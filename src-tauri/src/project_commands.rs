@@ -148,27 +148,25 @@ pub(super) async fn list_workspace_projects(
     ))
 }
 
-#[tauri::command]
-pub(super) async fn create_project(
-    state: State<'_, AppState>,
-    name: String,
-    workspace_dir: String,
-    description: String,
-    agent_context: String,
-    standard_layout: bool,
-) -> Result<ProjectSummary, String> {
-    if name.trim().is_empty() {
+/// Filesystem and store writes for a new project. Callers supply the store
+/// directly: this does not read or change any WebView window's active project
+/// or session, and it does not create a conversation.
+pub(crate) async fn create_project_record(
+    store: &wisp_store::Store,
+    input: wisp_dto::native_projects::CreateProjectRequest,
+) -> Result<String, String> {
+    let name = input.name.trim();
+    if name.is_empty() {
         return Err("Project name is required".into());
     }
-    let dir = workspace_dir.trim();
+    let dir = input.workspace_dir.trim();
     if dir.is_empty() {
         return Err("A working directory is required".into());
     }
     let path = PathBuf::from(dir);
     std::fs::create_dir_all(&path)
         .map_err(|e| format!("Failed to create working directory: {e}"))?;
-    if state
-        .store
+    if store
         .list_projects()
         .await
         .map_err(|e| format!("{e}"))?
@@ -185,24 +183,22 @@ pub(super) async fn create_project(
     let id = Uuid::new_v4().to_string();
     // #405: opt-in. Unchecked means the user keeps their own structure, so we
     // create nothing — the convention lives in .wisp/WISP.md instead (below).
-    if standard_layout {
-        workspace_manifest::init_workspace_layout(&path, &id, name.trim())?;
+    if input.standard_layout {
+        workspace_manifest::init_workspace_layout(&path, &id, name)?;
     }
-    state
-        .store
-        .create_project(&id, name.trim(), dir)
+    store
+        .create_project(&id, name, dir)
         .await
         .map_err(|e| format!("{e}"))?;
     // Description (DB) + Agent Context (.wisp/WISP.md) — same storage as update_project.
-    let desc = description.trim();
+    let desc = input.description.trim();
     if !desc.is_empty() {
-        state
-            .store
-            .update_project(&id, name.trim(), desc)
+        store
+            .update_project(&id, name, desc)
             .await
             .map_err(|e| format!("{e}"))?;
     }
-    let ctx = agent_context.trim();
+    let ctx = input.agent_context.trim();
     if !ctx.is_empty() {
         let wisp_dir = path.join(".wisp");
         std::fs::create_dir_all(&wisp_dir)
@@ -210,6 +206,29 @@ pub(super) async fn create_project(
         std::fs::write(wisp_dir.join("WISP.md"), ctx)
             .map_err(|e| format!("Failed to write Agent Context: {e}"))?;
     }
+    Ok(id)
+}
+
+#[tauri::command]
+pub(super) async fn create_project(
+    state: State<'_, AppState>,
+    name: String,
+    workspace_dir: String,
+    description: String,
+    agent_context: String,
+    standard_layout: bool,
+) -> Result<ProjectSummary, String> {
+    let id = create_project_record(
+        &state.store,
+        wisp_dto::native_projects::CreateProjectRequest {
+            name,
+            workspace_dir,
+            description,
+            agent_context,
+            standard_layout,
+        },
+    )
+    .await?;
     Ok(build_project_summary(&state, &id).await)
 }
 

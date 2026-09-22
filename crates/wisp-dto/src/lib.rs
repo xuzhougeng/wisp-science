@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub mod native_conversations;
+pub mod native_projects;
 pub mod native_settings;
 pub mod project_browser;
 

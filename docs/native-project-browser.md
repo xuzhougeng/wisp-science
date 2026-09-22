@@ -250,7 +250,7 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order; search is connected. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search and new project are connected; calendar, library, scratch, and import stay disabled. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | Selection and sorting/grouping retain their positions; not connected yet. |
@@ -260,10 +260,38 @@ Manual smoke steps:
 
 ## Remaining feature work
 
-The preview aligns the home/workspace shell and includes native settings and the
-conversation loop described below. Home creation/import, calendar/library,
+The preview aligns the home/workspace shell and includes native settings, project
+creation, and the conversation loop described below. Import, calendar, library,
 the sidebar tools and artifact search still require their native services.
-Their action slots are visible but explicitly disabled in the preview.
+Those action slots are visible but explicitly disabled in the preview.
+
+## Creating a project
+
+The home **新建项目** button opens a SwiftUI form with 名称, 工作目录, 说明,
+Agent Context, and a 标准布局 switch. The directory can be typed or chosen with
+the system open panel. `native_project_create` runs on the desktop host and uses
+the same checks as the WebView `create_project` command: create a missing
+directory, then reject an empty name, an empty directory, a folder already
+registered as a project, or a directory that is not writable. The command takes
+no project id. It does not change the WebView's active project or active session,
+and it does not create a conversation.
+
+With 标准布局 off, the host does not precreate the standard workspace tree.
+Non-empty Agent Context is still written to `.wisp/WISP.md`. Turning the switch
+on inserts the same convention block the WebView editor inserts; turning it off
+removes that block and leaves the rest of the text.
+
+The command is announced on `native_settings_capabilities` under `projects` and
+`project_schema` (`wisp.native-projects.v1`). It is not in the settings command
+allowlist and `wisp-service` cannot create projects. A validation error keeps the
+form and draft open. A lost reply does the same and is not retried; refresh the
+project list to see whether the host finished. A confirmed summary closes the
+form, reloads the read-only project list, and opens that project. Escape
+immediately after the form opens closes only the form. While the request is in
+flight the submit button stays disabled, including a second click.
+
+WinUI decodes the same fixture through `INativeProjectClient.CreateAsync` and
+leaves its 新建项目 button disabled.
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
 

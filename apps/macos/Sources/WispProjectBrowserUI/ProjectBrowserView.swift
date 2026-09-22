@@ -21,6 +21,9 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.searchPresented) {
                 ProjectSearchSheet(model: model, projectID: model.activeProjectID, close: { model.searchPresented = false })
             }
+            .sheet(isPresented: $model.createPresented) {
+                NewProjectSheet(model: model)
+            }
     }
 }
 
@@ -98,7 +101,14 @@ private struct ProjectLanding: View {
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
             WispUnavailableAction(title: "随手一聊")
             WispUnavailableAction(title: "导入项目", icon: "upload")
-            WispUnavailableAction(title: "新建项目", icon: "plus", primary: true)
+            Button { model.createPresented = true } label: {
+                HStack(spacing: 8) { WispIcon(name: "plus", size: 16); Text("新建项目") }
+            }
+            .buttonStyle(WispButtonStyle(primary: true))
+            .disabled(model.createBusy)
+            .help("新建项目")
+            .accessibilityLabel("新建项目")
+            .accessibilityIdentifier("new-project")
         }
     }
 

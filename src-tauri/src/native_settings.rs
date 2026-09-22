@@ -85,6 +85,17 @@ pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn capabilities() -> Value {
+    serde_json::json!({
+        "commands": COMMANDS,
+        "schema": SCHEMA,
+        "conversations": wisp_dto::native_conversations::COMMANDS,
+        "conversation_schema": wisp_dto::native_conversations::SCHEMA,
+        "projects": wisp_dto::native_projects::COMMANDS,
+        "project_schema": wisp_dto::native_projects::SCHEMA,
+    })
+}
+
 fn authorize(headers: &HeaderMap, expected: &str) -> bool {
     // A browser origin is never a native settings client. No CORS is enabled.
     !headers.contains_key("origin")
@@ -116,9 +127,13 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
         return Err("Invalid native settings request".into());
     }
     if request.command == "native_settings_capabilities" {
-        return Ok(
-            serde_json::json!({ "commands": COMMANDS, "schema": SCHEMA, "conversations": wisp_dto::native_conversations::COMMANDS, "conversation_schema": wisp_dto::native_conversations::SCHEMA }),
-        );
+        return Ok(capabilities());
+    }
+    if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        let id = crate::native_projects::execute(&state.store, request).await?;
+        return serde_json::to_value(crate::build_project_summary(&state, &id).await)
+            .map_err(|error| error.to_string());
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -299,5 +314,17 @@ mod tests {
         assert!(requested(["wisp".into(), "--native-settings-host".into()]));
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(!COMMANDS.contains(&"shell"));
+        assert!(!COMMANDS.contains(&"native_project_create"));
+        let advertised = capabilities();
+        assert_eq!(advertised["projects"][0], "native_project_create");
+        assert_eq!(
+            advertised["project_schema"],
+            wisp_dto::native_projects::SCHEMA
+        );
+        assert!(advertised["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|command| command != "native_project_create"));
     }
 }

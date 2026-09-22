@@ -5,6 +5,10 @@ import WispProjectBrowser
 @MainActor
 public final class ProjectBrowserModel: ObservableObject {
     @Published public var searchPresented = false
+    @Published public var createPresented = false
+    @Published public var createDraft = NewProjectDraft()
+    @Published private(set) var createBusy = false
+    @Published private(set) var createError: String?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
@@ -61,6 +65,8 @@ public final class ProjectBrowserModel: ObservableObject {
         await openSession(id)
     }
     private let client: any ProjectBrowserQuerying
+    private let projectTransportOverride: (any NativeSettingsQuerying)?
+    private var projectHosts: [URL: NativeSettingsClient] = [:]
 
     public init() {
         let environment = ProcessInfo.processInfo.environment
@@ -72,11 +78,13 @@ public final class ProjectBrowserModel: ObservableObject {
             ?? Bundle.main.url(forAuxiliaryExecutable: "wisp-service")
             ?? Bundle.main.bundleURL.appendingPathComponent("wisp-service")
         client = ProjectBrowserClient(executableURL: executable)
+        projectTransportOverride = nil
     }
 
-    init(client: any ProjectBrowserQuerying, databaseURL: URL) {
+    init(client: any ProjectBrowserQuerying, databaseURL: URL, projectTransport: (any NativeSettingsQuerying)? = nil) {
         self.client = client
         self.databaseURL = databaseURL
+        self.projectTransportOverride = projectTransport
     }
 
     public func refresh() async {
@@ -197,6 +205,58 @@ public final class ProjectBrowserModel: ObservableObject {
             sessionError = error.localizedDescription
         }
         if generation == transcriptGeneration { transcriptLoading = false }
+    }
+
+    func dismissNewProject() {
+        guard !createBusy else { return }
+        createPresented = false
+    }
+
+    func setCreateStandardLayout(_ enabled: Bool, block: String? = nil) {
+        let block = block ?? NewProjectLayout.currentBlock()
+        var draft = createDraft
+        draft.standardLayout = enabled
+        draft.agentContext = NewProjectLayout.apply(draft.agentContext, enabled: enabled, block: block)
+        createDraft = draft
+    }
+
+    func submitNewProject() async {
+        guard !createBusy else { return }
+        createBusy = true
+        createError = nil
+        defer { createBusy = false }
+        let draft = createDraft
+        do {
+            let value = try await projectTransport().invoke(
+                NativeProjectCommand.create,
+                args: [
+                    "name": .string(draft.name),
+                    "workspace_dir": .string(draft.directory),
+                    "description": .string(draft.description),
+                    "agent_context": .string(draft.agentContext),
+                    "standard_layout": .bool(draft.standardLayout),
+                ],
+                projectID: nil)
+            let summary = try NativeProjectCommand.summary(from: value)
+            createPresented = false
+            createDraft = NewProjectDraft()
+            createError = nil
+            await refresh()
+            if !projects.contains(where: { $0.id == summary.id }) {
+                projects.insert(summary, at: 0)
+            }
+            await openProject(summary.id)
+        } catch {
+            createError = NewProjectError.message(for: error.localizedDescription)
+        }
+    }
+
+    private func projectTransport() -> any NativeSettingsQuerying {
+        if let projectTransportOverride { return projectTransportOverride }
+        if let host = projectHosts[databaseURL] { return host }
+        let host = NativeSettingsClient(databaseURL: databaseURL, executableURL: nativeDesktopHostURL())
+        projectHosts[databaseURL] = host
+        return host
     }
 
     func reveal(_ project: ProjectSummary) {

@@ -45,6 +45,7 @@ mod device_hub;
 mod dynamic_workflow;
 mod exploration_commands;
 mod native_conversations;
+mod native_projects;
 mod native_settings;
 pub(crate) use wisp_runs::exploration_isolation;
 mod exploration_promotion;
@@ -1082,7 +1083,7 @@ struct FolderInfo {
 use wisp_app::projects::project_status_counts;
 use wisp_dto::ProjectSummary;
 
-async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
+pub(crate) async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
     let running = state.running_turns.lock().await.clone();
     let awaiting = state.awaiting_confirm.lock().unwrap().clone();
     let Some((id, name, ws, _c, upd, cnt, desc, art)) = state
