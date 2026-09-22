@@ -198,6 +198,7 @@ fn ensure_pet_window(app: &AppHandle) -> Result<(), String> {
         .skip_taskbar(true)
         .focused(false)
         .visible(false)
+        .general_autofill_enabled(false)
         .on_navigation(crate::guard_webview_navigation);
     if let Some((x, y)) = default_pet_position(app) {
         builder = builder.position(x, y);

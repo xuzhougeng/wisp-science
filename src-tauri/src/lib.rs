@@ -7331,6 +7331,9 @@ pub fn run() {
             .inner_size(1100.0, 760.0)
             .resizable(true)
             .disable_drag_drop_handler()
+            // WebView2 "Suggestions" ignores autocomplete="off" and draws the
+            // saved-info list over plain text fields such as the group name.
+            .general_autofill_enabled(false)
             .on_navigation(guard_webview_navigation);
             #[cfg(target_os = "windows")]
             let main_builder = main_builder.decorations(false).shadow(true);

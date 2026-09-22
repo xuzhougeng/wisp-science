@@ -570,6 +570,7 @@ pub(super) async fn spawn_project_window_with_label(
         .title(app_window_title(Some(&name)))
         .inner_size(1100.0, 760.0)
         .resizable(true)
+        .general_autofill_enabled(false)
         .on_navigation(crate::guard_webview_navigation);
     // Center over the requesting window (or the main window on startup
     // restore); otherwise the OS cascades each new window to an arbitrary
@@ -650,6 +651,7 @@ pub(super) async fn spawn_blank_window(
         .title(app_window_title(None))
         .inner_size(1100.0, 760.0)
         .resizable(true)
+        .general_autofill_enabled(false)
         .on_navigation(crate::guard_webview_navigation);
     let anchor = anchor_label
         .and_then(|label| app.workspace_surface(label))

@@ -3843,6 +3843,8 @@ test("conversation action button renames, transfers, and deletes sessions (#557)
 
   await page.getByRole("button", { name: "New group" }).click();
   const folderInput = page.locator("#folder-modal-input");
+  await expect(folderInput).toHaveAttribute("autocomplete", "nope");
+  await expect(folderInput).toHaveAttribute("name", "wisp-group-name");
   await folderInput.fill("Results");
   await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
   await expect(page.locator(".side-folder", { hasText: "Results" })).toBeVisible();

@@ -239,9 +239,17 @@ pub(crate) fn FolderModalOverlay(
                     <h2>{move || t(locale.get(), title_key)}</h2>
                     <label>
                         {move || t(locale.get(), label_key)}
+                        // Chromium treats autocomplete="off" as a hint and still
+                        // lists previously typed values. An unrecognized token
+                        // opts the field out of that saved-info popup.
                         <input
                             id="folder-modal-input"
                             type="text"
+                            name="wisp-group-name"
+                            autocomplete="nope"
+                            autocorrect="off"
+                            autocapitalize="none"
+                            spellcheck="false"
                             autofocus=true
                             prop:value=move || folder_modal_input.get()
                             on:input=move |ev| folder_modal_input.set(dom_value(&ev))
