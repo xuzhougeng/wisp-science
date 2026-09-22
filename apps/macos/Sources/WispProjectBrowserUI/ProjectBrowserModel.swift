@@ -12,6 +12,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var createError: String?
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
+    let library = NativeLibraryModel()
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
@@ -276,6 +277,13 @@ public final class ProjectBrowserModel: ObservableObject {
         }
     }
 
+    func openLibrarySource(_ item: LibraryEntry) async {
+        library.presented = false
+        guard !item.sourceProjectID.isEmpty else { return }
+        let session = item.sourceSessionID.isEmpty ? nil : item.sourceSessionID
+        await openProject(item.sourceProjectID, sessionID: session)
+    }
+
     func chooseProjectArchive() {
         guard !importBusy else { return }
         let panel = NSOpenPanel()
@@ -289,6 +297,8 @@ public final class ProjectBrowserModel: ObservableObject {
         let url = panel.url
         Task { await importChosenArchive(url) }
     }
+
+    func libraryClient() -> any NativeSettingsQuerying { projectTransport() }
 
     private func projectTransport() -> any NativeSettingsQuerying {
         if let projectTransportOverride { return projectTransportOverride }

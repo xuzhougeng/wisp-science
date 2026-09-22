@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub mod native_conversations;
+pub mod native_library;
 pub mod native_projects;
 pub mod native_settings;
 pub mod project_browser;
@@ -1482,7 +1483,7 @@ impl LibraryItem {
 
 /// Bounded Library list row. Full code/text is fetched only for the active
 /// session or an opened detail.
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 pub struct LibraryItemSummary {
     pub id: String,
     pub kind: String,

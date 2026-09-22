@@ -45,6 +45,7 @@ mod device_hub;
 mod dynamic_workflow;
 mod exploration_commands;
 mod native_conversations;
+mod native_library;
 mod native_projects;
 mod native_settings;
 pub(crate) use wisp_runs::exploration_isolation;

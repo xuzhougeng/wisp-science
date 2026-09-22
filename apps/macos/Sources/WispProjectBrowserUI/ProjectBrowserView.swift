@@ -3,9 +3,13 @@ import WispProjectBrowser
 
 public struct ProjectBrowserView: View {
     @ObservedObject private var model: ProjectBrowserModel
+    @ObservedObject private var library: NativeLibraryModel
     @AppStorage("projectBrowser.appearance") private var appearance = "system"
 
-    public init(model: ProjectBrowserModel) { self.model = model }
+    public init(model: ProjectBrowserModel) {
+        self.model = model
+        self.library = model.library
+    }
 
     public var body: some View {
         Group {
@@ -23,6 +27,9 @@ public struct ProjectBrowserView: View {
             }
             .sheet(isPresented: $model.createPresented) {
                 NewProjectSheet(model: model)
+            }
+            .sheet(isPresented: $library.presented) {
+                NativeLibrarySheet(model: model, library: library)
             }
     }
 }
@@ -97,7 +104,9 @@ private struct ProjectLanding: View {
     private var actions: some View {
         HStack(spacing: 8) {
             WispUnavailableAction(title: "研究日历", icon: "calendar", iconOnly: true)
-            WispUnavailableAction(title: "收藏", icon: "star", iconOnly: true)
+            Button { model.library.presented = true } label: { WispIcon(name: "star") }
+                .buttonStyle(WispButtonStyle()).help("收藏").accessibilityLabel("收藏")
+                .accessibilityIdentifier("home-library")
             searchAction
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
             WispUnavailableAction(title: "随手一聊")

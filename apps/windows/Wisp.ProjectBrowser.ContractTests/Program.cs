@@ -48,6 +48,7 @@ if (!encodedStar.GetProperty("starred").GetBoolean() || encodedStar.GetProperty(
 
 await NativeSettingsContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-settings/v1")));
 await NativeProjectContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-projects/v1/create.json")));
+await NativeLibraryContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-library/v1/search.json")));
 await NativeConversationContractTests.Run(args[0]);
 
 NativePanelTabsTests.Run();

@@ -228,7 +228,13 @@ struct ProjectWorkspace: View {
                 .accessibilityIdentifier("sidebar-files")
                 WispUnavailableAction(title: "研究历程", icon: "research-trail", expanded: true)
                 WispUnavailableAction(title: "论文证据", icon: "book", expanded: true)
-                WispUnavailableAction(title: "收藏", icon: "star", expanded: true)
+                Button { model.library.presented = true } label: {
+                    HStack { WispIcon(name: "star", size: 16); Text("收藏"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .help("收藏")
+                .accessibilityLabel("收藏")
+                .accessibilityIdentifier("sidebar-library")
             }
             HStack {
                 Text("会话").font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint"))

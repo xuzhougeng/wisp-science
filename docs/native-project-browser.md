@@ -250,7 +250,7 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, new project, and import are connected; calendar, library, and scratch stay disabled. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, new project, and import are connected; calendar and scratch stay disabled. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
@@ -261,9 +261,9 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, and the conversation loop described below. Calendar,
-library, and the sidebar tools other than 文件 and 新建分组 still require their native services.
-Those action slots are visible but explicitly disabled in the preview.
+creation, project import, the library, and the conversation loop described below. Calendar
+and the sidebar tools other than 文件, 新建分组, and 收藏 still require their native services.
+Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
 Sessions can be sorted by recent or name, grouped by folder or date, and
@@ -278,6 +278,38 @@ The sidebar **文件** button selects the existing right-hand files page and
 expands that panel. It uses the same tab layout as the panel itself and does
 not add a host command. Escape continues to dismiss only the panel's own top
 surface.
+
+## Library
+
+**收藏** on the home header and in the project sidebar opens the same library
+sheet. Search and delete go to the desktop host's app-global library store
+(`library.sqlite` via `AppState.library`), the same store the WebView library
+uses. `wisp-service` cannot search or delete that store.
+
+`native_library_search` takes a query and an optional kind (`code`, `figure`,
+or `text`). An empty query lists the library. `native_library_delete` removes
+one item by id. Neither command takes a project id. A non-empty project id is
+rejected and nothing is deleted. The dispatcher does not create a settings
+webview and does not change the WebView's active project or session.
+
+Both commands are announced on `native_settings_capabilities` as `library` and
+`library_schema` (`wisp.native-library.v1`). They are not in the settings
+command allowlist. A lost search keeps the current list and is not retried. A
+lost delete keeps the row and is not retried. A second click while that delete
+is in flight does not send again.
+
+**填入对话框** is shown only when a native session is already open. It writes
+the item text into that session's composer and does not send. The home page
+has no active session, so the button is absent there. **打开来源** closes the
+sheet and opens the item's source project and session through the native
+project list. It does not call `set_active`.
+
+Escape immediately after the sheet opens closes only the library sheet. A
+search surface that was already open stays open. A search reply that arrives
+after the sheet has closed does not reopen a project.
+
+WinUI decodes the same fixtures through `INativeLibraryClient` and leaves its
+收藏 buttons disabled.
 
 ## Creating a project
 

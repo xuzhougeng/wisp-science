@@ -130,6 +130,18 @@ final class NativeConversationModel: ObservableObject {
         }
         if generation == current { busy = false; await refresh() }
     }
+    @discardableResult
+    func prefillLibrary(_ text: String) -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sessionID, !text.isEmpty else { return false }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft = text
+        } else {
+            draft += (draft.hasSuffix("\n") ? "" : "\n") + text
+        }
+        drafts[sessionID] = draft
+        return true
+    }
     func acknowledgeUncertainSend() { if let sessionID { pendingSends[sessionID] = nil }; uncertainSend = false; pending = nil; operationError = nil }
     func stop() async { await action("native_conversation_stop", [:]) }
     func approve(_ approval: ConversationApproval, allowed: Bool) async {

@@ -93,6 +93,8 @@ pub(crate) fn capabilities() -> Value {
         "conversation_schema": wisp_dto::native_conversations::SCHEMA,
         "projects": wisp_dto::native_projects::COMMANDS,
         "project_schema": wisp_dto::native_projects::SCHEMA,
+        "library": wisp_dto::native_library::COMMANDS,
+        "library_schema": wisp_dto::native_library::SCHEMA,
     })
 }
 
@@ -138,6 +140,10 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
                 .map_err(|error| error.to_string());
         }
         return crate::native_projects::execute_folders(&state.store, request).await;
+    }
+    if wisp_dto::native_library::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_library::execute(&state.library, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -319,16 +325,27 @@ mod tests {
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(!COMMANDS.contains(&"shell"));
         assert!(!COMMANDS.contains(&"native_project_create"));
+        assert!(!COMMANDS.contains(&"native_library_delete"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
         assert_eq!(
             advertised["project_schema"],
             wisp_dto::native_projects::SCHEMA
         );
+        assert_eq!(advertised["library"][0], "native_library_search");
+        assert_eq!(advertised["library"][1], "native_library_delete");
+        assert_eq!(
+            advertised["library_schema"],
+            wisp_dto::native_library::SCHEMA
+        );
         assert!(advertised["commands"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|command| command != "native_project_create"));
+            .all(|command| {
+                command != "native_project_create"
+                    && command != "native_library_search"
+                    && command != "native_library_delete"
+            }));
     }
 }

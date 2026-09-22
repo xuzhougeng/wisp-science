@@ -1,0 +1,9 @@
+{
+  "schema": "wisp.native-library.v1",
+  "command": "native_library_delete",
+  "project_id": null,
+  "args": {
+    "id": "item-1"
+  },
+  "result": true
+}
