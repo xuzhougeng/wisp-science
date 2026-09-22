@@ -129,6 +129,12 @@ pub(crate) async fn attach_local_file(
     })
 }
 
+fn follow_up_id(request_id: &str) -> Result<u64, String> {
+    let id = uuid::Uuid::parse_str(request_id).map_err(|_| "Invalid follow-up request ID")?;
+    let bytes = id.as_bytes();
+    Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+}
+
 fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| error.to_string())
 }
@@ -399,6 +405,44 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             )
             .await?;
             serde_json::to_value(attached).map_err(|error| error.to_string())
+        }
+        "native_conversation_enqueue" => {
+            let args: dto::SendRequest = decode(&request.args)?;
+            let turn_running = {
+                let guard = record.lock().await;
+                guard.running || running(broker, session).await
+            };
+            let state = broker.app.state::<crate::AppState>();
+            let runtime = {
+                let mut sessions = state.sessions.lock().await;
+                sessions
+                    .entry(session.to_owned())
+                    .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
+                    .clone()
+            };
+            let id = follow_up_id(&args.request_id)?;
+            let text = crate::agent_turn::queue_one_follow_up(
+                turn_running,
+                &runtime,
+                id,
+                &args.message,
+                &args.attachments,
+            )?;
+            if !runtime
+                .draining
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                // The hidden label is not the WebView's main window. The
+                // existing driver sends this one parked draft after the
+                // current turn releases the workflow lock, then stops.
+                crate::agent_turn::spawn_queue_driver(
+                    broker.app.clone(),
+                    runtime,
+                    session.to_owned(),
+                    "native-follow-up".into(),
+                );
+            }
+            Ok(json!({"queued": true, "message": text}))
         }
         "native_conversation_send" => {
             let mut args: dto::SendRequest = decode(&request.args)?;

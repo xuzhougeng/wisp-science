@@ -179,6 +179,15 @@ static class NativeConversationContractTests
         Require(attachFake.Calls == 2, "Attach was retried");
         var savedItem = JsonSerializer.Deserialize<ConversationItem>(File.ReadAllText(Path.Combine(directory, "attached-item.json")), ConversationSnapshot.JsonOptions)!;
         Require(savedItem.Attachments is ["uploads/notes.csv", "uploads/figure.png"] && savedItem.Text.Contains("uploads/notes.csv"), "Saved snapshot dropped attachments");
+        var enqueueFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "enqueue.json")))!.AsObject();
+        var enqueueFake = new Fake { Reply = enqueueFixture["result"]!.DeepClone() };
+        var enqueueClient = new NativeConversationClient(enqueueFake);
+        await enqueueClient.EnqueueAsync("project-a", "session-a", Guid.Parse(enqueueFixture["args"]!["request_id"]!.GetValue<string>()), enqueueFixture["args"]!["message"]!.GetValue<string>());
+        Require(enqueueFake.Command == "native_conversation_enqueue" && enqueueFake.Project == "project-a" && enqueueFake.Args?["message"]?.GetValue<string>() == "继续检查对照" && enqueueFake.Calls == 1, "Enqueue fixture drift");
+        enqueueFake.Fail = true;
+        try { await enqueueClient.EnqueueAsync("project-a", "session-a", Guid.NewGuid(), "另一条"); throw new Exception("Expected lost enqueue"); }
+        catch (IOException) { }
+        Require(enqueueFake.Calls == 2, "Enqueue was retried");
         Console.WriteLine("Native conversation fixture, ordering, restart, approval and no-replay tests passed.");
     }
     static void Require(bool value, string message) { if (!value) throw new Exception(message); }

@@ -17,6 +17,8 @@ public interface INativeConversationClient
     Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default);
     Task<ComposerAttachment> AttachAsync(string projectId, string sessionId, string path, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("对话附件 stays disconnected in WinUI");
+    Task EnqueueAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("排队后续 stays disconnected in WinUI");
     Task StopAsync(string projectId, string sessionId, CancellationToken cancellationToken = default);
     Task ApproveAsync(string projectId, string sessionId, string approvalId, bool approved, CancellationToken cancellationToken = default);
     Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default);
@@ -86,6 +88,12 @@ public sealed class NativeConversationClient(INativeSettingsClient transport) : 
         var node = await transport.InvokeAsync("native_conversation_attach", new() { ["session_id"] = sessionId, ["path"] = path }, projectId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("Missing attachment");
         return node.Deserialize<ComposerAttachment>(ConversationSnapshot.JsonOptions) ?? throw new InvalidDataException("Missing attachment");
+    }
+    public async Task EnqueueAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default)
+    {
+        var node = await transport.InvokeAsync("native_conversation_enqueue", new() { ["session_id"] = sessionId, ["request_id"] = requestId.ToString(), ["message"] = message }, projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException("Missing queued follow-up");
+        if (node["queued"]?.GetValue<bool>() != true) throw new InvalidDataException("Follow-up was not queued");
     }
     public async Task StopAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_stop", new() { ["session_id"] = sessionId }, projectId, cancellationToken).ConfigureAwait(false);

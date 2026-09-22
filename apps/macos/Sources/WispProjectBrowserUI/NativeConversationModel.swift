@@ -51,6 +51,8 @@ final class NativeConversationModel: ObservableObject {
     @Published private(set) var showingHistory = false
     @Published private(set) var history: ConversationSnapshot?
     @Published private(set) var attachments: [ComposerFile] = []
+    @Published private(set) var queuedFollowUp: String?
+    private var queuedBySession: [String: String] = [:]
     private var stagedFiles: [String: [ComposerFile]] = [:]
     private var drafts: [String: String] = [:]
     private var projectID: String?
@@ -65,6 +67,10 @@ final class NativeConversationModel: ObservableObject {
     init(client: any NativeConversationQuerying) { self.client = client }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
     var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
+    var canQueueFollowUp: Bool {
+        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasText && queuedFollowUp == nil && snapshot?.running == true && snapshot?.read_only != true && !busy && !showingHistory && connectionError == nil
+    }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return (hasText || !attachments.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && connectionError == nil && !showingHistory
@@ -74,7 +80,7 @@ final class NativeConversationModel: ObservableObject {
         pause()
         outlinePresented = false; outline = []; outlineError = nil; outlineLoading = false; scrollTarget = nil; revealedExcerpt = nil
         savedHighlights = []; savingSelections = []; highlightsReadGeneration = UUID()
-        projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []
+        projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []; queuedFollowUp = queuedBySession[session]
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
         connectionError = nil; loading = true; busy = false
@@ -103,7 +109,11 @@ final class NativeConversationModel: ObservableObject {
         }
     }
     func pause() {
-        if let sessionID { drafts[sessionID] = draft; stagedFiles[sessionID] = attachments }
+        if let sessionID {
+            drafts[sessionID] = draft
+            stagedFiles[sessionID] = attachments
+            if let queuedFollowUp { queuedBySession[sessionID] = queuedFollowUp } else { queuedBySession.removeValue(forKey: sessionID) }
+        }
         generation = UUID(); polling?.cancel(); polling = nil
     }
     func refresh() async {
@@ -168,6 +178,30 @@ final class NativeConversationModel: ObservableObject {
     func removeAttachment(_ path: String) {
         attachments.removeAll { $0.path == path }
         if let sessionID { stagedFiles[sessionID] = attachments }
+    }
+    func queueFollowUp() async {
+        guard canQueueFollowUp, let project = projectID, let session = sessionID else { return }
+        let text = draft
+        let files = attachments.map(\.path)
+        let id = UUID().uuidString
+        busy = true
+        operationError = nil
+        defer { busy = false }
+        do {
+            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(text)]
+            if !files.isEmpty { args["attachments"] = .array(files.map(SettingsValue.string)) }
+            _ = try await client.invoke("native_conversation_enqueue", args: args, projectID: project)
+            guard self.sessionID == session else { return }
+            queuedFollowUp = text
+            queuedBySession[session] = text
+            if draft == text { draft = "" }
+            drafts[session] = draft
+            attachments = []
+            stagedFiles[session] = []
+        } catch {
+            guard self.sessionID == session else { return }
+            operationError = "后续未能确认排队，不会自动重试。\n" + error.localizedDescription
+        }
     }
     func send() async {
         guard canSend, let project = projectID, let session = sessionID else { return }

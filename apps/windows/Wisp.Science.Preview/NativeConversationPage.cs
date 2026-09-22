@@ -65,6 +65,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         };
         createSession.Click += async (_, _) => await create();
         var attach = new Button { Content = "对话附件", IsEnabled = false };
+        var queue = new Button { Content = "排队后续", IsEnabled = false };
         var actions = new Grid();
         actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -72,7 +73,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         send.HorizontalAlignment = HorizontalAlignment.Right; stop.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetColumn(send, 1); Grid.SetColumn(stop, 1); actions.Children.Add(send); actions.Children.Add(stop);
         var card = new StackPanel { Spacing = 12, Padding = new Thickness(16) };
-        card.Children.Add(attach); card.Children.Add(composer); card.Children.Add(actions);
+        card.Children.Add(attach); card.Children.Add(queue); card.Children.Add(composer); card.Children.Add(actions);
         var follow = new CheckBox { Content = "跟随最新回复", IsChecked = true, FontSize = 11 };
         follow.Checked += (_, _) => followLatest = true; follow.Unchecked += (_, _) => followLatest = false;
         var footer = new Grid { Margin = new Thickness(24, 0, 24, 16), MaxWidth = 850 };

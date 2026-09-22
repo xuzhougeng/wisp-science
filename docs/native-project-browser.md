@@ -544,3 +544,11 @@ in the same `Uploaded files:` text the WebView persists. A reloaded snapshot
 shows those names on the saved user message. A lost attach or send is not
 retried. Removing a chip drops it from this draft. WinUI leaves its 对话附件
 button disabled and decodes the same fixture.
+
+**排队后续** is enabled while a turn is running. It parks the current
+composer draft with `native_conversation_enqueue` for that project and
+session. The existing queue driver sends that one draft after the current
+turn releases its workflow lock, then stops. A second distinct draft is
+refused, and the button does not send another turn by itself. A lost reply
+is not retried. The command does not change the WebView's active project or
+session. WinUI leaves its 排队后续 button disabled.

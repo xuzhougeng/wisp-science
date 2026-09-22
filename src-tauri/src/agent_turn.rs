@@ -1807,6 +1807,49 @@ pub(crate) fn swap_queued_toward(q: &mut Vec<QueuedItem>, id: u64, up: bool) {
     }
 }
 
+/// Park exactly one user-authored follow-up. A second distinct draft is refused.
+/// Repeating the same id does not add another item. The queue driver drains
+/// this with `take_next_queued_turn` and stops when that returns nothing.
+pub(crate) fn queue_one_follow_up(
+    turn_running: bool,
+    rt: &SessionRuntime,
+    id: u64,
+    message: &str,
+    attachments: &[String],
+) -> Result<String, String> {
+    if !turn_running {
+        return Err("Queue a follow-up only while a turn is running".into());
+    }
+    let paths = attachments
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    let text = wisp_dto::native_conversations::message_with_attachments(message, &paths);
+    if text.trim().is_empty() {
+        return Err("A follow-up needs text".into());
+    }
+    let mut queued = rt.queued.lock().unwrap();
+    if let Some(existing) = queued.iter().find(|item| item.id == id) {
+        return Ok(existing.message.clone());
+    }
+    if !queued.is_empty() {
+        return Err("Only one follow-up can wait".into());
+    }
+    let cutins = rt.queued_cutins.lock().unwrap();
+    if !cutins.is_empty() {
+        return Err("Only one follow-up can wait".into());
+    }
+    drop(cutins);
+    queued.push(QueuedItem {
+        id,
+        message: text.clone(),
+        attachments: paths,
+        references: Vec::new(),
+    });
+    Ok(text)
+}
+
 /// Called only by the workflow-lock owner, before it starts any queued turn.
 /// Reconcile offered guidance here, not in a later mutex waiter: the FIFO
 /// driver may already be ahead of the cut-in command in the lock's wait list.
@@ -2007,6 +2050,38 @@ mod queue_tests {
         assert_eq!(parse_manual_compact_command("/compact2"), None);
         assert_eq!(parse_manual_compact_command("/compact --semantic2"), None);
         assert_eq!(parse_manual_compact_command("send /compact now"), None);
+    }
+
+    #[test]
+    fn one_user_follow_up_is_sent_and_the_queue_stops() {
+        let rt = SessionRuntime::new();
+        assert!(queue_one_follow_up(false, &rt, 1, "继续", &[]).is_err());
+        assert!(take_next_queued_turn(&rt).is_none());
+        let parked = queue_one_follow_up(
+            true,
+            &rt,
+            7,
+            "  继续检查对照  ",
+            &["uploads/notes.csv".into()],
+        )
+        .unwrap();
+        assert_eq!(parked, "继续检查对照\n\nUploaded files: uploads/notes.csv");
+        assert!(queue_one_follow_up(true, &rt, 8, "另一条", &[]).is_err());
+        let replay = queue_one_follow_up(
+            true,
+            &rt,
+            7,
+            "  继续检查对照  ",
+            &["uploads/notes.csv".into()],
+        )
+        .unwrap();
+        assert_eq!(replay, parked);
+        let next = take_next_queued_turn(&rt).unwrap();
+        assert_eq!(next.id, 7);
+        assert_eq!(next.message, parked);
+        assert_eq!(next.attachments, vec!["uploads/notes.csv".to_string()]);
+        assert!(take_next_queued_turn(&rt).is_none());
+        assert!(take_next_queued_turn(&rt).is_none());
     }
 
     #[test]

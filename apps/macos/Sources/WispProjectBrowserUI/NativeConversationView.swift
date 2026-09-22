@@ -155,6 +155,10 @@ struct NativeConversationView: View {
                 Text("该会话为只读（已归档、冻结或使用 ACP），请在 WebView 中继续，或新建原生会话。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 12) {
+                if let queued = conversation.queuedFollowUp {
+                    Text("已排队一条后续：\(queued)").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
+                        .accessibilityIdentifier("queued-follow-up")
+                }
                 if !conversation.attachments.isEmpty {
                     ForEach(conversation.attachments) { file in
                         HStack {
@@ -181,6 +185,9 @@ struct NativeConversationView: View {
                     }.frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
                     Spacer()
                     if conversation.snapshot?.running == true {
+                        Button("排队后续") { Task { await conversation.queueFollowUp() } }
+                            .disabled(!conversation.canQueueFollowUp)
+                            .accessibilityIdentifier("composer-queue")
                         Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle()).disabled(conversation.busy)
                     } else {
                         Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend).keyboardShortcut(.return, modifiers: .command)

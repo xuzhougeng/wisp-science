@@ -55,6 +55,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_snapshot",
     "native_conversation_send",
     "native_conversation_attach",
+    "native_conversation_enqueue",
     "native_conversation_stop",
     "native_conversation_approve",
     "native_conversation_model",
