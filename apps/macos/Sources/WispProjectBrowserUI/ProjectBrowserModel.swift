@@ -16,6 +16,7 @@ public final class ProjectBrowserModel: ObservableObject {
     let calendar = NativeCalendarModel()
     let journey = NativeJourneyModel()
     let publication = NativePublicationModel()
+    let capabilities = NativeCapabilitiesModel()
     @Published var journeyFocus: JourneyFocus?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
@@ -154,6 +155,7 @@ public final class ProjectBrowserModel: ObservableObject {
         calendar.invalidate()
         journey.invalidate()
         publication.invalidate()
+        capabilities.invalidate()
         journeyFocus = nil
         navigationGeneration = UUID()
         transcriptGeneration = UUID()

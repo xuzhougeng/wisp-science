@@ -5,12 +5,14 @@ public struct ProjectBrowserView: View {
     @ObservedObject private var model: ProjectBrowserModel
     @ObservedObject private var library: NativeLibraryModel
     @ObservedObject private var calendar: NativeCalendarModel
+    @ObservedObject private var capabilities: NativeCapabilitiesModel
     @AppStorage("projectBrowser.appearance") private var appearance = "system"
 
     public init(model: ProjectBrowserModel) {
         self.model = model
         self.library = model.library
         self.calendar = model.calendar
+        self.capabilities = model.capabilities
     }
 
     public var body: some View {
@@ -35,6 +37,9 @@ public struct ProjectBrowserView: View {
             }
             .sheet(isPresented: $calendar.presented) {
                 NativeCalendarSheet(model: model, calendar: calendar)
+            }
+            .sheet(isPresented: $capabilities.presented) {
+                NativeCapabilitiesSheet(model: model, capabilities: capabilities)
             }
     }
 }

@@ -317,7 +317,13 @@ struct ProjectWorkspace: View {
             }
             Spacer(minLength: 0)
             VStack(spacing: 4) {
-                WispUnavailableAction(title: "能力", icon: "grid", expanded: true)
+                Button { model.capabilities.open(projectID: project.id) } label: {
+                    HStack { WispIcon(name: "grid", size: 16); Text("能力"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .help("能力")
+                .accessibilityLabel("能力")
+                .accessibilityIdentifier("sidebar-capabilities")
                 WispUnavailableAction(title: "反馈问题", icon: "chat", expanded: true)
                 Button { model.settingsPresented = true } label: { HStack { WispIcon(name: "gear"); Text("设置"); Spacer() } }.buttonStyle(WispButtonStyle())
             }

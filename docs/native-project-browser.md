@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, the library, the research calendar, the research journey, the publication workspace, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, and 论文证据 still require their native services.
+creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, and the conversation loop described below.
+The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, 论文证据, and 能力 still require their native services.
 Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
@@ -365,6 +365,19 @@ the workspace has closed does not open a project. Escape closes only the
 publication column and returns to the conversation. Evidence binding, readiness,
 and reproduction stay out of this slice. WinUI decodes the same fixture through
 `INativePublicationClient` and leaves its 论文证据 button disabled.
+
+## Capabilities
+
+The sidebar **能力** button opens a summary for the current project. It reads
+`get_bootstrap_status`, `list_skills`, `list_mcp_connections`, and
+`get_memory_view` through the existing settings host. Each call carries that
+project id. Enabled bundled skills are counted separately from other enabled
+skills. Enabled connections and memory files are counted from those replies.
+The summary does not call `probe_execution_context` and does not add a host
+command. A lost read is not retried. A reply that arrives after the sheet
+closes does not open a project. Choosing a count opens the existing settings
+section for skills, connections, or memory. Escape closes only the summary.
+WinUI leaves its 能力 button disabled.
 
 ## Creating a project
 
