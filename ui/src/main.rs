@@ -49,9 +49,10 @@ use bindings::{
     add_workspace_file_to_motif, attach_chat_autoscroll, cancel_saved_marks_apply, clear_selection,
     close_mcp_app, force_chat_bottom, invoke, invoke_checked, is_mac, is_windows,
     jump_chat_to_item, jump_chat_to_user, listen, listen_current_window, listen_native_file_drop,
-    native_drop_in_composer, open_browser_extension_page, open_external_url, pasted_image_count,
-    preserve_chat_prepend_position, preview_selection, restore_chat_session_scroll,
-    schedule_chat_follow, set_saved_marks, set_window_title, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    native_drop_in_composer, open_browser_extension_page, open_external_url, open_tutorials,
+    pasted_image_count, preserve_chat_prepend_position, preview_selection,
+    restore_chat_session_scroll, schedule_chat_follow, set_saved_marks, set_window_title,
+    CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -10912,7 +10913,7 @@ fn App() -> impl IntoView {
             "export-current-project" => export_current_project.call(()),
             "skills" => manage_skills.call(()),
             "check-updates" => run_update_check(),
-            "docs" => open_external_url("https://github.com/xuzhougeng/wisp-science#readme".into()),
+            "docs" => open_tutorials(),
             "star-us" => open_external_url("https://github.com/xuzhougeng/wisp-science".into()),
             "issues" => {
                 open_external_url("https://github.com/xuzhougeng/wisp-science/issues".into())
@@ -10968,9 +10969,7 @@ fn App() -> impl IntoView {
             };
             match action.as_str() {
                 "check-updates" => run_update_check(),
-                "docs" => {
-                    open_external_url("https://github.com/xuzhougeng/wisp-science#readme".into())
-                }
+                "docs" => open_tutorials(),
                 "star-us" => open_external_url("https://github.com/xuzhougeng/wisp-science".into()),
                 "issues" => {
                     open_external_url("https://github.com/xuzhougeng/wisp-science/issues".into())

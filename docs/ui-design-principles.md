@@ -25,6 +25,7 @@
 - Projects landing and chat empty use the full molecular wordmark (`.brand-wordmark`) with transparent backgrounds. Select its light or dark asset through the app theme; explicit appearance choices override the system preference.
 - Keep the wordmark large enough for the “science” lettering to read. Compact chrome and the research-graph empty state retain a small symbol; chat greetings retain the serif typography.
 - Research graph headings use Source Serif at `--text-lg`; list/canvas stay utilitarian.
+- The projects home puts a documentation control immediately to the right of Settings. It opens the tutorials index, the same page as Help → Documentation.
 
 ## Queued follow-ups
 

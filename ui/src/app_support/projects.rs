@@ -733,6 +733,12 @@ pub(crate) fn ProjectsScreen(
                         on:click=move |_| on_open_settings.call(())>
                         {compose_icon("gear")}
                     </button>
+                    <button type="button" class="projects-icon-btn" data-testid="open-tutorials"
+                        title=move || t(locale.get(), "menu.docs")
+                        aria-label=move || t(locale.get(), "menu.docs")
+                        on:click=move |_| open_tutorials()>
+                        {compose_icon("doc")}
+                    </button>
                     <button type="button" class="btn-ghost projects-scratch"
                         on:click=move |_| on_open_scratch.call(())>
                         {move || t(locale.get(), "scratch.open")}

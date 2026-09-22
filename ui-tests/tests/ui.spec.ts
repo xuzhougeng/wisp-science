@@ -13768,6 +13768,21 @@ test("scratch chat opens from landing and closes on Escape", async ({ page }) =>
   await expect(page.locator(".projects-screen")).toBeVisible();
 });
 
+test("home docs button sits to the right of settings and opens tutorials", async ({ page }) => {
+  await page.goto("/");
+  const actions = page.locator(".projects-actions");
+  const labels = await actions.locator("button").evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute("data-testid") || button.getAttribute("aria-label"))
+  );
+  expect(labels[labels.indexOf("Settings") + 1]).toBe("open-tutorials");
+  const docs = page.getByTestId("open-tutorials");
+  await expect(docs).toHaveAttribute("aria-label", "Documentation");
+  await docs.click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
+    url: "https://wispscience.com/tutorials.html",
+  });
+});
+
 test("projects landing stays centered on wide windows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/");
@@ -13903,7 +13918,7 @@ test("Windows uses the integrated title bar without covering the project landing
     ((window as any).__skillInvokeLog ?? [])
       .filter((c: any) => c.cmd === "open_external_url")
       .map((c: any) => (c.args instanceof Map ? c.args.get("url") : c.args?.url))
-  )).toContain("https://github.com/xuzhougeng/wisp-science#readme");
+  )).toContain("https://wispscience.com/tutorials.html");
 
   await context.close();
 });

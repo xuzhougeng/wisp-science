@@ -212,6 +212,13 @@ pub(crate) fn set_highlighted_code(id: String, text: String) {
     });
 }
 
+/// Tutorials index. Help → Documentation and the home docs button both open it.
+pub(crate) const TUTORIALS_URL: &str = "https://wispscience.com/tutorials.html";
+
+pub(crate) fn open_tutorials() {
+    open_external_url(TUTORIALS_URL.to_string());
+}
+
 /// Open an http(s)/mailto/tel link in the OS default handler (not the app webview).
 pub(crate) fn open_external_url(url: String) {
     spawn_local(async move {
