@@ -101,6 +101,8 @@ pub(crate) fn capabilities() -> Value {
         "journey_schema": wisp_dto::native_journey::SCHEMA,
         "publication": wisp_dto::native_publication::COMMANDS,
         "publication_schema": wisp_dto::native_publication::SCHEMA,
+        "scratch": wisp_dto::native_scratch::COMMANDS,
+        "scratch_schema": wisp_dto::native_scratch::SCHEMA,
     })
 }
 
@@ -162,6 +164,10 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_publication::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_scratch::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_scratch::execute(&state.store, &state.app_data, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -347,6 +353,8 @@ mod tests {
         assert!(!COMMANDS.contains(&"native_research_calendar"));
         assert!(!COMMANDS.contains(&"native_research_journey"));
         assert!(!COMMANDS.contains(&"native_publication_create"));
+        assert!(!COMMANDS.contains(&"native_scratch_open"));
+        assert!(!COMMANDS.contains(&"start_scratch_chat"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
         assert_eq!(
@@ -375,6 +383,12 @@ mod tests {
             advertised["publication_schema"],
             wisp_dto::native_publication::SCHEMA
         );
+        assert_eq!(advertised["scratch"][0], "native_scratch_open");
+        assert_eq!(advertised["scratch"][1], "native_scratch_close");
+        assert_eq!(
+            advertised["scratch_schema"],
+            wisp_dto::native_scratch::SCHEMA
+        );
         assert!(advertised["commands"]
             .as_array()
             .unwrap()
@@ -387,6 +401,9 @@ mod tests {
                     && command != "native_research_journey"
                     && command != "native_publication_workspace"
                     && command != "native_publication_create"
+                    && command != "native_scratch_open"
+                    && command != "native_scratch_close"
+                    && command != "start_scratch_chat"
             }));
     }
 }

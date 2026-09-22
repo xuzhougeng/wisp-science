@@ -17,6 +17,7 @@ pub mod native_journey;
 pub mod native_library;
 pub mod native_projects;
 pub mod native_publication;
+pub mod native_scratch;
 pub mod native_settings;
 pub mod project_browser;
 

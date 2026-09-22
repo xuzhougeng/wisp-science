@@ -1,0 +1,7 @@
+{
+  "schema": "wisp.native-scratch.v1",
+  "command": "native_scratch_close",
+  "project_id": "scratch:11111111-1111-1111-1111-111111111111",
+  "args": {},
+  "result": true
+}

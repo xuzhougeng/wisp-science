@@ -6,6 +6,7 @@ public struct ProjectBrowserView: View {
     @ObservedObject private var library: NativeLibraryModel
     @ObservedObject private var calendar: NativeCalendarModel
     @ObservedObject private var capabilities: NativeCapabilitiesModel
+    @ObservedObject private var scratch: NativeScratchModel
     @AppStorage("projectBrowser.appearance") private var appearance = "system"
 
     public init(model: ProjectBrowserModel) {
@@ -13,12 +14,15 @@ public struct ProjectBrowserView: View {
         self.library = model.library
         self.calendar = model.calendar
         self.capabilities = model.capabilities
+        self.scratch = model.scratch
     }
 
     public var body: some View {
         Group {
             if model.settingsPresented {
                 NativeSettingsView(databaseURL: model.databaseURL, projects: model.projects, projectID: model.projectSettingsID ?? model.activeProjectID, editProject: model.projectSettingsID != nil, initialSection: NativeSettingsSection(rawValue: model.settingsSectionID ?? "") ?? .general) { model.settingsPresented = false; model.projectSettingsID = nil; model.settingsSectionID = nil; Task { await model.refresh() } }
+            } else if scratch.presented {
+                NativeScratchChat(model: model, scratch: model.scratch)
             } else if let project = model.projects.first(where: { $0.id == model.activeProjectID }) {
                 ProjectWorkspace(model: model, project: project)
             } else {
@@ -121,7 +125,12 @@ private struct ProjectLanding: View {
                 .accessibilityIdentifier("home-library")
             searchAction
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
-            WispUnavailableAction(title: "随手一聊")
+            Button { Task { await model.scratch.open(model.calendarClient()) } } label: { Text("随手一聊") }
+                .buttonStyle(WispButtonStyle())
+                .disabled(model.scratch.busy || model.scratch.presented)
+                .help("随手一聊")
+                .accessibilityLabel("随手一聊")
+                .accessibilityIdentifier("home-scratch")
             Button { model.chooseProjectArchive() } label: {
                 HStack(spacing: 8) { WispIcon(name: "upload", size: 16); Text("导入项目") }
             }

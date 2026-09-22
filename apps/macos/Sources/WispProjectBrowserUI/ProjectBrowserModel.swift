@@ -18,6 +18,7 @@ public final class ProjectBrowserModel: ObservableObject {
     let publication = NativePublicationModel()
     let capabilities = NativeCapabilitiesModel()
     let issueReport = NativeIssueReport()
+    let scratch = NativeScratchModel()
     @Published var journeyFocus: JourneyFocus?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?

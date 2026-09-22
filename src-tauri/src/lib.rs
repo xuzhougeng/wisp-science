@@ -50,6 +50,7 @@ mod native_journey;
 mod native_library;
 mod native_projects;
 mod native_publication;
+mod native_scratch;
 mod native_settings;
 pub(crate) use wisp_runs::exploration_isolation;
 mod exploration_promotion;
@@ -5679,7 +5680,10 @@ async fn register_mcp_with_approval(
 /// Create a brand-new SQLite frame for the active project and return its id.
 /// Used by `new_session` (and the lazy first-send path) to hand the UI a
 /// concrete session id before streaming starts.
-async fn create_session_frame(store: &Store, project_id: &str) -> Result<String, String> {
+pub(crate) async fn create_session_frame(
+    store: &Store,
+    project_id: &str,
+) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let model_id = models::active_profile_id(store).await;
     store

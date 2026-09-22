@@ -52,6 +52,7 @@ await NativeLibraryContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirect
 await NativeCalendarContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-calendar/v1/month.json")));
 await NativeJourneyContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-journey/v1/range.json")));
 await NativePublicationContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-publication/v1/workspace.json")));
+await NativeScratchContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-scratch/v1/open.json")));
 await NativeConversationContractTests.Run(args[0]);
 
 NativePanelTabsTests.Run();
