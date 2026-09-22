@@ -2901,6 +2901,98 @@ test("Ctrl+K opens in place and Ctrl+Enter opens a project window", async ({ pag
   });
 });
 
+test("command palette arrows move inside the window and scroll only at the edge", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await enterApp(page);
+  await page.keyboard.press("Control+k");
+  const dialog = page.locator(".conversation-search-dialog");
+  const results = dialog.locator(".project-search-results");
+  const rows = dialog.locator(".project-search-row");
+  const search = page.locator("#command-palette-input");
+  await expect(search).toBeFocused();
+  await expect(rows.first()).toHaveClass(/active/);
+  await dialog.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+  await expect(dialog.locator(".project-search-label").first()).toHaveText("Projects");
+  await expect(dialog.locator(".project-search-label", { hasText: "Commands" })).toHaveCount(1);
+  // The mock catalog is short, so cap the list. Real projects overflow on their own.
+  await results.evaluate((el) => {
+    const list = el as HTMLElement;
+    list.style.maxHeight = "280px";
+    list.style.flex = "0 0 auto";
+  });
+
+  const geometry = () => results.evaluate((container) => {
+    const active = container.querySelector(".project-search-row.active");
+    if (!(container instanceof HTMLElement) || !(active instanceof HTMLElement)) return null;
+    const view = container.getBoundingClientRect();
+    const row = active.getBoundingClientRect();
+    return {
+      scrollTop: container.scrollTop,
+      activeTop: row.top - view.top,
+      activeBottom: row.bottom - view.bottom,
+      fullyVisible: row.top >= view.top - 1 && row.bottom <= view.bottom + 1,
+    };
+  });
+
+  const before = await geometry();
+  expect(before?.scrollTop).toBe(0);
+  for (let i = 0; i < 3; i++) await search.press("ArrowDown");
+  await expect(rows.nth(3)).toHaveClass(/active/);
+  const mid = await geometry();
+  expect(mid?.scrollTop).toBe(0);
+  expect(mid?.fullyVisible).toBe(true);
+  expect(mid?.activeTop ?? 0).toBeGreaterThan(24);
+
+  let scrolled = false;
+  for (let i = 0; i < 40 && !scrolled; i++) {
+    await search.press("ArrowDown");
+    const next = await geometry();
+    expect(next?.fullyVisible).toBe(true);
+    if ((next?.scrollTop ?? 0) > 0) {
+      scrolled = true;
+      expect(next?.activeTop ?? 0).toBeGreaterThan(40);
+      expect(Math.abs(next?.activeBottom ?? 99)).toBeLessThan(8);
+    }
+  }
+  expect(scrolled).toBe(true);
+
+  const parked = (await geometry())?.scrollTop ?? 0;
+  await search.press("ArrowUp");
+  const steppedBack = await geometry();
+  expect(steppedBack?.scrollTop).toBe(parked);
+  expect(steppedBack?.fullyVisible).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+p");
+  const actions = page.locator(".action-palette");
+  const actionInput = page.locator("#action-palette-input");
+  const actionResults = actions.locator(".project-search-results");
+  const actionRows = actions.locator(".project-search-row");
+  await expect(actionInput).toBeFocused();
+  await expect(actionRows.first()).toHaveClass(/active/);
+  await actions.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+  const actionGeometry = () => actionResults.evaluate((container) => {
+    const active = container.querySelector(".project-search-row.active");
+    if (!(container instanceof HTMLElement) || !(active instanceof HTMLElement)) return null;
+    const view = container.getBoundingClientRect();
+    const row = active.getBoundingClientRect();
+    return {
+      scrollTop: container.scrollTop,
+      activeTop: row.top - view.top,
+      fullyVisible: row.top >= view.top - 1 && row.bottom <= view.bottom + 1,
+    };
+  });
+  for (let i = 0; i < 3; i++) await actionInput.press("ArrowDown");
+  const actionMid = await actionGeometry();
+  expect(actionMid?.scrollTop).toBe(0);
+  expect(actionMid?.fullyVisible).toBe(true);
+  expect(actionMid?.activeTop ?? 0).toBeGreaterThan(20);
+});
+
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
   await enterApp(page);
   const bell = page.locator(".inbox-wrap .icon-btn");

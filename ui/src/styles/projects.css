@@ -313,6 +313,63 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
   color: var(--text-muted); font: 11px var(--font-ui); box-shadow: 0 1px 0 rgba(20, 20, 19, .08); }
 .project-search-foot .palette-version { margin-left: auto; color: var(--text-faint); }
 
+/* Ctrl+K search and Ctrl+P actions share this chrome. The highlight is an
+   inset row: a full-bleed stripe plus a rail on the dialog edge reads as a
+   table selection, and it collides with the scrollbar. */
+.conversation-search-dialog .project-search-results,
+.action-palette .project-search-results {
+  padding: 4px 8px 8px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.conversation-search-dialog .project-search-row,
+.action-palette .project-search-row {
+  border: 0;
+  border-radius: var(--radius-xs);
+  gap: 10px;
+}
+.conversation-search-dialog .project-search-row { min-height: 40px; padding: 6px 10px; }
+.action-palette .project-search-row { min-height: 32px; padding: 4px 8px; }
+.conversation-search-dialog .project-search-row + .project-search-row,
+.action-palette .project-search-row + .project-search-row { margin-top: 1px; }
+/* Hover follows the same row as the keyboard cursor. A separate :hover fill
+   left a second gray row under a stationary pointer. */
+.conversation-search-dialog .project-search-row:hover,
+.action-palette .project-search-row:hover { background: transparent; }
+.conversation-search-dialog .project-search-row.active,
+.action-palette .project-search-row.active,
+.conversation-search-dialog .project-search-row.active:hover,
+.action-palette .project-search-row.active:hover { background: var(--clay-soft); }
+.conversation-search-dialog .project-search-row > svg,
+.action-palette .project-search-row > svg {
+  width: 22px; height: 22px; padding: 3px; border-radius: var(--radius-xs);
+  background: var(--bg-panel); color: var(--text-muted);
+}
+.conversation-search-dialog .project-search-row.active > svg,
+.action-palette .project-search-row.active > svg {
+  color: var(--clay-strong);
+  background: color-mix(in srgb, var(--clay) 18%, var(--bg-elev));
+}
+.conversation-search-dialog .project-search-label {
+  padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--text-faint);
+}
+.conversation-search-dialog .project-search-section:first-child .project-search-label { padding-top: 4px; }
+.conversation-search-dialog .project-search-section + .project-search-section { margin-top: 2px; }
+.conversation-search-dialog .project-search-section + .project-search-section .project-search-label {
+  margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.conversation-search-dialog .project-search-title { font-size: 13.5px; }
+.conversation-search-dialog .project-search-sub { font-size: 12px; color: var(--text-muted); }
+.conversation-search-dialog .project-window-shortcut {
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 84%, transparent); color: var(--text-muted); line-height: 1.4;
+}
+.conversation-search-dialog .project-search-foot,
+.action-palette .project-search-foot {
+  background: color-mix(in srgb, var(--bg-sunken) 72%, var(--bg-elev));
+  padding: 8px 12px;
+}
+
 @media (max-width: 820px) {
   .projects-screen { padding-top: 28px; }
   .projects-head { align-items: center; flex-wrap: wrap; }

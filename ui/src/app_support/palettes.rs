@@ -168,6 +168,15 @@ fn url_query_param(key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn command_palette_section(item: &CommandPaletteItem) -> &'static str {
+    match item {
+        CommandPaletteItem::Project(_) => "command.section.projects",
+        CommandPaletteItem::Artifact(_) => "command.section.files",
+        CommandPaletteItem::Session(_) => "command.section.sessions",
+        CommandPaletteItem::Command(_) => "command.section.commands",
+    }
+}
+
 #[component]
 pub(crate) fn CommandPalette(
     open: RwSignal<bool>,
@@ -232,9 +241,12 @@ pub(crate) fn CommandPalette(
         });
     });
     create_effect(move |_| {
-        open.get();
+        let is_open = open.get();
         query.get();
         active.set(0);
+        if is_open {
+            reset_picker_scroll(".conversation-search-dialog .project-search-results");
+        }
     });
     create_effect(move |_| {
         if open.get() {
@@ -378,38 +390,58 @@ pub(crate) fn CommandPalette(
                             } />
                     </div>
                     <div class="project-search-results">
-                        {move || items.get().into_iter().enumerate().map(|(i, item)| {
-                            let opens_project_window = matches!(&item, CommandPaletteItem::Project(_) | CommandPaletteItem::Session(_));
-                            let (icon, title, sub) = match item {
-                                CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
-                                CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
-                                CommandPaletteItem::Session(s) => ("bubble", s.title, s.project_name),
-                                CommandPaletteItem::Command("scratch") => ("bubble", t(locale.get(), "command.scratch").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command("check-updates") => ("gear", t(locale.get(), "command.check_updates").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "settings.nav.skills").to_string(), t(locale.get(), "command.category")),
-                                CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
-                            };
-                            view! {
-                                <button type="button" class="project-search-row" class:active=move || active.get() == i
-                                    data-icon=icon
-                                    on:mousemove=move |_| active.set(i)
-                                    on:click=move |_| open_item.call((i, false))>
-                                    {compose_icon(icon)}
-                                    <span class="project-search-main">
-                                        <span class="project-search-title">{title}</span>
-                                        {(!sub.trim().is_empty()).then(|| view! { <span class="project-search-sub">{sub}</span> })}
-                                    </span>
-                                    {opens_project_window.then(|| view! {
-                                        <kbd class="action-shortcut project-window-shortcut">
-                                            {if is_mac() { "⌘↵" } else { "Ctrl↵" }}" "{t(locale.get(), "command.hint.open_new_window")}
-                                        </kbd>
-                                    })}
-                                </button>
+                        {move || {
+                            let mut grouped: Vec<(&'static str, Vec<(usize, CommandPaletteItem)>)> = Vec::new();
+                            for (index, item) in items.get().into_iter().enumerate() {
+                                let section = command_palette_section(&item);
+                                match grouped.last_mut() {
+                                    Some((current, entries)) if *current == section => {
+                                        entries.push((index, item));
+                                    }
+                                    _ => grouped.push((section, vec![(index, item)])),
+                                }
                             }
-                        }).collect_view()}
+                            grouped.into_iter().map(|(section, rows)| {
+                                let section_label = t(locale.get(), section).to_string();
+                                view! {
+                                    <div class="project-search-section">
+                                        <div class="project-search-label">{section_label}</div>
+                                        {rows.into_iter().map(|(i, item)| {
+                                            let opens_project_window = matches!(&item, CommandPaletteItem::Project(_) | CommandPaletteItem::Session(_));
+                                            let (icon, title, sub) = match item {
+                                                CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
+                                                CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
+                                                CommandPaletteItem::Session(s) => ("bubble", s.title, s.project_name),
+                                                CommandPaletteItem::Command("scratch") => ("bubble", t(locale.get(), "command.scratch").to_string(), String::new()),
+                                                CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), String::new()),
+                                                CommandPaletteItem::Command("check-updates") => ("gear", t(locale.get(), "command.check_updates").to_string(), String::new()),
+                                                CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), String::new()),
+                                                CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), String::new()),
+                                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "settings.nav.skills").to_string(), String::new()),
+                                                CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
+                                            };
+                                            view! {
+                                                <button type="button" class="project-search-row" class:active=move || active.get() == i
+                                                    data-icon=icon
+                                                    on:mousemove=move |_| active.set(i)
+                                                    on:click=move |_| open_item.call((i, false))>
+                                                    {compose_icon(icon)}
+                                                    <span class="project-search-main">
+                                                        <span class="project-search-title">{title}</span>
+                                                        {(!sub.trim().is_empty()).then(|| view! { <span class="project-search-sub">{sub}</span> })}
+                                                    </span>
+                                                    {opens_project_window.then(|| view! {
+                                                        <kbd class="action-shortcut project-window-shortcut">
+                                                            {if is_mac() { "⌘↵" } else { "Ctrl↵" }}" "{t(locale.get(), "command.hint.open_new_window")}
+                                                        </kbd>
+                                                    })}
+                                                </button>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                }
+                            }).collect_view()
+                        }}
                     </div>
                     <div class="project-search-foot"><span><kbd>"↑↓"</kbd>{t(locale.get(), "command.hint.navigate")}</span><span><kbd>"↵"</kbd>{t(locale.get(), "command.hint.open")}</span><span><kbd>"⇧↵"</kbd>{t(locale.get(), "command.hint.attach")}</span><span><kbd>"esc"</kbd>{t(locale.get(), "command.hint.close")}</span><span class="palette-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span></div>
                 </div>
@@ -434,6 +466,7 @@ pub(crate) fn ActionPalette(
         }
         query.set(String::new());
         active.set(0);
+        reset_picker_scroll(".action-palette .project-search-results");
         let focus = Closure::once(|| {
             let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
                 return;
@@ -813,7 +846,11 @@ pub(crate) fn ActionPalette(
                             autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
                             placeholder=move || t(locale.get(), "command.placeholder")
                             prop:value=move || query.get()
-                            on:input=move |ev| { query.set(event_target_value(&ev)); active.set(0); }
+                            on:input=move |ev| {
+                                query.set(event_target_value(&ev));
+                                active.set(0);
+                                reset_picker_scroll(".action-palette .project-search-results");
+                            }
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
                                 if ime_composing(&ev) { return; }
                                 let n = actions.get().len();

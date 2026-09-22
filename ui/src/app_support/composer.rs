@@ -741,15 +741,128 @@ pub(crate) fn slash_command_fills_text(name: &str) -> bool {
     matches!(name, "compact" | "fork" | "btw" | "permission")
 }
 
+/// How far to move `scrollTop` so the row spanning `item_top..item_bottom`
+/// lies fully inside `viewport_top..viewport_bottom`.
+///
+/// Zero means the row is already on screen: arrow keys should walk the
+/// visible window, and the list should move only when the next row crosses
+/// an edge. A row taller than the window aligns to its top so the title
+/// stays in view.
+pub(crate) fn picker_reveal_delta(
+    viewport_top: f64,
+    viewport_bottom: f64,
+    item_top: f64,
+    item_bottom: f64,
+) -> f64 {
+    const SLOP: f64 = 0.5;
+    let above = viewport_top - item_top;
+    if above > SLOP {
+        return -above;
+    }
+    let below = item_bottom - viewport_bottom;
+    if below > SLOP {
+        let item_height = item_bottom - item_top;
+        let view_height = viewport_bottom - viewport_top;
+        if item_height > view_height + SLOP {
+            return item_top - viewport_top;
+        }
+        return below;
+    }
+    0.0
+}
+
+fn picker_item(selector: &str, index: usize) -> Option<web_sys::Element> {
+    let document = web_sys::window()?.document()?;
+    let items = document.query_selector_all(selector).ok()?;
+    items
+        .item(index as u32)
+        .map(|node| node.unchecked_into::<web_sys::Element>())
+}
+
+fn picker_label(element: &web_sys::Element) -> bool {
+    element.class_name().split_whitespace().any(|name| {
+        matches!(
+            name,
+            "project-search-label" | "action-palette-group" | "mention-group-label"
+        )
+    })
+}
+
+/// Scroll the picker list just enough to reveal `index`.
+///
+/// `scrollIntoView` aligns the row to the top and also scrolls ancestor
+/// containers, so each arrow press pinned the next row to the first line.
 pub(crate) fn scroll_picker_item(selector: &str, index: usize) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+    let Some(item) = picker_item(selector, index) else {
         return;
     };
-    let Ok(items) = document.query_selector_all(selector) else {
+    let Some(container) = item
+        .closest(".project-search-results, .mention-menu")
+        .ok()
+        .flatten()
+    else {
         return;
     };
-    if let Some(item) = items.item(index as u32) {
-        item.unchecked_into::<web_sys::Element>().scroll_into_view();
+    let view = container.get_bounding_client_rect();
+    let rect = item.get_bounding_client_rect();
+    let mut top = rect.top();
+    let bottom = rect.bottom();
+    if view.top() - top > 0.5 {
+        if let Some(label) = item.previous_element_sibling() {
+            if picker_label(&label) {
+                top = label.get_bounding_client_rect().top().min(top);
+            }
+        }
+    }
+    let delta = picker_reveal_delta(view.top(), view.bottom(), top, bottom);
+    if delta.abs() <= 0.5 {
+        return;
+    }
+    let max_scroll = (container.scroll_height() - container.client_height()).max(0) as f64;
+    let next = (container.scroll_top() as f64 + delta)
+        .round()
+        .clamp(0.0, max_scroll);
+    container.set_scroll_top(next as i32);
+}
+
+pub(crate) fn reset_picker_scroll(selector: &str) {
+    let Some(container) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.query_selector(selector).ok().flatten())
+    else {
+        return;
+    };
+    container.set_scroll_top(0);
+}
+
+#[cfg(test)]
+mod picker_scroll_tests {
+    use super::picker_reveal_delta;
+
+    #[test]
+    fn a_fully_visible_row_does_not_scroll() {
+        assert_eq!(picker_reveal_delta(0.0, 400.0, 40.0, 80.0), 0.0);
+        assert_eq!(picker_reveal_delta(0.0, 400.0, 0.0, 40.0), 0.0);
+        assert_eq!(picker_reveal_delta(0.0, 400.0, 360.0, 400.0), 0.0);
+        assert_eq!(picker_reveal_delta(80.0, 480.0, 80.0, 120.0), 0.0);
+    }
+
+    #[test]
+    fn subpixel_slop_does_not_scroll() {
+        assert_eq!(picker_reveal_delta(0.0, 400.0, -0.4, 40.0), 0.0);
+        assert_eq!(picker_reveal_delta(0.0, 400.0, 360.0, 400.4), 0.0);
+    }
+
+    #[test]
+    fn only_the_clipped_edge_scrolls() {
+        assert_eq!(picker_reveal_delta(0.0, 400.0, 390.0, 420.0), 20.0);
+        assert_eq!(picker_reveal_delta(100.0, 500.0, 85.0, 120.0), -15.0);
+    }
+
+    #[test]
+    fn a_row_taller_than_the_window_aligns_to_its_top() {
+        assert_eq!(picker_reveal_delta(0.0, 100.0, -10.0, 140.0), -10.0);
+        assert_eq!(picker_reveal_delta(0.0, 100.0, 50.0, 200.0), 50.0);
     }
 }
 

@@ -105,6 +105,11 @@
 - Conversation messages, runtime controls, and the composer grow together with the available center pane, leaving 16 px outer gutters and capping the column at 1280 px on wide screens. Resizing the window or opening the Inspector recalculates that width through CSS; document/chat split views continue to fill their narrower chat pane.
 - Scrollable lists keep stable scrollbar gutters and contain overscroll so a nested list does not unexpectedly move the surrounding workspace.
 
+## Command palette
+
+- Ctrl+K (search) and Ctrl+P (commands) move the highlight through rows already on screen. The list scrolls only when the next row would leave the visible area, and then only far enough to show that row and its section label.
+- The active row is an inset rounded highlight (`--clay-soft`) with the icon in the accent color. Do not paint a full-bleed stripe or a selection rail against the dialog edge.
+
 ## Dense settings lists
 
 - Long capability lists expose status filters and a visible/enabled count before the rows.
