@@ -164,10 +164,8 @@ struct ProjectWorkspace: View {
             .interactiveDismissDisabled(groups.busy)
             .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissCreate() })
         }
-        .sheet(isPresented: Binding(get: { model.journeyFocus?.projectID == project.id }, set: { if !$0 { model.journeyFocus = nil } })) {
-            if let focus = model.journeyFocus {
-                NativeJourneyEntry(focus: focus, entries: model.calendar.dayRows.first { $0.projectID == focus.projectID }?.history.entries ?? [], close: { model.journeyFocus = nil })
-            }
+        .sheet(isPresented: Binding(get: { model.journey.presented && model.journey.projectID == project.id }, set: { if !$0 { model.journey.presented = false; model.journeyFocus = nil } })) {
+            NativeJourneySheet(model: model, journey: model.journey)
         }
         .task(id: project.id + "-inbox") {
             inbox.reset()
@@ -231,7 +229,13 @@ struct ProjectWorkspace: View {
                 .help("文件")
                 .accessibilityLabel("文件")
                 .accessibilityIdentifier("sidebar-files")
-                WispUnavailableAction(title: "研究历程", icon: "research-trail", expanded: true)
+                Button { model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) } label: {
+                    HStack { WispIcon(name: "research-trail", size: 16); Text("研究历程"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .help("研究历程")
+                .accessibilityLabel("研究历程")
+                .accessibilityIdentifier("sidebar-journey")
                 WispUnavailableAction(title: "论文证据", icon: "book", expanded: true)
                 Button { model.library.presented = true } label: {
                     HStack { WispIcon(name: "star", size: 16); Text("收藏"); Spacer() }

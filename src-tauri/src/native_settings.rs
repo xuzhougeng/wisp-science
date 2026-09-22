@@ -97,6 +97,8 @@ pub(crate) fn capabilities() -> Value {
         "library_schema": wisp_dto::native_library::SCHEMA,
         "calendar": wisp_dto::native_calendar::COMMANDS,
         "calendar_schema": wisp_dto::native_calendar::SCHEMA,
+        "journey": wisp_dto::native_journey::COMMANDS,
+        "journey_schema": wisp_dto::native_journey::SCHEMA,
     })
 }
 
@@ -150,6 +152,10 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     if wisp_dto::native_calendar::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_calendar::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_journey::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_journey::execute(&state.store, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -333,6 +339,7 @@ mod tests {
         assert!(!COMMANDS.contains(&"native_project_create"));
         assert!(!COMMANDS.contains(&"native_library_delete"));
         assert!(!COMMANDS.contains(&"native_research_calendar"));
+        assert!(!COMMANDS.contains(&"native_research_journey"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
         assert_eq!(
@@ -350,6 +357,11 @@ mod tests {
             advertised["calendar_schema"],
             wisp_dto::native_calendar::SCHEMA
         );
+        assert_eq!(advertised["journey"][0], "native_research_journey");
+        assert_eq!(
+            advertised["journey_schema"],
+            wisp_dto::native_journey::SCHEMA
+        );
         assert!(advertised["commands"]
             .as_array()
             .unwrap()
@@ -359,6 +371,7 @@ mod tests {
                     && command != "native_library_search"
                     && command != "native_library_delete"
                     && command != "native_research_calendar"
+                    && command != "native_research_journey"
             }));
     }
 }

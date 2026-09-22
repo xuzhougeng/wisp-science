@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, the library, the research calendar, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, and 收藏 still require their native services.
+creation, project import, the library, the research calendar, the research journey, and the conversation loop described below.
+The sidebar tools other than 文件, 新建分组, 收藏, and 研究历程 still require their native services.
 Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
@@ -331,6 +331,23 @@ after the sheet has closed does not open a project.
 Escape immediately after the sheet opens closes only the calendar. WinUI
 decodes the same fixture through `INativeCalendarClient` and leaves its
 研究日历 button disabled.
+
+## Research journey
+
+The sidebar **研究历程** button, and the calendar's **打开研究历程** action,
+open the same journey sheet for one project. `native_research_journey` requires
+that project id and reads only its mainline history for the requested range.
+The calendar passes the selected day; the sidebar reads the current local month.
+The command is announced as `journey` and `journey_schema`
+(`wisp.native-journey.v1`). It is not in the settings allowlist and does not
+change the WebView's active project or session.
+
+A lost read keeps the last rows and is not retried. Search filters the rows
+already read. A reply that arrives after the sheet has closed does not open or
+change a project. Escape closes only the journey sheet. Adding a journal
+entry, artifact detail, and run detail stay out of this slice. WinUI decodes
+the same fixture through `INativeJourneyClient` and leaves its 研究历程 button
+disabled.
 
 ## Creating a project
 

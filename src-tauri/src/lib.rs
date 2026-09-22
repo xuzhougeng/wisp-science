@@ -46,6 +46,7 @@ mod dynamic_workflow;
 mod exploration_commands;
 mod native_calendar;
 mod native_conversations;
+mod native_journey;
 mod native_library;
 mod native_projects;
 mod native_settings;

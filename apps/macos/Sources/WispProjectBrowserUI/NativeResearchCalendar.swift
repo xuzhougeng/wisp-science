@@ -280,26 +280,4 @@ struct NativeCalendarSheet: View {
     }
 }
 
-struct NativeJourneyEntry: View {
-    let focus: JourneyFocus
-    let entries: [CalendarEntry]
-    let close: () -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("研究历程").font(.headline)
-            Text(Date(timeIntervalSince1970: TimeInterval(focus.day)).formatted(date: .abbreviated, time: .omitted))
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(NativeCalendarModel.sorted(entries)) { entry in
-                        Text(entry.title)
-                    }
-                }
-            }
-            Button("返回") { close() }
-        }
-        .padding(20)
-        .frame(width: 420, height: 320)
-        .background(NativeSettingsEscape { close() })
-    }
-}

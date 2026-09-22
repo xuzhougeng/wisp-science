@@ -14,6 +14,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var importError: String?
     let library = NativeLibraryModel()
     let calendar = NativeCalendarModel()
+    let journey = NativeJourneyModel()
     @Published var journeyFocus: JourneyFocus?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
@@ -150,6 +151,7 @@ public final class ProjectBrowserModel: ObservableObject {
     func goHome() {
         searchPresented = false
         calendar.invalidate()
+        journey.invalidate()
         journeyFocus = nil
         navigationGeneration = UUID()
         transcriptGeneration = UUID()
@@ -286,6 +288,7 @@ public final class ProjectBrowserModel: ObservableObject {
         guard calendar.dayGroups().contains(where: { $0.projectID == projectID }) else { return }
         calendar.presented = false
         journeyFocus = JourneyFocus(projectID: projectID, day: day)
+        journey.open(projectID: projectID, day: day)
         await openProject(projectID)
     }
 

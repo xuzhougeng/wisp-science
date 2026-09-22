@@ -1,0 +1,29 @@
+{
+  "schema": "wisp.native-journey.v1",
+  "command": "native_research_journey",
+  "project_id": "research-1",
+  "args": {
+    "from": 0,
+    "until": 86400
+  },
+  "result": {
+    "entries": [
+      {
+        "id": "journal:entry-1",
+        "kind": "finding",
+        "title": "a finding",
+        "summary": "Evidence",
+        "occurred_at": 100,
+        "recorded_at": 100,
+        "source_id": "entry-1",
+        "frame_id": null,
+        "status": "recorded",
+        "content_type": "",
+        "version_number": null,
+        "source_discarded": false,
+        "manual": true
+      }
+    ],
+    "truncated": false
+  }
+}
