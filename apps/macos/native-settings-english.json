@@ -142,6 +142,7 @@
   "添加命令连接": "Add stdio connection",
   "添加 HTTP 连接": "Add HTTP connection",
   "启动命令": "Command",
+  "命令": "Command",
   "参数": "Arguments",
   "环境变量": "Environment variables",
   "服务 URL": "Service URL",
