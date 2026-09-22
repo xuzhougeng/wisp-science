@@ -13,6 +13,8 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
     let library = NativeLibraryModel()
+    let calendar = NativeCalendarModel()
+    @Published var journeyFocus: JourneyFocus?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
@@ -147,6 +149,8 @@ public final class ProjectBrowserModel: ObservableObject {
 
     func goHome() {
         searchPresented = false
+        calendar.invalidate()
+        journeyFocus = nil
         navigationGeneration = UUID()
         transcriptGeneration = UUID()
         messages = []
@@ -277,6 +281,14 @@ public final class ProjectBrowserModel: ObservableObject {
         }
     }
 
+    func openCalendarJourney(projectID: String, day: Int64) async {
+        guard calendar.presented else { return }
+        guard calendar.dayGroups().contains(where: { $0.projectID == projectID }) else { return }
+        calendar.presented = false
+        journeyFocus = JourneyFocus(projectID: projectID, day: day)
+        await openProject(projectID)
+    }
+
     func openLibrarySource(_ item: LibraryEntry) async {
         library.presented = false
         guard !item.sourceProjectID.isEmpty else { return }
@@ -299,6 +311,8 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     func libraryClient() -> any NativeSettingsQuerying { projectTransport() }
+
+    func calendarClient() -> any NativeSettingsQuerying { projectTransport() }
 
     private func projectTransport() -> any NativeSettingsQuerying {
         if let projectTransportOverride { return projectTransportOverride }

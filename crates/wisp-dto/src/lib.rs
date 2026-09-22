@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub mod native_calendar;
 pub mod native_conversations;
 pub mod native_library;
 pub mod native_projects;

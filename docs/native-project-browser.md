@@ -250,7 +250,7 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, new project, and import are connected; calendar and scratch stay disabled. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, calendar, new project, and import are connected; scratch stays disabled. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, the library, and the conversation loop described below. Calendar
-and the sidebar tools other than 文件, 新建分组, and 收藏 still require their native services.
+creation, project import, the library, the research calendar, and the conversation loop described below.
+The sidebar tools other than 文件, 新建分组, and 收藏 still require their native services.
 Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
@@ -310,6 +310,27 @@ after the sheet has closed does not reopen a project.
 
 WinUI decodes the same fixtures through `INativeLibraryClient` and leaves its
 收藏 buttons disabled.
+
+## Research calendar
+
+Home **研究日历** opens one calendar sheet. It asks `native_research_calendar`
+for the current local month, then for the selected day. The body lists
+`project_ids`, `from`, and `until`. The command does not take a project id, does
+not create a settings webview, and does not change the WebView's active project
+or session. It is announced as `calendar` and `calendar_schema`
+(`wisp.native-calendar.v1`) and is not in the settings allowlist.
+
+The request includes the projects currently listed on the home screen. When
+privacy mode is on, privacy project ids are left out of that list. A project
+filter only hides rows that were already read; it does not add a project. A
+lost read keeps the last rows and is not retried. Choosing a date shows that
+day's records inside the sheet. **打开研究历程** closes the calendar and opens
+that project on the dated research-journey entry. A calendar reply that arrives
+after the sheet has closed does not open a project.
+
+Escape immediately after the sheet opens closes only the calendar. WinUI
+decodes the same fixture through `INativeCalendarClient` and leaves its
+研究日历 button disabled.
 
 ## Creating a project
 

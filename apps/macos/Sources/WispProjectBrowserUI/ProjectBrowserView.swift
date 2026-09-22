@@ -4,11 +4,13 @@ import WispProjectBrowser
 public struct ProjectBrowserView: View {
     @ObservedObject private var model: ProjectBrowserModel
     @ObservedObject private var library: NativeLibraryModel
+    @ObservedObject private var calendar: NativeCalendarModel
     @AppStorage("projectBrowser.appearance") private var appearance = "system"
 
     public init(model: ProjectBrowserModel) {
         self.model = model
         self.library = model.library
+        self.calendar = model.calendar
     }
 
     public var body: some View {
@@ -30,6 +32,9 @@ public struct ProjectBrowserView: View {
             }
             .sheet(isPresented: $library.presented) {
                 NativeLibrarySheet(model: model, library: library)
+            }
+            .sheet(isPresented: $calendar.presented) {
+                NativeCalendarSheet(model: model, calendar: calendar)
             }
     }
 }
@@ -103,7 +108,9 @@ private struct ProjectLanding: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            WispUnavailableAction(title: "研究日历", icon: "calendar", iconOnly: true)
+            Button { model.calendar.presented = true } label: { WispIcon(name: "calendar") }
+                .buttonStyle(WispButtonStyle()).help("研究日历").accessibilityLabel("研究日历")
+                .accessibilityIdentifier("home-calendar")
             Button { model.library.presented = true } label: { WispIcon(name: "star") }
                 .buttonStyle(WispButtonStyle()).help("收藏").accessibilityLabel("收藏")
                 .accessibilityIdentifier("home-library")

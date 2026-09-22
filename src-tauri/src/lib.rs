@@ -44,6 +44,7 @@ mod device_bridge;
 mod device_hub;
 mod dynamic_workflow;
 mod exploration_commands;
+mod native_calendar;
 mod native_conversations;
 mod native_library;
 mod native_projects;

@@ -164,6 +164,11 @@ struct ProjectWorkspace: View {
             .interactiveDismissDisabled(groups.busy)
             .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissCreate() })
         }
+        .sheet(isPresented: Binding(get: { model.journeyFocus?.projectID == project.id }, set: { if !$0 { model.journeyFocus = nil } })) {
+            if let focus = model.journeyFocus {
+                NativeJourneyEntry(focus: focus, entries: model.calendar.dayRows.first { $0.projectID == focus.projectID }?.history.entries ?? [], close: { model.journeyFocus = nil })
+            }
+        }
         .task(id: project.id + "-inbox") {
             inbox.reset()
             while !Task.isCancelled {
