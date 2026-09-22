@@ -5,7 +5,18 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-projects.v1";
 
-pub const COMMANDS: &[&str] = &["native_project_create", "native_project_import"];
+pub const COMMANDS: &[&str] = &[
+    "native_project_create",
+    "native_project_import",
+    "native_project_folders",
+    "native_project_folder_create",
+    "native_project_folder_rename",
+    "native_project_session_move",
+];
+
+pub fn returns_project_summary(command: &str) -> bool {
+    matches!(command, "native_project_create" | "native_project_import")
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +32,32 @@ pub struct CreateProjectRequest {
 #[serde(deny_unknown_fields)]
 pub struct ImportProjectRequest {
     pub archive_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FolderCreateRequest {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FolderRenameRequest {
+    pub folder_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionMoveRequest {
+    pub session_id: String,
+    pub folder_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ProjectFolder {
+    pub id: String,
+    pub name: String,
 }
 
 #[cfg(test)]

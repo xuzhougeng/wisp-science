@@ -253,7 +253,7 @@ Manual smoke steps:
 | Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, new project, and import are connected; calendar, library, and scratch stay disabled. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
-| Session controls | Selection and sorting/grouping retain their positions; not connected yet. |
+| Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
 | Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. |
 | Search | Home/project scope, Up/Down and Enter navigation, topmost Escape, Command-K / Ctrl+K even with the sidebar collapsed. |
 | Preview utilities | Database selection, refresh and appearance remain in the home footer / Windows sidebar footer; these do not replace WebView actions. |
@@ -262,8 +262,17 @@ Manual smoke steps:
 
 The preview aligns the home/workspace shell and includes native settings, project
 creation, project import, and the conversation loop described below. Calendar,
-library, and the sidebar tools other than 文件 still require their native services.
+library, and the sidebar tools other than 文件 and 新建分组 still require their native services.
 Those action slots are visible but explicitly disabled in the preview.
+
+The sidebar **新建分组** button creates a session group for the explicit project.
+Sessions can be sorted by recent or name, grouped by folder or date, and
+selected and moved. Those commands are `native_project_folders`,
+`native_project_folder_create`, `native_project_folder_rename`, and
+`native_project_session_move`. Each one requires a project id and does not
+change the WebView's active project or session. An empty name or a lost reply
+is not retried. Escape closes only the new-group sheet while a sort menu under
+it stays open.
 
 The sidebar **文件** button selects the existing right-hand files page and
 expands that panel. It uses the same tab layout as the panel itself and does

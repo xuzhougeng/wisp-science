@@ -3248,6 +3248,10 @@ pub struct RecentSession {
     pub ts: i64,
     #[serde(default)]
     pub status: String,
+    /// Sidebar group. Omitted when the session is ungrouped so older clients
+    /// keep the previous JSON shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Clone, serde::Deserialize, PartialEq)]

@@ -39,6 +39,81 @@ pub(crate) async fn execute(
     }
 }
 
+pub(crate) async fn execute_folders(
+    store: &wisp_store::Store,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    let project_id = request
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or("A project is required")?;
+    if store
+        .get_project(project_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("Project not found".into());
+    }
+    match request.command.as_str() {
+        "native_project_folders" => {
+            if request
+                .args
+                .as_object()
+                .is_some_and(|args| !args.is_empty())
+            {
+                return Err("Listing folders takes no arguments".into());
+            }
+            let folders = store
+                .list_folders(project_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|(id, name, _)| wisp_dto::native_projects::ProjectFolder { id, name })
+                .collect::<Vec<_>>();
+            serde_json::to_value(folders).map_err(|error| error.to_string())
+        }
+        "native_project_folder_create" => {
+            let input: wisp_dto::native_projects::FolderCreateRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let id = uuid::Uuid::new_v4().to_string();
+            store
+                .create_folder(&id, project_id, &input.name)
+                .await
+                .map_err(|error| error.to_string())?;
+            let name = input.name.trim().to_owned();
+            serde_json::to_value(wisp_dto::native_projects::ProjectFolder { id, name })
+                .map_err(|error| error.to_string())
+        }
+        "native_project_folder_rename" => {
+            let input: wisp_dto::native_projects::FolderRenameRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            store
+                .rename_folder(&input.folder_id, project_id, &input.name)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::Value::Bool(true))
+        }
+        "native_project_session_move" => {
+            let input: wisp_dto::native_projects::SessionMoveRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let folder = input
+                .folder_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            store
+                .move_session_to_folder(&input.session_id, project_id, folder)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::Value::Bool(true))
+        }
+        _ => Err("Unsupported native project command".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,5 +438,149 @@ mod tests {
             std::fs::read(std::path::Path::new(&meta.2).join("notes.txt")).unwrap(),
             b"hello"
         );
+    }
+
+    fn folder_request(project_id: Option<&str>, command: &str, args: serde_json::Value) -> Request {
+        let mut value = request(project_id, args);
+        value.command = command.into();
+        value
+    }
+
+    #[tokio::test]
+    async fn folders_require_an_explicit_project_and_do_not_cross_projects() {
+        let fixture = Fixture::open().await;
+        let workspace = fixture.workspace("grouped");
+        let project = crate::project_commands::create_project_record(
+            &fixture.store,
+            wisp_dto::native_projects::CreateProjectRequest {
+                name: "Grouped".into(),
+                workspace_dir: workspace.to_string_lossy().into_owned(),
+                description: String::new(),
+                agent_context: String::new(),
+                standard_layout: false,
+            },
+        )
+        .await
+        .unwrap();
+        let missing = execute_folders(
+            &fixture.store,
+            &folder_request(
+                None,
+                "native_project_folder_create",
+                json!({"name": "Week"}),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.contains("project is required"), "{missing}");
+        assert!(fixture
+            .store
+            .list_folders(&project)
+            .await
+            .unwrap()
+            .is_empty());
+
+        let empty = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folder_create",
+                json!({"name": "  "}),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(empty.contains("cannot be empty"), "{empty}");
+        assert!(fixture
+            .store
+            .list_folders(&project)
+            .await
+            .unwrap()
+            .is_empty());
+
+        let created = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folder_create",
+                json!({"name": "Week"}),
+            ),
+        )
+        .await
+        .unwrap();
+        let folder_id = created["id"].as_str().unwrap().to_owned();
+        assert_eq!(created["name"], "Week");
+        execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_folder_rename",
+                json!({"folder_id": folder_id, "name": "Week 1"}),
+            ),
+        )
+        .await
+        .unwrap();
+        fixture
+            .store
+            .create_frame("session-a", &project, "OPERON", "model")
+            .await
+            .unwrap();
+        fixture
+            .store
+            .rename_session("session-a", &project, "Named draft")
+            .await
+            .unwrap();
+        execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&project),
+                "native_project_session_move",
+                json!({"session_id": "session-a", "folder_id": folder_id}),
+            ),
+        )
+        .await
+        .unwrap();
+        let sessions = fixture.store.list_sessions(&project).await.unwrap();
+        assert_eq!(sessions[0].3.as_deref(), Some(folder_id.as_str()));
+        let other = crate::project_commands::create_project_record(
+            &fixture.store,
+            wisp_dto::native_projects::CreateProjectRequest {
+                name: "Other".into(),
+                workspace_dir: fixture.workspace("other").to_string_lossy().into_owned(),
+                description: String::new(),
+                agent_context: String::new(),
+                standard_layout: false,
+            },
+        )
+        .await
+        .unwrap();
+        let crossed = execute_folders(
+            &fixture.store,
+            &folder_request(
+                Some(&other),
+                "native_project_session_move",
+                json!({"session_id": "session-a", "folder_id": folder_id}),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            crossed.contains("not found") || crossed.contains("Folder"),
+            "{crossed}"
+        );
+        assert_eq!(
+            fixture.store.list_sessions(&project).await.unwrap()[0]
+                .3
+                .as_deref(),
+            Some(folder_id.as_str())
+        );
+        let listed = execute_folders(
+            &fixture.store,
+            &folder_request(Some(&project), "native_project_folders", json!({})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["name"], "Week 1");
+        assert_eq!(listed.as_array().unwrap().len(), 1);
     }
 }

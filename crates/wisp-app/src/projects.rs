@@ -105,7 +105,7 @@ pub async fn list_browser_sessions(
             .list_sessions(project_id)
             .await?
             .into_iter()
-            .map(|(id, title, ts, _, _)| {
+            .map(|(id, title, ts, folder_id, _)| {
                 let needs_you = roles.iter().any(|(sid, role, unseen)| {
                     sid == &id
                         && *unseen
@@ -117,6 +117,7 @@ pub async fn list_browser_sessions(
                     title,
                     ts,
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
+                    folder_id,
                 }
             })
             .collect())
@@ -134,6 +135,7 @@ pub async fn list_browser_sessions(
                     title: row.title,
                     ts: row.created_at,
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
+                    folder_id: None,
                 }
             })
             .collect())

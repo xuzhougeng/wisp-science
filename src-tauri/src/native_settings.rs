@@ -131,9 +131,13 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
-        let id = crate::native_projects::execute(&state.store, &state.app_data, request).await?;
-        return serde_json::to_value(crate::build_project_summary(&state, &id).await)
-            .map_err(|error| error.to_string());
+        if wisp_dto::native_projects::returns_project_summary(&request.command) {
+            let id =
+                crate::native_projects::execute(&state.store, &state.app_data, request).await?;
+            return serde_json::to_value(crate::build_project_summary(&state, &id).await)
+                .map_err(|error| error.to_string());
+        }
+        return crate::native_projects::execute_folders(&state.store, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;

@@ -26,6 +26,7 @@ struct ProjectWorkspace: View {
     @State private var terminalDragStart: CGFloat?
     @State private var inboxPresented = false
     @StateObject private var inbox = NativeInboxModel()
+    @StateObject private var groups = NativeSessionGroups()
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
     var body: some View {
@@ -146,7 +147,24 @@ struct ProjectWorkspace: View {
             }
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
-        .task(id: project.id) {
+        .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
+        .sheet(isPresented: $groups.creating) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("新建分组").font(.headline)
+                TextField("分组名称", text: $groups.draft).textFieldStyle(.roundedBorder).disabled(groups.busy)
+                if let error = groups.error { Text(error).font(.caption).foregroundStyle(.red) }
+                HStack {
+                    Spacer()
+                    Button("取消") { groups.dismissCreate() }.disabled(groups.busy)
+                    Button(groups.busy ? "正在创建…" : "创建") { Task { await groups.create(conversation.client, projectID: project.id) } }
+                        .disabled(groups.busy)
+                }
+            }
+            .padding(24).frame(width: 360)
+            .interactiveDismissDisabled(groups.busy)
+            .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissCreate() })
+        }
+        .task(id: project.id + "-inbox") {
             inbox.reset()
             while !Task.isCancelled {
                 await inbox.refresh(client: conversation.client, projectID: project.id)
@@ -157,6 +175,11 @@ struct ProjectWorkspace: View {
     }
 
     private func refreshInbox() { Task { await inbox.refresh(client: conversation.client, projectID: project.id) } }
+
+    private func moveSessions(_ folderID: String?) async {
+        await groups.moveSelected(conversation.client, projectID: project.id, folderID: folderID)
+        await model.openProject(project.id, sessionID: model.activeSessionID)
+    }
 
     private func createSession() {
         let database = model.databaseURL; let sourceSession = model.activeSessionID
@@ -185,7 +208,12 @@ struct ProjectWorkspace: View {
                 Button { model.searchPresented = true } label: {
                     HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer() }
                 }.buttonStyle(WispButtonStyle(compact: true))
-                WispUnavailableAction(title: "新建文件夹", icon: "folder-plus", expanded: true)
+                Button { groups.creating = true } label: {
+                    HStack { WispIcon(name: "folder-plus", size: 16); Text("新建分组"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .accessibilityLabel("新建分组")
+                .accessibilityIdentifier("new-session-group")
                 Button {
                     let revealed = NativePanelTabs.revealFiles(saved: panelTabs, selected: panelTab)
                     panelTabs = revealed.saved
@@ -205,20 +233,60 @@ struct ProjectWorkspace: View {
             HStack {
                 Text("会话").font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint"))
                 Spacer()
-                WispUnavailableAction(title: "选择", compact: true)
-                WispUnavailableAction(title: "排序与分组", icon: "adjustments", iconOnly: true, compact: true)
+                Button(groups.selecting ? "取消" : "选择") {
+                    groups.selecting.toggle()
+                    if !groups.selecting { groups.selected = [] }
+                }
+                .buttonStyle(.plain).font(WispDesign.font(size: 12)).disabled(model.sessions.isEmpty)
+                .accessibilityLabel(groups.selecting ? "取消选择" : "选择")
+                Button { groups.menuPresented = true } label: { WispIcon(name: "adjustments", size: 16) }
+                    .buttonStyle(.plain).help("排序与分组").accessibilityLabel("排序与分组")
+            }
+            if groups.menuPresented {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("排序").font(WispDesign.font(size: 11, weight: .semibold))
+                    Button("最近") { groups.sort = "newest"; groups.menuPresented = false }.buttonStyle(.plain)
+                    Button("名称") { groups.sort = "name"; groups.menuPresented = false }.buttonStyle(.plain)
+                    Text("分组").font(WispDesign.font(size: 11, weight: .semibold))
+                    Button("不分组") { groups.group = "none"; groups.menuPresented = false }.buttonStyle(.plain)
+                    Button("按分组") { groups.group = "folder"; groups.menuPresented = false }.buttonStyle(.plain)
+                    Button("按日期") { groups.group = "date"; groups.menuPresented = false }.buttonStyle(.plain)
+                }
+                .padding(10).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
+                .background(NativeSettingsEscape { groups.menuPresented = false })
+            }
+            if groups.selecting && !groups.selected.isEmpty {
+                Menu("移到分组") {
+                    Button("未分组") { Task { await moveSessions(nil) } }
+                    ForEach(groups.folders) { folder in
+                        Button(folder.name) { Task { await moveSessions(folder.id) } }
+                    }
+                }.font(WispDesign.font(size: 12))
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(model.sessions) { session in
-                        Button { Task { await model.openSession(session.id) } } label: {
-                            Text(session.title).font(WispDesign.font(size: 13)).lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                                .background(session.id == model.activeSessionID ? color("surface-hover") : .clear,
-                                            in: RoundedRectangle(cornerRadius: 8))
+                    ForEach(groups.sections(model.sessions)) { section in
+                        if groups.group != "none" {
+                            Text(section.title).font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint")).padding(.top, 6)
                         }
-                        .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
-                        .accessibilityAddTraits(session.id == model.activeSessionID ? [.isSelected] : [])
+                        ForEach(section.sessions) { session in
+                            Button {
+                                if groups.selecting {
+                                    if groups.selected.contains(session.id) { groups.selected.remove(session.id) } else { groups.selected.insert(session.id) }
+                                } else {
+                                    Task { await model.openSession(session.id) }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(session.title).font(WispDesign.font(size: 13)).lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(10)
+                                .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("surface-hover") : .clear), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
+                            .accessibilityAddTraits(session.id == model.activeSessionID ? [.isSelected] : [])
+                        }
                     }
                 }
             }
