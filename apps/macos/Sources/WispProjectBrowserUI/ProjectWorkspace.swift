@@ -7,9 +7,11 @@ struct ProjectWorkspace: View {
     @ObservedObject var model: ProjectBrowserModel
     let project: ProjectSummary
     @ObservedObject private var conversation: NativeConversationModel
+    @ObservedObject private var publication: NativePublicationModel
     init(model: ProjectBrowserModel, project: ProjectSummary) {
         self.model = model; self.project = project
         self.conversation = model.nativeConversation()
+        self.publication = model.publication
     }
     @Environment(\.colorScheme) private var scheme
     @State private var sidebarVisible = true
@@ -81,7 +83,9 @@ struct ProjectWorkspace: View {
                         Button("重试") { Task { await model.openProject(project.id, sessionID: model.activeSessionID) } }
                     }.padding().foregroundStyle(.orange)
                 }
-                if let session = model.activeSessionID {
+                if publication.presented && publication.projectID == project.id {
+                    NativePublicationColumn(model: model, publication: publication)
+                } else if let session = model.activeSessionID {
                     NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(.init(text: selection, source: "会话摘录"))
@@ -236,7 +240,13 @@ struct ProjectWorkspace: View {
                 .help("研究历程")
                 .accessibilityLabel("研究历程")
                 .accessibilityIdentifier("sidebar-journey")
-                WispUnavailableAction(title: "论文证据", icon: "book", expanded: true)
+                Button { publication.open(projectID: project.id) } label: {
+                    HStack { WispIcon(name: "book", size: 16); Text("论文证据"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .help("论文证据")
+                .accessibilityLabel("论文证据")
+                .accessibilityIdentifier("sidebar-publication")
                 Button { model.library.presented = true } label: {
                     HStack { WispIcon(name: "star", size: 16); Text("收藏"); Spacer() }
                 }

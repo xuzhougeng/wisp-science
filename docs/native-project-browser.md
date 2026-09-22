@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, the library, the research calendar, the research journey, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, 收藏, and 研究历程 still require their native services.
+creation, project import, the library, the research calendar, the research journey, the publication workspace, and the conversation loop described below.
+The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, and 论文证据 still require their native services.
 Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
@@ -348,6 +348,23 @@ change a project. Escape closes only the journey sheet. Adding a journal
 entry, artifact detail, and run detail stay out of this slice. WinUI decodes
 the same fixture through `INativeJourneyClient` and leaves its 研究历程 button
 disabled.
+
+## Publication workspace
+
+The sidebar **论文证据** button replaces the conversation column with the
+publication workspace for the open project. `native_publication_workspace`
+reads that project's papers. `native_publication_create` creates one paper and
+its first revision. Both commands require the project id, are announced as
+`publication` and `publication_schema` (`wisp.native-publication.v1`), and are
+not in the settings allowlist. They do not change the WebView's active project
+or session.
+
+An empty title or revision label keeps the draft and does not call the host.
+A lost create keeps the draft and is not retried. A reply that arrives after
+the workspace has closed does not open a project. Escape closes only the
+publication column and returns to the conversation. Evidence binding, readiness,
+and reproduction stay out of this slice. WinUI decodes the same fixture through
+`INativePublicationClient` and leaves its 论文证据 button disabled.
 
 ## Creating a project
 

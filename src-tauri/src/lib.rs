@@ -49,6 +49,7 @@ mod native_conversations;
 mod native_journey;
 mod native_library;
 mod native_projects;
+mod native_publication;
 mod native_settings;
 pub(crate) use wisp_runs::exploration_isolation;
 mod exploration_promotion;

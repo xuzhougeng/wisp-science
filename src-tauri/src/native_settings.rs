@@ -99,6 +99,8 @@ pub(crate) fn capabilities() -> Value {
         "calendar_schema": wisp_dto::native_calendar::SCHEMA,
         "journey": wisp_dto::native_journey::COMMANDS,
         "journey_schema": wisp_dto::native_journey::SCHEMA,
+        "publication": wisp_dto::native_publication::COMMANDS,
+        "publication_schema": wisp_dto::native_publication::SCHEMA,
     })
 }
 
@@ -156,6 +158,10 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     if wisp_dto::native_journey::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_journey::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_publication::execute(&state.store, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
@@ -340,6 +346,7 @@ mod tests {
         assert!(!COMMANDS.contains(&"native_library_delete"));
         assert!(!COMMANDS.contains(&"native_research_calendar"));
         assert!(!COMMANDS.contains(&"native_research_journey"));
+        assert!(!COMMANDS.contains(&"native_publication_create"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
         assert_eq!(
@@ -362,6 +369,12 @@ mod tests {
             advertised["journey_schema"],
             wisp_dto::native_journey::SCHEMA
         );
+        assert_eq!(advertised["publication"][0], "native_publication_workspace");
+        assert_eq!(advertised["publication"][1], "native_publication_create");
+        assert_eq!(
+            advertised["publication_schema"],
+            wisp_dto::native_publication::SCHEMA
+        );
         assert!(advertised["commands"]
             .as_array()
             .unwrap()
@@ -372,6 +385,8 @@ mod tests {
                     && command != "native_library_delete"
                     && command != "native_research_calendar"
                     && command != "native_research_journey"
+                    && command != "native_publication_workspace"
+                    && command != "native_publication_create"
             }));
     }
 }
