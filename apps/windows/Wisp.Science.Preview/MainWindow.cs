@@ -55,6 +55,7 @@ internal sealed partial class MainWindow : Window
         Title = "Wisp Science · WinUI 3 Preview";
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1220, 860));
         Content = root;
+        design.Typography = settings.Typography ?? new();
         root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
         root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
         panelVisible = settings.PanelVisible;
@@ -710,6 +711,8 @@ internal sealed partial class MainWindow : Window
             settings.Appearance = prefs["theme"]?.GetValue<string>() ?? "system";
             settings.LightPalette = prefs["light_palette"]?.GetValue<string>() ?? "paper";
             settings.DarkPalette = prefs["dark_palette"]?.GetValue<string>() ?? "charcoal";
+            settings.Typography = NativeTypography.From(prefs);
+            design.Typography = settings.Typography;
             SaveSettings();
             root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
             Render();
@@ -742,7 +745,7 @@ internal sealed partial class MainWindow : Window
 
     private TextBlock Text(string value, double size = 14, string color = "text") => new()
     {
-        Text = value, FontSize = size, Foreground = design.Brush(color), TextWrapping = TextWrapping.Wrap,
+        Text = value, FontSize = design.FontSize(size), FontFamily = design.Font(), Foreground = design.Brush(color), TextWrapping = TextWrapping.Wrap,
         VerticalAlignment = VerticalAlignment.Center
     };
     private TextBlock SingleLine(string value, double size = 14, string color = "text")

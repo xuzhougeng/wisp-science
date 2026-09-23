@@ -6,6 +6,19 @@ internal static class AppearanceSettingsTests
 {
     public static async Task RunAsync()
     {
+        Check(NativeTypography.From(new()) == new NativeTypography(), "older preferences use native font defaults");
+        var fonts = NativeTypography.From(new() { ["ui_font_size"] = 20, ["code_font_size"] = 10,
+            ["ui_font_family"] = "  Arial  ", ["code_font_family"] = "Cascadia Code" });
+        Check(Math.Abs(fonts.Scale(18) - 180d / 7) < 0.0001 && fonts.Scale(12, true) == 10,
+            "heading proportions and independent code size survive appearance changes");
+        Check(fonts.UiFamily == "Arial" && fonts.CodeFamily == "Cascadia Code", "custom native font families are retained");
+        var invalid = NativeTypography.From(new() { ["ui_font_size"] = -5, ["code_font_size"] = "bad",
+            ["ui_font_family"] = "  ", ["code_font_family"] = new JsonObject() });
+        Check(invalid == new NativeTypography(), "malformed or empty native preferences fall back without breaking rendering");
+        var bounded = NativeTypography.From(new() { ["ui_font_size"] = 999, ["code_font_size"] = 1 });
+        Check(bounded.UiSize == 20 && bounded.CodeSize == 10, "out-of-range preferences respect the native settings limits");
+        Check(NativeTypography.From(JsonNode.Parse("{\"ui_font_size\":16.5,\"code_font_size\":13}")!.AsObject()).UiSize == 16.5,
+            "wire numeric representation preserves fractional font sizes");
         var client = new Fake();
         var model = new AppearanceSettingsModel(client, "project-a");
         await model.LoadAsync();

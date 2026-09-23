@@ -35,6 +35,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     {
         this.model = model; this.design = design; this.quote = quote; this.create = create;
         model.Changed += Refresh;
+        design.TypographyChanged += Refresh;
         var root = new Grid();
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -123,6 +124,8 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     public void Refresh()
     {
         if (disposed) return;
+        FontFamily = design.Font(); FontSize = design.FontSize(14);
+        composer.FontFamily = design.Font(); composer.FontSize = design.FontSize(14);
         var error = model.ConnectionError ?? model.OperationError ?? model.Snapshot?.Error;
         status.Text = error ?? "";
         status.Foreground = design.Brush(error == null ? "text-muted" : "clay-strong");
@@ -201,8 +204,8 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             else if (item.Role == "tool")
             {
                 var body = new StackPanel { Spacing = 8 };
-                if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(new TextBox { Text = item.Input, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap });
-                body.Children.Add(new TextBox { Text = item.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap });
+                if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(new TextBox { Text = item.Input, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(12, true) });
+                body.Children.Add(new TextBox { Text = item.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(12, true) });
                 card.Children.Add(new Expander { Header = item.Text.Length == 0 ? "执行中…" : item.Text[..Math.Min(180, item.Text.Length)], Content = body, IsExpanded = item.Ok == false });
             }
             else
@@ -241,7 +244,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             card.Children.Add(new TextBlock { Text = "需要确认 · " + approval.Tool, FontSize = 13 });
             card.Children.Add(new TextBlock { Text = approval.Message, TextWrapping = TextWrapping.Wrap });
             if (approval.Preview.Length > 0)
-                card.Children.Add(new TextBox { Text = approval.Preview, IsReadOnly = true, AcceptsReturn = true, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), MaxHeight = 130 });
+                card.Children.Add(new TextBox { Text = approval.Preview, IsReadOnly = true, AcceptsReturn = true, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), MaxHeight = 130 });
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
             var deny = new Button { Content = "拒绝", IsEnabled = !model.Busy && model.ConnectionError == null };
             deny.Click += async (_, _) => await model.ApproveAsync(captured, false, lifetime.Token);
@@ -255,6 +258,6 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Pause(); lifetime.Dispose();
+        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
     }
 }

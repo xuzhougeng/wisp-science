@@ -10,6 +10,15 @@ namespace Wisp.Science.Preview;
 
 internal sealed class WispDesign
 {
+    private Wisp.ProjectBrowser.NativeTypography typography = new();
+    public event Action? TypographyChanged;
+    public Wisp.ProjectBrowser.NativeTypography Typography
+    {
+        get => typography;
+        set { if (typography == value) return; typography = value; TypographyChanged?.Invoke(); }
+    }
+    public double FontSize(double size, bool code = false) => Typography.Scale(size, code);
+    public FontFamily Font(bool code = false) => new(code ? Typography.CodeFamily : Typography.UiFamily);
     private readonly Dictionary<string, Dictionary<string, string>> palettes = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
         File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "palette.json")))!;
     private readonly Dictionary<string, SvgImageSource> icons = new();

@@ -140,3 +140,19 @@ sends the explicit `parity-a` identity while preserving Agent Context. Returning
 to home refreshes both the project card and recent-session labels. These are
 synthetic-host checks, not production Rust persistence acceptance. Channel UI
 navigation and dirty scope switching still need visual acceptance.
+
+### Native conversation typography
+
+Confirmed appearance preferences now update native conversation prose, Markdown
+headings, code blocks, inline code, tool output, approval previews and the
+composer. Home/sidebar text produced by the shared text helper also scales.
+UI and code sizes remain independent; headings retain their relative sizes.
+The appearance preview uses the same calculation, and confirmed preferences
+are cached for restart. Editing the preview does not apply unsaved fonts.
+An unchanged host read refreshes the cache; a dirty draft is not applied.
+
+Six additional model checks cover older preferences, proportional headings,
+independent code sizes, custom families, malformed values, bounds and wire
+numeric values. Remaining typography acceptance includes actual Windows
+rendering after save/reopen, all settings and auxiliary controls, narrow layouts
+and scaling. This increment does not establish full native font coverage.

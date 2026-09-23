@@ -217,7 +217,8 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             }
             await model!.LoadAsync(deadline.Token);
             if (closed) return;
-            RenderForm(); status.Text = "已读取设置。字体与自定义 CSS 的完整呈现仍由桌面客户端提供。";
+            if (!model.HasChanges && model.Draft is { } loaded) apply(loaded);
+            RenderForm(); status.Text = "已读取设置。对话字体使用原生控件呈现；自定义 CSS 仅用于 WebView。";
         }
         catch (OperationCanceledException) { if (!closed) status.Text = "连接超时，请检查桌面客户端版本后重新载入。可以随时返回。"; }
         catch (Exception ex) { if (!closed) status.Text = "无法读取设置：" + ex.Message; }
@@ -240,7 +241,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             var saved = await model.SaveAsync(lifetime.Token);
             if (closed || saved is null) return;
             apply(saved); confirmClose = false;
-            status.Text = "已保存。主题和配色已应用到预览窗口。";
+            status.Text = "已保存。主题、配色和对话字体已应用到预览窗口。";
         }
         catch (Exception ex)
         {
@@ -292,6 +293,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     }
     private void UpdatePreview(JsonObject prefs)
     {
+        var typography = NativeTypography.From(prefs);
         design.Dark = prefs["theme"]?.GetValue<string>() == "dark" ||
             (prefs["theme"]?.GetValue<string>() == "system" && shell.ActualTheme == ElementTheme.Dark);
         design.LightPalette = prefs["light_palette"]?.GetValue<string>() ?? "paper";
@@ -300,14 +302,13 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         preview.Children.Clear();
         Add("预览", 12, "text-muted");
         Add("Wisp Science", 18, "text");
-        Add("帮我查看这个项目的数据，整理分析思路。", prefs["ui_font_size"]?.GetValue<int>() ?? 14, "text");
-        Add("分析计划\n\n1. 查看样本和文件\n2. 确认分析目标\n3. 汇总结果与图表", prefs["ui_font_size"]?.GetValue<int>() ?? 14, "text");
-        Add("import pandas as pd\ndata = pd.read_csv(\"samples.csv\")\ndata.head()", prefs["code_font_size"]?.GetValue<int>() ?? 12, "clay", true);
+        Add("帮我查看这个项目的数据，整理分析思路。", 14, "text");
+        Add("分析计划\n\n1. 查看样本和文件\n2. 确认分析目标\n3. 汇总结果与图表", 14, "text");
+        Add("import pandas as pd\ndata = pd.read_csv(\"samples.csv\")\ndata.head()", 12, "clay", true);
         Add("输入消息…", 14, "text-faint");
         void Add(string text, double size, string token, bool code = false) => preview.Children.Add(new TextBlock {
-            Text = text, FontSize = size, Foreground = design.Brush(token), TextWrapping = TextWrapping.Wrap,
-            FontFamily = new FontFamily(string.IsNullOrWhiteSpace(prefs[code ? "code_font_family" : "ui_font_family"]?.GetValue<string>())
-                ? code ? "Consolas" : "Segoe UI" : prefs[code ? "code_font_family" : "ui_font_family"]!.GetValue<string>()) });
+            Text = text, FontSize = typography.Scale(size, code), Foreground = design.Brush(token), TextWrapping = TextWrapping.Wrap,
+            FontFamily = new FontFamily(code ? typography.CodeFamily : typography.UiFamily) });
     }
 
 }
