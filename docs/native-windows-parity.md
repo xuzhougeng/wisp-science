@@ -248,3 +248,21 @@ passed, but its unit-test executable exited before assertions with
 `0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`. This confirms the local test-loader
 problem still exists; the separately built production host acceptance above
 passed and is not evidence that the Tauri unit suite ran successfully.
+
+### Windows Tauri test-loader correction
+
+Manifest extraction confirmed the app executable contained Common Controls v6,
+but the Tauri unit-test executable had no resource section. It imports v6
+functions and therefore exited with `STATUS_ENTRYPOINT_NOT_FOUND` before the
+harness could run. The MSVC build now lets the linker embed the existing
+Common Controls manifest for all executable targets, and disables the separate
+app-only manifest resource to avoid duplicate-resource CVT1100 errors. Other
+targets keep the default Tauri resource configuration.
+
+Ordinary `cargo test -p wisp-tauri --lib native_publication -- --nocapture`
+started without binary patching and passed both tests. A full Tauri unit run
+is in progress. A normal app build also passed after eliminating the duplicate
+manifest; extracted app/test manifests contain the v6 dependency and an
+as-invoker execution level. Formatting and diff checks pass. Final full-suite
+results and a fresh test relink with the unified app/test resource configuration
+will be recorded after the currently running harness finishes.
