@@ -61,3 +61,4 @@ await AppearanceSettingsTests.RunAsync();
 await WorkspaceActionTests.RunAsync();
 await WorkspaceConversationTests.RunAsync(args[0]);
 await NativeParityTests.RunAsync();
+await NativeSettingsEditorTests.RunAsync();

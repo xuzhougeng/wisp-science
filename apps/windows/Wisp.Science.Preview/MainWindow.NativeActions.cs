@@ -74,7 +74,7 @@ internal sealed partial class MainWindow
                     (id, day) => MountSheet(new NativeJourneyPage(new NativeJourneyClient(host), id, design, day, CloseSheet), nested: true), CloseSheet),
                 "journey" when project != null => new NativeJourneyPage(new NativeJourneyClient(host), project, design, null, CloseSheet),
                 "capabilities" when project != null => new NativeCapabilitiesPage(host, project, design, section =>
-                    MountSheet(new NativeCapabilityDetailPage(host, project, section, design, CloseSheet), nested: true), CloseSheet),
+                    { CloseSheet(); OpenSettingsSection(section); }, CloseSheet),
                 _ => null
             };
             if (kind == "publication" && project != null)

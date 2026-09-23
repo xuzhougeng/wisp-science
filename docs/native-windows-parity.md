@@ -15,7 +15,7 @@ An alternate browser database still requires a matching running host descriptor.
 | #1340, #1348, #1350–#1351 | Local month/day calendar, project filter, partial errors and truncation, dated journey, and host privacy gate. Hidden project IDs never enter the calendar payload. Pending/failed privacy reads disable navigation; no fallback or automatic retry. |
 | #1341 | Project-scoped journey with editable date range and local title search. Calendar journeys are nested above the calendar so Escape restores the chosen day. |
 | #1342 | Publication workspace in the project column, initial revision creation, retained draft on failure, and Escape back to the conversation. |
-| #1343 | Capability summary and native read-only skill/connection/memory detail pages. The older Windows settings gap remains: only appearance has native editing. |
+| #1343 | Capability summary now opens the corresponding same-window settings category. Skills support local import, enablement, tags and file inspection; connections support connector/tool approval controls and MCP editing; memory supports project files, global entries and failure-analysis preferences. The remaining settings and acceptance work is tracked below. |
 | #1344 | Feedback prefills the current composer with version, platform, model and startup information. It neither sends nor includes the workspace path; stale reads and intervening edits are preserved. |
 | #1345 | Independent hidden scratch conversation using the same native conversation loop. Close/Escape names only the scratch project; failures are not automatically retried. Exiting the process leaves orphan cleanup to the host's existing startup purge. |
 | #1346–#1347 | Local attachments are staged per session, included in send/enqueue payloads and shown on saved messages. One follow-up is allowed while a turn runs. An uncertain queue preserves the draft and requires explicit user acknowledgement before another submission. |
@@ -37,7 +37,7 @@ relying on that value caused a blank project page with COM error `0x800F1000`.
 Rendering also defers reentrant notifications and provides a recovery action
 instead of leaving an empty window.
 
-## Validation
+## First increment validation (#1355)
 
 `dotnet run --project apps/windows/Wisp.ProjectBrowser.ContractTests -- contracts/project-browser/v1/projects.json`
 runs existing protocol/navigation/conversation checks and 35 added parity model
@@ -77,6 +77,36 @@ queue exactly one draft during a real turn; and open/close scratch once. On each
 screen press Escape immediately after opening, with a menu/dropdown open and
 with a child sheet above a parent. Repeat at 150% scaling and a narrow window.
 
-Capability configuration editing, the remaining older native settings pages,
-publication evidence binding, and journal/artifact/run editing are separate
-follow-ups, not implied by these connected entry points.
+## Remaining parity work (active)
+
+The follow-up objective is full completion of these remaining parts, not merely
+enabling their entry points. Each row needs implementation and matching tests
+plus real Windows UI/host evidence before it can be marked complete.
+
+| Requirement | Current evidence / next work |
+| --- | --- |
+| Skills settings | Local import, enable/disable, tags, file inspection, removal, community catalog, pinned GitHub preview/import and native path pickers implemented. Real-host install acceptance remains. |
+| Connections settings | Connector enable/approval controls, MCP stdio/HTTP editors, secret rows, OAuth command routing and cancellation implemented. Real host save/test and OAuth UI acceptance remain. |
+| Memory settings | File/global memory editors and failure-analysis settings implemented. Synthetic-host edit/save and draft Escape checks passed. Project scope selector added after that smoke; selector and actual host writes still need verification. |
+| Settings navigation | Fourteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Models, quick actions, workflows, specialists, channels and project settings remain. |
+| General / session / appearance / pet | Preference editors, local environment/network/update flows, pet controls and appearance font/CSS editing implemented. Full native font application and real-host acceptance remain. |
+| Models / credentials | Credential status and secret writes use host keyring APIs without secret readback. Model/provider/ACP configuration and authentication flows remain. |
+| Quick actions / workflows / specialists | Port editors, validation, selection and conversions exposed by SwiftUI. |
+| Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels and real-host acceptance remain. |
+| Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
+| Publication / research editing | Audit SwiftUI behavior and complete publication evidence binding and journal/artifact/run editing. |
+| Real host and model acceptance | Complete the smoke sequence above using disposable data, including real attachment copying, scratch lifecycle and queued model follow-ups. |
+| Final regression and delivery | Re-run relevant suites for the final change, inspect real Windows layouts and layered Escape, document exact results, and deliver a focused follow-up PR. |
+
+Current follow-up checks: Release WinUI build/publish passed; all existing C#
+checks plus 18 settings-editor checks passed (draft retention, no retry,
+duplicate-save exclusion, scope, argument casing, void success, unknown fields,
+credential references, OAuth dispatch/cancellation, keyring writes, optional
+plugin checksums and closed-view replies). The two Rust
+native-settings DTO tests and contract sync check passed. This is interim
+validation, not proof that the full parity objective is complete. Actual WinUI
+fixture-host checks also confirmed the general preference form opens in the
+same window and immediate Escape closes only its editor. Scope switching and
+dirty-draft navigation across scopes still need UI acceptance. The full Rust
+and Playwright results above belong to the first increment; they were not rerun
+for this settings follow-up.

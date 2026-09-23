@@ -235,5 +235,6 @@ mod tests {
         assert!(!allowed.contains("send_message"));
         assert!(!allowed.contains("open_terminal"));
         assert!(allowed.contains("import_wsl_contexts"));
+        assert!(allowed.contains("authorize_http_connection"));
     }
 }

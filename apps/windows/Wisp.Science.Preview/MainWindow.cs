@@ -698,6 +698,9 @@ internal sealed partial class MainWindow : Window
     }
 
     private void OpenSettings()
+        => OpenSettingsSection("appearance");
+
+    private void OpenSettingsSection(string initialSection)
     {
         if (settingsPage != null) return;
         CloseSheet();
@@ -710,7 +713,7 @@ internal sealed partial class MainWindow : Window
             SaveSettings();
             root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
             Render();
-        }, CloseSettings);
+        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"));
         if (pageContent != null) pageContent.Visibility = Visibility.Collapsed;
         root.Children.Add(settingsPage);
     }

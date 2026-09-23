@@ -34,10 +34,21 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private bool closed;
     private bool working;
     private bool confirmClose;
+    private NativeSettingsSectionPage? capabilityPage;
+    private readonly Dictionary<string, Button> navigationButtons = [];
+    private FrameworkElement? appearanceContent;
+    private string section = "appearance";
+    private string? pendingSection;
+    private string? settingsProject;
+    private readonly ComboBox projectChoice = new() { Header = "项目作用域", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private bool changingProject;
+    private readonly Func<bool, Task<string?>>? pickPath;
 
-    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close)
+    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close, string initialSection = "appearance", IReadOnlyList<ProjectSummary>? projects = null, Func<bool, Task<string?>>? pickPath = null)
     {
         this.database = database; this.projectId = projectId; this.apply = apply; this.close = close;
+        settingsProject = projectId;
+        this.pickPath = pickPath;
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(210) });
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         var nav = new StackPanel { Spacing = 4, Padding = new Thickness(16, 24, 16, 24) };
@@ -47,6 +58,26 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         var back = new Button { Content = backContent, Margin = new Thickness(0, 0, 0, 16) };
         back.Click += (_, _) => RequestClose(); nav.Children.Add(back);
         nav.Children.Add(new TextBlock { Text = "设置", FontSize = 22, Margin = new Thickness(12, 0, 0, 24) });
+        projectChoice.Items.Add(new ComboBoxItem { Content = "全局设置", Tag = "" });
+        foreach (var project in projects ?? []) projectChoice.Items.Add(new ComboBoxItem { Content = project.Name, Tag = project.Id });
+        projectChoice.SelectedItem = projectChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == (settingsProject ?? ""));
+        projectChoice.SelectionChanged += (_, _) =>
+        {
+            if (changingProject || projectChoice.SelectedItem is not ComboBoxItem selected) return;
+            var next = (string)selected.Tag;
+            changingProject = true;
+            projectChoice.SelectedItem = projectChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == (settingsProject ?? ""));
+            changingProject = false;
+            if (working || capabilityPage?.Busy == true) return;
+            void Change()
+            {
+                settingsProject = next.Length == 0 ? null : next;
+                changingProject = true; projectChoice.SelectedItem = selected; changingProject = false;
+                if (capabilityPage != null) MountSection(section);
+            }
+            if (capabilityPage != null) capabilityPage.RequestLeave(Change); else Change();
+        };
+        nav.Children.Add(projectChoice);
         var navigation = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "settings-navigation.json")))!.AsObject();
         string? group = null;
         foreach (var entry in navigation)
@@ -59,9 +90,12 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             }
             var item = new Button { Content = entry.Value["zh"]!.GetValue<string>(),
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(12, 8, 12, 8), IsEnabled = entry.Key == "appearance" };
+                Padding = new Thickness(12, 8, 12, 8), IsEnabled = entry.Key == "appearance" || NativeSettingsSectionPage.Titles.ContainsKey(entry.Key) };
             if (entry.Key == "appearance") item.Background = design.Brush("surface-hover");
-            else ToolTipService.SetToolTip(item, "此设置页尚未接入 Windows");
+            else if (!item.IsEnabled) ToolTipService.SetToolTip(item, "此设置页尚未接入 Windows");
+            var key = entry.Key;
+            item.Click += (_, _) => SelectSection(key);
+            navigationButtons[key] = item;
             nav.Children.Add(item);
         }
         shell.Children.Add(new ScrollViewer { Content = nav, Background = design.Brush("bg-sunken"), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
@@ -84,6 +118,8 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         ToolTipService.SetToolTip(scope, $"{database}\n{projectId ?? "全局"}"); body.Children.Add(scope);
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetColumn(scroll, 1); shell.Children.Add(scroll); shell.Background = design.Brush("bg-app");
+        appearanceContent = scroll;
+        pendingSection = initialSection;
         Content = shell;
         shell.SizeChanged += (_, e) =>
         {
@@ -101,12 +137,16 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
 
     public void HandleEscape()
     {
-        if (choices.LastOrDefault(c => c.IsDropDownOpen) is { } choice) choice.IsDropDownOpen = false;
+        if (projectChoice.IsDropDownOpen) projectChoice.IsDropDownOpen = false;
+        else if (capabilityPage != null) capabilityPage.HandleEscape();
+        else if (choices.LastOrDefault(c => c.IsDropDownOpen) is { } choice) choice.IsDropDownOpen = false;
         else RequestClose();
     }
 
     private void RequestClose()
     {
+        if (capabilityPage != null) { capabilityPage.RequestLeave(close); return; }
+        if (working) return;
         if (model?.HasChanges == true && !confirmClose)
         {
             confirmClose = true;
@@ -116,10 +156,34 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         close();
     }
 
+    private void SelectSection(string next)
+    {
+        if (next == section || working || closed) return;
+        if (client == null) { pendingSection = next; _ = LoadAsync(); return; }
+        if (capabilityPage != null) { capabilityPage.RequestLeave(() => MountSection(next)); return; }
+        if (model?.HasChanges == true && pendingSection != next)
+        {
+            pendingSection = next; status.Text = "有未保存的外观修改。保存后切换，或再次选择该分类以放弃修改。"; return;
+        }
+        model?.Discard(); RenderForm(); MountSection(next);
+    }
+    private void MountSection(string next)
+    {
+        if (capabilityPage != null) { shell.Children.Remove(capabilityPage); capabilityPage.Dispose(); capabilityPage = null; }
+        section = next; pendingSection = null;
+        if (appearanceContent != null) appearanceContent.Visibility = next == "appearance" ? Visibility.Visible : Visibility.Collapsed;
+        if (next != "appearance" && client != null)
+        {
+            capabilityPage = new NativeSettingsSectionPage(client, settingsProject, next, design, close, pickPath);
+            Grid.SetColumn(capabilityPage, 1); shell.Children.Add(capabilityPage);
+        }
+        foreach (var (key, button) in navigationButtons) button.Background = key == next ? design.Brush("surface-hover") : null;
+    }
+
     public void Dispose()
     {
         if (closed) return;
-        closed = true; lifetime.Cancel(); client?.Dispose(); lifetime.Dispose();
+        closed = true; capabilityPage?.Dispose(); lifetime.Cancel(); client?.Dispose(); lifetime.Dispose();
     }
 
     private void SetBusy(bool value)
@@ -157,7 +221,14 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         }
         catch (OperationCanceledException) { if (!closed) status.Text = "连接超时，请检查桌面客户端版本后重新载入。可以随时返回。"; }
         catch (Exception ex) { if (!closed) status.Text = "无法读取设置：" + ex.Message; }
-        finally { if (!closed) SetBusy(false); }
+        finally
+        {
+            if (!closed)
+            {
+                SetBusy(false);
+                if (client != null && pendingSection is { } next) { pendingSection = null; SelectSection(next); }
+            }
+        }
     }
 
     private async Task SaveAsync()
@@ -190,6 +261,11 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         form.Children.Add(new TextBlock { Text = "字体", FontSize = 16, Margin = new Thickness(0, 12, 0, 0) });
         FontSize("界面字号", "ui_font_size", 12, 20, 14);
         FontSize("代码字号", "code_font_size", 10, 20, 12);
+        FontFamilyField("界面字体（留空使用系统字体）", "ui_font_family");
+        FontFamilyField("代码字体（留空使用系统等宽字体）", "code_font_family");
+        var css = new TextBox { Header = "WebView 自定义 CSS", Text = prefs["custom_css"]?.GetValue<string>() ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
+        css.TextChanged += (_, _) => { prefs["custom_css"] = css.Text; confirmClose = false; }; form.Children.Add(css);
+        form.Children.Add(new TextBlock { Text = "自定义 CSS 仅应用于 WebView 客户端。", TextWrapping = TextWrapping.Wrap, Opacity = 0.65 });
 
         UpdatePreview(prefs);
         foreach (var control in form.Children.OfType<Control>()) control.IsEnabled = loaded && !working;
@@ -208,6 +284,11 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             slider.ValueChanged += (_, e) => { prefs[key] = (int)e.NewValue; confirmClose = false; UpdatePreview(prefs); };
             form.Children.Add(slider);
         }
+        void FontFamilyField(string label, string key)
+        {
+            var input = new TextBox { Header = label, Text = prefs[key]?.GetValue<string>() ?? "" };
+            input.TextChanged += (_, _) => { prefs[key] = input.Text; confirmClose = false; UpdatePreview(prefs); }; form.Children.Add(input);
+        }
     }
     private void UpdatePreview(JsonObject prefs)
     {
@@ -225,9 +306,8 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         Add("输入消息…", 14, "text-faint");
         void Add(string text, double size, string token, bool code = false) => preview.Children.Add(new TextBlock {
             Text = text, FontSize = size, Foreground = design.Brush(token), TextWrapping = TextWrapping.Wrap,
-            FontFamily = new FontFamily(code ? "Consolas" : "Segoe UI") });
+            FontFamily = new FontFamily(string.IsNullOrWhiteSpace(prefs[code ? "code_font_family" : "ui_font_family"]?.GetValue<string>())
+                ? code ? "Consolas" : "Segoe UI" : prefs[code ? "code_font_family" : "ui_font_family"]!.GetValue<string>()) });
     }
 
 }
-
-

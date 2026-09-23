@@ -32,6 +32,7 @@ internal abstract class NativeActionPage : WorkspaceSheet
         progress.Visibility = State.Busy ? Visibility.Visible : Visibility.Collapsed;
         error.Text = State.Error ?? ""; error.Visibility = State.Error == null ? Visibility.Collapsed : Visibility.Visible;
     }
+    protected void SetContentEnabled(bool enabled) { formHost.IsEnabled = resultsHost.IsEnabled = enabled; }
     protected TextBox Field(string title, string text, Action<string> changed, bool multiline = false)
     {
         var input = new TextBox { Header = title, Text = text, AcceptsReturn = multiline, TextWrapping = TextWrapping.Wrap, MinHeight = multiline ? 85 : 32 };
