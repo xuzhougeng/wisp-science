@@ -34,7 +34,9 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
         if (Busy || Closed || Draft == null || command == null) return false;
         var args = (JsonObject)extra.DeepClone();
         if (command == "install_plugin" && string.IsNullOrWhiteSpace(Draft["expected_sha256"]?.GetValue<string>())) Draft["expected_sha256"] = null;
-        if (parameter != null) args[parameter] = Draft.DeepClone();
+        if (command == "save_model")
+            foreach (var field in NativeModelDrafts.SaveArguments(Draft)) args[field.Key] = field.Value?.DeepClone();
+        else if (parameter != null) args[parameter] = Draft.DeepClone();
         else foreach (var field in Draft) args[Camel(field.Key)] = field.Value?.DeepClone();
         var operation = command is "add_mcp_connection" or "update_mcp_connection" && Draft["transport"]?["auth"]?.GetValue<string>() == "oauth"
             ? "authorize_http_connection" : command;
@@ -56,6 +58,18 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
     }
     public Task<bool> InvokeAsync(string operation, JsonObject args, Action<JsonNode?>? apply = null)
         => RunAsync(() => client.InvokeAsync(operation, (JsonObject)args.DeepClone(), projectId), value => apply?.Invoke(value));
+    public Task<bool> TestModelAsync(Action<JsonNode?> apply)
+    {
+        if (Draft == null || command != "save_model" || Busy || Closed) return Task.FromResult(false);
+        var draft = (JsonObject)Draft.DeepClone();
+        return RunAsync(async () =>
+        {
+            var settings = await client.InvokeAsync("get_settings", new(), projectId) as JsonObject
+                ?? throw new InvalidDataException("无法读取当前设置。");
+            if (Closed) return null;
+            return await client.InvokeAsync("validate_settings", NativeModelDrafts.TestArguments(settings, draft), projectId);
+        }, apply);
+    }
     public override void Dispose() { base.Dispose(); Draft = null; original = null; Values.Clear(); }
     private static string Camel(string key)
     {

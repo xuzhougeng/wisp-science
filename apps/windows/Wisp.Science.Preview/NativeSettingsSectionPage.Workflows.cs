@@ -93,12 +93,12 @@ internal sealed partial class NativeSettingsSectionPage
             catch (System.Text.Json.JsonException) { invalidFields.Add(validation); }
         }, true);
     }
-    private void OptionalNumber(JsonObject draft, string key, string label, string prefix)
+    private void OptionalNumber(JsonObject draft, string key, string label, string prefix, bool nullable = true)
     {
         var validation = prefix + label;
         Field(label, draft[key]?.ToString() ?? "", value =>
         {
-            if (string.IsNullOrWhiteSpace(value)) { draft[key] = null; invalidFields.Remove(validation); }
+            if (nullable && string.IsNullOrWhiteSpace(value)) { draft[key] = null; invalidFields.Remove(validation); }
             else if (ulong.TryParse(value, out var number)) { draft[key] = number; invalidFields.Remove(validation); }
             else invalidFields.Add(validation);
         });

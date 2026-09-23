@@ -88,9 +88,9 @@ plus real Windows UI/host evidence before it can be marked complete.
 | Skills settings | Local import, enable/disable, tags, file inspection, removal, community catalog, pinned GitHub preview/import and native path pickers implemented. Real-host install acceptance remains. |
 | Connections settings | Connector enable/approval controls, MCP stdio/HTTP editors, secret rows, OAuth command routing and cancellation implemented. Real host save/test and OAuth UI acceptance remain. |
 | Memory settings | File/global memory editors and failure-analysis settings implemented. Synthetic-host edit/save and draft Escape checks passed. Project scope selector added after that smoke; selector and actual host writes still need verification. |
-| Settings navigation | Seventeen enabled categories, project scope selector, scoped child models and unsaved-change guards. Models, channels and project settings remain. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
+| Settings navigation | Eighteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Channels and project settings remain. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
 | General / session / appearance / pet | Preference editors, local environment/network/update flows, pet controls and appearance font/CSS editing implemented. Full native font application and real-host acceptance remain. |
-| Models / credentials | Credential status and secret writes use host keyring APIs without secret readback. Model/provider/ACP configuration and authentication flows remain. |
+| Models / credentials | API presets, profile editing, exact catalog lookup, API test, default selection/reorder/remove and ACP configuration/test/authentication implemented. Model keys are separate host keyring arguments; image/video assignments use explicit top-level fields. Authentication terminal input is scoped, not persisted or automatically replayed, and late snapshots are ignored after disposal. Credential status and secret writes use host keyring APIs without secret readback. Real provider and ACP authentication acceptance remain. |
 | Quick actions / workflows / specialists | Native create/edit/copy/remove, quick-action template binding and enablement, workflow tasks/dependencies/executor/budget editing, built-in read-only templates, reviewable skill/template conversions and specialist/reviewer configuration implemented. Null capability inheritance is distinct from an explicit empty whitelist. Host validation retains rejected drafts. Real-host conversion and persistence acceptance remain. |
 | Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels and real-host acceptance remain. |
 | Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
@@ -105,7 +105,12 @@ credential references, OAuth dispatch/cancellation, keyring writes, optional
 plugin checksums, whitelist inheritance, independent copies, task identities,
 conversion provenance, workflow validation failures and closed-view replies). The two Rust
 native-settings DTO tests and contract sync check passed. This is interim
-validation, not proof that the full parity objective is complete. Actual WinUI
+validation, not proof that the full parity objective is complete. An additional
+16 model/authentication checks passed, covering key separation, assignment flags,
+unknown settings, blank-key preservation, draft testing, full-list reorder,
+late API-test cancellation, scoped terminal input, control-sequence stripping,
+uncertain-input guards and closed-terminal replies. Release build/publish and
+contract synchronization passed after adding models. Actual WinUI
 fixture-host checks also confirmed the general preference form opens in the
 same window and immediate Escape closes only its editor. Additional actual
 WinUI checks confirmed quick-action editor Escape, project selection followed
@@ -116,3 +121,8 @@ closes only the confirmation and preserves the changed workflow draft.
 Dirty-draft navigation across scopes still needs UI acceptance. The full Rust
 and Playwright results above belong to the first increment; they were not rerun
 for this settings follow-up.
+
+Model UI smoke used the same isolated fixture host: the API list/presets,
+new-model form, ACP list and executable/argument editor rendered in the current
+window. Immediate Escape returned each editor to its parent page. No real key,
+external API test or authentication flow was exercised by this UI smoke.

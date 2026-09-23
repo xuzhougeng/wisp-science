@@ -13,6 +13,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private readonly string section;
     private readonly bool projectScoped;
     private readonly string? settingsProjectId;
+    private INativeSettingsClient? settingsClient;
     private readonly Func<bool, Task<string?>>? pickPath;
     private readonly List<ComboBox> choices = [];
     private readonly StackPanel confirmation = new() { Spacing = 8 };
@@ -24,7 +25,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private static bool B(JsonNode? row, string key) => row?[key]?.GetValue<bool>() == true;
     private static IEnumerable<JsonObject> Rows(JsonNode? value) => (value as JsonArray)?.OfType<JsonObject>() ?? [];
     public NativeSettingsSectionPage(INativeSettingsClient client, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath = null)
-        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath) { }
+        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath) { settingsClient = client; }
     private NativeSettingsSectionPage(NativeSettingsEditorModel model, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath)
         : base(design, Titles[section], model, close)
     {
@@ -50,6 +51,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         "quick-actions" => ["list_quick_actions", "list_workflow_templates"],
         "specialists" => ["list_specialists", "list_models"],
         "workflows" => ["list_workflow_templates", "list_models", "list_skills"],
+        "models" => ["list_models", "list_acp_agents"],
         _ => throw new InvalidOperationException("Unknown settings section")
     };
     private async Task Reload()
@@ -73,7 +75,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         Notices.Visibility = pendingConfirmation != null || model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
-    public override void Dispose() { model.Changed -= LockConfirmation; base.Dispose(); }
+    public override void Dispose() { authTerminal?.Dispose(); model.Changed -= LockConfirmation; base.Dispose(); }
     public void RequestLeave(Action leave)
     {
         if (model.Busy) return;
@@ -101,6 +103,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private void Render()
     {
         if (model.Closed) return;
+        authTerminal?.Dispose(); authTerminal = null;
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
         Form.Children.Add(Button("刷新", Reload));
         switch (section)
@@ -121,6 +124,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "quick-actions": QuickActions(); break;
             case "specialists": Specialists(); break;
             case "workflows": Workflows(); break;
+            case "models": Models(); break;
         }
         Update();
         LockConfirmation();
@@ -141,6 +145,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     {
         model.Edit(draft, command, parameter, extra);
         if (model.Draft == null) return;
+        authTerminal?.Dispose(); authTerminal = null;
         invalidFields.Clear();
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
         Form.Children.Add(new TextBlock { Text = title, FontSize = 20 });
