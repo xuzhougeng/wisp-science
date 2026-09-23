@@ -45,8 +45,6 @@ pub(crate) fn ProjectsScreen(
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
     let import_options_open = create_rw_signal(false);
-    let opening_in_place = create_rw_signal(false);
-    let workspace_projects = create_rw_signal(None::<Vec<ProjectSummary>>);
     let recovery_preview = create_rw_signal(None::<WorkspaceSessionRecoveryPreview>);
     let recovery_name = create_rw_signal(String::new());
     let recovery_busy = create_rw_signal(false);
@@ -265,7 +263,6 @@ pub(crate) fn ProjectsScreen(
         }
         if pos == idx {
             search_open.set(false);
-            opening_in_place.set(false);
             creating.set(true);
         }
     });
@@ -324,18 +321,11 @@ pub(crate) fn ProjectsScreen(
                         new_ctx.set(String::new());
                         new_layout.set(false);
                         creating.set(false);
-                        let open_folder = opening_in_place.get_untracked();
-                        opening_in_place.set(false);
-                        if open_folder {
-                            on_open_folder.call(project.id);
-                        } else {
-                            on_open.call(project.id);
-                        }
+                        on_open.call(project.id);
                     }
                 }
                 Err(error) => {
                     creating.set(false);
-                    opening_in_place.set(false);
                     open_error.set(Some(localize_backend(
                         locale.get_untracked(),
                         &js_error_text(error),
@@ -408,7 +398,7 @@ pub(crate) fn ProjectsScreen(
         });
     });
 
-    let import_archive = Callback::new(move |_: ()| {
+    let import_package = Callback::new(move |directory: bool| {
         import_options_open.set(false);
         if project_transfer
             .get_untracked()
@@ -419,16 +409,20 @@ pub(crate) fn ProjectsScreen(
         project_transfer.set(Some(ProjectTransferProgress::selecting("import", None)));
         open_error.set(None);
         spawn_local(async move {
-            match invoke_checked("import_project", JsValue::UNDEFINED).await {
+            let args = to_value(&serde_json::json!({ "directory": directory })).unwrap();
+            match invoke_checked("import_project", args).await {
                 Ok(value) => {
                     if let Ok(Some(project)) =
                         serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value)
                     {
                         project_transfer.set(Some(ProjectTransferProgress::complete(
                             "import",
-                            Some(project.id),
+                            Some(project.id.clone()),
                             Some(project.name.clone()),
                         )));
+                        if directory {
+                            on_open_folder.call(project.id);
+                        }
                     } else {
                         project_transfer.set(None);
                     }
@@ -440,47 +434,6 @@ pub(crate) fn ProjectsScreen(
                     )));
                 }
             }
-        });
-    });
-
-    let import_in_place = Callback::new(move |_: ()| {
-        import_options_open.set(false);
-        open_error.set(None);
-        spawn_local(async move {
-            let value = invoke("pick_directory", JsValue::UNDEFINED).await;
-            let Ok(Some(path)) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
-                return;
-            };
-            let args = to_value(&serde_json::json!({ "workspaceDir": path })).unwrap();
-            let matches = match invoke_checked("list_workspace_projects", args).await {
-                Ok(value) => serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(value)
-                    .map_err(|error| error.to_string()),
-                Err(error) => Err(js_error_text(error)),
-            };
-            match matches {
-                Ok(matches) if !matches.is_empty() => {
-                    workspace_projects.set(Some(matches));
-                    return;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    open_error.set(Some(localize_backend(locale.get_untracked(), &error)));
-                    return;
-                }
-            }
-            let name = path
-                .trim_end_matches(['/', '\\'])
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            new_name.set(name);
-            new_dir.set(path);
-            new_desc.set(String::new());
-            new_ctx.set(String::new());
-            new_layout.set(false);
-            opening_in_place.set(true);
-            creating.set(true);
         });
     });
 
@@ -616,7 +569,6 @@ pub(crate) fn ProjectsScreen(
             confirm_delete_data.get()
                 || settings_confirm_context.get()
                 || settings_project_id.get().is_some()
-                || workspace_projects.get().is_some()
                 || recovery_preview.get().is_some()
                 || import_options_open.get()
                 || pending_delete.get().is_some()
@@ -656,12 +608,6 @@ pub(crate) fn ProjectsScreen(
             settings_project_id.set(None);
             return;
         }
-        if workspace_projects.get().is_some() {
-            ev.prevent_default();
-            ev.stop_propagation();
-            workspace_projects.set(None);
-            return;
-        }
         if recovery_preview.get().is_some() {
             ev.prevent_default();
             if !recovery_busy.get() {
@@ -694,7 +640,6 @@ pub(crate) fn ProjectsScreen(
         if creating.get() {
             ev.prevent_default();
             creating.set(false);
-            opening_in_place.set(false);
         }
     });
     on_cleanup(move || escape_listener.remove());
@@ -755,7 +700,6 @@ pub(crate) fn ProjectsScreen(
                         {compose_icon("upload")}<span>{move || t(locale.get(), "projects.import")}</span>
                     </button>
                     <button class="btn-primary" on:click=move |_| {
-                        opening_in_place.set(false);
                         creating.set(true);
                     }>
                         <span class="new-plus">"+"</span>{move || t(locale.get(), "projects.new")}
@@ -913,7 +857,6 @@ pub(crate) fn ProjectsScreen(
                             class:active=move || search_active.get() + 1 == search_count()
                             on:click=move |_| {
                                 search_open.set(false);
-                                opening_in_place.set(false);
                                 creating.set(true);
                             }>
                             {compose_icon("plus")}
@@ -938,12 +881,12 @@ pub(crate) fn ProjectsScreen(
                         </p>
                         <div class="project-import-options">
                             <button type="button" class="project-import-option"
-                                on:click=move |_| import_in_place.call(())>
+                                on:click=move |_| import_package.call(true)>
                                 <strong>{move || t(locale.get(), "projects.import_in_place")}</strong>
                                 <span>{move || t(locale.get(), "projects.import_in_place_hint")}</span>
                             </button>
                             <button type="button" class="project-import-option"
-                                on:click=move |_| import_archive.call(())>
+                                on:click=move |_| import_package.call(false)>
                                 <strong>{move || t(locale.get(), "projects.import_zip")}</strong>
                                 <span>{move || t(locale.get(), "projects.import_zip_hint")}</span>
                             </button>
@@ -1054,74 +997,17 @@ pub(crate) fn ProjectsScreen(
                     </div>
                 }
             })}
-            {move || workspace_projects.get().map(|matches| view! {
-                <div class="overlay" data-testid="workspace-project-picker">
-                    <div class="modal proj-settings-modal" role="dialog" aria-modal="true"
-                        aria-label=move || t(locale.get(), "projects.existing_title")>
-                        <div class="ps-head">
-                            <h2>{move || t(locale.get(), "projects.existing_title")}</h2>
-                            <button type="button" class="ps-close"
-                                title=move || t(locale.get(), "projects.cancel")
-                                on:click=move |_| workspace_projects.set(None)>
-                                {compose_icon("close")}
-                            </button>
-                        </div>
-                        <p class="project-in-place-hint">
-                            {move || t(locale.get(), "projects.existing_hint")}
-                        </p>
-                        <div class="workspace-project-options">
-                            {matches.into_iter().filter(|project| !project_is_hidden(&project.id)).map(|project| {
-                                let id = project.id.clone();
-                                view! {
-                                    <button type="button" class="project-import-option"
-                                        data-project-id=project.id.clone()
-                                        on:click=move |_| {
-                                            workspace_projects.set(None);
-                                            on_open_folder.call(id.clone());
-                                        }>
-                                        <strong>{project.name}</strong>
-                                        <span>{project.workspace_dir}</span>
-                                        <span class="workspace-project-id">{format!("ID: {}", project.id)}</span>
-                                        <span>{move || tf(locale.get(), "projects.sessions_n", &[("n", &project.session_count.to_string())])}</span>
-                                    </button>
-                                }
-                            }).collect_view()}
-                        </div>
-                        {move || privacy_mode_active.get().then(|| view! {
-                            <p class="ps-hint">{move || t(locale.get(), "projects.existing_privacy")}</p>
-                        })}
-                        <div class="row">
-                            <button type="button" on:click=move |_| workspace_projects.set(None)>
-                                {move || t(locale.get(), "projects.cancel")}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            })}
             {move || creating.get().then(|| view! {
                 <div class="overlay">
                     <div class="modal proj-settings-modal" role="dialog" aria-modal="true">
                         <div class="ps-head">
-                            <h2>{move || t(
-                                locale.get(),
-                                if opening_in_place.get() {
-                                    "projects.open_folder_title"
-                                } else {
-                                    "projects.new"
-                                },
-                            )}</h2>
+                            <h2>{move || t(locale.get(), "projects.new")}</h2>
                             <button type="button" class="ps-close"
                                 title=move || t(locale.get(), "projects.cancel")
                                 on:click=move |_| {
                                     creating.set(false);
-                                    opening_in_place.set(false);
                                 }>{compose_icon("close")}</button>
                         </div>
-                        {move || opening_in_place.get().then(|| view! {
-                            <p class="project-in-place-hint">
-                                {move || t(locale.get(), "projects.open_folder_hint")}
-                            </p>
-                        })}
                         <label>
                             {move || t(locale.get(), "proj_settings.name")}
                             <input id="new-project-name" autofocus=true
@@ -1144,19 +1030,17 @@ pub(crate) fn ProjectsScreen(
                                 prop:value=move || new_desc.get()
                                 on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
                         </label>
-                        {move || (!opening_in_place.get()).then(|| view! {
-                            <label class="pn-layout">
-                                <span class="toggle">
-                                    <input type="checkbox" prop:checked=move || new_layout.get()
-                                        on:change=move |ev| new_layout.set(event_target_checked(&ev)) />
-                                    <span class="toggle-track" aria-hidden="true"></span>
-                                </span>
-                                <span>
-                                    {move || t(locale.get(), "projects.standard_layout")}
-                                    <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
-                                </span>
-                            </label>
-                        })}
+                        <label class="pn-layout">
+                            <span class="toggle">
+                                <input type="checkbox" prop:checked=move || new_layout.get()
+                                    on:change=move |ev| new_layout.set(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </span>
+                            <span>
+                                {move || t(locale.get(), "projects.standard_layout")}
+                                <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
+                            </span>
+                        </label>
                         <label>
                             {move || t(locale.get(), "proj_settings.agent_context")}
                             <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
@@ -1167,19 +1051,11 @@ pub(crate) fn ProjectsScreen(
                         <div class="row">
                             <button type="button" on:click=move |_| {
                                 creating.set(false);
-                                opening_in_place.set(false);
                             }>
                                 {move || t(locale.get(), "projects.cancel")}</button>
                             <button type="button" class="primary"
                                 disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
-                                on:click=submit>{move || t(
-                                    locale.get(),
-                                    if opening_in_place.get() {
-                                        "projects.open_folder_action"
-                                    } else {
-                                        "projects.create"
-                                    },
-                                )}</button>
+                                on:click=submit>{move || t(locale.get(), "projects.create")}</button>
                         </div>
                     </div>
                 </div>

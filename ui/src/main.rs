@@ -10737,7 +10737,7 @@ fn App() -> impl IntoView {
             }
         });
     });
-    let start_project_export = Callback::new(move |id: String| {
+    let start_project_export = Callback::new(move |(id, directory): (String, bool)| {
         if project_transfer
             .get_untracked()
             .is_some_and(|transfer| transfer.is_active())
@@ -10751,7 +10751,7 @@ fn App() -> impl IntoView {
             Some(id.clone()),
         )));
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({ "id": id.clone() })).unwrap();
+            let args = to_value(&serde_json::json!({ "id": id.clone(), "directory": directory })).unwrap();
             match invoke_checked("export_project", args).await {
                 Ok(value) => {
                     if let Ok(Some(path)) = serde_wasm_bindgen::from_value::<Option<String>>(value)
@@ -11279,11 +11279,8 @@ fn App() -> impl IntoView {
         />
         <ProjectExportPrompt
             state=ProjectExportPromptState { locale, prompt: project_export_prompt }
-            on_export_zip=start_project_export
-            on_copy_path=Callback::new(move |path: String| {
-                copy_text(path);
-                show_toast(&t(locale.get_untracked(), "projects.folder_path_copied"));
-            })
+            on_export_zip=Callback::new(move |id| start_project_export.call((id, false)))
+            on_export_directory=Callback::new(move |id| start_project_export.call((id, true)))
         />
         <ProjectTransferOverlay state=ProjectTransferOverlayState { locale, project_transfer } />
         <ExternalLinkConfirm locale=locale pending=external_link_confirm />

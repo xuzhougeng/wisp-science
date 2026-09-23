@@ -2725,6 +2725,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             }
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "import_project": {
+            if (arg("directory")) {
+              const mode = query.get("mockProjectFolder");
+              if (mode === "cancel") return null;
+              if (mode === "missing") throw new Error("project_folder_invalid: Select an exported project folder containing manifest.json, metadata/project.sqlite and workspace.");
+              if (mode === "corrupt") throw new Error("project_folder_metadata_invalid: invalid sqlite database");
+              if (mode === "duplicate") throw new Error("This project is already present on this device.");
+              project.root = "/mock/root/new-project/workspace";
+              mockSessions.splice(0, mockSessions.length,
+                ...[1, 2, 3].map((n) => ({ id: `restored-${n}`, title: `Restored conversation ${n}`, ts: 2100 - n, running: false })));
+            }
             const delay = nextProjectTransferDelayMs.import ?? 0;
             delete nextProjectTransferDelayMs.import;
             if (delay > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(delay, 40)));
@@ -2747,7 +2757,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               totalBytes: 1024, currentPath: "data/example.tsv",
             });
             if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
-            return "/mock/wisp-project.zip";
+            return arg("directory") ? "/mock/exported-project" : "/mock/wisp-project.zip";
           }
           case "sync_project":
             if ((window as any).__failSyncConflict) {

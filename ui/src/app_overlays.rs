@@ -20,6 +20,8 @@ fn project_transfer_stage_label(locale: Locale, stage: &str) -> String {
     let key = match stage {
         "selecting_export_destination" => "projects.transfer.selecting_export_destination",
         "selecting_import_destination" => "projects.transfer.selecting_import_destination",
+        "selecting_project_folder" => "projects.transfer.selecting_project_folder",
+        "copying" => "projects.transfer.copying",
         "selecting_archive" => "projects.transfer.selecting_archive",
         "preparing" => "projects.transfer.preparing",
         "scanning" => "projects.transfer.scanning",
@@ -279,13 +281,13 @@ pub(crate) struct ProjectExportPromptState {
 pub(crate) fn ProjectExportPrompt(
     state: ProjectExportPromptState,
     on_export_zip: Callback<String>,
-    on_copy_path: Callback<String>,
+    on_export_directory: Callback<String>,
 ) -> impl IntoView {
     let ProjectExportPromptState { locale, prompt } = state;
     view! {
-        {move || prompt.get().map(|(project_id, workspace_dir)| {
+        {move || prompt.get().map(|(project_id, _)| {
             let export_id = project_id.clone();
-            let copy_path = workspace_dir.clone();
+            let directory_id = project_id.clone();
             view! {
                 <div class="overlay" data-testid="project-export-options">
                     <div class="modal confirm-modal project-export-options-modal"
@@ -295,23 +297,21 @@ pub(crate) fn ProjectExportPrompt(
                         <p class="project-export-zip-hint">
                             {move || t(locale.get(), "projects.export_zip_hint")}
                         </p>
-                        <div class="project-copy-folder-option">
-                            <strong>{move || t(locale.get(), "projects.copy_folder_title")}</strong>
-                            <p>{move || t(locale.get(), "projects.copy_folder_hint")}</p>
-                            <code title=workspace_dir.clone()>{workspace_dir}</code>
-                            <button type="button" class="btn-ghost"
-                                on:click=move |_| on_copy_path.call(copy_path.clone())>
-                                {move || t(locale.get(), "projects.copy_folder_path")}
+                        <div class="project-import-options">
+                            <button type="button" class="project-import-option"
+                                on:click=move |_| on_export_directory.call(directory_id.clone())>
+                                <strong>{move || t(locale.get(), "projects.export_directory")}</strong>
+                                <span>{move || t(locale.get(), "projects.export_directory_hint")}</span>
+                            </button>
+                            <button type="button" class="project-import-option"
+                                on:click=move |_| on_export_zip.call(export_id.clone())>
+                                <strong>{move || t(locale.get(), "projects.export_zip")}</strong>
+                                <span>{move || t(locale.get(), "projects.export_archive_hint")}</span>
                             </button>
                         </div>
                         <div class="row">
                             <button type="button" on:click=move |_| prompt.set(None)>
                                 {move || t(locale.get(), "settings.cancel")}
-                            </button>
-                            <button type="button" class="primary" on:click=move |_| {
-                                on_export_zip.call(export_id.clone());
-                            }>
-                                {move || t(locale.get(), "projects.export_zip")}
                             </button>
                         </div>
                     </div>

@@ -727,18 +727,6 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .project-export-zip-hint {
   margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.55;
 }
-.project-copy-folder-option {
-  display: grid; gap: 8px; padding: 13px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken);
-}
-.project-copy-folder-option strong { font-size: 13.5px; font-weight: 600; }
-.project-copy-folder-option p { margin: 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.5; }
-.project-copy-folder-option code {
-  overflow: hidden; padding: 8px 10px; border-radius: var(--radius-xs); background: var(--bg-elev);
-  color: var(--text-faint); font: 11.5px/1.45 var(--font-mono); text-overflow: ellipsis;
-  white-space: nowrap; user-select: text;
-}
-.project-copy-folder-option .btn-ghost { justify-self: start; }
 .project-import-options-modal { max-width: 560px; }
 .project-import-options-hint { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
 .project-import-options { display: grid; gap: 10px; }
@@ -756,9 +744,6 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   color: var(--text-muted); font-size: 12.5px; line-height: 1.5;
 }
 .workspace-recovery-modal { max-width: 600px; }
-.workspace-project-options { display: grid; gap: 8px; overflow-y: auto; max-height: 45vh; }
-.workspace-project-options .project-import-option { overflow-wrap: anywhere; min-width: 0; }
-.workspace-project-id { font-family: var(--font-mono); user-select: text; }
 .workspace-recovery-path {
   overflow: hidden; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-xs);
   background: var(--bg-sunken); color: var(--text-faint); font: 11.5px/1.45 var(--font-mono);
