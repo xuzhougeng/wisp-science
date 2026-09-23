@@ -168,3 +168,28 @@ duplicate pending writes, confirmed creation and late closed-view replies.
 Actual UI and production host persistence acceptance remain outstanding for
 this adjustment. Earlier references to evidence binding and general research
 editors as remaining requirements were broader than the requested PR scope.
+
+### Isolated production Rust host acceptance (2026-09-23)
+
+Built the current Rust desktop host with `TAURI_CONFIG` identifier
+`science.wisp-science.parity-acceptance` and `WISP_CATALOG_OFFLINE=1`, then ran
+`--native-settings-host` against its separate app-data database. Native broker
+requests used the real Rust implementation and real Tauri invoke, not the
+synthetic fixture server. The user research database was not used.
+
+Verified project creation, initial publication creation/read, group creation
+and rename, project name/Agent Context save/read, scratch open/close, native
+conversation creation, attachment copying with exact-byte comparison, and
+moving the conversation into the group. After restarting this isolated host,
+publication identity, renamed group, project settings, session group assignment
+and attachment bytes remained intact. Session storage verification reads the
+project's `.wisp/project.sqlite`, not the application registry database.
+
+This is real-host protocol/persistence acceptance, not WinUI visual acceptance.
+ZIP import, attachment send/reload through a model turn, queued follow-ups,
+credential/provider/OAuth/channel flows and narrow/150% layouts remain open.
+Current formatting, wasm check and native design/settings synchronization pass.
+A fresh full Rust workspace run is underway. The first fresh Playwright attempt
+failed during test-server startup before tests ran; a separate Trunk build
+succeeded, and a full rerun uses those assets on an isolated static server.
+Neither full suite has a final passing result recorded yet.
