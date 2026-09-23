@@ -5,69 +5,6 @@ range to the existing Rust desktop host. No second database writer or WebView
 project activation was added. Build with `scripts/build_native_windows.ps1`.
 An alternate browser database still requires a matching running host descriptor.
 
-## Latest validation status (2026-09-23, PR #1357)
-
-This status supersedes the chronological validation notes below. Release WinUI
-build/publish, the full C# contract harness, Rust formatting, wasm checking and
-native contract synchronization passed. The Windows Tauri manifest correction
-allowed all 989 Tauri unit tests to pass. After the final app/test resource
-configuration was unified, a fresh relink and both publication tests passed;
-the production app build and extracted manifests also passed verification.
-
-Real isolated Rust-host checks passed project creation, ZIP import, publication,
-group rename/move, project settings, scratch lifecycle and exact-byte attachment
-copying. A disposable loopback model provider exercised the real Rust agent
-pipeline: an attachment-bearing turn and exactly one queued follow-up produced
-two assistant replies. Restart verification preserved both turns, the attachment
-transcript and imported workspace identity/file. This is not external model or
-provider authentication acceptance. Actual WinUI checks confirmed publication
-display and immediate Escape, normal conversation recovery-button visibility,
-and live font resizing from 20/18 back to 14/12 on mounted settings controls.
-
-Full regression is not green. The original workspace run had two `wisp-runs`
-failures; both passed focused reruns, but a subsequent full package run had
-172 passes and one repeat failure in `ssh_input_staging_ledgers_uploaded_files`
-(expected one ledger entry, observed zero). The initial Playwright attempt
-failed at server startup; its full rerun against separately built static assets
-is still running. These results do not establish full-workspace success.
-
-Remaining acceptance includes dirty project-scope navigation, narrow/150%
-layouts, dynamic typography surfaces, real channel binding/sync, provider/ACP
-authentication, SkillStore installation and workflow conversion persistence.
-The overall parity objective remains open; PR #1357 is an incremental delivery.
-
-Subsequent real WinUI acceptance verified the dirty-scope guard: changing the
-project selection with an unsaved name opens the visible top confirmation,
-retains the original scope, and disables the editor. Immediate Escape closes
-only that confirmation and retains the draft. Cancel edit followed by discard
-restores the original saved project name. The real-host remote-access overview
-and unbound Feishu/Lark detail loaded; immediate Escape returned to the overview
-without leaving settings. No authorization or binding was started.
-
-A diagnostic full `wisp-runs` recheck passed all 173 tests. The earlier
-intermittent ledger failure is not considered fixed: its assertion now reports
-the command sequence and persisted run state to distinguish transfer/progress
-fixture ordering from storage failure if it recurs. A complete workspace run
-with four test threads is in progress; Playwright remains in progress as well.
-
-The four-thread workspace run subsequently reproduced the ledger failure with
-the sequence `prepare SSH Run`, `poll SSH input progress`, `stage 1 input
-file(s)`. The progress poll consumed the scripted upload-success response, so
-the upload received the launch-disconnect response and correctly wrote no
-ledger entry. The test runner now responds to progress queries independently
-of the mutation-response queue. A deterministic interleaving check and the
-original ledger test pass. The same workspace run also failed the harvest lease
-test with SQLite `database is locked`; that is a separate unresolved result.
-A full serial workspace run is now checking the final fixture correction.
-
-Additional isolated real-host acceptance saved a copied workflow, a quick action
-bound to it, and a specialist with inherited skills (`null`) and an explicit
-empty connector list. Reads preserved the complete task graph, action binding
-and distinct inheritance values. All three survived host restart, alongside
-the previously verified publication, project settings, group/session data,
-two-turn attachment transcript and imported ZIP content. Model-generated
-workflow conversion itself remains outside this persistence check.
-
 | Reference | Windows behavior |
 | --- | --- |
 | #1332–#1333 | Native search already scrolls its selected result into view. Home now opens the same tutorials URL. The WebView command palette and Help menu fixes remain shared. |
@@ -100,232 +37,150 @@ relying on that value caused a blank project page with COM error `0x800F1000`.
 Rendering also defers reentrant notifications and provides a recovery action
 instead of leaving an empty window.
 
-## First increment validation (#1355)
+## Settings and typography (#1357)
 
-`dotnet run --project apps/windows/Wisp.ProjectBrowser.ContractTests -- contracts/project-browser/v1/projects.json`
-runs existing protocol/navigation/conversation checks and 35 added parity model
-checks. Saved-layout tests also cover revealing a closed Files tab. The parity
-checks cover delayed and failed privacy reads, filtering every
-calendar payload, latest-day selection, closed-view replies, draft retention,
-group moves, scratch scope, attachment-only sends, per-session attachments,
-queue guards, explicit acknowledgement, feedback and paused polling.
+All 19 settings categories open in the existing WinUI window. Native editors
+cover general/session/appearance/pet preferences, skills and SkillStore,
+connections/MCP, memory, plugins/browser, credentials, permissions,
+environments, storage/usage, API/ACP models, workflows/actions/specialists,
+channels and project settings.
 
-Release WinUI publish, native design/contract synchronization, Rust formatting
-and the wasm UI check passed locally. Full `cargo test --workspace` reached the
-Windows Tauri test executable, which exited before assertions with
-`0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`; the full Rust suite is not green.
+Settings models retain unknown fields and credential references, preserve
+failed drafts, reject duplicate saves, and ignore late replies after disposal.
+Secret writes use existing host keyring arguments. Model editors submit all
+image/video assignments explicitly. Authentication terminal input is scoped,
+not persisted or automatically replayed after uncertain delivery.
 
-Full Playwright regression finished with 867 passed, 2 skipped, and one timeout
-in the existing WebView queued-guidance menu test: the target detached while
-Playwright was waiting to click it. A focused rerun of all seven tests in
-`queued-guidance.spec.ts` passed. The initial full run remains recorded as a
-failure; the failure did not reproduce in the focused rerun. No WebView source
-or test was changed for this Windows native increment.
+Project scope changes and category navigation respect unsaved-change guards.
+Discard confirmation and OAuth cancellation stay above long scrollable forms.
+Project settings preserve identity, save Agent Context through the host and
+refresh home/recent-session summaries after closing.
 
-Actual WinUI window checks use an isolated synthetic database and loopback
-fixture host. They exercise the real native controls and client transport, not
-real model requests or production host writes. Confirmed journeys include home,
-create form, calendar privacy filtering, immediate Escape, project entry,
-capability summary/detail with one-layer Escape, group form Escape, publication
-content with the sidebar retained, and a library filter dropdown whose first
-Escape keeps the library open. Do not interpret these checks as production create/import,
-attachment-copy, scratch-cleanup or model/queue acceptance.
+Workflow editors preserve task graphs, nullable capability inheritance and
+conversion provenance. Built-in workflows remain read-only and can be copied.
+Channels include project sync, Feishu/Lark, Weixin and device bridge controls.
+Binding polls are explicit, honor retry intervals and retain failed cancellations.
 
-## Remaining real-host smoke
+Committed UI/code font preferences bind to conversation prose, Markdown,
+composer, settings navigation/forms, shared sheets, search, auxiliary panels
+and terminals. The traversal visits app-owned logical content, preserving
+renderer fonts and existing bindings; it avoids generated templates and icons.
+Unsaved appearance changes remain local to the preview. Defaults are 14/12,
+bounded UI/code ranges are 12-20 and 10-20, and heading proportions are retained.
 
-Use a disposable workspace and a current host build; do not reuse live research
-data. Verify create and ZIP import appear after refresh; group/rename/move survive
-reopening; attach a local file, change sessions and return, then send and reload;
-queue exactly one draft during a real turn; and open/close scratch once. On each
-screen press Escape immediately after opening, with a menu/dropdown open and
-with a child sheet above a parent. Repeat at 150% scaling and a narrow window.
+Publication renders the host-selected paper with its matching revision/items.
+Initial creation is offered only after a confirmed empty workspace read and is
+replaced by the confirmed paper. Audited PR #1342 explicitly excludes evidence
+binding, readiness and reproduction; those are not extra parity requirements.
 
-## Remaining parity work (active)
+## Automated validation (2026-09-24)
 
-The follow-up objective is full completion of these remaining parts, not merely
-enabling their entry points. Each row needs implementation and matching tests
-plus real Windows UI/host evidence before it can be marked complete.
+Passed locally:
 
-| Requirement | Current evidence / next work |
-| --- | --- |
-| Skills settings | Local import, enable/disable, tags, file inspection, removal, community catalog, pinned GitHub preview/import and native path pickers implemented. Real-host install acceptance remains. |
-| Connections settings | Connector enable/approval controls, MCP stdio/HTTP editors, secret rows, OAuth command routing and cancellation implemented. Real host save/test and OAuth UI acceptance remain. |
-| Memory settings | File/global memory editors and failure-analysis settings implemented. Synthetic-host edit/save and draft Escape checks passed. Project scope selector added after that smoke; selector and actual host writes still need verification. |
-| Settings navigation | Nineteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Project settings open from the home card and project menu, with explicit project identity and summary refresh after closing. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
-| General / session / appearance / pet | Preference editors, local environment/network/update flows, pet controls and appearance font/CSS editing implemented. Full native font application and real-host acceptance remain. |
-| Models / credentials | API presets, profile editing, exact catalog lookup, API test, default selection/reorder/remove and ACP configuration/test/authentication implemented. Model keys are separate host keyring arguments; image/video assignments use explicit top-level fields. Authentication terminal input is scoped, not persisted or automatically replayed, and late snapshots are ignored after disposal. Credential status and secret writes use host keyring APIs without secret readback. Real provider and ACP authentication acceptance remain. |
-| Quick actions / workflows / specialists | Native create/edit/copy/remove, quick-action template binding and enablement, workflow tasks/dependencies/executor/budget editing, built-in read-only templates, reviewable skill/template conversions and specialist/reviewer configuration implemented. Null capability inheritance is distinct from an explicit empty whitelist. Host validation retains rejected drafts. Real-host conversion and persistence acceptance remain. |
-| Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels now include project sync, Feishu/Lark and Weixin binding, owner controls and device bridge configuration. Binding polls are explicit, honor host retry intervals and retain failed cancellations. Real binding, sync and host acceptance remain. |
-| Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
-| Publication (#1342) | Initial creation and selected publication/revision/items are implemented. The initial form appears only after an empty workspace read and disappears after confirmed creation. Real-host persistence acceptance remains. PR #1342 explicitly excludes evidence binding, readiness and reproduction; unrelated research editors are not requirements introduced by this PR range. |
-| Real host and model acceptance | Complete the smoke sequence above using disposable data, including real attachment copying, scratch lifecycle and queued model follow-ups. |
-| Final regression and delivery | Re-run relevant suites for the final change, inspect real Windows layouts and layered Escape, document exact results, and deliver a focused follow-up PR. |
+- WinUI Release build/publish and the complete C# contract harness, including
+  35 initial parity checks, 29 settings-editor checks, 16 model/authentication
+  checks, 13 channel checks, six typography checks and publication lifecycle
+  coverage. These test scope, draft retention, duplicate guards, null/empty
+  inheritance, casing, failed cancellation, late replies and no automatic replay.
+- Rust native settings DTO tests, wasm UI check, native design/settings contract
+  synchronization, Rust formatting and diff checks.
+- All 989 Tauri unit tests after correcting the Windows test manifest. Following
+  final resource unification, a fresh relink passed both publication tests;
+  the production app build and extracted manifests also passed verification.
+- The SSH ledger test and deterministic progress/upload interleaving regression
+  after the fixture correction described below.
 
-Current follow-up checks: Release WinUI build/publish passed; all existing C#
-checks plus 29 settings-editor checks passed (draft retention, no retry,
-duplicate-save exclusion, scope, argument casing, void success, unknown fields,
-credential references, OAuth dispatch/cancellation, keyring writes, optional
-plugin checksums, whitelist inheritance, independent copies, task identities,
-conversion provenance, workflow validation failures and closed-view replies). The two Rust
-native-settings DTO tests and contract sync check passed. This is interim
-validation, not proof that the full parity objective is complete. An additional
-16 model/authentication checks passed, covering key separation, assignment flags,
-unknown settings, blank-key preservation, draft testing, full-list reorder,
-late API-test cancellation, scoped terminal input, control-sequence stripping,
-uncertain-input guards and closed-terminal replies. Release build/publish and
-contract synchronization passed after adding models. Actual WinUI
-fixture-host checks also confirmed the general preference form opens in the
-same window and immediate Escape closes only its editor. Additional actual
-WinUI checks confirmed quick-action editor Escape, project selection followed
-by workflow reads and one save scoped to `parity-a`, and task-graph preservation
-in that save. A long-editor discard confirmation was initially below the fold;
-it now stays beneath the heading. Immediate Escape opens it, then another Escape
-closes only the confirmation and preserves the changed workflow draft.
-Dirty-draft navigation across scopes still needs UI acceptance. The full Rust
-and Playwright results above belong to the first increment; they were not rerun
-for this settings follow-up.
+The full serial workspace run is still running. It passed all 174 `wisp-runs`
+tests and reached later crates. Full Playwright finished with 864 passes, two
+skips and five failures. A one-worker focused rerun of all five failure locations
+(six cases, including both export locales) passed. The original full-run failure
+remains recorded; neither full suite is recorded as finally green yet.
 
-Model UI smoke used the same isolated fixture host: the API list/presets,
-new-model form, ACP list and executable/argument editor rendered in the current
-window. Immediate Escape returned each editor to its parent page. No real key,
-external API test or authentication flow was exercised by this UI smoke.
+### Regression findings and fixes
 
-Channel and project follow-up: Release build/publish and the complete C# harness
-passed, including 13 channel checks for flow identity, scope, throttling,
-cancellation, expiry, late replies, argument casing and unrelated settings
-preservation. The project editor check verifies immutable project identity and
-Agent Context argument casing. QR images use the host-returned SVG data; real
-QR rendering/scanning and account binding have not been accepted yet.
+The Tauri test executable lacked the Common Controls v6 manifest present in the
+app and exited with `0xc0000139` before assertions. The MSVC linker now embeds
+one shared manifest across executable targets; the app-only manifest resource
+is disabled to avoid duplicate-resource CVT1100. Other target configurations
+retain the default Tauri behavior. No binary-patching workaround is required.
 
-Actual WinUI fixture checks verified the home card opens the selected project's
-settings, immediate editor Escape returns to its parent, and one project rename
-sends the explicit `parity-a` identity while preserving Agent Context. Returning
-to home refreshes both the project card and recent-session labels. These are
-synthetic-host checks, not production Rust persistence acceptance. Channel UI
-navigation and dirty scope switching still need visual acceptance.
+The original workspace run had two `wisp-runs` failures; focused reruns passed,
+then repeated package/workspace runs exposed intermittent failures again. A
+later full diagnostic package run passed 173 tests, which alone did not resolve
+the flake. Command diagnostics subsequently proved the ledger fixture race:
+`prepare SSH Run`, `poll SSH input progress`, `stage 1 input file(s)`. Progress
+consumed the scripted upload-success response, so upload received the launch
+failure and correctly wrote no ledger. The fake runner now answers progress
+queries independently of the mutation-response queue, with a deterministic
+interleaving regression. The four-thread workspace run separately reported
+SQLite `database is locked` in the harvest lease test; that remains unresolved.
 
-### Native conversation typography
+The first fresh Playwright attempt failed at server startup before tests ran.
+A separate Trunk build succeeded and the completed rerun served those assets
+from an isolated static server. Failures were the cold-window loading indicator,
+three project-entry timeouts (message evidence, overflow tabs and Chinese
+project export), and the two-second Stop action in the WebView load test.
+Generated research-journey design-QA PNGs were restored after the suite finished.
 
-Confirmed appearance preferences now update native conversation prose, Markdown
-headings, code blocks, inline code, tool output, approval previews and the
-composer. Home/sidebar text produced by the shared text helper also scales.
-UI and code sizes remain independent; headings retain their relative sizes.
-The appearance preview uses the same calculation, and confirmed preferences
-are cached for restart. Editing the preview does not apply unsaved fonts.
-An unchanged host read refreshes the cache; a dirty draft is not applied.
+Historical #1355 validation: Playwright had 867 passes, two skips and one
+queued-guidance timeout; all seven focused queued-guidance tests then passed.
+Its original Rust run stopped at the now-corrected Tauri loader failure. Those
+historical results do not substitute for final #1357 regression results.
 
-Six additional model checks cover older preferences, proportional headings,
-independent code sizes, custom families, malformed values, bounds and wire
-numeric values. Remaining typography acceptance includes actual Windows
-rendering after save/reopen, all settings and auxiliary controls, narrow layouts
-and scaling. This increment does not establish full native font coverage.
+## Real Windows and host acceptance
 
-
-Publication scope audit: [PR #1342](https://github.com/xuzhougeng/wisp-science/pull/1342)
-and `NativePublication.swift` establish an initial-create/read workspace, not a
-full publication editor. The WinUI page now renders the host-selected paper
-with its revision/items instead of presenting all paper titles above one
-revision. The creation form waits for an empty workspace and disappears after
-success. Lifecycle checks cover unread/existing/empty states, invalid drafts,
-duplicate pending writes, confirmed creation and late closed-view replies.
-Actual UI and production host persistence acceptance remain outstanding for
-this adjustment. Earlier references to evidence binding and general research
-editors as remaining requirements were broader than the requested PR scope.
-
-### Isolated production Rust host acceptance (2026-09-23)
-
-Built the current Rust desktop host with `TAURI_CONFIG` identifier
-`science.wisp-science.parity-acceptance` and `WISP_CATALOG_OFFLINE=1`, then ran
-`--native-settings-host` against its separate app-data database. Native broker
-requests used the real Rust implementation and real Tauri invoke, not the
-synthetic fixture server. The user research database was not used.
-
-Verified project creation, initial publication creation/read, group creation
-and rename, project name/Agent Context save/read, scratch open/close, native
-conversation creation, attachment copying with exact-byte comparison, and
-moving the conversation into the group. After restarting this isolated host,
-publication identity, renamed group, project settings, session group assignment
-and attachment bytes remained intact. Session storage verification reads the
+The production Rust host was built with isolated identifier
+`science.wisp-science.parity-acceptance` and its own application database.
+Acceptance used disposable projects, not the user's research data. The native
+broker forwarded real Tauri invokes. Session persistence checks read the
 project's `.wisp/project.sqlite`, not the application registry database.
 
-This is real-host protocol/persistence acceptance, not WinUI visual acceptance.
-ZIP import, attachment send/reload through a model turn, queued follow-ups,
-credential/provider/OAuth/channel flows and narrow/150% layouts remain open.
-Current formatting, wasm check and native design/settings synchronization pass.
-A fresh full Rust workspace run is underway. The first fresh Playwright attempt
-failed during test-server startup before tests ran; a separate Trunk build
-succeeded, and a full rerun uses those assets on an isolated static server.
-Neither full suite has a final passing result recorded yet.
+Verified against that host:
 
-ZIP import and real WinUI follow-up: a disposable valid ZIP fixture containing
-current-schema project metadata and one workspace file was imported through
-`native_project_import`; the returned project identity, extracted bytes and
-project settings readback passed. The current WinUI acceptance build connected
-to this real host and displayed both the imported project and the earlier
-created project. Opening the existing publication showed its title,
-description and `v1 / draft`, with no initial-create form. Immediate Escape
-returned to the project conversation area while retaining the sidebar.
+- Project creation, valid ZIP import with identity and exact extracted bytes,
+  publication create/read, group creation/rename and session group assignment.
+- Project name/Agent Context save/read, scratch open/close, conversation
+  creation and exact-byte attachment copying into the project workspace.
+- Real Rust agent execution with a disposable loopback HTTP model fixture:
+  attachment-bearing first turn, exactly one queued follow-up and two assistant
+  replies. Restart preserved both turns and the attachment transcript.
+- Workflow graph save/read, quick-action template binding and specialist
+  instructions with inherited skills (`null`) versus an empty connector list.
+  All survived host restart together with the earlier project/publication data.
+- Conversion from a disposable project Skill through a loopback planning model:
+  source read, two-node draft validation, explicit template save, graph readback
+  and persisted source SHA-256. This verifies the host contract and provenance;
+  it is not external model-quality acceptance or workflow execution.
 
-The fresh full Rust run stopped in `wisp-runs`: 171 passed and 2 failed.
-`auto_harvest_skips_collect_when_already_harvested` reported SQLite database
-locked; `ssh_input_staging_ledgers_uploaded_files` expected one ledger entry
-but observed zero. Focused reruns are underway; neither failure is waived.
-The full Playwright rerun is still running on the separately built frontend.
-Its research-journey screenshot tests regenerate tracked design-QA PNGs;
-these generated files are not part of this native change and must be restored
-after the test run finishes.
+Actual WinUI acceptance:
 
-Both failing `wisp-runs` tests passed in focused reruns. The original full-run
-failure remains; this does not establish a fully green workspace suite.
-A remaining-workspace run excluding that package is now checking the crates
-that the first run did not reach.
+- Synthetic fixture host: memory edit/save; same-window general/model/ACP forms;
+  quick-action Escape; project-scoped workflow save with graph preservation;
+  selected-project rename and refreshed summaries; topmost discard Escape.
+- Real host: imported/created projects and matching publication/revision display;
+  initial-create form absent for an existing publication; immediate Escape
+  returns to the project area with sidebar retained.
+- Recovery buttons are absent on ordinary empty conversations, appearing only
+  for an error or uncertain send/queue result.
+- UI/code font sizes 20/18 enlarge home/settings text and controls. Restoring
+  14/12 and reloading the same mounted page updates existing controls immediately.
+  Original isolated-host preferences were restored.
+- Dirty project-scope switching opens the visible top confirmation while
+  retaining the original project. Immediate Escape dismisses only confirmation,
+  retains the draft and re-enables the editor. Explicit discard restores the
+  saved project name.
+- Real remote-access overview and unbound Feishu/Lark detail load correctly;
+  Escape returns to the overview. At a verified 614x567 captured window, sidebar,
+  overview/detail controls and wrapped explanatory text remained usable, and
+  detail Escape retained the settings parent. No account binding was started.
 
-Real WinUI inspection also found recovery buttons visible on a normal empty
-conversation. The retry button now appears only for a reported error, and the
-acknowledgement button only when a send/queue result is uncertain. Release
-build/publish and the C# harness passed; a second real-host WinUI launch
-confirmed neither recovery action appears on the normal empty project page.
+## Remaining acceptance
 
-### Expanded native font bindings
-
-Settings navigation/forms, shared sheet headings and notices, search results,
-conversation controls, auxiliary panels and terminal controls now bind to the
-committed native font preferences. The binding pass visits app-owned content
-only, preserves explicit renderer fonts and existing bindings, and does not
-traverse generated templates or icon glyphs. Repeated refreshes therefore do
-not repeatedly scale already configured text. Appearance preview content is
-excluded so unsaved changes remain preview-only. Terminal input/output use the
-independent code font setting.
-
-Actual WinUI acceptance against the isolated Rust host set UI/code sizes to
-20/18, confirmed enlarged home text, settings headings, navigation buttons,
-combo boxes and labels at the approximately 800x565 logical-pixel window, then
-restored 14/12 and reloaded the same mounted settings page. Both text and
-controls shrank immediately without reopening, and headings retained their
-relative size. The original isolated-host preferences were restored. Release
-build/publish and the complete C# harness passed; remaining surface-specific
-layout and dirty-navigation acceptance are still tracked above.
-
-The remaining-workspace Rust run reached Tauri after the preceding crates
-passed, but its unit-test executable exited before assertions with
-`0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`. This confirms the local test-loader
-problem still exists; the separately built production host acceptance above
-passed and is not evidence that the Tauri unit suite ran successfully.
-
-### Windows Tauri test-loader correction
-
-Manifest extraction confirmed the app executable contained Common Controls v6,
-but the Tauri unit-test executable had no resource section. It imports v6
-functions and therefore exited with `STATUS_ENTRYPOINT_NOT_FOUND` before the
-harness could run. The MSVC build now lets the linker embed the existing
-Common Controls manifest for all executable targets, and disables the separate
-app-only manifest resource to avoid duplicate-resource CVT1100 errors. Other
-targets keep the default Tauri resource configuration.
-
-Ordinary `cargo test -p wisp-tauri --lib native_publication -- --nocapture`
-started without binary patching and passed both tests. A full Tauri unit run
-is in progress. A normal app build also passed after eliminating the duplicate
-manifest; extracted app/test manifests contain the v6 dependency and an
-as-invoker execution level. Formatting and diff checks pass. Final full-suite
-results and a fresh test relink with the unified app/test resource configuration
-will be recorded after the currently running harness finishes.
+The overall parity objective remains open. Finish the running full suites and
+investigate any remaining regression failures. Further manual acceptance covers
+150% display scaling, additional narrow/large-font dynamic surfaces, real
+provider/ACP authentication, MCP test/OAuth cancellation, pinned SkillStore
+installation, channel binding/sync and real SSH/WSL contexts. External-account
+flows must use dedicated test accounts; loopback fixtures do not prove those
+integrations work. Preserve the distinction between automated model/transport
+checks, actual WinUI checks and real external-service acceptance.
