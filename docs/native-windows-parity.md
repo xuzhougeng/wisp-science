@@ -50,6 +50,24 @@ the command sequence and persisted run state to distinguish transfer/progress
 fixture ordering from storage failure if it recurs. A complete workspace run
 with four test threads is in progress; Playwright remains in progress as well.
 
+The four-thread workspace run subsequently reproduced the ledger failure with
+the sequence `prepare SSH Run`, `poll SSH input progress`, `stage 1 input
+file(s)`. The progress poll consumed the scripted upload-success response, so
+the upload received the launch-disconnect response and correctly wrote no
+ledger entry. The test runner now responds to progress queries independently
+of the mutation-response queue. A deterministic interleaving check and the
+original ledger test pass. The same workspace run also failed the harvest lease
+test with SQLite `database is locked`; that is a separate unresolved result.
+A full serial workspace run is now checking the final fixture correction.
+
+Additional isolated real-host acceptance saved a copied workflow, a quick action
+bound to it, and a specialist with inherited skills (`null`) and an explicit
+empty connector list. Reads preserved the complete task graph, action binding
+and distinct inheritance values. All three survived host restart, alongside
+the previously verified publication, project settings, group/session data,
+two-turn attachment transcript and imported ZIP content. Model-generated
+workflow conversion itself remains outside this persistence check.
+
 | Reference | Windows behavior |
 | --- | --- |
 | #1332–#1333 | Native search already scrolls its selected result into view. Home now opens the same tutorials URL. The WebView command palette and Help menu fixes remain shared. |

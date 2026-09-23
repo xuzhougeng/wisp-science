@@ -1809,6 +1809,11 @@ impl RunCommandRunner for ScriptedRunRunner {
             }
         }
         self.commands.lock().unwrap().push(command.clone());
+        // Progress polls can run before the transfer future is first polled.
+        // They must not consume the scripted prepare/upload/launch responses.
+        if command.script == "poll SSH input progress" {
+            return ok_output("");
+        }
         let output = self
             .outputs
             .lock()
@@ -1837,6 +1842,46 @@ fn ok_output(stdout: &str) -> Result<RunCommandOutput, String> {
         stdout: stdout.into(),
         stderr: String::new(),
     })
+}
+
+#[tokio::test]
+async fn scripted_input_progress_does_not_consume_transfer_responses() {
+    let runner = ScriptedRunRunner::new(vec![
+        ok_output("uploaded"),
+        Err("launch disconnected".into()),
+    ]);
+    let command = |script: &str| RunCommand {
+        context_id: "ssh:gpu".into(),
+        program: "ssh".into(),
+        args: Vec::new(),
+        script: script.into(),
+        cwd: None,
+        stdin: None,
+        envs: Vec::new(),
+    };
+    for _ in 0..2 {
+        assert!(runner
+            .run(command("poll SSH input progress"), Duration::from_secs(1))
+            .await
+            .unwrap()
+            .stdout
+            .is_empty());
+    }
+    assert_eq!(
+        runner
+            .run(command("stage 1 input file(s)"), Duration::from_secs(1))
+            .await
+            .unwrap()
+            .stdout,
+        "uploaded"
+    );
+    assert_eq!(
+        runner
+            .run(command("launch SSH Run"), Duration::from_secs(1))
+            .await
+            .unwrap_err(),
+        "launch disconnected"
+    );
 }
 
 #[tokio::test]
