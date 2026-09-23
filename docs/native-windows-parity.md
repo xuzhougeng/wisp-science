@@ -193,3 +193,32 @@ A fresh full Rust workspace run is underway. The first fresh Playwright attempt
 failed during test-server startup before tests ran; a separate Trunk build
 succeeded, and a full rerun uses those assets on an isolated static server.
 Neither full suite has a final passing result recorded yet.
+
+ZIP import and real WinUI follow-up: a disposable valid ZIP fixture containing
+current-schema project metadata and one workspace file was imported through
+`native_project_import`; the returned project identity, extracted bytes and
+project settings readback passed. The current WinUI acceptance build connected
+to this real host and displayed both the imported project and the earlier
+created project. Opening the existing publication showed its title,
+description and `v1 / draft`, with no initial-create form. Immediate Escape
+returned to the project conversation area while retaining the sidebar.
+
+The fresh full Rust run stopped in `wisp-runs`: 171 passed and 2 failed.
+`auto_harvest_skips_collect_when_already_harvested` reported SQLite database
+locked; `ssh_input_staging_ledgers_uploaded_files` expected one ledger entry
+but observed zero. Focused reruns are underway; neither failure is waived.
+The full Playwright rerun is still running on the separately built frontend.
+Its research-journey screenshot tests regenerate tracked design-QA PNGs;
+these generated files are not part of this native change and must be restored
+after the test run finishes.
+
+Both failing `wisp-runs` tests passed in focused reruns. The original full-run
+failure remains; this does not establish a fully green workspace suite.
+A remaining-workspace run excluding that package is now checking the crates
+that the first run did not reach.
+
+Real WinUI inspection also found recovery buttons visible on a normal empty
+conversation. The retry button now appears only for a reported error, and the
+acknowledgement button only when a send/queue result is uncertain. Release
+build/publish and the C# harness passed; a second real-host WinUI launch
+confirmed neither recovery action appears on the normal empty project page.

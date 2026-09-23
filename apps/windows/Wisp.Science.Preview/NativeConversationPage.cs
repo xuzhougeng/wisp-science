@@ -23,6 +23,8 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly Button createSession = new() { Content = "新建会话" };
     private readonly Button attach = new() { Content = "对话附件" };
     private readonly Button queue = new() { Content = "排队后续" };
+    private readonly Button retry = new() { Content = "重新读取" };
+    private readonly Button acknowledge = new() { Content = "已检查，允许再次发送或排队…" };
     private readonly StackPanel attachments = new() { Spacing = 4 };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly TextBlock hint = new() { FontSize = 11 };
@@ -42,12 +44,10 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         status.Margin = new Thickness(24, 12, 24, 0);
-        var retry = new Button { Content = "重新读取" };
         retry.Click += async (_, _) => await model.RefreshAsync(lifetime.Token);
-        var ack = new Button { Content = "已检查，允许再次发送或排队…" };
-        ack.Click += (_, _) => model.AcknowledgeUncertainSend();
+        acknowledge.Click += (_, _) => model.AcknowledgeUncertainSend();
         var banner = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(24, 8, 24, 0) };
-        banner.Children.Add(retry); banner.Children.Add(ack);
+        banner.Children.Add(retry); banner.Children.Add(acknowledge);
         var header = new StackPanel(); header.Children.Add(status); header.Children.Add(banner);
         root.Children.Add(header);
         scroll.Content = transcript; Grid.SetRow(scroll, 1); root.Children.Add(scroll);
@@ -127,6 +127,8 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         FontFamily = design.Font(); FontSize = design.FontSize(14);
         composer.FontFamily = design.Font(); composer.FontSize = design.FontSize(14);
         var error = model.ConnectionError ?? model.OperationError ?? model.Snapshot?.Error;
+        retry.Visibility = error != null ? Visibility.Visible : Visibility.Collapsed;
+        acknowledge.Visibility = model.UncertainSend ? Visibility.Visible : Visibility.Collapsed;
         status.Text = error ?? "";
         status.Foreground = design.Brush(error == null ? "text-muted" : "clay-strong");
         status.Visibility = error == null && !model.UncertainSend ? Visibility.Collapsed : Visibility.Visible;
