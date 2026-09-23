@@ -32,6 +32,10 @@ impl Store {
         model_id: &str,
         sessions: &[RecoveredWorkspaceSession],
     ) -> Result<Vec<String>> {
+        if self.registry.is_some() {
+            let workspace = std::path::Path::new(workspace_dir);
+            anyhow::ensure!(!workspace.join(super::PROJECT_DATABASE).exists() && !workspace.join(super::PROJECT_METADATA).exists(), "This workspace already contains project storage; import its project folder instead");
+        }
         if project_id.trim().is_empty() || name.trim().is_empty() || workspace_dir.trim().is_empty()
         {
             anyhow::bail!("recovered project identity is incomplete");
@@ -132,11 +136,20 @@ impl Store {
             frame_ids.push(frame_id);
         }
         tx.commit().await?;
+        if self.registry.is_some() && self.project_scope.is_none() {
+            self.migrate_project_storage(project_id).await?;
+        }
         Ok(frame_ids)
     }
 
     /// The frame a session archive was already imported into, if any.
     pub async fn find_session_import(&self, source_session_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self
+            .route_entity("session_imports", "source_session_id", source_session_id)
+            .await?
+        {
+            return Box::pin(store.find_session_import(source_session_id)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT frame_id FROM session_imports WHERE source_session_id=?")
                 .bind(source_session_id)
@@ -152,6 +165,10 @@ impl Store {
         frame_id: &str,
         source_path: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.record_session_import(source_session_id, frame_id, source_path))
+                .await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO session_imports(source_session_id,frame_id,source_path,created_at,updated_at) \

@@ -3,6 +3,9 @@ use anyhow::Result;
 
 impl Store {
     pub async fn replace_plugin_installation(&self, plugin: &PluginInstallation) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.replace_plugin_installation(plugin)).await;
+        }
         let mut tx = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO plugin_installations(\
@@ -51,6 +54,9 @@ impl Store {
         plugin_id: &str,
         version: &str,
     ) -> Result<Option<PluginInstallation>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.get_plugin_installation(plugin_id, version)).await;
+        }
         let row = sqlx::query_as::<
             _,
             (
@@ -81,6 +87,9 @@ impl Store {
     }
 
     pub async fn list_plugin_installations(&self) -> Result<Vec<PluginInstallation>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.list_plugin_installations()).await;
+        }
         let rows = sqlx::query_as::<
             _,
             (
@@ -109,6 +118,9 @@ impl Store {
     }
 
     pub async fn delete_plugin_installation(&self, plugin_id: &str, version: &str) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.delete_plugin_installation(plugin_id, version)).await;
+        }
         sqlx::query("DELETE FROM plugin_installations WHERE plugin_id=? AND version=?")
             .bind(plugin_id)
             .bind(version)
@@ -125,6 +137,16 @@ impl Store {
         enabled: bool,
         grants_json: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.set_project_plugin(
+                project_id,
+                plugin_id,
+                version,
+                enabled,
+                grants_json,
+            ))
+            .await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO project_plugins(project_id,plugin_id,version,enabled,grants_json,updated_at) \
@@ -150,6 +172,10 @@ impl Store {
         plugin_id: &str,
         enabled: bool,
     ) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.set_project_plugin_enabled(project_id, plugin_id, enabled))
+                .await;
+        }
         let result = sqlx::query(
             "UPDATE project_plugins SET enabled=?,updated_at=? \
              WHERE project_id=? AND plugin_id=?",
@@ -164,6 +190,9 @@ impl Store {
     }
 
     pub async fn list_project_plugins(&self, project_id: &str) -> Result<Vec<ProjectPlugin>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_project_plugins(project_id)).await;
+        }
         let rows = sqlx::query_as::<_, (String, String, String, bool, String, i64)>(
             "SELECT project_id,plugin_id,version,enabled,grants_json,updated_at \
              FROM project_plugins WHERE project_id=? ORDER BY plugin_id",
@@ -192,6 +221,19 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<PluginInstallation>> {
+        if self.registry.is_some() {
+            let enabled = self.list_project_plugins(project_id).await?;
+            let mut result = Vec::new();
+            for binding in enabled.into_iter().filter(|p| p.enabled) {
+                if let Some(plugin) = self
+                    .get_plugin_installation(&binding.plugin_id, &binding.version)
+                    .await?
+                {
+                    result.push(plugin);
+                }
+            }
+            return Ok(result);
+        }
         let rows = sqlx::query_as::<
             _,
             (

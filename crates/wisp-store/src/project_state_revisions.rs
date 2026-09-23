@@ -40,6 +40,9 @@ impl Store {
         &self,
         revision: &ProjectStateRevision,
     ) -> Result<bool> {
+        if let Some(store) = self.route_project(&revision.project_id).await? {
+            return Box::pin(store.create_project_state_revision(revision)).await;
+        }
         if revision.id.trim().is_empty()
             || revision.project_id.trim().is_empty()
             || revision.frame_id.trim().is_empty()
@@ -167,6 +170,9 @@ impl Store {
         frame_id: &str,
         turn_index: i64,
     ) -> Result<Option<ProjectStateRevision>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.project_state_revision_for_turn(frame_id, turn_index)).await;
+        }
         let row =
             sqlx::query("SELECT * FROM project_state_revisions WHERE frame_id=? AND turn_index=?")
                 .bind(frame_id)
@@ -182,6 +188,14 @@ impl Store {
         message_seq: i64,
         workspace_snapshot_id: &str,
     ) -> Result<Option<ProjectStateRevision>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.project_state_revision_for_boundary(
+                frame_id,
+                message_seq,
+                workspace_snapshot_id,
+            ))
+            .await;
+        }
         let row = sqlx::query(
             "SELECT * FROM project_state_revisions WHERE frame_id=? AND message_seq=? \
              AND workspace_snapshot_id=? LIMIT 1",
@@ -198,6 +212,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Option<ProjectStateRevision>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.latest_project_state_revision(frame_id)).await;
+        }
         let row = sqlx::query(
             "SELECT * FROM project_state_revisions WHERE frame_id=? ORDER BY turn_index DESC LIMIT 1",
         )
@@ -211,6 +228,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<ProjectStateRevision>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_project_state_revisions(frame_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT * FROM project_state_revisions WHERE frame_id=? ORDER BY turn_index",
         )
@@ -228,6 +248,12 @@ impl Store {
         turn_start: i64,
         turn_end: i64,
     ) -> Result<Vec<ProjectStateRevisionSummary>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(
+                store.list_project_state_revision_summaries(frame_id, turn_start, turn_end),
+            )
+            .await;
+        }
         if turn_start < 0 || turn_end < turn_start || turn_end - turn_start > 200 {
             anyhow::bail!("Project state revision summary range is invalid");
         }
@@ -251,6 +277,9 @@ impl Store {
     /// Stable UI turn count. Unlike the model-context `messages` table, these
     /// User events survive compaction and therefore preserve historical indices.
     pub async fn frame_visual_user_turn_count(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_visual_user_turn_count(frame_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM session_ui_events WHERE frame_id=? \
              AND json_extract(event_json,'$.kind')='User'",
@@ -261,6 +290,9 @@ impl Store {
     }
 
     pub async fn list_mainline_decision_ids(&self, project_id: &str) -> Result<Vec<String>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_mainline_decision_ids(project_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT id FROM research_nodes WHERE project_id=? AND exploration_id IS NULL \
              AND kind='decision' ORDER BY id",

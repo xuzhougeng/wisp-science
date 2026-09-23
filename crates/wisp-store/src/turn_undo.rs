@@ -16,6 +16,20 @@ impl Store {
         reversible: bool,
         reason: Option<&str>,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.save_turn_file_undo(
+                frame_id,
+                user_message_seq,
+                path,
+                before_exists,
+                before_snapshot_path,
+                before_checksum,
+                after_checksum,
+                reversible,
+                reason,
+            ))
+            .await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO turn_file_undo(\
@@ -54,6 +68,9 @@ impl Store {
         frame_id: &str,
         user_message_seq: i64,
     ) -> Result<Vec<TurnFileUndo>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_turn_file_undo(frame_id, user_message_seq)).await;
+        }
         let rows = sqlx::query(
             "SELECT frame_id,user_message_seq,path,before_exists,before_snapshot_path,\
              before_checksum,after_checksum,reversible,reason \
@@ -86,6 +103,9 @@ impl Store {
         frame_id: &str,
         keep: i64,
     ) -> Result<Vec<(String, String)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_owned_message_artifacts(frame_id, keep)).await;
+        }
         let rows = sqlx::query(
             "SELECT DISTINCT owned.display_name,owned.mime_type \
              FROM message_resource_links owned \
@@ -121,6 +141,9 @@ impl Store {
     /// Truncate one turn and roll back only artifact versions that its resource
     /// bindings created. Workspace files are restored by the caller first.
     pub async fn truncate_messages_for_undo(&self, frame_id: &str, keep: i64) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.truncate_messages_for_undo(frame_id, keep)).await;
+        }
         let mut tx = self.begin_write().await?;
         let owned = sqlx::query(
             "SELECT DISTINCT l.artifact_id,l.artifact_version_id,l.created_artifact,\

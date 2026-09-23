@@ -1,10 +1,11 @@
 use super::{Store, FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX};
 
-const FRAME_SETTING_PREFIXES: &[&str] = &[
+pub(super) const FRAME_SETTING_PREFIXES: &[&str] = &[
     "frame_specialist:",
     "frame_delegation_enabled:",
     "frame_plan_mode:",
     "frame_agent_completion:",
+    "frame_auto_review:",
     FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX,
 ];
 use anyhow::Result;
@@ -273,6 +274,9 @@ impl Store {
         &self,
         snapshot: &WorkspaceSnapshotRecord,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(&snapshot.project_id).await? {
+            return Box::pin(store.create_workspace_snapshot(snapshot)).await;
+        }
         validate_id("Workspace snapshot", &snapshot.id)?;
         validate_id("Workspace snapshot project", &snapshot.project_id)?;
         validate_sha256("Workspace snapshot manifest", &snapshot.manifest_sha256)?;
@@ -293,6 +297,9 @@ impl Store {
     }
 
     pub async fn create_context_archive(&self, archive: &ContextArchiveRecord) -> Result<()> {
+        if let Some(store) = self.route_project(&archive.project_id).await? {
+            return Box::pin(store.create_context_archive(archive)).await;
+        }
         validate_id("Context archive", &archive.id)?;
         validate_id("Context archive project", &archive.project_id)?;
         validate_id("Context archive frame", &archive.frame_id)?;
@@ -318,6 +325,12 @@ impl Store {
         &self,
         archive_id: &str,
     ) -> Result<Option<ContextArchiveRecord>> {
+        if let Some(store) = self
+            .route_entity("context_archives", "id", archive_id)
+            .await?
+        {
+            return Box::pin(store.get_context_archive(archive_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,frame_id,storage_path,checksum,created_at \
              FROM context_archives WHERE id=?",
@@ -339,6 +352,9 @@ impl Store {
     }
 
     pub async fn create_exploration_family(&self, family: &ExplorationFamily) -> Result<()> {
+        if let Some(store) = self.route_project(&family.project_id).await? {
+            return Box::pin(store.create_exploration_family(family)).await;
+        }
         validate_id("Exploration family", &family.id)?;
         validate_id("Exploration family project", &family.project_id)?;
         if family.generation != 0 {
@@ -367,6 +383,12 @@ impl Store {
         &self,
         family_id: &str,
     ) -> Result<Option<ExplorationFamily>> {
+        if let Some(store) = self
+            .route_entity("exploration_families", "id", family_id)
+            .await?
+        {
+            return Box::pin(store.get_exploration_family(family_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,root_frame_id,mainline_frame_id,generation,created_at,updated_at \
              FROM exploration_families WHERE id=?",
@@ -382,6 +404,9 @@ impl Store {
         project_id: &str,
         frame_id: &str,
     ) -> Result<Option<ExplorationFamily>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.exploration_family_for_mainline(project_id, frame_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,root_frame_id,mainline_frame_id,generation,created_at,updated_at \
              FROM exploration_families WHERE project_id=? AND mainline_frame_id=?",
@@ -397,6 +422,12 @@ impl Store {
         &self,
         snapshot_id: &str,
     ) -> Result<Option<WorkspaceSnapshotRecord>> {
+        if let Some(store) = self
+            .route_entity("workspace_snapshots", "id", snapshot_id)
+            .await?
+        {
+            return Box::pin(store.get_workspace_snapshot_record(snapshot_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,manifest_json,manifest_sha256,created_at \
              FROM workspace_snapshots WHERE id=?",
@@ -420,6 +451,14 @@ impl Store {
     /// desktop layer uses these to conservatively retain content-addressed
     /// blobs while removing storage for a resolved exploration round.
     pub async fn list_workspace_snapshot_manifests(&self) -> Result<Vec<String>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_workspace_snapshot_manifests()).await?;
+                result.extend(value);
+            }
+            return Ok(result);
+        }
         Ok(
             sqlx::query_scalar("SELECT manifest_json FROM workspace_snapshots ORDER BY id")
                 .fetch_all(&self.pool)
@@ -428,6 +467,9 @@ impl Store {
     }
 
     pub async fn frame_state_scope(&self, frame_id: &str) -> Result<Option<StateScope>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_state_scope(frame_id)).await;
+        }
         let row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT project_id,exploration_id FROM frames WHERE id=?")
                 .bind(frame_id)
@@ -442,6 +484,9 @@ impl Store {
     }
 
     pub async fn frame_message_head(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_message_head(frame_id)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?")
                 .bind(frame_id)
@@ -451,6 +496,9 @@ impl Store {
     }
 
     pub async fn frame_ui_event_head(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_ui_event_head(frame_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq),0) FROM session_ui_events WHERE frame_id=?",
         )
@@ -465,6 +513,9 @@ impl Store {
         frame_id: &str,
         turn_index: i64,
     ) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_ui_event_head_after_turn(frame_id, turn_index)).await;
+        }
         if turn_index < 0 {
             anyhow::bail!("Invalid conversation turn index");
         }
@@ -488,6 +539,15 @@ impl Store {
         message_head_seq: i64,
         ui_event_head_seq: i64,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", source_frame_id).await? {
+            return Box::pin(store.clone_exploration_frame(
+                source_frame_id,
+                target_frame_id,
+                message_head_seq,
+                ui_event_head_seq,
+            ))
+            .await;
+        }
         validate_id("Exploration source frame", source_frame_id)?;
         validate_id("Exploration target frame", target_frame_id)?;
         if message_head_seq <= 0 || ui_event_head_seq < 0 {
@@ -647,6 +707,12 @@ impl Store {
         frame_id: &str,
         source_root: &std::path::Path,
     ) -> Result<u64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(
+                store.rewrite_cloned_context_archive_references(frame_id, source_root),
+            )
+            .await;
+        }
         validate_id("Exploration frame", frame_id)?;
         let native_prefix = source_root
             .join(".wisp")
@@ -710,6 +776,9 @@ impl Store {
         frame_id: &str,
         messages: &[wisp_llm::Message],
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.replace_exploration_clone_history(frame_id, messages)).await;
+        }
         validate_id("Exploration frame", frame_id)?;
         if messages.is_empty() {
             anyhow::bail!("Exploration checkpoint transcript is empty");
@@ -735,6 +804,9 @@ impl Store {
         &self,
         checkpoint: &ExplorationCheckpoint,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(&checkpoint.project_id).await? {
+            return Box::pin(store.create_exploration_checkpoint(checkpoint)).await;
+        }
         validate_checkpoint(checkpoint)?;
         let family = self
             .get_exploration_family(&checkpoint.family_id)
@@ -844,6 +916,12 @@ impl Store {
         &self,
         checkpoint_id: &str,
     ) -> Result<Option<ExplorationCheckpoint>> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.get_exploration_checkpoint(checkpoint_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,family_id,project_id,source_frame_id,source_message_seq,\
                     source_frame_head_seq,source_ui_event_seq,source_ui_event_head_seq,source_family_generation,\
@@ -864,6 +942,15 @@ impl Store {
         source_message_seq: i64,
         guard_hash: &str,
     ) -> Result<Option<ExplorationCheckpoint>> {
+        if let Some(store) = self.route_entity("frames", "id", source_frame_id).await? {
+            return Box::pin(store.get_exploration_checkpoint_by_guard(
+                family_id,
+                source_frame_id,
+                source_message_seq,
+                guard_hash,
+            ))
+            .await;
+        }
         let row = sqlx::query(
             "SELECT id,family_id,project_id,source_frame_id,source_message_seq,\
                     source_frame_head_seq,source_ui_event_seq,source_ui_event_head_seq,source_family_generation,\
@@ -888,6 +975,15 @@ impl Store {
         family_id: &str,
         family_generation: i64,
     ) -> Result<Option<ExplorationCheckpoint>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.current_exploration_checkpoint_for_source(
+                project_id,
+                source_frame_id,
+                family_id,
+                family_generation,
+            ))
+            .await;
+        }
         let row = sqlx::query(
             "SELECT checkpoint.id,checkpoint.family_id,checkpoint.project_id,\
                     checkpoint.source_frame_id,checkpoint.source_message_seq,\
@@ -914,6 +1010,12 @@ impl Store {
     }
 
     pub async fn create_exploration(&self, exploration: &Exploration) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", &exploration.checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.create_exploration(exploration)).await;
+        }
         validate_exploration(exploration)?;
         if exploration.status != ExplorationStatus::Creating || exploration.scope_generation != 0 {
             anyhow::bail!("A new exploration must start in creating at generation zero");
@@ -964,6 +1066,12 @@ impl Store {
     }
 
     pub async fn get_exploration(&self, exploration_id: &str) -> Result<Option<Exploration>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.get_exploration(exploration_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,checkpoint_id,frame_id,name,status,workspace_dir,workspace_backend,\
                     scope_generation,warnings_json,created_at,updated_at \
@@ -976,6 +1084,9 @@ impl Store {
     }
 
     pub async fn exploration_for_frame(&self, frame_id: &str) -> Result<Option<Exploration>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.exploration_for_frame(frame_id)).await;
+        }
         let row = sqlx::query(
             "SELECT e.id,e.checkpoint_id,e.frame_id,e.name,e.status,e.workspace_dir,\
                     e.workspace_backend,e.scope_generation,e.warnings_json,e.created_at,e.updated_at \
@@ -989,6 +1100,9 @@ impl Store {
     }
 
     pub async fn list_explorations(&self, source_frame_id: &str) -> Result<Vec<Exploration>> {
+        if let Some(store) = self.route_entity("frames", "id", source_frame_id).await? {
+            return Box::pin(store.list_explorations(source_frame_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT e.id,e.checkpoint_id,e.frame_id,e.name,e.status,e.workspace_dir,\
                     e.workspace_backend,e.scope_generation,e.warnings_json,e.created_at,e.updated_at \
@@ -1006,6 +1120,9 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<ExplorationSummary>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_project_explorations(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT e.id,e.checkpoint_id,e.frame_id,e.name,e.status,e.workspace_dir,\
                     e.workspace_backend,e.scope_generation,e.warnings_json,e.created_at,e.updated_at,\
@@ -1054,6 +1171,12 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<Exploration>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.list_exploration_round_candidates(exploration_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT candidate.id,candidate.checkpoint_id,candidate.frame_id,candidate.name,\
                     candidate.status,candidate.workspace_dir,candidate.workspace_backend,\
@@ -1077,6 +1200,12 @@ impl Store {
     }
 
     pub async fn discard_exploration_scope(&self, exploration_id: &str) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.discard_exploration_scope(exploration_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT checkpoint.project_id,checkpoint.family_id,\
@@ -1111,6 +1240,12 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<Exploration>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.abandon_exploration_round(exploration_id)).await;
+        }
         let candidates = self
             .list_exploration_round_candidates(exploration_id)
             .await?;
@@ -1160,6 +1295,9 @@ impl Store {
     }
 
     pub async fn project_has_private_explorations(&self, project_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_has_private_explorations(project_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM explorations exploration \
              JOIN exploration_checkpoints checkpoint ON checkpoint.id=exploration.checkpoint_id \
@@ -1179,6 +1317,9 @@ impl Store {
     /// individual discard cannot release the mainline. Only
     /// promotion or explicit round abandonment advances the family generation.
     pub async fn project_mainline_is_frozen(&self, project_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_mainline_is_frozen(project_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM explorations exploration \
              JOIN exploration_checkpoints checkpoint ON checkpoint.id=exploration.checkpoint_id \
@@ -1198,6 +1339,9 @@ impl Store {
     /// chat, but their project tools remain read-only through the project-wide
     /// freeze above.
     pub async fn mainline_frame_is_frozen(&self, frame_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.mainline_frame_is_frozen(frame_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM explorations exploration \
              JOIN exploration_checkpoints checkpoint ON checkpoint.id=exploration.checkpoint_id \
@@ -1217,6 +1361,12 @@ impl Store {
         project_id: &str,
         source_frame_id: &str,
     ) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(
+                store.project_has_current_exploration_for_other_source(project_id, source_frame_id),
+            )
+            .await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM explorations exploration \
              JOIN exploration_checkpoints checkpoint ON checkpoint.id=exploration.checkpoint_id \
@@ -1239,6 +1389,12 @@ impl Store {
         expected: ExplorationStatus,
         next: ExplorationStatus,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.transition_exploration(exploration_id, expected, next)).await;
+        }
         if !expected.can_transition_to(next) {
             anyhow::bail!(
                 "Invalid exploration status transition: {} -> {}",
@@ -1259,6 +1415,9 @@ impl Store {
     }
 
     pub async fn project_state_generation(&self, project_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_state_generation(project_id)).await;
+        }
         ensure_project_exists(&self.pool, project_id).await?;
         Ok(sqlx::query_scalar(
             "SELECT mainline_generation FROM project_state_counters WHERE project_id=?",
@@ -1270,6 +1429,9 @@ impl Store {
     }
 
     pub async fn state_generation(&self, scope: &StateScope) -> Result<i64> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.state_generation(scope)).await;
+        }
         scope.validate()?;
         match scope {
             StateScope::Mainline { project_id } => self.project_state_generation(project_id).await,
@@ -1292,6 +1454,9 @@ impl Store {
     }
 
     pub async fn bump_state_generation(&self, scope: &StateScope) -> Result<i64> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.bump_state_generation(scope)).await;
+        }
         scope.validate()?;
         let mut tx = self.begin_write().await?;
         let generation = self.bump_state_generation_in_tx(&mut tx, scope).await?;
@@ -1357,6 +1522,12 @@ impl Store {
         &self,
         entity: &ExplorationBaselineEntity,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", &entity.checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.record_exploration_baseline_entity(entity)).await;
+        }
         validate_id("Baseline checkpoint", &entity.checkpoint_id)?;
         validate_nonempty("Baseline entity kind", &entity.entity_kind)?;
         validate_id("Baseline entity", &entity.entity_id)?;
@@ -1381,6 +1552,12 @@ impl Store {
         &self,
         checkpoint_id: &str,
     ) -> Result<Vec<ExplorationBaselineEntity>> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.capture_exploration_baseline_entities(checkpoint_id)).await;
+        }
         let project_id: String =
             sqlx::query_scalar("SELECT project_id FROM exploration_checkpoints WHERE id=?")
                 .bind(checkpoint_id)
@@ -1452,6 +1629,12 @@ impl Store {
         &self,
         checkpoint_id: &str,
     ) -> Result<Vec<ExplorationBaselineEntity>> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.list_exploration_baseline_entities(checkpoint_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT checkpoint_id,entity_kind,entity_id,version_id,fingerprint \
              FROM exploration_baseline_entities WHERE checkpoint_id=? \
@@ -1477,6 +1660,9 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<ExplorationBaselineEntity>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.snapshot_mainline_entities(project_id)).await;
+        }
         snapshot_mainline_entities_from(&self.pool, project_id, "").await
     }
 
@@ -1484,6 +1670,12 @@ impl Store {
         &self,
         head: &ExplorationBaselineArtifactHead,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", &head.checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.record_exploration_baseline_artifact_head(head)).await;
+        }
         validate_id("Baseline checkpoint", &head.checkpoint_id)?;
         validate_nonempty("Baseline Artifact logical key", &head.logical_key)?;
         validate_sha256("Baseline Artifact fingerprint", &head.fingerprint)?;
@@ -1508,6 +1700,12 @@ impl Store {
         &self,
         checkpoint_id: &str,
     ) -> Result<Vec<ExplorationBaselineArtifactHead>> {
+        if let Some(store) = self
+            .route_entity("exploration_checkpoints", "id", checkpoint_id)
+            .await?
+        {
+            return Box::pin(store.list_exploration_baseline_artifact_heads(checkpoint_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT checkpoint_id,logical_key,artifact_id,artifact_version_id,fingerprint \
              FROM exploration_baseline_artifact_heads WHERE checkpoint_id=? ORDER BY logical_key",
@@ -1529,6 +1727,9 @@ impl Store {
     }
 
     pub async fn upsert_artifact_head(&self, head: &ArtifactHead) -> Result<()> {
+        if let Some(store) = self.route_project(&head.project_id).await? {
+            return Box::pin(store.upsert_artifact_head(head)).await;
+        }
         validate_id("Artifact head project", &head.project_id)?;
         validate_nonempty("Artifact head scope", &head.scope_key)?;
         validate_nonempty("Artifact head logical key", &head.logical_key)?;
@@ -1578,6 +1779,9 @@ impl Store {
         scope_key: &str,
         logical_key: &str,
     ) -> Result<Option<ArtifactHead>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.get_artifact_head(project_id, scope_key, logical_key)).await;
+        }
         let row = sqlx::query(
             "SELECT project_id,scope_key,logical_key,artifact_id,artifact_version_id,updated_at \
              FROM artifact_heads WHERE project_id=? AND scope_key=? AND logical_key=?",
@@ -1595,6 +1799,9 @@ impl Store {
         project_id: &str,
         scope_key: &str,
     ) -> Result<Vec<ArtifactHead>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_artifact_heads(project_id, scope_key)).await;
+        }
         let rows = sqlx::query(
             "SELECT project_id,scope_key,logical_key,artifact_id,artifact_version_id,updated_at \
              FROM artifact_heads WHERE project_id=? AND scope_key=? ORDER BY logical_key",
@@ -1610,6 +1817,12 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<ExplorationEffect>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.list_exploration_effects(exploration_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,exploration_id,effect_kind,recoverability,target_summary,metadata_json,created_at \
              FROM exploration_effects WHERE exploration_id=? ORDER BY created_at,id",
@@ -1636,6 +1849,12 @@ impl Store {
         &self,
         promotion: &ExplorationPromotion,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", &promotion.exploration_id)
+            .await?
+        {
+            return Box::pin(store.create_exploration_promotion(promotion)).await;
+        }
         validate_id("Exploration promotion", &promotion.id)?;
         validate_id("Exploration promotion scope", &promotion.exploration_id)?;
         validate_sha256(
@@ -1674,6 +1893,12 @@ impl Store {
         &self,
         promotion_id: &str,
     ) -> Result<Option<ExplorationPromotion>> {
+        if let Some(store) = self
+            .route_entity("exploration_promotions", "id", promotion_id)
+            .await?
+        {
+            return Box::pin(store.get_exploration_promotion(promotion_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,exploration_id,expected_guard_hash,status,diff_json,journal_path,error,started_at,committed_at \
              FROM exploration_promotions WHERE id=?",
@@ -1687,6 +1912,15 @@ impl Store {
     pub async fn list_incomplete_exploration_promotions(
         &self,
     ) -> Result<Vec<ExplorationPromotion>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_incomplete_exploration_promotions()).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(
             "SELECT id,exploration_id,expected_guard_hash,status,diff_json,journal_path,error,started_at,committed_at \
              FROM exploration_promotions \
@@ -1701,6 +1935,12 @@ impl Store {
     }
 
     pub async fn delete_exploration_promotion(&self, promotion_id: &str) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("exploration_promotions", "id", promotion_id)
+            .await?
+        {
+            return Box::pin(store.delete_exploration_promotion(promotion_id)).await;
+        }
         Ok(sqlx::query("DELETE FROM exploration_promotions WHERE id=?")
             .bind(promotion_id)
             .execute(&self.pool)
@@ -1716,6 +1956,18 @@ impl Store {
         next: ExplorationPromotionStatus,
         error: Option<&str>,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("exploration_promotions", "id", promotion_id)
+            .await?
+        {
+            return Box::pin(store.transition_exploration_promotion(
+                promotion_id,
+                expected,
+                next,
+                error,
+            ))
+            .await;
+        }
         let committed_at = matches!(next, ExplorationPromotionStatus::Committed)
             .then(|| chrono::Utc::now().timestamp());
         let updated = sqlx::query(
@@ -1739,6 +1991,12 @@ impl Store {
     /// from the selected clone. Every exploration in the round is then
     /// discarded, while the selected promotion row remains as the audit record.
     pub async fn commit_exploration_promotion_metadata(&self, promotion_id: &str) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("exploration_promotions", "id", promotion_id)
+            .await?
+        {
+            return Box::pin(store.commit_exploration_promotion_metadata(promotion_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT promotion.exploration_id,promotion.status,exploration.frame_id,\

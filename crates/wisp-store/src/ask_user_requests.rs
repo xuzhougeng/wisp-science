@@ -27,6 +27,10 @@ impl Store {
         frame_id: &str,
         payload_json: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.insert_ask_user_request(request_id, frame_id, payload_json))
+                .await;
+        }
         sqlx::query(
             "INSERT INTO ask_user_requests(request_id,frame_id,payload_json,status,created_at) \
              VALUES(?,?,?,'pending',?)",
@@ -42,6 +46,12 @@ impl Store {
 
     /// Bridge side: poll for the answer, consuming the row once it has one.
     pub async fn poll_ask_user_answer(&self, request_id: &str) -> Result<AskUserPoll> {
+        if let Some(store) = self
+            .route_entity("ask_user_requests", "request_id", request_id)
+            .await?
+        {
+            return Box::pin(store.poll_ask_user_answer(request_id)).await;
+        }
         let row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT status, answer FROM ask_user_requests WHERE request_id=?")
                 .bind(request_id)
@@ -62,6 +72,9 @@ impl Store {
 
     /// Host side: the pendings the turn loop has to surface to the UI.
     pub async fn pending_ask_user_requests(&self, frame_id: &str) -> Result<Vec<(String, String)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.pending_ask_user_requests(frame_id)).await;
+        }
         Ok(sqlx::query_as(
             "SELECT request_id, payload_json FROM ask_user_requests \
              WHERE frame_id=? AND status='pending' ORDER BY created_at, rowid",
@@ -75,6 +88,12 @@ impl Store {
     /// is gone or already answered/expired — the caller reports "no longer
     /// pending" instead of silently double-writing.
     pub async fn answer_ask_user_request(&self, request_id: &str, answer: &str) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("ask_user_requests", "request_id", request_id)
+            .await?
+        {
+            return Box::pin(store.answer_ask_user_request(request_id, answer)).await;
+        }
         let updated = sqlx::query(
             "UPDATE ask_user_requests SET status='answered', answer=?, answered_at=? \
              WHERE request_id=? AND status='pending'",
@@ -95,6 +114,9 @@ impl Store {
         frame_id: &str,
         keep: &HashSet<String>,
     ) -> Result<Vec<(String, String)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.expire_ask_user_requests_except(frame_id, keep)).await;
+        }
         let mut expired = Vec::new();
         for (request_id, payload_json) in self.pending_ask_user_requests(frame_id).await? {
             if keep.contains(&request_id) {
@@ -119,6 +141,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<(String, String, String)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.ask_user_rows_for_frame(frame_id)).await;
+        }
         Ok(sqlx::query_as(
             "SELECT request_id, payload_json, status FROM ask_user_requests \
              WHERE frame_id=? ORDER BY created_at, rowid",

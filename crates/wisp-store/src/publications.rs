@@ -660,6 +660,9 @@ impl Store {
         title: &str,
         description: &str,
     ) -> Result<Publication> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.create_publication(id, project_id, title, description)).await;
+        }
         if id.trim().is_empty() || project_id.trim().is_empty() || title.trim().is_empty() {
             anyhow::bail!("Publication requires identity, project, and title");
         }
@@ -695,6 +698,9 @@ impl Store {
     }
 
     pub async fn get_publication(&self, id: &str) -> Result<Option<Publication>> {
+        if let Some(store) = self.route_entity("publications", "id", id).await? {
+            return Box::pin(store.get_publication(id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,title,description,created_at,updated_at \
              FROM publications WHERE id=?",
@@ -706,6 +712,9 @@ impl Store {
     }
 
     pub async fn list_publications(&self, project_id: &str) -> Result<Vec<Publication>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_publications(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,title,description,created_at,updated_at \
              FROM publications WHERE project_id=? ORDER BY updated_at DESC,id",
@@ -717,6 +726,9 @@ impl Store {
     }
 
     pub async fn update_publication(&self, id: &str, title: &str, description: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("publications", "id", id).await? {
+            return Box::pin(store.update_publication(id, title, description)).await;
+        }
         if title.trim().is_empty() {
             anyhow::bail!("Publication title cannot be empty");
         }
@@ -746,6 +758,9 @@ impl Store {
     }
 
     pub async fn delete_publication(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("publications", "id", id).await? {
+            return Box::pin(store.delete_publication(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let publication: Option<String> =
             sqlx::query_scalar("SELECT project_id FROM publications WHERE id=?")
@@ -800,6 +815,18 @@ impl Store {
         parent_revision_id: Option<&str>,
         label: &str,
     ) -> Result<PublicationRevision> {
+        if let Some(store) = self
+            .route_entity("publications", "id", publication_id)
+            .await?
+        {
+            return Box::pin(store.create_publication_revision(
+                id,
+                publication_id,
+                parent_revision_id,
+                label,
+            ))
+            .await;
+        }
         if id.trim().is_empty() || publication_id.trim().is_empty() || label.trim().is_empty() {
             anyhow::bail!("Publication revision requires identity, Publication, and label");
         }
@@ -852,6 +879,9 @@ impl Store {
     }
 
     pub async fn get_publication_revision(&self, id: &str) -> Result<Option<PublicationRevision>> {
+        if let Some(store) = self.route_entity("publication_revisions", "id", id).await? {
+            return Box::pin(store.get_publication_revision(id)).await;
+        }
         let row = sqlx::query(&format!(
             "SELECT {PUBLICATION_REVISION_COLUMNS} FROM publication_revisions WHERE id=?"
         ))
@@ -865,6 +895,12 @@ impl Store {
         &self,
         publication_id: &str,
     ) -> Result<Vec<PublicationRevision>> {
+        if let Some(store) = self
+            .route_entity("publications", "id", publication_id)
+            .await?
+        {
+            return Box::pin(store.list_publication_revisions(publication_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "SELECT {PUBLICATION_REVISION_COLUMNS} FROM publication_revisions \
              WHERE publication_id=? ORDER BY revision_number DESC"
@@ -878,6 +914,9 @@ impl Store {
     }
 
     pub async fn update_draft_publication_revision(&self, id: &str, label: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("publication_revisions", "id", id).await? {
+            return Box::pin(store.update_draft_publication_revision(id, label)).await;
+        }
         if label.trim().is_empty() {
             anyhow::bail!("Publication revision label cannot be empty");
         }
@@ -897,6 +936,9 @@ impl Store {
     }
 
     pub async fn delete_draft_publication_revision(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("publication_revisions", "id", id).await? {
+            return Box::pin(store.delete_draft_publication_revision(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let state: Option<String> =
             sqlx::query_scalar("SELECT state FROM publication_revisions WHERE id=?")
@@ -927,6 +969,12 @@ impl Store {
     }
 
     pub async fn save_publication_item(&self, item: &PublicationItem) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &item.revision_id)
+            .await?
+        {
+            return Box::pin(store.save_publication_item(item)).await;
+        }
         if item.id.trim().is_empty()
             || item.revision_id.trim().is_empty()
             || item.title.trim().is_empty()
@@ -1014,6 +1062,12 @@ impl Store {
     }
 
     pub async fn list_publication_items(&self, revision_id: &str) -> Result<Vec<PublicationItem>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_publication_items(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,parent_item_id,kind,title,content,ordinal,metadata_json,\
                     created_at,updated_at \
@@ -1027,6 +1081,9 @@ impl Store {
     }
 
     pub async fn delete_publication_item(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("publication_items", "id", id).await? {
+            return Box::pin(store.delete_publication_item(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let revision_id: Option<String> =
             sqlx::query_scalar("SELECT revision_id FROM publication_items WHERE id=?")
@@ -1061,6 +1118,12 @@ impl Store {
     }
 
     pub async fn save_publication_item_link(&self, link: &PublicationItemLink) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &link.revision_id)
+            .await?
+        {
+            return Box::pin(store.save_publication_item_link(link)).await;
+        }
         if link.id.trim().is_empty()
             || link.revision_id.trim().is_empty()
             || link.source_item_id.trim().is_empty()
@@ -1123,6 +1186,12 @@ impl Store {
         &self,
         revision_id: &str,
     ) -> Result<Vec<PublicationItemLink>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_publication_item_links(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,source_item_id,target_item_id,relation,created_at \
              FROM publication_item_links WHERE revision_id=? ORDER BY created_at,id",
@@ -1136,6 +1205,12 @@ impl Store {
     }
 
     pub async fn delete_publication_item_link(&self, id: &str) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_item_links", "id", id)
+            .await?
+        {
+            return Box::pin(store.delete_publication_item_link(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let revision_id: Option<String> =
             sqlx::query_scalar("SELECT revision_id FROM publication_item_links WHERE id=?")
@@ -1157,6 +1232,12 @@ impl Store {
         &self,
         draft: &EvidenceBindingDraft,
     ) -> Result<EvidenceBinding> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &draft.revision_id)
+            .await?
+        {
+            return Box::pin(store.save_evidence_binding(draft)).await;
+        }
         if draft.id.trim().is_empty()
             || draft.revision_id.trim().is_empty()
             || draft.source_id.trim().is_empty()
@@ -1315,6 +1396,9 @@ impl Store {
     }
 
     pub async fn get_evidence_binding(&self, id: &str) -> Result<Option<EvidenceBinding>> {
+        if let Some(store) = self.route_entity("evidence_bindings", "id", id).await? {
+            return Box::pin(store.get_evidence_binding(id)).await;
+        }
         let row = sqlx::query(&format!(
             "SELECT {EVIDENCE_BINDING_COLUMNS} FROM evidence_bindings WHERE id=?"
         ))
@@ -1325,6 +1409,12 @@ impl Store {
     }
 
     pub async fn list_evidence_bindings(&self, revision_id: &str) -> Result<Vec<EvidenceBinding>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_evidence_bindings(revision_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "SELECT {EVIDENCE_BINDING_COLUMNS} FROM evidence_bindings \
              WHERE revision_id=? ORDER BY created_at,id"
@@ -1341,6 +1431,14 @@ impl Store {
         selection_state: EvidenceSelectionState,
         visibility: EvidenceVisibility,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("evidence_bindings", "id", id).await? {
+            return Box::pin(store.update_evidence_binding_selection(
+                id,
+                selection_state,
+                visibility,
+            ))
+            .await;
+        }
         let updated = sqlx::query(
             "UPDATE evidence_bindings SET \
                selection_state=?,visibility=?,updated_at=? \
@@ -1361,6 +1459,9 @@ impl Store {
     }
 
     pub async fn delete_evidence_binding(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("evidence_bindings", "id", id).await? {
+            return Box::pin(store.delete_evidence_binding(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let revision_id: Option<String> =
             sqlx::query_scalar("SELECT revision_id FROM evidence_bindings WHERE id=?")
@@ -1383,6 +1484,12 @@ impl Store {
     }
 
     pub async fn save_evidence_review(&self, review: &EvidenceReview) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("evidence_bindings", "id", &review.binding_id)
+            .await?
+        {
+            return Box::pin(store.save_evidence_review(review)).await;
+        }
         if review.id.trim().is_empty()
             || review.binding_id.trim().is_empty()
             || review.reviewer.trim().is_empty()
@@ -1468,6 +1575,12 @@ impl Store {
     }
 
     pub async fn list_evidence_reviews(&self, binding_id: &str) -> Result<Vec<EvidenceReview>> {
+        if let Some(store) = self
+            .route_entity("evidence_bindings", "id", binding_id)
+            .await?
+        {
+            return Box::pin(store.list_evidence_reviews(binding_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,binding_id,reviewer,method,verified_at,environment_json,comparator_json,\
                     tolerance_json,result,report_json,created_at \
@@ -1499,6 +1612,12 @@ impl Store {
         &self,
         supersession: &EvidenceSupersession,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &supersession.revision_id)
+            .await?
+        {
+            return Box::pin(store.save_evidence_supersession(supersession)).await;
+        }
         if supersession.id.trim().is_empty()
             || supersession.revision_id.trim().is_empty()
             || supersession.old_binding_id.trim().is_empty()
@@ -1548,6 +1667,12 @@ impl Store {
         &self,
         revision_id: &str,
     ) -> Result<Vec<EvidenceSupersession>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_evidence_supersessions(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,old_binding_id,new_binding_id,reason,created_at \
              FROM evidence_supersessions WHERE revision_id=? ORDER BY created_at,id",
@@ -1570,6 +1695,12 @@ impl Store {
     }
 
     pub async fn save_publication_waiver(&self, waiver: &PublicationWaiver) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &waiver.revision_id)
+            .await?
+        {
+            return Box::pin(store.save_publication_waiver(waiver)).await;
+        }
         if waiver.id.trim().is_empty()
             || waiver.revision_id.trim().is_empty()
             || waiver.finding_code.trim().is_empty()
@@ -1607,6 +1738,12 @@ impl Store {
         &self,
         revision_id: &str,
     ) -> Result<Vec<PublicationWaiver>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_publication_waivers(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,finding_code,author,reason,created_at \
              FROM publication_waivers WHERE revision_id=? ORDER BY finding_code,id",
@@ -1634,6 +1771,12 @@ impl Store {
         attempt_id: &str,
         policy: &PublicationFreezePolicy,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.begin_publication_freeze(revision_id, attempt_id, policy)).await;
+        }
         if revision_id.trim().is_empty() || attempt_id.trim().is_empty() {
             anyhow::bail!("Publication freeze requires revision and attempt identities");
         }
@@ -1672,6 +1815,12 @@ impl Store {
         revision_id: &str,
         attempt_id: &str,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.abort_publication_freeze(revision_id, attempt_id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let mut tx = self.begin_write().await?;
         let removed =
@@ -1703,6 +1852,15 @@ impl Store {
         &self,
         started_before: i64,
     ) -> Result<Vec<String>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value =
+                    Box::pin(store.recover_stale_publication_freezes(started_before)).await?;
+                result.extend(value);
+            }
+            return Ok(result);
+        }
         let mut tx = self.begin_write().await?;
         let revisions: Vec<String> = sqlx::query_scalar(
             "SELECT revision_id FROM publication_freeze_attempts \
@@ -1733,6 +1891,12 @@ impl Store {
         &self,
         commit: &PublicationFreezeCommit,
     ) -> Result<PublicationRevision> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &commit.revision_id)
+            .await?
+        {
+            return Box::pin(store.commit_publication_freeze(commit)).await;
+        }
         if commit.revision_id != commit.readiness.revision_id
             || !commit.readiness.can_freeze
             || commit
@@ -2003,6 +2167,12 @@ impl Store {
         &self,
         revision_id: &str,
     ) -> Result<Option<PublicationReadinessReport>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.get_publication_readiness_report(revision_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,revision_id,capability_level,target_visibility,policy_json,\
                     blockers_json,warnings_json,omissions_json,manifest_json,manifest_sha256,\
@@ -2036,6 +2206,12 @@ impl Store {
         &self,
         revision_id: &str,
     ) -> Result<Vec<PublicationEvidenceDrift>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_publication_evidence_drift(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT binding.id AS binding_id,artifact.id AS artifact_id,\
                     artifact.logical_key AS logical_key,bound.id AS bound_version_id,\
@@ -2070,6 +2246,12 @@ impl Store {
     }
 
     pub async fn publish_publication_revision(&self, revision_id: &str) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.publish_publication_revision(revision_id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE publication_revisions SET state='published',published_at=?,updated_at=? \
@@ -2095,6 +2277,20 @@ impl Store {
         output_path: &str,
         revision_manifest_sha256: &str,
     ) -> Result<CapsuleBuild> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.start_capsule_build(
+                id,
+                revision_id,
+                format,
+                visibility,
+                output_path,
+                revision_manifest_sha256,
+            ))
+            .await;
+        }
         if id.trim().is_empty()
             || format != "zip"
             || output_path.trim().is_empty()
@@ -2143,6 +2339,9 @@ impl Store {
         id: &str,
         archive_sha256: &str,
     ) -> Result<CapsuleBuild> {
+        if let Some(store) = self.route_entity("capsule_builds", "id", id).await? {
+            return Box::pin(store.complete_capsule_build(id, archive_sha256)).await;
+        }
         if archive_sha256.len() != 64
             || !archive_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
@@ -2168,6 +2367,9 @@ impl Store {
     }
 
     pub async fn fail_capsule_build(&self, id: &str, error: &str) -> Result<CapsuleBuild> {
+        if let Some(store) = self.route_entity("capsule_builds", "id", id).await? {
+            return Box::pin(store.fail_capsule_build(id, error)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let error = error.chars().take(2_000).collect::<String>();
         let updated = sqlx::query(
@@ -2189,6 +2391,9 @@ impl Store {
     }
 
     pub async fn get_capsule_build(&self, id: &str) -> Result<Option<CapsuleBuild>> {
+        if let Some(store) = self.route_entity("capsule_builds", "id", id).await? {
+            return Box::pin(store.get_capsule_build(id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,revision_id,format,visibility,status,output_path,\
                     revision_manifest_sha256,archive_sha256,error,created_at,completed_at \
@@ -2201,6 +2406,12 @@ impl Store {
     }
 
     pub async fn list_capsule_builds(&self, revision_id: &str) -> Result<Vec<CapsuleBuild>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_capsule_builds(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,format,visibility,status,output_path,\
                     revision_manifest_sha256,archive_sha256,error,created_at,completed_at \
@@ -2216,6 +2427,12 @@ impl Store {
         &self,
         start: &ReproductionRunStart,
     ) -> Result<ReproductionRun> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", &start.revision_id)
+            .await?
+        {
+            return Box::pin(store.start_reproduction_run(start)).await;
+        }
         let valid_hash = |value: &str| {
             value.len() == 64
                 && value
@@ -2287,6 +2504,12 @@ impl Store {
         &self,
         commit: &ReproductionRunCommit,
     ) -> Result<ReproductionRun> {
+        if let Some(store) = self
+            .route_entity("reproduction_runs", "id", &commit.run_id)
+            .await?
+        {
+            return Box::pin(store.complete_reproduction_run(commit)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let mut tx = self.begin_write().await?;
         let environment_matched: Option<i64> = sqlx::query_scalar(
@@ -2388,6 +2611,9 @@ impl Store {
     }
 
     pub async fn fail_reproduction_run(&self, id: &str, error: &str) -> Result<ReproductionRun> {
+        if let Some(store) = self.route_entity("reproduction_runs", "id", id).await? {
+            return Box::pin(store.fail_reproduction_run(id, error)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE reproduction_runs SET status='failed',capability_level='re_executable',\
@@ -2407,6 +2633,9 @@ impl Store {
     }
 
     pub async fn get_reproduction_run(&self, id: &str) -> Result<Option<ReproductionRun>> {
+        if let Some(store) = self.route_entity("reproduction_runs", "id", id).await? {
+            return Box::pin(store.get_reproduction_run(id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,revision_id,source_run_id,status,capability_level,command_sha256,\
                     expected_environment_hash,actual_environment_json,actual_environment_hash,\
@@ -2421,6 +2650,12 @@ impl Store {
     }
 
     pub async fn list_reproduction_runs(&self, revision_id: &str) -> Result<Vec<ReproductionRun>> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", revision_id)
+            .await?
+        {
+            return Box::pin(store.list_reproduction_runs(revision_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,revision_id,source_run_id,status,capability_level,command_sha256,\
                     expected_environment_hash,actual_environment_json,actual_environment_hash,\
@@ -2435,6 +2670,9 @@ impl Store {
     }
 
     pub async fn list_reproduction_results(&self, run_id: &str) -> Result<Vec<ReproductionResult>> {
+        if let Some(store) = self.route_entity("reproduction_runs", "id", run_id).await? {
+            return Box::pin(store.list_reproduction_results(run_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,reproduction_run_id,output_id,output_path,\
                     expected_artifact_version_id,comparator_kind,required,expected_json,\
@@ -2453,6 +2691,17 @@ impl Store {
         new_revision_id: &str,
         label: &str,
     ) -> Result<PublicationRevision> {
+        if let Some(store) = self
+            .route_entity("publication_revisions", "id", source_revision_id)
+            .await?
+        {
+            return Box::pin(store.clone_publication_revision(
+                source_revision_id,
+                new_revision_id,
+                label,
+            ))
+            .await;
+        }
         if new_revision_id.trim().is_empty() || label.trim().is_empty() {
             anyhow::bail!("Cloned revision requires identity and label");
         }

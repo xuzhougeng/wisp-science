@@ -680,6 +680,26 @@ async fn import_project_directory(
     package: &Path,
     reporter: Option<&TransferReporter>,
 ) -> Result<String, String> {
+    // An exported package may have been opened and edited in place. Its live
+    // workspace database takes precedence over the original export snapshot.
+    let has_live_storage = |root: &Path| {
+        root.join(wisp_store::PROJECT_METADATA).exists()
+            || root.join(wisp_store::PROJECT_DATABASE).exists()
+            || root.join(".wisp/storage-migration.json").exists()
+    };
+    let live_workspace = if has_live_storage(package) {
+        Some(package.to_path_buf())
+    } else if has_live_storage(&package.join(WORKSPACE_PREFIX)) {
+        Some(package.join(WORKSPACE_PREFIX))
+    } else {
+        None
+    };
+    if let Some(workspace) = live_workspace {
+        return store
+            .register_project_folder(&workspace)
+            .await
+            .map_err(|error| format!("project_folder_metadata_invalid: {error:#}"));
+    }
     std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
     let database =
         TempFile(app_data.join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())));
@@ -1456,6 +1476,47 @@ mod tests {
         )
         .unwrap();
         package
+    }
+
+    #[tokio::test]
+    async fn reopening_an_edited_package_uses_live_project_records() {
+        let base = tempfile::tempdir().unwrap();
+        let package = directory_fixture(base.path()).await;
+        let original_metadata = std::fs::read(package.join(DATABASE_PATH)).unwrap();
+        let store = wisp_store::Store::open_application(&base.path().join("device.sqlite"))
+            .await
+            .unwrap();
+        import_project_directory(&store, base.path(), &package, None)
+            .await
+            .unwrap();
+        store
+            .append_message(
+                "frame-1",
+                2,
+                &wisp_llm::Message::user("written after importing the package"),
+            )
+            .await
+            .unwrap();
+        store.delete_project("project").await.unwrap();
+        let fresh = wisp_store::Store::open_application(&base.path().join("fresh.sqlite"))
+            .await
+            .unwrap();
+        import_project_directory(&fresh, base.path(), &package, None)
+            .await
+            .unwrap();
+        assert_eq!(fresh.message_count("frame-1").await.unwrap(), 2);
+        assert_eq!(
+            std::fs::read(package.join(DATABASE_PATH)).unwrap(),
+            original_metadata
+        );
+        let collected =
+            collect_workspace(&package.join(WORKSPACE_PREFIX), &base.path().join("unused"))
+                .unwrap();
+        assert!(!collected
+            .entries
+            .iter()
+            .any(|entry| entry.archive_path.contains("project.sqlite")
+                || entry.archive_path == ".wisp/project.json"));
     }
 
     #[tokio::test]

@@ -20,10 +20,27 @@ project-package/
 ```
 
 The metadata database contains only the exported project's records. It is a
-snapshot taken at export time, not a live database or continuous backup. After
-working on an imported project, export it again to transfer the latest records.
-Copy the entire exported package, including its manifest and metadata. Copying
-an ordinary workspace alone does not carry the application database's records.
+snapshot taken at export time. The live project database is now stored in the
+workspace at `.wisp/project.sqlite`, with identity metadata in `.wisp/project.json`.
+New projects and successfully migrated existing projects own their conversations,
+artifacts, runs and research records there. The application database retains
+device configuration and project locations. Removing a project from the list
+preserves its directory and database.
+
+**Import project folder** accepts either an export package or a live Wisp project
+directory with both metadata files. It validates their identity before registering
+the project. A fresh application profile can recover the project without the
+original application database. Stop work and close Wisp before copying a live
+directory; copy its entire `.wisp` directory too. Use export for a consistent
+snapshot while Wisp is running. Ordinary source folders without project metadata
+still belong under **New project**.
+
+Old projects migrate on application startup using a verified, filtered database
+copy. Their local runtime state is preserved during this same-device migration.
+If a legacy workspace is unavailable or unwritable, its original records remain
+in the application database and migration is retried on the next startup. A
+missing database for an already migrated project is an error; Wisp never creates
+a blank replacement or uses stale exported metadata as a fallback.
 
 To move a project from Windows to macOS:
 
@@ -39,17 +56,21 @@ To move a project from Windows to macOS:
    extraction and open the imported project from the project list.
 
 Folder import rejects ordinary folders, missing or corrupt metadata, unsupported
-manifest versions, mismatched project IDs, and linked package/workspace paths.
-It never falls back to registering an empty project. The database import is
-transactional; failed imports leave no partial project registration and do not
-modify or remove source package files. Importing a project ID already on the
+manifest versions, mismatched project IDs, and linked metadata paths.
+It never falls back to registering an empty project. Archive record insertion is
+transactional, and invalid metadata never creates a project registration or
+rewrites the exported snapshot. If publishing project-owned storage fails after
+valid records have been imported, those records remain in the application database
+for migration recovery. Importing a project ID already on the
 current device is rejected; open that project from the project list instead.
 To start a new project using ordinary files, use **New project**.
 
 The package's workspace remains editable after import. Manifest file totals
 record the original snapshot, so they are checked when exporting but do not
-prevent re-importing an edited workspace. Re-import restores the exported
-metadata snapshot; later database changes require a fresh export.
+prevent re-importing an edited workspace. After its first import, the workspace
+has a live project database. Re-importing that package uses the live database,
+including edits made since export; the original `metadata/project.sqlite`
+remains an unchanged export snapshot.
 
 Both formats share progress reporting and the same export guards: the source
 project stays read-only during export, while unrelated projects remain usable.
@@ -119,8 +140,9 @@ workspace files.
 
 The delete action on a project card offers two distinct choices:
 
-- **Remove from Wisp only** deletes the project's Wisp metadata while keeping
-  its project directory and files on disk.
+- **Remove from Wisp only** removes the device's project registration while
+  keeping the project directory, identity metadata, and project database on disk.
+  Import the project folder to register it again.
 - **Delete project and local data** also permanently deletes the registered
   project directory. This choice opens a second warning that shows the exact
   directory; its final delete button stays disabled for five seconds. The data

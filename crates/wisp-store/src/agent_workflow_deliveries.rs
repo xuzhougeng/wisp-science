@@ -52,6 +52,12 @@ impl Store {
         workflow_id: &str,
         auto_resume: bool,
     ) -> Result<AgentWorkflowDelivery> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.create_agent_workflow_delivery(workflow_id, auto_resume)).await;
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
         let resume_status = if auto_resume { "pending" } else { "disabled" };
@@ -86,6 +92,12 @@ impl Store {
         &self,
         id: &str,
     ) -> Result<Option<AgentWorkflowDelivery>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_deliveries", "id", id)
+            .await?
+        {
+            return Box::pin(store.get_agent_workflow_delivery(id)).await;
+        }
         sqlx::query(&format!("{SELECT_DELIVERY} WHERE id=?"))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -99,6 +111,12 @@ impl Store {
         &self,
         workflow_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.list_agent_workflow_deliveries(workflow_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE workflow_id=? ORDER BY generation"
         ))
@@ -113,6 +131,12 @@ impl Store {
         id: &str,
         result_json: &str,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_deliveries", "id", id)
+            .await?
+        {
+            return Box::pin(store.complete_agent_workflow_delivery(id, result_json)).await;
+        }
         if !serde_json::from_str::<serde_json::Value>(result_json)
             .is_ok_and(|value| value.is_object())
         {
@@ -133,6 +157,15 @@ impl Store {
     pub async fn list_incomplete_agent_workflow_deliveries(
         &self,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_incomplete_agent_workflow_deliveries()).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(
             "SELECT d.id,d.workflow_id,d.frame_id,d.generation,d.auto_resume,d.result_json,\
              d.message_seq,d.delivered_at,d.resume_status,d.resume_error,d.presented_at,\
@@ -147,6 +180,15 @@ impl Store {
     }
 
     pub async fn list_ready_agent_workflow_delivery_frames(&self) -> Result<Vec<String>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_ready_agent_workflow_delivery_frames()).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.cmp(b));
+            return Ok(result);
+        }
         Ok(sqlx::query_scalar(
             "SELECT DISTINCT frame_id FROM agent_workflow_deliveries \
              WHERE result_json IS NOT NULL \
@@ -165,6 +207,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.deliver_agent_workflow_completions(frame_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE frame_id=? AND result_json IS NOT NULL \
@@ -230,6 +275,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.claim_agent_workflow_auto_resumes(frame_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE frame_id=? AND delivered_at IS NOT NULL \
@@ -263,6 +311,15 @@ impl Store {
         success: bool,
         error: Option<&str>,
     ) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value =
+                    Box::pin(store.finish_agent_workflow_auto_resumes(ids, success, error)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let status = if success { "succeeded" } else { "failed" };
         let now = chrono::Utc::now().timestamp();
         let mut changed = 0;
@@ -289,6 +346,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_unpresented_agent_workflow_deliveries(frame_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE frame_id=? AND delivered_at IS NOT NULL \
              AND presented_at IS NULL ORDER BY created_at,id"
@@ -300,6 +360,14 @@ impl Store {
     }
 
     pub async fn mark_agent_workflow_deliveries_presented(&self, ids: &[String]) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.mark_agent_workflow_deliveries_presented(ids)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let mut changed = 0;
         let mut tx = self.begin_write().await?;

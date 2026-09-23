@@ -18,6 +18,19 @@ Each revision contains:
 - an encrypted workspace manifest using `/`-separated relative paths; and
 - encrypted content-addressed blobs for changed workspace files.
 
+Project-owned storage does not change this revision protocol. Snapshots are
+exported from the live `.wisp/project.sqlite`, and pulls replace that project's
+rows. The workspace scanner excludes the live database, its WAL/SHM/journal files
+and project identity metadata; copying those as ordinary blobs would produce
+inconsistent database copies. Device sync configuration stays in the application
+database. A pull also commits a pending cursor with the project rows so an
+interrupted device-cursor update can recover the existing workspace journal.
+
+Project directories are now self-contained, but automatic synchronization of an
+open SQLite database by a cloud-drive client and simultaneous editing on multiple
+devices remain unsupported. Close Wisp before copying a live project directory,
+or use **Sync now** / project export for a consistent transfer.
+
 The metadata snapshot is small and complete on every revision. Unchanged
 workspace files reuse their previous encrypted blob, so only changed files are
 uploaded. The backend sees project/revision identifiers and opaque blob hashes,

@@ -13,6 +13,9 @@ impl Store {
         query: &str,
         offset: u32,
     ) -> Result<PublicationSourcePage> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.publication_source_page(project_id, kind, query, offset)).await;
+        }
         let query = query.trim().to_lowercase();
         let sql = match kind {
             "files" => {

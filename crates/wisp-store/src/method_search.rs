@@ -345,6 +345,9 @@ const SELECT_CANDIDATE: &str = "SELECT id,run_id,parent_candidate_id,sequence,st
 
 impl Store {
     pub async fn create_method_search_run_state(&self, state: &MethodSearchRunState) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &state.run_id).await? {
+            return Box::pin(store.create_method_search_run_state(state)).await;
+        }
         state.validate()?;
         let valid_owner: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM runs run \
@@ -380,6 +383,9 @@ impl Store {
         &self,
         run_id: &str,
     ) -> Result<Option<MethodSearchRunState>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.get_method_search_run_state(run_id)).await;
+        }
         sqlx::query(&format!("{SELECT_RUN_STATE} WHERE run_id=?"))
             .bind(run_id)
             .fetch_optional(&self.pool)
@@ -395,6 +401,14 @@ impl Store {
         checkpoint_json: &str,
         result_status: Option<&str>,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.update_method_search_checkpoint(
+                run_id,
+                checkpoint_json,
+                result_status,
+            ))
+            .await;
+        }
         let mut state = self
             .get_method_search_run_state(run_id)
             .await?
@@ -415,6 +429,9 @@ impl Store {
     }
 
     pub async fn request_method_search_pause(&self, run_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.request_method_search_pause(run_id)).await;
+        }
         let updated = sqlx::query(
             "UPDATE method_search_runs SET control_state='pause_requested',updated_at=? \
              WHERE run_id=? AND control_state='run' AND run_id IN (\
@@ -428,6 +445,9 @@ impl Store {
     }
 
     pub async fn submit_method_search_run(&self, run_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.submit_method_search_run(run_id)).await;
+        }
         let updated = sqlx::query(
             "UPDATE runs SET status='submitted' WHERE id=? AND kind='method_search' \
              AND status='draft' AND lifecycle_owner IS NULL \
@@ -440,6 +460,9 @@ impl Store {
     }
 
     pub async fn fail_method_search_run(&self, run_id: &str, error: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.fail_method_search_run(run_id, error)).await;
+        }
         if error.trim().is_empty() {
             anyhow::bail!("failing method search requires an error");
         }
@@ -461,6 +484,9 @@ impl Store {
     }
 
     pub async fn method_search_pause_requested(&self, run_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.method_search_pause_requested(run_id)).await;
+        }
         Ok(sqlx::query_scalar::<_, String>(
             "SELECT control_state FROM method_search_runs WHERE run_id=?",
         )
@@ -476,6 +502,14 @@ impl Store {
         owner: &str,
         progress_json: &str,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.update_method_search_progress_owned(
+                run_id,
+                owner,
+                progress_json,
+            ))
+            .await;
+        }
         if !valid_json_shape(progress_json, false, 64 * 1024) {
             anyhow::bail!("method-search progress must be a bounded JSON object");
         }
@@ -496,6 +530,9 @@ impl Store {
     }
 
     pub async fn save_method_candidate_blob(&self, blob: &MethodCandidateBlob) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &blob.run_id).await? {
+            return Box::pin(store.save_method_candidate_blob(blob)).await;
+        }
         blob.validate()?;
         sqlx::query(
             "INSERT INTO method_candidate_blobs(id,run_id,kind,checksum,size_bytes,storage_path,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -518,6 +555,9 @@ impl Store {
         kind: &str,
         checksum: &str,
     ) -> Result<Option<MethodCandidateBlob>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.find_method_candidate_blob(run_id, kind, checksum)).await;
+        }
         let row = sqlx::query(
             "SELECT id,run_id,kind,checksum,size_bytes,storage_path,created_at \
              FROM method_candidate_blobs WHERE run_id=? AND kind=? AND checksum=?",
@@ -544,6 +584,9 @@ impl Store {
     }
 
     pub async fn insert_method_candidate(&self, candidate: &MethodCandidate) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &candidate.run_id).await? {
+            return Box::pin(store.insert_method_candidate(candidate)).await;
+        }
         candidate.validate()?;
         if candidate.status != MethodCandidateStatus::Proposed {
             anyhow::bail!("new method candidates must start proposed");
@@ -602,6 +645,9 @@ impl Store {
     }
 
     pub async fn transition_method_candidate_to_evaluating(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("method_candidates", "id", id).await? {
+            return Box::pin(store.transition_method_candidate_to_evaluating(id)).await;
+        }
         let updated = sqlx::query(
             "UPDATE method_candidates SET status='evaluating' WHERE id=? AND status='proposed'",
         )
@@ -616,6 +662,9 @@ impl Store {
         candidate: &MethodCandidate,
         expected: MethodCandidateStatus,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", &candidate.run_id).await? {
+            return Box::pin(store.finish_method_candidate(candidate, expected)).await;
+        }
         candidate.validate()?;
         if !candidate.status.is_terminal()
             || !matches!(
@@ -652,6 +701,9 @@ impl Store {
     }
 
     pub async fn get_method_candidate(&self, id: &str) -> Result<Option<MethodCandidate>> {
+        if let Some(store) = self.route_entity("method_candidates", "id", id).await? {
+            return Box::pin(store.get_method_candidate(id)).await;
+        }
         sqlx::query(&format!("{SELECT_CANDIDATE} WHERE id=?"))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -662,6 +714,9 @@ impl Store {
     }
 
     pub async fn list_method_candidates(&self, run_id: &str) -> Result<Vec<MethodCandidate>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.list_method_candidates(run_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_CANDIDATE} WHERE run_id=? ORDER BY sequence,id"
         ))
@@ -672,6 +727,9 @@ impl Store {
     }
 
     pub async fn upsert_method_strategy_stat(&self, stat: &MethodStrategyStat) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &stat.run_id).await? {
+            return Box::pin(store.upsert_method_strategy_stat(stat)).await;
+        }
         stat.validate()?;
         sqlx::query(
             "INSERT INTO method_strategy_stats(run_id,strategy_key,category,weight,attempts,improvements,cumulative_reward,summary,source_refs_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) \
@@ -696,6 +754,9 @@ impl Store {
         &self,
         run_id: &str,
     ) -> Result<Vec<MethodStrategyStat>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.list_method_strategy_stats(run_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT run_id,strategy_key,category,weight,attempts,improvements,cumulative_reward,summary,source_refs_json,updated_at FROM method_strategy_stats WHERE run_id=? ORDER BY category,strategy_key",
         )
@@ -728,6 +789,9 @@ impl Store {
         owner: &str,
         reason: &str,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.pause_method_search_run_owned(run_id, owner, reason)).await;
+        }
         if reason.trim().is_empty() {
             anyhow::bail!("pausing method search requires a reason");
         }
@@ -756,6 +820,9 @@ impl Store {
     }
 
     pub async fn resume_method_search_run(&self, run_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.resume_method_search_run(run_id)).await;
+        }
         let updated = sqlx::query(
             "UPDATE runs SET status='submitted',last_poll_error=NULL,ended_at=NULL WHERE id=? AND kind='method_search' AND status='paused' AND lifecycle_owner IS NULL",
         )
@@ -775,6 +842,14 @@ impl Store {
     }
 
     pub async fn recover_interrupted_method_search_runs(&self) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.recover_interrupted_method_search_runs()).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let updated = sqlx::query(
             "UPDATE runs SET status='paused',last_poll_error='Method search was interrupted; review the checkpoint and resume explicitly.',lifecycle_owner=NULL,lifecycle_lease_until=NULL \
              WHERE kind='method_search' AND status IN ('submitted','running') \
@@ -790,6 +865,14 @@ impl Store {
     /// this transition prevents a local search from being mistaken for live work
     /// after its evaluator process is terminated with the application.
     pub async fn pause_method_searches_for_shutdown(&self) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.pause_method_searches_for_shutdown()).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let mut tx = self.begin_write().await?;
         let updated = sqlx::query(
@@ -811,6 +894,9 @@ impl Store {
     }
 
     pub async fn method_search_run_status(&self, run_id: &str) -> Result<Option<RunStatus>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.method_search_run_status(run_id)).await;
+        }
         let status = sqlx::query_scalar::<_, String>(
             "SELECT status FROM runs WHERE id=? AND kind='method_search'",
         )

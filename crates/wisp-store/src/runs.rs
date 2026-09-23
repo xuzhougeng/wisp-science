@@ -8,6 +8,9 @@ use sha2::{Digest, Sha256};
 
 impl Store {
     pub async fn project_has_active_runs(&self, project_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_has_active_runs(project_id)).await;
+        }
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM runs WHERE project_id=? \
              AND exploration_id IS NULL AND status IN ('submitted','running','cancelling')",
@@ -19,6 +22,12 @@ impl Store {
     }
 
     pub async fn exploration_has_active_runs(&self, exploration_id: &str) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.exploration_has_active_runs(exploration_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM runs WHERE exploration_id=? \
              AND status IN ('submitted','running','cancelling'))",
@@ -29,6 +38,9 @@ impl Store {
     }
 
     pub async fn create_run(&self, run: &RunRecord) -> Result<()> {
+        if let Some(store) = self.route_project(&run.project_id).await? {
+            return Box::pin(store.create_run(run)).await;
+        }
         run.validate()?;
         let environment = serde_json::from_str::<serde_json::Value>(&run.env_snapshot_json)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -171,6 +183,9 @@ impl Store {
     }
 
     pub async fn get_run(&self, id: &str) -> Result<Option<RunRecord>> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.get_run(id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -185,6 +200,9 @@ impl Store {
     }
 
     pub async fn run_state_scope(&self, id: &str) -> Result<Option<StateScope>> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.run_state_scope(id)).await;
+        }
         let row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT project_id,exploration_id FROM runs WHERE id=?")
                 .bind(id)
@@ -199,6 +217,9 @@ impl Store {
     }
 
     pub async fn run_visible_in_scope(&self, id: &str, scope: &StateScope) -> Result<bool> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.run_visible_in_scope(id, scope)).await;
+        }
         scope.validate()?;
         Ok(match scope {
             StateScope::Mainline { project_id } => {
@@ -235,6 +256,9 @@ impl Store {
     }
 
     pub async fn list_runs_by_project(&self, project_id: &str) -> Result<Vec<RunRecord>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_runs_by_project(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -250,6 +274,9 @@ impl Store {
     }
 
     pub async fn list_runs_in_scope(&self, scope: &StateScope) -> Result<Vec<RunRecord>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.list_runs_in_scope(scope)).await;
+        }
         let StateScope::Exploration {
             project_id,
             exploration_id,
@@ -279,6 +306,9 @@ impl Store {
     }
 
     pub async fn list_run_summaries_in_scope(&self, scope: &StateScope) -> Result<Vec<RunSummary>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.list_run_summaries_in_scope(scope)).await;
+        }
         let columns = "run.id,run.frame_id,run.context_id,run.title,run.kind,run.status,\
             run.created_at,run.started_at,run.ended_at,run.exit_code,run.remote_workdir,\
             run.timeout_secs,run.last_polled_at,substr(run.last_poll_error,1,2048) AS last_poll_error,\
@@ -328,6 +358,12 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<RunRecord>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.list_runs_owned_by_exploration(exploration_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -345,6 +381,9 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<RunRecord>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_uncleaned_runs_for_project(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -362,6 +401,9 @@ impl Store {
     }
 
     pub async fn list_active_runs_for_project(&self, project_id: &str) -> Result<Vec<RunRecord>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_active_runs_for_project(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -377,6 +419,15 @@ impl Store {
     }
 
     pub async fn list_active_runs_for_context(&self, context_id: &str) -> Result<Vec<RunRecord>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_active_runs_for_context(context_id)).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -392,6 +443,14 @@ impl Store {
     }
 
     pub async fn count_active_runs_on_context(&self, context_id: &str) -> Result<i64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.count_active_runs_on_context(context_id)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM runs \
              WHERE context_id=? AND status IN ('submitted','running','cancelling')",
@@ -402,6 +461,15 @@ impl Store {
     }
 
     pub async fn list_active_runs(&self) -> Result<Vec<RunRecord>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_active_runs()).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
@@ -421,6 +489,9 @@ impl Store {
         owner: &str,
         lease_secs: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.claim_run_lifecycle(id, owner, lease_secs)).await;
+        }
         if owner.is_empty() || lease_secs <= 0 {
             anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
         }
@@ -450,6 +521,9 @@ impl Store {
         owner: &str,
         lease_secs: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.renew_run_lifecycle(id, owner, lease_secs)).await;
+        }
         if owner.is_empty() || lease_secs <= 0 {
             anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
         }
@@ -477,6 +551,9 @@ impl Store {
         owner: &str,
         lease_secs: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.activate_run_lifecycle(id, status, owner, lease_secs)).await;
+        }
         if !matches!(status, RunStatus::Submitted | RunStatus::Running) {
             anyhow::bail!("Run activation requires submitted or running status");
         }
@@ -501,6 +578,9 @@ impl Store {
 
     /// Request cancellation without taking ownership away from the active lifecycle.
     pub async fn request_run_cancellation(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.request_run_cancellation(id)).await;
+        }
         let updated = sqlx::query(
             "UPDATE runs SET status='cancelling' \
              WHERE id=? AND status IN ('draft','submitted','running','paused')",
@@ -518,6 +598,15 @@ impl Store {
         remote_handle_json: &str,
         remote_workdir: &str,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.set_run_remote_handle_owned(
+                id,
+                owner,
+                remote_handle_json,
+                remote_workdir,
+            ))
+            .await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET remote_handle_json=?, remote_workdir=? \
@@ -542,6 +631,16 @@ impl Store {
         stderr_tail: Option<&str>,
         error: Option<&str>,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.record_run_poll_owned(
+                id,
+                owner,
+                stdout_tail,
+                stderr_tail,
+                error,
+            ))
+            .await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET last_polled_at=?, stdout_tail=COALESCE(?,stdout_tail), \
@@ -568,6 +667,10 @@ impl Store {
         stdout_tail: Option<&str>,
         stderr_tail: Option<&str>,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.update_run_output_owned(id, owner, stdout_tail, stderr_tail))
+                .await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET stdout_tail=?, stderr_tail=? \
@@ -590,6 +693,9 @@ impl Store {
         owner: &str,
         progress: &super::RunProgress,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.update_run_progress_owned(id, owner, progress)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let progress_json = serde_json::to_string(progress)?;
         let updated = sqlx::query(
@@ -607,6 +713,9 @@ impl Store {
     }
 
     pub async fn transition_run_to_running_owned(&self, id: &str, owner: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.transition_run_to_running_owned(id, owner)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET status='running', started_at=COALESCE(started_at,?) \
@@ -629,6 +738,9 @@ impl Store {
         status: RunStatus,
         exit_code: Option<i64>,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.finish_active_run_owned(id, owner, status, exit_code)).await;
+        }
         if !status.is_terminal() {
             anyhow::bail!("finish_active_run requires a terminal status");
         }
@@ -659,6 +771,9 @@ impl Store {
         status: RunStatus,
         exit_code: Option<i64>,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.force_finish_cancelling_run(id, status, exit_code)).await;
+        }
         if !status.is_terminal() {
             anyhow::bail!("force_finish_cancelling_run requires a terminal status");
         }
@@ -679,6 +794,9 @@ impl Store {
     }
 
     pub async fn mark_run_lost_owned(&self, id: &str, owner: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.mark_run_lost_owned(id, owner)).await;
+        }
         self.finish_active_run_owned(id, owner, RunStatus::Lost, None)
             .await
     }
@@ -686,6 +804,9 @@ impl Store {
     /// Record that this Run's declared outputs were registered (and, for
     /// remote Runs, downloaded and checksum-verified). Idempotent.
     pub async fn mark_run_harvested(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.mark_run_harvested(id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated =
             sqlx::query("UPDATE runs SET harvested_at=? WHERE id=? AND harvested_at IS NULL")
@@ -705,6 +826,9 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<(Option<i64>, Option<i64>, Option<i64>)> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_run_retention(project_id)).await;
+        }
         let row: Option<(Option<i64>, Option<i64>, Option<i64>)> = sqlx::query_as(
             "SELECT run_retention_days, failed_run_retention_days, orphan_file_retention_days \
              FROM projects WHERE id=?",
@@ -722,6 +846,15 @@ impl Store {
         failed_run_retention_days: Option<i64>,
         orphan_file_retention_days: Option<i64>,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.set_project_run_retention(
+                project_id,
+                run_retention_days,
+                failed_run_retention_days,
+                orphan_file_retention_days,
+            ))
+            .await;
+        }
         for value in [
             run_retention_days,
             failed_run_retention_days,
@@ -755,6 +888,15 @@ impl Store {
     /// are old enough for the opt-in orphan-file sweep to inspect. State
     /// classification (active/replaced/orphan) happens at sweep time.
     pub async fn list_orphan_gc_contexts(&self, now: i64) -> Result<Vec<(String, String, i64)>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_orphan_gc_contexts(now)).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            return Ok(result);
+        }
         Ok(sqlx::query_as(
             "SELECT DISTINCT s.project_id, s.context_id, \
                     ? - p.orphan_file_retention_days*86400 AS cutoff \
@@ -774,6 +916,15 @@ impl Store {
     /// succeeded runs only after their outputs were harvested (or none were
     /// declared), failed/cancelled/timed-out/lost runs on their own window.
     pub async fn list_runs_due_for_retention(&self, now: i64) -> Result<Vec<RunRecord>> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.list_runs_due_for_retention(now)).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.ended_at.cmp(&b.ended_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(
             "SELECT r.id,r.project_id,r.frame_id,r.context_id,r.title,r.kind,r.status,r.command,\
                     r.script_path,r.input_refs_json,r.output_specs_json,r.created_at,r.started_at,\
@@ -804,6 +955,9 @@ impl Store {
     /// Record where the run's full logs were saved inside the project
     /// workspace (pulled back before cleanup deletes the server workdir).
     pub async fn mark_run_logs_saved(&self, id: &str, logs_path: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.mark_run_logs_saved(id, logs_path)).await;
+        }
         let updated = sqlx::query("UPDATE runs SET logs_path=? WHERE id=? AND logs_path IS NULL")
             .bind(logs_path)
             .bind(id)
@@ -816,6 +970,9 @@ impl Store {
     /// never auto-opened again. Manual review stays available. Idempotent:
     /// returns false when already dismissed.
     pub async fn mark_run_review_dismissed(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.mark_run_review_dismissed(id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET review_dismissed_at=? WHERE id=? AND review_dismissed_at IS NULL",
@@ -829,6 +986,9 @@ impl Store {
 
     /// Whether the user already closed this Run's results-review prompt.
     pub async fn run_review_dismissed(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.run_review_dismissed(id)).await;
+        }
         let row: Option<(Option<i64>,)> =
             sqlx::query_as("SELECT review_dismissed_at FROM runs WHERE id=?")
                 .bind(id)
@@ -838,6 +998,9 @@ impl Store {
     }
 
     pub async fn mark_run_cleaned(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.mark_run_cleaned(id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE runs SET cleaned_at=?, cleanup_error=NULL WHERE id=? AND cleaned_at IS NULL",
@@ -851,6 +1014,9 @@ impl Store {
 
     /// Surface a failed workspace cleanup so the user can retry.
     pub async fn record_run_cleanup_error(&self, id: &str, error: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.record_run_cleanup_error(id, error)).await;
+        }
         let updated =
             sqlx::query("UPDATE runs SET cleanup_error=? WHERE id=? AND cleaned_at IS NULL")
                 .bind(error)
@@ -863,6 +1029,9 @@ impl Store {
     /// Surface a harvest failure on an already-terminal Run so the UI and
     /// retry tooling can see why outputs were not registered.
     pub async fn record_run_harvest_error(&self, id: &str, error: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.record_run_harvest_error(id, error)).await;
+        }
         let updated = sqlx::query("UPDATE runs SET last_poll_error=? WHERE id=?")
             .bind(error)
             .bind(id)
@@ -878,6 +1047,9 @@ impl Store {
         artifact_id: &str,
         role: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.save_run_artifact_link(id, run_id, artifact_id, role)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO run_artifacts(id,run_id,artifact_id,role,created_at) VALUES(?,?,?,?,?) \

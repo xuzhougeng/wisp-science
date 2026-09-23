@@ -24,6 +24,7 @@ mod models;
 mod persist_seq;
 mod plugins;
 mod project_state_revisions;
+mod project_storage;
 mod project_sync;
 mod project_transfer;
 mod projects;
@@ -76,6 +77,7 @@ pub use method_search::{
 pub use models::*;
 pub use persist_seq::{join_or_abort_persist, persist_seq_loop, PersistJoinError};
 pub use project_state_revisions::{ProjectStateRevision, ProjectStateRevisionSummary};
+pub use project_storage::{PROJECT_DATABASE, PROJECT_METADATA};
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;
 pub use projects::{is_scratch_project_id, SCRATCH_PROJECT_PREFIX};
@@ -188,6 +190,8 @@ const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
+    registry: Option<std::sync::Arc<project_storage::ProjectRegistry>>,
+    project_scope: Option<String>,
 }
 
 impl Store {
@@ -202,7 +206,13 @@ impl Store {
             .max_connections(4)
             .connect_with(options)
             .await?;
-        Ok(Self { pool })
+        let mut store = Self {
+            pool,
+            registry: None,
+            project_scope: None,
+        };
+        store.enable_project_registry(true).await?;
+        Ok(store)
     }
 
     /// Open an existing database for explicit native commands. Never creates,
@@ -216,12 +226,20 @@ impl Store {
             .max_connections(1)
             .connect_with(options)
             .await?;
-        Ok(Self { pool })
+        let mut store = Self {
+            pool,
+            registry: None,
+            project_scope: None,
+        };
+        store.enable_project_registry(false).await?;
+        Ok(store)
     }
 
     /// Open (or create) the SQLite database at `path` and run migrations.
     pub async fn open(path: &Path) -> Result<Self> {
-        Self::open_with_journal(path, true).await
+        let mut store = Self::open_with_journal(path, true).await?;
+        store.enable_project_registry(false).await?;
+        Ok(store)
     }
 
     /// Open a throwaway snapshot/transfer database in the default rollback
@@ -256,7 +274,11 @@ impl Store {
                 .await?;
         }
         Self::migrate(&pool).await?;
-        let store = Self { pool };
+        let store = Self {
+            pool,
+            registry: None,
+            project_scope: None,
+        };
         store.ensure_local_execution_context().await?;
         Ok(store)
     }
@@ -2140,6 +2162,9 @@ impl Store {
     }
 
     pub async fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        if let Some(store) = self.route_setting(key).await? {
+            return Box::pin(store.set_setting(key, value)).await;
+        }
         sqlx::query("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
             .bind(key).bind(value)
             .execute(&self.pool).await?;
@@ -2147,6 +2172,9 @@ impl Store {
     }
 
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_setting(key).await? {
+            return Box::pin(store.get_setting(key)).await;
+        }
         let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key=?")
             .bind(key)
             .fetch_optional(&self.pool)
@@ -2155,6 +2183,9 @@ impl Store {
     }
 
     pub async fn delete_setting(&self, key: &str) -> Result<()> {
+        if let Some(store) = self.route_setting(key).await? {
+            return Box::pin(store.delete_setting(key)).await;
+        }
         sqlx::query("DELETE FROM settings WHERE key=?")
             .bind(key)
             .execute(&self.pool)

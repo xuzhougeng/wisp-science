@@ -86,6 +86,9 @@ impl Store {
         project_id: &str,
         context_id: &str,
     ) -> Result<Option<ContextStoragePrefs>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.get_context_storage_prefs(project_id, context_id)).await;
+        }
         let row: Option<(String, String, String, i64, i64)> = sqlx::query_as(
             "SELECT remote_data_root,remote_workdir_root,local_results_dir,created_at,updated_at \
              FROM context_storage_prefs WHERE project_id=? AND context_id=?",
@@ -110,6 +113,9 @@ impl Store {
     }
 
     pub async fn upsert_context_storage_prefs(&self, prefs: &ContextStoragePrefs) -> Result<()> {
+        if let Some(store) = self.route_project(&prefs.project_id).await? {
+            return Box::pin(store.upsert_context_storage_prefs(prefs)).await;
+        }
         prefs.validate()?;
         let now = chrono::Utc::now().timestamp();
         sqlx::query(

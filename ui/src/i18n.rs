@@ -3111,7 +3111,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.import") => Some("Import project"),
         (Locale::En, "projects.import_options_hint") => Some("Import a complete project folder or ZIP, or recover available conversations from workspace history."),
         (Locale::En, "projects.import_in_place") => Some("Import project folder"),
-        (Locale::En, "projects.import_in_place_hint") => Some("Select an exported project folder. Wisp checks its metadata, restores project records and uses its workspace without copying it."),
+        (Locale::En, "projects.import_in_place_hint") => Some("Select a Wisp project folder or an exported project folder. Wisp checks its metadata and opens the project where it is."),
         (Locale::En, "projects.import_zip") => Some("Import a ZIP archive"),
         (Locale::En, "projects.import_zip_hint") => Some("Restore workspace files, conversations, and Wisp project records into a new folder."),
         (Locale::En, "projects.recover_workspace") => Some("Recover conversations from a workspace"),
@@ -3177,7 +3177,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.transfer.selecting_export_destination") => Some("Choose the export location in the system dialog."),
         (Locale::En, "projects.transfer.selecting_import_destination") => Some("Choose a parent folder. Wisp will create a new folder named after the imported project inside it."),
         (Locale::En, "projects.transfer.import_destination_hint") => Some("The imported project is created in a project-named subfolder of the folder you select."),
-        (Locale::En, "projects.transfer.selecting_project_folder") => Some("Choose an exported project folder in the system dialog."),
+        (Locale::En, "projects.transfer.selecting_project_folder") => Some("Choose a Wisp project folder or an exported project folder in the system dialog."),
         (Locale::En, "projects.transfer.selecting_archive") => Some("Choose a project archive in the system dialog."),
         (Locale::En, "projects.transfer.preparing") => Some("Preparing the project snapshot…"),
         (Locale::En, "projects.transfer.scanning") => Some("Scanning workspace files…"),
@@ -5851,7 +5851,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "projects.import") => Some("导入项目"),
         (Locale::Zh, "projects.import_options_hint") => Some("导入完整的项目文件夹或 ZIP，或从工作区历史中恢复可用会话。"),
         (Locale::Zh, "projects.import_in_place") => Some("导入项目文件夹"),
-        (Locale::Zh, "projects.import_in_place_hint") => Some("选择导出的项目文件夹。Wisp 检查 metadata、恢复项目记录，并直接使用包内工作区，不再复制。"),
+        (Locale::Zh, "projects.import_in_place_hint") => Some("选择 Wisp 项目文件夹或导出的项目文件夹。Wisp 检查 metadata 后直接打开，无需复制。"),
         (Locale::Zh, "projects.import_zip") => Some("导入 ZIP 压缩包"),
         (Locale::Zh, "projects.import_zip_hint") => Some("把工作区文件、会话和 Wisp 项目记录完整恢复到一个新文件夹。"),
         (Locale::Zh, "projects.recover_workspace") => Some("从工作区恢复会话"),
@@ -5915,7 +5915,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "projects.transfer.selecting_export_destination") => Some("请在系统对话框中选择导出位置。"),
         (Locale::Zh, "projects.transfer.selecting_import_destination") => Some("请选择用于存放导入项目的父文件夹。Wisp 会在其中新建一个与项目同名的文件夹。"),
         (Locale::Zh, "projects.transfer.import_destination_hint") => Some("导入后的项目会创建在所选文件夹下、以项目名命名的子文件夹中。"),
-        (Locale::Zh, "projects.transfer.selecting_project_folder") => Some("请在系统对话框中选择导出的项目文件夹。"),
+        (Locale::Zh, "projects.transfer.selecting_project_folder") => Some("请在系统对话框中选择 Wisp 项目文件夹或导出的项目文件夹。"),
         (Locale::Zh, "projects.transfer.selecting_archive") => Some("请在系统对话框中选择项目压缩包。"),
         (Locale::Zh, "projects.transfer.preparing") => Some("正在准备项目快照…"),
         (Locale::Zh, "projects.transfer.scanning") => Some("正在扫描工作区文件…"),
@@ -6066,7 +6066,7 @@ pub fn send_failed(locale: Locale, msg: &str) -> String {
 pub fn localize_backend(locale: Locale, msg: &str) -> String {
     match msg {
         m if m.starts_with("project_folder_invalid:") => {
-            if locale == Locale::Zh { "所选目录不是有效的项目包。请选择包含 manifest.json、metadata/project.sqlite 和 workspace 的导出目录；不支持链接路径。".into() }
+            if locale == Locale::Zh { "所选目录缺少项目 metadata。请选择包含 .wisp/project.json 和项目数据库的项目文件夹，或包含 manifest.json、metadata/project.sqlite 和 workspace 的导出目录。".into() }
             else { m.trim_start_matches("project_folder_invalid:").trim().into() }
         }
         m if m.starts_with("project_folder_metadata_invalid:") => {

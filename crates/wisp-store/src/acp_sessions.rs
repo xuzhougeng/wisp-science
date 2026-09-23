@@ -34,6 +34,9 @@ fn from_row(row: sqlx::sqlite::SqliteRow) -> Result<AcpSessionBinding> {
 
 impl Store {
     pub async fn save_acp_session(&self, binding: &AcpSessionBinding) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", &binding.frame_id).await? {
+            return Box::pin(store.save_acp_session(binding)).await;
+        }
         sqlx::query(
             "INSERT INTO acp_sessions(\
              frame_id,agent_profile_id,profile_fingerprint,agent_session_id,cwd,\
@@ -64,6 +67,9 @@ impl Store {
     }
 
     pub async fn get_acp_session(&self, frame_id: &str) -> Result<Option<AcpSessionBinding>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.get_acp_session(frame_id)).await;
+        }
         let row = sqlx::query(
             "SELECT frame_id,agent_profile_id,profile_fingerprint,agent_session_id,cwd,\
              protocol_version,agent_info_json,capabilities_json,created_at,updated_at \

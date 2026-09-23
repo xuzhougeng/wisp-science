@@ -36,6 +36,22 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Option<ProjectSyncState>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.get_project_sync_state(project_id)).await;
+        }
+        // Replacement records its cursor beside the project rows first. If
+        // the process dies before updating the device DB, use that committed
+        // cursor to recover the existing workspace-swap journal safely.
+        if let Some(store) = self.route_project(project_id).await? {
+            let pending: Option<ProjectSyncState> =
+                sqlx::query_as("SELECT * FROM project_sync_state WHERE project_id=?")
+                    .bind(project_id)
+                    .fetch_optional(&store.pool)
+                    .await?;
+            if pending.is_some() {
+                return Ok(pending);
+            }
+        }
         Ok(sqlx::query_as(
             "SELECT project_id,transport_kind,transport_location,relay_project_id,base_revision,base_state_hash,\
              base_manifest_json,last_synced_at,last_direction \
@@ -47,6 +63,9 @@ impl Store {
     }
 
     pub async fn upsert_project_sync_state(&self, state: &ProjectSyncState) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.upsert_project_sync_state(state)).await;
+        }
         sqlx::query(
             "INSERT INTO project_sync_state(\
                project_id,transport_kind,transport_location,relay_project_id,base_revision,base_state_hash,\
@@ -70,6 +89,12 @@ impl Store {
         .bind(&state.last_direction)
         .execute(&self.pool)
         .await?;
+        if let Some(store) = self.route_project(&state.project_id).await? {
+            sqlx::query("DELETE FROM project_sync_state WHERE project_id=?")
+                .bind(&state.project_id)
+                .execute(&store.pool)
+                .await?;
+        }
         Ok(())
     }
 }

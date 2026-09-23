@@ -390,6 +390,12 @@ impl Store {
         &self,
         attempt: &AgentWorkflowAttempt,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", &attempt.workflow_id)
+            .await?
+        {
+            return Box::pin(store.create_agent_workflow_attempt(attempt)).await;
+        }
         attempt.validate()?;
         if attempt.status != AgentWorkflowAttemptStatus::Queued {
             anyhow::bail!("new agent workflow attempts must start queued");
@@ -450,6 +456,12 @@ impl Store {
         &self,
         mut attempt: AgentWorkflowAttempt,
     ) -> Result<AgentWorkflowAttemptStart> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", &attempt.workflow_id)
+            .await?
+        {
+            return Box::pin(store.try_create_started_agent_workflow_attempt(attempt)).await;
+        }
         attempt.validate()?;
         if attempt.status != AgentWorkflowAttemptStatus::Queued {
             anyhow::bail!("new agent workflow attempts must start queued");
@@ -634,6 +646,12 @@ impl Store {
         &self,
         id: &str,
     ) -> Result<Option<AgentWorkflowAttempt>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", id)
+            .await?
+        {
+            return Box::pin(store.get_agent_workflow_attempt(id)).await;
+        }
         sqlx::query(&format!("{SELECT_ATTEMPT} WHERE id=?"))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -647,6 +665,12 @@ impl Store {
         &self,
         request_id: &str,
     ) -> Result<Option<AgentWorkflowAttempt>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "request_id", request_id)
+            .await?
+        {
+            return Box::pin(store.get_agent_workflow_attempt_by_request_id(request_id)).await;
+        }
         sqlx::query(&format!("{SELECT_ATTEMPT} WHERE request_id=?"))
             .bind(request_id)
             .fetch_optional(&self.pool)
@@ -660,6 +684,10 @@ impl Store {
         &self,
         child_frame_id: &str,
     ) -> Result<Option<AgentWorkflowAttempt>> {
+        if let Some(store) = self.route_entity("frames", "id", child_frame_id).await? {
+            return Box::pin(store.running_agent_workflow_attempt_for_child_frame(child_frame_id))
+                .await;
+        }
         sqlx::query(&format!(
             "{SELECT_ATTEMPT} WHERE child_frame_id=? AND status='running' \
              ORDER BY created_at DESC LIMIT 1"
@@ -676,6 +704,12 @@ impl Store {
         &self,
         parent_attempt_id: &str,
     ) -> Result<Vec<String>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", parent_attempt_id)
+            .await?
+        {
+            return Box::pin(store.list_child_agent_workflow_ids(parent_attempt_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT id FROM agent_workflows WHERE parent_attempt_id=? ORDER BY created_at,id",
         )
@@ -688,6 +722,13 @@ impl Store {
         &self,
         attempt_id: &str,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", attempt_id)
+            .await?
+        {
+            return Box::pin(store.agent_workflow_attempt_has_delegation_capacity(attempt_id))
+                .await;
+        }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT a.root_workflow_id,a.depth,a.status,a.allow_delegation,a.cancel_requested,\
@@ -753,6 +794,12 @@ impl Store {
         &self,
         workflow_id: &str,
     ) -> Result<Vec<AgentWorkflowAttempt>> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.list_agent_workflow_attempts(workflow_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_ATTEMPT} WHERE workflow_id=? ORDER BY created_at,step_id,attempt"
         ))
@@ -763,6 +810,12 @@ impl Store {
     }
 
     pub async fn next_agent_workflow_attempt_number(&self, step_id: &str) -> Result<i64> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_steps", "id", step_id)
+            .await?
+        {
+            return Box::pin(store.next_agent_workflow_attempt_number(step_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT COALESCE(MAX(attempt),0)+1 FROM agent_workflow_attempts WHERE step_id=?",
         )
@@ -775,6 +828,12 @@ impl Store {
         &self,
         step_id: &str,
     ) -> Result<Option<(String, String)>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_steps", "id", step_id)
+            .await?
+        {
+            return Box::pin(store.latest_agent_workflow_step_session(step_id)).await;
+        }
         Ok(sqlx::query_as(
             "SELECT agent_session_id,child_frame_id FROM agent_workflow_attempts WHERE step_id=? AND agent_session_id IS NOT NULL AND child_frame_id IS NOT NULL ORDER BY attempt DESC LIMIT 1",
         )
@@ -788,6 +847,12 @@ impl Store {
         attempt: &AgentWorkflowAttempt,
         expected_status: AgentWorkflowAttemptStatus,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", &attempt.workflow_id)
+            .await?
+        {
+            return Box::pin(store.update_agent_workflow_attempt(attempt, expected_status)).await;
+        }
         attempt.validate()?;
         validate_transition(expected_status, attempt.status)?;
         let now = chrono::Utc::now().timestamp();
@@ -819,6 +884,12 @@ impl Store {
     }
 
     pub async fn request_agent_workflow_cancel(&self, workflow_id: &str) -> Result<u64> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.request_agent_workflow_cancel(workflow_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let root_workflow_id = sqlx::query_scalar::<_, String>(
             "SELECT root_workflow_id FROM agent_workflows WHERE id=?",
@@ -855,6 +926,12 @@ impl Store {
     }
 
     pub async fn agent_workflow_cancel_requested(&self, workflow_id: &str) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.agent_workflow_cancel_requested(workflow_id)).await;
+        }
         let root = sqlx::query(
             "SELECT root_workflow_id,created_at,root_limits_json,status FROM agent_workflows \
              WHERE id=?",
@@ -903,6 +980,15 @@ impl Store {
         attempt_id: &str,
         yielded: bool,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", attempt_id)
+            .await?
+        {
+            return Box::pin(
+                store.set_agent_workflow_attempt_delegation_slot_yielded(attempt_id, yielded),
+            )
+            .await;
+        }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT a.root_workflow_id,a.status,a.allow_delegation,a.cancel_requested,\
@@ -961,6 +1047,17 @@ impl Store {
         agent_session_id: Option<&str>,
         child_frame_id: &str,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "request_id", request_id)
+            .await?
+        {
+            return Box::pin(store.set_running_agent_workflow_attempt_provenance(
+                request_id,
+                agent_session_id,
+                child_frame_id,
+            ))
+            .await;
+        }
         let updated = sqlx::query(
             "UPDATE agent_workflow_attempts SET agent_session_id=?,child_frame_id=?,updated_at=? WHERE request_id=? AND status='running'",
         )
@@ -978,6 +1075,12 @@ impl Store {
         workflow_id: &str,
         error: &str,
     ) -> Result<(u64, bool)> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.fail_agent_workflow_execution(workflow_id, error)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let mut tx = self.begin_write().await?;
         let attempts = sqlx::query(
@@ -1007,6 +1110,15 @@ impl Store {
     }
 
     pub async fn recover_interrupted_agent_workflows(&self) -> Result<(u64, u64)> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = (0, 0);
+            for store in stores {
+                let value = Box::pin(store.recover_interrupted_agent_workflows()).await?;
+                result.0 += value.0;
+                result.1 += value.1;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let reason =
             "The application stopped before this Agent execution reached a terminal state.";

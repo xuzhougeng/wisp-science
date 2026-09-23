@@ -7360,7 +7360,7 @@ pub fn run() {
             std::fs::create_dir_all(&app_data).expect("create app data dir");
             let db_path = app_data.join("wisp.sqlite");
             let store = startup.record("store", || {
-                tauri::async_runtime::block_on(Store::open(&db_path)).expect("open store")
+                tauri::async_runtime::block_on(Store::open_application(&db_path)).expect("open store")
             });
             startup.record("exploration_recovery", || {
                 tauri::async_runtime::block_on(

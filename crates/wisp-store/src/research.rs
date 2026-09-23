@@ -6,6 +6,9 @@ use anyhow::Result;
 
 impl Store {
     pub async fn save_research_node(&self, node: &ResearchNode) -> Result<()> {
+        if let Some(store) = self.route_project(&node.project_id).await? {
+            return Box::pin(store.save_research_node(node)).await;
+        }
         self.save_research_node_in_scope(node, &StateScope::mainline(&node.project_id))
             .await
     }
@@ -15,6 +18,9 @@ impl Store {
         node: &ResearchNode,
         scope: &StateScope,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.save_research_node_in_scope(node, scope)).await;
+        }
         node.validate()?;
         if scope.project_id() != node.project_id {
             anyhow::bail!("Research node scope does not belong to its project");
@@ -58,6 +64,9 @@ impl Store {
         project_id: &str,
         kind: Option<ResearchNodeKind>,
     ) -> Result<Vec<ResearchNode>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_research_nodes(project_id, kind)).await;
+        }
         let rows = if let Some(kind) = kind {
             sqlx::query(
                 "SELECT id,project_id,kind,title,ref_id,metadata_json,created_at,updated_at \
@@ -82,6 +91,9 @@ impl Store {
     }
 
     pub async fn save_research_edge(&self, edge: &ResearchEdge) -> Result<()> {
+        if let Some(store) = self.route_project(&edge.project_id).await? {
+            return Box::pin(store.save_research_edge(edge)).await;
+        }
         self.save_research_edge_in_scope(edge, &StateScope::mainline(&edge.project_id))
             .await
     }
@@ -91,6 +103,9 @@ impl Store {
         edge: &ResearchEdge,
         scope: &StateScope,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.save_research_edge_in_scope(edge, scope)).await;
+        }
         edge.validate()?;
         if scope.project_id() != edge.project_id {
             anyhow::bail!("Research edge scope does not belong to its project");
@@ -159,6 +174,9 @@ impl Store {
     }
 
     pub async fn list_research_edges(&self, project_id: &str) -> Result<Vec<ResearchEdge>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_research_edges(project_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,source_id,target_id,relation,metadata_json,created_at \
              FROM research_edges WHERE project_id=? AND exploration_id IS NULL \
@@ -171,6 +189,9 @@ impl Store {
     }
 
     pub async fn research_graph(&self, project_id: &str) -> Result<ResearchGraph> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.research_graph(project_id)).await;
+        }
         Ok(ResearchGraph {
             nodes: self.list_research_nodes(project_id, None).await?,
             edges: self.list_research_edges(project_id).await?,
@@ -178,6 +199,9 @@ impl Store {
     }
 
     pub async fn research_graph_in_scope(&self, scope: &StateScope) -> Result<ResearchGraph> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.research_graph_in_scope(scope)).await;
+        }
         let StateScope::Exploration {
             project_id,
             exploration_id,
@@ -231,6 +255,12 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<ResearchGraph> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.research_graph_owned_by_exploration(exploration_id)).await;
+        }
         let node_rows = sqlx::query(
             "SELECT id,project_id,kind,title,ref_id,metadata_json,created_at,updated_at \
              FROM research_nodes WHERE exploration_id=? ORDER BY created_at,id",

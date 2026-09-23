@@ -1334,7 +1334,7 @@ async fn restore_import_paths(
 }
 
 impl Store {
-    async fn database_path(&self) -> Result<PathBuf> {
+    pub(super) async fn database_path(&self) -> Result<PathBuf> {
         let rows = sqlx::query("PRAGMA database_list")
             .fetch_all(&self.pool)
             .await?;
@@ -1462,6 +1462,9 @@ impl Store {
         project_id: &str,
         destination: &Path,
     ) -> Result<ProjectTransferStats> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.export_project_database(project_id, destination)).await;
+        }
         let (_, source_root) = self
             .get_project(project_id)
             .await?
@@ -1543,6 +1546,13 @@ impl Store {
         project_id: &str,
         workspace: &Path,
     ) -> Result<()> {
+        if self.registry.is_some() {
+            anyhow::ensure!(
+                !workspace.join(super::PROJECT_DATABASE).exists()
+                    && !workspace.join(super::PROJECT_METADATA).exists(),
+                "This workspace already contains project storage; register its folder instead"
+            );
+        }
         if self.get_project(project_id).await?.is_some() {
             anyhow::bail!("this project is already present on this device");
         }
@@ -1592,7 +1602,12 @@ impl Store {
         let _ = sqlx::query("DETACH DATABASE transfer")
             .execute(&mut *connection)
             .await;
-        result.context("could not import project metadata")
+        drop(connection);
+        result.context("could not import project metadata")?;
+        if self.registry.is_some() && self.project_scope.is_none() {
+            self.migrate_project_storage(project_id).await?;
+        }
+        Ok(())
     }
 
     /// Replace an existing project's portable rows from a trusted, decrypted
@@ -1606,6 +1621,17 @@ impl Store {
         workspace: &Path,
         sync_state: &ProjectSyncState,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            Box::pin(store.replace_project_database(
+                archive_database,
+                project_id,
+                workspace,
+                sync_state,
+            ))
+            .await?;
+            self.upsert_project_sync_state(sync_state).await?;
+            return Ok(());
+        }
         if sync_state.project_id != project_id {
             anyhow::bail!("sync cursor does not belong to the replaced project");
         }

@@ -59,6 +59,9 @@ impl Store {
         from: i64,
         until: i64,
     ) -> Result<ResearchJourney> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.research_journey(scope, from, until)).await;
+        }
         scope.validate()?;
         if from >= until || until.saturating_sub(from) > 32 * 86400 {
             bail!("Research history requires a date range of at most 32 days");
@@ -155,6 +158,9 @@ impl Store {
         scope: &StateScope,
         input: &ResearchJournalInput,
     ) -> Result<String> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.add_research_journal_entry(scope, input)).await;
+        }
         scope.validate()?;
         if input.title.trim().is_empty()
             || input.title.chars().count() > 200
@@ -194,6 +200,9 @@ impl Store {
         scope: &StateScope,
         version_id: &str,
     ) -> Result<ResearchJourneySource> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.research_journey_source(scope, version_id)).await;
+        }
         scope.validate()?;
         let exploration = match scope {
             StateScope::Mainline { .. } => None,
