@@ -88,18 +88,18 @@ plus real Windows UI/host evidence before it can be marked complete.
 | Skills settings | Local import, enable/disable, tags, file inspection, removal, community catalog, pinned GitHub preview/import and native path pickers implemented. Real-host install acceptance remains. |
 | Connections settings | Connector enable/approval controls, MCP stdio/HTTP editors, secret rows, OAuth command routing and cancellation implemented. Real host save/test and OAuth UI acceptance remain. |
 | Memory settings | File/global memory editors and failure-analysis settings implemented. Synthetic-host edit/save and draft Escape checks passed. Project scope selector added after that smoke; selector and actual host writes still need verification. |
-| Settings navigation | Eighteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Channels and project settings remain. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
+| Settings navigation | Nineteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Project settings open from the home card and project menu, with explicit project identity and summary refresh after closing. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
 | General / session / appearance / pet | Preference editors, local environment/network/update flows, pet controls and appearance font/CSS editing implemented. Full native font application and real-host acceptance remain. |
 | Models / credentials | API presets, profile editing, exact catalog lookup, API test, default selection/reorder/remove and ACP configuration/test/authentication implemented. Model keys are separate host keyring arguments; image/video assignments use explicit top-level fields. Authentication terminal input is scoped, not persisted or automatically replayed, and late snapshots are ignored after disposal. Credential status and secret writes use host keyring APIs without secret readback. Real provider and ACP authentication acceptance remain. |
 | Quick actions / workflows / specialists | Native create/edit/copy/remove, quick-action template binding and enablement, workflow tasks/dependencies/executor/budget editing, built-in read-only templates, reviewable skill/template conversions and specialist/reviewer configuration implemented. Null capability inheritance is distinct from an explicit empty whitelist. Host validation retains rejected drafts. Real-host conversion and persistence acceptance remain. |
-| Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels and real-host acceptance remain. |
+| Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels now include project sync, Feishu/Lark and Weixin binding, owner controls and device bridge configuration. Binding polls are explicit, honor host retry intervals and retain failed cancellations. Real binding, sync and host acceptance remain. |
 | Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
 | Publication / research editing | Audit SwiftUI behavior and complete publication evidence binding and journal/artifact/run editing. |
 | Real host and model acceptance | Complete the smoke sequence above using disposable data, including real attachment copying, scratch lifecycle and queued model follow-ups. |
 | Final regression and delivery | Re-run relevant suites for the final change, inspect real Windows layouts and layered Escape, document exact results, and deliver a focused follow-up PR. |
 
 Current follow-up checks: Release WinUI build/publish passed; all existing C#
-checks plus 28 settings-editor checks passed (draft retention, no retry,
+checks plus 29 settings-editor checks passed (draft retention, no retry,
 duplicate-save exclusion, scope, argument casing, void success, unknown fields,
 credential references, OAuth dispatch/cancellation, keyring writes, optional
 plugin checksums, whitelist inheritance, independent copies, task identities,
@@ -126,3 +126,17 @@ Model UI smoke used the same isolated fixture host: the API list/presets,
 new-model form, ACP list and executable/argument editor rendered in the current
 window. Immediate Escape returned each editor to its parent page. No real key,
 external API test or authentication flow was exercised by this UI smoke.
+
+Channel and project follow-up: Release build/publish and the complete C# harness
+passed, including 13 channel checks for flow identity, scope, throttling,
+cancellation, expiry, late replies, argument casing and unrelated settings
+preservation. The project editor check verifies immutable project identity and
+Agent Context argument casing. QR images use the host-returned SVG data; real
+QR rendering/scanning and account binding have not been accepted yet.
+
+Actual WinUI fixture checks verified the home card opens the selected project's
+settings, immediate editor Escape returns to its parent, and one project rename
+sends the explicit `parity-a` identity while preserving Agent Context. Returning
+to home refreshes both the project card and recent-session labels. These are
+synthetic-host checks, not production Rust persistence acceptance. Channel UI
+navigation and dirty scope switching still need visual acceptance.

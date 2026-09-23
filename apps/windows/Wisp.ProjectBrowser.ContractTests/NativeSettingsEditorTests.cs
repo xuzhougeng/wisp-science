@@ -79,6 +79,10 @@ internal static class NativeSettingsEditorTests
         fake.Fail = false; await model.SaveAsync();
         Check(S(fake.Args, "conversionSourceSha256") == "source-hash" && fake.Args!["template"]?["proposal"]?["approval_policy"]?.GetValue<string>() == "review_all",
             "reviewed conversion save preserves source provenance and approval policy outside the template payload");
+        model.Edit(new() { ["name"] = "Renamed", ["description"] = "Research", ["agent_context"] = "Keep project instructions" }, "update_project", arguments: new() { ["id"] = "project-a" });
+        await model.SaveAsync();
+        Check(fake.Command == "update_project" && fake.Project == "project-a" && S(fake.Args, "id") == "project-a"
+            && S(fake.Args, "agentContext") == "Keep project instructions", "project settings retain explicit identity and camelCase context without switching project scope");
         model.Edit(new() { ["content"] = "draft" }, "create_global_memory");
         await model.LoadAsync("get_memory_view");
         Check(S(model.Draft, "content") == "draft", "reads do not replace an editor draft");

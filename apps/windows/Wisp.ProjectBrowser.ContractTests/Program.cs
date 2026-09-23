@@ -63,3 +63,4 @@ await WorkspaceConversationTests.RunAsync(args[0]);
 await NativeParityTests.RunAsync();
 await NativeSettingsEditorTests.RunAsync();
 await NativeModelSettingsTests.RunAsync();
+await NativeChannelSettingsTests.RunAsync();

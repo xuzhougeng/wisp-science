@@ -20,19 +20,24 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private Action? pendingConfirmation;
     private readonly Button cancelAuthorization = new() { Content = "取消 OAuth 授权", Visibility = Visibility.Collapsed };
     public bool HasChanges => model.HasChanges || model.Draft != null && invalidFields.Count > 0;
-    public bool Busy => model.Busy;
+    public bool Busy => model.Busy || channelBinding?.Busy == true;
     private static string S(JsonNode? row, string key) => row?[key]?.GetValue<string>() ?? "";
     private static bool B(JsonNode? row, string key) => row?[key]?.GetValue<bool>() == true;
     private static IEnumerable<JsonObject> Rows(JsonNode? value) => (value as JsonArray)?.OfType<JsonObject>() ?? [];
     public NativeSettingsSectionPage(INativeSettingsClient client, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath = null)
-        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath) { settingsClient = client; }
+        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath)
+    {
+        settingsClient = client;
+        if (section == "channels") { channelBinding = new(client, project); channelBinding.Changed += ChannelChanged; }
+        _ = Reload();
+    }
     private NativeSettingsSectionPage(NativeSettingsEditorModel model, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath)
         : base(design, Titles[section], model, close)
     {
         this.model = model; this.projectScoped = project != null; settingsProjectId = project; this.section = section;
         this.pickPath = pickPath;
         cancelAuthorization.Click += async (_, _) => await model.CancelOAuthAsync();
-        Notices.Children.Add(cancelAuthorization); Notices.Children.Add(confirmation); model.Changed += LockConfirmation; _ = Reload();
+        Notices.Children.Add(cancelAuthorization); Notices.Children.Add(confirmation); model.Changed += LockConfirmation;
     }
     private string[] Reads => section switch
     {
@@ -52,6 +57,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         "specialists" => ["list_specialists", "list_models"],
         "workflows" => ["list_workflow_templates", "list_models", "list_skills"],
         "models" => ["list_models", "list_acp_agents"],
+        "channels" => ["channels_status", "get_settings"],
+        "project" => projectScoped ? ["get_project_settings"] : [],
         _ => throw new InvalidOperationException("Unknown settings section")
     };
     private async Task Reload()
@@ -70,23 +77,31 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     }
     private void LockConfirmation()
     {
-        SetContentEnabled(!model.Busy && pendingConfirmation == null);
+        SetContentEnabled(!Busy && pendingConfirmation == null);
         cancelAuthorization.Visibility = model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
         Notices.Visibility = pendingConfirmation != null || model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
-    public override void Dispose() { authTerminal?.Dispose(); model.Changed -= LockConfirmation; base.Dispose(); }
+    public override void Dispose()
+    {
+        ClearDeviceToken(); authTerminal?.Dispose();
+        if (channelBinding != null) { channelBinding.Changed -= ChannelChanged; channelBinding.Dispose(); }
+        model.Changed -= LockConfirmation; base.Dispose();
+    }
     public void RequestLeave(Action leave)
     {
-        if (model.Busy) return;
-        if (HasChanges) Confirm("放弃尚未保存的修改？", leave); else leave();
+        if (Busy) return;
+        void Leave() { _ = LeaveChannelsAsync(leave); }
+        if (HasChanges) Confirm("放弃尚未保存的修改？", Leave); else Leave();
     }
     public override void HandleEscape()
     {
         if (choices.LastOrDefault(c => c.IsDropDownOpen) is { } choice) { choice.IsDropDownOpen = false; return; }
         if (pendingConfirmation != null) { ClearConfirmation(); return; }
-        if (model.Busy) return;
+        if (Busy) return;
         if (model.Draft != null) { RequestLeave(() => { model.Discard(); Render(); }); return; }
+        if (channelBinding?.Active == true) { _ = CancelChannelBinding(); return; }
+        if (section == "channels" && channelDetail.Length > 0) { channelDetail = ""; Render(); return; }
         base.HandleEscape();
     }
     private async Task Run(string command, JsonObject args)
@@ -103,6 +118,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private void Render()
     {
         if (model.Closed) return;
+        ClearDeviceToken();
         authTerminal?.Dispose(); authTerminal = null;
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
         Form.Children.Add(Button("刷新", Reload));
@@ -125,6 +141,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "specialists": Specialists(); break;
             case "workflows": Workflows(); break;
             case "models": Models(); break;
+            case "channels": Channels(); break;
+            case "project": ProjectSettings(); break;
         }
         Update();
         LockConfirmation();
@@ -145,6 +163,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     {
         model.Edit(draft, command, parameter, extra);
         if (model.Draft == null) return;
+        ClearDeviceToken();
         authTerminal?.Dispose(); authTerminal = null;
         invalidFields.Clear();
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();

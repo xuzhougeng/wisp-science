@@ -238,7 +238,7 @@ internal sealed partial class MainWindow : Window
             var options = Row(2); options.VerticalAlignment = VerticalAlignment.Center;
             var star = ActionButton(project.Starred ? "取消收藏" : "收藏项目", project.Starred ? "star-filled" : "star", () => _ = model.SetStarredAsync(project.Id, !project.Starred), quiet: true);
             star.IsEnabled = !model.Loading; options.Children.Add(star);
-            options.Children.Add(ActionButton("项目设置", "gear", quiet: true));
+            options.Children.Add(ActionButton("项目设置", "gear", () => OpenSettingsSection("project", project.Id), quiet: true));
             Grid.SetColumn(options, 1); cardRow.Children.Add(options);
             var card = Card(cardRow, 4);
             var menu = new MenuFlyout();
@@ -381,7 +381,7 @@ internal sealed partial class MainWindow : Window
         AutomationProperties.SetName(switcher, "切换项目");
         var menu = new MenuFlyout();
         var projectSettings = new MenuFlyoutItem { Text = "项目设置" };
-        projectSettings.Click += (_, _) => OpenSettings();
+        projectSettings.Click += (_, _) => OpenSettingsSection("project", project.Id);
         menu.Items.Add(projectSettings);
         menu.Items.Add(new MenuFlyoutSeparator());
         foreach (var item in model.Projects)
@@ -700,11 +700,11 @@ internal sealed partial class MainWindow : Window
     private void OpenSettings()
         => OpenSettingsSection("appearance");
 
-    private void OpenSettingsSection(string initialSection)
+    private void OpenSettingsSection(string initialSection, string? projectId = null)
     {
         if (settingsPage != null) return;
         CloseSheet();
-        settingsPage = new NativeSettingsPage(model.DatabasePath, model.ActiveProjectId, prefs =>
+        settingsPage = new NativeSettingsPage(model.DatabasePath, projectId ?? model.ActiveProjectId, prefs =>
         {
             if (windowClosed) return;
             settings.Appearance = prefs["theme"]?.GetValue<string>() ?? "system";
@@ -725,6 +725,7 @@ internal sealed partial class MainWindow : Window
         settingsPage.Dispose(); settingsPage = null;
         if (pageContent != null) pageContent.Visibility = Visibility.Visible;
         Render();
+        _ = model.RefreshAsync();
     }
 
     private void SaveSettings()
