@@ -73,6 +73,11 @@ bound text and preserve their accessible names; WinUI's default header template
 otherwise kept those labels at the default size. The obsolete appearance-page
 notice that other categories were not yet available has been removed.
 
+Settings navigation restores the themed button background after deselection.
+Assigning a null background made only the text label hit-testable, so clicks in
+the center/right padding stopped switching categories after the first switch.
+The full navigation row now remains clickable.
+
 Publication renders the host-selected paper with its matching revision/items.
 Initial creation is offered only after a confirmed empty workspace read and is
 replaced by the confirmed paper. Audited PR #1342 explicitly excludes evidence
@@ -177,6 +182,13 @@ Verified against that host:
 
 Actual WinUI acceptance:
 
+- Navigation hit-testing regression: reproduced the old failure with center
+  clicks on Appearance/General after opening Workflows; clicking the label
+  still worked. After restoring the themed background, center/right-padding
+  clicks switched Workflows → Appearance → General, and General → Appearance
+  at a captured 616x567 window. Release publish and the complete C# contract
+  harness passed. The manual regression procedure is in `native-settings.md`;
+  model tests alone do not verify the native template's hit-test behavior.
 - Synthetic fixture host: memory edit/save; same-window general/model/ACP forms;
   quick-action Escape; project-scoped workflow save with graph preservation;
   selected-project rename and refreshed summaries; topmost discard Escape.

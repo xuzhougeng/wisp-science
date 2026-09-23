@@ -93,8 +93,7 @@ var memory = await client.InvokeAsync("get_memory_view", new JsonObject(), proje
 Windows must package the full desktop host and runtime resources with WebView2.
 The invisible document is an adapter for existing Tauri command extractors, not
 an embedded settings UI. The WinUI preview now hosts categorized settings in the
-main window, with appearance editing connected; the remaining 18 sections stay
-disabled until their editors are ported. The C# transport and fixture tests run
+main window, with all 19 categories connected to native editors. The C# transport and fixture tests run
 without WinUI or a real backend process.
 
 ## Manual smoke procedure
@@ -111,16 +110,25 @@ without WinUI or a real backend process.
    model and project-scoped record. Verify an intentional backend validation
    error keeps the draft. Confirm another WebView project's active context does
    not change.
-6. Build/run the Windows contract tests on Windows CI; repeat launch, read/save,
-   WSL listing and selected-project isolation when a WinUI surface is added.
+6. On Windows, build with `scripts/build_native_windows.ps1` and run the C#
+   contract harness. Repeat launch, read/save, WSL listing and selected-project
+   isolation with dedicated test services.
+7. In WinUI Settings, open Workflows, then click the blank center/right area of
+   the Appearance navigation button, away from its text. Verify Appearance
+   opens with one click. Repeat Appearance → Workflows → General → Appearance,
+   including a narrow window. Each whole row must remain clickable after it
+   becomes unselected. Press Escape immediately after opening Settings to
+   verify the parent window returns. This regression requires the actual
+   WinUI control template; transport-only contract tests do not cover hit testing.
 
 ## Remaining differences and limits
 
 - Appearance previews draft changes immediately but requires Save to persist;
   API access is added one model at a time. WebView's batch-add and auto-save
   interactions are not reproduced yet.
-- Native settings configure the existing runtime's pet/browser integrations;
-  the separate project preview remains read-only for conversations.
+- Native settings configure the existing runtime's pet/browser integrations.
+  WinUI conversations connect to the desktop host for sending and queueing;
+  see [native-conversations.md](native-conversations.md).
 - Update actions update the desktop host. Distribution/updating of the SwiftUI
   preview itself remains a separate packaging task.
 - Long operations show busy/result states. Update/download and conversion events
@@ -133,12 +141,13 @@ without WinUI or a real backend process.
 
 ## Windows incremental implementation
 
-The WinUI preview now connects the shared transport to native appearance editing
-(theme, light/dark palettes and font-size preferences) and packages the full
-settings host. It retains unknown preference fields, preserves dirty drafts on
-refresh and errors, and never retries writes automatically. Only theme and
-palette currently apply to the WinUI browser itself. The other 18 SwiftUI
-settings sections, font-family/CSS editors and complete native font styling are
-still follow-ups; this is not full #1281 UI parity. See
+The WinUI preview connects all 19 settings categories through the shared
+transport and packages the full settings host. It retains unknown preference
+fields, preserves dirty drafts on refresh and errors, and never retries writes
+automatically. Saved themes, palettes and independent UI/code typography apply
+to native controls, including controls inserted after initial rendering.
+Font-family and CSS editors are available; custom CSS applies only to WebView.
+See [native-windows-parity.md](native-windows-parity.md) for current verification
+and remaining platform/external-service acceptance, and
 [native-project-browser.md](native-project-browser.md#windows-alignment-after-1281)
 for build prerequisites, host/database boundaries and manual smoke steps.

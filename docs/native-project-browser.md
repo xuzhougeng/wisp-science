@@ -476,6 +476,10 @@ and project stars.
 
 ### Windows alignment after #1281
 
+This subsection records the original #1281 increment. Its disabled-settings,
+read-only conversation and font-styling limits have since been superseded;
+see [Windows parity](native-windows-parity.md) for current behavior and acceptance.
+
 This increment carries forward #1279, merges #1281 and enables:
 
 - Explicit project star/unstar writes through `--allow-project-writes`, applying

@@ -176,7 +176,13 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             capabilityPage = new NativeSettingsSectionPage(client, settingsProject, next, design, close, pickPath);
             Grid.SetColumn(capabilityPage, 1); shell.Children.Add(capabilityPage);
         }
-        foreach (var (key, button) in navigationButtons) button.Background = key == next ? design.Brush("surface-hover") : null;
+        foreach (var (key, button) in navigationButtons)
+        {
+            if (key == next) button.Background = design.Brush("surface-hover");
+            // A null brush leaves only the label hit-testable. Restore the
+            // themed background so the entire navigation row stays clickable.
+            else button.ClearValue(Control.BackgroundProperty);
+        }
     }
 
     public void Dispose()
