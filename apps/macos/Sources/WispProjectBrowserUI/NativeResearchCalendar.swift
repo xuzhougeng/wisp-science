@@ -51,6 +51,29 @@ enum NativeCalendarCommand {
     static let privacy = "get_privacy_mode"
 }
 
+enum CalendarPrivacyGate: Equatable {
+    case unresolved
+    case ready(active: Bool, projectIDs: Set<String>)
+    case failed
+}
+
+enum CalendarPrivacyDecision {
+    /// A calendar read is allowed only after privacy mode is known. Unresolved
+    /// and failed gates return nil so no project id is submitted.
+    static func admit(_ gate: CalendarPrivacyGate, projectIDs: [String]) -> [String]? {
+        guard case .ready(let active, let privacy) = gate else { return nil }
+        return filteredProjectIDs(projectIDs, privacyActive: active, privacy: privacy)
+    }
+}
+
+func filteredProjectIDs(_ projectIDs: [String], privacyActive: Bool, privacy: Set<String>) -> [String] {
+    var seen = Set<String>()
+    return projectIDs.filter { id in
+        if privacyActive && privacy.contains(id) { return false }
+        return seen.insert(id).inserted
+    }
+}
+
 enum NativeCalendarClock {
     static func monthInterval(containing date: Date, calendar: Calendar) -> (Int64, Int64) {
         let parts = calendar.dateComponents([.year, .month], from: date)
@@ -74,8 +97,14 @@ enum NativeCalendarClock {
 final class NativeCalendarModel: ObservableObject {
     @Published var presented = false
     @Published var projectFilter: String?
+    @Published private(set) var privacyGate: CalendarPrivacyGate = .unresolved
     @Published var privacyActive = false
     @Published var privacyProjectIDs: Set<String> = []
+    private var privacyToken = UUID()
+    var navigationEnabled: Bool {
+        if case .ready = privacyGate { return true }
+        return false
+    }
     @Published private(set) var monthRows: [CalendarProject] = []
     @Published private(set) var dayRows: [CalendarProject] = []
     @Published private(set) var selectedDay: Int64 = 0
@@ -93,17 +122,14 @@ final class NativeCalendarModel: ObservableObject {
     }
 
     func invalidate() {
+        privacyToken = UUID()
         monthGeneration = UUID()
         dayGeneration = UUID()
         presented = false
     }
 
     static func requestedIDs(_ projectIDs: [String], privacyActive: Bool, privacy: Set<String>) -> [String] {
-        var seen = Set<String>()
-        return projectIDs.filter { id in
-            if privacyActive && privacy.contains(id) { return false }
-            return seen.insert(id).inserted
-        }
+        filteredProjectIDs(projectIDs, privacyActive: privacyActive, privacy: privacy)
     }
 
     func visibleProjects(_ rows: [CalendarProject]) -> [CalendarProject] {
@@ -138,6 +164,7 @@ final class NativeCalendarModel: ObservableObject {
         let active = active && !projectIDs.isEmpty
         privacyActive = active
         privacyProjectIDs = projectIDs
+        privacyGate = .ready(active: active, projectIDs: projectIDs)
         if let projectFilter, active, projectIDs.contains(projectFilter) {
             self.projectFilter = nil
         }
@@ -145,15 +172,17 @@ final class NativeCalendarModel: ObservableObject {
 
     func openMonth(_ client: any NativeSettingsQuerying, projectIDs: [String]) async {
         guard presented else { return }
-        let generation = UUID()
-        monthGeneration = generation
+        let token = UUID()
+        privacyToken = token
+        privacyGate = .unresolved
         do {
             let value = try await client.invoke(NativeCalendarCommand.privacy, args: [:], projectID: nil)
-            guard monthGeneration == generation, presented else { return }
+            guard privacyToken == token, presented else { return }
             let stored = try JSONDecoder().decode(StoredPrivacy.self, from: JSONEncoder().encode(value))
             applyPrivacy(active: stored.active, projectIDs: Set(stored.projectIDs))
         } catch {
-            guard monthGeneration == generation, presented else { return }
+            guard privacyToken == token, presented else { return }
+            privacyGate = .failed
             self.error = "隐私模式未能确认读取，不会自动重试。\n" + error.localizedDescription
             return
         }
@@ -188,7 +217,7 @@ final class NativeCalendarModel: ObservableObject {
 
     private func load(_ client: any NativeSettingsQuerying, projectIDs: [String], from: Int64, until: Int64, month: Bool) async {
         guard presented else { return }
-        let ids = Self.requestedIDs(projectIDs, privacyActive: privacyActive, privacy: privacyProjectIDs)
+        guard let ids = CalendarPrivacyDecision.admit(privacyGate, projectIDs: projectIDs) else { return }
         let generation = UUID()
         if month { monthGeneration = generation } else { dayGeneration = generation }
         if ids.isEmpty {
@@ -237,9 +266,9 @@ struct NativeCalendarSheet: View {
                 Button("返回首页") { calendar.dismiss() }
                 Text("研究日历").font(.headline)
                 Spacer()
-                Button("上个月") { Task { await calendar.shiftMonth(-1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
-                Button("下个月") { Task { await calendar.shiftMonth(1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
-                Button("刷新") { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
+                Button("上个月") { Task { await calendar.shiftMonth(-1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
+                Button("下个月") { Task { await calendar.shiftMonth(1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
+                Button("刷新") { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
             }
             ScrollView(.horizontal) {
                 HStack {
@@ -259,6 +288,7 @@ struct NativeCalendarSheet: View {
                 ForEach(days, id: \.self) { day in
                     let start = NativeCalendarClock.dayInterval(containing: day, calendar: calendar.calendar).0
                     Button("\(calendar.calendar.component(.day, from: day))") { Task { await calendar.showDay(start, client: model.calendarClient(), projectIDs: projectIDs) } }
+                        .disabled(!calendar.navigationEnabled || calendar.busy)
                         .accessibilityLabel(dayLabel(day))
                         .accessibilityAddTraits(calendar.selectedDay == start ? .isSelected : [])
                         .overlay(alignment: .bottom) {

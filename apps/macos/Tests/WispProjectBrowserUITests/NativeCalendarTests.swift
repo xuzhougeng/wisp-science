@@ -11,6 +11,17 @@ final class NativeCalendarTests: XCTestCase {
         return calendar
     }
 
+    func testPrivacyGateRefusesAReadUntilPrivacyIsReady() {
+        XCTAssertNil(CalendarPrivacyDecision.admit(.unresolved, projectIDs: ["research-1", "hidden"]))
+        XCTAssertNil(CalendarPrivacyDecision.admit(.failed, projectIDs: ["research-1", "hidden"]))
+        XCTAssertEqual(
+            CalendarPrivacyDecision.admit(.ready(active: true, projectIDs: ["hidden"]), projectIDs: ["research-1", "hidden", "research-1"]),
+            ["research-1"])
+        XCTAssertEqual(
+            CalendarPrivacyDecision.admit(.ready(active: false, projectIDs: ["hidden"]), projectIDs: ["research-1", "hidden", "research-1"]),
+            ["research-1", "hidden"])
+    }
+
     func testMonthAndDayBoundsUseTheLocalCalendar() {
         let bounds = NativeCalendarClock.monthInterval(containing: Date(timeIntervalSince1970: 100), calendar: utc)
         XCTAssertEqual(bounds.0, 0)
@@ -62,6 +73,53 @@ final class NativeCalendarTests: XCTestCase {
         XCTAssertEqual(still, after)
     }
 
+    @MainActor func testNavigationWhilePrivacyIsPendingDoesNotSubmitProjects() async {
+        let host = CalendarTransport()
+        await host.setPrivacy(active: true, ids: ["hidden"])
+        await host.suspend()
+        let calendar = NativeCalendarModel()
+        calendar.calendar = utc
+        calendar.clock = Date(timeIntervalSince1970: 100)
+        calendar.presented = true
+        let task = Task { await calendar.openMonth(host, projectIDs: ["research-1", "hidden", "research-1"]) }
+        while !(await host.isHanging()) { await Task.yield() }
+        await calendar.shiftMonth(1, client: host, projectIDs: ["research-1", "hidden", "research-1"])
+        await calendar.showDay(86_400, client: host, projectIDs: ["research-1", "hidden", "research-1"])
+        let during = await host.calls()
+        XCTAssertEqual(during.map(\.command), [NativeCalendarCommand.privacy])
+        await host.resume(with: .object(["active": .bool(true), "project_ids": .array([.string("hidden")])]))
+        await task.value
+        let after = await host.calls()
+        let reads = after.filter { $0.command == NativeCalendarCommand.read }
+        XCTAssertFalse(reads.isEmpty)
+        for read in reads {
+            XCTAssertEqual(read.args["project_ids"], .array([.string("research-1")]))
+        }
+        XCTAssertEqual(after.filter { $0.command == NativeCalendarCommand.privacy }.count, 1)
+        XCTAssertEqual(calendar.privacyGate, .ready(active: true, projectIDs: ["hidden"]))
+    }
+
+    @MainActor func testLostPrivacyReadDoesNotSubmitProjectsOrRetry() async {
+        let host = CalendarTransport()
+        await host.suspend()
+        let calendar = NativeCalendarModel()
+        calendar.calendar = utc
+        calendar.presented = true
+        let task = Task { await calendar.openMonth(host, projectIDs: ["research-1", "hidden"]) }
+        while !(await host.isHanging()) { await Task.yield() }
+        await calendar.shiftMonth(1, client: host, projectIDs: ["research-1", "hidden"])
+        await calendar.showDay(86_400, client: host, projectIDs: ["research-1", "hidden"])
+        await host.fail()
+        await task.value
+        let calls = await host.calls()
+        XCTAssertEqual(calls.map(\.command), [NativeCalendarCommand.privacy])
+        XCTAssertEqual(calendar.privacyGate, .failed)
+        XCTAssertTrue(calendar.error?.contains("不会自动重试") == true)
+        await Task.yield()
+        let later = await host.callCount()
+        XCTAssertEqual(later, 1)
+    }
+
     @MainActor func testFilterHidesProjectsWithoutAnotherRequest() async throws {
         let host = CalendarTransport()
         await host.setRows(try CalendarTransport.twoProjects())
@@ -69,7 +127,7 @@ final class NativeCalendarTests: XCTestCase {
         calendar.calendar = utc
         calendar.clock = Date(timeIntervalSince1970: 100)
         calendar.presented = true
-        await calendar.reloadMonth(host, projectIDs: ["research-1", "other"])
+        await calendar.openMonth(host, projectIDs: ["research-1", "other"])
         let loaded = await host.callCount()
         calendar.projectFilter = "other"
         XCTAssertEqual(calendar.markedDays()[0], ["other"])
@@ -85,11 +143,11 @@ final class NativeCalendarTests: XCTestCase {
         model.calendar.calendar = utc
         model.calendar.clock = Date(timeIntervalSince1970: 100)
         model.calendar.presented = true
-        await model.calendar.reloadMonth(host, projectIDs: ["research-1"])
+        await model.calendar.openMonth(host, projectIDs: ["research-1"])
         await model.openCalendarJourney(projectID: "research-1", day: 0)
         let hostCalls = await host.callCount()
         let asked = await list.sessionProjects()
-        XCTAssertEqual(hostCalls, 2)
+        XCTAssertEqual(hostCalls, 3)
         XCTAssertEqual(asked, ["research-1"])
         XCTAssertEqual(model.activeProjectID, "research-1")
         XCTAssertEqual(model.journeyFocus, JourneyFocus(projectID: "research-1", day: 0))
@@ -176,12 +234,21 @@ private actor CalendarTransport: NativeSettingsQuerying {
     func calls() -> [(command: String, args: [String: SettingsValue], projectID: String?)] { recorded }
     func suspend() { mode = "hang" }
     func isHanging() -> Bool { release != nil }
-    func resume(with value: SettingsValue) { release?.resume(returning: value); release = nil }
+    func resume(with value: SettingsValue) {
+        mode = "ok"
+        release?.resume(returning: value)
+        release = nil
+    }
+    func fail() {
+        mode = "ok"
+        release?.resume(throwing: ProjectBrowserError.service("connection reset"))
+        release = nil
+    }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String?) async throws -> SettingsValue {
         recorded.append((command, args, projectID))
         if mode == "lost" { throw ProjectBrowserError.service("connection reset") }
-        if command == NativeCalendarCommand.privacy { return privacy }
         if mode == "hang" { return try await withCheckedThrowingContinuation { release = $0 } }
+        if command == NativeCalendarCommand.privacy { return privacy }
         return try rows ?? Self.fixtureRows()
     }
     static func fixtureRows() throws -> SettingsValue {
