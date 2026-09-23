@@ -141,9 +141,13 @@ public sealed class WorkspacePublicationModel(INativePublicationClient client, s
     public string Description { get; set; } = "";
     public string RevisionLabel { get; set; } = "";
     public NativePublicationWorkspace? Workspace { get; private set; }
+    public bool CreationAvailable => Workspace is { Publications.Count: 0 };
+    public bool CanCreate => CreationAvailable && !Busy && !Closed
+        && !string.IsNullOrWhiteSpace(Title) && !string.IsNullOrWhiteSpace(RevisionLabel);
     public Task<bool> LoadAsync() => RunAsync(() => client.ReadAsync(projectId), value => Workspace = value);
     public Task<bool> CreateAsync()
     {
+        if (!CreationAvailable || Busy || Closed) return Task.FromResult(false);
         if (string.IsNullOrWhiteSpace(Title) || string.IsNullOrWhiteSpace(RevisionLabel))
         { Fail("请填写论文标题和版本标签。"); return Task.FromResult(false); }
         return RunAsync(() => client.CreateAsync(projectId, Title.Trim(), Description, RevisionLabel.Trim()), value =>

@@ -94,7 +94,7 @@ plus real Windows UI/host evidence before it can be marked complete.
 | Quick actions / workflows / specialists | Native create/edit/copy/remove, quick-action template binding and enablement, workflow tasks/dependencies/executor/budget editing, built-in read-only templates, reviewable skill/template conversions and specialist/reviewer configuration implemented. Null capability inheritance is distinct from an explicit empty whitelist. Host validation retains rejected drafts. Real-host conversion and persistence acceptance remain. |
 | Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels now include project sync, Feishu/Lark and Weixin binding, owner controls and device bridge configuration. Binding polls are explicit, honor host retry intervals and retain failed cancellations. Real binding, sync and host acceptance remain. |
 | Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
-| Publication / research editing | Audit SwiftUI behavior and complete publication evidence binding and journal/artifact/run editing. |
+| Publication (#1342) | Initial creation and selected publication/revision/items are implemented. The initial form appears only after an empty workspace read and disappears after confirmed creation. Real-host persistence acceptance remains. PR #1342 explicitly excludes evidence binding, readiness and reproduction; unrelated research editors are not requirements introduced by this PR range. |
 | Real host and model acceptance | Complete the smoke sequence above using disposable data, including real attachment copying, scratch lifecycle and queued model follow-ups. |
 | Final regression and delivery | Re-run relevant suites for the final change, inspect real Windows layouts and layered Escape, document exact results, and deliver a focused follow-up PR. |
 
@@ -156,3 +156,15 @@ independent code sizes, custom families, malformed values, bounds and wire
 numeric values. Remaining typography acceptance includes actual Windows
 rendering after save/reopen, all settings and auxiliary controls, narrow layouts
 and scaling. This increment does not establish full native font coverage.
+
+
+Publication scope audit: [PR #1342](https://github.com/xuzhougeng/wisp-science/pull/1342)
+and `NativePublication.swift` establish an initial-create/read workspace, not a
+full publication editor. The WinUI page now renders the host-selected paper
+with its revision/items instead of presenting all paper titles above one
+revision. The creation form waits for an empty workspace and disappears after
+success. Lifecycle checks cover unread/existing/empty states, invalid drafts,
+duplicate pending writes, confirmed creation and late closed-view replies.
+Actual UI and production host persistence acceptance remain outstanding for
+this adjustment. Earlier references to evidence binding and general research
+editors as remaining requirements were broader than the requested PR scope.

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Wisp.ProjectBrowser.Contracts;
+using Wisp.ProjectBrowser;
 
 internal static class NativePublicationContractTests
 {
@@ -29,7 +30,34 @@ internal static class NativePublicationContractTests
         try { await client.CreateAsync("research-1", "RNA-seq paper", "Differential expression", "v1"); throw new InvalidOperationException("Expected lost publication create"); }
         catch (IOException) { }
         if (fake.Calls != before + 1) throw new InvalidOperationException("Publication create was retried");
+        fake.Fail = false;
+        using var model = new WorkspacePublicationModel(client, "research-1") { Title = "Paper", RevisionLabel = "v1" };
+        before = fake.Calls;
+        if (model.CanCreate || await model.CreateAsync() || fake.Calls != before)
+            throw new InvalidOperationException("Publication creation must wait for an authoritative empty workspace");
+        await model.LoadAsync();
+        if (model.CreationAvailable || await model.CreateAsync())
+            throw new InvalidOperationException("Existing publication must replace the initial creation form");
+        fake.Reply = JsonNode.Parse("{\"publications\":[],\"publication\":null,\"revision\":null,\"items\":[]}");
+        await model.LoadAsync();
+        if (!model.CanCreate) throw new InvalidOperationException("Empty workspace must enable a valid initial draft");
+        model.RevisionLabel = " "; before = fake.Calls;
+        if (model.CanCreate || await model.CreateAsync() || fake.Calls != before || model.Title != "Paper")
+            throw new InvalidOperationException("Invalid initial draft must remain intact without invoking the host");
+        model.RevisionLabel = "v1";
+        fake.Pending = new();
+        var pending = model.CreateAsync(); before = fake.Calls;
+        if (await model.CreateAsync() || fake.Calls != before || model.CanCreate)
+            throw new InvalidOperationException("Pending publication write must exclude duplicate creation");
+        fake.Pending.SetResult(fixture["result"]!.DeepClone()); await pending; fake.Pending = null;
+        if (model.Title != "" || model.CreationAvailable || model.Workspace?.Publication?.Id != "pub-1")
+            throw new InvalidOperationException("Confirmed creation must replace draft with returned publication");
+        fake.Pending = new(); var late = model.LoadAsync(); model.Dispose();
+        fake.Pending.SetResult(new JsonObject { ["publications"] = new JsonArray(), ["items"] = new JsonArray() }); await late;
+        if (model.Workspace?.Publication?.Id != "pub-1")
+            throw new InvalidOperationException("Late publication read must not repopulate a closed page");
         Console.WriteLine("Native publication fixture, explicit project id and no-retry tests passed.");
+        Console.WriteLine("Publication initial-create lifecycle, duplicate exclusion and closed-view checks passed.");
     }
 
     sealed class FakePublicationTransport : INativeSettingsClient
@@ -40,6 +68,7 @@ internal static class NativePublicationContractTests
         public string? ProjectId;
         public JsonObject? Args;
         public JsonNode? Reply;
+        public TaskCompletionSource<JsonNode?>? Pending;
         public Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null, CancellationToken cancellationToken = default)
         {
             Calls++;
@@ -47,7 +76,7 @@ internal static class NativePublicationContractTests
             ProjectId = projectId;
             Args = arguments;
             if (Fail) throw new IOException("lost response");
-            return Task.FromResult(Reply?.DeepClone());
+            return Pending?.Task ?? Task.FromResult(Reply?.DeepClone());
         }
     }
 }

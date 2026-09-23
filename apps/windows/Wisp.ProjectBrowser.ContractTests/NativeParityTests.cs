@@ -72,6 +72,8 @@ internal static class NativeParityTests
         Check(!groups.Selected.Contains("s1") && groups.Selected.Contains("s2") && groups.Selecting, "partial move removes confirmed successes and retains unresolved selection");
 
         var publication = new WorkspacePublicationModel(new NativePublicationClient(transport), "project-a") { Title = "Paper", RevisionLabel = "v1" };
+        transport.Handler = (_, _, _) => Task.FromResult<JsonNode?>(JsonNode.Parse("{\"publications\":[],\"publication\":null,\"revision\":null,\"items\":[]}"));
+        await publication.LoadAsync();
         transport.Handler = (_, _, _) => throw new IOException("lost publication");
         await publication.CreateAsync();
         Check(publication.Title == "Paper" && publication.RevisionLabel == "v1", "publication failure keeps manuscript draft");
