@@ -168,6 +168,22 @@ struct ProjectWorkspace: View {
             .interactiveDismissDisabled(groups.busy)
             .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissCreate() })
         }
+        .sheet(isPresented: Binding(get: { groups.renamingID != nil }, set: { if !$0 { groups.dismissRename() } })) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("重命名分组").font(.headline)
+                TextField("分组名称", text: $groups.renameDraft).textFieldStyle(.roundedBorder).disabled(groups.busy)
+                if let error = groups.error { Text(error).font(.caption).foregroundStyle(.red) }
+                HStack {
+                    Spacer()
+                    Button("取消") { groups.dismissRename() }.disabled(groups.busy)
+                    Button(groups.busy ? "正在重命名…" : "保存") { Task { await groups.rename(conversation.client, projectID: project.id) } }
+                        .disabled(groups.busy)
+                }
+            }
+            .padding(24).frame(width: 360)
+            .interactiveDismissDisabled(groups.busy)
+            .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissRename() })
+        }
         .sheet(isPresented: Binding(get: { model.journey.presented && model.journey.projectID == project.id }, set: { if !$0 { model.journey.presented = false; model.journeyFocus = nil } })) {
             NativeJourneySheet(model: model, journey: model.journey)
         }
@@ -292,7 +308,18 @@ struct ProjectWorkspace: View {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(groups.sections(model.sessions)) { section in
                         if groups.group != "none" {
-                            Text(section.title).font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint")).padding(.top, 6)
+                            HStack {
+                                Text(section.title).font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint"))
+                                Spacer()
+                                if let folderID = section.folderID {
+                                    Button("重命名") { groups.beginRename(folderID) }
+                                        .buttonStyle(.plain)
+                                        .font(WispDesign.font(size: 11))
+                                        .accessibilityLabel("重命名 \(section.title)")
+                                        .accessibilityIdentifier("rename-group-\(folderID)")
+                                }
+                            }
+                            .padding(.top, 6)
                         }
                         ForEach(section.sessions) { session in
                             Button {

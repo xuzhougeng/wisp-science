@@ -267,12 +267,13 @@ Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
 Sessions can be sorted by recent or name, grouped by folder or date, and
-selected and moved. Those commands are `native_project_folders`,
-`native_project_folder_create`, `native_project_folder_rename`, and
-`native_project_session_move`. Each one requires a project id and does not
-change the WebView's active project or session. An empty name or a lost reply
-is not retried. Escape closes only the new-group sheet while a sort menu under
-it stays open.
+selected and moved. A folder section header can rename that group. Those
+commands are `native_project_folders`, `native_project_folder_create`,
+`native_project_folder_rename`, and `native_project_session_move`. Each one
+requires a project id and does not change the WebView's active project or
+session. An empty name or a lost reply is not retried, and the rename draft
+stays open. Escape closes only the new-group or rename sheet while a sort menu
+under it stays open.
 
 The sidebar **文件** button selects the existing right-hand files page and
 expands that panel. It uses the same tab layout as the panel itself and does
@@ -320,8 +321,10 @@ not create a settings webview, and does not change the WebView's active project
 or session. It is announced as `calendar` and `calendar_schema`
 (`wisp.native-calendar.v1`) and is not in the settings allowlist.
 
-The request includes the projects currently listed on the home screen. When
-privacy mode is on, privacy project ids are left out of that list. A project
+The request includes the projects currently listed on the home screen. Opening
+or refreshing the sheet reads privacy mode from `wisp-privacy-mode-active` and
+`wisp-privacy-mode-projects` before building that list. When privacy mode is
+on, those project ids are left out of the request. A project
 filter only hides rows that were already read; it does not add a project. A
 lost read keeps the last rows and is not retried. Choosing a date shows that
 day's records inside the sheet. **打开研究历程** closes the calendar and opens

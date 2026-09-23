@@ -41,6 +41,32 @@ enum NativeCalendarCommand {
     static let read = "native_research_calendar"
 }
 
+/// Same keys the WebView privacy mode stores. The calendar sheet reads them
+/// before every month load, so a hidden project is left out of the request.
+struct PrivacyMode: Equatable {
+    var active: Bool
+    var projectIDs: Set<String>
+    static let activeKey = "wisp-privacy-mode-active"
+    static let projectsKey = "wisp-privacy-mode-projects"
+
+    static func load(_ defaults: UserDefaults = .standard) -> PrivacyMode {
+        let raw = defaults.string(forKey: projectsKey) ?? "[]"
+        let projects = Set((try? JSONDecoder().decode([String].self, from: Data(raw.utf8))) ?? [])
+        let active = defaults.string(forKey: activeKey) == "1" && !projects.isEmpty
+        return PrivacyMode(active: active, projectIDs: projects)
+    }
+
+    func save(_ defaults: UserDefaults = .standard) {
+        let encoded = (try? JSONEncoder().encode(Array(projectIDs).sorted())) ?? Data("[]".utf8)
+        defaults.set(String(data: encoded, encoding: .utf8), forKey: Self.projectsKey)
+        if active && !projectIDs.isEmpty {
+            defaults.set("1", forKey: Self.activeKey)
+        } else {
+            defaults.removeObject(forKey: Self.activeKey)
+        }
+    }
+}
+
 enum NativeCalendarClock {
     static func monthInterval(containing date: Date, calendar: Calendar) -> (Int64, Int64) {
         let parts = calendar.dateComponents([.year, .month], from: date)
@@ -124,6 +150,19 @@ final class NativeCalendarModel: ObservableObject {
         }
     }
 
+    func applyPrivacy(_ mode: PrivacyMode) {
+        privacyActive = mode.active
+        privacyProjectIDs = mode.projectIDs
+        if let projectFilter, mode.active, mode.projectIDs.contains(projectFilter) {
+            self.projectFilter = nil
+        }
+    }
+
+    func openMonth(_ client: any NativeSettingsQuerying, projectIDs: [String], defaults: UserDefaults = .standard) async {
+        applyPrivacy(PrivacyMode.load(defaults))
+        await reloadMonth(client, projectIDs: projectIDs)
+    }
+
     func reloadMonth(_ client: any NativeSettingsQuerying, projectIDs: [String]) async {
         let bounds = NativeCalendarClock.monthInterval(containing: clock, calendar: calendar)
         monthStart = bounds.0
@@ -203,7 +242,7 @@ struct NativeCalendarSheet: View {
                 Spacer()
                 Button("上个月") { Task { await calendar.shiftMonth(-1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
                 Button("下个月") { Task { await calendar.shiftMonth(1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
-                Button("刷新") { Task { await calendar.reloadMonth(model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
+                Button("刷新") { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } }.disabled(calendar.busy)
             }
             ScrollView(.horizontal) {
                 HStack {
@@ -256,7 +295,7 @@ struct NativeCalendarSheet: View {
         .frame(width: 640, height: 520)
         .interactiveDismissDisabled(calendar.busy)
         .background(NativeSettingsEscape(enabled: !calendar.busy) { calendar.dismiss() })
-        .task { await calendar.reloadMonth(model.calendarClient(), projectIDs: projectIDs) }
+        .task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) }
     }
 
     private var days: [Date] {

@@ -26,9 +26,11 @@ final class NativeCalendarTests: XCTestCase {
         calendar.calendar = utc
         calendar.clock = Date(timeIntervalSince1970: 100)
         calendar.presented = true
-        calendar.privacyActive = true
-        calendar.privacyProjectIDs = ["hidden"]
-        await calendar.reloadMonth(host, projectIDs: ["research-1", "hidden", "research-1"])
+        let defaults = UserDefaults(suiteName: "wisp-calendar-privacy-test")!
+        defaults.removePersistentDomain(forName: "wisp-calendar-privacy-test")
+        PrivacyMode(active: true, projectIDs: ["hidden"]).save(defaults)
+        XCTAssertFalse(calendar.privacyActive)
+        await calendar.openMonth(host, projectIDs: ["research-1", "hidden", "research-1"], defaults: defaults)
         let calls = await host.calls()
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[0].command, NativeCalendarCommand.read)
@@ -39,6 +41,8 @@ final class NativeCalendarTests: XCTestCase {
         XCTAssertEqual(calls[1].args["from"], .integer(0))
         XCTAssertEqual(calls[1].args["until"], .integer(86400))
         XCTAssertEqual(calls[1].args["project_ids"], .array([.string("research-1")]))
+        XCTAssertTrue(calendar.privacyActive)
+        XCTAssertEqual(calendar.privacyProjectIDs, ["hidden"])
         XCTAssertEqual(calendar.monthRows.map(\.projectID), ["research-1"])
         XCTAssertEqual(calendar.markedDays()[0], ["research-1"])
         XCTAssertEqual(calendar.dayGroups().map(\.projectID), ["research-1"])

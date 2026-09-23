@@ -81,6 +81,63 @@ final class NativeSessionGroupTests: XCTestCase {
         XCTAssertEqual(groups.draft, "kept")
         XCTAssertTrue(window.firstResponder === focus)
     }
+
+    @MainActor func testRenameUsesTheProjectAndKeepsTheDraftWhenTheReplyIsLost() async {
+        let client = GroupClient()
+        let groups = NativeSessionGroups()
+        await groups.load(client, projectID: "project-a")
+        groups.beginRename("f1")
+        groups.renameDraft = "  "
+        await groups.rename(client, projectID: "project-a")
+        let empty = await client.callCount()
+        XCTAssertEqual(empty, 1)
+        XCTAssertEqual(groups.error, "请填写分组名称。")
+        XCTAssertEqual(groups.renamingID, "f1")
+        groups.renameDraft = "Analysis"
+        await client.setMode("lost")
+        await groups.rename(client, projectID: "project-a")
+        let calls = await client.calls
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].projectID, "project-a")
+        XCTAssertEqual(calls[1].command, "native_project_folder_rename")
+        XCTAssertEqual(calls[1].args["folder_id"]?.string, "f1")
+        XCTAssertEqual(calls[1].args["name"]?.string, "Analysis")
+        XCTAssertEqual(groups.renamingID, "f1")
+        XCTAssertEqual(groups.renameDraft, "Analysis")
+        XCTAssertTrue(groups.error?.contains("不会自动重试") == true)
+        await Task.yield()
+        let after = await client.callCount()
+        XCTAssertEqual(after, 2)
+    }
+
+    @MainActor func testImmediateEscapeClosesOnlyTheRenameSheet() async {
+        _ = NSApplication.shared
+        let groups = NativeSessionGroups()
+        let client = GroupClient()
+        await groups.load(client, projectID: "project-a")
+        groups.beginRename("f1")
+        groups.menuPresented = true
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let root = NSView(frame: window.contentLayoutRect)
+        window.contentView = root
+        let menu = NSView(frame: .zero)
+        root.addSubview(menu)
+        let menuOwner = NativeSettingsEscape.Coordinator(enabled: true) { groups.menuPresented = false }
+        menuOwner.view = menu
+        menuOwner.install()
+        defer { menuOwner.remove() }
+        let host = NSHostingView(rootView: GroupRenameSheet(groups: groups))
+        root.addSubview(host)
+        host.frame = root.bounds
+        host.layoutSubtreeIfNeeded()
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        XCTAssertTrue(NativeEscapeStack.shared.consume(event, keyWindow: window, modalWindow: nil))
+        XCTAssertNil(groups.renamingID)
+        XCTAssertTrue(groups.menuPresented)
+        XCTAssertEqual(groups.renameDraft, "Week")
+    }
 }
 
 private extension Array where Element == SessionSection {
@@ -98,17 +155,28 @@ private struct GroupCreateSheet: View {
     }
 }
 
+private struct GroupRenameSheet: View {
+    @ObservedObject var groups: NativeSessionGroups
+    var body: some View {
+        Text("重命名分组")
+            .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissRename() })
+    }
+}
+
 private actor GroupClient: NativeConversationQuerying {
-    var calls: [(String, String)] = []
+    var calls: [(projectID: String, command: String, args: [String: SettingsValue])] = []
     var mode = "ok"
     func setMode(_ mode: String) { self.mode = mode }
     func callCount() -> Int { calls.count }
-    func lastProject() -> String { calls.last?.0 ?? "" }
-    func lastCommand() -> String { calls.last?.1 ?? "" }
+    func lastProject() -> String { calls.last?.projectID ?? "" }
+    func lastCommand() -> String { calls.last?.command ?? "" }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot { throw ProjectBrowserError.invalidResponse }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
-        calls.append((projectID, command))
+        calls.append((projectID, command, args))
         if mode == "lost" { throw ProjectBrowserError.service("connection reset") }
-        return .object(["id": .string("folder-1"), "name": args["name"] ?? .null])
+        if command == "native_project_folders" {
+            return .array([.object(["id": .string("f1"), "name": .string("Week")])])
+        }
+        return .bool(true)
     }
 }

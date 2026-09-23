@@ -7,8 +7,9 @@ struct ProjectFolder: Codable, Identifiable, Equatable {
 }
 
 struct SessionSection: Equatable, Identifiable {
-    var id: String { title }
+    var id: String { folderID ?? title }
     let title: String
+    let folderID: String?
     let sessions: [BrowserSession]
 }
 
@@ -26,11 +27,11 @@ enum SessionArrangement {
         switch group {
         case "folder":
             var sections = folders.map { folder in
-                SessionSection(title: folder.name, sessions: ordered.filter { $0.folderID == folder.id })
+                SessionSection(title: folder.name, folderID: folder.id, sessions: ordered.filter { $0.folderID == folder.id })
             }
             let ungrouped = ordered.filter { session in session.folderID == nil || !folders.contains { $0.id == session.folderID } }
             if !ungrouped.isEmpty || sections.isEmpty {
-                sections.append(SessionSection(title: "未分组", sessions: ungrouped))
+                sections.append(SessionSection(title: "未分组", folderID: nil, sessions: ungrouped))
             }
             return sections
         case "date":
@@ -44,9 +45,9 @@ enum SessionArrangement {
                 if grouped[title] == nil { titles.append(title) }
                 grouped[title, default: []].append(session)
             }
-            return titles.map { SessionSection(title: $0, sessions: grouped[$0] ?? []) }
+            return titles.map { SessionSection(title: $0, folderID: nil, sessions: grouped[$0] ?? []) }
         default:
-            return [SessionSection(title: "会话", sessions: ordered)]
+            return [SessionSection(title: "会话", folderID: nil, sessions: ordered)]
         }
     }
 }
@@ -60,6 +61,8 @@ final class NativeSessionGroups: ObservableObject {
     @Published var selected: Set<String> = []
     @Published var creating = false
     @Published var draft = ""
+    @Published var renamingID: String?
+    @Published var renameDraft = ""
     @Published private(set) var busy = false
     @Published private(set) var error: String?
     @Published var menuPresented = false
@@ -71,6 +74,18 @@ final class NativeSessionGroups: ObservableObject {
     func dismissCreate() {
         guard !busy else { return }
         creating = false
+    }
+
+    func beginRename(_ folderID: String) {
+        guard !busy, let folder = folders.first(where: { $0.id == folderID }) else { return }
+        renamingID = folder.id
+        renameDraft = folder.name
+        error = nil
+    }
+
+    func dismissRename() {
+        guard !busy else { return }
+        renamingID = nil
     }
 
     func load(_ client: any NativeConversationQuerying, projectID: String) async {
@@ -98,6 +113,26 @@ final class NativeSessionGroups: ObservableObject {
             await load(client, projectID: projectID)
         } catch {
             self.error = "分组未能确认创建，不会自动重试。\n" + error.localizedDescription
+        }
+    }
+
+    func rename(_ client: any NativeConversationQuerying, projectID: String) async {
+        let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !busy, let folderID = renamingID else { return }
+        guard !name.isEmpty else { error = "请填写分组名称。"; return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            _ = try await client.invoke(
+                "native_project_folder_rename",
+                args: ["folder_id": .string(folderID), "name": .string(name)],
+                projectID: projectID)
+            renameDraft = ""
+            renamingID = nil
+            await load(client, projectID: projectID)
+        } catch {
+            self.error = "分组未能确认重命名，不会自动重试。\n" + error.localizedDescription
         }
     }
 
