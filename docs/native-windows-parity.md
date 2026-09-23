@@ -103,10 +103,11 @@ Passed locally:
 The full `cargo test --workspace -- --test-threads=1` run finished with exit code
 0, including all 174 `wisp-runs` tests, Tauri tests and workspace doc-tests.
 The final dynamic-control font build/publish and complete C# harness also passed.
-Full Playwright finished with 864 passes, two
-skips and five failures. A one-worker focused rerun of all five failure locations
-(six cases, including both export locales) passed. The original full-run failure
-remains recorded; the full Playwright run is not green.
+The final full four-worker Playwright run passed: 869 passes, two skips, exit
+code 0 (24.8 minutes). It used the same built frontend assets served over
+HTTP/1.1 keep-alive. An earlier full run had 864 passes, two skips and five
+failures; all five failure locations also passed a focused six-case rerun.
+The earlier failures and test-server distinction remain recorded below.
 
 ### Regression findings and fixes
 
@@ -143,8 +144,9 @@ The first repeated run had 15 passes and one listener-readiness setup timeout.
 Serving the identical frontend assets with HTTP/1.1 keep-alive and a larger
 connection backlog then passed all 16 cases (three workers, two repetitions).
 This suggests a test-server contribution; it does not establish the cause of
-every original timeout. A new full four-worker Playwright run is in progress;
-its result is not yet included in the passing checks above.
+every original timeout. The subsequent full four-worker run passed 869 tests
+with two skips and exit code 0. Generated research-journey design-QA PNGs were
+restored again after this final run finished.
 
 Historical #1355 validation: Playwright had 867 passes, two skips and one
 queued-guidance timeout; all seven focused queued-guidance tests then passed.
@@ -215,8 +217,9 @@ Actual WinUI acceptance:
 
 ## Remaining acceptance
 
-The overall parity objective remains open. Investigate the remaining parallel
-SQLite and full-suite Playwright failures. Further manual acceptance covers
+The overall parity objective remains open. Investigate the earlier intermittent
+parallel SQLite failure; final serial workspace and four-thread package runs
+pass, and the final full Playwright run is green. Further manual acceptance covers
 150% display scaling, additional narrow/large-font dynamic surfaces, real
 provider/ACP authentication, MCP test/OAuth cancellation, pinned SkillStore
 installation, channel binding/sync and real SSH/WSL contexts. External-account
