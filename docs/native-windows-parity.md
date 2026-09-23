@@ -36,6 +36,20 @@ layouts, dynamic typography surfaces, real channel binding/sync, provider/ACP
 authentication, SkillStore installation and workflow conversion persistence.
 The overall parity objective remains open; PR #1357 is an incremental delivery.
 
+Subsequent real WinUI acceptance verified the dirty-scope guard: changing the
+project selection with an unsaved name opens the visible top confirmation,
+retains the original scope, and disables the editor. Immediate Escape closes
+only that confirmation and retains the draft. Cancel edit followed by discard
+restores the original saved project name. The real-host remote-access overview
+and unbound Feishu/Lark detail loaded; immediate Escape returned to the overview
+without leaving settings. No authorization or binding was started.
+
+A diagnostic full `wisp-runs` recheck passed all 173 tests. The earlier
+intermittent ledger failure is not considered fixed: its assertion now reports
+the command sequence and persisted run state to distinguish transfer/progress
+fixture ordering from storage failure if it recurs. A complete workspace run
+with four test threads is in progress; Playwright remains in progress as well.
+
 | Reference | Windows behavior |
 | --- | --- |
 | #1332–#1333 | Native search already scrolls its selected result into view. Home now opens the same tutorials URL. The WebView command palette and Help menu fixes remain shared. |

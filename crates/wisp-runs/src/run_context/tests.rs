@@ -3832,7 +3832,20 @@ async fn ssh_input_staging_ledgers_uploaded_files() {
         .list_remote_staging("p", "ssh:gpu", false)
         .await
         .unwrap();
-    assert_eq!(entries.len(), 1);
+    let run = store.get_run(&submitted.run_id).await.unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "commands: {:?}; run: {:?}",
+        runner
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|c| &c.script)
+            .collect::<Vec<_>>(),
+        run
+    );
     assert_eq!(entries[0].source, "run_input");
     assert_eq!(
         entries[0].run_id.as_deref(),
