@@ -138,8 +138,8 @@ async function publishCompaction(page: Page, automatic = false) {
   }, { automatic });
 }
 
-async function wireManualCompaction(page: Page, options: { checkpoint?: string } = {}) {
-  await page.evaluate(({ checkpoint }) => {
+async function wireManualCompaction(page: Page, options: { checkpoint?: string; manualCompletion?: boolean } = {}) {
+  await page.evaluate(({ checkpoint, manualCompletion }) => {
     const w = window as any;
     const original = w.__TAURI__.core.invoke;
     w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
@@ -148,7 +148,7 @@ async function wireManualCompaction(page: Page, options: { checkpoint?: string }
       const message = String(arg("message") ?? "");
       (w.__skillInvokeLog ??= []).push({ cmd, args });
       w.__compactInstruction = message;
-      setTimeout(() => {
+      const complete = () => {
         const state = w.__contextState;
         const epoch = state.head_epoch + 1;
         const compactedCheckpoint = checkpoint ?? "[context summary checkpoint]\n\nNew context after manual compaction.";
@@ -174,7 +174,9 @@ async function wireManualCompaction(page: Page, options: { checkpoint?: string }
           context_usage: { system_prompt: 40, tool_definitions: 20, rules: 10, skills: 10,
             mcp_dynamic_tools: 0, subagent_definitions: 0, conversation: 70 } });
         w.__tauriEmit("agent", { kind: "Done", frame_id: "s-compact", stop_reason: "compact" });
-      }, 40);
+      };
+      if (manualCompletion) w.__completeManualCompaction = complete;
+      else setTimeout(complete, 40);
       return "s-compact";
     };
   }, options);
@@ -385,7 +387,7 @@ test("a late context refresh cannot alter another conversation", async ({ page }
 
 test("slash compact opens a guided locked flow and reveals the compacted model context", async ({ page }) => {
   await openCompactedSession(page);
-  await wireManualCompaction(page);
+  await wireManualCompaction(page, { manualCompletion: true });
   const composer = page.locator("#composer-input");
   await composer.fill("/compact preserve the QC thresholds and blockers");
   await composer.press("Enter");
@@ -403,6 +405,9 @@ test("slash compact opens a guided locked flow and reveals the compacted model c
   await expect.poll(() => page.evaluate(() => (window as any).__compactInstruction)).toBe(
     "/compact --semantic preserve the QC thresholds and blockers",
   );
+  // Keep the mock operation running until the locked-state assertions finish.
+  // A 40 ms timer can complete between Playwright calls and hide the modal.
+  await page.evaluate(() => (window as any).__completeManualCompaction());
   await expect(modal).toHaveCount(0);
   await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "true");
   await expect(page.getByTestId("context-checkpoint-row")).toContainText("New context after manual compaction.");
