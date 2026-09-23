@@ -1852,7 +1852,7 @@ impl Store {
         &self,
         started_before: i64,
     ) -> Result<Vec<String>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value =

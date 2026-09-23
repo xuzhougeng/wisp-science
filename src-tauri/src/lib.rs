@@ -1112,6 +1112,7 @@ pub(crate) async fn build_project_summary(state: &AppState, id: &str) -> Project
             needs_you_count: 0,
             sync_configured: false,
             last_synced_at: None,
+            folder_sync: None,
         };
     };
     let (running_count, needs_you_count) =
@@ -1120,6 +1121,13 @@ pub(crate) async fn build_project_summary(state: &AppState, id: &str) -> Project
     let sync_configured = sync_state
         .as_ref()
         .is_some_and(|state| state.base_revision.is_some());
+    let folder_sync = state
+        .store
+        .folder_snapshot_status(&id)
+        .await
+        .ok()
+        .flatten()
+        .map(str::to_owned);
     ProjectSummary {
         starred: state
             .store
@@ -1138,6 +1146,7 @@ pub(crate) async fn build_project_summary(state: &AppState, id: &str) -> Project
         needs_you_count,
         sync_configured,
         last_synced_at: sync_state.and_then(|state| state.last_synced_at),
+        folder_sync,
     }
 }
 
@@ -7532,6 +7541,7 @@ pub fn run() {
             app.manage(channels::ChannelManager::new());
             delegation_completion::start_dispatcher(app.handle());
             scheduler::start_scheduler(app.handle());
+            project_sync::start_folder_publisher(app.handle());
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -7785,6 +7795,7 @@ pub fn run() {
             codex_import::import_codex_sessions,
             codex_import::import_claude_sessions,
             project_sync::sync_project,
+            project_sync::enable_project_folder_sync,
             project_sync::resolve_project_sync,
             project_sync::project_sync_code,
             project_sync::join_synced_project,

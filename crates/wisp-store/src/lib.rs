@@ -23,6 +23,7 @@ mod method_search;
 mod models;
 mod persist_seq;
 mod plugins;
+mod project_snapshots;
 mod project_state_revisions;
 mod project_storage;
 mod project_sync;
@@ -76,6 +77,7 @@ pub use method_search::{
 };
 pub use models::*;
 pub use persist_seq::{join_or_abort_persist, persist_seq_loop, PersistJoinError};
+pub use project_snapshots::{FolderSyncOutcome, FOLDER_WAITING, WORKSPACE_TRANSPORT};
 pub use project_state_revisions::{ProjectStateRevision, ProjectStateRevisionSummary};
 pub use project_storage::{PROJECT_DATABASE, PROJECT_METADATA};
 pub use project_sync::ProjectSyncState;

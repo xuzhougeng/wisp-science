@@ -87,6 +87,8 @@ pub(crate) fn scan_workspace(
             ".wisp/project.sqlite-journal",
             ".wisp/project.json",
             ".wisp/storage-migration.json",
+            // Published folder snapshots are moved by the cloud drive itself.
+            ".wisp/revisions",
         ]
         .into_iter()
         .map(|path| root.join(path)),
@@ -237,6 +239,8 @@ mod tests {
         ] {
             std::fs::write(root.path().join(".wisp").join(name), b"private persistence").unwrap();
         }
+        std::fs::create_dir_all(root.path().join(".wisp/revisions")).unwrap();
+        std::fs::write(root.path().join(".wisp/revisions/r.sqlite"), b"snapshot").unwrap();
         std::fs::write(root.path().join(".wisp/artifacts/plot.svg"), b"figure").unwrap();
         let nodes = scan_workspace(root.path(), &WorkspaceScanOptions::default()).unwrap();
         let files: Vec<_> = nodes

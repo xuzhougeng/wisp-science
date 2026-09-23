@@ -54,9 +54,14 @@ after registration commits. Missing/unwritable legacy workspaces retain their
 records and are retried at startup; registered missing databases fail explicitly.
 
 Publication currently requires filesystem hard-link support. Unsupported volumes
-leave the legacy records intact and defer migration. Cross-project aggregate
-queries fail explicitly when a registered database is unavailable; partial-result
-presentation for offline projects is a follow-up.
+leave the legacy records intact and defer migration. Cross-project searches and
+safety checks (execution-context deletion, remote-file GC) fail explicitly when a
+registered database is unavailable. Project listing, stars, recent sessions,
+usage statistics and background loops (schedules, run monitoring, startup
+recovery, workflow deliveries, retention) skip that project with a warning: one
+unplugged or moved folder must not hide every other project or stop their
+automation. The registration row keeps the offline project listed, and opening
+it still fails explicitly.
 
 ## Acceptance
 
@@ -68,3 +73,42 @@ presentation for offline projects is a follow-up.
 5. Global settings and credentials do not leak into project packages.
 6. Existing export/import, manual sync, cross-project search and native readers
    continue to work against project-owned data.
+
+# Phase 2: project folders inside a cloud drive
+
+A drive client copies files, not transactions: it may upload a SQLite file
+without its WAL, or deliver a half-written file. A project folder in a drive
+therefore never contains a live database.
+
+- Opt-in per project (`enable_folder_snapshots`). The live database moves to
+  `<app data>/project-cache/<id>-<uuid>.sqlite`; `project_locations` points at
+  it, so all phase-1 routing is unchanged. The device cursor is a
+  `project_sync_state` row with transport `workspace`; the project cannot also
+  use relay/shared-folder device sync.
+- Publishing reuses the portable export and `portable_project_database_hash`.
+  `.wisp/revisions/<uuid>.sqlite` is written first, then `<uuid>.json`
+  (parents, device, size, SHA-256, state hash), each by write-and-rename. An
+  unchanged state hash publishes nothing. `.wisp/project.json` becomes version 2
+  and the stale folder database is removed after the first publish.
+- There is no mutable head. Tips are descriptors that no other descriptor names
+  as a parent. One tip equal to the cursor: publish if dirty. One tip that
+  descends from the cursor: adopt it if clean (fast-forward when the state hash
+  already matches), else conflict. Several tips, or no descent: conflict.
+  Resolution publishes over all tips (`local`) or adopts the newest complete tip
+  and closes the fork (`remote`). A tip whose snapshot is missing, short or fails
+  its checksum is "waiting" and is never applied.
+- Adopting a version uses `replace_project_database`, which rebinds workspace
+  paths, retires other devices' in-flight runs and commits the cursor with the
+  rows. Registering a version-2 folder on a new device materializes a fresh
+  cache from the single verified tip.
+- The desktop publishes changed projects every 20 seconds while no turn is
+  running (hashing once per launch, then only after a cache write), adopts newer
+  versions when a project is opened, and routes **Sync now** and the conflict
+  dialog to the folder. The project card reports `saved`, `unpublished`,
+  `remote-newer`, `waiting` or `conflict` from descriptors and cache file
+  metadata without exporting.
+- Retention: snapshots for the head and its parents, descriptors for 64
+  generations, and never a file without a known descriptor.
+
+Follow-ups: turning the mode off, cleanup of cache files left by removed
+registrations, and suggesting the mode automatically for known drive folders.

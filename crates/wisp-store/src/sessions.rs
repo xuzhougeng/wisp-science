@@ -598,7 +598,7 @@ impl Store {
     /// callers use it as a deterministic cold-start fallback for cross-surface
     /// conversation routing.
     pub async fn last_user_message_session(&self) -> Result<Option<(String, String)>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut latest: Option<(i64, String, String)> = None;
             for store in stores {
                 let row: Option<(i64,String,String)> = sqlx::query_as("SELECT m.ts,m.frame_id,f.project_id FROM messages m JOIN frames f ON f.id=m.frame_id WHERE m.role='user' AND f.parent_frame_id=f.id AND f.exploration_id IS NULL ORDER BY m.ts DESC,m.rowid DESC LIMIT 1").fetch_optional(&store.pool).await?;
@@ -640,7 +640,7 @@ impl Store {
         &self,
         limit: i64,
     ) -> Result<Vec<RecentSessionDetail>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 result.extend(Box::pin(store.list_recent_sessions_detail(limit)).await?);
@@ -3255,7 +3255,7 @@ impl Store {
     /// Per-project totals for the Usage settings page. A project is the durable
     /// workspace boundary in Wisp; scratch projects are intentionally omitted.
     pub async fn token_usage_by_project(&self) -> Result<Vec<ProjectTokenUsage>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 result.extend(Box::pin(store.token_usage_by_project()).await?);
@@ -3313,7 +3313,7 @@ impl Store {
     /// events carry their own timestamp; legacy events fall back to the root
     /// session's last activity because no round timestamp was persisted then.
     pub async fn token_usage_activity(&self) -> Result<Vec<TokenUsageDay>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut merged = std::collections::BTreeMap::<_, TokenUsageDay>::new();
             for store in stores {
                 for row in Box::pin(store.token_usage_activity()).await? {
@@ -3369,7 +3369,7 @@ impl Store {
     /// Input + output token share by the model selected for each round.
     /// Legacy events use their frame's current model binding as a fallback.
     pub async fn token_usage_by_model(&self) -> Result<Vec<ModelTokenUsage>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut merged = std::collections::BTreeMap::<_, ModelTokenUsage>::new();
             for store in stores {
                 for row in Box::pin(store.token_usage_by_model()).await? {
@@ -3417,7 +3417,7 @@ impl Store {
     /// persisted transcript events. Skill identity comes from the call preview
     /// (the skill name); skipped-batch placeholders are ignored.
     pub async fn tool_call_usage_ranking(&self) -> Result<Vec<ToolCallUsage>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut merged = std::collections::BTreeMap::<_, ToolCallUsage>::new();
             for store in stores {
                 for row in Box::pin(store.tool_call_usage_ranking()).await? {

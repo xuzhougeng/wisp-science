@@ -35,6 +35,12 @@ pub async fn list_projects(
         let (running_count, needs_you_count) =
             project_status_counts(store, &id, running, awaiting).await;
         let sync_state = store.get_project_sync_state(&id).await.ok().flatten();
+        let folder_sync = store
+            .folder_snapshot_status(&id)
+            .await
+            .ok()
+            .flatten()
+            .map(str::to_owned);
         let sync_configured = sync_state
             .as_ref()
             .is_some_and(|state| state.base_revision.is_some());
@@ -51,6 +57,7 @@ pub async fn list_projects(
             needs_you_count,
             sync_configured,
             last_synced_at: sync_state.and_then(|state| state.last_synced_at),
+            folder_sync,
         });
     }
     Ok(projects)

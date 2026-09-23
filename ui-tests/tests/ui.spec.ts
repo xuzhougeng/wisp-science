@@ -15357,6 +15357,34 @@ test("a sync conflict requires an explicit authoritative device choice", async (
   });
 });
 
+test("a cloud-drive folder project shows whether its latest changes reached the folder", async ({ page }) => {
+  await page.goto("/?mockSyncUnconfigured=1");
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await expect(projectCard.getByRole("button", { name: "Sync now" })).toHaveCount(0);
+  await projectCard.getByTestId("project-card-settings").click();
+  const settings = page.getByTestId("project-home-settings");
+  await settings.getByTestId("enable-project-folder-sync").click();
+  await expect.poll(() => lastInvokeArgs(page, "enable_project_folder_sync")).toMatchObject({ id: "default" });
+  await expect(settings.getByTestId("project-folder-sync-enabled")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+
+  // Folder projects sync through the folder itself: no relay setup and no device code.
+  await expect(projectCard.locator('.pc-sync-state[data-folder-sync="saved"]')).toContainText("Saved to folder");
+  await projectCard.hover();
+  await expect(projectCard.getByRole("button", { name: "Copy device code" })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__folderSync.default = "conflict";
+    (window as any).__failSyncConflict = true;
+  });
+  await projectCard.getByRole("button", { name: "Sync now" }).click();
+  await expect(page.getByRole("dialog", { name: "Both devices changed this project" })).toBeVisible();
+  await page.getByRole("button", { name: "Use this device" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "resolve_project_sync")).toMatchObject({
+    id: "default", strategy: "local",
+  });
+});
+
 test("a second conversation can run in parallel without interleaving transcripts", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");

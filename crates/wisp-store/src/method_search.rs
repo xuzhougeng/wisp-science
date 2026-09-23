@@ -842,7 +842,7 @@ impl Store {
     }
 
     pub async fn recover_interrupted_method_search_runs(&self) -> Result<u64> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = 0;
             for store in stores {
                 let value = Box::pin(store.recover_interrupted_method_search_runs()).await?;
@@ -865,7 +865,7 @@ impl Store {
     /// this transition prevents a local search from being mistaken for live work
     /// after its evaluator process is terminated with the application.
     pub async fn pause_method_searches_for_shutdown(&self) -> Result<u64> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = 0;
             for store in stores {
                 let value = Box::pin(store.pause_method_searches_for_shutdown()).await?;

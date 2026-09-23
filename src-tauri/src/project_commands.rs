@@ -406,6 +406,7 @@ pub(super) async fn open_project(
     window: crate::workspace_surface::WorkspaceSurface,
     id: String,
 ) -> Result<ProjectSummary, String> {
+    super::project_sync::adopt_newer_folder_version(&state, &id).await;
     let _project_activity = state.begin_project_activity(&id)?;
     let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
     apply_app_window_title(&window, Some(&name));
@@ -830,6 +831,7 @@ pub(super) struct ProjectSettings {
     name: String,
     description: String,
     agent_context: String,
+    folder_sync: bool,
 }
 
 fn project_agent_context_path(root: &Path) -> PathBuf {
@@ -887,11 +889,18 @@ pub(super) async fn get_project_settings(
     let (project_id, root, name, description) =
         settings_project(state.inner(), window.label(), id.as_deref()).await?;
     let _project_activity = state.begin_project_activity(&project_id)?;
+    let folder_sync = state
+        .store
+        .get_project_sync_state(&project_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .is_some_and(|sync| sync.transport_kind == wisp_store::WORKSPACE_TRANSPORT);
     Ok(ProjectSettings {
         id: project_id,
         name,
         description,
         agent_context: read_project_agent_context(&root),
+        folder_sync,
     })
 }
 
@@ -1078,6 +1087,7 @@ mod tests {
             needs_you_count: 0,
             sync_configured: false,
             last_synced_at: None,
+            folder_sync: None,
         };
         let projects = vec![
             summary("P37", &root, 9),

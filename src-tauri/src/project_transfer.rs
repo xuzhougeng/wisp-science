@@ -698,7 +698,18 @@ async fn import_project_directory(
         return store
             .register_project_folder(&workspace)
             .await
-            .map_err(|error| format!("project_folder_metadata_invalid: {error:#}"));
+            .map_err(|error| {
+                // A cloud folder that is still downloading or holds two
+                // devices' versions is not damaged; say what to wait for.
+                let message = format!("{error:#}");
+                if message.starts_with(wisp_store::FOLDER_WAITING)
+                    || message.starts_with("Sync conflict")
+                {
+                    message
+                } else {
+                    format!("project_folder_metadata_invalid: {message}")
+                }
+            });
     }
     std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
     let database =

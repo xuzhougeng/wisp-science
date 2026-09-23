@@ -461,7 +461,7 @@ impl Store {
     }
 
     pub async fn list_active_runs(&self) -> Result<Vec<RunRecord>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value = Box::pin(store.list_active_runs()).await?;
@@ -916,7 +916,7 @@ impl Store {
     /// succeeded runs only after their outputs were harvested (or none were
     /// declared), failed/cancelled/timed-out/lost runs on their own window.
     pub async fn list_runs_due_for_retention(&self, now: i64) -> Result<Vec<RunRecord>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value = Box::pin(store.list_runs_due_for_retention(now)).await?;

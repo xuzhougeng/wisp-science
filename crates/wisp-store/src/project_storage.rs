@@ -8,11 +8,13 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use tokio::sync::Mutex;
 
 pub(super) struct ProjectRegistry {
-    global: SqlitePool,
-    pools: Mutex<HashMap<String, SqlitePool>>,
+    pub(super) global: SqlitePool,
+    pub(super) pools: Mutex<HashMap<String, SqlitePool>>,
     read_only: bool,
     migrate_on_open: bool,
     entities: Mutex<HashMap<(String, String, String), String>>,
+    /// Cache-file fingerprints at the last folder publish/check, per project.
+    pub(super) published: std::sync::Mutex<HashMap<String, super::project_snapshots::Fingerprint>>,
 }
 
 pub const PROJECT_DATABASE: &str = ".wisp/project.sqlite";
@@ -25,10 +27,10 @@ const PROJECT_SETTING_PREFIXES: &[&str] = &[
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ProjectMetadata {
-    format: String,
-    version: u32,
-    project_id: String,
+pub(super) struct ProjectMetadata {
+    pub(super) format: String,
+    pub(super) version: u32,
+    pub(super) project_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -38,7 +40,7 @@ struct MigrationMarker {
     database_sha256: String,
 }
 
-fn database_digest(path: &Path) -> Result<String> {
+pub(super) fn database_digest(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
@@ -142,11 +144,16 @@ impl Store {
             "Application store required"
         );
         let workspace = std::fs::canonicalize(workspace)?;
-        for relative in [".wisp", PROJECT_METADATA, PROJECT_DATABASE] {
+        for relative in [
+            ".wisp",
+            PROJECT_METADATA,
+            PROJECT_DATABASE,
+            super::project_snapshots::REVISIONS,
+        ] {
+            // Snapshot folders have no live database; v1 folders no revisions.
             anyhow::ensure!(
-                !std::fs::symlink_metadata(workspace.join(relative))?
-                    .file_type()
-                    .is_symlink(),
+                !std::fs::symlink_metadata(workspace.join(relative))
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink()),
                 "Project metadata paths must not be symbolic links"
             );
         }
@@ -158,10 +165,18 @@ impl Store {
         let metadata: ProjectMetadata = serde_json::from_slice(&std::fs::read(metadata_path)?)?;
         anyhow::ensure!(
             metadata.format == "wisp-project"
-                && metadata.version == 1
+                && matches!(
+                    metadata.version,
+                    1 | super::project_snapshots::SNAPSHOT_METADATA_VERSION
+                )
                 && !metadata.project_id.is_empty(),
             "Unsupported project metadata"
         );
+        if metadata.version == super::project_snapshots::SNAPSHOT_METADATA_VERSION {
+            return self
+                .register_snapshot_folder(&workspace, &metadata.project_id)
+                .await;
+        }
         let database = workspace.join(PROJECT_DATABASE);
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(&database)
@@ -272,6 +287,7 @@ impl Store {
                 read_only,
                 migrate_on_open: false,
                 entities: Mutex::new(HashMap::new()),
+                published: std::sync::Mutex::new(HashMap::new()),
             }));
         }
         Ok(())
@@ -336,6 +352,18 @@ impl Store {
     }
 
     pub(super) async fn routed_projects(&self) -> Result<Option<Vec<Self>>> {
+        self.collect_projects(false).await
+    }
+
+    /// Listing and background maintenance must survive one offline folder
+    /// (unplugged disk, moved workspace). Its registration row still lists the
+    /// project, and opening it fails explicitly. Searches and cross-project
+    /// safety checks keep using `routed_projects`, which fails instead.
+    pub(super) async fn available_projects(&self) -> Result<Option<Vec<Self>>> {
+        self.collect_projects(true).await
+    }
+
+    async fn collect_projects(&self, skip_unavailable: bool) -> Result<Option<Vec<Self>>> {
         if self.registry.is_none() || self.project_scope.is_some() {
             return Ok(None);
         }
@@ -345,8 +373,13 @@ impl Store {
                 .await?;
         let mut stores = Vec::new();
         for id in ids {
-            if let Some(store) = self.route_project(&id).await? {
-                stores.push(store);
+            match self.route_project(&id).await {
+                Ok(Some(store)) => stores.push(store),
+                Ok(None) => {}
+                Err(error) if skip_unavailable => {
+                    tracing::warn!(project_id=%id, %error, "Skipping unavailable project database");
+                }
+                Err(error) => return Err(error),
             }
         }
         // Legacy/unregistered records may still exist after an interrupted
@@ -487,7 +520,11 @@ impl Store {
             .await?;
         tx.commit().await?;
         if let Some(registry) = &self.registry {
-            registry.pools.lock().await.remove(id);
+            // Release file handles so a removed project folder can be moved
+            // or deleted, including on Windows.
+            if let Some(pool) = registry.pools.lock().await.remove(id) {
+                pool.close().await;
+            }
         }
         Ok(true)
     }

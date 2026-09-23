@@ -84,6 +84,9 @@
 .proj-settings-modal .ps-textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
 .proj-settings-modal .ps-ctx { min-height: 150px; }
 .proj-settings-modal .ps-label { font-weight: 600; }
+/* Cloud-folder saving: explanation plus a one-way enable action. */
+.proj-settings-modal .ps-folder-sync { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.proj-settings-modal .ps-error { color: var(--err); font-size: 12px; }
 /* Retention windows: one labeled row per window, input right-aligned with a unit suffix. */
 .proj-settings-modal .ps-retention-row { display: flex; flex-direction: column; gap: 6px; }
 .proj-settings-modal .ps-retention-item {

@@ -153,7 +153,7 @@ impl Store {
     /// Enabled schedules whose slot has passed. The poller claims each row
     /// before firing so a slow turn can never double-fire a schedule.
     pub async fn due_schedules(&self, now: i64) -> Result<Vec<ScheduleRecord>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value = Box::pin(store.due_schedules(now)).await?;

@@ -1110,7 +1110,7 @@ impl Store {
     }
 
     pub async fn recover_interrupted_agent_workflows(&self) -> Result<(u64, u64)> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = (0, 0);
             for store in stores {
                 let value = Box::pin(store.recover_interrupted_agent_workflows()).await?;

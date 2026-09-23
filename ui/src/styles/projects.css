@@ -89,6 +89,10 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-meta { color: var(--text-faint); font-size: 13px; }
 .proj-card .pc-when { flex: 0 0 auto; margin-left: auto; padding-left: 12px; color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .proj-card .pc-sync-state { color: var(--ok); font-size: 11px; font-weight: 600; }
+.proj-card .pc-sync-state[data-folder-sync="unpublished"],
+.proj-card .pc-sync-state[data-folder-sync="remote-newer"],
+.proj-card .pc-sync-state[data-folder-sync="waiting"] { color: var(--warn); }
+.proj-card .pc-sync-state[data-folder-sync="conflict"] { color: var(--err); }
 .proj-card .pc-transfer-lock { flex: 0 0 auto; color: var(--clay); font-size: 11px; font-weight: 650; }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }

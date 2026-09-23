@@ -3213,6 +3213,12 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.sync.code_copied") => Some("Secret device code copied."),
         (Locale::En, "projects.sync.enabled") => Some("Sync enabled"),
         (Locale::En, "projects.sync.last") => Some("Synced {when}"),
+        (Locale::En, "projects.folder.saved") => Some("Saved to project folder"),
+        (Locale::En, "projects.folder.saved_at") => Some("Saved to folder {when}"),
+        (Locale::En, "projects.folder.unpublished") => Some("Changes not yet saved to folder"),
+        (Locale::En, "projects.folder.remote_newer") => Some("Newer version in folder"),
+        (Locale::En, "projects.folder.waiting") => Some("Waiting for the cloud drive"),
+        (Locale::En, "projects.folder.conflict") => Some("Folder version conflict"),
         (Locale::En, "projects.sync.conflict_title") => Some("Both devices changed this project"),
         (Locale::En, "projects.sync.conflict_hint") => Some("If you use a cloud-drive folder, let its client finish and retry first. Otherwise choose which complete project state becomes the next revision."),
         (Locale::En, "projects.sync.conflict_backup") => Some("Export this project first if you want a safety copy of this device's version."),
@@ -3274,6 +3280,10 @@ Do not leave generated files in the project root.",
         (Locale::En, "proj_settings.description_hint") => Some("Shown in the project switcher for your reference — not included in the agent's prompt."),
         (Locale::En, "proj_settings.agent_context") => Some("Agent Context"),
         (Locale::En, "proj_settings.agent_context_hint") => Some("Included in every agent's system prompt for this project. Use it for background, conventions, or instructions all agents should follow. Takes effect on the next new session."),
+        (Locale::En, "proj_settings.folder_sync") => Some("Cloud-drive folder"),
+        (Locale::En, "proj_settings.folder_sync_hint") => Some("Use this when the project folder is inside Nutstore, Baidu Netdisk, OneDrive, iCloud Drive or Dropbox. Wisp keeps the live database on this device and saves complete versions to .wisp/revisions for the drive to upload. On another device, import the folder. Close Wisp on other devices before enabling."),
+        (Locale::En, "proj_settings.folder_sync_enable") => Some("Save safely for cloud-drive sync"),
+        (Locale::En, "proj_settings.folder_sync_enabled") => Some("Enabled. The project card shows whether the latest changes are saved to the folder."),
         (Locale::En, "proj_settings.agent_context_confirm") => Some("Saving writes this project's Agent Context (.wisp/WISP.md). New conversations use it automatically. Existing conversations keep their current prompt until you right-click the session and reload project rules — that invalidates the model's prompt cache once for that session."),
         (Locale::En, "proj_settings.agent_context_confirm_action") => Some("Save agent context"),
 
@@ -5951,6 +5961,12 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "projects.sync.code_copied") => Some("机密设备码已复制。"),
         (Locale::Zh, "projects.sync.enabled") => Some("已启用同步"),
         (Locale::Zh, "projects.sync.last") => Some("同步于 {when}"),
+        (Locale::Zh, "projects.folder.saved") => Some("已保存到项目文件夹"),
+        (Locale::Zh, "projects.folder.saved_at") => Some("已保存到文件夹 · {when}"),
+        (Locale::Zh, "projects.folder.unpublished") => Some("有更改尚未保存到文件夹"),
+        (Locale::Zh, "projects.folder.remote_newer") => Some("文件夹中有更新的版本"),
+        (Locale::Zh, "projects.folder.waiting") => Some("等待网盘同步完成"),
+        (Locale::Zh, "projects.folder.conflict") => Some("文件夹版本冲突"),
         (Locale::Zh, "projects.sync.conflict_title") => Some("两台设备都修改了此项目"),
         (Locale::Zh, "projects.sync.conflict_hint") => Some("若使用网盘目录，请先等待网盘客户端完成同步并重试；否则请选择哪一份完整项目状态作为下一个修订。"),
         (Locale::Zh, "projects.sync.conflict_backup") => Some("如果想保留此设备上的版本，请先导出项目作为安全备份。"),
@@ -6016,6 +6032,10 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "proj_settings.description_hint") => Some("显示在项目切换器中供你参考 —— 不会包含在 Agent 的提示词里。"),
         (Locale::Zh, "proj_settings.agent_context") => Some("Agent 上下文"),
         (Locale::Zh, "proj_settings.agent_context_hint") => Some("会包含在本项目每个 Agent 的系统提示词中。可用于填写背景信息、约定或所有 Agent 都应遵循的指令。下次新建会话时生效。"),
+        (Locale::Zh, "proj_settings.folder_sync") => Some("网盘同步文件夹"),
+        (Locale::Zh, "proj_settings.folder_sync_hint") => Some("项目文件夹位于坚果云、百度网盘、OneDrive、iCloud 或 Dropbox 同步目录时使用。Wisp 在本机保存活跃数据库，并把完整版本写入 .wisp/revisions 供网盘上传；在其他设备上导入该文件夹即可。启用前请先关闭其他设备上的 Wisp。"),
+        (Locale::Zh, "proj_settings.folder_sync_enable") => Some("启用网盘安全保存"),
+        (Locale::Zh, "proj_settings.folder_sync_enabled") => Some("已启用。项目卡片会显示最新更改是否已保存到文件夹。"),
         (Locale::Zh, "proj_settings.agent_context_confirm") => Some("保存会写入本项目的 Agent 上下文（.wisp/WISP.md）。新会话会自动使用。已有会话仍沿用旧提示词，直到你在会话上右键并重载项目规则——重载会让该会话的模型提示词缓存失效一次。"),
         (Locale::Zh, "proj_settings.agent_context_confirm_action") => Some("保存 Agent 上下文"),
 
@@ -6068,6 +6088,10 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         m if m.starts_with("project_folder_invalid:") => {
             if locale == Locale::Zh { "所选目录缺少项目 metadata。请选择包含 .wisp/project.json 和项目数据库的项目文件夹，或包含 manifest.json、metadata/project.sqlite 和 workspace 的导出目录。".into() }
             else { m.trim_start_matches("project_folder_invalid:").trim().into() }
+        }
+        m if m.starts_with("project_folder_waiting:") => {
+            if locale == Locale::Zh { "网盘还没有同步完最新版本。请等待网盘客户端完成下载后再试，本机数据未被改动。".into() }
+            else { "The cloud drive has not finished syncing the latest version. Wait for the drive client, then try again. Nothing on this device was changed.".into() }
         }
         m if m.starts_with("project_folder_metadata_invalid:") => {
             if locale == Locale::Zh { "项目 metadata 数据库损坏、不完整或与项目说明不匹配，无法导入。请从原项目重新导出。".into() }

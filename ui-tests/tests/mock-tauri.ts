@@ -377,6 +377,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   (window as any).__petWindowVisible = false;
   let resolveMockUpdateCheck: (() => void) | null = null;
   const syncedProjects = new Set<string>();
+  const folderSync = ((window as any).__folderSync ??= {} as Record<string, string>);
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let nextProbeDelayMs = 0;
   let nextMcpTestDelayMs = 0;
@@ -2655,8 +2656,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "list_projects":
             return [
               ...(new URL(location.href).searchParams.get("mockCalendar") === "dense" ? Array.from({length:32}, (_, index) => ({id:`calendar-project-${index}`,name:["跨物种单细胞图谱", "水稻基因组", "转录组分析", "长期研究项目与文献证据整理"][index % 4] + ` ${index + 1}`,workspace_dir:`/mock/calendar-${index}`,session_count:0,updated_at:0,running_count:0,needs_you_count:0,sync_configured:false,last_synced_at:null})) : []),
-              { id: "default", name: projectNames.default ?? project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("default"), last_synced_at: syncedProjects.has("default") ? Math.floor(Date.now() / 1000) : null },
-              { id: "other", name: projectNames.other ?? "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("other"), last_synced_at: syncedProjects.has("other") ? Math.floor(Date.now() / 1000) : null },
+              { id: "default", name: projectNames.default ?? project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("default"), last_synced_at: syncedProjects.has("default") ? Math.floor(Date.now() / 1000) : null, folder_sync: folderSync.default ?? null },
+              { id: "other", name: projectNames.other ?? "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("other"), last_synced_at: syncedProjects.has("other") ? Math.floor(Date.now() / 1000) : null, folder_sync: folderSync.other ?? null },
             ].map(p => ({ ...p, starred: localStorage.getItem("mock-project-star:" + p.id) === "true" }))
               .sort((a, b) => Number(b.starred) - Number(a.starred));
 
@@ -2765,7 +2766,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               throw new Error("Sync conflict: this device and another device both changed the project. No data was overwritten.");
             }
             syncedProjects.add(String(arg("id") ?? "default"));
+            if (folderSync[String(arg("id") ?? "default")]) {
+              folderSync[String(arg("id") ?? "default")] = "saved";
+              return { status: "published", direction: "push", revision: "revision-1", uploadedFiles: 0, downloadedFiles: 0, skippedPaths: [] };
+            }
             return { status: "synced", direction: "push", revision: "revision-1", uploadedFiles: 1, downloadedFiles: 0, skippedPaths: [] };
+          case "enable_project_folder_sync":
+            folderSync[String(arg("id") ?? "default")] = "saved";
+            syncedProjects.add(String(arg("id") ?? "default"));
+            return { status: "published", direction: "push", revision: "revision-1", uploadedFiles: 0, downloadedFiles: 0, skippedPaths: [] };
           case "resolve_project_sync":
             return { status: "synced", direction: arg("strategy") === "remote" ? "pull" : "push", revision: "revision-2", uploadedFiles: 1, downloadedFiles: 1, skippedPaths: [] };
           case "project_sync_code":
@@ -4047,6 +4056,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               name: projectNames[settingsId] ?? (settingsId === "other" ? "Other project" : project.name),
               description: projectDescriptions[settingsId] ?? "",
               agent_context: projectAgentContexts[settingsId] ?? (settingsId === "default" ? projectAgentContext : ""),
+              folder_sync: Boolean(folderSync[settingsId]),
             };
           }
           case "update_project": {

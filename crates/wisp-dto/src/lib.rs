@@ -2996,6 +2996,11 @@ pub struct ProjectSummary {
     pub sync_configured: bool,
     #[serde(default)]
     pub last_synced_at: Option<i64>,
+    /// Cloud-folder snapshot state: `saved`, `unpublished`, `remote-newer`,
+    /// `conflict` or `waiting`. Omitted when the project is not in that mode,
+    /// keeping the existing wire contract for every other project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_sync: Option<String>,
 }
 
 /// Read-only scan result shown before an orphaned workspace is registered and
@@ -3035,6 +3040,10 @@ pub struct ProjectSettings {
     pub description: String,
     #[serde(default)]
     pub agent_context: String,
+    /// The live database is cached locally and snapshots are published into
+    /// the (cloud-drive synchronized) project folder.
+    #[serde(default)]
+    pub folder_sync: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -98,7 +98,7 @@ impl Store {
     }
 
     pub async fn starred_project_ids(&self) -> Result<std::collections::HashSet<String>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = std::collections::HashSet::new();
             let owned: std::collections::HashSet<_> = stores
                 .iter()
@@ -133,7 +133,7 @@ impl Store {
     pub async fn list_projects(
         &self,
     ) -> Result<Vec<(String, String, String, i64, i64, i64, String, i64)>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut rows = Vec::new();
             let mut seen = std::collections::HashSet::new();
             for store in stores {

@@ -157,7 +157,7 @@ impl Store {
     pub async fn list_incomplete_agent_workflow_deliveries(
         &self,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value = Box::pin(store.list_incomplete_agent_workflow_deliveries()).await?;
@@ -180,7 +180,7 @@ impl Store {
     }
 
     pub async fn list_ready_agent_workflow_delivery_frames(&self) -> Result<Vec<String>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = Vec::new();
             for store in stores {
                 let value = Box::pin(store.list_ready_agent_workflow_delivery_frames()).await?;
@@ -311,7 +311,7 @@ impl Store {
         success: bool,
         error: Option<&str>,
     ) -> Result<u64> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = 0;
             for store in stores {
                 let value =
@@ -360,7 +360,7 @@ impl Store {
     }
 
     pub async fn mark_agent_workflow_deliveries_presented(&self, ids: &[String]) -> Result<u64> {
-        if let Some(stores) = self.routed_projects().await? {
+        if let Some(stores) = self.available_projects().await? {
             let mut result = 0;
             for store in stores {
                 let value = Box::pin(store.mark_agent_workflow_deliveries_presented(ids)).await?;

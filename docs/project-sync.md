@@ -26,10 +26,61 @@ inconsistent database copies. Device sync configuration stays in the application
 database. A pull also commits a pending cursor with the project rows so an
 interrupted device-cursor update can recover the existing workspace journal.
 
-Project directories are now self-contained, but automatic synchronization of an
-open SQLite database by a cloud-drive client and simultaneous editing on multiple
-devices remain unsupported. Close Wisp before copying a live project directory,
-or use **Sync now** / project export for a consistent transfer.
+Project directories are now self-contained, but a cloud-drive client cannot
+copy an open SQLite database consistently. Close Wisp before copying a live
+project directory, use **Sync now** / project export, or keep the project folder
+in a cloud drive with the mode below.
+
+## Project folder inside a cloud drive
+
+When the whole project folder lives in Nutstore, Baidu Netdisk, OneDrive,
+iCloud Drive or Dropbox, open **Project Settings** and press **Save safely for
+cloud-drive sync**. Enable it while Wisp is closed on other devices. Wisp then:
+
+- moves the live database out of the folder into this device's application
+  data (`project-cache/`), where WAL writes never reach the drive client;
+- publishes complete versions into `.wisp/revisions/`: an immutable database
+  snapshot (`<revision>.sqlite`) plus a small descriptor (`<revision>.json`)
+  naming its parents, size and SHA-256. Each file is written beside its target
+  and renamed, so the drive only ever sees finished files;
+- marks the folder with `.wisp/project.json` version 2. Older Wisp versions
+  reject it instead of opening a missing database.
+
+Workspace files are moved by the drive client itself; this mode uploads no
+workspace blobs and needs no relay, sync key or device code.
+
+**Saving.** After a conversation turn finishes, Wisp publishes within about 20
+seconds. An unchanged project creates no revision. The project card shows the
+state: *Saved to folder*, *Changes not yet saved to folder*, *Newer version in
+folder*, *Waiting for the cloud drive* (a descriptor arrived but its snapshot
+is missing or incomplete), or *Folder version conflict*. **Sync now** publishes
+immediately.
+
+**Switching devices.** On the second device, wait for the drive client, then
+use **Import project → Import project folder** and select the folder. Wisp
+verifies the latest snapshot's checksum, builds its own local cache and binds
+workspace paths to that device. Later, opening the project adopts a newer
+version published elsewhere when this device has nothing unpublished; runs
+that were in flight on the other device are recorded as not resumed.
+
+**Conflicts.** A cloud drive's file lock is not a cross-device lock, so Wisp
+never trusts one. Revisions form a history through their parents and there is
+no mutable head file. If both devices changed the project from the same
+version, or both published concurrently (two newest revisions), Wisp overwrites
+nothing and shows the conflict dialog: **Use this device** publishes this
+device's records as a revision that supersedes every competing one; **Use
+remote version** adopts the newest complete folder version. A snapshot whose
+size or checksum does not match is treated as still downloading, never applied.
+
+**Retention.** The newest version and its parents keep their snapshots; older
+snapshots are deleted, and descriptors are kept for 64 generations so a device
+that fell behind can still prove it is not diverging. Files without a
+descriptor are never deleted, because they may be another device's version
+still in transit. Project export and **Sync now** relay sync skip
+`.wisp/revisions/`.
+
+Limits: the mode cannot currently be turned off, and removing the project from
+Wisp leaves its local cache file in the application data directory.
 
 The metadata snapshot is small and complete on every revision. Unchanged
 workspace files reuse their previous encrypted blob, so only changed files are

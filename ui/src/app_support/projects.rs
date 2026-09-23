@@ -67,6 +67,7 @@ pub(crate) fn ProjectsScreen(
     let settings_baseline = create_rw_signal(ProjectSettings::default());
     let settings_busy = create_rw_signal(false);
     let settings_confirm_context = create_rw_signal(false);
+    let folder_sync_error = create_rw_signal(None::<String>);
     let delete_data_countdown = create_rw_signal(0_u8);
     let delete_data_unlock_at = Rc::new(Cell::new(0_f64));
 
@@ -395,6 +396,32 @@ pub(crate) fn ProjectsScreen(
                     open_error.set(Some(message));
                 }
             }
+        });
+    });
+
+    let enable_folder_sync = Callback::new(move |_: ()| {
+        let Some(id) = settings_project_id.get_untracked() else {
+            return;
+        };
+        if settings_busy.get_untracked() {
+            return;
+        }
+        settings_busy.set(true);
+        folder_sync_error.set(None);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            match invoke_checked("enable_project_folder_sync", arg).await {
+                Ok(_) => {
+                    settings_form.update(|settings| settings.folder_sync = true);
+                    settings_baseline.update(|settings| settings.folder_sync = true);
+                    reload();
+                }
+                Err(error) => folder_sync_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
+            settings_busy.set(false);
         });
     });
 
@@ -1103,6 +1130,28 @@ pub(crate) fn ProjectsScreen(
                                         settings_form.update(|s| s.agent_context = v);
                                     }></textarea>
                             </label>
+                            <div class="ps-folder-sync">
+                                <span class="ps-label">{move || t(locale.get(), "proj_settings.folder_sync")}</span>
+                                <span class="ps-hint">{move || t(locale.get(), "proj_settings.folder_sync_hint")}</span>
+                                {move || if settings_form.get().folder_sync {
+                                    view! {
+                                        <span class="ps-hint" data-testid="project-folder-sync-enabled">
+                                            {t(locale.get(), "proj_settings.folder_sync_enabled")}
+                                        </span>
+                                    }.into_view()
+                                } else {
+                                    view! {
+                                        <button type="button" data-testid="enable-project-folder-sync"
+                                            disabled=move || settings_busy.get()
+                                            on:click=move |_| enable_folder_sync.call(())>
+                                            {t(locale.get(), "proj_settings.folder_sync_enable")}
+                                        </button>
+                                    }.into_view()
+                                }}
+                                {move || folder_sync_error.get().map(|error| view! {
+                                    <span class="ps-error" role="alert">{error}</span>
+                                })}
+                            </div>
                             <div class="row">
                                 <button type="button" disabled=move || settings_busy.get()
                                     on:click=move |_| {
@@ -1184,7 +1233,17 @@ pub(crate) fn ProjectsScreen(
                             let sync_when = p.last_synced_at
                                 .map(|timestamp| format_relative_time(timestamp, loc))
                                 .filter(|value| !value.is_empty());
-                            let sync_label = if p.sync_configured {
+                            let folder_mode = p.folder_sync.is_some();
+                            let sync_label = if let Some(status) = p.folder_sync.as_deref() {
+                                Some(match (status, sync_when.as_deref()) {
+                                    ("saved", Some(when)) => tf(loc, "projects.folder.saved_at", &[("when", when)]),
+                                    ("saved", None) => t(loc, "projects.folder.saved").into(),
+                                    ("unpublished", _) => t(loc, "projects.folder.unpublished").into(),
+                                    ("remote-newer", _) => t(loc, "projects.folder.remote_newer").into(),
+                                    ("waiting", _) => t(loc, "projects.folder.waiting").into(),
+                                    _ => t(loc, "projects.folder.conflict").into(),
+                                })
+                            } else if p.sync_configured {
                                 Some(sync_when.as_deref().map_or_else(
                                     || t(loc, "projects.sync.enabled").into(),
                                     |when| tf(loc, "projects.sync.last", &[("when", when)]),
@@ -1222,7 +1281,7 @@ pub(crate) fn ProjectsScreen(
                                         <div class="pc-meta-row">
                                             <span class="pc-meta">{meta}</span>
                                             <span class="pc-meta">{artifacts_meta}</span>
-                                            {sync_label.clone().map(|label| view! { <span class="pc-sync-state">{label}</span> })}
+                                            {sync_label.clone().map(|label| view! { <span class="pc-sync-state" data-folder-sync=p.folder_sync.clone()>{label}</span> })}
                                         </div>
                                     </div>
                                     </button>
@@ -1278,7 +1337,7 @@ pub(crate) fn ProjectsScreen(
                                                 }
                                             });
                                         }>{compose_icon("gear")}</button>
-                                    {show_sync_actions.then(|| view! {
+                                    {(show_sync_actions || folder_mode).then(|| view! {
                                         <button class="pc-sync" title=t(loc, "projects.sync.now")
                                             aria-label=t(loc, "projects.sync.now")
                                             disabled=move || syncing_projects.with(|ids| ids.contains(&id_sync_disabled))
@@ -1324,6 +1383,7 @@ pub(crate) fn ProjectsScreen(
                                                     syncing_projects.update(|ids| { ids.remove(&id); });
                                                 });
                                             }>{compose_icon("sync")}</button>
+                                        {(!folder_mode).then(|| view! {
                                         <button class="pc-sync-code" title=t(loc, "projects.sync.copy_code")
                                             aria-label=t(loc, "projects.sync.copy_code")
                                             on:click=move |e| {
@@ -1346,6 +1406,7 @@ pub(crate) fn ProjectsScreen(
                                                     }
                                                 });
                                             }>{compose_icon("link")}</button>
+                                        })}
                                     })}
                                     <button class="pc-export" title=t(loc, "projects.export")
                                         aria-label=t(loc, "projects.export")
