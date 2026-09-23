@@ -1,0 +1,9 @@
+{
+  "command": "get_privacy_mode",
+  "project_id": null,
+  "args": {},
+  "result": {
+    "active": true,
+    "project_ids": ["hidden", "research-1"]
+  }
+}

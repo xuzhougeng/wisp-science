@@ -103,6 +103,7 @@ pub(crate) fn capabilities() -> Value {
         "publication_schema": wisp_dto::native_publication::SCHEMA,
         "scratch": wisp_dto::native_scratch::COMMANDS,
         "scratch_schema": wisp_dto::native_scratch::SCHEMA,
+        "privacy": ["get_privacy_mode"],
     })
 }
 
@@ -152,6 +153,13 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     if wisp_dto::native_library::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_library::execute(&state.library, request).await;
+    }
+    if request.command == "get_privacy_mode" {
+        let state = broker.app.state::<crate::AppState>();
+        let mode =
+            crate::privacy_mode::read(&state.store, request.project_id.as_deref(), &request.args)
+                .await?;
+        return serde_json::to_value(mode).map_err(|error| error.to_string());
     }
     if wisp_dto::native_calendar::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
@@ -356,6 +364,8 @@ mod tests {
         assert!(!COMMANDS.contains(&"native_scratch_open"));
         assert!(!COMMANDS.contains(&"native_conversation_attach"));
         assert!(!COMMANDS.contains(&"native_conversation_enqueue"));
+        assert!(!COMMANDS.contains(&"get_privacy_mode"));
+        assert!(!COMMANDS.contains(&"set_privacy_mode"));
         assert!(!COMMANDS.contains(&"start_scratch_chat"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
@@ -391,6 +401,7 @@ mod tests {
             advertised["scratch_schema"],
             wisp_dto::native_scratch::SCHEMA
         );
+        assert_eq!(advertised["privacy"][0], "get_privacy_mode");
         assert!(advertised["conversations"]
             .as_array()
             .unwrap()
@@ -417,6 +428,8 @@ mod tests {
                     && command != "native_scratch_close"
                     && command != "native_conversation_attach"
                     && command != "native_conversation_enqueue"
+                    && command != "get_privacy_mode"
+                    && command != "set_privacy_mode"
                     && command != "start_scratch_chat"
             }));
     }

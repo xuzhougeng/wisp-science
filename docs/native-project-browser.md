@@ -322,9 +322,12 @@ or session. It is announced as `calendar` and `calendar_schema`
 (`wisp.native-calendar.v1`) and is not in the settings allowlist.
 
 The request includes the projects currently listed on the home screen. Opening
-or refreshing the sheet reads privacy mode from `wisp-privacy-mode-active` and
-`wisp-privacy-mode-projects` before building that list. When privacy mode is
-on, those project ids are left out of the request. A project
+or refreshing the sheet first calls `get_privacy_mode`. That command reads the
+privacy list the WebView writes with `set_privacy_mode` into the desktop
+settings store (`wisp-privacy-mode-active` and `wisp-privacy-mode-projects`).
+It does not take a project id. When privacy mode is on, those project ids are
+left out of the calendar request. A lost privacy read does not ask for every
+project and is not retried. A project
 filter only hides rows that were already read; it does not add a project. A
 lost read keeps the last rows and is not retried. Choosing a date shows that
 day's records inside the sheet. **打开研究历程** closes the calendar and opens

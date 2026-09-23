@@ -1480,6 +1480,7 @@ fn App() -> impl IntoView {
     let command_palette_open = create_rw_signal(false);
     let action_palette_open = create_rw_signal(false);
     let (privacy_active_initial, privacy_projects_initial) = load_privacy_mode();
+    mirror_privacy_mode(privacy_active_initial, &privacy_projects_initial);
     let privacy_mode_active = create_rw_signal(privacy_active_initial);
     let privacy_hidden_project_ids = create_rw_signal(privacy_projects_initial);
     let privacy_mode_modal_open = create_rw_signal(false);

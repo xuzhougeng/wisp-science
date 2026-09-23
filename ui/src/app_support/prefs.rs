@@ -19,19 +19,38 @@ pub(crate) fn load_privacy_mode() -> (bool, HashSet<String>) {
     (active, projects)
 }
 
+pub(crate) fn privacy_host_args(active: bool, projects: &HashSet<String>) -> serde_json::Value {
+    let mut project_ids = projects.iter().map(String::as_str).collect::<Vec<_>>();
+    project_ids.sort_unstable();
+    serde_json::json!({
+        "active": active && !project_ids.is_empty(),
+        "project_ids": project_ids,
+    })
+}
+
+pub(crate) fn mirror_privacy_mode(active: bool, projects: &HashSet<String>) {
+    let args = privacy_host_args(active, projects);
+    leptos::spawn_local(async move {
+        if let Ok(args) = serde_wasm_bindgen::to_value(&args) {
+            let _ = crate::bindings::invoke("set_privacy_mode", args).await;
+        }
+    });
+}
+
 pub(crate) fn save_privacy_mode(active: bool, projects: &HashSet<String>) {
-    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-    else {
-        return;
-    };
-    if let Ok(value) = serde_json::to_string(projects) {
-        let _ = storage.set_item(PRIVACY_MODE_PROJECTS_KEY, &value);
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
+        if let Ok(value) = serde_json::to_string(projects) {
+            let _ = storage.set_item(PRIVACY_MODE_PROJECTS_KEY, &value);
+        }
+        let _ = if active && !projects.is_empty() {
+            storage.set_item(PRIVACY_MODE_ACTIVE_KEY, "1")
+        } else {
+            storage.remove_item(PRIVACY_MODE_ACTIVE_KEY)
+        };
     }
-    let _ = if active && !projects.is_empty() {
-        storage.set_item(PRIVACY_MODE_ACTIVE_KEY, "1")
-    } else {
-        storage.remove_item(PRIVACY_MODE_ACTIVE_KEY)
-    };
+    mirror_privacy_mode(active, projects);
 }
 
 pub(crate) fn model_switch_warning_disabled() -> bool {
@@ -758,6 +777,29 @@ pub(crate) fn load_context_usage_geom() -> Option<ContextUsageGeom> {
         .ok()?;
     let (viewport_w, viewport_h) = viewport_size();
     Some(clamp_context_usage_geom(x, y, w, h, viewport_w, viewport_h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::privacy_host_args;
+    use std::collections::HashSet;
+
+    #[test]
+    fn privacy_host_args_match_the_stored_record() {
+        let mut projects = HashSet::new();
+        projects.insert("hidden".into());
+        projects.insert("research-1".into());
+        let args = privacy_host_args(true, &projects);
+        assert_eq!(args["active"], true);
+        assert_eq!(args["project_ids"][0], "hidden");
+        assert_eq!(args["project_ids"][1], "research-1");
+        let off = privacy_host_args(false, &projects);
+        assert_eq!(off["active"], false);
+        assert_eq!(off["project_ids"].as_array().unwrap().len(), 2);
+        let empty = privacy_host_args(true, &HashSet::new());
+        assert_eq!(empty["active"], false);
+        assert!(empty["project_ids"].as_array().unwrap().is_empty());
+    }
 }
 
 pub(crate) fn save_context_usage_geom(geom: ContextUsageGeom) {

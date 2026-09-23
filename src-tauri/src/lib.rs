@@ -52,6 +52,7 @@ mod native_projects;
 mod native_publication;
 mod native_scratch;
 mod native_settings;
+mod privacy_mode;
 pub(crate) use wisp_runs::exploration_isolation;
 mod exploration_promotion;
 mod exploration_workspace;
@@ -7864,6 +7865,8 @@ pub fn run() {
             network::get_network_settings,
             network::set_network_settings,
             settings_commands::get_settings,
+            privacy_mode::get_privacy_mode,
+            privacy_mode::set_privacy_mode,
             settings_commands::set_settings,
             configure::get_appearance_prefs,
             configure::set_appearance_prefs,

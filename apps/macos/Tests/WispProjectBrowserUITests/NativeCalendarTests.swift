@@ -26,21 +26,22 @@ final class NativeCalendarTests: XCTestCase {
         calendar.calendar = utc
         calendar.clock = Date(timeIntervalSince1970: 100)
         calendar.presented = true
-        let defaults = UserDefaults(suiteName: "wisp-calendar-privacy-test")!
-        defaults.removePersistentDomain(forName: "wisp-calendar-privacy-test")
-        PrivacyMode(active: true, projectIDs: ["hidden"]).save(defaults)
+        await host.setPrivacy(active: true, ids: ["hidden"])
         XCTAssertFalse(calendar.privacyActive)
-        await calendar.openMonth(host, projectIDs: ["research-1", "hidden", "research-1"], defaults: defaults)
+        await calendar.openMonth(host, projectIDs: ["research-1", "hidden", "research-1"])
         let calls = await host.calls()
-        XCTAssertEqual(calls.count, 2)
-        XCTAssertEqual(calls[0].command, NativeCalendarCommand.read)
+        XCTAssertEqual(calls.count, 3)
+        XCTAssertEqual(calls[0].command, NativeCalendarCommand.privacy)
         XCTAssertNil(calls[0].projectID)
-        XCTAssertEqual(calls[0].args["project_ids"], .array([.string("research-1")]))
-        XCTAssertEqual(calls[0].args["from"], .integer(0))
-        XCTAssertEqual(calls[0].args["until"], .integer(31 * 86400))
-        XCTAssertEqual(calls[1].args["from"], .integer(0))
-        XCTAssertEqual(calls[1].args["until"], .integer(86400))
+        XCTAssertEqual(calls[0].args, [:])
+        XCTAssertEqual(calls[1].command, NativeCalendarCommand.read)
+        XCTAssertNil(calls[1].projectID)
         XCTAssertEqual(calls[1].args["project_ids"], .array([.string("research-1")]))
+        XCTAssertEqual(calls[1].args["from"], .integer(0))
+        XCTAssertEqual(calls[1].args["until"], .integer(31 * 86400))
+        XCTAssertEqual(calls[2].args["from"], .integer(0))
+        XCTAssertEqual(calls[2].args["until"], .integer(86400))
+        XCTAssertEqual(calls[2].args["project_ids"], .array([.string("research-1")]))
         XCTAssertTrue(calendar.privacyActive)
         XCTAssertEqual(calendar.privacyProjectIDs, ["hidden"])
         XCTAssertEqual(calendar.monthRows.map(\.projectID), ["research-1"])
@@ -48,9 +49,12 @@ final class NativeCalendarTests: XCTestCase {
         XCTAssertEqual(calendar.dayGroups().map(\.projectID), ["research-1"])
         let before = calls.count
         await host.setMode("lost")
-        await calendar.reloadMonth(host, projectIDs: ["research-1"])
+        await calendar.openMonth(host, projectIDs: ["research-1", "hidden"])
         let after = await host.callCount()
         XCTAssertEqual(after, before + 1)
+        let lost = await host.calls()
+        XCTAssertEqual(lost.last?.command, NativeCalendarCommand.privacy)
+        XCTAssertFalse(lost.dropFirst(before).contains { $0.command == NativeCalendarCommand.read })
         XCTAssertEqual(calendar.monthRows.map(\.projectID), ["research-1"])
         XCTAssertTrue(calendar.error?.contains("不会自动重试") == true)
         await Task.yield()
@@ -161,8 +165,12 @@ private actor CalendarTransport: NativeSettingsQuerying {
     private var recorded: [(command: String, args: [String: SettingsValue], projectID: String?)] = []
     private var mode = "ok"
     private var rows: SettingsValue?
+    private var privacy = SettingsValue.object(["active": .bool(false), "project_ids": .array([])])
     private var release: CheckedContinuation<SettingsValue, Error>?
     func setMode(_ mode: String) { self.mode = mode }
+    func setPrivacy(active: Bool, ids: [String]) {
+        privacy = .object(["active": .bool(active), "project_ids": .array(ids.map(SettingsValue.string))])
+    }
     func setRows(_ rows: SettingsValue) { self.rows = rows }
     func callCount() -> Int { recorded.count }
     func calls() -> [(command: String, args: [String: SettingsValue], projectID: String?)] { recorded }
@@ -172,6 +180,7 @@ private actor CalendarTransport: NativeSettingsQuerying {
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String?) async throws -> SettingsValue {
         recorded.append((command, args, projectID))
         if mode == "lost" { throw ProjectBrowserError.service("connection reset") }
+        if command == NativeCalendarCommand.privacy { return privacy }
         if mode == "hang" { return try await withCheckedThrowingContinuation { release = $0 } }
         return try rows ?? Self.fixtureRows()
     }

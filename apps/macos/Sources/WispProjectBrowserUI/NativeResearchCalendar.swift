@@ -37,34 +37,18 @@ struct CalendarProject: Codable, Equatable, Identifiable {
     }
 }
 
-enum NativeCalendarCommand {
-    static let read = "native_research_calendar"
+struct StoredPrivacy: Decodable {
+    var active: Bool
+    var projectIDs: [String]
+    enum CodingKeys: String, CodingKey {
+        case active
+        case projectIDs = "project_ids"
+    }
 }
 
-/// Same keys the WebView privacy mode stores. The calendar sheet reads them
-/// before every month load, so a hidden project is left out of the request.
-struct PrivacyMode: Equatable {
-    var active: Bool
-    var projectIDs: Set<String>
-    static let activeKey = "wisp-privacy-mode-active"
-    static let projectsKey = "wisp-privacy-mode-projects"
-
-    static func load(_ defaults: UserDefaults = .standard) -> PrivacyMode {
-        let raw = defaults.string(forKey: projectsKey) ?? "[]"
-        let projects = Set((try? JSONDecoder().decode([String].self, from: Data(raw.utf8))) ?? [])
-        let active = defaults.string(forKey: activeKey) == "1" && !projects.isEmpty
-        return PrivacyMode(active: active, projectIDs: projects)
-    }
-
-    func save(_ defaults: UserDefaults = .standard) {
-        let encoded = (try? JSONEncoder().encode(Array(projectIDs).sorted())) ?? Data("[]".utf8)
-        defaults.set(String(data: encoded, encoding: .utf8), forKey: Self.projectsKey)
-        if active && !projectIDs.isEmpty {
-            defaults.set("1", forKey: Self.activeKey)
-        } else {
-            defaults.removeObject(forKey: Self.activeKey)
-        }
-    }
+enum NativeCalendarCommand {
+    static let read = "native_research_calendar"
+    static let privacy = "get_privacy_mode"
 }
 
 enum NativeCalendarClock {
@@ -150,16 +134,29 @@ final class NativeCalendarModel: ObservableObject {
         }
     }
 
-    func applyPrivacy(_ mode: PrivacyMode) {
-        privacyActive = mode.active
-        privacyProjectIDs = mode.projectIDs
-        if let projectFilter, mode.active, mode.projectIDs.contains(projectFilter) {
+    func applyPrivacy(active: Bool, projectIDs: Set<String>) {
+        let active = active && !projectIDs.isEmpty
+        privacyActive = active
+        privacyProjectIDs = projectIDs
+        if let projectFilter, active, projectIDs.contains(projectFilter) {
             self.projectFilter = nil
         }
     }
 
-    func openMonth(_ client: any NativeSettingsQuerying, projectIDs: [String], defaults: UserDefaults = .standard) async {
-        applyPrivacy(PrivacyMode.load(defaults))
+    func openMonth(_ client: any NativeSettingsQuerying, projectIDs: [String]) async {
+        guard presented else { return }
+        let generation = UUID()
+        monthGeneration = generation
+        do {
+            let value = try await client.invoke(NativeCalendarCommand.privacy, args: [:], projectID: nil)
+            guard monthGeneration == generation, presented else { return }
+            let stored = try JSONDecoder().decode(StoredPrivacy.self, from: JSONEncoder().encode(value))
+            applyPrivacy(active: stored.active, projectIDs: Set(stored.projectIDs))
+        } catch {
+            guard monthGeneration == generation, presented else { return }
+            self.error = "隐私模式未能确认读取，不会自动重试。\n" + error.localizedDescription
+            return
+        }
         await reloadMonth(client, projectIDs: projectIDs)
     }
 
