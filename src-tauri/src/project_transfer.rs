@@ -1359,6 +1359,7 @@ async fn import_archived_project_with_reporter(
     Ok(manifest.project.id)
 }
 
+#[cfg(test)]
 pub(crate) async fn export_project_archive(
     store: &wisp_store::Store,
     app_data: &Path,
