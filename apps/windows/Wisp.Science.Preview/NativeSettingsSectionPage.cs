@@ -12,25 +12,26 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private readonly NativeSettingsEditorModel model;
     private readonly string section;
     private readonly bool projectScoped;
+    private readonly string? settingsProjectId;
     private readonly Func<bool, Task<string?>>? pickPath;
     private readonly List<ComboBox> choices = [];
     private readonly StackPanel confirmation = new() { Spacing = 8 };
     private Action? pendingConfirmation;
     private readonly Button cancelAuthorization = new() { Content = "取消 OAuth 授权", Visibility = Visibility.Collapsed };
-    public bool HasChanges => model.HasChanges;
+    public bool HasChanges => model.HasChanges || model.Draft != null && invalidFields.Count > 0;
     public bool Busy => model.Busy;
     private static string S(JsonNode? row, string key) => row?[key]?.GetValue<string>() ?? "";
     private static bool B(JsonNode? row, string key) => row?[key]?.GetValue<bool>() == true;
     private static IEnumerable<JsonObject> Rows(JsonNode? value) => (value as JsonArray)?.OfType<JsonObject>() ?? [];
     public NativeSettingsSectionPage(INativeSettingsClient client, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath = null)
-        : this(new NativeSettingsEditorModel(client, project), project != null, section, design, close, pickPath) { }
-    private NativeSettingsSectionPage(NativeSettingsEditorModel model, bool projectScoped, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath)
+        : this(new NativeSettingsEditorModel(client, project), project, section, design, close, pickPath) { }
+    private NativeSettingsSectionPage(NativeSettingsEditorModel model, string? project, string section, WispDesign design, Action close, Func<bool, Task<string?>>? pickPath)
         : base(design, Titles[section], model, close)
     {
-        this.model = model; this.projectScoped = projectScoped; this.section = section;
+        this.model = model; this.projectScoped = project != null; settingsProjectId = project; this.section = section;
         this.pickPath = pickPath;
         cancelAuthorization.Click += async (_, _) => await model.CancelOAuthAsync();
-        Body.Children.Add(cancelAuthorization); Body.Children.Add(confirmation); model.Changed += LockConfirmation; _ = Reload();
+        Notices.Children.Add(cancelAuthorization); Notices.Children.Add(confirmation); model.Changed += LockConfirmation; _ = Reload();
     }
     private string[] Reads => section switch
     {
@@ -46,6 +47,9 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         "environments" => ["list_execution_contexts", "list_ssh_hosts", "get_default_execution_context", "list_ssh_trust_edges"],
         "storage" => projectScoped ? ["get_storage_usage", "get_project_run_retention"] : ["get_storage_usage"],
         "usage" => ["get_token_usage"],
+        "quick-actions" => ["list_quick_actions", "list_workflow_templates"],
+        "specialists" => ["list_specialists", "list_models"],
+        "workflows" => ["list_workflow_templates", "list_models", "list_skills"],
         _ => throw new InvalidOperationException("Unknown settings section")
     };
     private async Task Reload()
@@ -66,13 +70,14 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     {
         SetContentEnabled(!model.Busy && pendingConfirmation == null);
         cancelAuthorization.Visibility = model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
+        Notices.Visibility = pendingConfirmation != null || model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
     public override void Dispose() { model.Changed -= LockConfirmation; base.Dispose(); }
     public void RequestLeave(Action leave)
     {
         if (model.Busy) return;
-        if (model.HasChanges) Confirm("放弃尚未保存的修改？", leave); else leave();
+        if (HasChanges) Confirm("放弃尚未保存的修改？", leave); else leave();
     }
     public override void HandleEscape()
     {
@@ -113,6 +118,9 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "environments": Environments(); break;
             case "storage": Storage(); break;
             case "usage": Usage(); break;
+            case "quick-actions": QuickActions(); break;
+            case "specialists": Specialists(); break;
+            case "workflows": Workflows(); break;
         }
         Update();
         LockConfirmation();
@@ -139,7 +147,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         fields(model.Draft);
         Form.Children.Add(Button("保存", async () =>
         {
-            if (invalidFields.Count > 0) { model.Fail("请填写有效整数：" + string.Join("、", invalidFields)); return; }
+            if (invalidFields.Count > 0) { model.Fail("请检查字段格式：" + string.Join("、", invalidFields.Select(key => key.Contains(':') ? key[(key.IndexOf(':') + 1)..] : key).Distinct())); return; }
             if (await model.SaveAsync()) await Reload();
         }));
         Form.Children.Add(Button("取消编辑", () => { RequestLeave(() => { model.Discard(); Render(); }); return Task.CompletedTask; }));

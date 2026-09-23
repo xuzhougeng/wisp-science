@@ -22,6 +22,7 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         Design = design; this.close = close;
         var root = new Grid { Background = design.Brush("bg-app") };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         var header = new Grid { Padding = new Thickness(20, 16, 20, 12), ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -31,12 +32,15 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         dismiss.Click += (_, _) => HandleEscape();
         Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss);
         root.Children.Add(header);
+        Notices = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 12), Visibility = Visibility.Collapsed };
+        Grid.SetRow(Notices, 1); root.Children.Add(Notices);
         Body = new StackPanel { Spacing = 12, Padding = new Thickness(20, 0, 20, 20) };
         var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(scroll, 1); root.Children.Add(scroll);
+        Grid.SetRow(scroll, 2); root.Children.Add(scroll);
         Content = root;
     }
     protected StackPanel Body { get; }
+    protected StackPanel Notices { get; }
     public virtual void HandleEscape() { if (!closed) close(); }
     public virtual void Dispose() { closed = true; }
     protected TextBlock Mute(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, Foreground = Design.Brush("text-muted"), FontSize = 13 };

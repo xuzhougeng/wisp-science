@@ -11,7 +11,8 @@ internal sealed partial class NativeSettingsSectionPage
         ["general"] = "常规", ["session"] = "对话", ["pet"] = "宠物",
         ["skills"] = "技能", ["connections"] = "连接", ["memory"] = "记忆",
         ["plugins"] = "插件", ["browser"] = "浏览器", ["credentials"] = "凭据", ["permissions"] = "权限",
-        ["environments"] = "环境", ["storage"] = "存储", ["usage"] = "用量"
+        ["environments"] = "环境", ["storage"] = "存储", ["usage"] = "用量",
+        ["quick-actions"] = "快捷操作", ["specialists"] = "专家", ["workflows"] = "工作流"
     };
     private readonly HashSet<string> invalidFields = [];
     private void Boolean(JsonObject draft, string key, string label)

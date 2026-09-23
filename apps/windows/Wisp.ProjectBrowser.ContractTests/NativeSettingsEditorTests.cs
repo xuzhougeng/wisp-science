@@ -48,6 +48,37 @@ internal static class NativeSettingsEditorTests
         model.Edit(new() { ["content"] = "old" }, "update_global_memory", arguments: new() { ["id"] = "memory-id" });
         model.Draft!["content"] = "new"; await model.SaveAsync();
         Check(S(fake.Args, "id") == "memory-id" && S(fake.Args, "content") == "new", "memory edits preserve authoritative row identity");
+        var action = NativeWorkflowDrafts.QuickAction(4);
+        action["name"] = "Inspect selection"; action["workflow_template_id"] = "template-1";
+        model.Edit(action, "save_quick_action", "action"); await model.SaveAsync();
+        Check(S(fake.Args!["action"], "context") == "selection" && S(fake.Args["action"], "workflow_template_id") == "template-1"
+            && fake.Args["action"]!["sort_order"]!.GetValue<int>() == 4, "quick action save binds the selected template with selection context and ordering");
+        var specialist = NativeWorkflowDrafts.Specialist();
+        Check(specialist["skills"] == null && specialist["connectors"] == null, "new specialists inherit project capabilities instead of disabling all capabilities");
+        NativeWorkflowDrafts.SetWhitelist(specialist, "skills", false, "  analysis\nanalysis\nplot\n");
+        Check(specialist["skills"]!.AsArray().Count == 2 && specialist["connectors"] == null, "explicit whitelist normalizes names without changing the other inherited capability set");
+        NativeWorkflowDrafts.SetWhitelist(specialist, "skills", false, "");
+        Check(specialist["skills"] is JsonArray { Count: 0 }, "an empty explicit whitelist disables all skills");
+        NativeWorkflowDrafts.SetWhitelist(specialist, "skills", true, "analysis");
+        model.Edit(specialist, "save_specialist_cmd", "spec"); await model.SaveAsync();
+        Check(fake.Command == "save_specialist_cmd" && fake.Args!["spec"]!["skills"] == null, "restoring inheritance sends null rather than an empty capability whitelist");
+        var reviewer = JsonNode.Parse("{\"id\":\"reviewer\",\"name\":\"Reviewer\",\"builtin\":true,\"review_backend\":{\"kind\":\"acp_agent\",\"profile_id\":\"agent-a\"},\"skills\":[\"review\"],\"future\":true}")!.AsObject();
+        var copied = NativeWorkflowDrafts.Copy(reviewer); copied["skills"]!.AsArray().Add("extra");
+        Check(S(copied, "id") != "reviewer" && !copied["builtin"]!.GetValue<bool>() && copied["review_backend"] == null
+            && reviewer["skills"]!.AsArray().Count == 1 && copied["future"]!.GetValue<bool>(), "copying a reviewer creates an independent editable persona without reviewer-only backend state");
+        model.Edit(reviewer, "save_specialist_cmd", "spec"); model.Draft!["description"] = "Updated"; await model.SaveAsync();
+        Check(S(fake.Args!["spec"]?["review_backend"], "profile_id") == "agent-a", "editing reviewer text preserves its ACP backend binding");
+        var workflow = NativeWorkflowDrafts.Workflow(); var tasks = workflow["proposal"]!["tasks"]!.AsArray();
+        tasks.Add(NativeWorkflowDrafts.TaskNode([])); tasks.Add(NativeWorkflowDrafts.TaskNode(tasks.OfType<JsonObject>()));
+        Check(S(tasks[0], "id") != S(tasks[1], "id") && tasks[0]!["executor"] == null && tasks[0]!["budget"] == null,
+            "new workflow tasks get unique identities and inherit executor and budget policy");
+        model.Edit(workflow, "save_workflow_template", "template", new() { ["conversionSourceSha256"] = "source-hash" });
+        fake.Fail = true; count = fake.Calls;
+        Check(!await model.SaveAsync() && fake.Calls == count + 1 && model.Draft?["proposal"]?["tasks"]?.AsArray().Count == 2,
+            "host workflow validation errors retain the complete task graph without replaying saves");
+        fake.Fail = false; await model.SaveAsync();
+        Check(S(fake.Args, "conversionSourceSha256") == "source-hash" && fake.Args!["template"]?["proposal"]?["approval_policy"]?.GetValue<string>() == "review_all",
+            "reviewed conversion save preserves source provenance and approval policy outside the template payload");
         model.Edit(new() { ["content"] = "draft" }, "create_global_memory");
         await model.LoadAsync("get_memory_view");
         Check(S(model.Draft, "content") == "draft", "reads do not replace an editor draft");

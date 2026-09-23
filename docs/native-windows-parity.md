@@ -88,10 +88,10 @@ plus real Windows UI/host evidence before it can be marked complete.
 | Skills settings | Local import, enable/disable, tags, file inspection, removal, community catalog, pinned GitHub preview/import and native path pickers implemented. Real-host install acceptance remains. |
 | Connections settings | Connector enable/approval controls, MCP stdio/HTTP editors, secret rows, OAuth command routing and cancellation implemented. Real host save/test and OAuth UI acceptance remain. |
 | Memory settings | File/global memory editors and failure-analysis settings implemented. Synthetic-host edit/save and draft Escape checks passed. Project scope selector added after that smoke; selector and actual host writes still need verification. |
-| Settings navigation | Fourteen enabled categories, project scope selector, scoped child models and unsaved-change guards. Models, quick actions, workflows, specialists, channels and project settings remain. |
+| Settings navigation | Seventeen enabled categories, project scope selector, scoped child models and unsaved-change guards. Models, channels and project settings remain. Confirmation and OAuth cancellation controls stay above the scrollable editor. |
 | General / session / appearance / pet | Preference editors, local environment/network/update flows, pet controls and appearance font/CSS editing implemented. Full native font application and real-host acceptance remain. |
 | Models / credentials | Credential status and secret writes use host keyring APIs without secret readback. Model/provider/ACP configuration and authentication flows remain. |
-| Quick actions / workflows / specialists | Port editors, validation, selection and conversions exposed by SwiftUI. |
+| Quick actions / workflows / specialists | Native create/edit/copy/remove, quick-action template binding and enablement, workflow tasks/dependencies/executor/budget editing, built-in read-only templates, reviewable skill/template conversions and specialist/reviewer configuration implemented. Null capability inheritance is distinct from an explicit empty whitelist. Host validation retains rejected drafts. Real-host conversion and persistence acceptance remain. |
 | Plugins / browser / channels / permissions | Plugin install/toggle/remove, browser lifecycle and URL filters, and approval grant controls implemented. Channels and real-host acceptance remain. |
 | Environments / storage / usage | SSH/WSL/context management, interpreter/storage preferences, retention and usage pages implemented. Real-host acceptance remains. |
 | Publication / research editing | Audit SwiftUI behavior and complete publication evidence binding and journal/artifact/run editing. |
@@ -99,14 +99,20 @@ plus real Windows UI/host evidence before it can be marked complete.
 | Final regression and delivery | Re-run relevant suites for the final change, inspect real Windows layouts and layered Escape, document exact results, and deliver a focused follow-up PR. |
 
 Current follow-up checks: Release WinUI build/publish passed; all existing C#
-checks plus 18 settings-editor checks passed (draft retention, no retry,
+checks plus 28 settings-editor checks passed (draft retention, no retry,
 duplicate-save exclusion, scope, argument casing, void success, unknown fields,
 credential references, OAuth dispatch/cancellation, keyring writes, optional
-plugin checksums and closed-view replies). The two Rust
+plugin checksums, whitelist inheritance, independent copies, task identities,
+conversion provenance, workflow validation failures and closed-view replies). The two Rust
 native-settings DTO tests and contract sync check passed. This is interim
 validation, not proof that the full parity objective is complete. Actual WinUI
 fixture-host checks also confirmed the general preference form opens in the
-same window and immediate Escape closes only its editor. Scope switching and
-dirty-draft navigation across scopes still need UI acceptance. The full Rust
+same window and immediate Escape closes only its editor. Additional actual
+WinUI checks confirmed quick-action editor Escape, project selection followed
+by workflow reads and one save scoped to `parity-a`, and task-graph preservation
+in that save. A long-editor discard confirmation was initially below the fold;
+it now stays beneath the heading. Immediate Escape opens it, then another Escape
+closes only the confirmation and preserves the changed workflow draft.
+Dirty-draft navigation across scopes still needs UI acceptance. The full Rust
 and Playwright results above belong to the first increment; they were not rerun
 for this settings follow-up.
