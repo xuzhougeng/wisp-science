@@ -64,7 +64,8 @@ public sealed record BrowserSession(
     [property: JsonPropertyName("project_id")] string ProjectId,
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("ts")] long Timestamp,
-    [property: JsonPropertyName("status")] string Status);
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("folder_id")] string? FolderId = null);
 
 public sealed record BrowserMessage(
     [property: JsonPropertyName("seq")] long Sequence,

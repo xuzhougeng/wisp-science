@@ -12,7 +12,7 @@ using Wisp.ProjectBrowser.Contracts;
 
 namespace Wisp.Science.Preview;
 
-internal sealed class MainWindow : Window
+internal sealed partial class MainWindow : Window
 {
     private readonly Grid root = new();
     private readonly WispDesign design = new();
@@ -25,6 +25,8 @@ internal sealed class MainWindow : Window
     private NativeSettingsPage? settingsPage;
     private IWorkspaceSheet? workspaceSheet;
     private NativeSettingsClient? workspaceHost;
+    private Task<NativeSettingsClient?>? connectingHost;
+    private int conversationNavigation;
     private WorkspaceInboxModel? inbox;
     private NativeWorkspacePanel? panelPage;
     private NativeWorkspaceTerminal? terminalPage;
@@ -43,6 +45,10 @@ internal sealed class MainWindow : Window
     private long? renderedFirst;
     private bool scrollToLatest;
     private string? localError;
+    private bool rendering;
+    private bool renderQueued;
+    private Grid? workspaceMain;
+    private Grid? workspaceShell;
 
     public MainWindow()
     {
@@ -69,10 +75,12 @@ internal sealed class MainWindow : Window
         var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
         escape.Invoked += (_, e) =>
         {
+            if (nativePickerOpen) return;
             if (overlays.LastOrDefault() is { } flyout) { flyout.Hide(); e.Handled = true; }
             else if (searchOverlay != null) { CloseSearch(); e.Handled = true; }
             else if (workspaceSheet != null) { workspaceSheet.HandleEscape(); e.Handled = true; }
             else if (settingsPage != null) { settingsPage.HandleEscape(); e.Handled = true; }
+            else if (projectPage != null) { projectPage.HandleEscape(); e.Handled = true; }
         };
         root.KeyboardAccelerators.Add(escape);
         Closed += (_, _) =>
@@ -98,6 +106,27 @@ internal sealed class MainWindow : Window
 
     private void Render()
     {
+        if (rendering)
+        {
+            if (!renderQueued) { renderQueued = true; DispatcherQueue.TryEnqueue(() => { renderQueued = false; Render(); }); }
+            return;
+        }
+        rendering = true;
+        try { RenderCore(); }
+        catch (Exception ex)
+        {
+            localError = "界面未能完成加载：" + ex.Message;
+            root.Children.Clear();
+            var recovery = Stack(12); recovery.Margin = new Thickness(24);
+            recovery.Children.Add(Text(localError, 14, "clay-strong"));
+            recovery.Children.Add(ActionButton("返回项目", "arrow-left", model.GoHome, true));
+            root.Children.Add(recovery);
+        }
+        finally { rendering = false; }
+    }
+
+    private void RenderCore()
+    {
         if (settingsPage != null) return;
         SyncWorkspaceSession();
         var offset = transcriptScroll?.VerticalOffset ?? 0;
@@ -108,11 +137,16 @@ internal sealed class MainWindow : Window
         design.DarkPalette = settings.DarkPalette;
         design.Dark = root.ActualTheme == ElementTheme.Dark;
         root.Background = design.Brush("bg-app");
+        // WinUI can report Parent=null while an unloaded subtree still owns a
+        // reusable UserControl. Detach through the retained owner before remounting.
+        workspaceMain?.Children.Clear(); workspaceMain = null;
+        workspaceShell?.Children.Clear(); workspaceShell = null;
         root.Children.Clear();
         transcriptScroll = null;
         var project = model.Projects.FirstOrDefault(p => p.Id == model.ActiveProjectId);
         pageContent = project == null ? Home() : Workspace(project);
         pageContent.IsHitTestVisible = searchOverlay == null && workspaceSheet == null;
+        pageContent.Visibility = workspaceSheet == null ? Visibility.Visible : Visibility.Collapsed;
         root.Children.Add(pageContent);
         if (searchOverlay != null) root.Children.Add(searchOverlay);
         if (workspaceSheet is UserControl sheet) root.Children.Add(sheet);
@@ -164,14 +198,15 @@ internal sealed class MainWindow : Window
         var actions = new StackPanel { Spacing = 8, Orientation = layout.StackHeader ? Orientation.Vertical : Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         var quickActions = Row(6); quickActions.HorizontalAlignment = HorizontalAlignment.Right;
-        quickActions.Children.Add(ActionButton("研究日历", "calendar"));
-        quickActions.Children.Add(ActionButton("收藏", "star"));
+        quickActions.Children.Add(ActionButton("研究日历", "calendar", () => _ = OpenNativeAction("calendar")));
+        quickActions.Children.Add(ActionButton("收藏", "star", () => _ = OpenNativeAction("library")));
+        quickActions.Children.Add(ActionButton("教程", "book", OpenTutorials));
         quickActions.Children.Add(ActionButton("搜索", "search", OpenSearch));
         quickActions.Children.Add(ActionButton("设置", "gear", OpenSettings));
         var projectActions = Row(6); projectActions.HorizontalAlignment = HorizontalAlignment.Right;
-        projectActions.Children.Add(ActionButton("随手一聊", null));
-        projectActions.Children.Add(ActionButton("导入项目", "upload", showLabel: true));
-        projectActions.Children.Add(ActionButton("新建项目", "plus", showLabel: true, primary: true));
+        projectActions.Children.Add(ActionButton("随手一聊", null, () => _ = OpenNativeAction("scratch")));
+        projectActions.Children.Add(ActionButton("导入项目", "upload", () => _ = OpenNativeAction("import"), showLabel: true));
+        projectActions.Children.Add(ActionButton("新建项目", "plus", () => _ = OpenNativeAction("create"), showLabel: true, primary: true));
         actions.Children.Add(quickActions); actions.Children.Add(projectActions);
         Grid.SetColumn(actions, 1);
         header.Children.Add(actions);
@@ -232,11 +267,13 @@ internal sealed class MainWindow : Window
     private FrameworkElement Workspace(ProjectSummary project)
     {
         var shell = new Grid();
+        workspaceShell = shell;
         shell.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         shell.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         if (sidebarVisible) shell.Children.Add(Sidebar(project));
         var main = new Grid();
+        workspaceMain = main;
         main.RowDefinitions.Add(new() { Height = GridLength.Auto });
         main.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         main.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -298,7 +335,12 @@ internal sealed class MainWindow : Window
         }
         if (model.SessionsLoading || model.TranscriptLoading) messages.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 180 });
         else if (model.Messages.Count == 0 && model.SessionError == null) messages.Children.Add(Text(model.Sessions.Count == 0 ? "这个项目还没有会话" : "这个会话暂无消息", 14, "text-faint"));
-        if (conversationPage != null)
+        if (projectPage is UserControl projectControl)
+        {
+            if (projectControl.Parent is Panel parent) parent.Children.Remove(projectControl);
+            Grid.SetRow(projectControl, 1); main.Children.Add(projectControl);
+        }
+        else if (conversationPage != null)
         {
             if (conversationPage.Parent is Panel previous) previous.Children.Remove(conversationPage);
             Grid.SetRow(conversationPage, 1); main.Children.Add(conversationPage);
@@ -353,30 +395,21 @@ internal sealed class MainWindow : Window
         top.Children.Add(heading);
         top.Children.Add(ActionButton("新建会话", "plus", () => _ = CreateSessionAsync(), showLabel: true, primary: true, quiet: true));
         top.Children.Add(ActionButton("搜索", "search", OpenSearch, true, quiet: true));
-        foreach (var (label, icon) in new[] { ("新建文件夹", "folder-plus"), ("文件", "doc"), ("研究历程", "research-trail"), ("论文证据", "book"), ("收藏", "star") })
-            top.Children.Add(ActionButton(label, icon, showLabel: true, quiet: true));
+        top.Children.Add(ActionButton("新建文件夹", "folder-plus", () => _ = EditGroup(), true, quiet: true));
+        top.Children.Add(ActionButton("文件", "doc", model.ActiveSessionId == null ? null : ShowFiles, true, quiet: true));
+        top.Children.Add(ActionButton("研究历程", "research-trail", () => _ = OpenNativeAction("journey"), true, quiet: true));
+        top.Children.Add(ActionButton("论文证据", "book", () => _ = OpenNativeAction("publication"), true, quiet: true));
+        top.Children.Add(ActionButton("收藏", "star", () => _ = OpenNativeAction("library"), true, quiet: true));
         // Bound the tools region on short windows so saved sessions always get space.
         var topScroll = new ScrollViewer { Content = top, MaxHeight = layout.ShortWindow ? 225 : 300 };
         sidebar.Children.Add(topScroll);
-        var sessions = new ListView { SelectionMode = ListViewSelectionMode.Single, IsItemClickEnabled = true };
-        AutomationProperties.SetName(sessions, "项目会话");
-        foreach (var session in model.Sessions)
-        {
-            var item = new ListViewItem { Content = SingleLine(session.Title, 12), Tag = session.Id, IsSelected = session.Id == model.ActiveSessionId,
-                MinHeight = 30, Padding = new Thickness(8, 5, 8, 5), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetAutomationId(item, $"session-{session.Id}");
-            sessions.Items.Add(item);
-        }
-        sessions.ItemClick += async (_, e) => await model.OpenSessionAsync((string)((ListViewItem)e.ClickedItem).Tag);
-        var sessionSection = new Grid { RowSpacing = 6 };
-        sessionSection.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        sessionSection.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-        sessionSection.Children.Add(Text($"会话   {model.Sessions.Count}", 11, "text-faint"));
-        Grid.SetRow(sessions, 1); sessionSection.Children.Add(sessions);
+        var sessionSection = SessionList();
         Grid.SetRow(sessionSection, 1); sidebar.Children.Add(sessionSection);
         var bottom = Stack(4);
         var utilities = Row(3);
-        foreach (var (label, icon) in new[] { ("能力", "grid"), ("反馈问题", "chat"), ("设置", "gear") }) utilities.Children.Add(ActionButton(label, icon, label == "设置" ? OpenSettings : null, quiet: true));
+        utilities.Children.Add(ActionButton("能力", "grid", () => _ = OpenNativeAction("capabilities"), quiet: true));
+        utilities.Children.Add(ActionButton("反馈问题", "chat", model.ActiveSessionId == null ? null : () => _ = conversation?.PrepareIssueReportAsync(), quiet: true));
+        utilities.Children.Add(ActionButton("设置", "gear", OpenSettings, quiet: true));
         utilities.Children.Add(ActionButton("在资源管理器中显示", "folder", () => Reveal(project), quiet: true));
         bottom.Children.Add(utilities);
         bottom.Children.Add(Footer(workspace: true));
@@ -440,6 +473,8 @@ internal sealed class MainWindow : Window
             if (await picker.PickSingleFileAsync() is { } file)
             {
                 settings.DatabasePath = file.Path; SaveSettings(); localError = null;
+                DisposeWorkspace(); conversation = null;
+                workspaceHost?.Dispose(); workspaceHost = null;
                 await model.ChangeDatabaseAsync(file.Path);
             }
         }
@@ -460,24 +495,27 @@ internal sealed class MainWindow : Window
 
     private void SyncWorkspaceSession()
     {
-        var key = model.ActiveProjectId is { } project && model.ActiveSessionId is { } session ? project + ":" + session : null;
+        SyncProjectActions();
+        var key = model.ActiveProjectId is { } project ? project + ":" + model.ActiveSessionId : null;
         if (key == workspaceKey) return;
         workspaceKey = key;
-        CloseSheet();
+        ClearSheets();
         panelPage?.Dispose(); panelPage = null;
         terminalPage?.Dispose(); terminalPage = null;
         sideChat = null;
         inbox?.Reset();
-        conversation?.Pause();
+        conversation?.Reset();
         if (model.ActiveProjectId != null) _ = EnsureConversationAsync();
     }
 
     private async Task EnsureConversationAsync()
     {
+        var navigation = ++conversationNavigation;
+        var selectedProject = model.ActiveProjectId; var selectedSession = model.ActiveSessionId;
         var host = await ConnectHostAsync();
-        if (host == null || windowClosed) return;
+        if (host == null || windowClosed || navigation != conversationNavigation || selectedProject != model.ActiveProjectId || selectedSession != model.ActiveSessionId) return;
         conversation ??= new WorkspaceConversationModel(new NativeConversationClient(host), host);
-        conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync);
+        conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync, () => PickFile("*"));
         if (model.ActiveProjectId is { } project && model.ActiveSessionId is { } session)
         {
             sideChat = new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
@@ -605,12 +643,25 @@ internal sealed class MainWindow : Window
         if (workspaceSheet is null) return;
         if (workspaceSheet is UserControl control) root.Children.Remove(control);
         workspaceSheet.Dispose(); workspaceSheet = null;
-        if (pageContent != null) pageContent.IsHitTestVisible = searchOverlay == null;
+        if (parentSheets.TryPop(out var parent))
+        {
+            workspaceSheet = parent;
+            if (parent is UserControl restored) root.Children.Add(restored);
+        }
+        if (pageContent != null) pageContent.IsHitTestVisible = searchOverlay == null && workspaceSheet == null;
+        if (pageContent != null) pageContent.Visibility = workspaceSheet == null ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async Task<NativeSettingsClient?> ConnectHostAsync()
+    private Task<NativeSettingsClient?> ConnectHostAsync()
     {
-        if (workspaceHost != null) return workspaceHost;
+        if (workspaceHost != null) return Task.FromResult<NativeSettingsClient?>(workspaceHost);
+        if (connectingHost is not { IsCompleted: false }) connectingHost = ConnectHostCoreAsync();
+        return connectingHost;
+    }
+
+    private async Task<NativeSettingsClient?> ConnectHostCoreAsync()
+    {
+        var database = model.DatabasePath;
         try
         {
             string? host = Environment.GetEnvironmentVariable("WISP_SETTINGS_HOST_PATH")
@@ -620,13 +671,14 @@ internal sealed class MainWindow : Window
             if (!string.Equals(Path.GetFullPath(model.DatabasePath), Path.GetFullPath(defaultDatabase), StringComparison.OrdinalIgnoreCase))
                 host = null;
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var connected = await NativeSettingsClient.ConnectAsync(model.DatabasePath, host, deadline.Token);
-            if (windowClosed) { connected.Dispose(); return null; }
+            var connected = await NativeSettingsClient.ConnectAsync(database, host, deadline.Token);
+            if (windowClosed || database != model.DatabasePath) { connected.Dispose(); return null; }
             workspaceHost = connected;
             return connected;
         }
         catch (Exception ex)
         {
+            if (windowClosed || database != model.DatabasePath) return null;
             localError = "无法连接桌面宿主：" + ex.Message;
             Render();
             return null;
@@ -635,7 +687,9 @@ internal sealed class MainWindow : Window
 
     private void DisposeWorkspace()
     {
-        CloseSheet();
+        sessionGroups?.Dispose(); sessionGroups = null;
+        projectPage?.Dispose(); projectPage = null;
+        ClearSheets();
         panelPage?.Dispose(); panelPage = null;
         terminalPage?.Dispose(); terminalPage = null;
         conversationPage?.Dispose(); conversationPage = null;

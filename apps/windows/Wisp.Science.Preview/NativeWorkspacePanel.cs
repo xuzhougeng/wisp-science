@@ -17,6 +17,11 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
     private readonly StackPanel body = new() { Spacing = 8 };
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed;
+    public async Task ShowFilesAsync()
+    {
+        try { await model.RefreshAsync("files", cancellationToken: lifetime.Token); Render(); }
+        catch (OperationCanceledException) { }
+    }
 
     public NativeWorkspacePanel(WorkspacePanelModel model, Func<ConversationItem[]> transcript, WispDesign design, Action close,
         WorkspaceSideChatModel? sideChat = null, Action<string>? openTerminal = null)

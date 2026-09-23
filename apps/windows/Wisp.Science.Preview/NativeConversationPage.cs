@@ -21,6 +21,9 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly Button send = new() { Content = "发送" };
     private readonly Button stop = new() { Content = "停止" };
     private readonly Button createSession = new() { Content = "新建会话" };
+    private readonly Button attach = new() { Content = "对话附件" };
+    private readonly Button queue = new() { Content = "排队后续" };
+    private readonly StackPanel attachments = new() { Spacing = 4 };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly TextBlock hint = new() { FontSize = 11 };
     private readonly Grid composerBar = new();
@@ -28,7 +31,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed, followLatest = true;
 
-    public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create)
+    public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create, Func<Task<string?>>? pickAttachment = null)
     {
         this.model = model; this.design = design; this.quote = quote; this.create = create;
         model.Changed += Refresh;
@@ -40,7 +43,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         status.Margin = new Thickness(24, 12, 24, 0);
         var retry = new Button { Content = "重新读取" };
         retry.Click += async (_, _) => await model.RefreshAsync(lifetime.Token);
-        var ack = new Button { Content = "已检查，允许再次发送…" };
+        var ack = new Button { Content = "已检查，允许再次发送或排队…" };
         ack.Click += (_, _) => model.AcknowledgeUncertainSend();
         var banner = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(24, 8, 24, 0) };
         banner.Children.Add(retry); banner.Children.Add(ack);
@@ -48,7 +51,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         root.Children.Add(header);
         scroll.Content = transcript; Grid.SetRow(scroll, 1); root.Children.Add(scroll);
         Grid.SetRow(approvals, 2); root.Children.Add(approvals);
-        composer.TextChanged += (_, _) => model.Draft = composer.Text;
+        composer.TextChanged += (_, _) => { model.Draft = composer.Text; send.IsEnabled = model.CanSend; queue.IsEnabled = model.CanQueue; };
         composer.KeyDown += (_, e) =>
         {
             if (e.Key != VirtualKey.Enter) return;
@@ -64,8 +67,12 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
                 await model.SelectModelAsync(id, lifetime.Token);
         };
         createSession.Click += async (_, _) => await create();
-        var attach = new Button { Content = "对话附件", IsEnabled = false };
-        var queue = new Button { Content = "排队后续", IsEnabled = false };
+        attach.Click += async (_, _) =>
+        {
+            if (pickAttachment != null && await pickAttachment() is { } path) await model.AttachAsync(path, lifetime.Token);
+        };
+        attach.Visibility = pickAttachment == null ? Visibility.Collapsed : Visibility.Visible;
+        queue.Click += async (_, _) => await model.QueueAsync(lifetime.Token);
         var actions = new Grid();
         actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -73,7 +80,9 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         send.HorizontalAlignment = HorizontalAlignment.Right; stop.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetColumn(send, 1); Grid.SetColumn(stop, 1); actions.Children.Add(send); actions.Children.Add(stop);
         var card = new StackPanel { Spacing = 12, Padding = new Thickness(16) };
-        card.Children.Add(attach); card.Children.Add(queue); card.Children.Add(composer); card.Children.Add(actions);
+        var extras = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        extras.Children.Add(attach); extras.Children.Add(queue);
+        card.Children.Add(extras); card.Children.Add(attachments); card.Children.Add(composer); card.Children.Add(actions);
         var follow = new CheckBox { Content = "跟随最新回复", IsChecked = true, FontSize = 11 };
         follow.Checked += (_, _) => followLatest = true; follow.Unchecked += (_, _) => followLatest = false;
         var footer = new Grid { Margin = new Thickness(24, 0, 24, 16), MaxWidth = 850 };
@@ -127,6 +136,14 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         send.Visibility = model.Snapshot?.Running == true ? Visibility.Collapsed : Visibility.Visible;
         stop.Visibility = model.Snapshot?.Running == true ? Visibility.Visible : Visibility.Collapsed;
         send.IsEnabled = model.CanSend; stop.IsEnabled = !model.Busy;
+        attach.IsEnabled = model.CanAttach; queue.IsEnabled = model.CanQueue;
+        queue.Content = model.QueuedFollowUp == null ? "排队后续" : "后续已排队";
+        attachments.Children.Clear();
+        foreach (var file in model.Attachments)
+        {
+            var remove = new Button { Content = file.Name + " · 移除", IsEnabled = !model.Busy && !model.UncertainSend };
+            remove.Click += (_, _) => model.RemoveAttachment(file.Path); attachments.Children.Add(remove);
+        }
         stop.Content = model.Snapshot?.Stopping == true ? "正在停止…" : "停止";
         if (models.Items.Count != model.Models.Length)
         {
@@ -168,6 +185,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             var card = new StackPanel { Spacing = 8, Padding = new Thickness(16) };
             var role = item.Role == "user" ? "你" : item.Role == "tool" ? item.ToolName ?? "工具" : item.Role == "reasoning" ? "思考" : "Wisp Science";
             card.Children.Add(new TextBlock { Text = role, FontSize = 12, Foreground = design.Brush("text-muted") });
+            foreach (var path in item.Attachments ?? []) card.Children.Add(new TextBlock { Text = "附件 · " + path, TextWrapping = TextWrapping.Wrap });
             if (item.Role == "question" && JsonNode.Parse(item.Text) is JsonObject question)
             {
                 card.Children.Add(new TextBlock { Text = question["question"]?.GetValue<string>() ?? item.Text, TextWrapping = TextWrapping.Wrap });

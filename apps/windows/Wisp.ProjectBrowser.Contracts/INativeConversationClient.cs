@@ -15,10 +15,14 @@ public interface INativeConversationClient
     Task<string> CreateAsync(string projectId, CancellationToken cancellationToken = default);
     Task<ConversationSnapshot> SnapshotAsync(string projectId, string sessionId, long? beforeSeq = null, CancellationToken cancellationToken = default);
     Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default);
+    Task SendFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default)
+        => attachments.Length == 0 ? SendAsync(projectId, sessionId, requestId, message, cancellationToken) : throw new NotSupportedException("Attachments are not supported by this client");
     Task<ComposerAttachment> AttachAsync(string projectId, string sessionId, string path, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("对话附件 stays disconnected in WinUI");
+        => throw new NotSupportedException("Attachments are not supported by this client");
     Task EnqueueAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("排队后续 stays disconnected in WinUI");
+        => throw new NotSupportedException("Follow-ups are not supported by this client");
+    Task EnqueueFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default)
+        => attachments.Length == 0 ? EnqueueAsync(projectId, sessionId, requestId, message, cancellationToken) : throw new NotSupportedException("Attachments are not supported by this client");
     Task StopAsync(string projectId, string sessionId, CancellationToken cancellationToken = default);
     Task ApproveAsync(string projectId, string sessionId, string approvalId, bool approved, CancellationToken cancellationToken = default);
     Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default);
@@ -83,6 +87,18 @@ public sealed class NativeConversationClient(INativeSettingsClient transport) : 
             new() { ["session_id"] = sessionId, ["before_seq"] = beforeSeq }, projectId, cancellationToken).ConfigureAwait(false), projectId, sessionId);
     public async Task SendAsync(string projectId, string sessionId, Guid requestId, string message, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_send", new() { ["session_id"] = sessionId, ["request_id"] = requestId.ToString(), ["message"] = message }, projectId, cancellationToken).ConfigureAwait(false);
+    public async Task SendFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default) =>
+        await transport.InvokeAsync("native_conversation_send", ComposerArgs(sessionId, requestId, message, attachments), projectId, cancellationToken).ConfigureAwait(false);
+    private static JsonObject ComposerArgs(string sessionId, Guid requestId, string message, string[] attachments) => new()
+    {
+        ["session_id"] = sessionId, ["request_id"] = requestId.ToString(), ["message"] = message,
+        ["attachments"] = JsonSerializer.SerializeToNode(attachments)
+    };
+    public async Task EnqueueFilesAsync(string projectId, string sessionId, Guid requestId, string message, string[] attachments, CancellationToken cancellationToken = default)
+    {
+        var node = await transport.InvokeAsync("native_conversation_enqueue", ComposerArgs(sessionId, requestId, message, attachments), projectId, cancellationToken).ConfigureAwait(false);
+        if (node?["queued"]?.GetValue<bool>() != true) throw new InvalidDataException("Follow-up was not queued");
+    }
     public async Task<ComposerAttachment> AttachAsync(string projectId, string sessionId, string path, CancellationToken cancellationToken = default)
     {
         var node = await transport.InvokeAsync("native_conversation_attach", new() { ["session_id"] = sessionId, ["path"] = path }, projectId, cancellationToken).ConfigureAwait(false)

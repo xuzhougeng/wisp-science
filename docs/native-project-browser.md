@@ -1,6 +1,8 @@
 # Native project browser preview
 
 Wisp has SwiftUI (macOS) and WinUI 3 (Windows) project browsers alongside the existing Tauri client.
+
+For current Windows coverage of PRs #1332–#1351, validation, and remaining differences, see [Windows native parity](native-windows-parity.md). Earlier milestone sections below describe their original delivery boundaries.
 It lists real projects, preserves the desktop's ordering and metadata, searches
 names/descriptions/paths, refreshes on demand, and reveals a selected workspace
 in Finder or Explorer. The existing desktop remains the client for chat and execution.
@@ -250,11 +252,11 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, calendar, scratch, new project, and import are connected. The WinUI 随手一聊 button stays disabled. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, calendar, scratch, new project, and import are connected. WinUI also connects these actions. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
-| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. macOS 对话附件 copies a local file into the project and shows it on the saved message. The WinUI button stays disabled. |
+| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. macOS 对话附件 copies a local file into the project and shows it on the saved message. WinUI connects the same attachment flow. |
 | Search | Home/project scope, Up/Down and Enter navigation, topmost Escape, Command-K / Ctrl+K even with the sidebar collapsed. |
 | Preview utilities | Database selection, refresh and appearance remain in the home footer / Windows sidebar footer; these do not replace WebView actions. |
 
@@ -309,8 +311,7 @@ Escape immediately after the sheet opens closes only the library sheet. A
 search surface that was already open stays open. A search reply that arrives
 after the sheet has closed does not reopen a project.
 
-WinUI decodes the same fixtures through `INativeLibraryClient` and leaves its
-收藏 buttons disabled.
+WinUI connects the same library search, filters, delete, source navigation and composer insertion through `INativeLibraryClient`.
 
 ## Research calendar
 
@@ -335,9 +336,7 @@ day's records inside the sheet. **打开研究历程** closes the calendar and o
 that project on the dated research-journey entry. A calendar reply that arrives
 after the sheet has closed does not open a project.
 
-Escape immediately after the sheet opens closes only the calendar. WinUI
-decodes the same fixture through `INativeCalendarClient` and leaves its
-研究日历 button disabled.
+Escape immediately after the sheet opens closes only the calendar. WinUI uses the same privacy gate and `INativeCalendarClient`. Its dated journey opens above the calendar so one Escape returns to the selected calendar day.
 
 ## Research journey
 
@@ -352,9 +351,7 @@ change the WebView's active project or session.
 A lost read keeps the last rows and is not retried. Search filters the rows
 already read. A reply that arrives after the sheet has closed does not open or
 change a project. Escape closes only the journey sheet. Adding a journal
-entry, artifact detail, and run detail stay out of this slice. WinUI decodes
-the same fixture through `INativeJourneyClient` and leaves its 研究历程 button
-disabled.
+entry, artifact detail, and run detail stay out of this slice. WinUI connects the same read through `INativeJourneyClient`, with date range and local title search.
 
 ## Publication workspace
 
@@ -370,8 +367,7 @@ An empty title or revision label keeps the draft and does not call the host.
 A lost create keeps the draft and is not retried. A reply that arrives after
 the workspace has closed does not open a project. Escape closes only the
 publication column and returns to the conversation. Evidence binding, readiness,
-and reproduction stay out of this slice. WinUI decodes the same fixture through
-`INativePublicationClient` and leaves its 论文证据 button disabled.
+and reproduction stay out of this slice. WinUI connects `INativePublicationClient` in the project column, retaining the sidebar and conversation draft.
 
 ## Capabilities
 
@@ -384,7 +380,7 @@ The summary does not call `probe_execution_context` and does not add a host
 command. A lost read is not retried. A reply that arrives after the sheet
 closes does not open a project. Choosing a count opens the existing settings
 section for skills, connections, or memory. Escape closes only the summary.
-WinUI leaves its 能力 button disabled.
+WinUI connects the same summary. Counts open native read-only detail pages; editing skills, connections and memory remains part of the older Windows settings gap.
 
 ## Issue feedback
 
@@ -394,8 +390,7 @@ prompt the WebView builds into the current composer. The prompt includes the
 app version, OS, architecture, model, and startup timing. It does not include
 the workspace path. The button does not send the message. A lost read keeps the
 composer unchanged and is not retried. A reply that arrives after the user has
-returned home does not prefill a composer or open a project. WinUI leaves its
-反馈问题 button disabled.
+returned home does not prefill a composer or open a project. WinUI connects the same prefill behavior and also preserves edits made while the bootstrap read was pending.
 
 ## Scratch chat
 
@@ -413,9 +408,7 @@ and it refuses a normal project id or a scratch id whose workspace is outside
 `scratch/`. A lost open or close is not retried. Closing the preview without
 this command leaves the project and sandbox for the existing startup purge:
 that purge records the orphans before any new scratch chat can be created, so
-a chat opened while the purge is still running is spared. WinUI decodes the
-same fixtures through `INativeScratchClient` and leaves its 随手一聊 button
-disabled.
+a chat opened while the purge is still running is spared. WinUI opens the same independent hidden conversation through `INativeScratchClient`; its close button and Escape call the scoped close command.
 
 ## Creating a project
 
@@ -442,8 +435,7 @@ form, reloads the read-only project list, and opens that project. Escape
 immediately after the form opens closes only the form. While the request is in
 flight the submit button stays disabled, including a second click.
 
-WinUI decodes the same fixture through `INativeProjectClient.CreateAsync` and
-leaves its 新建项目 button disabled.
+WinUI provides the corresponding native form, folder picker, standard-layout convention and host call through `INativeProjectClient.CreateAsync`.
 
 ## Importing a project
 
@@ -459,9 +451,7 @@ confirmed summary reloads the read-only list and opens that project. A second
 click while the request is in flight does not send again.
 
 `native_project_import` is announced next to `native_project_create` on the
-host capability document. `wisp-service` still cannot import projects. WinUI
-decodes the same fixture through `INativeProjectClient.ImportAsync` and leaves
-its 导入项目 button disabled.
+host capability document. `wisp-service` still cannot import projects. WinUI provides a ZIP picker and an import form through `INativeProjectClient.ImportAsync`; errors retain the selected path.
 
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
@@ -549,8 +539,7 @@ send a message and does not change the WebView's active project or session.
 Send then includes those project-relative paths in the `attachments` list and
 in the same `Uploaded files:` text the WebView persists. A reloaded snapshot
 shows those names on the saved user message. A lost attach or send is not
-retried. Removing a chip drops it from this draft. WinUI leaves its 对话附件
-button disabled and decodes the same fixture.
+retried. Removing a chip drops it from this draft. WinUI enables its 对话附件 button, retains staged files per conversation, and includes their paths in send and enqueue calls.
 
 **排队后续** is enabled while a turn is running. It parks the current
 composer draft with `native_conversation_enqueue` for that project and
@@ -558,4 +547,4 @@ session. The existing queue driver sends that one draft after the current
 turn releases its workflow lock, then stops. A second distinct draft is
 refused, and the button does not send another turn by itself. A lost reply
 is not retried. The command does not change the WebView's active project or
-session. WinUI leaves its 排队后续 button disabled.
+session. WinUI enables 排队后续 only for a writable running turn. An uncertain result preserves the draft and blocks resubmission until the user explicitly acknowledges checking the result.

@@ -9,6 +9,13 @@ static class NativePanelTabsTests
         Require(restored.Open.SequenceEqual(new[] { "hosts", "files" }) && restored.Selected == "hosts");
         Require(new NativePanelTabs("broken").Open.SequenceEqual(NativePanelTabs.Defaults));
         Require(new NativePanelTabs(restored.Saved, restored.Selected).Open.SequenceEqual(restored.Open));
+        foreach (var saved in new[] { "[]", "[\"agents\"]" })
+        {
+            var reveal = new NativePanelTabs(saved, "files", NativePanelTabs.All);
+            reveal.Show("files");
+            var reopened = new NativePanelTabs(reveal.Saved, reveal.Selected, NativePanelTabs.All);
+            Require(reopened.Selected == "files" && reopened.Open.Count(id => id == "files") == 1);
+        }
         var state = new NativePanelTabs(selected: "files");
         state.Remove("files"); Require(state.Selected == "agents");
         state.Remove("artifacts"); Require(state.Selected == "agents");
