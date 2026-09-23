@@ -27,6 +27,7 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
         WorkspaceSideChatModel? sideChat = null, Action<string>? openTerminal = null)
     {
         this.model = model; this.transcript = transcript; this.design = design; this.close = close;
+        design.BindTypography(this);
         this.sideChat = sideChat; this.openTerminal = openTerminal;
         var root = new Grid { Width = 320, Padding = new Thickness(12), Background = design.Brush("bg-sunken") };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -90,6 +91,7 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
         }
         else if (model.Tabs.Selected == "sidechat") RenderSideChat();
         RenderPreview();
+        design.ApplyTypography(this);
     }
 
     private void RenderArtifacts(string query)

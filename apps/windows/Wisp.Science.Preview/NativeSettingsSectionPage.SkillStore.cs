@@ -43,7 +43,7 @@ internal sealed partial class NativeSettingsSectionPage
             foreach (var item in Rows(response))
             {
                 var entry = new StackPanel { Spacing = 8 };
-                entry.Children.Add(new TextBlock { Text = S(item, "name"), FontSize = 18 }); entry.Children.Add(Mute(S(item, "description")));
+                entry.Children.Add(Design.Text(S(item, "name"), 18)); entry.Children.Add(Mute(S(item, "description")));
                 entry.Children.Add(Mute("Commit: " + S(item["source"], "commit")));
                 foreach (var key in new[] { "warnings", "format_errors", "resource_errors" })
                     foreach (var warning in item[key] as JsonArray ?? []) entry.Children.Add(Warn(warning?.GetValue<string>() ?? ""));

@@ -28,6 +28,7 @@ internal abstract class NativeActionPage : WorkspaceSheet
     protected void Update()
     {
         if (State.Closed) return;
+        Design.ApplyTypography(Form); Design.ApplyTypography(Results);
         formHost.IsEnabled = !State.Busy; resultsHost.IsEnabled = !State.Busy;
         progress.Visibility = State.Busy ? Visibility.Visible : Visibility.Collapsed;
         error.Text = State.Error ?? ""; error.Visibility = State.Error == null ? Visibility.Collapsed : Visibility.Visible;

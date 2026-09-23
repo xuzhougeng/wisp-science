@@ -44,9 +44,10 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private bool changingProject;
     private readonly Func<bool, Task<string?>>? pickPath;
 
-    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close, string initialSection = "appearance", IReadOnlyList<ProjectSummary>? projects = null, Func<bool, Task<string?>>? pickPath = null)
+    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close, string initialSection = "appearance", IReadOnlyList<ProjectSummary>? projects = null, Func<bool, Task<string?>>? pickPath = null, NativeTypography? typography = null)
     {
         this.database = database; this.projectId = projectId; this.apply = apply; this.close = close;
+        design.Typography = typography ?? new(); design.BindTypography(this);
         settingsProject = projectId;
         this.pickPath = pickPath;
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(210) });
@@ -57,7 +58,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         backContent.Children.Add(new TextBlock { Text = "返回" });
         var back = new Button { Content = backContent, Margin = new Thickness(0, 0, 0, 16) };
         back.Click += (_, _) => RequestClose(); nav.Children.Add(back);
-        nav.Children.Add(new TextBlock { Text = "设置", FontSize = 22, Margin = new Thickness(12, 0, 0, 24) });
+        var settingsHeading = design.Text("设置", 22); settingsHeading.Margin = new Thickness(12, 0, 0, 24); nav.Children.Add(settingsHeading);
         projectChoice.Items.Add(new ComboBoxItem { Content = "全局设置", Tag = "" });
         foreach (var project in projects ?? []) projectChoice.Items.Add(new ComboBoxItem { Content = project.Name, Tag = project.Id });
         projectChoice.SelectedItem = projectChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == (settingsProject ?? ""));
@@ -86,7 +87,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             if (group != nextGroup)
             {
                 group = nextGroup;
-                nav.Children.Add(new TextBlock { Text = group, FontSize = 11, Opacity = 0.65, Margin = new Thickness(12, 16, 0, 6) });
+                var groupHeading = design.Text(group, 11); groupHeading.Opacity = 0.65; groupHeading.Margin = new Thickness(12, 16, 0, 6); nav.Children.Add(groupHeading);
             }
             var item = new Button { Content = entry.Value["zh"]!.GetValue<string>(),
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
@@ -100,7 +101,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         }
         shell.Children.Add(new ScrollViewer { Content = nav, Background = design.Brush("bg-sunken"), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         var heading = new Grid();
-        heading.Children.Add(new TextBlock { Text = "外观", FontSize = 24 });
+        heading.Children.Add(design.Text("外观", 24));
         reload.Content = "重新载入"; reload.HorizontalAlignment = HorizontalAlignment.Right;
         heading.Children.Add(reload); body.Children.Add(heading);
         body.Children.Add(new TextBlock { Text = "选择主题、配色和字体大小。保存后与桌面客户端共享。", TextWrapping = TextWrapping.Wrap, Opacity = 0.65 });
@@ -217,7 +218,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             }
             await model!.LoadAsync(deadline.Token);
             if (closed) return;
-            if (!model.HasChanges && model.Draft is { } loaded) apply(loaded);
+            if (!model.HasChanges && model.Draft is { } loaded) ApplyCommitted(loaded);
             RenderForm(); status.Text = "已读取设置。对话字体使用原生控件呈现；自定义 CSS 仅用于 WebView。";
         }
         catch (OperationCanceledException) { if (!closed) status.Text = "连接超时，请检查桌面客户端版本后重新载入。可以随时返回。"; }
@@ -240,7 +241,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         {
             var saved = await model.SaveAsync(lifetime.Token);
             if (closed || saved is null) return;
-            apply(saved); confirmClose = false;
+            ApplyCommitted(saved); confirmClose = false;
             status.Text = "已保存。主题、配色和对话字体已应用到预览窗口。";
         }
         catch (Exception ex)
@@ -250,16 +251,21 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         finally { if (!closed) SetBusy(false); }
     }
 
+    private void ApplyCommitted(JsonObject preferences)
+    {
+        design.Typography = NativeTypography.From(preferences);
+        apply(preferences);
+    }
     private void RenderForm()
     {
         choices.Clear(); form.Children.Clear();
         var loaded = model?.Draft is not null;
         var prefs = model?.Draft ?? new JsonObject { ["theme"] = "system", ["light_palette"] = "paper", ["dark_palette"] = "charcoal", ["ui_font_size"] = 14, ["code_font_size"] = 12 };
-        form.Children.Add(new TextBlock { Text = "主题与配色", FontSize = 16 });
+        form.Children.Add(design.Text("主题与配色", 16));
         Choice("主题", "theme", [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")]);
         Choice("浅色配色", "light_palette", [.. new[] { "paper", "codex", "github", "catppuccin", "everforest" }.Select(s => (s, s))]);
         Choice("深色配色", "dark_palette", [.. new[] { "charcoal", "codex", "github", "catppuccin", "gruvbox" }.Select(s => (s, s))]);
-        form.Children.Add(new TextBlock { Text = "字体", FontSize = 16, Margin = new Thickness(0, 12, 0, 0) });
+        var fontsHeading = design.Text("字体", 16); fontsHeading.Margin = new Thickness(0, 12, 0, 0); form.Children.Add(fontsHeading);
         FontSize("界面字号", "ui_font_size", 12, 20, 14);
         FontSize("代码字号", "code_font_size", 10, 20, 12);
         FontFamilyField("界面字体（留空使用系统字体）", "ui_font_family");
@@ -269,6 +275,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         form.Children.Add(new TextBlock { Text = "自定义 CSS 仅应用于 WebView 客户端。", TextWrapping = TextWrapping.Wrap, Opacity = 0.65 });
 
         UpdatePreview(prefs);
+        design.ApplyTypography(shell, previewCard);
         foreach (var control in form.Children.OfType<Control>()) control.IsEnabled = loaded && !working;
 
         void Choice(string label, string key, (string Value, string Label)[] items)

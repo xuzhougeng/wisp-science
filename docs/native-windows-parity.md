@@ -222,3 +222,29 @@ conversation. The retry button now appears only for a reported error, and the
 acknowledgement button only when a send/queue result is uncertain. Release
 build/publish and the C# harness passed; a second real-host WinUI launch
 confirmed neither recovery action appears on the normal empty project page.
+
+### Expanded native font bindings
+
+Settings navigation/forms, shared sheet headings and notices, search results,
+conversation controls, auxiliary panels and terminal controls now bind to the
+committed native font preferences. The binding pass visits app-owned content
+only, preserves explicit renderer fonts and existing bindings, and does not
+traverse generated templates or icon glyphs. Repeated refreshes therefore do
+not repeatedly scale already configured text. Appearance preview content is
+excluded so unsaved changes remain preview-only. Terminal input/output use the
+independent code font setting.
+
+Actual WinUI acceptance against the isolated Rust host set UI/code sizes to
+20/18, confirmed enlarged home text, settings headings, navigation buttons,
+combo boxes and labels at the approximately 800x565 logical-pixel window, then
+restored 14/12 and reloaded the same mounted settings page. Both text and
+controls shrank immediately without reopening, and headings retained their
+relative size. The original isolated-host preferences were restored. Release
+build/publish and the complete C# harness passed; remaining surface-specific
+layout and dirty-navigation acceptance are still tracked above.
+
+The remaining-workspace Rust run reached Tauri after the preceding crates
+passed, but its unit-test executable exited before assertions with
+`0xc0000139 / STATUS_ENTRYPOINT_NOT_FOUND`. This confirms the local test-loader
+problem still exists; the separately built production host acceptance above
+passed and is not evidence that the Tauri unit suite ran successfully.

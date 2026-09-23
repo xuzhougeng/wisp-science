@@ -150,7 +150,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private StackPanel Card(string title)
     {
         var card = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 12) };
-        card.Children.Add(new TextBlock { Text = title, FontSize = 18, TextWrapping = TextWrapping.Wrap });
+        card.Children.Add(Design.Text(title, 18));
         Results.Children.Add(card); return card;
     }
     private void Toggle(StackPanel card, string label, bool value, string command, JsonObject args)
@@ -167,7 +167,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         authTerminal?.Dispose(); authTerminal = null;
         invalidFields.Clear();
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
-        Form.Children.Add(new TextBlock { Text = title, FontSize = 20 });
+        Form.Children.Add(Design.Text(title, 20));
         fields(model.Draft);
         Form.Children.Add(Button("保存", async () =>
         {

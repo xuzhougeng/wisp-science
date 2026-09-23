@@ -17,6 +17,7 @@ internal sealed class NativeWorkspaceTerminal : UserControl, IDisposable
     public NativeWorkspaceTerminal(WorkspaceTerminalModel model, WispDesign design, Action hide)
     {
         this.model = model; this.design = design; this.hide = hide;
+        design.BindTypography(this); design.BindTypography(output, true); design.BindTypography(input, true);
         Height = 260;
         var root = new Grid { Padding = new Thickness(10), Background = design.Brush("bg-sunken") };
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -47,6 +48,7 @@ internal sealed class NativeWorkspaceTerminal : UserControl, IDisposable
         };
         Grid.SetRow(input, 2); root.Children.Add(input);
         Content = root;
+        design.ApplyTypography(this);
         _ = LoopAsync();
     }
 

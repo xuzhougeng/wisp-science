@@ -36,6 +36,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create, Func<Task<string?>>? pickAttachment = null)
     {
         this.model = model; this.design = design; this.quote = quote; this.create = create;
+        design.BindTypography(status, 12); design.BindTypography(hint, 11);
         model.Changed += Refresh;
         design.TypographyChanged += Refresh;
         var root = new Grid();
@@ -95,7 +96,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var empty = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(24) };
-        empty.Children.Add(new TextBlock { Text = "开始新的研究对话", FontSize = 22, HorizontalAlignment = HorizontalAlignment.Center });
+        var emptyHeading = design.Text("开始新的研究对话", 22); emptyHeading.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(emptyHeading);
         empty.Children.Add(createSession);
         composerBar.Children.Add(empty);
         var border = new Border { Child = card, CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(24, 0, 24, 8), MaxWidth = 850 };
@@ -159,6 +160,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         models.IsEnabled = !model.Busy && model.Snapshot is { Running: false, ReadOnly: false };
         RenderTranscript();
         RenderApprovals();
+        design.ApplyTypography(this);
         if (followLatest && !model.ShowingHistory) scroll.ChangeView(null, scroll.ScrollableHeight, null);
     }
 

@@ -20,6 +20,7 @@ internal sealed class NativeResearchCalendarPage : WorkspaceSheet
         : base(design, "研究日历", close)
     {
         this.model = model; this.journey = journey;
+        design.BindTypography(month, 20);
         Button Action(string label, Func<Task> action)
         {
             var button = new Button { Content = label }; button.Click += async (_, _) => await action(); return button;

@@ -14,11 +14,12 @@ internal sealed class NativeSettingsAuthTerminal : UserControl, IDisposable
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Button send = new() { Content = "发送" }, interrupt = new() { Content = "中断" }, close = new() { Content = "关闭授权终端" }, resume = new() { Content = "已检查，恢复输入" };
     private bool disposed;
-    public NativeSettingsAuthTerminal(NativeAuthTerminalModel model, Action closed)
+    public NativeSettingsAuthTerminal(NativeAuthTerminalModel model, WispDesign design, Action closed)
     {
         this.model = model;
+        design.BindTypography(this); design.BindTypography(output, true); design.BindTypography(input, true);
         var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Text = "授权终端", FontSize = 18 });
+        body.Children.Add(design.Text("授权终端", 18));
         body.Children.Add(new TextBlock { Text = "离开页面仅停止显示；使用关闭按钮结束授权终端。", TextWrapping = TextWrapping.Wrap });
         body.Children.Add(output); body.Children.Add(status); body.Children.Add(input);
         var buttons = new StackPanel { Spacing = 8 }; buttons.Children.Add(send); buttons.Children.Add(interrupt); buttons.Children.Add(resume); buttons.Children.Add(close); body.Children.Add(buttons);
@@ -33,7 +34,7 @@ internal sealed class NativeSettingsAuthTerminal : UserControl, IDisposable
         interrupt.Click += async (_, _) => await model.WriteAsync("\u0003");
         resume.Click += (_, _) => model.AcknowledgeInput();
         close.Click += async (_, _) => { if (await model.CloseAsync() && !disposed) closed(); };
-        model.Changed += Render; Content = body; Render(); _ = Poll();
+        model.Changed += Render; Content = body; design.ApplyTypography(this); Render(); _ = Poll();
     }
     private async Task Poll()
     {

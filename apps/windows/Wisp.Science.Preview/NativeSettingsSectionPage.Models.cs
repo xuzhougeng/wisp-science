@@ -125,7 +125,7 @@ internal sealed partial class NativeSettingsSectionPage
         }
         if (authTerminalId != null && settingsClient != null && settingsProjectId != null)
         {
-            authTerminal = new NativeSettingsAuthTerminal(new NativeAuthTerminalModel(settingsClient, settingsProjectId, authTerminalId), () =>
+            authTerminal = new NativeSettingsAuthTerminal(new NativeAuthTerminalModel(settingsClient, settingsProjectId, authTerminalId), Design, () =>
             { authTerminalId = null; authTerminal?.Dispose(); authTerminal = null; Render(); });
             Results.Children.Add(authTerminal);
         }

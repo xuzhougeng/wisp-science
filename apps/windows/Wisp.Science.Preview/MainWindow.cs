@@ -123,7 +123,7 @@ internal sealed partial class MainWindow : Window
             recovery.Children.Add(ActionButton("返回项目", "arrow-left", model.GoHome, true));
             root.Children.Add(recovery);
         }
-        finally { rendering = false; }
+        finally { design.ApplyTypography(root, settingsPage); rendering = false; }
     }
 
     private void RenderCore()
@@ -716,7 +716,7 @@ internal sealed partial class MainWindow : Window
             SaveSettings();
             root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
             Render();
-        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"));
+        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"), design.Typography);
         if (pageContent != null) pageContent.Visibility = Visibility.Collapsed;
         root.Children.Add(settingsPage);
     }
