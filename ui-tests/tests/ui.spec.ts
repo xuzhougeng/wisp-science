@@ -14300,8 +14300,10 @@ test("new project form enables Create after name and folder are set", async ({ p
   await expect(create).toBeEnabled();
 });
 
-test("import can open an existing folder in place without copying it", async ({ page }) => {
-  await page.goto("/");
+test("import can open an existing folder in place without copying it", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/?mockInPlaceFolder=1");
   await page.getByRole("button", { name: "Import project" }).click();
   const options = page.getByTestId("project-import-options");
   await expect(options).toBeVisible();
@@ -14329,6 +14331,32 @@ test("import can open an existing folder in place without copying it", async ({ 
     standardLayout: false,
   });
   await expect.poll(() => lastInvokeArgs(page, "import_project")).toBeNull();
+  await expect(page.locator(".rp-files")).toBeVisible();
+  await expect(page.locator(".fb-root")).toContainText("/mock/root/new-project");
+  await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
+  await expect(page.locator("#composer-input")).toBeVisible();
+  await expect(page.locator(".side-item.ses")).toHaveCount(0);
+  await page.locator('.fb-row[data-workspace-path="DEG"]').click();
+  await expect(page.locator('.fb-row[data-workspace-path="DEG/scripts"]')).toBeVisible();
+  await page.locator(".fb-up").click();
+  await page.locator('.fb-row[data-workspace-path="report.csv"]').click();
+  await expect(page.locator(".artifact-modal table")).toBeVisible();
+  await page.locator(".artifact-modal").getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview")).toBeVisible();
+  await expect(page.locator(".center-file-preview")).toContainText("report.csv");
+  await page.screenshot({ path: testInfo.outputPath("in-place-files.png"), fullPage: true });
+  // A project without sessions must also clear a file-only preview and nested
+  // directory when the user switches to another workspace.
+  await page.locator('.fb-row[data-workspace-path="DEG"]').click();
+  await page.getByRole("button", { name: "Back to projects", exact: true }).click();
+  await page.locator('.proj-card-main').filter({ hasText: "Other project" }).click();
+  await expect(page.locator(".fb-path")).toHaveText(".");
+  await expect(page.locator(".fb-root")).toContainText("/mock/other");
+  await expect(page.locator('.fb-row[data-workspace-path="other-project.txt"]')).toBeVisible();
+  await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toHaveCount(0);
+  await expect(page.locator(".center-file-preview")).toHaveCount(0);
+  await expect(page.locator("#composer-input")).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test("opening a registered folder offers every project identity before switching", async ({ page }) => {
@@ -14359,6 +14387,8 @@ test("opening a registered folder offers every project identity before switching
   await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "P15" });
   await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
   await expect.poll(() => lastInvokeArgs(page, "recover_workspace_sessions")).toBeNull();
+  await expect(page.locator(".rp-files")).toBeVisible();
+  await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
 });
 
 test("opening a folder with one existing project reuses its identity", async ({ page }) => {
@@ -14371,6 +14401,8 @@ test("opening a folder with one existing project reuses its identity", async ({ 
   await picker.locator('[data-project-id="P37"]').click();
   await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "P37" });
   await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
+  await expect(page.locator(".rp-files")).toBeVisible();
+  await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
 });
 
 test("registered folder chooser respects hidden project identities", async ({ page }) => {

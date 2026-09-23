@@ -43,6 +43,11 @@ copy.
 For a folder you copied yourself, choose **Import project → Open a folder in
 place** instead. Confirm its local name and path; Wisp registers that exact path
 without creating a duplicate workspace.
+After opening, Wisp shows the folder's files in the Files panel immediately,
+even when the project has no conversations. Browse subfolders and select a file
+to preview it, or start a new conversation to work with that folder. Reopening
+a registered folder through this entry point also shows its files. Switching
+projects resets file navigation to the selected project's root.
 
 If the folder is already registered, Wisp instead shows **Choose an existing
 project**, with the name, full project ID, workspace path, and conversation count

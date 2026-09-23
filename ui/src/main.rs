@@ -10073,13 +10073,13 @@ fn App() -> impl IntoView {
     // serialized gate. A rapid A -> B switch can therefore never let A's late
     // response load a session, refresh lists, or publish project metadata after
     // B has become the requested target.
-    let open_project_transition = {
+    let open_project_with_files = {
         let transition_epoch = project_transition_epoch.clone();
         let transition_target = project_transition_target.clone();
         let open_gate = project_open_gate.clone();
         let load_session = load_session.clone();
         let app_shell_entering = app_shell_entering;
-        Callback::new(move |(project_id, session_id): (String, Option<String>)| {
+        Callback::new(move |(project_id, session_id, show_files): (String, Option<String>, bool)| {
             if project_transfer
                 .get_untracked()
                 .is_some_and(|transfer| transfer.is_exporting_project(&project_id))
@@ -10116,7 +10116,19 @@ fn App() -> impl IntoView {
                 transcripts,
                 running,
             );
+            // Folder navigation belongs to the project, even when neither
+            // project has a conversation to trigger the session-tab reset.
+            // Let the session effect stash outgoing conversation tabs itself.
+            if active_session.get_untracked().is_none() {
+                center_file.set(None);
+                center_files.set(Vec::new());
+            }
             active_session.set(None);
+            file_source.set("local".into());
+            file_cwd.set(".".into());
+            file_query.set(String::new());
+            file_entries.set(Vec::new());
+            file_search_hits.set(Vec::new());
             collapsed_folders.set(HashSet::new());
             selecting_workspace_entries.set(false);
             selected_workspace_paths.set(HashSet::new());
@@ -10232,11 +10244,20 @@ fn App() -> impl IntoView {
                 if let Some(session_id) = session_id {
                     load_session.call(session_id);
                 }
+                if show_files {
+                    ensure_right_tab(RightTab::File, show_right, open_right_tabs, right_tab);
+                }
+                if show_right.get_untracked() && right_tab.get_untracked() == RightTab::File {
+                    refresh_dir(file_cwd, file_entries);
+                }
                 refresh_session_history();
                 refresh_folders(folders);
             });
         })
     };
+    let open_project_transition = Callback::new(move |(id, session): (String, Option<String>)| {
+        open_project_with_files.call((id, session, false));
+    });
     // Sent by the pet (to "main") and by `open_project_window` targeting a
     // session in an already-open project window (#423). This listener must be
     // window-scoped: the generic event listener is app-wide, so a targeted
@@ -11443,6 +11464,7 @@ fn App() -> impl IntoView {
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
             }
             open_project=switch_project
+            open_project_folder=Callback::new(move |id| open_project_with_files.call((id, None, true)))
             open_project_session=palette_open_session
             open_project_journey=Callback::new(move |(id, day): (String, i64)| {
                 calendar_journey_request.set(Some((id.clone(), day)));

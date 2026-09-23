@@ -34,6 +34,7 @@ pub(super) struct ProjectLandingState {
 pub(super) fn ProjectLanding(
     state: ProjectLandingState,
     open_project: Callback<String>,
+    open_project_folder: Callback<String>,
     open_project_session: Callback<(String, String)>,
     open_project_journey: Callback<(String, i64)>,
     open_scratch: Callback<()>,
@@ -93,6 +94,7 @@ pub(super) fn ProjectLanding(
                     sync_actions_available=sync_actions_available.read_only()
                     open_error=project_open_error
                     on_open=open_project
+                    on_open_folder=open_project_folder
                     on_open_session=open_project_session
                     on_open_journey=open_project_journey
                     on_open_artifact=on_open_artifact

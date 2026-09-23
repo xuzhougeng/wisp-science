@@ -10,6 +10,7 @@ pub(crate) fn ProjectsScreen(
     sync_actions_available: ReadSignal<bool>,
     open_error: RwSignal<Option<String>>,
     on_open: Callback<String>,
+    on_open_folder: Callback<String>,
     on_open_session: Callback<(String, String)>,
     on_open_journey: Callback<(String, i64)>,
     on_open_artifact: Callback<(String, String, String)>,
@@ -323,8 +324,13 @@ pub(crate) fn ProjectsScreen(
                         new_ctx.set(String::new());
                         new_layout.set(false);
                         creating.set(false);
+                        let open_folder = opening_in_place.get_untracked();
                         opening_in_place.set(false);
-                        on_open.call(project.id);
+                        if open_folder {
+                            on_open_folder.call(project.id);
+                        } else {
+                            on_open.call(project.id);
+                        }
                     }
                 }
                 Err(error) => {
@@ -1071,7 +1077,7 @@ pub(crate) fn ProjectsScreen(
                                         data-project-id=project.id.clone()
                                         on:click=move |_| {
                                             workspace_projects.set(None);
-                                            on_open.call(id.clone());
+                                            on_open_folder.call(id.clone());
                                         }>
                                         <strong>{project.name}</strong>
                                         <span>{project.workspace_dir}</span>

@@ -185,7 +185,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     mcp_proxy_url: "", command_proxy_url: "", conda_mirror_url: "", pip_index_url: "", ca_bundle_path: "",
   };
 
-  const mockSessions: any[] = mockExplorationFlow
+  const mockSessions: any[] = query.get("mockInPlaceFolder") === "1" ? [] : mockExplorationFlow
     ? [
         { id: "exploration-mainline", title: "Mainline analysis", ts: 2100, running: false },
         ...(mockOtherExplorationSession
@@ -2719,6 +2719,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "create_project":
             activeProjectId = "default";
+            if (query.get("mockInPlaceFolder") === "1") {
+              project.name = String(arg("name"));
+              project.root = String(arg("workspaceDir"));
+            }
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "import_project": {
             const delay = nextProjectTransferDelayMs.import ?? 0;
@@ -4002,6 +4006,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "get_project_info":
             ((window as any).__projectInfoReads ??= []).push(activeProjectId);
+            if (activeProjectId.startsWith("P") && query.has("mockWorkspaceProjects")) {
+              return { ...project, id: activeProjectId, root: "/mock/root/new-project" };
+            }
             return activeProjectId === "other"
               ? { ...project, id: "other", name: "Other project", root: "/mock/other" }
               : project;
@@ -4343,6 +4350,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "list_dir": {
             const cwd = String(arg("path") ?? ".").replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "") || ".";
+            if (query.get("mockInPlaceFolder") === "1" && activeProjectId === "other") {
+              return cwd === "." ? [{ name: "other-project.txt", is_dir: false, size: 12 }] : [];
+            }
             return workspaceEntries
               .filter((entry) => {
                 const split = entry.path.lastIndexOf("/");
