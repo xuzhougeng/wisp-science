@@ -5,6 +5,37 @@ range to the existing Rust desktop host. No second database writer or WebView
 project activation was added. Build with `scripts/build_native_windows.ps1`.
 An alternate browser database still requires a matching running host descriptor.
 
+## Latest validation status (2026-09-23, PR #1357)
+
+This status supersedes the chronological validation notes below. Release WinUI
+build/publish, the full C# contract harness, Rust formatting, wasm checking and
+native contract synchronization passed. The Windows Tauri manifest correction
+allowed all 989 Tauri unit tests to pass. After the final app/test resource
+configuration was unified, a fresh relink and both publication tests passed;
+the production app build and extracted manifests also passed verification.
+
+Real isolated Rust-host checks passed project creation, ZIP import, publication,
+group rename/move, project settings, scratch lifecycle and exact-byte attachment
+copying. A disposable loopback model provider exercised the real Rust agent
+pipeline: an attachment-bearing turn and exactly one queued follow-up produced
+two assistant replies. Restart verification preserved both turns, the attachment
+transcript and imported workspace identity/file. This is not external model or
+provider authentication acceptance. Actual WinUI checks confirmed publication
+display and immediate Escape, normal conversation recovery-button visibility,
+and live font resizing from 20/18 back to 14/12 on mounted settings controls.
+
+Full regression is not green. The original workspace run had two `wisp-runs`
+failures; both passed focused reruns, but a subsequent full package run had
+172 passes and one repeat failure in `ssh_input_staging_ledgers_uploaded_files`
+(expected one ledger entry, observed zero). The initial Playwright attempt
+failed at server startup; its full rerun against separately built static assets
+is still running. These results do not establish full-workspace success.
+
+Remaining acceptance includes dirty project-scope navigation, narrow/150%
+layouts, dynamic typography surfaces, real channel binding/sync, provider/ACP
+authentication, SkillStore installation and workflow conversion persistence.
+The overall parity objective remains open; PR #1357 is an incremental delivery.
+
 | Reference | Windows behavior |
 | --- | --- |
 | #1332–#1333 | Native search already scrolls its selected result into view. Home now opens the same tutorials URL. The WebView command palette and Help menu fixes remain shared. |
