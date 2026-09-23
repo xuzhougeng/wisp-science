@@ -121,6 +121,8 @@ failure and correctly wrote no ledger. The fake runner now answers progress
 queries independently of the mutation-response queue, with a deterministic
 interleaving regression. The four-thread workspace run separately reported
 SQLite `database is locked` in the harvest lease test; that remains unresolved.
+A subsequent four-thread `wisp-runs` package run passed all 174 tests and
+doc-tests. That pass does not establish that the earlier SQLite flake is fixed.
 
 The first fresh Playwright attempt failed at server startup before tests ran.
 A separate Trunk build succeeded and the completed rerun served those assets
@@ -128,6 +130,16 @@ from an isolated static server. Failures were the cold-window loading indicator,
 three project-entry timeouts (message evidence, overflow tabs and Chinese
 project export), and the two-second Stop action in the WebView load test.
 Generated research-journey design-QA PNGs were restored after the suite finished.
+
+Hydration regressions now hold the next snapshot with an explicit promise gate,
+so loading-state assertions and intervening live events complete before the
+snapshot is released. They no longer depend on 350/400 ms timing windows.
+The first repeated run had 15 passes and one listener-readiness setup timeout.
+Serving the identical frontend assets with HTTP/1.1 keep-alive and a larger
+connection backlog then passed all 16 cases (three workers, two repetitions).
+This suggests a test-server contribution; it does not establish the cause of
+every original timeout. A new full four-worker Playwright run is in progress;
+its result is not yet included in the passing checks above.
 
 Historical #1355 validation: Playwright had 867 passes, two skips and one
 queued-guidance timeout; all seven focused queued-guidance tests then passed.
