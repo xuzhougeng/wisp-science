@@ -199,6 +199,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         foreach (var option in options) combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Id });
         combo.SelectedItem = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(o => (string)o.Tag == value);
         combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem item) changed((string)item.Tag); };
+        Design.ApplyTypography(combo);
         choices.Add(combo); target.Children.Add(combo);
     }
     private void Memory()

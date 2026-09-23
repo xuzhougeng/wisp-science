@@ -27,7 +27,7 @@ internal sealed partial class NativeSettingsSectionPage
             if (item is JsonObject or JsonArray)
             {
                 var nested = new StackPanel { Spacing = 5 }; Summary(nested, item);
-                parent.Children.Add(new Expander { Header = label, Content = nested, HorizontalAlignment = HorizontalAlignment.Stretch });
+                parent.Children.Add(Disclosure(label, nested));
             }
             else parent.Children.Add(Mute(label + "：" + Display(item)));
         }

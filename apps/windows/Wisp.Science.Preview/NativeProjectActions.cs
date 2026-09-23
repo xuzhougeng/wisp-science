@@ -37,12 +37,23 @@ internal abstract class NativeActionPage : WorkspaceSheet
     protected TextBox Field(string title, string text, Action<string> changed, bool multiline = false)
     {
         var input = new TextBox { Header = title, Text = text, AcceptsReturn = multiline, TextWrapping = TextWrapping.Wrap, MinHeight = multiline ? 85 : 32 };
+        Design.BindTypography(input);
         input.TextChanged += (_, _) => changed(input.Text); Form.Children.Add(input); return input;
     }
-    protected static Button Button(string title, Func<Task> action)
+    protected Button Button(string title, Func<Task> action)
     {
         var button = new Button { Content = title };
+        Design.BindTypography(button);
         button.Click += async (_, _) => await action(); return button;
+    }
+    protected Expander Disclosure(string title, UIElement content, bool expanded = false)
+    {
+        var expander = new Expander { Header = Design.Text(title), Content = content,
+            IsExpanded = expanded, HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expander, title);
+        Design.ApplyTypography(expander);
+        return expander;
     }
     public override void HandleEscape()
     {

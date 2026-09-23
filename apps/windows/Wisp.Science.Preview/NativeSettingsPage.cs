@@ -115,8 +115,6 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         body.Children.Add(columns);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, HorizontalAlignment = HorizontalAlignment.Right };
         actions.Children.Add(discard); actions.Children.Add(save); body.Children.Add(actions);
-        var scope = new TextBlock { Text = "其他设置分类将逐步接入 Windows。", TextWrapping = TextWrapping.Wrap, Opacity = 0.6, FontSize = 12 };
-        ToolTipService.SetToolTip(scope, $"{database}\n{projectId ?? "全局"}"); body.Children.Add(scope);
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetColumn(scroll, 1); shell.Children.Add(scroll); shell.Background = design.Brush("bg-app");
         appearanceContent = scroll;

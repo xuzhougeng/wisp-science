@@ -19,7 +19,7 @@ internal sealed partial class NativeSettingsSectionPage
             if (B(row, "builtin"))
             {
                 var details = new StackPanel { Spacing = 6 }; Summary(details, row["proposal"]);
-                card.Children.Add(new Expander { Header = "查看内置定义（复制后可编辑）", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
+                card.Children.Add(Disclosure("查看内置定义（复制后可编辑）", details));
             }
             else card.Children.Add(Button("编辑", () => { EditWorkflow(row); return Task.CompletedTask; }));
             card.Children.Add(Button("复制", () => { EditWorkflow(NativeWorkflowDrafts.Copy(row)); return Task.CompletedTask; }));
@@ -73,10 +73,10 @@ internal sealed partial class NativeSettingsSectionPage
             }
             var fields = new StackPanel { Spacing = 10 };
             while (Form.Children.Count > start) { var field = Form.Children[start]; Form.Children.RemoveAt(start); fields.Children.Add(field); }
-            var expander = new Expander { Header = "任务：" + S(task, "id"), Content = fields, IsExpanded = true,
-                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            var expander = Disclosure("任务：" + S(task, "id"), fields, true);
             fields.Children.Add(Button("移除此任务", () =>
             { tasks.Remove(task); list.Children.Remove(expander); invalidFields.RemoveWhere(key => key.StartsWith(prefix, StringComparison.Ordinal)); return Task.CompletedTask; }));
+            Design.ApplyTypography(expander);
             list.Children.Add(expander);
         }
         foreach (var task in Rows(tasks)) Add(task);

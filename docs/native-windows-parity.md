@@ -67,6 +67,11 @@ and terminals. The traversal visits app-owned logical content, preserving
 renderer fonts and existing bindings; it avoids generated templates and icons.
 Unsaved appearance changes remain local to the preview. Defaults are 14/12,
 bounded UI/code ranges are 12-20 and 10-20, and heading proportions are retained.
+Controls inserted after initial rendering bind immediately, including added
+workflow tasks and SkillStore preview fields. Disclosure headers use explicit
+bound text and preserve their accessible names; WinUI's default header template
+otherwise kept those labels at the default size. The obsolete appearance-page
+notice that other categories were not yet available has been removed.
 
 Publication renders the host-selected paper with its matching revision/items.
 Initial creation is offered only after a confirmed empty workspace read and is
@@ -90,11 +95,13 @@ Passed locally:
 - The SSH ledger test and deterministic progress/upload interleaving regression
   after the fixture correction described below.
 
-The full serial workspace run is still running. It passed all 174 `wisp-runs`
-tests and reached later crates. Full Playwright finished with 864 passes, two
+The full `cargo test --workspace -- --test-threads=1` run finished with exit code
+0, including all 174 `wisp-runs` tests, Tauri tests and workspace doc-tests.
+The final dynamic-control font build/publish and complete C# harness also passed.
+Full Playwright finished with 864 passes, two
 skips and five failures. A one-worker focused rerun of all five failure locations
 (six cases, including both export locales) passed. The original full-run failure
-remains recorded; neither full suite is recorded as finally green yet.
+remains recorded; the full Playwright run is not green.
 
 ### Regression findings and fixes
 
@@ -151,6 +158,10 @@ Verified against that host:
   source read, two-node draft validation, explicit template save, graph readback
   and persisted source SHA-256. This verifies the host contract and provenance;
   it is not external model-quality acceptance or workflow execution.
+- A uniquely named ZIP skill through the real install command: exact copied
+  files, reference listing/readback, tags, project enable/disable, reload and
+  removal. The temporary global package was removed without replacing existing
+  skills. This does not establish pinned GitHub download/install acceptance.
 
 Actual WinUI acceptance:
 
@@ -165,6 +176,10 @@ Actual WinUI acceptance:
 - UI/code font sizes 20/18 enlarge home/settings text and controls. Restoring
   14/12 and reloading the same mounted page updates existing controls immediately.
   Original isolated-host preferences were restored.
+- With UI size 20, a task added after opening the workflow editor displayed
+  enlarged input fields. The final build also rendered enlarged disclosure
+  labels with the expected accessibility names. Restoring 14/12 and reopening
+  settings confirmed the original preferences were active again.
 - Dirty project-scope switching opens the visible top confirmation while
   retaining the original project. Immediate Escape dismisses only confirmation,
   retains the draft and re-enables the editor. Explicit discard restores the
@@ -176,8 +191,8 @@ Actual WinUI acceptance:
 
 ## Remaining acceptance
 
-The overall parity objective remains open. Finish the running full suites and
-investigate any remaining regression failures. Further manual acceptance covers
+The overall parity objective remains open. Investigate the remaining parallel
+SQLite and full-suite Playwright failures. Further manual acceptance covers
 150% display scaling, additional narrow/large-font dynamic surfaces, real
 provider/ACP authentication, MCP test/OAuth cancellation, pinned SkillStore
 installation, channel binding/sync and real SSH/WSL contexts. External-account

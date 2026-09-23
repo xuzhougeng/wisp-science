@@ -56,7 +56,7 @@ internal sealed partial class NativeSettingsSectionPage
                 });
                 install.IsEnabled = conflict.Length == 0 && (item["format_errors"] as JsonArray)?.Count is not > 0
                     && (item["resource_errors"] as JsonArray)?.Count is not > 0 && item["source"] is JsonObject;
-                entry.Children.Add(install); candidates.Children.Add(entry);
+                entry.Children.Add(install); Design.ApplyTypography(entry); candidates.Children.Add(entry);
             }
             if (candidates.Children.Count == 0) candidates.Children.Add(Mute("未找到可安装的技能。"));
         }));
