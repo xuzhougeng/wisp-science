@@ -27,6 +27,7 @@ private actor ConversationFake: NativeConversationQuerying {
         return reads.count > 1 ? reads.removeFirst() : try reads.first ?? fixture(sessionID)
     }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
+        if command == "get_appearance_prefs" { return .null }
         if command == "list_models" { return .array([]) }
         writes.append((command, args, projectID))
         if failSend { throw ProjectBrowserError.service("response lost") }

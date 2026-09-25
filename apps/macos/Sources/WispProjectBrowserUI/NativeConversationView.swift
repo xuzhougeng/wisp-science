@@ -8,6 +8,7 @@ struct NativeConversationView: View {
     var sessionID: String?
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
+    @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
     @State private var confirmResend = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
@@ -169,9 +170,10 @@ struct NativeConversationView: View {
                         }.font(WispDesign.font(size: 12))
                     }
                 }
-                TextEditor(text: $conversation.draft).font(WispDesign.font(size: 14)).frame(minHeight: 58, maxHeight: 110)
-                    .scrollContentBackground(.hidden).accessibilityLabel("消息输入框")
-                    .disabled(conversation.snapshot?.read_only == true || conversation.showingHistory)
+                NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend }, submit: { Task { await conversation.send() } },
+                                   sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
+                                   accessibilityLabel: "消息输入框", fontSize: 14)
+                    .frame(minHeight: 58, maxHeight: 110)
                 HStack {
                     Button("对话附件") { attachFiles() }
                         .disabled(!conversation.canAttach)
@@ -190,13 +192,13 @@ struct NativeConversationView: View {
                             .accessibilityIdentifier("composer-queue")
                         Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle()).disabled(conversation.busy)
                     } else {
-                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend).keyboardShortcut(.return, modifiers: .command)
+                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend)
                     }
                 }
             }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(color("border")))
             HStack {
-                Text("⌘Enter 发送 · Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
+                Text(sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }

@@ -4,11 +4,42 @@ import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
 final class NativeSideChatInputTests: XCTestCase {
-    @MainActor private func editor() -> (NSWindow, NativeSideChatTextView) {
+    @MainActor func testModifierPreferenceChangesLiveAndShiftAlwaysMakesNewline() {
+        let (window, editor) = editor(); defer { window.close() }
+        var sends = 0
+        editor.canSubmit = { true }; editor.submit = { sends += 1 }
+        editor.sendWithModifier = true
+        editor.apply("first")
+        editor.keyDown(with: enter(window))
+        XCTAssertEqual(editor.string, "first\n"); XCTAssertEqual(sends, 0)
+        editor.keyDown(with: enter(window, flags: .command))
+        editor.keyDown(with: enter(window, flags: .control, keypad: true))
+        XCTAssertEqual(sends, 2)
+        editor.keyDown(with: enter(window, flags: [.shift, .command]))
+        XCTAssertEqual(editor.string, "first\n\n"); XCTAssertEqual(sends, 2)
+        editor.sendWithModifier = false
+        editor.keyDown(with: enter(window))
+        XCTAssertEqual(sends, 3)
+        editor.isEditable = false
+        editor.keyDown(with: enter(window))
+        XCTAssertEqual(sends, 3)
+    }
+    func testAuthoritativePreferencesRefreshCachedSendingPolicyWithoutRequiringTheme() {
+        let suite = "native-composer-tests-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        WispDesign.apply(.object(["send_with_modifier": .bool(true)]), defaults: defaults)
+        XCTAssertTrue(defaults.bool(forKey: "nativeSettings.send_with_modifier"))
+        WispDesign.apply(.null, defaults: defaults)
+        XCTAssertTrue(defaults.bool(forKey: "nativeSettings.send_with_modifier"))
+        WispDesign.apply(.object(["send_with_modifier": .bool(false)]), defaults: defaults)
+        XCTAssertFalse(defaults.bool(forKey: "nativeSettings.send_with_modifier"))
+    }
+    @MainActor private func editor() -> (NSWindow, NativeComposerTextView) {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let editor = NativeSideChatTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 100))
+        let editor = NativeComposerTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 100))
         editor.isRichText = false; editor.isEditable = true; editor.isSelectable = true
         window.contentView = editor
         XCTAssertTrue(window.makeFirstResponder(editor))
@@ -18,10 +49,10 @@ final class NativeSideChatInputTests: XCTestCase {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: keypad ? 76 : 36)!
     }
     func testReturnPolicyAlwaysLetsIMEConfirmComposition() {
-        XCTAssertEqual(NativeSideChatReturnAction.resolve(shift: false, composing: false), .send)
-        XCTAssertEqual(NativeSideChatReturnAction.resolve(shift: true, composing: false), .newline)
-        XCTAssertEqual(NativeSideChatReturnAction.resolve(shift: false, composing: true), .composition)
-        XCTAssertEqual(NativeSideChatReturnAction.resolve(shift: true, composing: true), .composition)
+        XCTAssertEqual(NativeMessageReturnAction.resolve(shift: false, composing: false), .send)
+        XCTAssertEqual(NativeMessageReturnAction.resolve(shift: true, composing: false), .newline)
+        XCTAssertEqual(NativeMessageReturnAction.resolve(shift: false, composing: true), .composition)
+        XCTAssertEqual(NativeMessageReturnAction.resolve(shift: true, composing: true), .composition)
     }
     @MainActor func testReturnSubmitsAndBusyReturnDoesNotInsertOrResubmit() {
         let (window, editor) = editor(); defer { window.close() }

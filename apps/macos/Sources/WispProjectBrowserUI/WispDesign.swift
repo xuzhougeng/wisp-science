@@ -61,11 +61,14 @@ enum WispDesign {
         return family.isEmpty ? .system(size: scaled, weight: weight, design: design) : .custom(family, size: scaled).weight(weight)
     }
 
-    static func apply(_ prefs: WispProjectBrowser.SettingsValue) {
+    static func apply(_ prefs: WispProjectBrowser.SettingsValue, defaults: UserDefaults = .standard) {
+        if case .bool(let value) = prefs["send_with_modifier"] {
+            defaults.set(value, forKey: "nativeSettings.send_with_modifier")
+        }
         guard prefs["theme"] != .null else { return }
-        for key in ["light_palette", "dark_palette", "ui_font_family", "code_font_family"] { UserDefaults.standard.set(prefs[key].string, forKey: "nativeSettings." + key) }
-        for key in ["ui_font_size", "code_font_size"] { UserDefaults.standard.set(prefs[key].integer, forKey: "nativeSettings." + key) }
-        UserDefaults.standard.set(prefs["theme"].string, forKey: "projectBrowser.appearance")
+        for key in ["light_palette", "dark_palette", "ui_font_family", "code_font_family"] { defaults.set(prefs[key].string, forKey: "nativeSettings." + key) }
+        for key in ["ui_font_size", "code_font_size"] { defaults.set(prefs[key].integer, forKey: "nativeSettings." + key) }
+        defaults.set(prefs["theme"].string, forKey: "projectBrowser.appearance")
     }
 
     static func image(_ name: String) -> NSImage {

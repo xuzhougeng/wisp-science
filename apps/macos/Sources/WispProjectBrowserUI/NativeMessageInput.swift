@@ -4,10 +4,14 @@ import WispProjectBrowser
 
 /// A native editor owns Return handling, so keyboard events never escape to the
 /// main conversation's send shortcut. IME composition stays with AppKit.
-struct NativeSideChatInput: NSViewRepresentable {
+struct NativeMessageInput: NSViewRepresentable {
     @Binding var text: String
     let canSubmit: () -> Bool
     let submit: () -> Void
+    var sendWithModifier = false
+    var editable = true
+    var accessibilityLabel = "侧聊问题"
+    var fontSize: CGFloat = 13
     @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -15,7 +19,7 @@ struct NativeSideChatInput: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        let editor = NativeSideChatTextView(frame: .zero)
+        let editor = NativeComposerTextView(frame: .zero)
         editor.isRichText = false
         editor.isEditable = true
         editor.isSelectable = true
@@ -29,32 +33,35 @@ struct NativeSideChatInput: NSViewRepresentable {
         editor.textContainer?.widthTracksTextView = true
         editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         editor.textContainerInset = NSSize(width: 6, height: 6)
-        editor.setAccessibilityLabel("侧聊问题")
         scroll.documentView = editor
         configure(editor)
         return scroll
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let editor = scroll.documentView as? NativeSideChatTextView else { return }
+        guard let editor = scroll.documentView as? NativeComposerTextView else { return }
         configure(editor)
     }
-    private func configure(_ editor: NativeSideChatTextView) {
+    private func configure(_ editor: NativeComposerTextView) {
         editor.onChange = { text = $0 }
         editor.canSubmit = canSubmit
         editor.submit = submit
-        editor.font = .systemFont(ofSize: 13)
+        editor.sendWithModifier = sendWithModifier
+        editor.isEditable = editable
+        editor.setAccessibilityLabel(accessibilityLabel)
+        editor.font = .systemFont(ofSize: fontSize)
         editor.textColor = NSColor(WispDesign.color("text", scheme))
         editor.backgroundColor = NSColor(WispDesign.color("bg-elev", scheme))
         editor.insertionPointColor = editor.textColor ?? .textColor
         editor.apply(text)
     }
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: ()) {
-        guard let editor = scroll.documentView as? NativeSideChatTextView else { return }
+        guard let editor = scroll.documentView as? NativeComposerTextView else { return }
         editor.onChange = nil; editor.canSubmit = nil; editor.submit = nil
     }
 }
 
-class NativeSideChatTextView: NSTextView {
+class NativeComposerTextView: NSTextView {
+    var sendWithModifier = false
     var onChange: ((String) -> Void)?
     var canSubmit: (() -> Bool)?
     var submit: (() -> Void)?
@@ -67,15 +74,16 @@ class NativeSideChatTextView: NSTextView {
     override func didChangeText() { super.didChangeText(); onChange?(string) }
     override func keyDown(with event: NSEvent) {
         guard event.keyCode == 36 || event.keyCode == 76 else { super.keyDown(with: event); return }
-        switch NativeSideChatReturnAction.resolve(shift: event.modifierFlags.contains(.shift), composing: hasMarkedText()) {
-        case .composition, .newline: super.keyDown(with: event)
-        case .send: if canSubmit?() == true { submit?() }
+        switch NativeMessageReturnAction.resolve(shift: event.modifierFlags.contains(.shift), composing: hasMarkedText(), sendWithModifier: sendWithModifier, modifier: !event.modifierFlags.intersection([.command, .control]).isEmpty) {
+        case .composition: super.keyDown(with: event)
+        case .newline: if isEditable { insertNewline(nil) }
+        case .send: if isEditable && canSubmit?() == true { submit?() }
         }
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // Keep Command-Return inside this editor rather than activating the
-        // main conversation's window-level Command-Return button.
-        if window?.firstResponder === self, event.modifierFlags.contains(.command),
+        // Return shortcuts belong only to the focused editor, including IME
+        // composition; other windows and editors must never submit this draft.
+        if window?.firstResponder === self, !event.modifierFlags.intersection([.command, .control]).isEmpty,
            event.keyCode == 36 || event.keyCode == 76 {
             keyDown(with: event)
             return true

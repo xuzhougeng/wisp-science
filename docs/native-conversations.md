@@ -4,10 +4,18 @@ The SwiftUI preview supports creating/opening HTTP-model conversations, selectin
 that conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing
-WebView remains usable. ACP, attachments, embedded MCP Apps, workflow approval
-editors, rich artifact viewers, guidance/queued follow-ups and branch management
-remain WebView features in this phase. ACP and frozen/archived conversations are
-read-only in the native composer.
+WebView remains usable. The macOS composer also supports file attachments and one
+queued follow-up, and the workspace has an Agent workflow approval panel. ACP,
+embedded MCP Apps, rich scientific artifact viewers and branch management remain
+follow-ups. ACP and frozen/archived conversations are read-only in the native composer.
+
+The macOS main composer reads the saved `send_with_modifier` preference when a
+conversation opens and updates when settings are saved. With it off, Enter sends;
+with it on, Enter inserts a newline. Cmd/Ctrl+Enter sends in either mode;
+Shift+Enter (including with Cmd/Ctrl) inserts a newline. IME marked-text
+confirmation belongs to AppKit and never submits a message. Return shortcuts
+apply only to the focused editor. Side chat retains its own Enter-to-send policy.
+
 
 ## Transport and recovery
 

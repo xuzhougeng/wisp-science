@@ -94,6 +94,11 @@ final class NativeConversationModel: ObservableObject {
         }
         guard generation == current else { return }
         do {
+            let prefs = try await client.invoke("get_appearance_prefs", args: [:], projectID: project)
+            if generation == current { WispDesign.apply(prefs) }
+        } catch { if generation == current { operationError = "未能读取输入偏好：\(error.localizedDescription)" } }
+        guard generation == current else { return }
+        do {
             let rows = try await client.invoke("list_models", args: [:], projectID: project).array.filter { !$0["use_for_image_generation"].bool && !$0["use_for_video_generation"].bool }
             if generation == current { models = rows }
         }
