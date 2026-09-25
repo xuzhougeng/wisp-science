@@ -8020,6 +8020,7 @@ pub fn run() {
             handler(invoke)
         })
         .build(tauri::generate_context!())
+        .map(native_settings::background_policy)
         .expect("error while building Wisp")
         .run(move |_app, _event| {
             #[cfg(target_os = "macos")]

@@ -27,6 +27,18 @@ pub(crate) fn requested(args: impl IntoIterator<Item = String>) -> bool {
     args.into_iter().any(|arg| arg == "--native-settings-host")
 }
 
+/// Keeps the host out of the Dock. Tao launches every app as Regular and so
+/// overrides the host bundle's `LSUIElement`; `setup` only runs after launch,
+/// where the icon would already flash, so this must precede `App::run`.
+#[allow(unused_mut)] // Only macOS mutates.
+pub(crate) fn background_policy(mut app: tauri::App) -> tauri::App {
+    #[cfg(target_os = "macos")]
+    if requested(std::env::args()) {
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
+    app
+}
+
 pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     if app.try_state::<HostDescriptor>().is_some() {
         return Ok(());
