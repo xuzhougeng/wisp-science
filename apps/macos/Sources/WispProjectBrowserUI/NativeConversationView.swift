@@ -96,7 +96,7 @@ struct NativeConversationView: View {
     }
     private func markedText(_ item: ConversationItem, index: Int, input: Bool = false) -> AttributedString {
         let source = item.role == "user" && !input ? SavedAttachments.body(in: item.text) : item.text
-        var text = input ? AttributedString(item.input ?? "") : item.role == "tool" ? AttributedString(item.text) : ((try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source))
+        var text = AttributedString(input ? item.input ?? "" : source)
         if conversation.scrollTarget == index, let excerpt = conversation.revealedExcerpt,
            let range = NativeSavedExcerpt.range(in: String(text.characters), excerpt: excerpt) {
             let start = text.characters.index(text.startIndex, offsetBy: range.lowerBound)
