@@ -76,3 +76,4 @@
 
 - 会话置顶：复用持久状态与共享 pin 图标，置顶分区不重复列出分组中的会话；未知状态禁用、请求失败不重试、导航后旧回调隔离。侧栏元数据刷新保留会话选择、草稿和历史页游标。定向 Swift 26 passed（`/tmp/wisp-parity-session-pin-navigation-swift.log`）；全套 Swift 271 passed（UI 256 + 基础 15，含全部 opt-in render，`/tmp/wisp-parity-session-pin-full-swift.log`）；wasm check、设计/契约同步检查、格式检查通过。Rust 项目查询首轮 7 passed、DTO 全套 64 passed（`/tmp/wisp-parity-session-pin-rust.log`）；旧数据库 pin 字段缺失时保持历史可读，新增兼容测试另轮运行中（`/tmp/wisp-parity-session-pin-compat-rust.log`）。稳定代码的 workspace 全套运行中（`/tmp/wisp-parity-session-pin-workspace.log`）；新版 QA 包/CUA 待完成。
 - ACP/重命名之后的 workspace 全套未完成：编译期间修改了 DTO，旧 `RecentSession` 编译产物与新增 `pinned` 调用不一致，编译退出 101，未进入完整测试；保留 `/tmp/wisp-parity-acp-rename-workspace.log`。稳定代码后重新执行全套，不把此前全绿结果当作本批验证。
+- 置顶修复已提交 `a4455d0b`；新增旧库兼容测试后的项目查询 8 passed、0 failed（`/tmp/wisp-parity-session-pin-compat-rust.log`），确认缺少 pin 字段不触发迁移、不阻断历史读取，主查询错误仍正常暴露。Swift 271、DTO 64 及 wasm 已通过。workspace 全套与 QA 重建仍在运行，未宣称完成；Mac 仍待解锁后的 CUA 验收。空闲的隔离 QA host 43632 已停止，更新后需重启；未停止其他应用或宿主。
