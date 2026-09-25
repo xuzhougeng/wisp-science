@@ -36,6 +36,9 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.createPresented) {
                 NewProjectSheet(model: model)
             }
+            .sheet(isPresented: $model.importOptionsPresented) {
+                NativeProjectImportSheet(model: model)
+            }
             .sheet(isPresented: $library.presented) {
                 NativeLibrarySheet(model: model, library: library)
             }
@@ -131,7 +134,7 @@ private struct ProjectLanding: View {
                 .help("随手一聊")
                 .accessibilityLabel("随手一聊")
                 .accessibilityIdentifier("home-scratch")
-            Button { model.chooseProjectArchive() } label: {
+            Button { model.importOptionsPresented = true } label: {
                 HStack(spacing: 8) { WispIcon(name: "upload", size: 16); Text("导入项目") }
             }
             .buttonStyle(WispButtonStyle())

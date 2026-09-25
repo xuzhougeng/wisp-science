@@ -451,19 +451,26 @@ WinUI provides the corresponding native form, folder picker, standard-layout con
 
 ## Importing a project
 
-The home **导入项目** button opens the system file panel for a `.zip` archive.
-Canceling the panel does not call the host. A chosen path is sent once as
-`native_project_import`, with no project id. The host reads and verifies the
-archive with the existing project-transfer code, places the workspace next to
-the archive, and registers it. It does not open the Tauri file dialog and does
-not consult the WebView's exploration-branch window. Progress is a busy state,
-not a streamed bar. A lost or invalid reply stays on the home screen and is not
-retried; refresh the project list to see whether the import finished. A
-confirmed summary reloads the read-only list and opens that project. A second
-click while the request is in flight does not send again.
+The macOS home **导入项目** button opens native import options. **打开项目文件夹**
+uses a directory-only system picker and sends `native_project_import_directory`
+with an explicit `directory_path` and no project ID. The host reuses the WebView
+project-folder importer: workspace-owned `.wisp` metadata and legacy exported
+packages both register in place. It does not copy large workspace data. Missing
+metadata, duplicate projects, incomplete cloud downloads and conflicts return
+errors without inventing a new project or falling back to ZIP import.
 
-`native_project_import` is announced next to `native_project_create` on the
-host capability document. `wisp-service` still cannot import projects. WinUI provides a ZIP picker and an import form through `INativeProjectClient.ImportAsync`; errors retain the selected path.
+**导入 ZIP 归档** uses the existing `native_project_import` path: it verifies the
+archive, places the workspace in a new directory next to it, and registers the
+project. Canceling either picker does not call the host. Escape closes the
+system picker before the options sheet; immediate Escape in the options sheet
+closes only that sheet. In-flight imports disable duplicate submission and
+switching databases. Confirmed imports refresh and open the returned project;
+failed or ambiguous replies preserve the options and error, without automatic
+retry. Progress is a busy state rather than a streamed byte counter.
+
+These commands are advertised in the native project capability family and
+execute without a WebView window selection. `wisp-service` remains read-only.
+WinUI retains its ZIP picker and `INativeProjectClient.ImportAsync` form.
 
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.

@@ -12,6 +12,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var createError: String?
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
+    @Published var importOptionsPresented = false
     let library = NativeLibraryModel()
     let calendar = NativeCalendarModel()
     let journey = NativeJourneyModel()
@@ -133,7 +134,7 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     public func chooseDatabase() {
-        guard !isLoading else { return }
+        guard !isLoading, !importBusy else { return }
         let panel = NSOpenPanel()
         panel.title = "选择 Wisp 数据库"
         panel.message = "打开已有的 wisp.sqlite；点击项目星标会保存收藏状态，不执行数据库升级。"
@@ -268,23 +269,35 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     func importChosenArchive(_ url: URL?) async {
+        await importProject(url, directory: false)
+    }
+
+    func importChosenDirectory(_ url: URL?) async {
+        await importProject(url, directory: true)
+    }
+
+    private func importProject(_ url: URL?, directory: Bool) async {
         guard let url else { return }
         guard !importBusy else { return }
         importBusy = true
         importError = nil
+        let database = databaseURL
         defer { importBusy = false }
         do {
             let value = try await projectTransport().invoke(
-                NativeProjectCommand.importArchive,
-                args: ["archive_path": .string(url.path)],
+                directory ? NativeProjectCommand.importDirectory : NativeProjectCommand.importArchive,
+                args: [directory ? "directory_path" : "archive_path": .string(url.path)],
                 projectID: nil)
+            guard database == databaseURL else { return }
             let summary = try NativeProjectCommand.summary(from: value)
+            importOptionsPresented = false
             await refresh()
             if !projects.contains(where: { $0.id == summary.id }) {
                 projects.insert(summary, at: 0)
             }
             await openProject(summary.id)
         } catch {
+            guard database == databaseURL else { return }
             importError = NewProjectError.importMessage(for: error.localizedDescription)
         }
     }
@@ -319,6 +332,19 @@ public final class ProjectBrowserModel: ObservableObject {
         Task { await importChosenArchive(url) }
     }
 
+    func chooseProjectDirectory() {
+        guard !importBusy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "打开项目"
+        panel.message = "选择含 Wisp 项目记录的文件夹。直接在此目录工作，不复制工作区数据。"
+        guard panel.runModal() == .OK else { return }
+        let url = panel.url
+        Task { await importChosenDirectory(url) }
+    }
+
     func prepareIssueReport() async {
         await issueReport.prepare(model: self, conversation: nativeConversation(), client: calendarClient())
     }
@@ -351,4 +377,3 @@ public final class ProjectBrowserModel: ObservableObject {
             && directory.boolValue
     }
 }
-

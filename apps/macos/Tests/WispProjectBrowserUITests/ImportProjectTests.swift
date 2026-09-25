@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 import WispProjectBrowser
 @testable import WispProjectBrowserUI
@@ -22,6 +24,12 @@ private actor ImportTransport: NativeSettingsQuerying {
             throw ProjectBrowserError.service("not a valid project archive: invalid zip")
         case "present":
             throw ProjectBrowserError.service("This project is already present on this device.")
+        case "folder-invalid":
+            throw ProjectBrowserError.service("project_folder_metadata_invalid: metadata mismatch")
+        case "waiting":
+            throw ProjectBrowserError.service("project_folder_waiting: missing snapshot")
+        case "conflict":
+            throw ProjectBrowserError.service("Sync conflict: multiple heads")
         case "lost":
             throw ProjectBrowserError.service("connection reset")
         case "hang":
@@ -40,10 +48,62 @@ final class ImportProjectTests: XCTestCase {
         let transport = ImportTransport()
         let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
         await model.importChosenArchive(nil)
+        await model.importChosenDirectory(nil)
         let calls = await transport.callCount()
         XCTAssertEqual(calls, 0)
         XCTAssertNil(model.importError)
         XCTAssertNil(model.activeProjectID)
+    }
+
+    @MainActor func testDirectoryContractOpensInPlaceAndClosesOptionsOnlyOnSuccess() async throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        let contract = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-projects/v1/import-directory.json")))
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        await model.importChosenDirectory(URL(fileURLWithPath: contract["args"]["directory_path"].string))
+        let call = await transport.lastCall()
+        XCTAssertEqual(call.command, contract["command"].string)
+        XCTAssertEqual(SettingsValue.object(call.args), contract["args"])
+        XCTAssertNil(call.projectID)
+        XCTAssertFalse(model.importOptionsPresented)
+        XCTAssertEqual(model.activeProjectID, contract["result"]["id"].string)
+    }
+
+    @MainActor func testFolderFailuresRemainActionableAndDoNotRetry() async {
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        for (mode, expected) in [("folder-invalid", "无效或不完整"), ("waiting", "等待同步完成"), ("conflict", "同步冲突")] {
+            await transport.setMode(mode)
+            await model.importChosenDirectory(URL(fileURLWithPath: "/tmp/project"))
+            XCTAssertTrue(model.importError?.contains(expected) == true)
+            XCTAssertTrue(model.importOptionsPresented)
+            XCTAssertNil(model.activeProjectID)
+        }
+        let calls = await transport.callCount(); XCTAssertEqual(calls, 3)
+    }
+
+    @MainActor func testImmediateEscapeClosesOnlyImportOptionsWithoutCallingHost() async {
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 530, height: 350), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; defer { window.close() }
+        let parentView = NSView(frame: window.contentView!.bounds); window.contentView = parentView
+        var parentClosed = 0
+        let parent = NativeSettingsEscape.Coordinator(enabled: true) { parentClosed += 1 }
+        parent.view = parentView; parent.install(); defer { parent.remove() }
+        let hosted = NSHostingView(rootView: NativeProjectImportSheet(model: model))
+        hosted.frame = parentView.bounds; parentView.addSubview(hosted); hosted.layoutSubtreeIfNeeded()
+        let focus = window.firstResponder
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        XCTAssertTrue(NativeEscapeStack.shared.consume(escape, keyWindow: window, modalWindow: nil))
+        XCTAssertFalse(model.importOptionsPresented); XCTAssertEqual(parentClosed, 0)
+        XCTAssertTrue(window.firstResponder === focus)
+        let calls = await transport.callCount(); XCTAssertEqual(calls, 0)
     }
 
     @MainActor func testSuccessOpensTheImportedProjectOnce() async throws {
@@ -99,7 +159,7 @@ final class ImportProjectTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertTrue(hanging)
-        await model.importChosenArchive(URL(fileURLWithPath: "/tmp/other.zip"))
+        await model.importChosenDirectory(URL(fileURLWithPath: "/tmp/other-project"))
         let busyCalls = await transport.callCount()
         XCTAssertEqual(busyCalls, 1)
         var root = URL(fileURLWithPath: #filePath)

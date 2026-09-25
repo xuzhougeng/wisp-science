@@ -674,6 +674,16 @@ fn read_project_directory(
     Ok((manifest, workspace))
 }
 
+/// Register a native-picker selection in place through the same validation as
+/// WebView imports. No data synchronization and no window-owned file dialog.
+pub(crate) async fn import_project_folder(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    package: &Path,
+) -> Result<String, String> {
+    import_project_directory(store, app_data, package, None).await
+}
+
 async fn import_project_directory(
     store: &wisp_store::Store,
     app_data: &Path,

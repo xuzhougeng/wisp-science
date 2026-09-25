@@ -8,6 +8,7 @@ pub const SCHEMA: &str = "wisp.native-projects.v1";
 pub const COMMANDS: &[&str] = &[
     "native_project_create",
     "native_project_import",
+    "native_project_import_directory",
     "native_project_folders",
     "native_project_folder_create",
     "native_project_folder_rename",
@@ -15,7 +16,10 @@ pub const COMMANDS: &[&str] = &[
 ];
 
 pub fn returns_project_summary(command: &str) -> bool {
-    matches!(command, "native_project_create" | "native_project_import")
+    matches!(
+        command,
+        "native_project_create" | "native_project_import" | "native_project_import_directory"
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -32,6 +36,12 @@ pub struct CreateProjectRequest {
 #[serde(deny_unknown_fields)]
 pub struct ImportProjectRequest {
     pub archive_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportDirectoryRequest {
+    pub directory_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -63,6 +73,24 @@ pub struct ProjectFolder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_import_uses_an_explicit_path_without_window_scope() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-projects/v1/import-directory.json"
+        ))
+        .unwrap();
+        let command = fixture["command"].as_str().unwrap();
+        assert!(COMMANDS.contains(&command));
+        assert!(returns_project_summary(command));
+        assert!(fixture["project_id"].is_null());
+        let input: ImportDirectoryRequest =
+            serde_json::from_value(fixture["args"].clone()).unwrap();
+        assert!(input.directory_path.ends_with("RNA seq"));
+        let mut invalid = fixture["args"].clone();
+        invalid["archive_path"] = serde_json::json!("other.zip");
+        assert!(serde_json::from_value::<ImportDirectoryRequest>(invalid).is_err());
+    }
 
     #[test]
     fn create_fixture_round_trips_without_a_project_id() {

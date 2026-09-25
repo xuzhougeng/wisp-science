@@ -35,6 +35,15 @@ pub(crate) async fn execute(
             crate::project_transfer::import_archived_project(store, app_data, &archive, parent)
                 .await
         }
+        "native_project_import_directory" => {
+            let input: wisp_dto::native_projects::ImportDirectoryRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let directory = std::path::PathBuf::from(input.directory_path);
+            if !directory.is_absolute() || !directory.is_dir() {
+                return Err("Choose an existing absolute project directory".into());
+            }
+            crate::project_transfer::import_project_folder(store, app_data, &directory).await
+        }
         _ => Err("Unsupported native project command".into()),
     }
 }
@@ -340,6 +349,72 @@ mod tests {
         );
         value.command = "native_project_import".into();
         value
+    }
+
+    #[tokio::test]
+    async fn directory_import_opens_workspace_owned_and_legacy_packages_in_place() {
+        let source = Fixture::open().await;
+        let workspace = source.workspace("study");
+        let store = wisp_store::Store::open_application(&source.workspace("owned.sqlite"))
+            .await
+            .unwrap();
+        let id = crate::project_commands::create_project_record(
+            &store,
+            serde_json::from_value(input(workspace.to_str().unwrap(), false)).unwrap(),
+        )
+        .await
+        .unwrap();
+        std::fs::write(workspace.join("large-data-reference.txt"), "remote://data").unwrap();
+        let archive = source.workspace("study.zip");
+        crate::project_transfer::export_project_archive(&store, &source.root, &id, &archive)
+            .await
+            .unwrap();
+        let legacy = source.workspace("legacy-package");
+        zip::ZipArchive::new(std::fs::File::open(&archive).unwrap())
+            .unwrap()
+            .extract(&legacy)
+            .unwrap();
+        for folder in [&workspace, &legacy] {
+            let target = Fixture::open().await;
+            let mut call = request(None, json!({"directory_path": folder}));
+            call.command = "native_project_import_directory".into();
+            let imported = execute(&target.store, &target.root, &call).await.unwrap();
+            assert_eq!(imported, id);
+            let meta = target.store.get_project_meta(&id).await.unwrap().unwrap();
+            let expected = if folder == &legacy {
+                legacy.join("workspace")
+            } else {
+                workspace.clone()
+            };
+            assert_eq!(
+                std::path::PathBuf::from(meta.2),
+                std::fs::canonicalize(&expected).unwrap()
+            );
+            assert_eq!(
+                std::fs::read(expected.join("large-data-reference.txt")).unwrap(),
+                b"remote://data"
+            );
+            assert!(execute(&target.store, &target.root, &call).await.is_err());
+            assert_eq!(target.store.list_projects().await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn directory_import_rejects_bad_scope_path_and_metadata_without_registration() {
+        let fixture = Fixture::open().await;
+        let folder = fixture.workspace("empty-folder");
+        std::fs::create_dir(&folder).unwrap();
+        for (scope, path) in [
+            (Some("wrong-project"), folder.clone()),
+            (None, "relative/path".into()),
+            (None, folder.clone()),
+        ] {
+            let mut call = request(scope, json!({"directory_path": path}));
+            call.command = "native_project_import_directory".into();
+            assert!(execute(&fixture.store, &fixture.root, &call).await.is_err());
+            assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        }
+        assert_eq!(std::fs::read_dir(folder).unwrap().count(), 0);
     }
 
     #[tokio::test]
