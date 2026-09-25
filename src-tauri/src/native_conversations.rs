@@ -140,6 +140,14 @@ fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| error.to_string())
 }
 
+fn delete_session_arguments(value: &Value) -> Result<Value, String> {
+    let args: dto::SessionRequest = decode(value)?;
+    if args.before_seq.is_some() {
+        return Err("Delete does not accept a history cursor".into());
+    }
+    Ok(json!({"id": args.session_id}))
+}
+
 fn require_acp_profile(profiles: &[crate::acp::AcpAgentProfile], id: &str) -> Result<(), String> {
     if id.trim().is_empty() || !profiles.iter().any(|profile| profile.id == id) {
         return Err("ACP Agent profile does not exist; refresh the model list".into());
@@ -172,6 +180,25 @@ pub(crate) async fn require_owner(
         return Err("Conversation does not belong to the selected project".into());
     }
     Ok(())
+}
+
+async fn owned_session_exists(
+    store: &wisp_store::Store,
+    project: &str,
+    session: &str,
+) -> Result<bool, String> {
+    if session.is_empty() {
+        return Err("A conversation is required".into());
+    }
+    match store
+        .frame_project_id(session)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        None => Ok(false),
+        Some(owner) if owner == project => Ok(true),
+        Some(_) => Err("Conversation does not belong to the selected project".into()),
+    }
 }
 async fn running(broker: &Broker, session: &str) -> bool {
     broker
@@ -234,6 +261,19 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         .get("session_id")
         .and_then(Value::as_str)
         .ok_or("A conversation is required")?;
+    if request.command == "native_conversation_exists" {
+        let args: dto::SessionRequest = decode(&request.args)?;
+        if args.before_seq.is_some() {
+            return Err("Existence check does not accept a history cursor".into());
+        }
+        return owned_session_exists(
+            &broker.app.state::<crate::AppState>().store,
+            project,
+            session,
+        )
+        .await
+        .map(Value::Bool);
+    }
     require_owner(
         &broker.app.state::<crate::AppState>().store,
         project,
@@ -248,6 +288,15 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     }
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_delete" => {
+            call(
+                broker,
+                project,
+                "delete_session",
+                delete_session_arguments(&request.args)?,
+            )
+            .await
+        }
         "native_conversation_pin" => {
             let args: dto::PinRequest = decode(&request.args)?;
             call(
@@ -644,6 +693,21 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deletion_uses_only_the_explicit_session_and_rejects_history_or_scope_overrides() {
+        assert_eq!(
+            super::delete_session_arguments(&serde_json::json!({"session_id":"s"})).unwrap(),
+            serde_json::json!({"id":"s"})
+        );
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"session_id":"s","before_seq":1}),
+            serde_json::json!({"session_id":"s","project_id":"other"}),
+            serde_json::json!({"session_id":"s","id":"other"}),
+        ] {
+            assert!(super::delete_session_arguments(&args).is_err());
+        }
+    }
     use super::*;
     #[test]
     fn acp_creation_requires_exact_profile_and_turn_routing_preserves_session() {
@@ -711,6 +775,10 @@ mod tests {
         assert!(require_owner(&store, "b", "s").await.is_err());
         assert!(require_owner(&store, "a", "").await.is_err());
         assert!(require_owner(&store, "a", "missing").await.is_err());
+        assert!(owned_session_exists(&store, "a", "s").await.unwrap());
+        assert!(!owned_session_exists(&store, "a", "missing").await.unwrap());
+        assert!(owned_session_exists(&store, "b", "s").await.is_err());
+        assert!(owned_session_exists(&store, "a", "").await.is_err());
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
     }

@@ -41,6 +41,19 @@ Stale navigation replies are ignored. A lost pin response is not retried;
 without a confirmed pin state leave the action disabled until a saved row is
 available.
 
+The trash action opens a confirmation listing the selected conversation. Sidebar
+multi-selection also offers “删除所选会话”. Deletion uses the existing host checks
+for ownership, archives and branches, and stops the selected conversation's running
+work before removing it. A batch is sequential, not atomic: confirmed deletions
+are removed locally, and the first error stops all later requests. An ambiguous
+response never triggers another deletion automatically. The error banner provides
+a read-only refresh; empty native drafts use an explicit scoped existence query
+because their absence from saved history does not prove deletion. A still-existing
+draft remains available and is checked again on later refreshes. Failed existence
+reads preserve that draft. Immediate Escape cancels the confirmation without
+writing. Navigation stops remaining batch requests and discards old UI callbacks;
+confirmed deletion results still remove stale local draft entries in their scope.
+
 ## Transport and recovery
 
 `wisp-dto::native_conversations` is the authoritative v1 protocol. Requests use
@@ -56,6 +69,8 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 | `native_conversation_create` | optional `acp_agent_id` | New session ID; omitted uses HTTP |
 | `native_conversation_rename` | `session_id`, `title` | Rename the owned, unarchived conversation |
 | `native_conversation_pin` | `session_id`, boolean `pinned` | Set the owned, unarchived conversation's pin state |
+| `native_conversation_delete` | `session_id` | Delete the owned conversation using existing host lifecycle checks |
+| `native_conversation_exists` | `session_id` | Boolean existence; a different project's conversation is rejected |
 | `native_conversation_snapshot` | `session_id`, optional `before_seq` | `Snapshot` replacement event |
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |

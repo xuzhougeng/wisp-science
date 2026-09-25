@@ -27,7 +27,7 @@
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
 - [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
-- [ ] 会话：重命名与置顶入口、会话范围保存已实现，CUA 待验；删除/批量整理、跨项目复制/移动、导出、分支导航仍待完成。
+- [ ] 会话：重命名、置顶、删除/批量删除入口与会话范围操作已实现，删除后端及 CUA 待验；跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
 - [ ] 阅读：数学/图片、Markdown/CSV 预览、科学 viewer 支持表与对应实现。
@@ -77,3 +77,6 @@
 - 会话置顶：复用持久状态与共享 pin 图标，置顶分区不重复列出分组中的会话；未知状态禁用、请求失败不重试、导航后旧回调隔离。侧栏元数据刷新保留会话选择、草稿和历史页游标。定向 Swift 26 passed（`/tmp/wisp-parity-session-pin-navigation-swift.log`）；全套 Swift 271 passed（UI 256 + 基础 15，含全部 opt-in render，`/tmp/wisp-parity-session-pin-full-swift.log`）；wasm check、设计/契约同步检查、格式检查通过。Rust 项目查询首轮 7 passed、DTO 全套 64 passed（`/tmp/wisp-parity-session-pin-rust.log`）；旧数据库 pin 字段缺失时保持历史可读，新增兼容测试另轮运行中（`/tmp/wisp-parity-session-pin-compat-rust.log`）。稳定代码的 workspace 全套运行中（`/tmp/wisp-parity-session-pin-workspace.log`）；新版 QA 包/CUA 待完成。
 - ACP/重命名之后的 workspace 全套未完成：编译期间修改了 DTO，旧 `RecentSession` 编译产物与新增 `pinned` 调用不一致，编译退出 101，未进入完整测试；保留 `/tmp/wisp-parity-acp-rename-workspace.log`。稳定代码后重新执行全套，不把此前全绿结果当作本批验证。
 - 置顶修复已提交 `a4455d0b`；新增旧库兼容测试后的项目查询 8 passed、0 failed（`/tmp/wisp-parity-session-pin-compat-rust.log`），确认缺少 pin 字段不触发迁移、不阻断历史读取，主查询错误仍正常暴露。Swift 271、DTO 64 及 wasm 已通过。workspace 全套与 QA 重建仍在运行，未宣称完成；Mac 仍待解锁后的 CUA 验收。空闲的隔离 QA host 43632 已停止，更新后需重启；未停止其他应用或宿主。
+- 置顶真实宿主协议验收通过：true/false/true 状态及保存列表一致、跨项目和非布尔请求被拒绝、host 重启后仍置顶（`/tmp/wisp-parity-native-pin-host-smoke.log`、`/tmp/wisp-parity-native-pin-host-restart.log`）。QA 构建及签名检查通过（`/tmp/wisp-parity-session-pin-build.log`），revision `60eec4d8` / dirty=true；构建期间开始了删除批次，当前宿主未包含随后新增的 existence 命令，不把此包用于完整删除验收。
+- 删除/批量删除：列出目标后确认、复用宿主停止/分支/归档检查、串行执行遇到首个错误停止、不自动重试、迟到响应不关闭新弹窗、已确认删除移除本地草稿。未命名草稿的未知删除结果由同项目只读 existence 查询核对，查询失败保留草稿，仍存在时在后续刷新继续检查。定向 Swift 19 passed；全套 Swift 279 passed（UI 264 + 基础 15，含所有 opt-in render，`/tmp/wisp-parity-session-delete-full-swift.log`）；wasm、格式及资源同步检查通过。Rust native conversation 定向运行中（`/tmp/wisp-parity-session-delete-rust.log`）；之前启动的 workspace 全套只覆盖置顶及此前改动，不包括删除批次。
+- 删除批 Rust native conversation 5 passed、0 failed（同上日志），含删除请求参数边界以及存在性查询的所有权/不存在检查。稳定 QA 重建、真实宿主删除/停止/未知结果恢复与 CUA 仍待验收；DTO 全套复测进行中（`/tmp/wisp-parity-session-delete-dto.log`）。

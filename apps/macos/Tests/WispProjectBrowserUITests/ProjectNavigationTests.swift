@@ -37,7 +37,70 @@ private actor NavigationClient: ProjectBrowserQuerying {
     }
 }
 
+private actor DraftExistenceClient: NativeSettingsQuerying {
+    var value: SettingsValue = .null
+    var calls: [(String, String?, [String: SettingsValue])] = []
+    func set(_ value: SettingsValue) { self.value = value }
+    func requests() -> [(String, String?, [String: SettingsValue])] { calls }
+    func invoke(_ command: String, args: [String: SettingsValue], projectID: String?) async throws -> SettingsValue {
+        calls.append((command, projectID, args))
+        if value == .null { throw ProjectBrowserError.service("host unavailable") }
+        return value
+    }
+}
+
 final class ProjectNavigationTests: XCTestCase {
+    @MainActor func testUncertainDraftDeletionReconcilesByReadWithoutRepeatingTheDelete() async {
+        for exists in [true, false] {
+            let database = URL(fileURLWithPath: "/unused")
+            let host = DraftExistenceClient()
+            let model = ProjectBrowserModel(client: NavigationClient(), databaseURL: database, projectTransport: host)
+            await model.openProject("p", sessionID: "s1")
+            await model.openNativeDraft("draft", projectID: "p", database: database, sourceSession: "s1")
+            model.noteUnconfirmedDeletion(model.sessions.first { $0.id == "draft" }, database: database)
+            model.goHome()
+            await model.openProject("p", sessionID: "draft")
+            XCTAssertNotNil(model.sessionError)
+            await host.set(.bool(exists))
+            await model.openProject("p", sessionID: "draft")
+            XCTAssertEqual(model.sessions.contains { $0.id == "draft" }, exists)
+            if exists { XCTAssertNil(model.sessionError) }
+            model.goHome(); await model.openProject("p")
+            XCTAssertEqual(model.sessions.contains { $0.id == "draft" }, exists)
+            let calls = await host.requests()
+            XCTAssertEqual(calls.count, exists ? 3 : 2)
+            XCTAssertTrue(calls.allSatisfy { $0.0 == "native_conversation_exists" && $0.1 == "p" && $0.2 == ["session_id": .string("draft")] })
+        }
+    }
+    @MainActor func testConfirmedDeletionPreservesOtherSelectionAndInvalidatesLateList() async {
+        let client = NavigationClient(); let database = URL(fileURLWithPath: "/unused")
+        let model = ProjectBrowserModel(client: client, databaseURL: database)
+        await model.openProject("p", sessionID: "s2")
+        await client.setSuspended()
+        let refresh = Task { await model.refreshSessionMetadata(projectID: "p", sessionID: "s2", database: database) }
+        while !(await client.isWaiting()) { await Task.yield() }
+        model.removeConfirmedSessions(["s1"], projectID: "p", database: database)
+        XCTAssertEqual(model.activeSessionID, "s2"); XCTAssertEqual(model.messages.first?.text, "s2")
+        XCTAssertEqual(model.sessions.map(\.id), ["s2"])
+        await client.finish(); let stale = await refresh.value
+        XCTAssertFalse(stale); XCTAssertEqual(model.sessions.map(\.id), ["s2"])
+        XCTAssertFalse(model.sessionsLoading)
+        model.removeConfirmedSessions(["s2"], projectID: "other", database: database)
+        model.removeConfirmedSessions(["s2"], projectID: "p", database: URL(fileURLWithPath: "/old-db"))
+        XCTAssertEqual(model.activeSessionID, "s2")
+        model.removeConfirmedSessions(["s2"], projectID: "p", database: database)
+        XCTAssertNil(model.activeSessionID); XCTAssertTrue(model.messages.isEmpty); XCTAssertTrue(model.sessions.isEmpty)
+    }
+    @MainActor func testConfirmedDraftDeletionCannotReappearAfterReopeningProject() async {
+        let client = NavigationClient(); let database = URL(fileURLWithPath: "/unused")
+        let model = ProjectBrowserModel(client: client, databaseURL: database)
+        await model.openProject("p", sessionID: "s1")
+        await model.openNativeDraft("draft", projectID: "p", database: database, sourceSession: "s1")
+        model.goHome()
+        model.removeConfirmedSessions(["draft"], projectID: "p", database: database)
+        await model.openProject("p")
+        XCTAssertFalse(model.sessions.contains { $0.id == "draft" })
+    }
     @MainActor func testMetadataRefreshKeepsSelectionTranscriptCursorAndDraft() async {
         let client = NavigationClient(); await client.enablePagination()
         let database = URL(fileURLWithPath: "/unused")

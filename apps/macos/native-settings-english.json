@@ -234,5 +234,13 @@
   "取消置顶会话": "Unpin conversation",
   "刷新会话": "Refresh conversations",
   "已置顶": "Pinned",
-  "置顶状态未能确认保存，不会自动重试。\n": "The pin state could not be confirmed saved. It will not retry automatically.\n"
+  "置顶状态未能确认保存，不会自动重试。\n": "The pin state could not be confirmed saved. It will not retry automatically.\n",
+  "删除会话": "Delete conversation",
+  "删除所选会话": "Delete selected conversations",
+  "将删除以下会话及其保存的消息。此操作无法撤销。": "The following conversations and their saved messages will be deleted. This cannot be undone.",
+  "已删除": "Deleted",
+  "正在删除…": "Deleting…",
+  "确认删除": "Confirm deletion",
+  "删除结果未能确认，后续会话尚未删除。请刷新会话后核对。\n": "Deletion could not be confirmed. Later conversations were not deleted. Refresh conversations to check.\n",
+  "运行中的会话会先停止。": "Running conversations will be stopped first."
 }

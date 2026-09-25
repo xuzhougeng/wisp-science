@@ -31,6 +31,8 @@ struct ProjectWorkspace: View {
     @StateObject private var groups = NativeSessionGroups()
     @StateObject private var sessionRename = NativeSessionRename()
     @StateObject private var sessionPin = NativeSessionPin()
+    @StateObject private var sessionDelete = NativeSessionDelete()
+    @State private var sessionManagementError: String?
     private var selectedSession: BrowserSession? { model.sessions.first { $0.id == model.activeSessionID } }
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
@@ -68,6 +70,9 @@ struct ProjectWorkspace: View {
                         .help(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
                         .accessibilityLabel(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
                         .disabled(selectedSession?.pinned == nil || sessionPin.busy || model.sessionsLoading || conversation.snapshot?.read_only == true)
+                    Button { if let session = selectedSession { sessionDelete.begin([session]) } } label: { WispIcon(name: "trash", size: 14) }
+                        .buttonStyle(.plain).help("删除会话").accessibilityLabel("删除会话")
+                        .disabled(selectedSession == nil || sessionDelete.busy || conversation.snapshot?.read_only == true)
                     Spacer()
                     Button { conversation.outlinePresented.toggle() } label: { WispIcon(name: "list") }
                         .buttonStyle(.plain).help("会话大纲").accessibilityLabel("会话大纲")
@@ -114,6 +119,19 @@ struct ProjectWorkspace: View {
                             let database = model.databaseURL
                             Task {
                                 if await model.refreshSessionMetadata(projectID: project.id, sessionID: session, database: database) { sessionPin.reset() }
+                            }
+                        }.disabled(model.sessionsLoading)
+                    }.padding().foregroundStyle(.orange)
+                }
+                if let error = sessionManagementError {
+                    HStack {
+                        Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
+                        Button("刷新会话") {
+                            let database = model.databaseURL; let session = model.activeSessionID
+                            Task {
+                                guard model.databaseURL == database, model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                                await model.openProject(project.id, sessionID: session)
+                                if model.databaseURL == database, model.activeProjectID == project.id, model.sessionError == nil { sessionManagementError = nil }
                             }
                         }.disabled(model.sessionsLoading)
                     }.padding().foregroundStyle(.orange)
@@ -187,9 +205,9 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset() }
-        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset() }
-        .onDisappear { sessionRename.reset(); sessionPin.reset() }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset() }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
+        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
         .onChange(of: conversation.snapshot?.running) { running in
             guard running == false, !model.sessionsLoading, !sessionPin.busy,
                   let session = conversation.snapshot?.session_id else { return }
@@ -209,6 +227,9 @@ struct ProjectWorkspace: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: Binding(get: { !sessionDelete.targets.isEmpty }, set: { if !$0 { sessionDelete.dismiss() } })) {
+            NativeSessionDeleteSheet(model: sessionDelete, confirm: deleteSessions)
         }
         .sheet(isPresented: $groups.creating) {
             VStack(alignment: .leading, spacing: 12) {
@@ -256,6 +277,22 @@ struct ProjectWorkspace: View {
     }
 
     private func refreshInbox() { Task { await inbox.refresh(client: conversation.client, projectID: project.id) } }
+
+    private func deleteSessions() {
+        let database = model.databaseURL; let session = model.activeSessionID
+        Task {
+            let result = await sessionDelete.delete(conversation.client)
+            model.noteUnconfirmedDeletion(result.unconfirmed, database: database)
+            let stillHere = model.databaseURL == database && model.activeProjectID == project.id && model.activeSessionID == session
+            if stillHere && result.isCurrent {
+                sessionManagementError = result.error
+                sessionDelete.dismiss()
+                groups.selected.subtract(result.confirmed)
+                if groups.selected.isEmpty { groups.selecting = false }
+            }
+            model.removeConfirmedSessions(result.confirmed, projectID: project.id, database: database)
+        }
+    }
 
     private func moveSessions(_ folderID: String?) async {
         await groups.moveSelected(conversation.client, projectID: project.id, folderID: folderID)
@@ -361,6 +398,11 @@ struct ProjectWorkspace: View {
                         Button(folder.name) { Task { await moveSessions(folder.id) } }
                     }
                 }.font(WispDesign.font(size: 12))
+                Button {
+                    sessionDelete.begin(model.sessions.filter { groups.selected.contains($0.id) })
+                } label: { HStack { WispIcon(name: "trash", size: 14); Text("删除所选会话") } }
+                    .buttonStyle(.plain).font(WispDesign.font(size: 12))
+                    .disabled(sessionDelete.busy || model.sessionsLoading)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {

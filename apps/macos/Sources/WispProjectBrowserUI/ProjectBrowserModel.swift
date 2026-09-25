@@ -49,6 +49,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var lastLoaded: Date?
     @Published private(set) var databaseURL: URL
     private var nativeDrafts: [String: BrowserSession] = [:]
+    private var unconfirmedDraftDeletions: [String: String] = [:]
     private var nativeModels: [URL: NativeConversationModel] = [:]
     private struct NativeSessionKey: Hashable { let database: URL; let project: String; let session: String }
     private var sideChats: [NativeSessionKey: NativeSideChatModel] = [:]
@@ -152,6 +153,7 @@ public final class ProjectBrowserModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         nativeModels[databaseURL]?.pause()
         nativeDrafts.removeAll()
+        unconfirmedDraftDeletions.removeAll()
         databaseURL = url
         UserDefaults.standard.set(url.path, forKey: "projectBrowser.database")
         goHome()
@@ -195,7 +197,9 @@ public final class ProjectBrowserModel: ObservableObject {
         do {
             var rows = try await client.listSessions(databaseURL: databaseURL, projectID: id)
             guard generation == navigationGeneration else { return }
-            for row in rows { nativeDrafts[row.id] = nil }
+            try await reconcileDraftDeletions(projectID: id, generation: generation)
+            guard generation == navigationGeneration else { return }
+            for row in rows { nativeDrafts[row.id] = nil; unconfirmedDraftDeletions[row.id] = nil }
             rows.insert(contentsOf: nativeDrafts.values.filter { $0.projectID == id }.sorted { $0.ts > $1.ts }, at: 0)
             sessions = rows
             if let sessionID, !rows.contains(where: { $0.id == sessionID }) {
@@ -252,7 +256,9 @@ public final class ProjectBrowserModel: ObservableObject {
             var rows = try await client.listSessions(databaseURL: database, projectID: projectID)
             guard generation == navigationGeneration, databaseURL == database,
                   activeProjectID == projectID, activeSessionID == sessionID else { return false }
-            for row in rows { nativeDrafts[row.id] = nil }
+            try await reconcileDraftDeletions(projectID: projectID, generation: generation)
+            guard generation == navigationGeneration, activeSessionID == sessionID else { return false }
+            for row in rows { nativeDrafts[row.id] = nil; unconfirmedDraftDeletions[row.id] = nil }
             rows.insert(contentsOf: nativeDrafts.values.filter { $0.projectID == projectID }.sorted { $0.ts > $1.ts }, at: 0)
             sessions = rows
             sessionError = rows.contains { $0.id == sessionID } ? nil : "这个会话已不存在，请刷新项目列表。"
@@ -262,6 +268,37 @@ public final class ProjectBrowserModel: ObservableObject {
                   activeProjectID == projectID, activeSessionID == sessionID else { return false }
             sessionError = error.localizedDescription
             return false
+        }
+    }
+
+    func removeConfirmedSessions(_ ids: Set<String>, projectID: String, database: URL) {
+        guard databaseURL == database, !ids.isEmpty else { return }
+        for id in ids where nativeDrafts[id]?.projectID == projectID { nativeDrafts[id] = nil; unconfirmedDraftDeletions[id] = nil }
+        recentSessions.removeAll { $0.projectID == projectID && ids.contains($0.id) }
+        guard activeProjectID == projectID else { return }
+        navigationGeneration = UUID(); sessionsLoading = false
+        sessions.removeAll { ids.contains($0.id) }
+        if let id = activeSessionID, ids.contains(id) {
+            nativeModels[database]?.pause()
+            activeSessionID = nil
+            transcriptGeneration = UUID()
+            messages = []; nextBeforeSeq = nil; transcriptLoading = false; sessionError = nil
+        }
+    }
+
+    func noteUnconfirmedDeletion(_ session: BrowserSession?, database: URL) {
+        guard databaseURL == database, let session, nativeDrafts[session.id]?.projectID == session.projectID else { return }
+        unconfirmedDraftDeletions[session.id] = session.projectID
+    }
+
+    private func reconcileDraftDeletions(projectID: String, generation: UUID) async throws {
+        for (id, project) in unconfirmedDraftDeletions where project == projectID {
+            let value = try await projectTransport().invoke("native_conversation_exists", args: ["session_id": .string(id)], projectID: projectID)
+            guard generation == navigationGeneration else { return }
+            guard case .bool(let exists) = value else { throw ProjectBrowserError.invalidResponse }
+            // A still-existing frame may be waiting for its running turn to
+            // stop. Keep checking on later explicit refreshes until absent.
+            if !exists { nativeDrafts[id] = nil; unconfirmedDraftDeletions[id] = nil }
         }
     }
 

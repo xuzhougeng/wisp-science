@@ -60,3 +60,13 @@ Mac 锁屏期间执行本地协议验收，**这不是 CUA 验收**。使用新�
 - 确认所有回合结束后重启隔离 QA helper（43274 → 43632），再次读取同一会话，历史消息/权限结果仍在，发送成功并走 `session/resume`。真实外部 ACP 产品的账户和实现未被测试。
 
 脚本与日志：`/tmp/wisp-parity-native-acp-host-smoke.py`、`/tmp/wisp-parity-native-acp-host-smoke.log`、`/tmp/wisp-parity-native-acp-host-resume.py`、`/tmp/wisp-parity-native-acp-host-resume.log`。peer 事件日志为隔离目录下 `qa-parity-fba149f10b-normal.jsonl` 与 `qa-parity-fba149f10b-startup-stall.jsonl`，仅记录方法和 ACP session ID，不记录 prompt 或 token。QA helper 保持可用供后续 CUA 连接；仍需实机验证输入、卡片操作、重命名入口及窗口恢复。
+
+## 置顶的真实宿主协议验收（20:49–20:50）
+
+仍未进行 CUA。标准 QA 构建及严格签名检查通过（`/tmp/wisp-parity-session-pin-build.log`），shell/helper 均为 1.14.0、revision `60eec4d8`、dirty=true。构建过程中开始了删除批次；此包未包含随后加入的 `native_conversation_exists`，因此只用于本节置顶验收，删除仍须稳定重建。
+
+- 对上述合成会话 `b6f70910-0a9c-44ef-8e2f-d3126da6688a` 设置置顶 true → false → true，每一步都通过单独的只读 `wisp-service` 查询确认保存状态，标题保持 `QA ACP protocol smoke`。
+- 使用不同 project ID 取消置顶，以及缺少 pinned / 字符串 pinned，均被拒绝，保存状态仍为 true。
+- 确认会话空闲后重启此次 QA helper（48350 → 48979），再次读取仍为 true；没有发送模型消息或修改用户数据。
+
+脚本 `/tmp/wisp-parity-native-pin-host-smoke.py`；日志 `/tmp/wisp-parity-native-pin-host-smoke.log`、`/tmp/wisp-parity-native-pin-host-restart.log`。置顶分区、按钮及导航保留仍需解锁后的 CUA 验收。
