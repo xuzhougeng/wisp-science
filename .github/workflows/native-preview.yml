@@ -16,6 +16,7 @@ jobs:
       - run: python3 scripts/sync_native_design.py --check
       - run: python3 scripts/sync_native_settings_contract.py --check
       - run: python3 scripts/test_sync_native_settings_contract.py
+      - run: python3 scripts/test_stamp_native_macos.py
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: swift test --package-path apps/macos --scratch-path target/native-macos/swift
       - run: bash scripts/build_native_macos.sh
