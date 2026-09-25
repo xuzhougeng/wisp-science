@@ -286,6 +286,13 @@ private struct ProjectCard: View {
                         Spacer(minLength: 0)
                     }
                     .font(WispDesign.font(size: 12)).foregroundStyle(color("text-faint"))
+                    if let status = NativeProjectSyncStatus(project) {
+                        Text(status.label).font(WispDesign.font(size: 11))
+                            .foregroundStyle(status.needsAttention ? color("clay-strong") : color("text-muted"))
+                            .help(NativeProjectSyncStatus.lastSaved(project) ?? status.label)
+                            .accessibilityLabel(status.label + (NativeProjectSyncStatus.lastSaved(project).map { "，" + $0 } ?? ""))
+                            .accessibilityIdentifier("project-sync-\(project.id)")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16).padding(.leading, 18)
                 .contentShape(Rectangle())

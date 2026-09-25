@@ -472,6 +472,14 @@ These commands are advertised in the native project capability family and
 execute without a WebView window selection. `wisp-service` remains read-only.
 WinUI retains its ZIP picker and `INativeProjectClient.ImportAsync` form.
 
+Project cards display the shared `folder_sync` state when present: saved,
+unpublished, a newer remote version, waiting for files, or conflict. Configured
+relay synchronization remains separately labeled. The last synchronization time
+is available through the status tooltip and VoiceOver label. Old payloads without
+`folder_sync` still decode; an unknown state is displayed explicitly and is never
+reported as saved. These indicators report the host snapshot and do not initiate
+network transfers or enable synchronization.
+
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
 

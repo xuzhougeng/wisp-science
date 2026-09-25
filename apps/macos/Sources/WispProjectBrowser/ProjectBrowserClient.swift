@@ -13,6 +13,7 @@ public struct ProjectSummary: Codable, Identifiable, Equatable, Sendable {
     public let needsYouCount: Int64
     public let syncConfigured: Bool
     public let lastSyncedAt: Int64?
+    public let folderSync: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, starred
@@ -24,6 +25,7 @@ public struct ProjectSummary: Codable, Identifiable, Equatable, Sendable {
         case needsYouCount = "needs_you_count"
         case syncConfigured = "sync_configured"
         case lastSyncedAt = "last_synced_at"
+        case folderSync = "folder_sync"
     }
 }
 
