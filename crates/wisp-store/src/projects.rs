@@ -1,4 +1,3 @@
-use super::sessions::SESSION_IS_LISTABLE_SQL;
 use super::Store;
 use anyhow::Result;
 use sqlx::Row;
@@ -170,7 +169,7 @@ impl Store {
              FROM projects p \
              WHERE p.id NOT LIKE 'scratch:%' \
              ORDER BY {starred_order}p.updated_at DESC, p.rowid DESC",
-            listable = SESSION_IS_LISTABLE_SQL,
+            listable = self.session_listable_sql().await?,
         );
         let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
         let mut out = vec![];

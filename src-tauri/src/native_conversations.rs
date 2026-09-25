@@ -23,7 +23,6 @@ impl Default for Conversations {
 }
 #[derive(Default)]
 struct Record {
-    acp_agent_id: Option<String>,
     sequence: u64,
     running: bool,
     stopping: bool,
@@ -247,13 +246,15 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         }
         let value = call(broker, project, "new_session", json!({})).await?;
         let id = value.as_str().ok_or("Invalid new conversation response")?;
-        broker
-            .conversations
-            .session(id)
-            .await?
-            .lock()
-            .await
-            .acp_agent_id = args.acp_agent_id;
+        if let Some(agent) = args.acp_agent_id {
+            broker
+                .app
+                .state::<crate::AppState>()
+                .store
+                .set_frame_acp_agent_selection(id, project, &agent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         return Ok(value);
     }
     let session = request
@@ -286,6 +287,8 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command.starts_with("native_conversation_panel_") {
         return crate::native_panels::dispatch(broker, request, project, session).await;
     }
+    let acp_agent_id =
+        crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
         "native_conversation_delete" => {
@@ -456,7 +459,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 .await
                 .map_err(|e| e.to_string())?;
             if binding.is_none() {
-                if let Some(agent) = &record.acp_agent_id {
+                if let Some(agent) = &acp_agent_id {
                     model = json!(format!("acp:{agent}"));
                 }
             }
@@ -521,7 +524,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         }
         "native_conversation_enqueue" => {
             let args: dto::SendRequest = decode(&request.args)?;
-            if record.lock().await.acp_agent_id.is_some()
+            if acp_agent_id.is_some()
                 && broker
                     .app
                     .state::<crate::AppState>()
@@ -583,7 +586,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let session = session.to_owned();
                 let message = args.message.clone();
                 let attachments = args.attachments.clone();
-                let acp_agent_id = guard.acp_agent_id.clone();
+                let acp_agent_id = acp_agent_id.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(call(
                         &broker,
@@ -660,7 +663,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             if record.running || running(broker, session).await {
                 return Err("Wait for the current turn before changing its model".into());
             }
-            if record.acp_agent_id.is_some()
+            if acp_agent_id.is_some()
                 || broker
                     .app
                     .state::<crate::AppState>()

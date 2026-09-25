@@ -210,6 +210,13 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
     }
     if attached_table_columns(tx, "frames")
         .await?
+        .contains("acp_agent_selection")
+    {
+        sqlx::query("UPDATE frames SET acp_agent_selection=(SELECT source.acp_agent_selection FROM transfer.frames source WHERE source.id=frames.id) WHERE project_id=?")
+            .bind(project_id).execute(&mut **tx).await?;
+    }
+    if attached_table_columns(tx, "frames")
+        .await?
         .contains("head_epoch")
     {
         sqlx::query(

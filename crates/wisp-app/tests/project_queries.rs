@@ -435,3 +435,34 @@ async fn native_command_open_never_migrates_legacy_databases() {
     );
     assert!(!directory.path().join("absent.sqlite").exists());
 }
+
+#[tokio::test]
+async fn native_sidebar_restores_an_unsent_acp_choice_without_marking_it_recent() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    for id in ["chosen", "ordinary-draft"] {
+        db.store
+            .create_frame(id, "p", "test", "http-default")
+            .await
+            .unwrap();
+    }
+    db.store
+        .set_frame_acp_agent_selection("chosen", "p", "offline-agent")
+        .await
+        .unwrap();
+    let reader = Store::open_read_only(&db._directory.path().join("queries.sqlite"))
+        .await
+        .unwrap();
+    let rows = wisp_app::projects::list_browser_sessions(&reader, Some("p"))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "chosen");
+    assert_eq!(rows[0].pinned, Some(false));
+    assert!(wisp_app::projects::list_browser_sessions(&reader, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(reader.get_acp_session("chosen").await.unwrap().is_none());
+    assert!(reader.load_messages("chosen").await.unwrap().is_empty());
+}

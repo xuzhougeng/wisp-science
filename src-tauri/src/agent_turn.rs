@@ -325,19 +325,12 @@ pub(crate) async fn send_message_inner(
         session_id.as_deref().filter(|id| !id.is_empty()),
     )
     .await?;
-    let saved_binding = match session_id.as_deref().filter(|id| !id.is_empty()) {
-        Some(id) => state
-            .store
-            .get_acp_session(id)
-            .await
-            .map_err(|error| error.to_string())?,
+    let saved_agent = match session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => acp::session_agent_id(&state.store, id).await?,
         None => None,
     };
-    if acp_agent_id
-        .as_deref()
-        .is_some_and(|id| !id.trim().is_empty())
-        || saved_binding.is_some()
-    {
+    let acp_agent_id = acp::resolve_agent_choice(acp_agent_id.as_deref(), saved_agent.as_deref())?;
+    if acp_agent_id.is_some() {
         if project_write_locked {
             return Err(
                 "exploration_mainline_frozen: ACP conversations cannot enforce the exploration read-only project lock; use the built-in Agent or finish the exploration round first."

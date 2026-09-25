@@ -90,3 +90,8 @@
 - `f4b279e8` clean QA 重建及严格签名通过；多选辅助功能 CUA 已验证：两行勾选各自 selected、未勾选活动行不 selected、退出恢复仅活动行 selected。
 - 同步冲突 CUA 已显示拦截及两种选择，使用同内容的合成 revision 分叉，仅验证界面路由，未运行真实双设备/网盘。随后 Mac 锁屏，确认/取消/解决仍待继续；fixture 保留。修复现场发现的错误文字省略，新增明暗渲染测试，Swift 全套 281 passed（`/tmp/wisp-parity-sync-error-wrap-full.log`），4 张图目视检查通过。最新运行包尚不含换行修复。
 - 为会话管理后的 UI/Tauri 改动启动新一轮 npm ci + WebView 全套（2 workers，`/tmp/wisp-parity-session-management-playwright.log`），仍在运行；不可用先前 870 项绿色代替此次结果。删除之后的稳定 Rust 全套待此轮结束后运行，以减少测试负载互扰。
+
+- ACP 首轮前选择持久化正在实现：新增可空 frames.acp_agent_selection 和幂等迁移；空的已选择/已连接会话纳入项目列表，普通未命名草稿仍隐藏，旧库只读查询不迁移。连接成功时在同一事务保存 binding 并清除待连接选择，拒绝不同 profile 的覆盖；native Record 不再保存唯一的选择副本。共享发送及模型读取复用持久选择，模型切换不能悄悄回退到 HTTP。项目快照导入导出和空会话复制保留选择，复制仍不携带外部 ACP session binding。
+- 首轮存储定向 8 项通过（`/tmp/wisp-parity-acp-choice-store-final.log`），覆盖宿主数据重开、旧库兼容、作用域拒绝、未发送消息/未伪造连接、连接前后可见性、同库及 workspace-owned 跨项目复制、项目导出导入。之后新增 profile 不匹配时事务回滚断言，须复测。存储全套、项目查询和 ACP 宿主测试依次运行中（`/tmp/wisp-parity-acp-choice-{store-full,app,tauri}.log`）；wasm、设计资源和设置契约检查已通过。当前源码未完成稳定宿主重建和重启前后真实协议 smoke，不能宣称此项闭环完成。
+
+- 本轮 WebView 全套完成：870 passed、2 skipped、退出 0（20.3 分钟，`/tmp/wisp-parity-session-management-playwright.log`）；已恢复测试生成的 5 张研究历程图片。ACP 选择持久化的 Store 全套 211 passed；之后补充的 profile 冲突回滚及跨库 move 断言定向 8 passed（`/tmp/wisp-parity-acp-choice-guard.log`）；项目查询 9 passed，ACP 宿主定向 19 passed（包含共享发送选择恢复测试），wasm/格式/资源同步检查通过。真实宿主重启 smoke 尚待新包，不将上述测试标记为 CUA 完成。

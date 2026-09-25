@@ -215,6 +215,37 @@ pub(crate) async fn list_acp_agents(
     Ok(profiles(&state.store).await)
 }
 
+/// Persisted choice or established connection, without launching a process.
+pub(crate) async fn session_agent_id(
+    store: &wisp_store::Store,
+    frame: &str,
+) -> Result<Option<String>, String> {
+    if let Some(binding) = store
+        .get_acp_session(frame)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(Some(binding.agent_profile_id));
+    }
+    store
+        .frame_acp_agent_selection(frame)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub(crate) fn resolve_agent_choice(
+    requested: Option<&str>,
+    saved: Option<&str>,
+) -> Result<Option<String>, String> {
+    let requested = requested.filter(|id| !id.trim().is_empty());
+    if let (Some(requested), Some(saved)) = (requested, saved) {
+        if requested != saved {
+            return Err("The ACP Agent selection changed; start a new conversation.".into());
+        }
+    }
+    Ok(saved.or(requested).map(str::to_owned))
+}
+
 #[tauri::command]
 pub(crate) async fn get_acp_session_agent(
     state: State<'_, AppState>,
@@ -232,12 +263,7 @@ pub(crate) async fn get_acp_session_agent(
     {
         return Err("Session does not belong to the active project.".into());
     }
-    Ok(state
-        .store
-        .get_acp_session(&frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .map(|binding| binding.agent_profile_id))
+    session_agent_id(&state.store, &frame_id).await
 }
 
 /// The mode controls need `availableModes`, but nothing launches the agent until
@@ -2032,6 +2058,34 @@ async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_acp_choice_never_falls_back_to_http_or_changes_profiles() {
+        assert_eq!(
+            resolve_agent_choice(None, Some("saved"))
+                .unwrap()
+                .as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            resolve_agent_choice(Some(""), Some("saved"))
+                .unwrap()
+                .as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            resolve_agent_choice(Some("saved"), Some("saved"))
+                .unwrap()
+                .as_deref(),
+            Some("saved")
+        );
+        assert!(resolve_agent_choice(Some("other"), Some("saved")).is_err());
+        assert_eq!(
+            resolve_agent_choice(Some("new"), None).unwrap().as_deref(),
+            Some("new")
+        );
+        assert_eq!(resolve_agent_choice(None, None).unwrap(), None);
+    }
 
     fn permission_option(id: &str, kind: AcpPermissionKind) -> wisp_acp::AcpPermissionOption {
         wisp_acp::AcpPermissionOption {

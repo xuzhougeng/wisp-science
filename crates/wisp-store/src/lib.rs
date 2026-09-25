@@ -188,6 +188,7 @@ const PROJECT_STARS_MIGRATION: &str = "0056_project_stars";
 const RESEARCH_ARCHIVES_MIGRATION: &str = "0057_research_archives";
 const CONTEXT_EPOCHS_MIGRATION: &str = "0058_context_epochs";
 const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
+const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
 
 #[derive(Clone)]
 pub struct Store {
@@ -804,6 +805,12 @@ impl Store {
             Self::record_migration(pool, PROJECT_STARS_MIGRATION).await?;
         }
 
+        if !Self::migration_applied(pool, ACP_AGENT_SELECTION_MIGRATION).await? {
+            Self::add_columns_if_missing(pool, "frames", &[("acp_agent_selection", "TEXT")])
+                .await?;
+            Self::record_migration(pool, ACP_AGENT_SELECTION_MIGRATION).await?;
+        }
+
         // Re-apply additive DDL even when a migration marker is already
         // recorded. Jumping many releases can leave a table/column that was
         // later folded into 0000_init.sql (or into an already-shipped apply_*
@@ -866,6 +873,7 @@ impl Store {
                 ("branched_from", "TEXT"),
                 ("reasoning_effort", "TEXT"),
                 ("service_tier", "TEXT"),
+                ("acp_agent_selection", "TEXT"),
                 ("branch_point_user_index", "INTEGER"),
                 ("branch_point_kind", "TEXT"),
                 ("exploration_id", "TEXT"),

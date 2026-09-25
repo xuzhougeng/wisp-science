@@ -147,9 +147,14 @@ The additive `acp_agent_id` snapshot field identifies a persisted ACP binding;
 a provisional choice is shown as `acp:<profile id>` until the first connection.
 Follow-ups cannot be queued before that binding exists. An ACP conversation cannot
 switch to an HTTP model; create a new conversation for that change. The provisional
-choice before the first turn currently lasts only for the host lifetime, like
-unsent drafts; established ACP bindings are persisted. No external history is
-injected into a new ACP session.
+choice is persisted separately on the frame and makes an otherwise empty draft
+visible in the project sidebar after restart. It does not create a user message
+or claim that ACP has connected, and it does not save unsent message text. A
+successful connection atomically replaces the provisional choice with the actual
+ACP binding. Both clients route the restored choice through ACP; a missing agent
+profile produces an error instead of falling back to an HTTP model. Pending
+choices survive project export/import and empty conversation copy/move; external
+session bindings and histories are not injected into a new ACP session.
 
 For an offline, isolated UI smoke, configure a QA-only ACP profile using Python
 and `scripts/qa_native_acp.py --workspace /absolute/qa/root --log /absolute/qa/log`.

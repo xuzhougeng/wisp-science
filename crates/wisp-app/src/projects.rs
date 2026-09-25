@@ -92,7 +92,7 @@ pub async fn project_status_counts(
 }
 
 /// The home page uses the same five recent sessions as the WebView. A project
-/// scope returns its saved sidebar sessions, including named drafts.
+/// scope returns its saved sidebar sessions, including named and ACP-selected drafts.
 /// This read-only snapshot deliberately does not claim live runtime activity.
 pub async fn list_browser_sessions(
     store: &Store,
