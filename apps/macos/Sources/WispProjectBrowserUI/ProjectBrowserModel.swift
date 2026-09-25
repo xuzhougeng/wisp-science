@@ -220,6 +220,13 @@ public final class ProjectBrowserModel: ObservableObject {
         if !older { messages = []; nextBeforeSeq = nil }
         transcriptLoading = true
         sessionError = nil
+        // Untitled native drafts are deliberately absent from the saved-history
+        // query. Their live transcript is owned by NativeConversationModel.
+        // Once listSessions returns the row, openProject removes this marker.
+        if nativeDrafts[id] != nil {
+            transcriptLoading = false
+            return
+        }
         do {
             let page = try await client.transcript(databaseURL: databaseURL, projectID: projectID, sessionID: id, beforeSeq: cursor)
             guard generation == transcriptGeneration else { return }

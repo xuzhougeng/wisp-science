@@ -22,6 +22,7 @@ private actor NavigationClient: ProjectBrowserQuerying {
         """.utf8))
     }
     func transcript(databaseURL: URL, projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> TranscriptPage {
+        guard ["s1", "s2"].contains(sessionID) else { throw ProjectBrowserError.service("Session not found in project") }
         let sequence = paginated && beforeSeq == nil ? 21 : 1
         let data = Data("[{\"seq\":\(sequence),\"role\":\"user\",\"text\":\"\(sessionID)\",\"tool_name\":null}]".utf8)
         return TranscriptPage(messages: try JSONDecoder().decode([BrowserMessage].self, from: data), nextBeforeSeq: paginated && beforeSeq == nil ? 21 : nil)
@@ -122,6 +123,9 @@ final class ProjectNavigationTests: XCTestCase {
         await model.openProject("p")
         await model.openNativeDraft("draft", projectID: "p", database: database, sourceSession: model.activeSessionID)
         XCTAssertEqual(model.activeSessionID, "draft")
+        XCTAssertNil(model.sessionError)
+        XCTAssertTrue(model.messages.isEmpty)
+        XCTAssertFalse(model.transcriptLoading)
         model.goHome()
         await model.openProject("p", sessionID: "draft")
         XCTAssertEqual(model.activeSessionID, "draft"); XCTAssertNil(model.sessionError)

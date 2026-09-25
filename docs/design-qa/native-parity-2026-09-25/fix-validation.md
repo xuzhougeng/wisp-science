@@ -36,3 +36,14 @@
 2. 不移动焦点立即 Escape，只关闭恢复预览，父级导入选项保留。读取源目录确认预览没有创建 `.wisp/project.toml`。
 3. 再次预览，命名“CUA 历史恢复验收”并确认；应用打开新会话，显示合成用户问题及“样本 A 计数为 12”的回答，工作区路径与选定目录一致。
 4. 恢复前后 `session.json` 的 SHA-256 相同。没有模型调用、远程任务或源归档覆盖。
+
+## ACP 创建与启动边界（19:31–19:40）
+
+构建为 `5719574aa008d788ca992923b03c5502864c5045` / dirty=false，1.14.0；标准 QA 构建与严格签名验证通过，日志 `/tmp/wisp-parity-acp-turn-build.log`。
+
+- 在 QA 设置中添加 `QA Native ACP`，命令为本机 Python，脚本 `scripts/qa_native_acp.py`，限定目录为上述历史恢复测试目录，事件日志为 `/private/tmp/wisp-parity-fixes-20260925/acp-native-events.jsonl`。没有真实模型、网络或研究数据操作。配置保存曾长时间显示处理中；只读 SQLite 检查确认已保存，因此没有重复提交。随后 UI 回到列表显示“已保存”和两个 ACP 配置。此延迟仍需复验，不认定原因。
+- 在原 HTTP 历史会话输入合成草稿，模型菜单可见 `ACP · 新会话` 及 `QA Native ACP`；选择后出现新的空会话 `51e67984-2fd1-42ff-982e-f923f383f425`，模型标签正确。尚未切回原会话核验草稿，因此不把自动化的草稿保持测试算作本次 CUA 结论。
+- 新建后显示 `Session not found in project`。定位为原生草稿调用旧 saved-history 查询：未命名空会话原本不在该列表中。修复让已知原生草稿由实时 conversation snapshot 读取，导航回归 8 项通过。此修复尚未重建 CUA。
+- Enter 发送 `hello native ACP smoke` 后显示处理中；ACP Python 子进程启动，但没有创建事件日志或保存 ACP binding。进程采样显示 Python 阻塞于启动导入阶段的 `open` 系统调用（`/tmp/wisp-parity-acp-peer-sample.txt`），尚不能认定为协议错误，也未确认文件访问等待的根因。
+- 点击 Stop 后最终显示“正在停止…”，未自行结束。源码确认 ACP 初始化回复前尚无 `AcpRuntime` 可供 `cancel_frame` 关闭，启动 future 也未观察会话取消标记。已开始修复初始化取消与 actor drop 清理；未以此失败场景宣称发送/停止通过。
+- 退出 QA 壳后，核对 PID/命令，终止此次隔离 host 和合成 Python 子进程。没有终止其他应用或 Rust 全量测试。下一次需重新构建并验收普通回复、权限选择、停止、已绑定会话重启恢复；脚本可复制到同一 `/private/tmp` QA 目录，避免验收依赖仓库脚本所在目录的访问状态。
