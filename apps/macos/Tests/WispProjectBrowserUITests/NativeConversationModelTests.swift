@@ -20,6 +20,8 @@ private actor ConversationFake: NativeConversationQuerying {
     var failRead = false
     var held: CheckedContinuation<ConversationSnapshot, Error>?
     var holdRead = false
+    var heldPreferences: CheckedContinuation<SettingsValue, Never>?
+    var holdPreferences = false
     func configure(_ values: [ConversationSnapshot], failSend: Bool = false, failRead: Bool = false) { reads = values; self.failSend = failSend; self.failRead = failRead }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot {
         if holdRead { holdRead = false; return try await withCheckedThrowingContinuation { held = $0 } }
@@ -27,7 +29,10 @@ private actor ConversationFake: NativeConversationQuerying {
         return reads.count > 1 ? reads.removeFirst() : try reads.first ?? fixture(sessionID)
     }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
-        if command == "get_appearance_prefs" { return .null }
+        if command == "get_appearance_prefs" {
+            if holdPreferences { holdPreferences = false; return await withCheckedContinuation { heldPreferences = $0 } }
+            return .null
+        }
         if command == "list_models" { return .array([]) }
         writes.append((command, args, projectID))
         if failSend { throw ProjectBrowserError.service("response lost") }
@@ -39,10 +44,26 @@ private actor ConversationFake: NativeConversationQuerying {
     func seenCount() -> Int { writes.filter { $0.0 == "native_conversation_seen" }.count }
     func lastArgs() -> [String: SettingsValue] { writes.last?.1 ?? [:] }
     func hold() { holdRead = true }
+    func holdInputPreferences() { holdPreferences = true }
+    func isHoldingPreferences() -> Bool { heldPreferences != nil }
+    func finishPreferences() { heldPreferences?.resume(returning: .null); heldPreferences = nil }
     func isHeld() -> Bool { held != nil }
     func finish(_ value: ConversationSnapshot) { held?.resume(returning: value); held = nil }
 }
 final class NativeConversationModelTests: XCTestCase {
+    @MainActor func testComposerWaitsForSavedInputPolicyBeforeAcceptingMessages() async {
+        let client = ConversationFake(); let model = NativeConversationModel(client: client)
+        await client.holdInputPreferences()
+        let opening = Task { await model.open(project: "project-a", session: "session-a") }
+        while !(await client.isHoldingPreferences()) { await Task.yield() }
+        model.draft = "not yet ready"
+        XCTAssertFalse(model.canSend)
+        await model.send()
+        let before = await client.count(); XCTAssertEqual(before, 0)
+        await client.finishPreferences(); await opening.value
+        XCTAssertTrue(model.canSend)
+        model.pause()
+    }
     @MainActor func testSavedExcerptSelectsRenderedMessageAndDoesNotClearNewerHighlight() async throws {
         let client = ConversationFake(); let model = NativeConversationModel(client: client)
         await client.configure([try fixture()]); await model.open(project: "project-a", session: "session-a")

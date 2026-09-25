@@ -86,6 +86,11 @@ final class NativeConversationModel: ObservableObject {
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
         connectionError = nil; loading = true; busy = false
         let current = generation
+        do {
+            let prefs = try await client.invoke("get_appearance_prefs", args: [:], projectID: project)
+            if generation == current { WispDesign.apply(prefs) }
+        } catch { if generation == current { operationError = "未能读取输入偏好：\(error.localizedDescription)" } }
+        guard generation == current else { return }
         await refresh()
         guard generation == current else { return }
         loading = false
@@ -93,11 +98,6 @@ final class NativeConversationModel: ObservableObject {
             do { _ = try await client.invoke("native_conversation_seen", args: ["session_id": .string(session)], projectID: project) }
             catch { if generation == current { operationError = "未能标记已查看：\(error.localizedDescription)" } }
         }
-        guard generation == current else { return }
-        do {
-            let prefs = try await client.invoke("get_appearance_prefs", args: [:], projectID: project)
-            if generation == current { WispDesign.apply(prefs) }
-        } catch { if generation == current { operationError = "未能读取输入偏好：\(error.localizedDescription)" } }
         guard generation == current else { return }
         do {
             let rows = try await client.invoke("list_models", args: [:], projectID: project).array.filter { !$0["use_for_image_generation"].bool && !$0["use_for_video_generation"].bool }
