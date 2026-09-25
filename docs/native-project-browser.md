@@ -461,12 +461,22 @@ errors without inventing a new project or falling back to ZIP import.
 
 **导入 ZIP 归档** uses the existing `native_project_import` path: it verifies the
 archive, places the workspace in a new directory next to it, and registers the
-project. Canceling either picker does not call the host. Escape closes the
+project. Canceling a picker does not call the host. Escape closes the
 system picker before the options sheet; immediate Escape in the options sheet
 closes only that sheet. In-flight imports disable duplicate submission and
 switching databases. Confirmed imports refresh and open the returned project;
 failed or ambiguous replies preserve the options and error, without automatic
 retry. Progress is a busy state rather than a streamed byte counter.
+
+**从旧工作区恢复历史** first calls `native_project_recovery_preview` to scan
+`.wisp/history` without registering a project. A nested sheet shows recoverable
+sessions, messages, dates and invalid/duplicate archive counts, and allows editing
+the project name. Only confirmation calls `native_project_recover_workspace`;
+the host rescans and uses the shared WebView recovery path. This restores archived
+messages, not a complete project database, and preserves source archives. Empty
+names or previews with no recoverable sessions cannot be submitted. Immediate
+Escape closes only the preview and leaves import options open. A lost response
+preserves the preview and asks the user to check the project list, without retry.
 
 These commands are advertised in the native project capability family and
 execute without a WebView window selection. `wisp-service` remains read-only.

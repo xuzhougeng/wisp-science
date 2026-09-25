@@ -48,6 +48,47 @@ pub(crate) async fn execute(
     }
 }
 
+pub(crate) async fn execute_recovery(
+    store: &wisp_store::Store,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    if request
+        .project_id
+        .as_deref()
+        .is_some_and(|id| !id.trim().is_empty())
+    {
+        return Err("Workspace recovery does not use a project id".into());
+    }
+    match request.command.as_str() {
+        "native_project_recovery_preview" => {
+            let input: wisp_dto::native_projects::RecoveryPreviewRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            serde_json::to_value(
+                crate::workspace_session_recovery::preview_workspace_history(
+                    store,
+                    &input.workspace_dir,
+                )
+                .await?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        "native_project_recover_workspace" => {
+            let input: wisp_dto::native_projects::RecoverWorkspaceRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            serde_json::to_value(
+                crate::workspace_session_recovery::recover_workspace_history(
+                    store,
+                    &input.workspace_dir,
+                    &input.name,
+                )
+                .await?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        _ => Err("Unsupported workspace recovery command".into()),
+    }
+}
+
 pub(crate) async fn execute_folders(
     store: &wisp_store::Store,
     request: &Request,
@@ -352,6 +393,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_preview_is_read_only_and_confirmation_preserves_source_archives() {
+        let fixture = Fixture::open().await;
+        let workspace = fixture.workspace("orphaned");
+        std::fs::create_dir_all(workspace.join(".wisp/history")).unwrap();
+        let archive = workspace.join(".wisp/history/session.json");
+        let original = serde_json::to_vec(&vec![
+            wisp_llm::Message::user("source question"),
+            wisp_llm::Message::assistant("source answer"),
+        ])
+        .unwrap();
+        std::fs::write(&archive, &original).unwrap();
+        std::fs::write(workspace.join(".wisp/history/broken.json"), b"invalid").unwrap();
+        let mut call = request(None, json!({"workspace_dir": workspace}));
+        call.command = "native_project_recovery_preview".into();
+        let preview = execute_recovery(&fixture.store, &call).await.unwrap();
+        assert_eq!(preview["recoverable_session_count"], 1);
+        assert_eq!(preview["message_count"], 2);
+        assert_eq!(preview["invalid_archive_count"], 1);
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        assert!(!workspace.join(".wisp/project.toml").exists());
+        call.command = "native_project_recover_workspace".into();
+        call.args["name"] = json!("");
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        call.args["name"] = json!("Recovered");
+        let result = execute_recovery(&fixture.store, &call).await.unwrap();
+        let id = result["project_id"].as_str().unwrap();
+        assert_eq!(fixture.store.list_sessions(id).await.unwrap().len(), 1);
+        assert_eq!(result["recovered_session_count"], 1);
+        assert_eq!(std::fs::read(&archive).unwrap(), original);
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert_eq!(fixture.store.list_projects().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn recovery_refuses_project_scope_or_unrecognized_arguments() {
+        let fixture = Fixture::open().await;
+        let mut call = request(Some("other"), json!({"workspace_dir": fixture.root}));
+        call.command = "native_project_recovery_preview".into();
+        assert!(execute_recovery(&fixture.store, &call)
+            .await
+            .unwrap_err()
+            .contains("does not use a project id"));
+        call.project_id = None;
+        call.args["extra"] = json!(true);
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn directory_import_opens_workspace_owned_and_legacy_packages_in_place() {
         let source = Fixture::open().await;
         let workspace = source.workspace("study");
@@ -375,7 +466,11 @@ mod tests {
             .extract(&legacy)
             .unwrap();
         for folder in [&workspace, &legacy] {
-            let target = Fixture::open().await;
+            let mut target = Fixture::open().await;
+            target.store =
+                wisp_store::Store::open_application(&target.workspace("application.sqlite"))
+                    .await
+                    .unwrap();
             let mut call = request(None, json!({"directory_path": folder}));
             call.command = "native_project_import_directory".into();
             let imported = execute(&target.store, &target.root, &call).await.unwrap();

@@ -142,6 +142,12 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        if matches!(
+            request.command.as_str(),
+            "native_project_recovery_preview" | "native_project_recover_workspace"
+        ) {
+            return crate::native_projects::execute_recovery(&state.store, request).await;
+        }
         if wisp_dto::native_projects::returns_project_summary(&request.command) {
             let id =
                 crate::native_projects::execute(&state.store, &state.app_data, request).await?;

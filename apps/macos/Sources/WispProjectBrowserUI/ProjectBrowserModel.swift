@@ -13,6 +13,8 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
     @Published var importOptionsPresented = false
+    @Published var recoveryPreview: NativeWorkspaceRecoveryPreview?
+    @Published var recoveryName = ""
     let library = NativeLibraryModel()
     let calendar = NativeCalendarModel()
     let journey = NativeJourneyModel()
@@ -343,6 +345,52 @@ public final class ProjectBrowserModel: ObservableObject {
         guard panel.runModal() == .OK else { return }
         let url = panel.url
         Task { await importChosenDirectory(url) }
+    }
+
+    func chooseRecoveryWorkspace() {
+        guard !importBusy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
+        panel.prompt = "查看可恢复历史"
+        panel.message = "选择包含 .wisp/history 归档的旧工作区。先读取预览，确认后才恢复消息。"
+        guard panel.runModal() == .OK else { return }
+        let url = panel.url
+        Task { await previewWorkspaceRecovery(url) }
+    }
+
+    func previewWorkspaceRecovery(_ url: URL?) async {
+        guard let url, !importBusy else { return }
+        let database = databaseURL
+        importBusy = true; importError = nil
+        defer { importBusy = false }
+        do {
+            let value = try await projectTransport().invoke(NativeProjectCommand.recoveryPreview, args: ["workspace_dir": .string(url.path)], projectID: nil)
+            let preview = try JSONDecoder().decode(NativeWorkspaceRecoveryPreview.self, from: JSONEncoder().encode(value))
+            guard database == databaseURL else { return }
+            recoveryName = preview.suggested_name; recoveryPreview = preview
+        } catch {
+            if database == databaseURL { importError = "未能读取恢复预览：\n" + error.localizedDescription }
+        }
+    }
+
+    func recoverWorkspace() async {
+        guard let preview = recoveryPreview, !importBusy, preview.recoverable_session_count > 0,
+              !recoveryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let database = databaseURL
+        importBusy = true; importError = nil
+        defer { importBusy = false }
+        do {
+            let value = try await projectTransport().invoke(NativeProjectCommand.recoverWorkspace,
+                args: ["workspace_dir": .string(preview.workspace_dir), "name": .string(recoveryName)], projectID: nil)
+            let result = try JSONDecoder().decode(NativeWorkspaceRecoveryResult.self, from: JSONEncoder().encode(value))
+            guard !result.project_id.isEmpty else { throw ProjectBrowserError.invalidResponse }
+            guard database == databaseURL else { return }
+            recoveryPreview = nil; recoveryName = ""; importOptionsPresented = false
+            await refresh()
+            await openProject(result.project_id)
+        } catch {
+            if database == databaseURL { importError = "恢复结果尚未确认。请刷新项目列表核对；不会自动重试。\n" + error.localizedDescription }
+        }
     }
 
     func prepareIssueReport() async {

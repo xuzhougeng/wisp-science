@@ -9,6 +9,8 @@ pub const COMMANDS: &[&str] = &[
     "native_project_create",
     "native_project_import",
     "native_project_import_directory",
+    "native_project_recovery_preview",
+    "native_project_recover_workspace",
     "native_project_folders",
     "native_project_folder_create",
     "native_project_folder_rename",
@@ -46,6 +48,19 @@ pub struct ImportDirectoryRequest {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct RecoveryPreviewRequest {
+    pub workspace_dir: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverWorkspaceRequest {
+    pub workspace_dir: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FolderCreateRequest {
     pub name: String,
 }
@@ -73,6 +88,33 @@ pub struct ProjectFolder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_contract_reuses_shared_preview_and_result_shapes() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-projects/v1/recovery.json"
+        ))
+        .unwrap();
+        for key in ["preview_request", "recover_request"] {
+            assert!(COMMANDS.contains(&fixture[key]["command"].as_str().unwrap()));
+            assert!(fixture[key]["project_id"].is_null());
+        }
+        let preview: crate::WorkspaceSessionRecoveryPreview =
+            serde_json::from_value(fixture["preview_result"].clone()).unwrap();
+        let result: crate::WorkspaceSessionRecoveryResult =
+            serde_json::from_value(fixture["recover_result"].clone()).unwrap();
+        assert_eq!(
+            preview.recoverable_session_count,
+            result.recovered_session_count
+        );
+        assert_eq!(preview.message_count, result.message_count);
+        let _: RecoveryPreviewRequest =
+            serde_json::from_value(fixture["preview_request"]["args"].clone()).unwrap();
+        let mut args = fixture["recover_request"]["args"].clone();
+        let _: RecoverWorkspaceRequest = serde_json::from_value(args.clone()).unwrap();
+        args["active_window"] = serde_json::json!("main");
+        assert!(serde_json::from_value::<RecoverWorkspaceRequest>(args).is_err());
+    }
 
     #[test]
     fn directory_import_uses_an_explicit_path_without_window_scope() {

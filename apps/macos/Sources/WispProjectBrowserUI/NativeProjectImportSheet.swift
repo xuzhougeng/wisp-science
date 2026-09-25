@@ -23,11 +23,23 @@ struct NativeProjectImportSheet: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }.disabled(model.importBusy)
+            Button(action: model.chooseRecoveryWorkspace) {
+                HStack(alignment: .top, spacing: 12) {
+                    WispIcon(name: "timeline")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("从旧工作区恢复历史").fontWeight(.semibold)
+                        Text("预览历史归档中的消息，再确认恢复到新会话。").font(.caption).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.disabled(model.importBusy)
             if model.importBusy { HStack { ProgressView().controlSize(.small); Text("正在导入…") } }
             if let error = model.importError { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             HStack { Spacer(); Button("取消") { model.importOptionsPresented = false }.disabled(model.importBusy) }
         }.buttonStyle(WispButtonStyle()).padding(24).frame(width: 470)
-            .interactiveDismissDisabled(model.importBusy)
-            .background(NativeSettingsEscape(enabled: !model.importBusy) { model.importOptionsPresented = false })
+            .interactiveDismissDisabled(model.importBusy || model.recoveryPreview != nil)
+            .background(NativeSettingsEscape(enabled: !model.importBusy && model.recoveryPreview == nil) { model.importOptionsPresented = false })
+            .sheet(item: $model.recoveryPreview) { preview in
+                NativeWorkspaceRecoverySheet(model: model, preview: preview)
+            }
     }
 }

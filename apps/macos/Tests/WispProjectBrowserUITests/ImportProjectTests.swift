@@ -37,6 +37,10 @@ private actor ImportTransport: NativeSettingsQuerying {
         default:
             var root = URL(fileURLWithPath: #filePath)
             for _ in 0..<5 { root.deleteLastPathComponent() }
+            if command == NativeProjectCommand.recoveryPreview || command == NativeProjectCommand.recoverWorkspace {
+                let fixture = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-projects/v1/recovery.json")))
+                return fixture[command == NativeProjectCommand.recoveryPreview ? "preview_result" : "recover_result"]
+            }
             let fixture = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-projects/v1/import.json")))
             return fixture["result"]
         }
@@ -44,6 +48,87 @@ private actor ImportTransport: NativeSettingsQuerying {
 }
 
 final class ImportProjectTests: XCTestCase {
+    private func recoveryContract() throws -> SettingsValue {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        return try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-projects/v1/recovery.json")))
+    }
+
+    @MainActor func testRecoveryPreviewIsReadOnlyAndConfirmationUsesSharedContractOnce() async throws {
+        let contract = try recoveryContract()
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        await model.previewWorkspaceRecovery(nil)
+        let canceled = await transport.callCount(); XCTAssertEqual(canceled, 0)
+        await model.previewWorkspaceRecovery(URL(fileURLWithPath: contract["preview_request"]["args"]["workspace_dir"].string))
+        let previewCall = await transport.lastCall()
+        XCTAssertEqual(previewCall.command, contract["preview_request"]["command"].string)
+        XCTAssertEqual(SettingsValue.object(previewCall.args), contract["preview_request"]["args"])
+        XCTAssertNil(previewCall.projectID)
+        XCTAssertNil(model.activeProjectID)
+        XCTAssertTrue(model.importOptionsPresented)
+        XCTAssertEqual(model.recoveryPreview?.recoverable_session_count, 1)
+        XCTAssertEqual(model.recoveryPreview?.message_count, 4)
+        XCTAssertEqual(model.recoveryPreview?.invalid_archive_count, 1)
+        XCTAssertEqual(model.recoveryPreview?.duplicate_archive_count, 1)
+        XCTAssertEqual(model.recoveryName, "Old study")
+        model.recoveryName = "  "
+        await model.recoverWorkspace()
+        let blank = await transport.callCount(); XCTAssertEqual(blank, 1)
+        model.recoveryName = contract["recover_request"]["args"]["name"].string
+        await model.recoverWorkspace()
+        let recoverCall = await transport.lastCall()
+        XCTAssertEqual(recoverCall.command, contract["recover_request"]["command"].string)
+        XCTAssertEqual(SettingsValue.object(recoverCall.args), contract["recover_request"]["args"])
+        XCTAssertNil(recoverCall.projectID)
+        XCTAssertEqual(model.activeProjectID, contract["recover_result"]["project_id"].string)
+        XCTAssertNil(model.recoveryPreview)
+        XCTAssertFalse(model.importOptionsPresented)
+        await model.recoverWorkspace()
+        let calls = await transport.callCount(); XCTAssertEqual(calls, 2)
+    }
+
+    @MainActor func testRecoveryLostReplyPreservesPreviewWithoutAutomaticRetry() async {
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        await model.previewWorkspaceRecovery(URL(fileURLWithPath: "/tmp/history"))
+        await transport.setMode("lost")
+        await model.recoverWorkspace()
+        XCTAssertNotNil(model.recoveryPreview)
+        XCTAssertTrue(model.importOptionsPresented)
+        XCTAssertEqual(model.recoveryName, "Old study")
+        XCTAssertTrue(model.importError?.contains("不会自动重试") == true)
+        XCTAssertNil(model.activeProjectID)
+        XCTAssertFalse(model.importBusy)
+        await Task.yield()
+        let calls = await transport.callCount(); XCTAssertEqual(calls, 2)
+    }
+
+    @MainActor func testImmediateEscapeFromRecoveryKeepsImportOptionsOpen() async throws {
+        let transport = ImportTransport()
+        let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        model.importOptionsPresented = true
+        await model.previewWorkspaceRecovery(URL(fileURLWithPath: "/tmp/history"))
+        let preview = try XCTUnwrap(model.recoveryPreview)
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; defer { window.close() }
+        let parentView = NSView(frame: window.contentView!.bounds); window.contentView = parentView
+        let parent = NativeSettingsEscape.Coordinator(enabled: true) { model.importOptionsPresented = false }
+        parent.view = parentView; parent.install(); defer { parent.remove() }
+        let hosted = NSHostingView(rootView: NativeWorkspaceRecoverySheet(model: model, preview: preview))
+        hosted.frame = parentView.bounds; parentView.addSubview(hosted); hosted.layoutSubtreeIfNeeded()
+        let focus = window.firstResponder
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        XCTAssertTrue(NativeEscapeStack.shared.consume(escape, keyWindow: window, modalWindow: nil))
+        XCTAssertNil(model.recoveryPreview)
+        XCTAssertTrue(model.importOptionsPresented)
+        XCTAssertTrue(window.firstResponder === focus)
+        let calls = await transport.callCount(); XCTAssertEqual(calls, 1)
+    }
+
     @MainActor func testCancelingThePickerDoesNotCallTheHost() async {
         let transport = ImportTransport()
         let model = ProjectBrowserModel(client: EmptyImportList(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
