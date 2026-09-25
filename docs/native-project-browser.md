@@ -54,6 +54,14 @@ bash scripts/build_native_macos.sh
 open "target/native-macos/Wisp Science Preview.app"
 ```
 
+Both the SwiftUI shell and embedded host are stamped from the product version in
+`src-tauri/tauri.conf.json`. Their plists also contain `WispSourceRevision` and
+`WispSourceDirty`, so a local edited preview is distinguishable from a clean
+commit. `scripts/test_stamp_native_macos.py` verifies the metadata and identifier
+preservation. The native shell uses one workspace scene: closing the last window
+keeps the app alive; opening it again from Finder/Dock restores a workspace with
+the same project model, without launching another host.
+
 This builds a debug app for the current architecture, bundles `wisp-service`, and
 applies an ad-hoc local signature. It is a local preview, not a notarized release
 or universal installer. Its bundle ID is `science.wisp-science.native-preview`;
@@ -264,8 +272,12 @@ Manual smoke steps:
 
 The preview aligns the home/workspace shell and includes native settings, project
 creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, scratch chat, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, 论文证据, 能力, and 反馈问题 still require their native services.
-Those remaining action slots are visible but explicitly disabled in the preview.
+The macOS workspace additionally connects terminal/files, Notebook, Highlights,
+Provenance, SideChat, contexts, Runs and Agent panels. Their implementation does
+not imply complete parity behind every entry: ACP main conversations, full
+publication editing and the project-folder workflow are tracked in the
+[2026-09-25 parity audit](superpowers/plans/2026-09-25-macos-native-parity-iteration.md)
+and [repair progress](superpowers/plans/2026-09-25-macos-native-parity-progress.md).
 
 The sidebar **新建分组** button creates a session group for the explicit project.
 Sessions can be sorted by recent or name, grouped by folder or date, and
