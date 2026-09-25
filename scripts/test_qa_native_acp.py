@@ -7,6 +7,17 @@ import unittest
 
 
 class NativeAcpFixtureTests(unittest.TestCase):
+    def test_startup_stall_records_readiness_without_replying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve(); log = root / "events.jsonl"
+            completed = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("qa_native_acp.py")), "--workspace", str(root), "--log", str(log), "--stall-initialize"],
+                input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n",
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+            self.assertEqual(completed.stdout, "")
+            self.assertEqual(json.loads(log.read_text())["method"], "initialize_wait")
+
     def test_restored_session_permission_stop_and_workspace_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

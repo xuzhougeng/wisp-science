@@ -61,8 +61,11 @@
 
 - CUA 发现并修复首页旧导入错误/过期数据提示；新增“保留打开表单错误、失败刷新不清除、成功刷新清除、不重试导入”测试。最新全套 Swift 254 passed，日志 `/tmp/wisp-parity-cua-fix-swift.log`。
 
-- 当前 Rust workspace 全套重跑中（与 WebView 全套错峰）：`/tmp/wisp-parity-final-workspace.log`，执行 session 88359。未拿到最终结果前不宣称全套通过。
+- Rust workspace 全套重跑已通过，退出码 0：标准测试结果汇总 2347 passed、0 failed；另含 ACP process harness 成功与 process-tree 集成目标。日志 `/tmp/wisp-parity-final-workspace.log`，原执行 session 88359。Tauri 1006 项包含 ACP 创建/路由回归；这次构建不含随后添加的初始化取消/actor 清理/死进程恢复锁修复，因此后者仍须单独验证并纳入下一次全套。
 
 - ACP 会话批：Swift 全套 258 passed（UI 243 + 基础 15，含全部 opt-in render），日志 `/tmp/wisp-parity-acp-turn-full-swift.log`；Rust native conversation 定向 4 passed（`/tmp/wisp-parity-acp-turn-rust.log`）；离线 QA peer 子进程测试 1 passed；共享 DTO 全套 62 passed（`/tmp/wisp-parity-acp-turn-dto.log`）。`cargo fmt --all -- --check` 和最新 wasm check 通过（`/tmp/wisp-parity-acp-turn-wasm.log`）。实际 QA 包正在构建，不能把 fake transport 测试当作完整界面验收。
 
 - ACP CUA 构建 `5719574a` / clean 通过严格签名检查；实际创建菜单与新会话可用，但首轮启动/Stop 未通过，详情见验收记录。已修复空原生草稿误走历史查询而报 Session not found 的问题，导航 8 项及 Swift 全套 258 项通过（`/tmp/wisp-parity-native-draft-navigation-swift.log`、`/tmp/wisp-parity-native-draft-full-swift.log`）。ACP 初始化取消与 actor 清理修复正在编译验证；未提交此后端修复、未宣称 ACP 全流程通过。
+
+- ACP 初始化取消修复：native startup 路由测试 1 passed（`/tmp/wisp-parity-acp-startup-routing-rust.log`）；ACP lib 全套 3 passed（`/tmp/wisp-parity-acp-startup-lib-verified.log`）；真实 fake-agent process harness 通过，含初始化不回复时取消后心跳停止（`/tmp/wisp-parity-acp-startup-process.log`）。最初以远端 SDK handler 的退出作为清理信号的测试超时，保留 `/tmp/wisp-parity-acp-startup-cancel.log`；改为直接观察传输 drop，并另用真实进程心跳证明子进程清理。还修复 dead-runtime 恢复时 if-let 暂存 guard 导致的重复加锁，恢复 CUA 仍待验。
+- QA peer 新增 `--stall-initialize`，可稳定复现初始化等待，两个 Python 子进程测试通过。Mac 再次锁屏，已请求手动解锁；不把无法执行的 CUA 写成通过。

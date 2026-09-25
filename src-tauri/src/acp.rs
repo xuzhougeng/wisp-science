@@ -461,6 +461,17 @@ async fn wait_for_cancel(cancel: Option<&AtomicBool>) {
     }
 }
 
+async fn await_session_start<T>(
+    future: impl Future<Output = Result<T, String>>,
+    cancel: Option<&AtomicBool>,
+) -> Result<Option<T>, String> {
+    tokio::select! {
+        biased;
+        _ = wait_for_cancel(cancel) => Ok(None),
+        result = future => result.map(Some),
+    }
+}
+
 async fn acp_read_only_turn(
     handle: &AcpSessionHandle,
     cwd: &Path,
@@ -630,7 +641,11 @@ async fn runtime_for(
     frame_id: &str,
     requested_profile_id: Option<&str>,
 ) -> Result<Arc<AcpRuntime>, String> {
-    if let Some(runtime) = state.acp_sessions.lock().await.get(frame_id).cloned() {
+    // Release the map guard before checking/evicting the cached process. In
+    // Rust 2021 an if-let scrutinee temporary lives through the body, so an
+    // inline lock here would deadlock when the dead-process branch locks again.
+    let cached = state.acp_sessions.lock().await.get(frame_id).cloned();
+    if let Some(runtime) = cached {
         if runtime.handle.is_alive() {
             let profile = profiles(&state.store)
                 .await
@@ -1220,7 +1235,20 @@ async fn run_acp_turn_inner(
     queue_id: Option<u64>,
     turn_kind: AcpTurnKind,
 ) -> Result<String, String> {
-    let runtime = runtime_for(state, project, frame_id, profile_id).await?;
+    let cancel = state
+        .sessions
+        .lock()
+        .await
+        .get(frame_id)
+        .map(|runtime| runtime.cancel.clone());
+    let Some(runtime) = await_session_start(
+        runtime_for(state, project, frame_id, profile_id),
+        cancel.as_deref(),
+    )
+    .await?
+    else {
+        return Ok("cancelled".into());
+    };
     if let Some(session_state) = runtime.session_state.lock().await.take() {
         crate::emit_to_session_surfaces(
             app,
@@ -2313,6 +2341,52 @@ mod tests {
         assert!(json.contains("analyse this"));
         assert!(json.contains("bear-map"));
         assert!(json.find("bear-map").unwrap() < json.find("analyse this").unwrap());
+    }
+
+    #[tokio::test]
+    async fn session_start_cancellation_drops_initialization_without_waiting_for_reply() {
+        let cancel = AtomicBool::new(true);
+        let started = std::sync::atomic::AtomicBool::new(false);
+        let result = await_session_start(
+            async {
+                started.store(true, Ordering::SeqCst);
+                std::future::pending::<Result<(), String>>().await
+            },
+            Some(&cancel),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none());
+        assert!(
+            !started.load(Ordering::SeqCst),
+            "a previously cancelled turn must not launch a child"
+        );
+
+        let cancel = AtomicBool::new(false);
+        let stopped = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(
+                await_session_start(std::future::pending::<Result<(), String>>(), Some(&cancel)),
+                async {
+                    tokio::task::yield_now().await;
+                    cancel.store(true, Ordering::SeqCst);
+                }
+            )
+            .0
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(stopped.is_none());
+        assert_eq!(
+            await_session_start(async { Ok(42) }, None).await.unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            await_session_start(async { Err::<(), _>("profile missing".into()) }, None)
+                .await
+                .unwrap_err(),
+            "profile missing"
+        );
     }
 
     #[tokio::test]

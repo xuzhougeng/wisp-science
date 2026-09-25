@@ -18,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
+    parser.add_argument("--stall-initialize", action="store_true", help="Keep initialization pending to test startup cancellation")
     args = parser.parse_args()
     root = args.workspace.resolve(strict=True)
     pending_prompt = None
@@ -54,6 +55,9 @@ def main():
                 pending_prompt = permission_id = None
             continue
         if method == "initialize":
+            record("initialize_wait" if args.stall_initialize else "initialize")
+            if args.stall_initialize:
+                continue
             result(identifier, {"protocolVersion": 1, "agentInfo": {"name": "wisp-native-qa", "version": "1"},
                                 "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}, "close": {}}}, "authMethods": []})
         elif method in ("session/new", "session/load", "session/resume", "_unstable/session/resume"):

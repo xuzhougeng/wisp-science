@@ -421,12 +421,12 @@ async fn launch_transport(
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = oneshot::channel();
-    let actor = tokio::spawn(async move {
+    let mut actor = LaunchActor(Some(tokio::spawn(async move {
         let result = run_actor(process, command_rx, event_tx.clone(), ready_tx).await;
         let _ = event_tx.send(AcpSessionEvent::Exited {
             error: result.err().map(|error| error.to_string()),
         });
-    });
+    })));
 
     let info = match ready_rx.await {
         Ok(result) => result?,
@@ -437,7 +437,6 @@ async fn launch_transport(
             // the reader flushes rather than betting on one fixed delay — a
             // fixed 25ms raced the reader under slow CI and flaked (#179).
             let message = wait_for_stderr(&stderr).await;
-            actor.abort();
             return Err(if message.is_empty() {
                 AcpError::Closed
             } else {
@@ -451,8 +450,19 @@ async fn launch_transport(
         command_tx,
         event_rx: tokio::sync::Mutex::new(event_rx),
         stderr,
-        actor: Mutex::new(Some(actor)),
+        actor: Mutex::new(actor.0.take()),
     })
+}
+
+/// The handle does not exist until initialize replies. Cancellation during that
+/// wait must still stop the actor and release its child-process guard.
+struct LaunchActor(Option<tokio::task::JoinHandle<()>>);
+impl Drop for LaunchActor {
+    fn drop(&mut self) {
+        if let Some(actor) = self.0.take() {
+            actor.abort();
+        }
+    }
 }
 
 /// Wait for a just-exited child's stderr reader to flush, returning as soon as
@@ -1033,6 +1043,48 @@ mod tests {
                 }),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_initialize_drops_the_transport() {
+        struct WaitingTransport {
+            started: oneshot::Sender<()>,
+            dropped: oneshot::Sender<()>,
+        }
+        struct DropSignal(Option<oneshot::Sender<()>>);
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        impl ConnectTo<Client> for WaitingTransport {
+            async fn connect_to(
+                self,
+                _client: impl ConnectTo<Agent>,
+            ) -> agent_client_protocol::Result<()> {
+                let _signal = DropSignal(Some(self.dropped));
+                let _ = self.started.send(());
+                std::future::pending().await
+            }
+        }
+        let (started, waiting) = oneshot::channel();
+        let (dropped, cleanup) = oneshot::channel();
+        let launch = tokio::spawn(launch_transport(
+            WaitingTransport { started, dropped },
+            BoundedStderr::new(1024),
+        ));
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        launch.abort();
+        assert!(matches!(launch.await, Err(error) if error.is_cancelled()));
+        tokio::time::timeout(Duration::from_secs(5), cleanup)
+            .await
+            .expect("cancelled initialize left its transport alive")
+            .unwrap();
     }
 
     #[tokio::test]
