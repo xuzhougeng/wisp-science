@@ -8031,8 +8031,15 @@ pub fn run() {
                 macos_exit_in_progress.store(true, Ordering::SeqCst);
             }
             if matches!(_event, tauri::RunEvent::Exit) {
+                // Each step is logged as it is entered so a future "exit never
+                // finished" report can name the step it stopped at. Today the log
+                // simply goes quiet here, which is why #1358 stays undiagnosed.
+                let exit_started = std::time::Instant::now();
+                tracing::info!(target: "wisp", step="shutdown-mcp-broker", "app.exit.step");
                 mcp_broker::shutdown();
+                tracing::info!(target: "wisp", step="shutdown-mcp-connections", "app.exit.step");
                 tauri::async_runtime::block_on(mcp_connections::host().shutdown_all());
+                tracing::info!(target: "wisp", step="pause-method-searches", "app.exit.step");
                 let store = _app.state::<AppState>().store.clone();
                 match tauri::async_runtime::block_on(store.pause_method_searches_for_shutdown()) {
                     Ok(paused) if paused > 0 => {
@@ -8043,12 +8050,21 @@ pub fn run() {
                         tracing::error!(target: "wisp", %error, "failed to pause method searches during shutdown");
                     }
                 }
+                tracing::info!(target: "wisp", step="stop-device-bridge", "app.exit.step");
                 let device_bridge = _app.state::<AppState>().device_bridge.clone();
                 tauri::async_runtime::block_on(device_bridge.stop());
+                tracing::info!(target: "wisp", step="shutdown-runtimes", "app.exit.step");
                 let runtime_manager = _app.state::<AppState>().runtime_manager.clone();
                 tauri::async_runtime::block_on(runtime_manager.shutdown_all());
+                tracing::info!(target: "wisp", step="shutdown-terminals", "app.exit.step");
                 _app.state::<terminal_sessions::TerminalManager>()
                     .shutdown_all();
+                tracing::info!(target: "wisp", step="done", "app.exit.step");
+                tracing::info!(
+                    target: "wisp",
+                    elapsed_ms = exit_started.elapsed().as_millis() as u64,
+                    "app.exit.finished"
+                );
             }
         });
 }

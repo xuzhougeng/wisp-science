@@ -206,6 +206,14 @@ next launch). The `startup finished` line breaks pre-first-paint work by phase
 purge, and restoring project windows run after the window is interactive and
 are logged as `deferred startup finished`.
 
+If the window stops responding while quitting and the process has to be killed,
+the tail of `wisp.log` shows how far the exit sequence got. Each cleanup step is
+logged as it is entered (`app.exit.step` with `step="shutdown-mcp-broker"`,
+`"shutdown-mcp-connections"`, `"pause-method-searches"`, `"stop-device-bridge"`,
+`"shutdown-runtimes"`, `"shutdown-terminals"`, `"done"`), and the final line adds
+the total wall time (`app.exit.finished` with `elapsed_ms=…`). A log that ends at
+one of these lines names the step that never returned.
+
 ## Headless CLI
 
 ```bash
