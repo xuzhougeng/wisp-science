@@ -16,7 +16,7 @@
 | 项目目录导入 | 新旧目录格式共用 WebView 校验与原地登记；ZIP 保留；取消不请求 | Swift 导入流程及 Rust 新旧格式/重复/无效路径测试通过；CUA 文件选择器待验收 |
 | 历史恢复 | 只读预览、会话/消息/无效/重复数量、命名与确认；保持源归档 | 恢复/取消/未知结果不重试/嵌套 Escape，以及后端只读预览/源归档字节不变测试通过；CUA 预览/立即 Escape/确认恢复/消息可读及源 SHA-256 不变通过 |
 | ZIP/目录导出 | 显式项目与目标、复用独占锁/运行检查/校验与发布，显示确认后的目标 | Swift 5 项、Rust transfer 12 项通过；包含两种格式往返与目标保护；CUA ZIP/目录导出完成、ZIP CRC 通过，立即 Escape 仅关闭 Save Panel |
-| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；原生发送与恢复仍待实现 |
+| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；会话创建/发送/停止已接入共享流程，完整进程 CUA 待验收 |
 | ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；CUA 入口及菜单/sheet 两层 Escape 通过；未登录真实账户 |
 | 项目同步 | 卡片快照状态、启用文件夹快照、手动同步；显式本地/远端冲突决策 | Swift 状态 2 项及操作 7 项通过；Rust 项目测试 13 项通过，含同步范围与策略校验；CUA 启用/同步及首页状态通过，冲突交互仍待实机验收 |
 
@@ -26,7 +26,7 @@
 - [ ] 计划与审批：反馈已完成；plan mode 决策与普通工具授权范围仍待实现；维持现有 Agent workflow 审批。
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
-- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止与完整 fake ACP process 验证仍待完成。
+- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
 - [ ] 会话：重命名、删除/批量整理、置顶、跨项目复制/移动、导出、分支导航。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
@@ -62,3 +62,5 @@
 - CUA 发现并修复首页旧导入错误/过期数据提示；新增“保留打开表单错误、失败刷新不清除、成功刷新清除、不重试导入”测试。最新全套 Swift 254 passed，日志 `/tmp/wisp-parity-cua-fix-swift.log`。
 
 - 当前 Rust workspace 全套重跑中（与 WebView 全套错峰）：`/tmp/wisp-parity-final-workspace.log`，执行 session 88359。未拿到最终结果前不宣称全套通过。
+
+- ACP 会话批：Swift 全套 258 passed（UI 243 + 基础 15，含全部 opt-in render），日志 `/tmp/wisp-parity-acp-turn-full-swift.log`；Rust native conversation 定向 4 passed（`/tmp/wisp-parity-acp-turn-rust.log`）；离线 QA peer 子进程测试 1 passed；共享 DTO 全套 62 passed（`/tmp/wisp-parity-acp-turn-dto.log`）。`cargo fmt --all -- --check` 和最新 wasm check 通过（`/tmp/wisp-parity-acp-turn-wasm.log`）。实际 QA 包正在构建，不能把 fake transport 测试当作完整界面验收。

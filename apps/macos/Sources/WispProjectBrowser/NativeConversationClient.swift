@@ -30,6 +30,7 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let stopping: Bool
     public let read_only: Bool
     public let model_id: String
+    public let acp_agent_id: String?
     public let request_id: String?
     public let error: String?
     public let approvals: [ConversationApproval]

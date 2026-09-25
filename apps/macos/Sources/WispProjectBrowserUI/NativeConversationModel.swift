@@ -43,6 +43,7 @@ final class NativeConversationModel: ObservableObject {
     @Published private(set) var scrollRevision = 0
     @Published private(set) var snapshot: ConversationSnapshot?
     @Published private(set) var models: [SettingsValue] = []
+    @Published private(set) var acpAgents: [SettingsValue] = []
     @Published private(set) var loading = false
     @Published private(set) var busy = false
     @Published private(set) var connectionError: String?
@@ -68,10 +69,18 @@ final class NativeConversationModel: ObservableObject {
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
+    var isAcp: Bool { snapshot?.acp_agent_id != nil || snapshot?.model_id.hasPrefix("acp:") == true }
+    var modelLabel: String {
+        if isAcp {
+            let id = snapshot?.acp_agent_id ?? String((snapshot?.model_id ?? "").dropFirst(4))
+            return acpAgents.first(where: { $0["id"].string == id })?["label"].string ?? String((snapshot?.model_id ?? "ACP").dropFirst(4))
+        }
+        return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
+    }
     var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
     var canQueueFollowUp: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText && queuedFollowUp == nil && snapshot?.running == true && snapshot?.read_only != true && !busy && !showingHistory && connectionError == nil
+        return hasText && queuedFollowUp == nil && snapshot?.running == true && snapshot?.read_only != true && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil
     }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -85,6 +94,7 @@ final class NativeConversationModel: ObservableObject {
         projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []; queuedFollowUp = queuedBySession[session]
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
+        models = []; acpAgents = []
         connectionError = nil; loading = true; busy = false
         let current = generation
         do {
@@ -105,6 +115,11 @@ final class NativeConversationModel: ObservableObject {
             if generation == current { models = rows }
         }
         catch { if generation == current { operationError = error.localizedDescription } }
+        guard generation == current else { return }
+        do {
+            let agents = try await client.invoke("list_acp_agents", args: [:], projectID: project).array
+            if generation == current { acpAgents = agents }
+        } catch { if generation == current { operationError = error.localizedDescription } }
         guard generation == current else { return }
         polling = Task { [weak self] in
             while !Task.isCancelled {
@@ -147,12 +162,14 @@ final class NativeConversationModel: ObservableObject {
             if current == generation && !Task.isCancelled { connectionError = "连接暂时中断，正在重新读取会话：\(error.localizedDescription)" }
         }
     }
-    func create(project: String) async -> String? {
+    func create(project: String, acpAgentID: String? = nil) async -> String? {
         guard !busy else { return nil }; busy = true; operationError = nil
         let current = generation
         defer { if generation == current { busy = false } }
         do {
-            let id = try await client.invoke("native_conversation_create", args: [:], projectID: project).string
+            var args: [String: SettingsValue] = [:]
+            if let acpAgentID { args["acp_agent_id"] = .string(acpAgentID) }
+            let id = try await client.invoke("native_conversation_create", args: args, projectID: project).string
             guard !id.isEmpty else { throw ProjectBrowserError.invalidResponse }
             return id
         }
@@ -323,7 +340,7 @@ final class NativeConversationModel: ObservableObject {
         if !allowed, let feedback = feedback?.trimmingCharacters(in: .whitespacesAndNewlines), !feedback.isEmpty { args["feedback"] = .string(feedback) }
         return await action("native_conversation_approve", args)
     }
-    func selectModel(_ id: String) async { await action("native_conversation_model", ["model_id": .string(id)]) }
+    func selectModel(_ id: String) async { guard !isAcp else { return }; await action("native_conversation_model", ["model_id": .string(id)]) }
     @discardableResult
     private func action(_ command: String, _ args: [String: SettingsValue]) async -> Bool {
         guard !busy, let project = projectID, let session = sessionID else { return false }

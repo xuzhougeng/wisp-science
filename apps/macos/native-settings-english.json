@@ -223,5 +223,7 @@
   "拒绝这一次": "Reject once",
   "始终拒绝": "Always reject",
   "代理提供的选项": "Agent option",
-  "取消请求": "Cancel request"
+  "取消请求": "Cancel request",
+  "ACP · 新会话": "ACP · New conversation",
+  "该会话已归档或冻结，请新建会话继续。": "This conversation is archived or frozen. Start a new conversation to continue."
 }

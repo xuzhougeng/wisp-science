@@ -33,7 +33,7 @@ private actor ConversationFake: NativeConversationQuerying {
             if holdPreferences { holdPreferences = false; return await withCheckedContinuation { heldPreferences = $0 } }
             return .null
         }
-        if command == "list_models" { return .array([]) }
+        if command == "list_models" || command == "list_acp_agents" { return .array([]) }
         writes.append((command, args, projectID))
         if failSend { throw ProjectBrowserError.service("response lost") }
         return .null

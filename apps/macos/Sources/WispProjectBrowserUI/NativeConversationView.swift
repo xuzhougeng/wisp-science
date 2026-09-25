@@ -6,6 +6,7 @@ struct NativeConversationView: View {
     @ObservedObject var conversation: NativeConversationModel
     var projectID: String?
     var sessionID: String?
+    var createAcpConversation: ((String) -> Void)?
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
@@ -161,7 +162,7 @@ struct NativeConversationView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if conversation.snapshot?.read_only == true {
-                Text("该会话为只读（已归档、冻结或使用 ACP），请在 WebView 中继续，或新建原生会话。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
+                Text("该会话已归档或冻结，请新建会话继续。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 12) {
                 if let queued = conversation.queuedFollowUp {
@@ -189,9 +190,18 @@ struct NativeConversationView: View {
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
                             Button(profile["label"].string.isEmpty ? profile["model"].string : profile["label"].string) { Task { await conversation.selectModel(profile["id"].string) } }
+                                .disabled(conversation.isAcp)
+                        }
+                        if let createAcpConversation, !conversation.acpAgents.isEmpty {
+                            Divider()
+                            Section("ACP · 新会话") {
+                                ForEach(Array(conversation.acpAgents.enumerated()), id: \.offset) { _, agent in
+                                    Button(agent["label"].string) { createAcpConversation(agent["id"].string) }
+                                }
+                            }
                         }
                     } label: {
-                        Text(conversation.models.first(where: { $0["id"].string == conversation.snapshot?.model_id })?["label"].string ?? "选择模型").lineLimit(1)
+                        Text(conversation.modelLabel).lineLimit(1)
                     }.frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
                     Spacer()
                     if conversation.snapshot?.running == true {

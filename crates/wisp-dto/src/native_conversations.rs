@@ -224,6 +224,12 @@ pub struct OutlineEntry {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct CreateRequest {
+    #[serde(default)]
+    pub acp_agent_id: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionRequest {
     pub session_id: String,
     #[serde(default)]
@@ -359,6 +365,10 @@ pub struct Snapshot {
     pub stopping: bool,
     pub read_only: bool,
     pub model_id: String,
+    /// Persisted ACP binding. A provisional choice before the first turn is
+    /// represented by model_id = acp:<profile id>, without claiming a binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_agent_id: Option<String>,
     pub request_id: Option<String>,
     pub error: Option<String>,
     pub approvals: Vec<super::PendingToolApproval>,
@@ -369,6 +379,21 @@ pub struct Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn create_preserves_http_default_and_accepts_explicit_acp_profile() {
+        assert!(serde_json::from_str::<CreateRequest>("{}")
+            .unwrap()
+            .acp_agent_id
+            .is_none());
+        assert_eq!(
+            serde_json::from_str::<CreateRequest>(r#"{"acp_agent_id":"agent"}"#)
+                .unwrap()
+                .acp_agent_id
+                .as_deref(),
+            Some("agent")
+        );
+        assert!(serde_json::from_str::<CreateRequest>(r#"{"command":"run arbitrary"}"#).is_err());
+    }
     #[test]
     fn acp_interactions_are_scoped_and_optional_for_older_snapshots() {
         let mut value: serde_json::Value = serde_json::from_str(include_str!(

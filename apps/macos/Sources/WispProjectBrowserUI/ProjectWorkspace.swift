@@ -86,7 +86,7 @@ struct ProjectWorkspace: View {
                 if publication.presented && publication.projectID == project.id {
                     NativePublicationColumn(model: model, publication: publication)
                 } else if let session = model.activeSessionID {
-                    NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session) { selection in
+                    NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session, createAcpConversation: { agent in createSession(acpAgentID: agent) }) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(.init(text: selection, source: "会话摘录"))
                         var tabs = NativePanelTabs(saved: panelTabs, selected: panelTab, available: NativePanelTabs.all)
@@ -204,9 +204,9 @@ struct ProjectWorkspace: View {
         await model.openProject(project.id, sessionID: model.activeSessionID)
     }
 
-    private func createSession() {
+    private func createSession(acpAgentID: String? = nil) {
         let database = model.databaseURL; let sourceSession = model.activeSessionID
-        Task { if let id = await conversation.create(project: project.id) { await model.openNativeDraft(id, projectID: project.id, database: database, sourceSession: sourceSession) } }
+        Task { if let id = await conversation.create(project: project.id, acpAgentID: acpAgentID) { await model.openNativeDraft(id, projectID: project.id, database: database, sourceSession: sourceSession) } }
     }
 
     private var sidebar: some View {

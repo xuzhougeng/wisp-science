@@ -1,13 +1,13 @@
 # Native conversation loop
 
-The SwiftUI preview supports creating/opening HTTP-model conversations, selecting
-that conversation's model, sending messages, seeing incremental text and tool
+The SwiftUI preview supports creating/opening HTTP-model and ACP conversations,
+selecting an HTTP conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing
 WebView remains usable. The macOS composer also supports file attachments and one
-queued follow-up, and the workspace has an Agent workflow approval panel. ACP,
-embedded MCP Apps, rich scientific artifact viewers and branch management remain
-follow-ups. ACP and frozen/archived conversations are read-only in the native composer.
+queued follow-up, and the workspace has an Agent workflow approval panel.
+Embedded MCP Apps, rich scientific artifact viewers and branch management remain
+follow-ups. Frozen/archived conversations are read-only in the native composer.
 
 The macOS main composer reads the saved `send_with_modifier` preference when a
 conversation opens and updates when settings are saved. With it off, Enter sends;
@@ -35,7 +35,7 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 
 | Command | Arguments | Result |
 | --- | --- | --- |
-| `native_conversation_create` | `{}` | New session ID |
+| `native_conversation_create` | optional `acp_agent_id` | New session ID; omitted uses HTTP |
 | `native_conversation_snapshot` | `session_id`, optional `before_seq` | `Snapshot` replacement event |
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |
@@ -96,9 +96,26 @@ persisted bridge answer as WebView and reject empty, stale or cross-session
 replies. The composer draft is unchanged. Local submission tracking prevents a
 second reply to the same request, including after an ambiguous transport error;
 there is no automatic retry. Navigation discards callbacks from the old view.
-Old hosts without the optional field show inactive ACP questions. Creating,
-restoring and sending ACP turns from native remain a separate next step; this
-interaction change alone does not enable the ACP composer.
+Old hosts without the optional field show inactive ACP questions.
+
+The macOS model menu lists configured ACP profiles under “ACP · 新会话”. Choosing
+one creates a fresh conversation and preserves the previous conversation's draft.
+The host validates the exact profile before creating the session. Send and Stop
+reuse the shared ACP turn pipeline, including stored binding recovery after a
+host restart, profile/workspace validation and cancellation during startup.
+The additive `acp_agent_id` snapshot field identifies a persisted ACP binding;
+a provisional choice is shown as `acp:<profile id>` until the first connection.
+Follow-ups cannot be queued before that binding exists. An ACP conversation cannot
+switch to an HTTP model; create a new conversation for that change. The provisional
+choice before the first turn currently lasts only for the host lifetime, like
+unsent drafts; established ACP bindings are persisted. No external history is
+injected into a new ACP session.
+
+For an offline, isolated UI smoke, configure a QA-only ACP profile using Python
+and `scripts/qa_native_acp.py --workspace /absolute/qa/root --log /absolute/qa/log`.
+The fixture refuses other workspaces, streams a fixed answer, requests a harmless
+choice for messages containing `permission`, and waits for Stop for messages
+containing `wait`. It neither executes tools nor contacts a model provider.
 
 ## WinUI integration
 
