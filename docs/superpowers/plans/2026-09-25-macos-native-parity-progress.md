@@ -17,7 +17,7 @@
 | 历史恢复 | 只读预览、会话/消息/无效/重复数量、命名与确认；保持源归档 | 恢复/取消/未知结果不重试/嵌套 Escape，以及后端只读预览/源归档字节不变测试通过 |
 | ZIP/目录导出 | 显式项目与目标、复用独占锁/运行检查/校验与发布，显示确认后的目标 | Swift 5 项、Rust transfer 12 项通过；包含两种格式往返与目标保护；CUA ZIP/目录导出完成、ZIP CRC 通过，立即 Escape 仅关闭 Save Panel |
 | ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；原生发送与恢复仍待实现 |
-| ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；未登录真实账户，CUA 待验收 |
+| ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；CUA 入口及菜单/sheet 两层 Escape 通过；未登录真实账户 |
 | 项目同步 | 卡片快照状态、启用文件夹快照、手动同步；显式本地/远端冲突决策 | Swift 状态 2 项及操作 7 项通过；Rust 项目测试 13 项通过，含同步范围与策略校验；CUA 启用/同步及首页状态通过，冲突交互仍待实机验收 |
 
 ## 后续范围（全部保留，不能因第一批完成而结项）
@@ -25,7 +25,7 @@
 - [x] 内置问题卡片：不覆盖草稿、pending/answered/expired、自由输入暂存、导航后旧回调隔离。ACP request ID 与实时回复已接入，完整 ACP 会话生命周期留在 ACP 项。
 - [ ] 计划与审批：反馈已完成；plan mode 决策与普通工具授权范围仍待实现；维持现有 Agent workflow 审批。
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
-- [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；等待新 QA bundle 构建与 CUA 验收。
+- [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
 - [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止与完整 fake ACP process 验证仍待完成。
 - [ ] 会话：重命名、删除/批量整理、置顶、跨项目复制/移动、导出、分支导航。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
@@ -45,18 +45,20 @@
 - 最新 Swift 全套：245 tests，0 failures（UI 230 + 基础 15），启用全部 opt-in render，包含 12 项订阅认证测试。日志 `/tmp/wisp-parity-auth-final-swift.log`。之前两个 process transport 超时已在本次全套通过，未放宽超时。Agent 面板首次渲染失败定位为测试未创建输出目录，已修复；全新目录中复测生成全部 7 张图片，日志 `/tmp/wisp-parity-agent-fresh-check.log`。
 - WebView 新一轮全套使用 2 workers，在多项子进程启动延迟后出现连续超时，已发送 SIGINT 停止这次并发复测：312 passed、2 failed、2 interrupted、556 did not run；日志 `/tmp/wisp-parity-projects-playwright.log`。依赖安装已完成且 lockfile 未变；已恢复本次生成的 research-journey 图片。Rust 重负载任务结束后的新一轮 2 workers 全套已完成：870 passed、2 skipped（20.3 分钟），日志 `/tmp/wisp-parity-auth-playwright.log`；生成的 5 张研究历程截图已恢复。
 - Rust workspace 全套已结束：Tauri 1000 passed、1 failed，失败为已有 terminal manager 测试等待 shell 输出的 5 秒超时；日志 `/tmp/wisp-parity-rust-full.log`。该项不改超时定向复测 1 passed（0.02 秒），日志 `/tmp/wisp-parity-terminal-rust-retry.log`。全套未全绿，后续 workspace 测试未全部执行，不能用定向复测替代全套结果。
-- 含目录/历史/导出/同步的标准 QA 构建与严格签名验证已通过，日志 `/tmp/wisp-parity-projects-build.log`；后续订阅认证改动仍需稳定重建。应用：`target/native-macos-qa/Wisp Science QA.app`；真实复验需在解锁后重新启动更新的 shell/helper。
+- 含目录/历史/导出/同步的标准 QA 构建与严格签名验证已通过，日志 `/tmp/wisp-parity-projects-build.log`；后续订阅/ACP/首页错误修复的稳定重建也已通过：`/tmp/wisp-parity-auth-acp-build.log`，revision `e3a35fcd`，dirty=false。应用：`target/native-macos-qa/Wisp Science QA.app`；真实复验需在解锁后重新启动更新的 shell/helper。
 - 订阅认证共享 DTO 全套 60 passed，日志 `/tmp/wisp-parity-auth-dto.log`；wasm check 通过，日志 `/tmp/wisp-parity-auth-wasm.log`。
-- CUA 已于 18:52 恢复可用；项目批 QA 包版本 1.14.0 / revision `65feaa83` / dirty。关闭重开、草稿、换行偏好、导出、重复导入保护和同步已验；新订阅/ACP 代码须重建后再验。详见 `docs/design-qa/native-parity-2026-09-25/fix-validation.md`。
+- CUA 已于 18:52 恢复可用；项目批 QA 包版本 1.14.0 / revision `65feaa83` / dirty。关闭重开、草稿、换行偏好、导出、重复导入保护和同步已验；19:08 重建后订阅入口/嵌套 Escape 及首页错误修复 CUA 复验通过；ACP 完整进程仍待接入。详见 `docs/design-qa/native-parity-2026-09-25/fix-validation.md`。
 - 测试仅使用隔离合成数据库：`/private/tmp/wisp-parity-fixes-20260925/native/wisp.sqlite`。QA app 的 database preference 指向它；QA host 的 Application Support symlink 指向同一目录。之前的临时 QA 链接路径记录在 `/tmp/wisp-parity-fixes-previous-qa-link.txt`。
 - 未登录真实外部账户，未执行远程科学任务，未推送分支或创建远端 PR。
 
 ## 下一步
 
-1. 重建后用 Computer Use 验收订阅认证入口/嵌套 Escape、历史恢复、问题卡片和反馈；补齐真实 IME 与发送 smoke。
+1. 继续用 Computer Use 验收历史恢复、问题卡片和反馈；补齐真实 IME 与发送 smoke。
 2. 收尾 Rust 完整回归结果；保留全套 WebView 的原始失败与复测记录。
 3. 收尾本批项目能力的构建/测试/实机闭环；订阅认证已接入，继续 ACP、会话管理、论文证据。全部剩余项仍属本目标范围，当前未结项。
 
 - ACP 交互批最新全套 Swift 253 passed，包含全部 opt-in render（`/tmp/wisp-parity-acp-full-swift.log`）；scoped Rust resolver 3 passed（`/tmp/wisp-parity-acp-native-rust.log`）；DTO 全套 61 passed、wasm check 通过（`/tmp/wisp-parity-acp-dto.log`、`/tmp/wisp-parity-acp-wasm.log`）。
 
 - CUA 发现并修复首页旧导入错误/过期数据提示；新增“保留打开表单错误、失败刷新不清除、成功刷新清除、不重试导入”测试。最新全套 Swift 254 passed，日志 `/tmp/wisp-parity-cua-fix-swift.log`。
+
+- 当前 Rust workspace 全套重跑中（与 WebView 全套错峰）：`/tmp/wisp-parity-final-workspace.log`，执行 session 88359。未拿到最终结果前不宣称全套通过。
