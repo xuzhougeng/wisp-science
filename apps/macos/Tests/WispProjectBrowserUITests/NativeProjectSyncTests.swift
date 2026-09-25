@@ -87,6 +87,22 @@ final class NativeProjectSyncTests: XCTestCase {
         let calls = await client.count(); XCTAssertEqual(calls, 2)
     }
 
+    @MainActor func testConflictDiscoveredWhileEnablingRequiresAChoiceBeforeAnotherWrite() async throws {
+        let client = SyncTransport(); await client.setMode("conflict")
+        let model = NativeProjectSyncModel(project: try project(), client: client)
+        await model.enableFolderSync()
+        XCTAssertTrue(model.conflict)
+        await model.enableFolderSync(); await model.resolve()
+        let before = await client.count(); XCTAssertEqual(before, 1)
+        model.choose(.local)
+        await client.setMode("published")
+        await model.resolve()
+        let call = await client.last()
+        XCTAssertEqual(call.0, "resolve_project_sync")
+        XCTAssertEqual(call.1["strategy"], .string("local"))
+        XCTAssertTrue(model.configured); XCTAssertFalse(model.conflict)
+    }
+
     @MainActor func testUnknownStatusDoesNotClaimEnableSucceeded() async throws {
         let client = SyncTransport(); await client.setMode("new-unknown-state")
         let model = NativeProjectSyncModel(project: try project(), client: client)

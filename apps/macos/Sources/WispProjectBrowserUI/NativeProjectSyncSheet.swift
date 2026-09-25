@@ -29,7 +29,7 @@ final class NativeProjectSyncModel: ObservableObject {
         status = NativeProjectSyncStatus(project)?.label ?? "尚未启用同步"
     }
     func enableFolderSync() async {
-        guard !configured else { return }
+        guard !configured, !conflict else { return }
         await perform("enable_project_folder_sync")
     }
     func synchronize() async {
@@ -68,7 +68,7 @@ struct NativeProjectSyncSheet: View {
             Text("项目同步：\(model.project.name)").font(.headline)
             Text(model.status).fontWeight(.medium)
             Text(model.project.workspaceDirectory).font(.caption).textSelection(.enabled)
-            if !model.configured {
+            if !model.configured && !model.conflict {
                 Text("把项目记录快照保存在工作区的 .wisp 中。网盘客户端负责同步文件；此操作不会上传到新的云服务。")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("启用项目文件夹快照") { Task { await model.enableFolderSync() } }.disabled(model.busy)
