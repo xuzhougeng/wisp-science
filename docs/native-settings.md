@@ -27,6 +27,36 @@ Native settings never switch the WebView's active project or active session.
 No mutation is automatically retried following a timeout. The user can refresh
 to discover whether the previous operation completed.
 
+## ChatGPT subscription sign-in on macOS
+
+Models → **快速接入 → ChatGPT Plus / Pro** opens the native subscription sheet.
+It supports browser login, manual redirect submission, device-code login, and
+explicit reuse of an account already saved on this device. The saved-account
+indicator reports keyring presence, not a promise that credentials have not
+expired; saving through the existing host refreshes credentials when required.
+An empty model ID uses the backend's default rather than duplicating a model
+catalog rule in Swift. Existing subscription models expose **重新登录 ChatGPT…**
+in their context menu and retain their profile ID and endpoint on save. Their
+ordinary model editor retains the subscription provider and omits the API-key
+field.
+
+The six existing `codex_*` sign-in commands are allowlisted on the native settings
+transport. Their response types live in `wisp-dto::codex_login`, with a shared
+Swift/Rust fixture. OAuth exchange, polling, refresh and credential persistence
+remain in the existing host implementation; access/refresh tokens and the PKCE
+verifier never enter the Swift form or SQLite. No login or real account request
+is started merely by opening the form.
+
+Each attempt has its own UI generation. Canceling drops late status responses;
+if a challenge arrives after cancellation, the client cancels that specific
+attempt. An old outstanding poll cannot block a new attempt or replace a newer
+success. Save requests are serialized and never automatically replayed after an
+uncertain response. Immediate Escape closes only the login sheet and cancels
+its attempt. While a save is in flight, the sheet consumes Escape without
+closing the parent settings. Both browser and device flows are exercised with
+fake transport responses, including expiry, reconnect, cancellation and lost
+save replies; automated tests do not use real accounts or keys.
+
 ## Settings coverage
 
 - General: locale, workspace, notifications, resume behavior, local paths, network, update preferences.
@@ -151,3 +181,5 @@ See [native-windows-parity.md](native-windows-parity.md) for current verificatio
 and remaining platform/external-service acceptance, and
 [native-project-browser.md](native-project-browser.md#windows-alignment-after-1281)
 for build prerequisites, host/database boundaries and manual smoke steps.
+
+成功刷新项目列表后，已关闭导入表单的旧错误会清除；只有项目列表读取失败才显示缓存数据说明。打开中的导入表单仍保留错误，刷新不会重试导入。

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub mod codex_login;
 pub mod native_calendar;
 pub mod native_conversations;
 pub mod native_journey;
@@ -3266,6 +3267,9 @@ pub struct RecentSession {
     /// keep the previous JSON shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder_id: Option<String>,
+    /// Project sidebar pin state. Global recent-session queries do not fetch it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Clone, serde::Deserialize, PartialEq)]

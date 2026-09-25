@@ -17,12 +17,26 @@ pub fn is_compaction_checkpoint(text: &str) -> bool {
 }
 
 /// Sidebar, project-card count, and search (#888): a root frame is visible
-/// once it has a user turn **or** an explicit title. Untitled empty drafts stay
+/// once it has a user turn **or** an explicit title. Unconfigured empty drafts stay
 /// hidden. Keep this in lockstep with every list/count/search query that
 /// should match `list_sessions_page`.
-pub(crate) const SESSION_IS_LISTABLE_SQL: &str = "(\
+const SESSION_IS_LISTABLE_SQL: &str = "(\
 EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
 OR TRIM(COALESCE(f.title, '')) <> '')";
+
+impl Store {
+    /// Pending ACP choices are durable drafts. Older read-only databases keep
+    /// the original visibility rule without creating or migrating anything.
+    pub(crate) async fn session_listable_sql(&self) -> Result<String> {
+        Ok(
+            if Self::has_column(&self.pool, "frames", "acp_agent_selection").await? {
+                format!("({SESSION_IS_LISTABLE_SQL} OR NULLIF(TRIM(f.acp_agent_selection),'') IS NOT NULL OR EXISTS(SELECT 1 FROM acp_sessions a WHERE a.frame_id=f.id))")
+            } else {
+                SESSION_IS_LISTABLE_SQL.to_owned()
+            },
+        )
+    }
+}
 
 /// Recent, last-role, and resume: a conversation that has actually been used.
 /// A named unused draft is listable but has nothing to rank or reopen.
@@ -2134,7 +2148,7 @@ impl Store {
              ) sessions \
              WHERE (? IS NULL OR activity_at < ? OR (activity_at = ? AND id < ?)) \
              ORDER BY activity_at DESC, id DESC LIMIT ?",
-            listable = SESSION_IS_LISTABLE_SQL,
+            listable = self.session_listable_sql().await?,
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)
@@ -2201,7 +2215,7 @@ impl Store {
              WHERE f.project_id = ? AND f.parent_frame_id = f.id AND COALESCE(f.pinned, 0) = 1 \
                AND f.exploration_id IS NULL \
                AND {listable} ORDER BY activity_at DESC, f.id DESC",
-            listable = SESSION_IS_LISTABLE_SQL,
+            listable = self.session_listable_sql().await?,
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)
@@ -2299,7 +2313,8 @@ impl Store {
 
     /// Copy the user-visible transcript into another project. Workspace files,
     /// artifacts, runs, external-agent bindings, and provider turn IDs stay in
-    /// the source project. The copy resumes as a fresh local conversation.
+    /// the source project. The copy resumes as a fresh local conversation; an
+    /// empty draft retains its not-yet-connected ACP profile choice.
     pub async fn copy_session_to_project(
         &self,
         frame_id: &str,
@@ -2408,7 +2423,7 @@ impl Store {
         }
 
         let source = sqlx::query(
-            "SELECT agent_name,status,model,reasoning_effort,service_tier,input_tokens,output_tokens,completed_at,title,head_epoch,context_epoch_high_water \
+            "SELECT agent_name,status,model,reasoning_effort,service_tier,acp_agent_selection,input_tokens,output_tokens,completed_at,title,head_epoch,context_epoch_high_water \
              FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id",
         )
         .bind(frame_id)
@@ -2420,9 +2435,9 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO frames(\
-                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,acp_agent_selection,\
                 input_tokens,output_tokens,created_at,updated_at,completed_at,title,head_epoch,context_epoch_high_water\
-             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)",
+             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(new_frame_id)
         .bind(new_frame_id)
@@ -2433,6 +2448,7 @@ impl Store {
         .bind(source.try_get::<Option<String>, _>("model")?)
         .bind(source.try_get::<Option<String>, _>("reasoning_effort")?)
         .bind(source.try_get::<Option<String>, _>("service_tier")?)
+        .bind(source.try_get::<Option<String>, _>("acp_agent_selection")?)
         .bind(source.try_get::<Option<i64>, _>("input_tokens")?)
         .bind(source.try_get::<Option<i64>, _>("output_tokens")?)
         .bind(now)
@@ -2569,7 +2585,7 @@ impl Store {
         }
 
         let source = sqlx::query(
-            "SELECT agent_name,status,model,reasoning_effort,service_tier,input_tokens,output_tokens,completed_at,title,head_epoch,context_epoch_high_water \
+            "SELECT agent_name,status,model,reasoning_effort,service_tier,acp_agent_selection,input_tokens,output_tokens,completed_at,title,head_epoch,context_epoch_high_water \
              FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id",
         )
         .bind(frame_id)
@@ -2581,9 +2597,9 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO frames(\
-                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,acp_agent_selection,\
                 input_tokens,output_tokens,created_at,updated_at,completed_at,title,head_epoch,context_epoch_high_water\
-             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)",
+             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(new_frame_id)
         .bind(new_frame_id)
@@ -2594,6 +2610,7 @@ impl Store {
         .bind(source.try_get::<Option<String>, _>("model")?)
         .bind(source.try_get::<Option<String>, _>("reasoning_effort")?)
         .bind(source.try_get::<Option<String>, _>("service_tier")?)
+        .bind(source.try_get::<Option<String>, _>("acp_agent_selection")?)
         .bind(source.try_get::<Option<i64>, _>("input_tokens")?)
         .bind(source.try_get::<Option<i64>, _>("output_tokens")?)
         .bind(now)
@@ -3205,7 +3222,7 @@ impl Store {
              ORDER BY CASE WHEN ? IS NOT NULL AND s.project_id=? THEN 0 ELSE 1 END, \
                 CASE WHEN ?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? THEN 0 ELSE 1 END, \
                 s.activity_at DESC, s.frame_rowid DESC LIMIT ?",
-            listable = SESSION_IS_LISTABLE_SQL,
+            listable = self.session_listable_sql().await?,
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)

@@ -142,6 +142,15 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        if request.command == "native_project_export" {
+            return crate::native_projects::execute_export(&state, request).await;
+        }
+        if matches!(
+            request.command.as_str(),
+            "native_project_recovery_preview" | "native_project_recover_workspace"
+        ) {
+            return crate::native_projects::execute_recovery(&state.store, request).await;
+        }
         if wisp_dto::native_projects::returns_project_summary(&request.command) {
             let id =
                 crate::native_projects::execute(&state.store, &state.app_data, request).await?;
@@ -182,6 +191,27 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if !COMMANDS.contains(&request.command.as_str()) {
         return Err("Command is not available to native settings".into());
+    }
+    if matches!(
+        request.command.as_str(),
+        "enable_project_folder_sync" | "sync_project" | "resolve_project_sync"
+    ) {
+        let input = crate::native_projects::validate_sync_request(request)?;
+        let state = broker.app.state::<crate::AppState>();
+        let result = match request.command.as_str() {
+            "enable_project_folder_sync" => {
+                crate::project_sync::enable_project_folder_sync(state, input.id).await?
+            }
+            "sync_project" => crate::project_sync::sync_project(state, input.id).await?,
+            _ => {
+                let strategy = match input.strategy.ok_or("A conflict strategy is required")? {
+                    wisp_dto::native_projects::SyncConflictStrategy::Local => "local",
+                    wisp_dto::native_projects::SyncConflictStrategy::Remote => "remote",
+                };
+                crate::project_sync::resolve_project_sync(state, input.id, strategy.into()).await?
+            }
+        };
+        return serde_json::to_value(result).map_err(|error| error.to_string());
     }
     if matches!(
         request.command.as_str(),

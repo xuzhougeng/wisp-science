@@ -1550,10 +1550,10 @@ pub async fn get_session_model(
     // ACP-bound frames run through the agent, not an HTTP model. Return the
     // agent's label under an `acp:` marker so message badges don't fall back
     // to the active HTTP model.
-    if let Ok(Some(binding)) = state.store.get_acp_session(&session_id).await {
-        let label = crate::acp::profile_label(&state.store, &binding.agent_profile_id)
+    if let Some(agent) = crate::acp::session_agent_id(&state.store, &session_id).await? {
+        let label = crate::acp::profile_label(&state.store, &agent)
             .await
-            .unwrap_or_else(|| "ACP Agent".into());
+            .unwrap_or(agent);
         return Ok(format!("acp:{label}"));
     }
     Ok(session_profile_id(&state.store, &session_id).await)
@@ -1838,6 +1838,12 @@ pub async fn set_active_model(
         return Err("Image or video generation models cannot be used for chat.".into());
     }
     if let Some(session_id) = session_id.filter(|value| !value.is_empty()) {
+        if crate::acp::session_agent_id(&state.store, &session_id)
+            .await?
+            .is_some()
+        {
+            return Err("Start a new conversation to switch away from this ACP Agent".into());
+        }
         let (project, scope) =
             crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
         let _activity = state.begin_project_activity(&project.id)?;

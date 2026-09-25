@@ -43,6 +43,7 @@ final class NativeConversationModel: ObservableObject {
     @Published private(set) var scrollRevision = 0
     @Published private(set) var snapshot: ConversationSnapshot?
     @Published private(set) var models: [SettingsValue] = []
+    @Published private(set) var acpAgents: [SettingsValue] = []
     @Published private(set) var loading = false
     @Published private(set) var busy = false
     @Published private(set) var connectionError: String?
@@ -55,6 +56,8 @@ final class NativeConversationModel: ObservableObject {
     private var queuedBySession: [String: String] = [:]
     private var stagedFiles: [String: [ComposerFile]] = [:]
     private var drafts: [String: String] = [:]
+    private var questionDrafts: [String: (target: NativeQuestionTarget, text: String, prefix: String)] = [:]
+    private var submittedAcpRequests: Set<String> = []
     private var projectID: String?
     private var sessionID: String?
     private var generation = UUID()
@@ -66,10 +69,18 @@ final class NativeConversationModel: ObservableObject {
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
+    var isAcp: Bool { snapshot?.acp_agent_id != nil || snapshot?.model_id.hasPrefix("acp:") == true }
+    var modelLabel: String {
+        if isAcp {
+            let id = snapshot?.acp_agent_id ?? String((snapshot?.model_id ?? "").dropFirst(4))
+            return acpAgents.first(where: { $0["id"].string == id })?["label"].string ?? String((snapshot?.model_id ?? "ACP").dropFirst(4))
+        }
+        return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
+    }
     var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
     var canQueueFollowUp: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText && queuedFollowUp == nil && snapshot?.running == true && snapshot?.read_only != true && !busy && !showingHistory && connectionError == nil
+        return hasText && queuedFollowUp == nil && snapshot?.running == true && snapshot?.read_only != true && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil
     }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -83,8 +94,14 @@ final class NativeConversationModel: ObservableObject {
         projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []; queuedFollowUp = queuedBySession[session]
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
+        models = []; acpAgents = []
         connectionError = nil; loading = true; busy = false
         let current = generation
+        do {
+            let prefs = try await client.invoke("get_appearance_prefs", args: [:], projectID: project)
+            if generation == current { WispDesign.apply(prefs) }
+        } catch { if generation == current { operationError = "未能读取输入偏好：\(error.localizedDescription)" } }
+        guard generation == current else { return }
         await refresh()
         guard generation == current else { return }
         loading = false
@@ -98,6 +115,11 @@ final class NativeConversationModel: ObservableObject {
             if generation == current { models = rows }
         }
         catch { if generation == current { operationError = error.localizedDescription } }
+        guard generation == current else { return }
+        do {
+            let agents = try await client.invoke("list_acp_agents", args: [:], projectID: project).array
+            if generation == current { acpAgents = agents }
+        } catch { if generation == current { operationError = error.localizedDescription } }
         guard generation == current else { return }
         polling = Task { [weak self] in
             while !Task.isCancelled {
@@ -140,12 +162,14 @@ final class NativeConversationModel: ObservableObject {
             if current == generation && !Task.isCancelled { connectionError = "连接暂时中断，正在重新读取会话：\(error.localizedDescription)" }
         }
     }
-    func create(project: String) async -> String? {
+    func create(project: String, acpAgentID: String? = nil) async -> String? {
         guard !busy else { return nil }; busy = true; operationError = nil
         let current = generation
         defer { if generation == current { busy = false } }
         do {
-            let id = try await client.invoke("native_conversation_create", args: [:], projectID: project).string
+            var args: [String: SettingsValue] = [:]
+            if let acpAgentID { args["acp_agent_id"] = .string(acpAgentID) }
+            let id = try await client.invoke("native_conversation_create", args: args, projectID: project).string
             guard !id.isEmpty else { throw ProjectBrowserError.invalidResponse }
             return id
         }
@@ -245,18 +269,88 @@ final class NativeConversationModel: ObservableObject {
         return true
     }
     func acknowledgeUncertainSend() { if let sessionID { pendingSends[sessionID] = nil }; uncertainSend = false; pending = nil; operationError = nil }
-    func stop() async { await action("native_conversation_stop", [:]) }
-    func approve(_ approval: ConversationApproval, allowed: Bool) async {
-        await action("native_conversation_approve", ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)])
+    func questionTarget(_ item: ConversationItem, index: Int) -> NativeQuestionTarget {
+        NativeQuestionTarget(session: sessionID ?? "", index: index, text: item.text, generation: generation)
     }
-    func selectModel(_ id: String) async { await action("native_conversation_model", ["model_id": .string(id)]) }
-    private func action(_ command: String, _ args: [String: SettingsValue]) async {
-        guard !busy, let project = projectID, let session = sessionID else { return }
+    func questionState(_ target: NativeQuestionTarget) -> NativeQuestion.State {
+        guard target.session == sessionID, target.generation == generation,
+              visibleItems.indices.contains(target.index), visibleItems[target.index].role == "question",
+              visibleItems[target.index].text == target.text, let question = NativeQuestion(target.text) else { return .expired }
+        if question.state != .pending { return question.state }
+        if visibleItems.dropFirst(target.index + 1).contains(where: { $0.role == "user" }) { return .answered }
+        return .pending
+    }
+    func canStageQuestion(_ target: NativeQuestionTarget) -> Bool {
+        questionState(target) == .pending && NativeQuestion(target.text)?.requestID == nil
+            && snapshot?.read_only == false && !showingHistory && !busy && !uncertainSend && connectionError == nil
+    }
+    func canAnswerAcpQuestion(_ target: NativeQuestionTarget) -> Bool {
+        guard questionState(target) == .pending, let id = NativeQuestion(target.text)?.requestID else { return false }
+        return !showingHistory && !busy && connectionError == nil && !submittedAcpRequests.contains(id)
+            && snapshot?.acp?.question_ids.contains(id) == true
+    }
+    @discardableResult
+    func answerAcpQuestion(_ text: String, target: NativeQuestionTarget) async -> Bool {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canAnswerAcpQuestion(target), let id = NativeQuestion(target.text)?.requestID, !answer.isEmpty else { return false }
+        return await respondAcp("native_conversation_acp_answer", id: id, args: ["answer": .string(answer)])
+    }
+    func canRespondAcpPermission(_ permission: ConversationAcpPermission) -> Bool {
+        !busy && !showingHistory && connectionError == nil && permission.frame_id == sessionID
+            && !submittedAcpRequests.contains(permission.request_id)
+            && snapshot?.acp?.permissions.contains(permission) == true
+    }
+    @discardableResult
+    func respondAcpPermission(_ permission: ConversationAcpPermission, optionID: String?) async -> Bool {
+        guard canRespondAcpPermission(permission), optionID == nil || permission.options.contains(where: { $0.id == optionID }) else { return false }
+        return await respondAcp("native_conversation_acp_permission", id: permission.request_id, args: ["option_id": optionID.map(SettingsValue.string) ?? .null])
+    }
+    private func respondAcp(_ command: String, id: String, args: [String: SettingsValue]) async -> Bool {
+        submittedAcpRequests.insert(id)
+        var args = args; args["request_id"] = .string(id)
+        let current = generation
+        let success = await action(command, args)
+        if !success && current == generation { operationError = "ACP 回复结果未能确认。请核对最新状态；不会自动重试。\n" + (operationError ?? "") }
+        return success
+    }
+    @discardableResult
+    func stageQuestionAnswer(_ text: String, target: NativeQuestionTarget) -> Bool {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canStageQuestion(target), !answer.isEmpty else { return false }
+        let prefix: String
+        if let previous = questionDrafts[target.session], previous.target.isSameQuestion(as: target), previous.text == draft {
+            prefix = previous.prefix
+        } else {
+            prefix = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : draft
+        }
+        draft = prefix.isEmpty ? answer : prefix + (prefix.hasSuffix("\n\n") ? "" : "\n\n") + answer
+        questionDrafts[target.session] = (target, draft, prefix)
+        drafts[target.session] = draft
+        return true
+    }
+    func stop() async { await action("native_conversation_stop", [:]) }
+    func canApprove(_ approval: ConversationApproval) -> Bool {
+        !busy && !showingHistory && connectionError == nil && snapshot?.read_only == false
+            && approval.frame_id == sessionID && snapshot?.approvals.contains(where: { $0.approval_id == approval.approval_id }) == true
+    }
+    @discardableResult
+    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil) async -> Bool {
+        guard canApprove(approval) else { return false }
+        var args: [String: SettingsValue] = ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)]
+        if !allowed, let feedback = feedback?.trimmingCharacters(in: .whitespacesAndNewlines), !feedback.isEmpty { args["feedback"] = .string(feedback) }
+        return await action("native_conversation_approve", args)
+    }
+    func selectModel(_ id: String) async { guard !isAcp else { return }; await action("native_conversation_model", ["model_id": .string(id)]) }
+    @discardableResult
+    private func action(_ command: String, _ args: [String: SettingsValue]) async -> Bool {
+        guard !busy, let project = projectID, let session = sessionID else { return false }
         let current = generation; busy = true; operationError = nil
         var args = args; args["session_id"] = .string(session)
-        do { _ = try await client.invoke(command, args: args, projectID: project) }
+        var succeeded = false
+        do { _ = try await client.invoke(command, args: args, projectID: project); succeeded = true }
         catch { if current == generation { operationError = error.localizedDescription } }
         if current == generation { busy = false; await refresh() }
+        return succeeded && current == generation
     }
     func older() async {
         revealedExcerpt = nil
@@ -339,8 +433,8 @@ final class NativeConversationModel: ObservableObject {
     }
     static func renderedText(_ item: ConversationItem) -> String {
         if item.role == "tool" { return item.text }
-        let attributed = (try? AttributedString(markdown: item.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(item.text)
-        return String(attributed.characters)
+        let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
+        return NativeMarkdownContent.render(source, saved: [], scheme: .light).string
     }
     func clearExcerpt(revision: Int) { if scrollRevision == revision { revealedExcerpt = nil } }
     static func questionItemIndex(_ target: Int, offset: Int, items: [ConversationItem]) -> Int? {

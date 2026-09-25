@@ -674,6 +674,16 @@ fn read_project_directory(
     Ok((manifest, workspace))
 }
 
+/// Register a native-picker selection in place through the same validation as
+/// WebView imports. No data synchronization and no window-owned file dialog.
+pub(crate) async fn import_project_folder(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    package: &Path,
+) -> Result<String, String> {
+    import_project_directory(store, app_data, package, None).await
+}
+
 async fn import_project_directory(
     store: &wisp_store::Store,
     app_data: &Path,
@@ -1101,47 +1111,15 @@ pub(super) async fn export_project(
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    exploration_commands::reject_private_exploration_project_mutation(
-        &state.store,
-        &id,
-        "Project export",
-    )
-    .await?;
-    let reporter = TransferReporter::new(app.clone(), &window, "export", Some(id.clone()));
-    reporter.report("selecting_export_destination", 0, None, 0, None, None);
-    let _project_activity = state.begin_project_exclusive_activity(&id)?;
-    let (name, description, workspace_dir) = state
+    let _project_activity = begin_project_export(&state, &id).await?;
+    let (name, _, _) = state
         .store
         .get_project_meta(&id)
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Project not found".to_string())?;
-    let running_frames = state.running_turns.lock().await.clone();
-    for frame_id in running_frames {
-        if state
-            .store
-            .frame_project_id(&frame_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .as_deref()
-            == Some(id.as_str())
-        {
-            return Err(
-                "Wait for running sessions to finish before exporting this project.".into(),
-            );
-        }
-    }
-    if state
-        .store
-        .list_active_runs()
-        .await
-        .map_err(|error| error.to_string())?
-        .iter()
-        .any(|run| run.project_id == id)
-    {
-        return Err("Wait for running jobs to finish before exporting this project.".into());
-    }
-
+        .ok_or("Project not found")?;
+    let reporter = TransferReporter::new(app.clone(), &window, "export", Some(id.clone()));
+    reporter.report("selecting_export_destination", 0, None, 0, None, None);
     let directory = directory.unwrap_or(false);
     let destination = if directory {
         pick_import_parent(&app)
@@ -1168,27 +1146,119 @@ pub(super) async fn export_project(
         return Ok(None);
     };
 
-    reporter.report("preparing", 0, None, 0, None, None);
-    std::fs::create_dir_all(&state.app_data).map_err(|error| error.to_string())?;
-    let database = TempFile(
-        state
-            .app_data
-            .join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())),
-    );
-    let stats = state
-        .store
-        .export_project_database(&id, &database.0)
+    export_project_contents(
+        &state.store,
+        &state.app_data,
+        &id,
+        &destination,
+        directory,
+        Some(reporter),
+    )
+    .await?;
+    Ok(Some(destination.to_string_lossy().into_owned()))
+}
+
+async fn begin_project_export(
+    state: &AppState,
+    id: &str,
+) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>, String> {
+    exploration_commands::reject_private_exploration_project_mutation(
+        &state.store,
+        id,
+        "Project export",
+    )
+    .await?;
+    let guard = state.begin_project_exclusive_activity(id)?;
+    let running_frames = state.running_turns.lock().await.clone();
+    ensure_project_export_idle(&state.store, id, &running_frames).await?;
+    Ok(guard)
+}
+
+async fn ensure_project_export_idle(
+    store: &wisp_store::Store,
+    id: &str,
+    running_frames: &HashSet<String>,
+) -> Result<(), String> {
+    for frame_id in running_frames {
+        if store
+            .frame_project_id(frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .as_deref()
+            == Some(id)
+        {
+            return Err(
+                "Wait for running sessions to finish before exporting this project.".into(),
+            );
+        }
+    }
+    if store
+        .list_active_runs()
+        .await
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|run| run.project_id == id)
+    {
+        return Err("Wait for running jobs to finish before exporting this project.".into());
+    }
+    Ok(())
+}
+
+/// Native export keeps the same project lock and active-run checks as WebView.
+/// Destination was chosen by the caller's system picker; no window is selected.
+pub(crate) async fn export_project_to(
+    state: &AppState,
+    id: &str,
+    destination: &Path,
+    directory: bool,
+) -> Result<(), String> {
+    if !destination.is_absolute() {
+        return Err("Choose an absolute export destination".into());
+    }
+    let _project_activity = begin_project_export(state, id).await?;
+    export_project_contents(
+        &state.store,
+        &state.app_data,
+        id,
+        destination,
+        directory,
+        None,
+    )
+    .await
+}
+
+async fn export_project_contents(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    id: &str,
+    destination: &Path,
+    directory: bool,
+    reporter: Option<TransferReporter>,
+) -> Result<(), String> {
+    let (name, description, workspace_dir) = store
+        .get_project_meta(id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("Project not found")?;
+    if let Some(progress) = &reporter {
+        progress.report("preparing", 0, None, 0, None, None);
+    }
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())));
+    let stats = store
+        .export_project_database(id, &database.0)
         .await
         .map_err(|error| error.to_string())?;
     let workspace = PathBuf::from(workspace_dir);
     let project = ArchivedProject {
-        id,
+        id: id.to_owned(),
         name,
         description,
     };
+    let output = destination.to_path_buf();
+    let progress = reporter.clone();
     if directory {
-        let output = destination.clone();
-        let progress = reporter.clone();
         tokio::task::spawn_blocking(move || {
             write_project_directory(
                 &output,
@@ -1196,37 +1266,38 @@ pub(super) async fn export_project(
                 &workspace,
                 project,
                 &stats,
-                Some(&progress),
+                progress.as_ref(),
             )
         })
         .await
         .map_err(|error| error.to_string())??;
-        reporter.report("complete", 0, None, 0, None, None);
-        return Ok(Some(destination.to_string_lossy().into_owned()));
+    } else {
+        let temporary = temporary_archive_path(destination)?;
+        let _temporary_archive = TempFile(temporary.clone());
+        tokio::task::spawn_blocking(move || {
+            write_project_archive(
+                &temporary,
+                &database.0,
+                &workspace,
+                &output,
+                project,
+                &stats,
+                progress.as_ref(),
+            )?;
+            let manifest = read_manifest(&temporary)?;
+            verify_project_archive(&temporary, &manifest, progress.as_ref())?;
+            if let Some(progress) = &progress {
+                progress.report("publishing", 0, None, 0, None, None);
+            }
+            publish_archive(&temporary, &output)
+        })
+        .await
+        .map_err(|error| error.to_string())??;
     }
-    let temporary = temporary_archive_path(&destination)?;
-    let _temporary_archive = TempFile(temporary.clone());
-    let destination_for_task = destination.clone();
-    let reporter_for_task = reporter.clone();
-    tokio::task::spawn_blocking(move || {
-        write_project_archive(
-            &temporary,
-            &database.0,
-            &workspace,
-            &destination_for_task,
-            project,
-            &stats,
-            Some(&reporter_for_task),
-        )?;
-        let manifest = read_manifest(&temporary)?;
-        verify_project_archive(&temporary, &manifest, Some(&reporter_for_task))?;
-        reporter_for_task.report("publishing", 0, None, 0, None, None);
-        publish_archive(&temporary, &destination_for_task)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    reporter.report("complete", 0, None, 0, None, None);
-    Ok(Some(destination.to_string_lossy().into_owned()))
+    if let Some(progress) = &reporter {
+        progress.report("complete", 0, None, 0, None, None);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1377,51 +1448,145 @@ pub(crate) async fn export_project_archive(
     project_id: &str,
     destination: &Path,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
-    let (name, description, workspace_dir) = store
-        .get_project_meta(project_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Project not found".to_string())?;
-    let database =
-        TempFile(app_data.join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())));
-    let stats = store
-        .export_project_database(project_id, &database.0)
-        .await
-        .map_err(|error| error.to_string())?;
-    let project = ArchivedProject {
-        id: project_id.to_owned(),
-        name,
-        description,
-    };
-    let workspace = PathBuf::from(workspace_dir);
-    let temporary = temporary_archive_path(destination)?;
-    let temporary_archive = TempFile(temporary.clone());
-    let destination = destination.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        write_project_archive(
-            &temporary,
-            &database.0,
-            &workspace,
-            &destination,
-            project,
-            &stats,
-            None,
-        )?;
-        let manifest = read_manifest(&temporary)?;
-        verify_project_archive(&temporary, &manifest, None)?;
-        publish_archive(&temporary, &destination)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    // publish_archive renamed the temporary zip onto `destination`.
-    std::mem::forget(temporary_archive);
-    Ok(())
+    export_project_contents(store, app_data, project_id, destination, false, None).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shared_export_preserves_records_in_both_formats_and_rejects_bad_destinations() {
+        let base = tempfile::tempdir().unwrap();
+        let _package = directory_fixture(base.path()).await;
+        let source = wisp_store::Store::open(&base.path().join("source.sqlite"))
+            .await
+            .unwrap();
+        for directory in [false, true] {
+            let destination = base.path().join(if directory {
+                "native-directory"
+            } else {
+                "native.zip"
+            });
+            export_project_contents(
+                &source,
+                base.path(),
+                "project",
+                &destination,
+                directory,
+                None,
+            )
+            .await
+            .unwrap();
+            let target = wisp_store::Store::open_application(&base.path().join(if directory {
+                "directory.sqlite"
+            } else {
+                "zip.sqlite"
+            }))
+            .await
+            .unwrap();
+            let imported = if directory {
+                import_project_directory(&target, base.path(), &destination, None)
+                    .await
+                    .unwrap()
+            } else {
+                import_archived_project(&target, base.path(), &destination, base.path())
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(imported, "project");
+            assert_eq!(target.list_sessions(&imported).await.unwrap().len(), 3);
+            let workspace =
+                PathBuf::from(target.get_project_meta(&imported).await.unwrap().unwrap().2);
+            assert_eq!(
+                std::fs::read(workspace.join(".wisp/artifacts/plot.txt")).unwrap(),
+                b"figure"
+            );
+        }
+        let occupied = base.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep"), b"original").unwrap();
+        assert!(
+            export_project_contents(&source, base.path(), "project", &occupied, true, None)
+                .await
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"original");
+        let recursive = base.path().join("source/nested-export");
+        assert!(
+            export_project_contents(&source, base.path(), "project", &recursive, true, None)
+                .await
+                .unwrap_err()
+                .contains("outside")
+        );
+        assert!(!recursive.exists());
+        let missing = base.path().join("unknown.zip");
+        assert!(
+            export_project_contents(&source, base.path(), "unknown", &missing, false, None)
+                .await
+                .is_err()
+        );
+        assert!(!missing.exists());
+    }
+
+    #[tokio::test]
+    async fn shared_export_idle_gate_scopes_running_sessions_and_jobs() {
+        let base = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&base.path().join("test.sqlite"))
+            .await
+            .unwrap();
+        for project in ["chosen", "other"] {
+            store
+                .create_project(
+                    project,
+                    project,
+                    base.path().join(project).to_str().unwrap(),
+                )
+                .await
+                .unwrap();
+            store
+                .create_frame(
+                    &format!("frame-{project}"),
+                    project,
+                    "Conversation",
+                    "model",
+                )
+                .await
+                .unwrap();
+        }
+        ensure_project_export_idle(
+            &store,
+            "chosen",
+            &HashSet::from(["frame-other".to_string()]),
+        )
+        .await
+        .unwrap();
+        assert!(ensure_project_export_idle(
+            &store,
+            "chosen",
+            &HashSet::from(["frame-chosen".to_string()])
+        )
+        .await
+        .unwrap_err()
+        .contains("running sessions"));
+        let mut run =
+            wisp_store::RunRecord::new("job-other", "other", "local", "Analysis", "command");
+        run.status = wisp_store::RunStatus::Running;
+        store.create_run(&run).await.unwrap();
+        ensure_project_export_idle(&store, "chosen", &HashSet::new())
+            .await
+            .unwrap();
+        run.id = "job-chosen".into();
+        run.project_id = "chosen".into();
+        store.create_run(&run).await.unwrap();
+        assert!(
+            ensure_project_export_idle(&store, "chosen", &HashSet::new())
+                .await
+                .unwrap_err()
+                .contains("running jobs")
+        );
+    }
 
     async fn directory_fixture(base: &Path) -> PathBuf {
         let workspace = base.join("source");

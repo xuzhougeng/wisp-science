@@ -139,6 +139,30 @@ fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| error.to_string())
 }
 
+fn delete_session_arguments(value: &Value) -> Result<Value, String> {
+    let args: dto::SessionRequest = decode(value)?;
+    if args.before_seq.is_some() {
+        return Err("Delete does not accept a history cursor".into());
+    }
+    Ok(json!({"id": args.session_id}))
+}
+
+fn require_acp_profile(profiles: &[crate::acp::AcpAgentProfile], id: &str) -> Result<(), String> {
+    if id.trim().is_empty() || !profiles.iter().any(|profile| profile.id == id) {
+        return Err("ACP Agent profile does not exist; refresh the model list".into());
+    }
+    Ok(())
+}
+
+fn turn_arguments(
+    session: &str,
+    message: &str,
+    attachments: &[String],
+    agent: Option<&str>,
+) -> Value {
+    json!({"sessionId":session,"message":message,"attachments":attachments,"acpAgentId":agent})
+}
+
 pub(crate) async fn require_owner(
     store: &wisp_store::Store,
     project: &str,
@@ -155,6 +179,25 @@ pub(crate) async fn require_owner(
         return Err("Conversation does not belong to the selected project".into());
     }
     Ok(())
+}
+
+async fn owned_session_exists(
+    store: &wisp_store::Store,
+    project: &str,
+    session: &str,
+) -> Result<bool, String> {
+    if session.is_empty() {
+        return Err("A conversation is required".into());
+    }
+    match store
+        .frame_project_id(session)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        None => Ok(false),
+        Some(owner) if owner == project => Ok(true),
+        Some(_) => Err("Conversation does not belong to the selected project".into()),
+    }
 }
 async fn running(broker: &Broker, session: &str) -> bool {
     broker
@@ -196,16 +239,42 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         return Ok(Value::Array(rows));
     }
     if request.command == "native_conversation_create" {
-        if !request.args.as_object().is_some_and(|v| v.is_empty()) {
-            return Err("Create takes no arguments".into());
+        let args: dto::CreateRequest = decode(&request.args)?;
+        if let Some(agent) = args.acp_agent_id.as_deref() {
+            let state = broker.app.state::<crate::AppState>();
+            require_acp_profile(&crate::acp::profiles(&state.store).await, agent)?;
         }
-        return call(broker, project, "new_session", json!({})).await;
+        let value = call(broker, project, "new_session", json!({})).await?;
+        let id = value.as_str().ok_or("Invalid new conversation response")?;
+        if let Some(agent) = args.acp_agent_id {
+            broker
+                .app
+                .state::<crate::AppState>()
+                .store
+                .set_frame_acp_agent_selection(id, project, &agent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(value);
     }
     let session = request
         .args
         .get("session_id")
         .and_then(Value::as_str)
         .ok_or("A conversation is required")?;
+    if request.command == "native_conversation_exists" {
+        let args: dto::SessionRequest = decode(&request.args)?;
+        if args.before_seq.is_some() {
+            return Err("Existence check does not accept a history cursor".into());
+        }
+        return owned_session_exists(
+            &broker.app.state::<crate::AppState>().store,
+            project,
+            session,
+        )
+        .await
+        .map(Value::Bool);
+    }
     require_owner(
         &broker.app.state::<crate::AppState>().store,
         project,
@@ -218,8 +287,39 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command.starts_with("native_conversation_panel_") {
         return crate::native_panels::dispatch(broker, request, project, session).await;
     }
+    let acp_agent_id =
+        crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_delete" => {
+            call(
+                broker,
+                project,
+                "delete_session",
+                delete_session_arguments(&request.args)?,
+            )
+            .await
+        }
+        "native_conversation_pin" => {
+            let args: dto::PinRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "set_session_pinned",
+                json!({"id":session,"pinned":args.pinned}),
+            )
+            .await
+        }
+        "native_conversation_rename" => {
+            let args: dto::RenameRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "rename_session",
+                json!({"id":session,"title":args.title}),
+            )
+            .await
+        }
         "native_conversation_share" => {
             let _: dto::SessionRequest = decode(&request.args)?;
             let state = broker.app.state::<crate::AppState>();
@@ -346,15 +446,25 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             let (items, next_before_seq, frozen, user_offset) =
                 crate::session_commands::native_transcript(&state, session, args.before_seq)
                     .await?;
-            let model = call(
+            let mut model = call(
                 broker,
                 project,
                 "get_session_model",
                 json!({"sessionId":session}),
             )
             .await?;
+            let binding = state
+                .store
+                .get_acp_session(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            if binding.is_none() {
+                if let Some(agent) = &acp_agent_id {
+                    model = json!(format!("acp:{agent}"));
+                }
+            }
             record.sequence += 1;
-            let read_only = frozen || model.as_str().is_some_and(|id| id.starts_with("acp:"));
+            let read_only = frozen;
             let snapshot = dto::Snapshot {
                 schema: dto::SCHEMA.into(),
                 epoch: broker.conversations.epoch.clone(),
@@ -367,7 +477,13 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 running: record.running || running(broker, session).await,
                 stopping: record.stopping,
                 read_only,
+                acp: if frozen {
+                    None
+                } else {
+                    Some(crate::acp::native_interactions(&state, session).await)
+                },
                 model_id: model.as_str().unwrap_or_default().into(),
+                acp_agent_id: binding.map(|binding| binding.agent_profile_id),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
                 approvals: state
@@ -408,6 +524,20 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         }
         "native_conversation_enqueue" => {
             let args: dto::SendRequest = decode(&request.args)?;
+            if acp_agent_id.is_some()
+                && broker
+                    .app
+                    .state::<crate::AppState>()
+                    .store
+                    .get_acp_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_none()
+            {
+                return Err(
+                    "Wait for the ACP session to connect before queuing a follow-up".into(),
+                );
+            }
             let turn_running = {
                 let guard = record.lock().await;
                 guard.running || running(broker, session).await
@@ -448,19 +578,6 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             let mut args: dto::SendRequest = decode(&request.args)?;
             args.attachments.retain(|path| !path.trim().is_empty());
             args.message = dto::message_with_attachments(&args.message, &args.attachments);
-            // ACP authorization/questions need a separate native protocol. Keep
-            // saved ACP transcripts readable, but never start an invisible flow.
-            if broker
-                .app
-                .state::<crate::AppState>()
-                .store
-                .get_acp_session(session)
-                .await
-                .map_err(|e| e.to_string())?
-                .is_some()
-            {
-                return Err("ACP conversations are read-only in the native preview".into());
-            }
             let mut guard = record.lock().await;
             if guard.accept(&args, running(broker, session).await)? {
                 let broker = broker.clone();
@@ -469,12 +586,13 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let session = session.to_owned();
                 let message = args.message.clone();
                 let attachments = args.attachments.clone();
+                let acp_agent_id = acp_agent_id.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(call(
                         &broker,
                         &project,
                         "send_message",
-                        json!({"sessionId":session,"message":message,"attachments":attachments}),
+                        turn_arguments(&session, &message, &attachments, acp_agent_id.as_deref()),
                     ));
                     // The Stop request can precede creation of SessionRuntime.
                     // Keep cancelling until the turn settles, without dropping
@@ -519,11 +637,43 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             .await?;
             Ok(Value::Null)
         }
+        "native_conversation_acp_permission" => {
+            let args: dto::AcpPermissionResponse = decode(&request.args)?;
+            crate::acp::respond_native_permission(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "native_conversation_acp_answer" => {
+            let args: dto::AcpQuestionResponse = decode(&request.args)?;
+            crate::acp::respond_native_question(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
         "native_conversation_model" => {
             let args: dto::ModelRequest = decode(&request.args)?;
             let record = record.lock().await;
             if record.running || running(broker, session).await {
                 return Err("Wait for the current turn before changing its model".into());
+            }
+            if acp_agent_id.is_some()
+                || broker
+                    .app
+                    .state::<crate::AppState>()
+                    .store
+                    .get_acp_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+            {
+                return Err("Start a new conversation to switch away from this ACP Agent".into());
             }
             let profiles = call(broker, project, "list_models", json!({})).await?;
             if !profiles.as_array().is_some_and(|rows| {
@@ -546,7 +696,51 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deletion_uses_only_the_explicit_session_and_rejects_history_or_scope_overrides() {
+        assert_eq!(
+            super::delete_session_arguments(&serde_json::json!({"session_id":"s"})).unwrap(),
+            serde_json::json!({"id":"s"})
+        );
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"session_id":"s","before_seq":1}),
+            serde_json::json!({"session_id":"s","project_id":"other"}),
+            serde_json::json!({"session_id":"s","id":"other"}),
+        ] {
+            assert!(super::delete_session_arguments(&args).is_err());
+        }
+    }
     use super::*;
+    #[test]
+    fn acp_creation_requires_exact_profile_and_turn_routing_preserves_session() {
+        let profiles = vec![crate::acp::AcpAgentProfile {
+            id: "agent".into(),
+            label: "Agent".into(),
+            command: "fake-acp".into(),
+            args: vec![],
+        }];
+        assert!(require_acp_profile(&profiles, "agent").is_ok());
+        for id in ["", "agent-other", "missing", " agent "] {
+            assert!(require_acp_profile(&profiles, id).is_err());
+        }
+        let new = turn_arguments(
+            "new-session",
+            "hello",
+            &["uploads/a.csv".into()],
+            Some("agent"),
+        );
+        assert_eq!(
+            new,
+            json!({"sessionId":"new-session", "message":"hello", "attachments":["uploads/a.csv"], "acpAgentId":"agent"})
+        );
+        let resume = turn_arguments("saved-session", "continue", &[], None);
+        assert_eq!(resume["sessionId"], "saved-session");
+        assert!(
+            resume["acpAgentId"].is_null(),
+            "Saved bindings are resolved by the shared send pipeline"
+        );
+    }
     #[test]
     fn sending_is_idempotent_and_rejects_ambiguous_id_reuse_and_busy_sessions() {
         let mut record = Record::default();
@@ -584,6 +778,10 @@ mod tests {
         assert!(require_owner(&store, "b", "s").await.is_err());
         assert!(require_owner(&store, "a", "").await.is_err());
         assert!(require_owner(&store, "a", "missing").await.is_err());
+        assert!(owned_session_exists(&store, "a", "s").await.unwrap());
+        assert!(!owned_session_exists(&store, "a", "missing").await.unwrap());
+        assert!(owned_session_exists(&store, "b", "s").await.is_err());
+        assert!(owned_session_exists(&store, "a", "").await.is_err());
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
     }

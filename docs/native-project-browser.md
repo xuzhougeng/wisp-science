@@ -54,6 +54,14 @@ bash scripts/build_native_macos.sh
 open "target/native-macos/Wisp Science Preview.app"
 ```
 
+Both the SwiftUI shell and embedded host are stamped from the product version in
+`src-tauri/tauri.conf.json`. Their plists also contain `WispSourceRevision` and
+`WispSourceDirty`, so a local edited preview is distinguishable from a clean
+commit. `scripts/test_stamp_native_macos.py` verifies the metadata and identifier
+preservation. The native shell uses one workspace scene: closing the last window
+keeps the app alive; opening it again from Finder/Dock restores a workspace with
+the same project model, without launching another host.
+
 This builds a debug app for the current architecture, bundles `wisp-service`, and
 applies an ad-hoc local signature. It is a local preview, not a notarized release
 or universal installer. Its bundle ID is `science.wisp-science.native-preview`;
@@ -264,8 +272,12 @@ Manual smoke steps:
 
 The preview aligns the home/workspace shell and includes native settings, project
 creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, scratch chat, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, 论文证据, 能力, and 反馈问题 still require their native services.
-Those remaining action slots are visible but explicitly disabled in the preview.
+The macOS workspace additionally connects terminal/files, Notebook, Highlights,
+Provenance, SideChat, contexts, Runs and Agent panels. Their implementation does
+not imply complete parity behind every entry: ACP main conversations, full
+publication editing and the project-folder workflow are tracked in the
+[2026-09-25 parity audit](superpowers/plans/2026-09-25-macos-native-parity-iteration.md)
+and [repair progress](superpowers/plans/2026-09-25-macos-native-parity-progress.md).
 
 The sidebar **新建分组** button creates a session group for the explicit project.
 Sessions can be sorted by recent or name, grouped by folder or date, and
@@ -439,19 +451,71 @@ WinUI provides the corresponding native form, folder picker, standard-layout con
 
 ## Importing a project
 
-The home **导入项目** button opens the system file panel for a `.zip` archive.
-Canceling the panel does not call the host. A chosen path is sent once as
-`native_project_import`, with no project id. The host reads and verifies the
-archive with the existing project-transfer code, places the workspace next to
-the archive, and registers it. It does not open the Tauri file dialog and does
-not consult the WebView's exploration-branch window. Progress is a busy state,
-not a streamed bar. A lost or invalid reply stays on the home screen and is not
-retried; refresh the project list to see whether the import finished. A
-confirmed summary reloads the read-only list and opens that project. A second
-click while the request is in flight does not send again.
+The macOS home **导入项目** button opens native import options. **打开项目文件夹**
+uses a directory-only system picker and sends `native_project_import_directory`
+with an explicit `directory_path` and no project ID. The host reuses the WebView
+project-folder importer: workspace-owned `.wisp` metadata and legacy exported
+packages both register in place. It does not copy large workspace data. Missing
+metadata, duplicate projects, incomplete cloud downloads and conflicts return
+errors without inventing a new project or falling back to ZIP import.
 
-`native_project_import` is announced next to `native_project_create` on the
-host capability document. `wisp-service` still cannot import projects. WinUI provides a ZIP picker and an import form through `INativeProjectClient.ImportAsync`; errors retain the selected path.
+**导入 ZIP 归档** uses the existing `native_project_import` path: it verifies the
+archive, places the workspace in a new directory next to it, and registers the
+project. Canceling a picker does not call the host. Escape closes the
+system picker before the options sheet; immediate Escape in the options sheet
+closes only that sheet. In-flight imports disable duplicate submission and
+switching databases. Confirmed imports refresh and open the returned project;
+failed or ambiguous replies preserve the options and error, without automatic
+retry. Progress is a busy state rather than a streamed byte counter.
+
+**从旧工作区恢复历史** first calls `native_project_recovery_preview` to scan
+`.wisp/history` without registering a project. A nested sheet shows recoverable
+sessions, messages, dates and invalid/duplicate archive counts, and allows editing
+the project name. Only confirmation calls `native_project_recover_workspace`;
+the host rescans and uses the shared WebView recovery path. This restores archived
+messages, not a complete project database, and preserves source archives. Empty
+names or previews with no recoverable sessions cannot be submitted. Immediate
+Escape closes only the preview and leaves import options open. A lost response
+preserves the preview and asks the user to check the project list, without retry.
+
+These commands are advertised in the native project capability family and
+execute without a WebView window selection. `wisp-service` remains read-only.
+WinUI retains its ZIP picker and `INativeProjectClient.ImportAsync` form.
+
+Project cards display the shared `folder_sync` state when present: saved,
+unpublished, a newer remote version, waiting for files, or conflict. Configured
+relay synchronization remains separately labeled. The last synchronization time
+is available through the status tooltip and VoiceOver label. Old payloads without
+`folder_sync` still decode; an unknown state is displayed explicitly and is never
+reported as saved. These indicators report the host snapshot and do not initiate
+network transfers or enable synchronization.
+
+The project card's **项目同步…** menu opens native controls for enabling workspace
+folder snapshots, manually synchronizing an already configured project, and
+resolving conflicts. Enabling saves snapshots in `.wisp`; the user's drive client
+moves files. The same existing backend handles folder and configured relay sync,
+including idle-project checks and runtime invalidation after a pull. Native
+requests must have matching explicit project scope and `id`, and only conflict
+resolution accepts a `local`/`remote` strategy. No visible or hidden WebView is
+selected for these three native calls. A conflict never chooses a version
+automatically: a nested confirmation explains which copy will replace the other.
+Escape closes only that confirmation, preserving the sync sheet. Failed or
+unknown responses stay unconfirmed and never retry. Closing refreshes project
+cards. Creating a relay configuration is outside this menu's scope.
+
+## Exporting a project
+
+Right-click a macOS project card and choose **导出项目…**. The native sheet offers
+ZIP or an uncompressed project directory, using the system save picker. Both
+include project records and workspace files; large workspace data is copied only
+when the user explicitly exports. Canceling the picker sends no host request.
+`native_project_export` carries the explicit project ID, destination and format.
+The host reuses the WebView export lock, running-session/job checks and validated
+transfer writer. A directory destination must be new and outside the source
+workspace. ZIP output is verified before publishing. A confirmed response shows
+the destination with a Finder action; failures preserve the sheet without retry.
+The busy state blocks duplicate export and dismissal. Immediate Escape closes
+only the idle export sheet. Byte-level progress is not yet shown in the native UI.
 
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
@@ -552,3 +616,6 @@ turn releases its workflow lock, then stops. A second distinct draft is
 refused, and the button does not send another turn by itself. A lost reply
 is not retried. The command does not change the WebView's active project or
 session. WinUI enables 排队后续 only for a writable running turn. An uncertain result preserves the draft and blocks resubmission until the user explicitly acknowledges checking the result.
+
+Sync errors wrap inside the native status and confirmation sheets, keeping both
+the backend explanation and the no-automatic-retry notice readable.

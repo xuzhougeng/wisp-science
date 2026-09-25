@@ -1,19 +1,66 @@
 # Native conversation loop
 
-The SwiftUI preview supports creating/opening HTTP-model conversations, selecting
-that conversation's model, sending messages, seeing incremental text and tool
+The SwiftUI preview supports creating/opening HTTP-model and ACP conversations,
+selecting an HTTP conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing
-WebView remains usable. ACP, attachments, embedded MCP Apps, workflow approval
-editors, rich artifact viewers, guidance/queued follow-ups and branch management
-remain WebView features in this phase. ACP and frozen/archived conversations are
-read-only in the native composer.
+WebView remains usable. The macOS composer also supports file attachments and one
+queued follow-up, and the workspace has an Agent workflow approval panel.
+Embedded MCP Apps, rich scientific artifact viewers and branch management remain
+follow-ups. Frozen/archived conversations are read-only in the native composer.
+
+The macOS main composer reads the saved `send_with_modifier` preference when a
+conversation opens and updates when settings are saved. With it off, Enter sends;
+with it on, Enter inserts a newline. Cmd/Ctrl+Enter sends in either mode;
+Shift+Enter (including with Cmd/Ctrl) inserts a newline. IME marked-text
+confirmation belongs to AppKit and never submits a message. Return shortcuts
+apply only to the focused editor. Side chat retains its own Enter-to-send policy.
+
+The macOS transcript renders block Markdown headings, nested/ordered/task lists,
+quotes, fenced code and native tables in one selectable document. Code retains
+newlines; long lines wrap within the conversation. Right-click a code block to
+copy its original content or a table to copy TSV. Quote and highlight actions
+work across blocks. Task state is shown as readable completion labels. Formula
+rendering and inline images remain separate follow-ups; tool output stays literal.
+
+The edit action next to the macOS conversation title opens a rename editor.
+Saving uses the selected project and session IDs, trims surrounding whitespace,
+and refreshes the sidebar after confirmed success. Empty names are rejected.
+A failed or ambiguous response preserves the input and never retries by itself;
+navigation invalidates the editor's pending callback. Immediate Escape closes
+only the editor, without writing or closing its parent.
+
+The pin action beside the title saves the explicit pin/unpin state for the
+selected project and session. Pinned conversations appear once in a leading
+“已置顶” section, retaining the chosen name/date order within that section.
+Folder membership is preserved; unpinning restores the normal grouping.
+Sidebar metadata refreshes after a confirmed rename/pin or a completed turn
+without reopening the transcript, changing its history page, or clearing drafts.
+Stale navigation replies are ignored. A lost pin response is not retried;
+“刷新会话” reads the saved state. Older hosts and unsaved empty conversations
+without a confirmed pin state leave the action disabled until a saved row is
+available.
+
+The trash action opens a confirmation listing the selected conversation. Sidebar
+multi-selection also offers “删除所选会话”. The sidebar's accessibility selection
+follows the checked rows in multi-selection mode and the open conversation in
+normal navigation. Deletion uses the existing host checks for ownership, archives
+and branches, and stops the selected conversation's running
+work before removing it. A batch is sequential, not atomic: confirmed deletions
+are removed locally, and the first error stops all later requests. An ambiguous
+response never triggers another deletion automatically. The error banner provides
+a read-only refresh; empty native drafts use an explicit scoped existence query
+because their absence from saved history does not prove deletion. A still-existing
+draft remains available and is checked again on later refreshes. Failed existence
+reads preserve that draft. Immediate Escape cancels the confirmation without
+writing. Navigation stops remaining batch requests and discards old UI callbacks;
+confirmed deletion results still remove stale local draft entries in their scope.
 
 ## Transport and recovery
 
 `wisp-dto::native_conversations` is the authoritative v1 protocol. Requests use
 the authenticated `/invoke` transport established for native settings, with an
-explicit project ID and one of six `native_conversation_*` commands. The host
+explicit project ID and the advertised `native_conversation_*` commands. The host
 capabilities response advertises these separately from the settings allowlist;
 raw agent commands are not exposed. Swift uses `NativeConversationClient`; WinUI
 can depend on `INativeConversationClient` without referencing SwiftUI or Tauri.
@@ -21,11 +68,17 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 
 | Command | Arguments | Result |
 | --- | --- | --- |
-| `native_conversation_create` | `{}` | New session ID |
+| `native_conversation_create` | optional `acp_agent_id` | New session ID; omitted uses HTTP |
+| `native_conversation_rename` | `session_id`, `title` | Rename the owned, unarchived conversation |
+| `native_conversation_pin` | `session_id`, boolean `pinned` | Set the owned, unarchived conversation's pin state |
+| `native_conversation_delete` | `session_id` | Delete the owned conversation using existing host lifecycle checks |
+| `native_conversation_exists` | `session_id` | Boolean existence; a different project's conversation is rejected |
 | `native_conversation_snapshot` | `session_id`, optional `before_seq` | `Snapshot` replacement event |
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |
 | `native_conversation_approve` | `session_id`, `approval_id`, `approved`, optional `feedback` | Successful void, once only |
+| `native_conversation_acp_permission` | `session_id`, `request_id`, nullable `option_id` | Resolve the exact pending ACP option (null cancels) |
+| `native_conversation_acp_answer` | `session_id`, `request_id`, `answer` | Persist one reply for the pending bridge question |
 | `native_conversation_model` | `session_id`, `model_id` | Existing model list result |
 
 The initial transport polls a bounded transcript snapshot every 350 ms while a
@@ -59,9 +112,55 @@ an error instead of silently evicting deduplication records.
 Stop targets only the supplied session. A cancellation request that races runtime
 creation is repeated until the host-owned turn completes. Approval removal checks
 both project ownership and the exact one-shot approval ID under the same lock;
-an old button cannot approve the next request. This phase never grants permanent
-approval scopes. Normal `ask_user` questions display readable choices that fill
-the composer; the user sends their chosen answer as the next message.
+an old button cannot approve the next request. On macOS, “修改意见…” opens a
+feedback editor and “拒绝并反馈” forwards the existing optional `feedback` field.
+The editor keeps its text after a failed request and does not retry automatically.
+Immediate Escape closes only the feedback editor; it does not reject the request
+or close its parent. The client also checks the current session and approval ID
+before submitting. This phase never grants permanent approval scopes. Normal `ask_user` questions stage an editable answer in the
+composer, including the option description. Existing notes are preserved even
+when the user switches options; edits made after staging are also retained.
+Freeform answers use the same staging action. The card remains pending until a
+later user message appears in the authoritative transcript. Answered/expired
+cards are inactive; stale callbacks cannot edit another conversation's draft.
+ACP interactions are an additive optional `acp` snapshot field. Native macOS can
+answer a live ACP question or permission request already running in the shared
+host. Permission cards preserve the agent's option IDs, labels and scope kinds;
+choosing “always” explicitly sends that offered option, and cancel sends null.
+The host validates session ownership and the pending request under its existing
+resolver; an invalid option does not consume the request. Questions use the same
+persisted bridge answer as WebView and reject empty, stale or cross-session
+replies. The composer draft is unchanged. Local submission tracking prevents a
+second reply to the same request, including after an ambiguous transport error;
+there is no automatic retry. Navigation discards callbacks from the old view.
+Old hosts without the optional field show inactive ACP questions.
+
+The macOS model menu lists configured ACP profiles under “ACP · 新会话”. Choosing
+one creates a fresh conversation and preserves the previous conversation's draft.
+The host validates the exact profile before creating the session. Send and Stop
+reuse the shared ACP turn pipeline, including stored binding recovery after a
+host restart, profile/workspace validation and cancellation during startup.
+Stop also interrupts initialization before the agent has returned a session
+handle; dropping the pending launch aborts its actor and releases the child
+process. A dead cached process is evicted without retaining the cache lock.
+The additive `acp_agent_id` snapshot field identifies a persisted ACP binding;
+a provisional choice is shown as `acp:<profile id>` until the first connection.
+Follow-ups cannot be queued before that binding exists. An ACP conversation cannot
+switch to an HTTP model; create a new conversation for that change. The provisional
+choice is persisted separately on the frame and makes an otherwise empty draft
+visible in the project sidebar after restart. It does not create a user message
+or claim that ACP has connected, and it does not save unsent message text. A
+successful connection atomically replaces the provisional choice with the actual
+ACP binding. Both clients route the restored choice through ACP; a missing agent
+profile produces an error instead of falling back to an HTTP model. Pending
+choices survive project export/import and empty conversation copy/move; external
+session bindings and histories are not injected into a new ACP session.
+
+For an offline, isolated UI smoke, configure a QA-only ACP profile using Python
+and `scripts/qa_native_acp.py --workspace /absolute/qa/root --log /absolute/qa/log`.
+The fixture refuses other workspaces, streams a fixed answer, requests a harmless
+choice for messages containing `permission`, and waits for Stop for messages
+containing `wait`. It neither executes tools nor contacts a model provider.
 
 ## WinUI integration
 
@@ -81,7 +180,7 @@ user choice. Attachments, ACP composers and PNG share export remain follow-ups.
 
 Automated tests use temporary stores and fake native transports, without API keys,
 SSH hosts or external network calls. They cover ownership, duplicate-send handling,
-stale approvals, shared fixtures, snapshot order/host restarts, read failures,
+stale approvals, ACP reply scope/expiry/duplicate handling, shared fixtures, snapshot order/host restarts, read failures,
 late navigation callbacks and preservation of drafts. To render the real SwiftUI
 conversation view with offline fixtures at desktop/narrow sizes and in dark mode:
 

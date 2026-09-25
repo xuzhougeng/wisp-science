@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS frames (
     model           TEXT,
     reasoning_effort TEXT,
     service_tier    TEXT,
+    acp_agent_selection TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     created_at      INTEGER NOT NULL,

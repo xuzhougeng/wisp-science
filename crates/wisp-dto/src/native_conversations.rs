@@ -52,12 +52,18 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_trajectory_html",
     "native_conversation_outline",
     "native_conversation_create",
+    "native_conversation_rename",
+    "native_conversation_pin",
+    "native_conversation_delete",
+    "native_conversation_exists",
     "native_conversation_snapshot",
     "native_conversation_send",
     "native_conversation_attach",
     "native_conversation_enqueue",
     "native_conversation_stop",
     "native_conversation_approve",
+    "native_conversation_acp_permission",
+    "native_conversation_acp_answer",
     "native_conversation_model",
 ];
 
@@ -222,10 +228,28 @@ pub struct OutlineEntry {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct CreateRequest {
+    #[serde(default)]
+    pub acp_agent_id: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionRequest {
     pub session_id: String,
     #[serde(default)]
     pub before_seq: Option<i64>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameRequest {
+    pub session_id: String,
+    pub title: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinRequest {
+    pub session_id: String,
+    pub pinned: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -290,6 +314,39 @@ pub struct ApprovalRequest {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct AcpPermissionResponse {
+    pub session_id: String,
+    pub request_id: String,
+    pub option_id: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcpQuestionResponse {
+    pub session_id: String,
+    pub request_id: String,
+    pub answer: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AcpPermissionOption {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AcpPermission {
+    pub request_id: String,
+    pub frame_id: String,
+    pub title: String,
+    pub preview: String,
+    pub options: Vec<AcpPermissionOption>,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AcpInteractions {
+    pub permissions: Vec<AcpPermission>,
+    pub question_ids: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelRequest {
     pub session_id: String,
     pub model_id: String,
@@ -324,14 +381,84 @@ pub struct Snapshot {
     pub stopping: bool,
     pub read_only: bool,
     pub model_id: String,
+    /// Persisted ACP binding. A provisional choice before the first turn is
+    /// represented by model_id = acp:<profile id>, without claiming a binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_agent_id: Option<String>,
     pub request_id: Option<String>,
     pub error: Option<String>,
     pub approvals: Vec<super::PendingToolApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp: Option<AcpInteractions>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pin_request_requires_explicit_boolean_state() {
+        let request: PinRequest =
+            serde_json::from_str(r#"{"session_id":"s","pinned":true}"#).unwrap();
+        assert!(request.pinned);
+        assert_eq!(request.session_id, "s");
+        for invalid in [
+            r#"{"session_id":"s"}"#,
+            r#"{"session_id":"s","pinned":"false"}"#,
+            r#"{"session_id":"s","pinned":false,"project_id":"other"}"#,
+        ] {
+            assert!(serde_json::from_str::<PinRequest>(invalid).is_err());
+        }
+    }
+    #[test]
+    fn rename_requires_an_explicit_session_and_title() {
+        let request: RenameRequest =
+            serde_json::from_str(r#"{"session_id":"s","title":"样本分析"}"#).unwrap();
+        assert_eq!(request.session_id, "s");
+        assert_eq!(request.title, "样本分析");
+        assert!(serde_json::from_str::<RenameRequest>(r#"{"title":"new"}"#).is_err());
+        assert!(serde_json::from_str::<RenameRequest>(
+            r#"{"session_id":"s","title":"new","project_id":"other"}"#
+        )
+        .is_err());
+    }
+    #[test]
+    fn create_preserves_http_default_and_accepts_explicit_acp_profile() {
+        assert!(serde_json::from_str::<CreateRequest>("{}")
+            .unwrap()
+            .acp_agent_id
+            .is_none());
+        assert_eq!(
+            serde_json::from_str::<CreateRequest>(r#"{"acp_agent_id":"agent"}"#)
+                .unwrap()
+                .acp_agent_id
+                .as_deref(),
+            Some("agent")
+        );
+        assert!(serde_json::from_str::<CreateRequest>(r#"{"command":"run arbitrary"}"#).is_err());
+    }
+    #[test]
+    fn acp_interactions_are_scoped_and_optional_for_older_snapshots() {
+        let mut value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/acp-interactions.json"
+        ))
+        .unwrap();
+        let snapshot: Snapshot = serde_json::from_value(value.clone()).unwrap();
+        let pending = snapshot.acp.unwrap();
+        assert_eq!(pending.question_ids, ["ask-1"]);
+        assert_eq!(pending.permissions[0].frame_id, snapshot.session_id);
+        assert_eq!(pending.permissions[0].options[1].kind, "allow_always");
+        value.as_object_mut().unwrap().remove("acp");
+        assert!(serde_json::from_value::<Snapshot>(value)
+            .unwrap()
+            .acp
+            .is_none());
+        assert!(
+            serde_json::from_value::<AcpQuestionResponse>(serde_json::json!({
+                "session_id":"s", "request_id":"a", "answer":"yes", "project_id":"other"
+            }))
+            .is_err()
+        );
+    }
     #[test]
     fn panel_fixtures_use_existing_file_contracts() {
         let files: Vec<crate::DirEntry> = serde_json::from_str(include_str!(

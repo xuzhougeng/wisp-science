@@ -5,7 +5,6 @@
 //! (SSH, WSL, a remote browser). Tokens are stored in the OS keyring.
 
 use crate::models::{self, ModelProfile, DEFAULT_CONTEXT_WINDOW};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -15,28 +14,7 @@ use wisp_llm::codex_auth::{
     CodexCredentials, REDIRECT_URI,
 };
 
-#[derive(Clone, Serialize)]
-pub struct CodexLoginChallenge {
-    pub login_id: String,
-    pub method: String,
-    pub url: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub message: String,
-}
-
-#[derive(Clone, Serialize)]
-pub struct CodexLoginSnapshot {
-    pub status: String,
-    pub message: String,
-    pub account_id: String,
-}
-
-#[derive(Clone, Serialize)]
-pub struct CodexSubscriptionStatus {
-    pub signed_in: bool,
-    pub account_id: String,
-}
+pub use wisp_dto::codex_login::{CodexLoginChallenge, CodexLoginSnapshot, CodexSubscriptionStatus};
 
 struct LoginSession {
     cancel: Arc<AtomicBool>,

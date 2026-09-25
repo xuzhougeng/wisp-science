@@ -36,6 +36,17 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.createPresented) {
                 NewProjectSheet(model: model)
             }
+            .sheet(isPresented: $model.importOptionsPresented) {
+                NativeProjectImportSheet(model: model)
+            }
+            .sheet(item: $model.syncProject) { project in
+                NativeProjectSyncSheet(model: NativeProjectSyncModel(project: project, client: model.libraryClient())) {
+                    model.syncProject = nil; Task { await model.refresh() }
+                }
+            }
+            .sheet(item: $model.exportProject) { project in
+                NativeProjectExportSheet(project: project, client: model.libraryClient()) { model.exportProject = nil }
+            }
             .sheet(isPresented: $library.presented) {
                 NativeLibrarySheet(model: model, library: library)
             }
@@ -61,7 +72,7 @@ private struct ProjectLanding: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header.padding(.bottom, 32)
-                    if let error = model.error { errorBanner(error).padding(.bottom, 20) }
+                    if let error = model.error { errorBanner(error, stale: model.listRefreshFailed).padding(.bottom, 20) }
                     if let error = model.importError { errorBanner(error).padding(.bottom, 20) }
                     let columns = geometry.size.width < 820
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 26))
@@ -131,7 +142,7 @@ private struct ProjectLanding: View {
                 .help("随手一聊")
                 .accessibilityLabel("随手一聊")
                 .accessibilityIdentifier("home-scratch")
-            Button { model.chooseProjectArchive() } label: {
+            Button { model.importOptionsPresented = true } label: {
                 HStack(spacing: 8) { WispIcon(name: "upload", size: 16); Text("导入项目") }
             }
             .buttonStyle(WispButtonStyle())
@@ -171,6 +182,8 @@ private struct ProjectLanding: View {
                         ProjectCard(project: project, selected: false, busy: model.isLoading, saving: model.savingProjectID == project.id,
                                     toggleStar: { Task { await model.toggleStar(project.id) } },
                                     settings: { model.openProjectSettings(project.id) },
+                                    export: { model.exportProject = project },
+                                    sync: { model.syncProject = project },
                                     select: { Task { await model.openProject(project.id) } }, reveal: { model.reveal(project) })
                     }
                 }
@@ -212,11 +225,11 @@ private struct ProjectLanding: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color("border")))
     }
 
-    private func errorBanner(_ error: String) -> some View {
+    private func errorBanner(_ error: String, stale: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("项目操作未完成").font(WispDesign.font(size: 13, weight: .semibold))
             Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
-            if model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
+            if stale && model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
         }
         .padding(13).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -258,6 +271,8 @@ private struct ProjectCard: View {
     let saving: Bool
     let toggleStar: () -> Void
     let settings: () -> Void
+    let export: () -> Void
+    let sync: () -> Void
     let select: () -> Void
     let reveal: () -> Void
     @Environment(\.colorScheme) private var scheme
@@ -283,6 +298,13 @@ private struct ProjectCard: View {
                         Spacer(minLength: 0)
                     }
                     .font(WispDesign.font(size: 12)).foregroundStyle(color("text-faint"))
+                    if let status = NativeProjectSyncStatus(project) {
+                        Text(status.label).font(WispDesign.font(size: 11))
+                            .foregroundStyle(status.needsAttention ? color("clay-strong") : color("text-muted"))
+                            .help(NativeProjectSyncStatus.lastSaved(project) ?? status.label)
+                            .accessibilityLabel(status.label + (NativeProjectSyncStatus.lastSaved(project).map { "，" + $0 } ?? ""))
+                            .accessibilityIdentifier("project-sync-\(project.id)")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16).padding(.leading, 18)
                 .contentShape(Rectangle())
@@ -309,7 +331,11 @@ private struct ProjectCard: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color(selected || hovering ? "clay" : "border")))
         .shadow(color: Color.black.opacity(0.035), radius: 2, y: 1)
         .onHover { hovering = $0 }
-        .contextMenu { Button("在 Finder 中显示", action: reveal).disabled(!ProjectBrowserModel.workspaceExists(project)) }
+        .contextMenu {
+            Button(action: reveal) { HStack { WispIcon(name: "folder"); Text("在 Finder 中显示") } }.disabled(!ProjectBrowserModel.workspaceExists(project))
+            Button(action: export) { HStack { WispIcon(name: "share"); Text("导出项目…") } }.disabled(busy)
+            Button(action: sync) { HStack { WispIcon(name: "sync"); Text("项目同步…") } }.disabled(busy)
+        }
     }
 }
 

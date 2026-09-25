@@ -81,7 +81,7 @@ private actor FollowUpClient: NativeConversationQuerying {
     }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
         recorded.append((command, args, projectID))
-        if command == "list_models" { return .array([]) }
+        if command == "list_models" || command == "list_acp_agents" { return .array([]) }
         if command == "native_conversation_seen" { return .null }
         if lost { throw ProjectBrowserError.service("response lost") }
         if command == "native_conversation_enqueue" { return .object(["queued": .bool(true), "message": args["message"] ?? .null]) }

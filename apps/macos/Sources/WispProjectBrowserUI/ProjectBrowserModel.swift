@@ -12,6 +12,11 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var createError: String?
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
+    @Published var syncProject: ProjectSummary?
+    @Published var exportProject: ProjectSummary?
+    @Published var importOptionsPresented = false
+    @Published var recoveryPreview: NativeWorkspaceRecoveryPreview?
+    @Published var recoveryName = ""
     let library = NativeLibraryModel()
     let calendar = NativeCalendarModel()
     let journey = NativeJourneyModel()
@@ -39,10 +44,12 @@ public final class ProjectBrowserModel: ObservableObject {
     private var navigationGeneration = UUID()
     @Published public private(set) var isLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var listRefreshFailed = false
     @Published private(set) var savingProjectID: String?
     @Published private(set) var lastLoaded: Date?
     @Published private(set) var databaseURL: URL
     private var nativeDrafts: [String: BrowserSession] = [:]
+    private var unconfirmedDraftDeletions: [String: String] = [:]
     private var nativeModels: [URL: NativeConversationModel] = [:]
     private struct NativeSessionKey: Hashable { let database: URL; let project: String; let session: String }
     private var sideChats: [NativeSessionKey: NativeSideChatModel] = [:]
@@ -109,9 +116,12 @@ public final class ProjectBrowserModel: ObservableObject {
             projects = snapshot.projects
             recentSessions = recent
             lastLoaded = Date()
+            listRefreshFailed = false
+            if !importBusy && !importOptionsPresented && recoveryPreview == nil { importError = nil }
             if let id = activeProjectID { await openProject(id, sessionID: activeSessionID) }
         } catch {
             self.error = error.localizedDescription
+            listRefreshFailed = true
         }
     }
 
@@ -133,7 +143,7 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     public func chooseDatabase() {
-        guard !isLoading else { return }
+        guard !isLoading, !importBusy, exportProject == nil, syncProject == nil, recoveryPreview == nil else { return }
         let panel = NSOpenPanel()
         panel.title = "选择 Wisp 数据库"
         panel.message = "打开已有的 wisp.sqlite；点击项目星标会保存收藏状态，不执行数据库升级。"
@@ -143,6 +153,7 @@ public final class ProjectBrowserModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         nativeModels[databaseURL]?.pause()
         nativeDrafts.removeAll()
+        unconfirmedDraftDeletions.removeAll()
         databaseURL = url
         UserDefaults.standard.set(url.path, forKey: "projectBrowser.database")
         goHome()
@@ -186,7 +197,9 @@ public final class ProjectBrowserModel: ObservableObject {
         do {
             var rows = try await client.listSessions(databaseURL: databaseURL, projectID: id)
             guard generation == navigationGeneration else { return }
-            for row in rows { nativeDrafts[row.id] = nil }
+            try await reconcileDraftDeletions(projectID: id, generation: generation)
+            guard generation == navigationGeneration else { return }
+            for row in rows { nativeDrafts[row.id] = nil; unconfirmedDraftDeletions[row.id] = nil }
             rows.insert(contentsOf: nativeDrafts.values.filter { $0.projectID == id }.sorted { $0.ts > $1.ts }, at: 0)
             sessions = rows
             if let sessionID, !rows.contains(where: { $0.id == sessionID }) {
@@ -211,6 +224,13 @@ public final class ProjectBrowserModel: ObservableObject {
         if !older { messages = []; nextBeforeSeq = nil }
         transcriptLoading = true
         sessionError = nil
+        // Untitled native drafts are deliberately absent from the saved-history
+        // query. Their live transcript is owned by NativeConversationModel.
+        // Once listSessions returns the row, openProject removes this marker.
+        if nativeDrafts[id] != nil {
+            transcriptLoading = false
+            return
+        }
         do {
             let page = try await client.transcript(databaseURL: databaseURL, projectID: projectID, sessionID: id, beforeSeq: cursor)
             guard generation == transcriptGeneration else { return }
@@ -221,6 +241,65 @@ public final class ProjectBrowserModel: ObservableObject {
             sessionError = error.localizedDescription
         }
         if generation == transcriptGeneration { transcriptLoading = false }
+    }
+
+    /// Refresh sidebar metadata without reopening the selected transcript or
+    /// changing the live conversation's draft/history page.
+    @discardableResult
+    func refreshSessionMetadata(projectID: String, sessionID: String, database: URL) async -> Bool {
+        guard !sessionsLoading, databaseURL == database,
+              activeProjectID == projectID, activeSessionID == sessionID else { return false }
+        let generation = navigationGeneration
+        sessionsLoading = true
+        defer { if generation == navigationGeneration { sessionsLoading = false } }
+        do {
+            var rows = try await client.listSessions(databaseURL: database, projectID: projectID)
+            guard generation == navigationGeneration, databaseURL == database,
+                  activeProjectID == projectID, activeSessionID == sessionID else { return false }
+            try await reconcileDraftDeletions(projectID: projectID, generation: generation)
+            guard generation == navigationGeneration, activeSessionID == sessionID else { return false }
+            for row in rows { nativeDrafts[row.id] = nil; unconfirmedDraftDeletions[row.id] = nil }
+            rows.insert(contentsOf: nativeDrafts.values.filter { $0.projectID == projectID }.sorted { $0.ts > $1.ts }, at: 0)
+            sessions = rows
+            sessionError = rows.contains { $0.id == sessionID } ? nil : "这个会话已不存在，请刷新项目列表。"
+            return sessionError == nil
+        } catch {
+            guard generation == navigationGeneration, databaseURL == database,
+                  activeProjectID == projectID, activeSessionID == sessionID else { return false }
+            sessionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func removeConfirmedSessions(_ ids: Set<String>, projectID: String, database: URL) {
+        guard databaseURL == database, !ids.isEmpty else { return }
+        for id in ids where nativeDrafts[id]?.projectID == projectID { nativeDrafts[id] = nil; unconfirmedDraftDeletions[id] = nil }
+        recentSessions.removeAll { $0.projectID == projectID && ids.contains($0.id) }
+        guard activeProjectID == projectID else { return }
+        navigationGeneration = UUID(); sessionsLoading = false
+        sessions.removeAll { ids.contains($0.id) }
+        if let id = activeSessionID, ids.contains(id) {
+            nativeModels[database]?.pause()
+            activeSessionID = nil
+            transcriptGeneration = UUID()
+            messages = []; nextBeforeSeq = nil; transcriptLoading = false; sessionError = nil
+        }
+    }
+
+    func noteUnconfirmedDeletion(_ session: BrowserSession?, database: URL) {
+        guard databaseURL == database, let session, nativeDrafts[session.id]?.projectID == session.projectID else { return }
+        unconfirmedDraftDeletions[session.id] = session.projectID
+    }
+
+    private func reconcileDraftDeletions(projectID: String, generation: UUID) async throws {
+        for (id, project) in unconfirmedDraftDeletions where project == projectID {
+            let value = try await projectTransport().invoke("native_conversation_exists", args: ["session_id": .string(id)], projectID: projectID)
+            guard generation == navigationGeneration else { return }
+            guard case .bool(let exists) = value else { throw ProjectBrowserError.invalidResponse }
+            // A still-existing frame may be waiting for its running turn to
+            // stop. Keep checking on later explicit refreshes until absent.
+            if !exists { nativeDrafts[id] = nil; unconfirmedDraftDeletions[id] = nil }
+        }
     }
 
     func dismissNewProject() {
@@ -268,23 +347,35 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     func importChosenArchive(_ url: URL?) async {
+        await importProject(url, directory: false)
+    }
+
+    func importChosenDirectory(_ url: URL?) async {
+        await importProject(url, directory: true)
+    }
+
+    private func importProject(_ url: URL?, directory: Bool) async {
         guard let url else { return }
         guard !importBusy else { return }
         importBusy = true
         importError = nil
+        let database = databaseURL
         defer { importBusy = false }
         do {
             let value = try await projectTransport().invoke(
-                NativeProjectCommand.importArchive,
-                args: ["archive_path": .string(url.path)],
+                directory ? NativeProjectCommand.importDirectory : NativeProjectCommand.importArchive,
+                args: [directory ? "directory_path" : "archive_path": .string(url.path)],
                 projectID: nil)
+            guard database == databaseURL else { return }
             let summary = try NativeProjectCommand.summary(from: value)
+            importOptionsPresented = false
             await refresh()
             if !projects.contains(where: { $0.id == summary.id }) {
                 projects.insert(summary, at: 0)
             }
             await openProject(summary.id)
         } catch {
+            guard database == databaseURL else { return }
             importError = NewProjectError.importMessage(for: error.localizedDescription)
         }
     }
@@ -319,6 +410,65 @@ public final class ProjectBrowserModel: ObservableObject {
         Task { await importChosenArchive(url) }
     }
 
+    func chooseProjectDirectory() {
+        guard !importBusy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "打开项目"
+        panel.message = "选择含 Wisp 项目记录的文件夹。直接在此目录工作，不复制工作区数据。"
+        guard panel.runModal() == .OK else { return }
+        let url = panel.url
+        Task { await importChosenDirectory(url) }
+    }
+
+    func chooseRecoveryWorkspace() {
+        guard !importBusy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
+        panel.prompt = "查看可恢复历史"
+        panel.message = "选择包含 .wisp/history 归档的旧工作区。先读取预览，确认后才恢复消息。"
+        guard panel.runModal() == .OK else { return }
+        let url = panel.url
+        Task { await previewWorkspaceRecovery(url) }
+    }
+
+    func previewWorkspaceRecovery(_ url: URL?) async {
+        guard let url, !importBusy else { return }
+        let database = databaseURL
+        importBusy = true; importError = nil
+        defer { importBusy = false }
+        do {
+            let value = try await projectTransport().invoke(NativeProjectCommand.recoveryPreview, args: ["workspace_dir": .string(url.path)], projectID: nil)
+            let preview = try JSONDecoder().decode(NativeWorkspaceRecoveryPreview.self, from: JSONEncoder().encode(value))
+            guard database == databaseURL else { return }
+            recoveryName = preview.suggested_name; recoveryPreview = preview
+        } catch {
+            if database == databaseURL { importError = "未能读取恢复预览：\n" + error.localizedDescription }
+        }
+    }
+
+    func recoverWorkspace() async {
+        guard let preview = recoveryPreview, !importBusy, preview.recoverable_session_count > 0,
+              !recoveryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let database = databaseURL
+        importBusy = true; importError = nil
+        defer { importBusy = false }
+        do {
+            let value = try await projectTransport().invoke(NativeProjectCommand.recoverWorkspace,
+                args: ["workspace_dir": .string(preview.workspace_dir), "name": .string(recoveryName)], projectID: nil)
+            let result = try JSONDecoder().decode(NativeWorkspaceRecoveryResult.self, from: JSONEncoder().encode(value))
+            guard !result.project_id.isEmpty else { throw ProjectBrowserError.invalidResponse }
+            guard database == databaseURL else { return }
+            recoveryPreview = nil; recoveryName = ""; importOptionsPresented = false
+            await refresh()
+            await openProject(result.project_id)
+        } catch {
+            if database == databaseURL { importError = "恢复结果尚未确认。请刷新项目列表核对；不会自动重试。\n" + error.localizedDescription }
+        }
+    }
+
     func prepareIssueReport() async {
         await issueReport.prepare(model: self, conversation: nativeConversation(), client: calendarClient())
     }
@@ -351,4 +501,3 @@ public final class ProjectBrowserModel: ObservableObject {
             && directory.boolValue
     }
 }
-

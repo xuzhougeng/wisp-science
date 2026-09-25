@@ -286,6 +286,39 @@ async fn optional_enrichment_stays_best_effort_and_primary_query_errors_propagat
 }
 
 #[tokio::test]
+async fn missing_optional_pin_column_keeps_history_readable_without_migration() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    db.session("saved", "p").await;
+    sqlx::query("ALTER TABLE frames RENAME COLUMN pinned TO legacy_pin")
+        .execute(&db.sql)
+        .await
+        .unwrap();
+    let read_only = Store::open_read_only(&db._directory.path().join("queries.sqlite"))
+        .await
+        .unwrap();
+    let rows = wisp_app::projects::list_browser_sessions(&read_only, Some("p"))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "saved");
+    assert_eq!(rows[0].pinned, None);
+    assert!(sqlx::query("SELECT pinned FROM frames")
+        .fetch_all(&db.sql)
+        .await
+        .is_err());
+    sqlx::query("DROP TABLE messages")
+        .execute(&db.sql)
+        .await
+        .unwrap();
+    assert!(
+        wisp_app::projects::list_browser_sessions(&read_only, Some("p"))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn native_session_navigation_uses_home_limit_project_scope_and_read_only_pages() {
     use wisp_app::projects::{browser_transcript, list_browser_sessions};
     let db = TestDb::new().await;
@@ -310,7 +343,22 @@ async fn native_session_navigation_uses_home_limit_project_scope_and_read_only_p
     assert!(recent
         .iter()
         .all(|s| !s.project_id.starts_with("scratch:") && s.id != "draft"));
+    assert!(recent.iter().all(|s| s.pinned.is_none()));
+    db.store.set_session_pinned("s0", "p", true).await.unwrap();
+    db.store
+        .set_session_pinned("private", "other", true)
+        .await
+        .unwrap();
+    assert!(db
+        .store
+        .set_session_pinned("s0", "other", false)
+        .await
+        .is_err());
     let project = list_browser_sessions(&db.store, Some("p")).await.unwrap();
+    assert!(project.iter().all(|s| s.pinned == Some(s.id == "s0")));
+    db.store.set_session_pinned("s0", "p", false).await.unwrap();
+    let unpinned = list_browser_sessions(&db.store, Some("p")).await.unwrap();
+    assert!(unpinned.iter().all(|s| s.pinned == Some(false)));
     assert_eq!(project.len(), 8);
     assert!(project.iter().all(|s| s.project_id == "p"));
     assert!(project
@@ -386,4 +434,35 @@ async fn native_command_open_never_migrates_legacy_databases() {
             .is_err()
     );
     assert!(!directory.path().join("absent.sqlite").exists());
+}
+
+#[tokio::test]
+async fn native_sidebar_restores_an_unsent_acp_choice_without_marking_it_recent() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    for id in ["chosen", "ordinary-draft"] {
+        db.store
+            .create_frame(id, "p", "test", "http-default")
+            .await
+            .unwrap();
+    }
+    db.store
+        .set_frame_acp_agent_selection("chosen", "p", "offline-agent")
+        .await
+        .unwrap();
+    let reader = Store::open_read_only(&db._directory.path().join("queries.sqlite"))
+        .await
+        .unwrap();
+    let rows = wisp_app::projects::list_browser_sessions(&reader, Some("p"))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "chosen");
+    assert_eq!(rows[0].pinned, Some(false));
+    assert!(wisp_app::projects::list_browser_sessions(&reader, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(reader.get_acp_session("chosen").await.unwrap().is_none());
+    assert!(reader.load_messages("chosen").await.unwrap().is_empty());
 }

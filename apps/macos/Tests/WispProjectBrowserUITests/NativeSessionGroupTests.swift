@@ -5,6 +5,21 @@ import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
 final class NativeSessionGroupTests: XCTestCase {
+    @MainActor func testBulkSelectionReportsCheckedRowsInsteadOfTheOpenConversation() {
+        let groups = NativeSessionGroups()
+        XCTAssertTrue(groups.isSelected("open", activeSessionID: "open"))
+        groups.selecting = true
+        groups.selected = ["first", "second"]
+        XCTAssertFalse(groups.isSelected("open", activeSessionID: "open"))
+        XCTAssertTrue(groups.isSelected("first", activeSessionID: "open"))
+        XCTAssertTrue(groups.isSelected("second", activeSessionID: "open"))
+        groups.selected.remove("first")
+        XCTAssertFalse(groups.isSelected("first", activeSessionID: "open"))
+        groups.selecting = false
+        XCTAssertTrue(groups.isSelected("open", activeSessionID: "open"))
+        XCTAssertFalse(groups.isSelected("second", activeSessionID: "open"))
+        XCTAssertFalse(groups.isSelected("open", activeSessionID: nil))
+    }
     private func session(_ id: String, _ title: String, _ ts: Int64, _ folder: String? = nil) -> BrowserSession {
         BrowserSession(id: id, projectID: "p", title: title, ts: ts, status: "complete", folderID: folder)
     }

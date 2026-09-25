@@ -1,0 +1,9 @@
+{
+  "browser": {"login_id":"browser-test", "method":"browser", "url":"https://auth.openai.com/oauth/authorize?state=test-state", "user_code":"", "verification_uri":"", "message":"Finish sign-in in the browser, or paste the redirect URL."},
+  "device": {"login_id":"device-test", "method":"device", "url":"https://auth.openai.com/codex/device", "user_code":"TEST-1234", "verification_uri":"https://auth.openai.com/codex/device", "message":"Enter the one-time code on the ChatGPT device page."},
+  "saved_account": {"signed_in":true,"account_id":"account-test"},
+  "pending": {"status":"pending","message":"Waiting for sign-in","account_id":""},
+  "success": {"status":"success","message":"Signed in","account_id":"account-test"},
+  "expired": {"status":"error","message":"ChatGPT sign-in timed out.","account_id":""},
+  "saved_models": [{"id":"subscription-test","provider":"openai_codex","model":"fixture-model","label":"Test subscription"}]
+}

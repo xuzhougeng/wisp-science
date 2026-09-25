@@ -4,13 +4,12 @@ import WispProjectBrowserUI
 
 @main
 struct WispSciencePreview: App {
+    @NSApplicationDelegateAdaptor(NativeApplicationDelegate.self) private var delegate
     @StateObject private var model = ProjectBrowserModel()
 
     var body: some Scene {
-        WindowGroup("Wisp Science — 原生预览") {
-            ProjectBrowserView(model: model)
-                .frame(minWidth: 680, minHeight: 560)
-                .task { await model.refresh() }
+        Window("Wisp Science — 原生预览", id: "workspace") {
+            WorkspaceRoot(model: model, delegate: delegate)
         }
         .defaultSize(width: 1120, height: 820)
         .commands {
@@ -33,5 +32,18 @@ struct WispSciencePreview: App {
                     .disabled(model.isLoading || model.settingsPresented)
             }
         }
+    }
+}
+
+private struct WorkspaceRoot: View {
+    @ObservedObject var model: ProjectBrowserModel
+    let delegate: NativeApplicationDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        ProjectBrowserView(model: model)
+            .frame(minWidth: 680, minHeight: 560)
+            .onAppear { delegate.openWorkspace = { openWindow(id: "workspace") } }
+            .task { await model.refresh() }
     }
 }

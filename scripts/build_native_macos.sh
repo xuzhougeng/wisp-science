@@ -60,17 +60,6 @@ for resource in skills python r browser-extension seed; do
   cp -R "$ROOT/$resource" "$HOST_APP/Contents/Resources/$resource"
 done
 cp "$ROOT/apps/macos/HostInfo.plist" "$HOST_APP/Contents/Info.plist"
-python3 - "$ROOT/src-tauri/tauri.conf.json" "$HOST_APP/Contents/Info.plist" "$HOST_IDENTIFIER" <<'PY_VERSION'
-import json, plistlib, sys
-with open(sys.argv[1]) as config:
-    version = json.load(config)["version"]
-with open(sys.argv[2], "rb") as source:
-    info = plistlib.load(source)
-info["CFBundleShortVersionString"] = version
-info["CFBundleIdentifier"] = sys.argv[3]
-with open(sys.argv[2], "wb") as target:
-    plistlib.dump(info, target)
-PY_VERSION
 cp "$ROOT/apps/macos/Info.plist" "$APP/Contents/Info.plist"
 if [[ "$QA_MODE" == 1 ]]; then
   python3 - "$APP/Contents/Info.plist" "$HOST_IDENTIFIER" <<'PY_QA'
@@ -83,6 +72,7 @@ with open(sys.argv[1], "wb") as target:
     plistlib.dump(info, target)
 PY_QA
 fi
+python3 "$ROOT/scripts/stamp_native_macos.py" "$APP" "$HOST_IDENTIFIER"
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 printf 'Built: %s\n' "$APP"

@@ -59,7 +59,10 @@ enum NewProjectError {
     }
 
     static func importMessage(for text: String) -> String {
-        if text.contains("already present") { return "这个项目已经在这台设备上。" }
+        if text.contains("already present") || text.contains("already registered") { return "这个项目已经在这台设备上。" }
+        if text.contains("project_folder_waiting:") { return "项目文件尚未完整下载，请等待同步完成后重试。\n" + text }
+        if text.contains("Sync conflict") { return "项目文件夹存在同步冲突，请先选择要保留的版本。\n" + text }
+        if text.contains("project_folder_metadata_invalid:") { return "项目文件夹的记录无效或不完整。\n" + text }
         if text.contains("not a valid project archive") || text.contains("no manifest") {
             return "这不是有效的项目归档。\n" + text
         }

@@ -35,7 +35,105 @@ pub(crate) async fn execute(
             crate::project_transfer::import_archived_project(store, app_data, &archive, parent)
                 .await
         }
+        "native_project_import_directory" => {
+            let input: wisp_dto::native_projects::ImportDirectoryRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let directory = std::path::PathBuf::from(input.directory_path);
+            if !directory.is_absolute() || !directory.is_dir() {
+                return Err("Choose an existing absolute project directory".into());
+            }
+            crate::project_transfer::import_project_folder(store, app_data, &directory).await
+        }
         _ => Err("Unsupported native project command".into()),
+    }
+}
+
+pub(crate) fn validate_sync_request(
+    request: &Request,
+) -> Result<wisp_dto::native_projects::SyncProjectRequest, String> {
+    let id = request
+        .project_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("A project is required")?;
+    let input: wisp_dto::native_projects::SyncProjectRequest =
+        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    if input.id != id {
+        return Err("Synchronization project does not match the explicit project scope".into());
+    }
+    match request.command.as_str() {
+        "enable_project_folder_sync" | "sync_project" if input.strategy.is_none() => Ok(input),
+        "resolve_project_sync" if input.strategy.is_some() => Ok(input),
+        _ => Err("A conflict strategy is only required for conflict resolution".into()),
+    }
+}
+
+pub(crate) async fn execute_export(
+    state: &crate::AppState,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    let id = request
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or("A project is required")?;
+    let input: wisp_dto::native_projects::ExportProjectRequest =
+        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    let destination = std::path::Path::new(&input.destination_path);
+    crate::project_transfer::export_project_to(
+        state,
+        id,
+        destination,
+        input.format == wisp_dto::native_projects::ExportFormat::Directory,
+    )
+    .await?;
+    serde_json::to_value(wisp_dto::native_projects::ExportProjectResult {
+        project_id: id.into(),
+        destination_path: input.destination_path,
+        format: input.format,
+    })
+    .map_err(|error| error.to_string())
+}
+
+pub(crate) async fn execute_recovery(
+    store: &wisp_store::Store,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    if request
+        .project_id
+        .as_deref()
+        .is_some_and(|id| !id.trim().is_empty())
+    {
+        return Err("Workspace recovery does not use a project id".into());
+    }
+    match request.command.as_str() {
+        "native_project_recovery_preview" => {
+            let input: wisp_dto::native_projects::RecoveryPreviewRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            serde_json::to_value(
+                crate::workspace_session_recovery::preview_workspace_history(
+                    store,
+                    &input.workspace_dir,
+                )
+                .await?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        "native_project_recover_workspace" => {
+            let input: wisp_dto::native_projects::RecoverWorkspaceRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            serde_json::to_value(
+                crate::workspace_session_recovery::recover_workspace_history(
+                    store,
+                    &input.workspace_dir,
+                    &input.name,
+                )
+                .await?,
+            )
+            .map_err(|error| error.to_string())
+        }
+        _ => Err("Unsupported workspace recovery command".into()),
     }
 }
 
@@ -165,6 +263,35 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn synchronization_requires_matching_scope_and_explicit_conflict_strategy() {
+        for command in [
+            "enable_project_folder_sync",
+            "sync_project",
+            "resolve_project_sync",
+        ] {
+            let mut call = request(Some("chosen"), json!({"id":"chosen"}));
+            call.command = command.into();
+            if command == "resolve_project_sync" {
+                assert!(validate_sync_request(&call).is_err());
+                call.args["strategy"] = json!("remote");
+            }
+            assert!(validate_sync_request(&call).is_ok());
+            call.args["id"] = json!("other");
+            assert!(validate_sync_request(&call).is_err());
+            call.args["id"] = json!("chosen");
+            call.project_id = None;
+            assert!(validate_sync_request(&call).is_err());
+        }
+        let mut call = request(Some("chosen"), json!({"id":"chosen","strategy":"local"}));
+        call.command = "sync_project".into();
+        assert!(validate_sync_request(&call).is_err());
+        call.command = "resolve_project_sync".into();
+        assert!(validate_sync_request(&call).is_ok());
+        call.args["strategy"] = json!("merge");
+        assert!(validate_sync_request(&call).is_err());
     }
 
     #[tokio::test]
@@ -340,6 +467,126 @@ mod tests {
         );
         value.command = "native_project_import".into();
         value
+    }
+
+    #[tokio::test]
+    async fn recovery_preview_is_read_only_and_confirmation_preserves_source_archives() {
+        let fixture = Fixture::open().await;
+        let workspace = fixture.workspace("orphaned");
+        std::fs::create_dir_all(workspace.join(".wisp/history")).unwrap();
+        let archive = workspace.join(".wisp/history/session.json");
+        let original = serde_json::to_vec(&vec![
+            wisp_llm::Message::user("source question"),
+            wisp_llm::Message::assistant("source answer"),
+        ])
+        .unwrap();
+        std::fs::write(&archive, &original).unwrap();
+        std::fs::write(workspace.join(".wisp/history/broken.json"), b"invalid").unwrap();
+        let mut call = request(None, json!({"workspace_dir": workspace}));
+        call.command = "native_project_recovery_preview".into();
+        let preview = execute_recovery(&fixture.store, &call).await.unwrap();
+        assert_eq!(preview["recoverable_session_count"], 1);
+        assert_eq!(preview["message_count"], 2);
+        assert_eq!(preview["invalid_archive_count"], 1);
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        assert!(!workspace.join(".wisp/project.toml").exists());
+        call.command = "native_project_recover_workspace".into();
+        call.args["name"] = json!("");
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        call.args["name"] = json!("Recovered");
+        let result = execute_recovery(&fixture.store, &call).await.unwrap();
+        let id = result["project_id"].as_str().unwrap();
+        assert_eq!(fixture.store.list_sessions(id).await.unwrap().len(), 1);
+        assert_eq!(result["recovered_session_count"], 1);
+        assert_eq!(std::fs::read(&archive).unwrap(), original);
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert_eq!(fixture.store.list_projects().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn recovery_refuses_project_scope_or_unrecognized_arguments() {
+        let fixture = Fixture::open().await;
+        let mut call = request(Some("other"), json!({"workspace_dir": fixture.root}));
+        call.command = "native_project_recovery_preview".into();
+        assert!(execute_recovery(&fixture.store, &call)
+            .await
+            .unwrap_err()
+            .contains("does not use a project id"));
+        call.project_id = None;
+        call.args["extra"] = json!(true);
+        assert!(execute_recovery(&fixture.store, &call).await.is_err());
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn directory_import_opens_workspace_owned_and_legacy_packages_in_place() {
+        let source = Fixture::open().await;
+        let workspace = source.workspace("study");
+        let store = wisp_store::Store::open_application(&source.workspace("owned.sqlite"))
+            .await
+            .unwrap();
+        let id = crate::project_commands::create_project_record(
+            &store,
+            serde_json::from_value(input(workspace.to_str().unwrap(), false)).unwrap(),
+        )
+        .await
+        .unwrap();
+        std::fs::write(workspace.join("large-data-reference.txt"), "remote://data").unwrap();
+        let archive = source.workspace("study.zip");
+        crate::project_transfer::export_project_archive(&store, &source.root, &id, &archive)
+            .await
+            .unwrap();
+        let legacy = source.workspace("legacy-package");
+        zip::ZipArchive::new(std::fs::File::open(&archive).unwrap())
+            .unwrap()
+            .extract(&legacy)
+            .unwrap();
+        for folder in [&workspace, &legacy] {
+            let mut target = Fixture::open().await;
+            target.store =
+                wisp_store::Store::open_application(&target.workspace("application.sqlite"))
+                    .await
+                    .unwrap();
+            let mut call = request(None, json!({"directory_path": folder}));
+            call.command = "native_project_import_directory".into();
+            let imported = execute(&target.store, &target.root, &call).await.unwrap();
+            assert_eq!(imported, id);
+            let meta = target.store.get_project_meta(&id).await.unwrap().unwrap();
+            let expected = if folder == &legacy {
+                legacy.join("workspace")
+            } else {
+                workspace.clone()
+            };
+            assert_eq!(
+                std::path::PathBuf::from(meta.2),
+                std::fs::canonicalize(&expected).unwrap()
+            );
+            assert_eq!(
+                std::fs::read(expected.join("large-data-reference.txt")).unwrap(),
+                b"remote://data"
+            );
+            assert!(execute(&target.store, &target.root, &call).await.is_err());
+            assert_eq!(target.store.list_projects().await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn directory_import_rejects_bad_scope_path_and_metadata_without_registration() {
+        let fixture = Fixture::open().await;
+        let folder = fixture.workspace("empty-folder");
+        std::fs::create_dir(&folder).unwrap();
+        for (scope, path) in [
+            (Some("wrong-project"), folder.clone()),
+            (None, "relative/path".into()),
+            (None, folder.clone()),
+        ] {
+            let mut call = request(scope, json!({"directory_path": path}));
+            call.command = "native_project_import_directory".into();
+            assert!(execute(&fixture.store, &fixture.root, &call).await.is_err());
+            assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        }
+        assert_eq!(std::fs::read_dir(folder).unwrap().count(), 0);
     }
 
     #[tokio::test]

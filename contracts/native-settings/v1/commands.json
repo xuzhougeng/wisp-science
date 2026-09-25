@@ -83,6 +83,18 @@
       "source": "src-tauri/src/app_commands.rs"
     },
     {
+      "command": "cancel_codex_login",
+      "arguments": [
+        {
+          "name": "loginId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/codex_login.rs"
+    },
+    {
       "command": "cancel_oauth_authorization",
       "arguments": [],
       "result": null,
@@ -123,6 +135,24 @@
       ],
       "result": "Result<(), String>",
       "source": "src-tauri/src/terminal_sessions.rs"
+    },
+    {
+      "command": "codex_login_status",
+      "arguments": [
+        {
+          "name": "loginId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<CodexLoginSnapshot, String>",
+      "source": "src-tauri/src/codex_login.rs"
+    },
+    {
+      "command": "codex_subscription_status",
+      "arguments": [],
+      "result": "Result<CodexSubscriptionStatus, String>",
+      "source": "src-tauri/src/codex_login.rs"
     },
     {
       "command": "confirm_feishu_pending_owner",
@@ -206,6 +236,18 @@
       "arguments": [],
       "result": "BootstrapStatus",
       "source": "src-tauri/src/app_commands.rs"
+    },
+    {
+      "command": "enable_project_folder_sync",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<ProjectSyncResult, String>",
+      "source": "src-tauri/src/project_sync.rs"
     },
     {
       "command": "feishu_bind_cancel",
@@ -1000,6 +1042,43 @@
       "source": "src-tauri/src/acp.rs"
     },
     {
+      "command": "save_codex_login",
+      "arguments": [
+        {
+          "name": "loginId",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "model",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "label",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "profileId",
+          "rust_type": "Option<String>",
+          "optional": true
+        },
+        {
+          "name": "apiUrl",
+          "rust_type": "Option<String>",
+          "optional": true
+        },
+        {
+          "name": "useSaved",
+          "rust_type": "Option<bool>",
+          "optional": true
+        }
+      ],
+      "result": "Result<Vec<ModelProfile>, String>",
+      "source": "src-tauri/src/codex_login.rs"
+    },
+    {
       "command": "save_local_environment_paths",
       "arguments": [
         {
@@ -1522,6 +1601,35 @@
       ],
       "result": "Result<(), String>",
       "source": "src-tauri/src/channels/mod.rs"
+    },
+    {
+      "command": "start_codex_login",
+      "arguments": [
+        {
+          "name": "method",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<CodexLoginChallenge, String>",
+      "source": "src-tauri/src/codex_login.rs"
+    },
+    {
+      "command": "submit_codex_login_redirect",
+      "arguments": [
+        {
+          "name": "loginId",
+          "rust_type": "String",
+          "optional": false
+        },
+        {
+          "name": "redirect",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<CodexLoginSnapshot, String>",
+      "source": "src-tauri/src/codex_login.rs"
     },
     {
       "command": "sync_project",

@@ -94,7 +94,7 @@ private actor AttachmentClient: NativeConversationQuerying {
     }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
         recorded.append((command, args, projectID))
-        if command == "list_models" || command == "native_conversation_seen" { return command == "list_models" ? .array([]) : .null }
+        if command == "list_models" || command == "list_acp_agents" || command == "native_conversation_seen" { return command == "native_conversation_seen" ? .null : .array([]) }
         if lost { throw ProjectBrowserError.service("response lost") }
         if command == "native_conversation_attach" {
             return .object(["path": .string("uploads/notes.csv"), "name": .string("notes.csv")])
