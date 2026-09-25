@@ -2,6 +2,16 @@
 
 目标：完成 [Computer Use 审计](2026-09-25-macos-native-parity-iteration.md)发现的问题。审计文档与截图保留为改动前的证据；本文记录实现和验证，不把入口存在视为闭环完成。分支：`codex/macos-native-parity-fixes`。
 
+## PR 汇总状态（2026-09-25）
+
+本轮改动已通过 [PR #1361](https://github.com/xuzhougeng/wisp-science/pull/1361) 合并到 main，合并提交为 `70a95141`。这次合并不是全部 parity 目标的结项，也不是版本发布。下一阶段执行 [可靠性与实机验收收尾计划](2026-09-25-macos-native-parity-phase2.md)。本文后半部分按时间保留历史验证记录，早期的“运行中”“尚待构建”以本节及后续结果为准。
+
+- 本轮最后验证的产品代码为 `092aae1a`，后续实现以合并后的 main 为起点。ACP 首轮前 agent 选择持久化已实现；标准 QA 包构建与严格签名验证通过，shell/helper 均为 1.14.0，源码标识 clean。新包的宿主重启 smoke/CUA 尚未执行。
+- Swift 全套 281 passed（含全部 opt-in render）；WebView 全套 870 passed、2 skipped；ACP 存储全套 211 passed，补充断言后定向 8 passed，项目查询 9 passed，ACP 宿主定向 19 passed。最新源码的 wasm、格式及资源/契约同步检查通过。
+- 合并前源码 `092aae1a` 的 Rust workspace 全套已完成，退出码 0：2361 passed、0 failed，包含存储 211 项、桌面宿主 1009 项，另含 ACP process harness 与 process-tree 集成目标。日志 `/tmp/wisp-parity-pr-workspace.log`。本次覆盖删除与 ACP 持久化，但不能算作合并后 main 的完整验证。
+- 收尾优先级：未命名已保存 ACP 空会话的标题 fallback（保留真实标题与首条消息命名语义）、首轮前选择重启验证、同步冲突确认/取消/解决、目录选择器立即 Escape、真实 IME/快速输入。真实 OAuth、性能和正式分发未验收。
+- 后续按会话/审批、论文证据、输入/阅读、正式交付与质量基线分批推进；以下未完成清单全部保留。
+
 ## 当前批次
 
 | 项目 | 实现 | 验证 |
@@ -26,7 +36,7 @@
 - [ ] 计划与审批：反馈已完成；plan mode 决策与普通工具授权范围仍待实现；维持现有 Agent workflow 审批。
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
-- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA 已通过，首次发送前选择的持久化仍待完成。
+- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；fake ACP process CUA 已通过。首次发送前选择的持久化已实现并通过自动化及 QA 构建，宿主重启 smoke/CUA 和空标题显示仍待收尾。
 - [ ] 会话：重命名、置顶、删除/批量删除入口与会话范围操作已实现，删除后端及单个/批量 CUA 已通过；跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
