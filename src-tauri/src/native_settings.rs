@@ -194,6 +194,27 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if matches!(
         request.command.as_str(),
+        "enable_project_folder_sync" | "sync_project" | "resolve_project_sync"
+    ) {
+        let input = crate::native_projects::validate_sync_request(request)?;
+        let state = broker.app.state::<crate::AppState>();
+        let result = match request.command.as_str() {
+            "enable_project_folder_sync" => {
+                crate::project_sync::enable_project_folder_sync(state, input.id).await?
+            }
+            "sync_project" => crate::project_sync::sync_project(state, input.id).await?,
+            _ => {
+                let strategy = match input.strategy.ok_or("A conflict strategy is required")? {
+                    wisp_dto::native_projects::SyncConflictStrategy::Local => "local",
+                    wisp_dto::native_projects::SyncConflictStrategy::Remote => "remote",
+                };
+                crate::project_sync::resolve_project_sync(state, input.id, strategy.into()).await?
+            }
+        };
+        return serde_json::to_value(result).map_err(|error| error.to_string());
+    }
+    if matches!(
+        request.command.as_str(),
         "native_terminal_snapshot" | "write_terminal" | "close_terminal"
     ) {
         let id = request

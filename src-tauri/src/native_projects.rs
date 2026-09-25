@@ -48,6 +48,26 @@ pub(crate) async fn execute(
     }
 }
 
+pub(crate) fn validate_sync_request(
+    request: &Request,
+) -> Result<wisp_dto::native_projects::SyncProjectRequest, String> {
+    let id = request
+        .project_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("A project is required")?;
+    let input: wisp_dto::native_projects::SyncProjectRequest =
+        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    if input.id != id {
+        return Err("Synchronization project does not match the explicit project scope".into());
+    }
+    match request.command.as_str() {
+        "enable_project_folder_sync" | "sync_project" if input.strategy.is_none() => Ok(input),
+        "resolve_project_sync" if input.strategy.is_some() => Ok(input),
+        _ => Err("A conflict strategy is only required for conflict resolution".into()),
+    }
+}
+
 pub(crate) async fn execute_export(
     state: &crate::AppState,
     request: &Request,
@@ -243,6 +263,35 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn synchronization_requires_matching_scope_and_explicit_conflict_strategy() {
+        for command in [
+            "enable_project_folder_sync",
+            "sync_project",
+            "resolve_project_sync",
+        ] {
+            let mut call = request(Some("chosen"), json!({"id":"chosen"}));
+            call.command = command.into();
+            if command == "resolve_project_sync" {
+                assert!(validate_sync_request(&call).is_err());
+                call.args["strategy"] = json!("remote");
+            }
+            assert!(validate_sync_request(&call).is_ok());
+            call.args["id"] = json!("other");
+            assert!(validate_sync_request(&call).is_err());
+            call.args["id"] = json!("chosen");
+            call.project_id = None;
+            assert!(validate_sync_request(&call).is_err());
+        }
+        let mut call = request(Some("chosen"), json!({"id":"chosen","strategy":"local"}));
+        call.command = "sync_project".into();
+        assert!(validate_sync_request(&call).is_err());
+        call.command = "resolve_project_sync".into();
+        assert!(validate_sync_request(&call).is_ok());
+        call.args["strategy"] = json!("merge");
+        assert!(validate_sync_request(&call).is_err());
     }
 
     #[tokio::test]

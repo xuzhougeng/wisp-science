@@ -32,6 +32,7 @@ pub struct Response {
 }
 
 pub const COMMANDS: &[&str] = &[
+    "enable_project_folder_sync",
     "authorize_http_connection",
     "cancel_oauth_authorization",
     "get_pet",

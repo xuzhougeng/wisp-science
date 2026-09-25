@@ -208,6 +208,18 @@
       "source": "src-tauri/src/app_commands.rs"
     },
     {
+      "command": "enable_project_folder_sync",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<ProjectSyncResult, String>",
+      "source": "src-tauri/src/project_sync.rs"
+    },
+    {
       "command": "feishu_bind_cancel",
       "arguments": [
         {

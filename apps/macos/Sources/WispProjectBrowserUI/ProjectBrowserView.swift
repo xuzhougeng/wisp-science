@@ -39,6 +39,11 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.importOptionsPresented) {
                 NativeProjectImportSheet(model: model)
             }
+            .sheet(item: $model.syncProject) { project in
+                NativeProjectSyncSheet(model: NativeProjectSyncModel(project: project, client: model.libraryClient())) {
+                    model.syncProject = nil; Task { await model.refresh() }
+                }
+            }
             .sheet(item: $model.exportProject) { project in
                 NativeProjectExportSheet(project: project, client: model.libraryClient()) { model.exportProject = nil }
             }
@@ -178,6 +183,7 @@ private struct ProjectLanding: View {
                                     toggleStar: { Task { await model.toggleStar(project.id) } },
                                     settings: { model.openProjectSettings(project.id) },
                                     export: { model.exportProject = project },
+                                    sync: { model.syncProject = project },
                                     select: { Task { await model.openProject(project.id) } }, reveal: { model.reveal(project) })
                     }
                 }
@@ -266,6 +272,7 @@ private struct ProjectCard: View {
     let toggleStar: () -> Void
     let settings: () -> Void
     let export: () -> Void
+    let sync: () -> Void
     let select: () -> Void
     let reveal: () -> Void
     @Environment(\.colorScheme) private var scheme
@@ -327,6 +334,7 @@ private struct ProjectCard: View {
         .contextMenu {
             Button(action: reveal) { HStack { WispIcon(name: "folder"); Text("在 Finder 中显示") } }.disabled(!ProjectBrowserModel.workspaceExists(project))
             Button(action: export) { HStack { WispIcon(name: "share"); Text("导出项目…") } }.disabled(busy)
+            Button(action: sync) { HStack { WispIcon(name: "sync"); Text("项目同步…") } }.disabled(busy)
         }
     }
 }

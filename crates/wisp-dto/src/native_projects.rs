@@ -27,6 +27,20 @@ pub fn returns_project_summary(command: &str) -> bool {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct SyncProjectRequest {
+    pub id: String,
+    pub strategy: Option<SyncConflictStrategy>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncConflictStrategy {
+    Local,
+    Remote,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateProjectRequest {
     pub name: String,
     pub workspace_dir: String,

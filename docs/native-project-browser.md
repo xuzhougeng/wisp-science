@@ -490,6 +490,19 @@ is available through the status tooltip and VoiceOver label. Old payloads withou
 reported as saved. These indicators report the host snapshot and do not initiate
 network transfers or enable synchronization.
 
+The project card's **项目同步…** menu opens native controls for enabling workspace
+folder snapshots, manually synchronizing an already configured project, and
+resolving conflicts. Enabling saves snapshots in `.wisp`; the user's drive client
+moves files. The same existing backend handles folder and configured relay sync,
+including idle-project checks and runtime invalidation after a pull. Native
+requests must have matching explicit project scope and `id`, and only conflict
+resolution accepts a `local`/`remote` strategy. No visible or hidden WebView is
+selected for these three native calls. A conflict never chooses a version
+automatically: a nested confirmation explains which copy will replace the other.
+Escape closes only that confirmation, preserving the sync sheet. Failed or
+unknown responses stay unconfirmed and never retry. Closing refreshes project
+cards. Creating a relay configuration is outside this menu's scope.
+
 ## Exporting a project
 
 Right-click a macOS project card and choose **导出项目…**. The native sheet offers
