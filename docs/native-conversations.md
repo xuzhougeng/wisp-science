@@ -16,6 +16,12 @@ Shift+Enter (including with Cmd/Ctrl) inserts a newline. IME marked-text
 confirmation belongs to AppKit and never submits a message. Return shortcuts
 apply only to the focused editor. Side chat retains its own Enter-to-send policy.
 
+The macOS transcript renders block Markdown headings, nested/ordered/task lists,
+quotes, fenced code and native tables in one selectable document. Code retains
+newlines; long lines wrap within the conversation. Right-click a code block to
+copy its original content or a table to copy TSV. Quote and highlight actions
+work across blocks. Task state is shown as readable completion labels. Formula
+rendering and inline images remain separate follow-ups; tool output stays literal.
 
 ## Transport and recovery
 

@@ -148,7 +148,9 @@ struct NativeConversationView: View {
         NativeSelectableMessage(text: markedText(item, index: index, input: input), saved: conversation.savedHighlights.map(\.code), quote: quoteSelection, save: { selection in
             guard let projectID, let sessionID else { return }
             Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
-        }, monospaced: item.role == "tool").frame(maxWidth: .infinity, alignment: .leading)
+        }, monospaced: item.role == "tool",
+           markdown: item.role == "tool" || input ? nil : item.role == "user" ? SavedAttachments.body(in: item.text) : item.text,
+           revealed: conversation.scrollTarget == index ? conversation.revealedExcerpt : nil).frame(maxWidth: .infinity, alignment: .leading)
     }
     private var composer: some View {
         VStack(spacing: 8) {

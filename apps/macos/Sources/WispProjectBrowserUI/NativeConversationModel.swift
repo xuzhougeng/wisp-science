@@ -344,8 +344,8 @@ final class NativeConversationModel: ObservableObject {
     }
     static func renderedText(_ item: ConversationItem) -> String {
         if item.role == "tool" { return item.text }
-        let attributed = (try? AttributedString(markdown: item.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(item.text)
-        return String(attributed.characters)
+        let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
+        return NativeMarkdownContent.render(source, saved: [], scheme: .light).string
     }
     func clearExcerpt(revision: Int) { if scrollRevision == revision { revealedExcerpt = nil } }
     static func questionItemIndex(_ target: Int, offset: Int, items: [ConversationItem]) -> Int? {

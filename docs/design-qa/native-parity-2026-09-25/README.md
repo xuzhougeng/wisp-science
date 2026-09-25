@@ -41,3 +41,15 @@
 [首次读取超时](native-read-timeout.jpg)属于 QA 环境记录：数据库初放在 Documents，新签名应用派生的 service 阻塞在系统 `open()`；shell 中同一 service 能快速读取。将合成数据迁移到 `/private/tmp` 后恢复。没有修改系统文件访问权限，不据此断言已经确定产品缺陷。
 
 未做真实模型/ACP/OAuth/SSH/Run 的端到端验证；未完整覆盖所有面板、深色、英文、窄窗、图片附件、长会话性能。静态功能缺口与实机复现的标签详见计划文档。没有执行完整测试套件，也没有修改产品实现。
+
+## 修复后的渲染测试
+
+以下是修复分支上 `NativeMarkdownTests` 生成的 NSHostingView 图片，并非 CUA
+实机窗口截图。浅色 720pt 与深色 310pt，标题、列表、原生表格及代码换行已
+目视检查；测试同时断言真实文本布局宽度、表格行列/对齐、复制内容和跨块选择。
+
+- [浅色 Markdown](fixed-markdown-light.png)
+- [深色窄窗 Markdown](fixed-markdown-dark-narrow.png)
+
+全应用的窗口恢复和快捷键实机复验暂因 Mac 锁屏待进行。后续状态见
+[修复进度](../../superpowers/plans/2026-09-25-macos-native-parity-progress.md)。

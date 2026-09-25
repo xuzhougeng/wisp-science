@@ -8,6 +8,8 @@ struct NativeSelectableMessage: NSViewRepresentable {
     let quote: ((String) -> Void)?
     let save: ((String) -> Void)?
     var monospaced = false
+    var markdown: String?
+    var revealed: String?
     @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> NativeMessageTextView {
@@ -26,7 +28,8 @@ struct NativeSelectableMessage: NSViewRepresentable {
     private func configure(_ view: NativeMessageTextView) {
         view.quote = quote; view.save = save
         view.linkTextAttributes = [.foregroundColor: NSColor(WispDesign.color("clay", scheme)), .underlineStyle: NSUnderlineStyle.single.rawValue]
-        view.apply(Self.content(text, saved: saved, scheme: scheme, monospaced: monospaced))
+        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme) }
+                   ?? Self.content(text, saved: saved, scheme: scheme, monospaced: monospaced))
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeMessageTextView, context: Context) -> CGSize? {
         let width = max(1, proposal.width ?? 400)
@@ -109,8 +112,21 @@ class NativeMessageTextView: NSTextView {
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
-        let actions = selectionActions()
+        let point = convert(event.locationInWindow, from: nil)
+        let actions = selectionActions() + blockActions(at: characterIndexForInsertion(at: point))
         if !actions.isEmpty { menu.addItem(.separator()); actions.forEach(menu.addItem) }
         return menu
+    }
+    func blockActions(at index: Int, copy: @escaping (String) -> Void = { text in
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+    }) -> [NSMenuItem] {
+        guard let storage = textStorage, index >= 0, index < storage.length else { return [] }
+        return [("复制代码", NativeMarkdownContent.codeCopy), ("复制表格", NativeMarkdownContent.tableCopy)].compactMap { title, key in
+            guard let text = storage.attribute(key, at: index, effectiveRange: nil) as? String else { return nil }
+            let action = NativeSelectionAction { copy(text) }
+            let item = NSMenuItem(title: title, action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")
+            item.target = action; item.representedObject = action
+            return item
+        }
     }
 }
