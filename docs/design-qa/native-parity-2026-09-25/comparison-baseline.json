@@ -1,0 +1,26 @@
+{
+  "head": "4272578e",
+  "product_version": "1.14.0",
+  "native_app": "/Users/xuzhougeng/Documents/Code/wisp-science/target/parity-20260925/native-macos-qa/Wisp Science Parity Native.app",
+  "native_bundle_identifier": "science.wisp-science.parity-20260925.native.preview",
+  "native_host_identifier": "science.wisp-science.parity-20260925.native",
+  "native_database": "/private/tmp/wisp-parity-20260925-data/native/wisp.sqlite",
+  "webview_app": "/Users/xuzhougeng/Documents/Code/wisp-science/target/parity-20260925/Wisp Science Parity WebView.app",
+  "webview_bundle_identifier": "science.wisp-science.parity-20260925.webview",
+  "webview_database": "/private/tmp/wisp-parity-20260925-data/webview/wisp.sqlite",
+  "launch": "Use CUA getApp(app path). SwiftUI database preference has been set in its isolated domain. App Support identifiers symlink to independent data-native and data-webview.",
+  "fixtures": "2 projects, 6 sessions, 146 messages, 4 artifacts; HTTP/ACP rich transcript, 35-turn transcript, empty session; 2 publications with 2 draft revisions each; local fixture workspace only. HTTP 127.0.0.1:9; ACP missing local executable; no real providers/credentials.",
+  "caveats": [
+    "Official native script failed native-english.json drift (19 ChatGPT/Codex login English labels). Temporary script skipped only asset check, preserving HEAD sources.",
+    "Initial fixture generator binary was 2026-09-18; current context-epoch columns/migration 0058 applied to isolated fixtures and current wisp-service successfully read rich transcript. Backend can run remaining idempotent migrations on initial open.",
+    "Native bundle retains source Info.plist preview version 0.1.0; embedded Rust host and service are workspace 1.14.0.",
+    "Data moved from Documents to /private/tmp/wisp-parity-20260925-data after GUI-spawned service blocked in OS open for Documents. Fresh fixture copies avoid expanding file privacy permissions."
+  ],
+  "native_build_complete": true,
+  "native_signature_verified": true,
+  "native_host_sha256": "89e4850e067bb399e6169790aadb05a954cfe5d429b01999dbfc651c18d694d7",
+  "webview_build_complete": true,
+  "webview_signature_verified": true,
+  "webview_host_sha256": "9dea53f23d12a3cdc99eb8df99d7d2eb5e80077f99584ccb41611cff1712b327",
+  "webview_dist_index_sha256": "47b698e8e5a1c633c5bef84948069f6b50b7175e4e1e033aea6823dbd4d6bb32"
+}
