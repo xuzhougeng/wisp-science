@@ -12,6 +12,7 @@ struct NativeConversationView: View {
     @State private var confirmResend = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
+    @State private var feedbackApproval: ConversationApproval?
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -65,10 +66,11 @@ struct NativeConversationView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         HStack {
+                            Button("修改意见…") { feedbackApproval = approval }
                             Spacer()
                             Button("拒绝") { Task { await conversation.approve(approval, allowed: false) } }
                             Button("允许这一次") { Task { await conversation.approve(approval, allowed: true) } }.buttonStyle(WispButtonStyle(primary: true))
-                        }.disabled(conversation.busy || conversation.connectionError != nil)
+                        }.disabled(!conversation.canApprove(approval))
                     }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color("clay")))
                         .frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 12)
@@ -82,8 +84,11 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = [] }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
+        .sheet(item: $feedbackApproval) { approval in
+            NativeApprovalFeedback(approval: approval, conversation: conversation) { feedbackApproval = nil }
+        }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
             Button("取消", role: .cancel) {}

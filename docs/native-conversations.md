@@ -73,8 +73,12 @@ an error instead of silently evicting deduplication records.
 Stop targets only the supplied session. A cancellation request that races runtime
 creation is repeated until the host-owned turn completes. Approval removal checks
 both project ownership and the exact one-shot approval ID under the same lock;
-an old button cannot approve the next request. This phase never grants permanent
-approval scopes. Normal `ask_user` questions stage an editable answer in the
+an old button cannot approve the next request. On macOS, “修改意见…” opens a
+feedback editor and “拒绝并反馈” forwards the existing optional `feedback` field.
+The editor keeps its text after a failed request and does not retry automatically.
+Immediate Escape closes only the feedback editor; it does not reject the request
+or close its parent. The client also checks the current session and approval ID
+before submitting. This phase never grants permanent approval scopes. Normal `ask_user` questions stage an editable answer in the
 composer, including the option description. Existing notes are preserved even
 when the user switches options; edits made after staging are also retained.
 Freeform answers use the same staging action. The card remains pending until a

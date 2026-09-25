@@ -282,17 +282,28 @@ final class NativeConversationModel: ObservableObject {
         return true
     }
     func stop() async { await action("native_conversation_stop", [:]) }
-    func approve(_ approval: ConversationApproval, allowed: Bool) async {
-        await action("native_conversation_approve", ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)])
+    func canApprove(_ approval: ConversationApproval) -> Bool {
+        !busy && !showingHistory && connectionError == nil && snapshot?.read_only == false
+            && approval.frame_id == sessionID && snapshot?.approvals.contains(where: { $0.approval_id == approval.approval_id }) == true
+    }
+    @discardableResult
+    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil) async -> Bool {
+        guard canApprove(approval) else { return false }
+        var args: [String: SettingsValue] = ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)]
+        if !allowed, let feedback = feedback?.trimmingCharacters(in: .whitespacesAndNewlines), !feedback.isEmpty { args["feedback"] = .string(feedback) }
+        return await action("native_conversation_approve", args)
     }
     func selectModel(_ id: String) async { await action("native_conversation_model", ["model_id": .string(id)]) }
-    private func action(_ command: String, _ args: [String: SettingsValue]) async {
-        guard !busy, let project = projectID, let session = sessionID else { return }
+    @discardableResult
+    private func action(_ command: String, _ args: [String: SettingsValue]) async -> Bool {
+        guard !busy, let project = projectID, let session = sessionID else { return false }
         let current = generation; busy = true; operationError = nil
         var args = args; args["session_id"] = .string(session)
-        do { _ = try await client.invoke(command, args: args, projectID: project) }
+        var succeeded = false
+        do { _ = try await client.invoke(command, args: args, projectID: project); succeeded = true }
         catch { if current == generation { operationError = error.localizedDescription } }
         if current == generation { busy = false; await refresh() }
+        return succeeded && current == generation
     }
     func older() async {
         revealedExcerpt = nil
