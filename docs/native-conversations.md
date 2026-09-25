@@ -27,7 +27,7 @@ rendering and inline images remain separate follow-ups; tool output stays litera
 
 `wisp-dto::native_conversations` is the authoritative v1 protocol. Requests use
 the authenticated `/invoke` transport established for native settings, with an
-explicit project ID and one of six `native_conversation_*` commands. The host
+explicit project ID and the advertised `native_conversation_*` commands. The host
 capabilities response advertises these separately from the settings allowlist;
 raw agent commands are not exposed. Swift uses `NativeConversationClient`; WinUI
 can depend on `INativeConversationClient` without referencing SwiftUI or Tauri.
@@ -40,6 +40,8 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |
 | `native_conversation_approve` | `session_id`, `approval_id`, `approved`, optional `feedback` | Successful void, once only |
+| `native_conversation_acp_permission` | `session_id`, `request_id`, nullable `option_id` | Resolve the exact pending ACP option (null cancels) |
+| `native_conversation_acp_answer` | `session_id`, `request_id`, `answer` | Persist one reply for the pending bridge question |
 | `native_conversation_model` | `session_id`, `model_id` | Existing model list result |
 
 The initial transport polls a bounded transcript snapshot every 350 ms while a
@@ -84,8 +86,19 @@ when the user switches options; edits made after staging are also retained.
 Freeform answers use the same staging action. The card remains pending until a
 later user message appears in the authoritative transcript. Answered/expired
 cards are inactive; stale callbacks cannot edit another conversation's draft.
-ACP request IDs are retained but remain inactive until the native ACP reply
-protocol is implemented.
+ACP interactions are an additive optional `acp` snapshot field. Native macOS can
+answer a live ACP question or permission request already running in the shared
+host. Permission cards preserve the agent's option IDs, labels and scope kinds;
+choosing “always” explicitly sends that offered option, and cancel sends null.
+The host validates session ownership and the pending request under its existing
+resolver; an invalid option does not consume the request. Questions use the same
+persisted bridge answer as WebView and reject empty, stale or cross-session
+replies. The composer draft is unchanged. Local submission tracking prevents a
+second reply to the same request, including after an ambiguous transport error;
+there is no automatic retry. Navigation discards callbacks from the old view.
+Old hosts without the optional field show inactive ACP questions. Creating,
+restoring and sending ACP turns from native remain a separate next step; this
+interaction change alone does not enable the ACP composer.
 
 ## WinUI integration
 
@@ -105,7 +118,7 @@ user choice. Attachments, ACP composers and PNG share export remain follow-ups.
 
 Automated tests use temporary stores and fake native transports, without API keys,
 SSH hosts or external network calls. They cover ownership, duplicate-send handling,
-stale approvals, shared fixtures, snapshot order/host restarts, read failures,
+stale approvals, ACP reply scope/expiry/duplicate handling, shared fixtures, snapshot order/host restarts, read failures,
 late navigation callbacks and preservation of drafts. To render the real SwiftUI
 conversation view with offline fixtures at desktop/narrow sizes and in dark mode:
 

@@ -58,6 +58,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_enqueue",
     "native_conversation_stop",
     "native_conversation_approve",
+    "native_conversation_acp_permission",
+    "native_conversation_acp_answer",
     "native_conversation_model",
 ];
 
@@ -290,6 +292,39 @@ pub struct ApprovalRequest {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct AcpPermissionResponse {
+    pub session_id: String,
+    pub request_id: String,
+    pub option_id: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcpQuestionResponse {
+    pub session_id: String,
+    pub request_id: String,
+    pub answer: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AcpPermissionOption {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AcpPermission {
+    pub request_id: String,
+    pub frame_id: String,
+    pub title: String,
+    pub preview: String,
+    pub options: Vec<AcpPermissionOption>,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AcpInteractions {
+    pub permissions: Vec<AcpPermission>,
+    pub question_ids: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelRequest {
     pub session_id: String,
     pub model_id: String,
@@ -327,11 +362,36 @@ pub struct Snapshot {
     pub request_id: Option<String>,
     pub error: Option<String>,
     pub approvals: Vec<super::PendingToolApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp: Option<AcpInteractions>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn acp_interactions_are_scoped_and_optional_for_older_snapshots() {
+        let mut value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/acp-interactions.json"
+        ))
+        .unwrap();
+        let snapshot: Snapshot = serde_json::from_value(value.clone()).unwrap();
+        let pending = snapshot.acp.unwrap();
+        assert_eq!(pending.question_ids, ["ask-1"]);
+        assert_eq!(pending.permissions[0].frame_id, snapshot.session_id);
+        assert_eq!(pending.permissions[0].options[1].kind, "allow_always");
+        value.as_object_mut().unwrap().remove("acp");
+        assert!(serde_json::from_value::<Snapshot>(value)
+            .unwrap()
+            .acp
+            .is_none());
+        assert!(
+            serde_json::from_value::<AcpQuestionResponse>(serde_json::json!({
+                "session_id":"s", "request_id":"a", "answer":"yes", "project_id":"other"
+            }))
+            .is_err()
+        );
+    }
     #[test]
     fn panel_fixtures_use_existing_file_contracts() {
         let files: Vec<crate::DirEntry> = serde_json::from_str(include_str!(

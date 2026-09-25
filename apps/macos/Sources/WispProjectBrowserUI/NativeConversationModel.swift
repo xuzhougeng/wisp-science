@@ -56,6 +56,7 @@ final class NativeConversationModel: ObservableObject {
     private var stagedFiles: [String: [ComposerFile]] = [:]
     private var drafts: [String: String] = [:]
     private var questionDrafts: [String: (target: NativeQuestionTarget, text: String, prefix: String)] = [:]
+    private var submittedAcpRequests: Set<String> = []
     private var projectID: String?
     private var sessionID: String?
     private var generation = UUID()
@@ -265,6 +266,35 @@ final class NativeConversationModel: ObservableObject {
     func canStageQuestion(_ target: NativeQuestionTarget) -> Bool {
         questionState(target) == .pending && NativeQuestion(target.text)?.requestID == nil
             && snapshot?.read_only == false && !showingHistory && !busy && !uncertainSend && connectionError == nil
+    }
+    func canAnswerAcpQuestion(_ target: NativeQuestionTarget) -> Bool {
+        guard questionState(target) == .pending, let id = NativeQuestion(target.text)?.requestID else { return false }
+        return !showingHistory && !busy && connectionError == nil && !submittedAcpRequests.contains(id)
+            && snapshot?.acp?.question_ids.contains(id) == true
+    }
+    @discardableResult
+    func answerAcpQuestion(_ text: String, target: NativeQuestionTarget) async -> Bool {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canAnswerAcpQuestion(target), let id = NativeQuestion(target.text)?.requestID, !answer.isEmpty else { return false }
+        return await respondAcp("native_conversation_acp_answer", id: id, args: ["answer": .string(answer)])
+    }
+    func canRespondAcpPermission(_ permission: ConversationAcpPermission) -> Bool {
+        !busy && !showingHistory && connectionError == nil && permission.frame_id == sessionID
+            && !submittedAcpRequests.contains(permission.request_id)
+            && snapshot?.acp?.permissions.contains(permission) == true
+    }
+    @discardableResult
+    func respondAcpPermission(_ permission: ConversationAcpPermission, optionID: String?) async -> Bool {
+        guard canRespondAcpPermission(permission), optionID == nil || permission.options.contains(where: { $0.id == optionID }) else { return false }
+        return await respondAcp("native_conversation_acp_permission", id: permission.request_id, args: ["option_id": optionID.map(SettingsValue.string) ?? .null])
+    }
+    private func respondAcp(_ command: String, id: String, args: [String: SettingsValue]) async -> Bool {
+        submittedAcpRequests.insert(id)
+        var args = args; args["request_id"] = .string(id)
+        let current = generation
+        let success = await action(command, args)
+        if !success && current == generation { operationError = "ACP 回复结果未能确认。请核对最新状态；不会自动重试。\n" + (operationError ?? "") }
+        return success
     }
     @discardableResult
     func stageQuestionAnswer(_ text: String, target: NativeQuestionTarget) -> Bool {

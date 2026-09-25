@@ -1,0 +1,28 @@
+{
+  "schema": "wisp.native-conversations.v1",
+  "epoch": "acp-fixture",
+  "sequence": 1,
+  "project_id": "p",
+  "session_id": "s",
+  "items": [{"role":"question","text":"{\"question\":\"Which reference?\",\"request_id\":\"ask-1\",\"status\":\"pending\",\"allow_freeform\":true}"}],
+  "next_before_seq": null,
+  "running": true,
+  "stopping": false,
+  "read_only": true,
+  "model_id": "acp:Fixture agent",
+  "request_id": null,
+  "error": null,
+  "approvals": [],
+  "acp": {
+    "question_ids": ["ask-1"],
+    "permissions": [{
+      "request_id": "permission-1", "frame_id": "s", "title": "Write result", "preview": "results/example.csv",
+      "options": [
+        {"id":"allow-single","name":"Allow write","kind":"allow_once"},
+        {"id":"allow-future","name":"Allow future writes","kind":"allow_always"},
+        {"id":"deny-single","name":"Reject write","kind":"reject_once"},
+        {"id":"deny-future","name":"Reject future writes","kind":"reject_always"}
+      ]
+    }]
+  }
+}

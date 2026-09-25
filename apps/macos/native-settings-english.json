@@ -216,5 +216,12 @@
   "登录取消请求未能确认。": "Could not confirm cancellation of this sign-in attempt.",
   "重新登录 ChatGPT…": "Sign in to ChatGPT again…",
   "ChatGPT 订阅": "ChatGPT subscription",
-  "通过 ChatGPT 订阅登录。登录凭据保存在系统钥匙串中。": "Sign in with your ChatGPT subscription. Sign-in credentials are stored in the system keychain."
+  "通过 ChatGPT 订阅登录。登录凭据保存在系统钥匙串中。": "Sign in with your ChatGPT subscription. Sign-in credentials are stored in the system keychain.",
+  "发送回答": "Send answer",
+  "回答会直接发送给 ACP Agent，保留输入框中的草稿。": "Send the answer directly to the ACP Agent and keep the composer draft.",
+  "始终允许": "Always allow",
+  "拒绝这一次": "Reject once",
+  "始终拒绝": "Always reject",
+  "代理提供的选项": "Agent option",
+  "取消请求": "Cancel request"
 }

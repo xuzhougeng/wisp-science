@@ -367,6 +367,11 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 running: record.running || running(broker, session).await,
                 stopping: record.stopping,
                 read_only,
+                acp: if frozen {
+                    None
+                } else {
+                    Some(crate::acp::native_interactions(&state, session).await)
+                },
                 model_id: model.as_str().unwrap_or_default().into(),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
@@ -515,6 +520,26 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 &broker.app.state::<crate::AppState>(),
                 project,
                 &args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "native_conversation_acp_permission" => {
+            let args: dto::AcpPermissionResponse = decode(&request.args)?;
+            crate::acp::respond_native_permission(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "native_conversation_acp_answer" => {
+            let args: dto::AcpQuestionResponse = decode(&request.args)?;
+            crate::acp::respond_native_question(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
             )
             .await?;
             Ok(Value::Null)

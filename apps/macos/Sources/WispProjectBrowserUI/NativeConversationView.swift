@@ -53,6 +53,15 @@ struct NativeConversationView: View {
                 }
             }
             if !conversation.showingHistory {
+                if let permissions = conversation.snapshot?.acp?.permissions, !permissions.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            ForEach(permissions) { permission in
+                                NativeAcpPermissionCard(conversation: conversation, permission: permission)
+                            }
+                        }.frame(maxWidth: 800).padding(.horizontal, 24)
+                    }.frame(maxHeight: 260).padding(.bottom, 12)
+                }
                 ForEach(conversation.snapshot?.approvals ?? []) { approval in
                     VStack(alignment: .leading, spacing: 10) {
                         Text("需要确认 · \(approval.tool)").font(WispDesign.font(size: 13, weight: .semibold))

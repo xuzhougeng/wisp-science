@@ -1532,6 +1532,115 @@ fn stop_reason(reason: AcpStopReason) -> &'static str {
     }
 }
 
+fn require_pending_owner(owner: &str, expected: Option<&str>) -> Result<(), String> {
+    if expected.is_some_and(|frame| frame != owner) {
+        return Err("ACP request does not belong to this conversation.".into());
+    }
+    Ok(())
+}
+
+fn take_permission(
+    permissions: &mut HashMap<String, PendingAcpPermission>,
+    request_id: &str,
+    option_id: Option<&str>,
+    expected_frame: Option<&str>,
+) -> Result<PendingAcpPermission, String> {
+    let pending = permissions
+        .get(request_id)
+        .ok_or("ACP permission request is no longer pending.")?;
+    require_pending_owner(&pending.frame_id, expected_frame)?;
+    if expected_frame.is_some()
+        && option_id.is_some_and(|id| !pending.request.options.iter().any(|option| option.id == id))
+    {
+        return Err("ACP permission option is no longer available.".into());
+    }
+    Ok(permissions
+        .remove(request_id)
+        .expect("validated pending request"))
+}
+
+pub(crate) async fn native_interactions(
+    state: &AppState,
+    frame: &str,
+) -> wisp_dto::native_conversations::AcpInteractions {
+    use wisp_dto::native_conversations::{AcpInteractions, AcpPermission, AcpPermissionOption};
+    let mut permissions = state
+        .acp_permissions
+        .lock()
+        .await
+        .values()
+        .filter(|pending| pending.frame_id == frame)
+        .map(|pending| AcpPermission {
+            request_id: pending.request.request_id.clone(),
+            frame_id: pending.frame_id.clone(),
+            title: pending.remote_request.tool.clone(),
+            preview: pending.remote_request.preview.clone(),
+            options: pending
+                .request
+                .options
+                .iter()
+                .map(|option| AcpPermissionOption {
+                    id: option.id.clone(),
+                    name: option.name.clone(),
+                    kind: match option.kind {
+                        AcpPermissionKind::AllowOnce => "allow_once",
+                        AcpPermissionKind::AllowAlways => "allow_always",
+                        AcpPermissionKind::RejectOnce => "reject_once",
+                        AcpPermissionKind::RejectAlways => "reject_always",
+                        AcpPermissionKind::Unknown => "unknown",
+                    }
+                    .into(),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    permissions.sort_by(|a, b| a.request_id.cmp(&b.request_id));
+    let mut question_ids = state
+        .acp_asks
+        .lock()
+        .await
+        .iter()
+        .filter(|(_, owner)| owner.as_str() == frame)
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    question_ids.sort();
+    AcpInteractions {
+        permissions,
+        question_ids,
+    }
+}
+
+pub(crate) async fn respond_native_permission(
+    state: &AppState,
+    app: &AppHandle,
+    request: wisp_dto::native_conversations::AcpPermissionResponse,
+) -> Result<(), String> {
+    respond_acp_permission_inner(
+        state,
+        app,
+        request.request_id,
+        request.option_id,
+        Some(&request.session_id),
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn respond_native_question(
+    state: &AppState,
+    app: &AppHandle,
+    request: wisp_dto::native_conversations::AcpQuestionResponse,
+) -> Result<(), String> {
+    respond_ask_user_inner(
+        state,
+        app,
+        request.request_id,
+        request.answer,
+        Some(&request.session_id),
+    )
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn respond_acp_permission(
     state: State<'_, AppState>,
@@ -1539,7 +1648,7 @@ pub(crate) async fn respond_acp_permission(
     request_id: String,
     option_id: Option<String>,
 ) -> Result<(), String> {
-    respond_acp_permission_inner(&state, &app, request_id, option_id)
+    respond_acp_permission_inner(&state, &app, request_id, option_id, None)
         .await
         .map(|_| ())
 }
@@ -1549,13 +1658,14 @@ async fn respond_acp_permission_inner(
     app: &AppHandle,
     request_id: String,
     option_id: Option<String>,
+    expected_frame: Option<&str>,
 ) -> Result<PendingAcpPermission, String> {
-    let pending = state
-        .acp_permissions
-        .lock()
-        .await
-        .remove(&request_id)
-        .ok_or_else(|| "ACP permission request is no longer pending.".to_string())?;
+    let pending = take_permission(
+        &mut *state.acp_permissions.lock().await,
+        &request_id,
+        option_id.as_deref(),
+        expected_frame,
+    )?;
     let frame_id = pending.frame_id.clone();
     let runtime = state.acp_sessions.lock().await.get(&frame_id).cloned();
     let Some(runtime) = runtime else {
@@ -1640,7 +1750,8 @@ pub(crate) async fn respond_remote_permission(
         (entry.0.clone(), option_id)
     };
 
-    let pending = respond_acp_permission_inner(state, app, request_id, Some(option_id)).await?;
+    let pending =
+        respond_acp_permission_inner(state, app, request_id, Some(option_id), None).await?;
     Ok(crate::approval_commands::RemoteConfirmationResolution {
         approval_id: pending.remote_request.approval_id,
         frame_id: pending.frame_id,
@@ -1660,27 +1771,54 @@ pub(crate) async fn respond_ask_user(
     request_id: String,
     answer: String,
 ) -> Result<(), String> {
+    respond_ask_user_inner(&state, &app, request_id, answer, None).await
+}
+
+async fn answer_pending_question(
+    store: &wisp_store::Store,
+    asks: &Mutex<HashMap<String, String>>,
+    request_id: &str,
+    answer: &str,
+    expected_frame: Option<&str>,
+) -> Result<String, String> {
     let answer = answer.trim().to_string();
     if answer.is_empty() {
         return Err("The answer is empty.".into());
     }
-    let frame_id = state
-        .acp_asks
+    let frame_id = asks
         .lock()
         .await
-        .get(&request_id)
+        .get(request_id)
         .cloned()
         .ok_or_else(|| "This question is no longer pending.".to_string())?;
-    if !state
-        .store
-        .answer_ask_user_request(&request_id, &answer)
+    require_pending_owner(&frame_id, expected_frame)?;
+    if !store
+        .answer_ask_user_request(request_id, &answer)
         .await
         .map_err(|error| error.to_string())?
     {
-        state.acp_asks.lock().await.remove(&request_id);
+        asks.lock().await.remove(request_id);
         return Err("This question is no longer pending.".into());
     }
-    state.acp_asks.lock().await.remove(&request_id);
+    asks.lock().await.remove(request_id);
+    Ok(frame_id)
+}
+
+async fn respond_ask_user_inner(
+    state: &AppState,
+    app: &AppHandle,
+    request_id: String,
+    answer: String,
+    expected_frame: Option<&str>,
+) -> Result<(), String> {
+    let frame_id = answer_pending_question(
+        &state.store,
+        &state.acp_asks,
+        &request_id,
+        &answer,
+        expected_frame,
+    )
+    .await?;
     let frame_has_asks = state
         .acp_asks
         .lock()
@@ -1892,6 +2030,111 @@ mod tests {
             Some("allow-once")
         );
         assert_eq!(remote_permission_option(&request, false), None);
+    }
+
+    #[test]
+    fn native_permission_validates_owner_and_exact_option_before_consuming() {
+        let request = AcpPermissionRequest {
+            request_id: "request".into(),
+            session_id: "agent-session".into(),
+            tool_call: serde_json::json!({"title":"Write results"}),
+            options: vec![permission_option("always", AcpPermissionKind::AllowAlways)],
+        };
+        let pending = PendingAcpPermission::new("frame", &request);
+        let mut permissions = HashMap::from([("request".into(), pending.clone())]);
+        assert!(
+            take_permission(&mut permissions, "request", Some("always"), Some("other")).is_err()
+        );
+        assert!(
+            take_permission(&mut permissions, "request", Some("made-up"), Some("frame")).is_err()
+        );
+        assert_eq!(permissions.len(), 1);
+        assert_eq!(
+            take_permission(&mut permissions, "request", Some("always"), Some("frame"))
+                .unwrap()
+                .frame_id,
+            "frame"
+        );
+        assert!(
+            take_permission(&mut permissions, "request", Some("always"), Some("frame")).is_err()
+        );
+        permissions.insert("request".into(), pending);
+        assert!(take_permission(&mut permissions, "request", None, Some("frame")).is_ok());
+        assert!(permissions.is_empty());
+    }
+
+    #[test]
+    fn native_question_owner_must_match_without_changing_webview_resolution() {
+        assert!(require_pending_owner("frame-a", Some("frame-b")).is_err());
+        assert!(require_pending_owner("frame-a", Some("frame-a")).is_ok());
+        assert!(require_pending_owner("frame-a", None).is_ok());
+    }
+
+    #[tokio::test]
+    async fn native_question_persists_one_answer_and_preserves_other_frames() {
+        let directory = std::env::temp_dir().join(format!("wisp_native_acp_{}", Uuid::new_v4()));
+        let store = wisp_store::Store::open(&directory.join("test.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project("p", "Project", &directory.to_string_lossy())
+            .await
+            .unwrap();
+        for frame in ["a", "b"] {
+            store.create_frame(frame, "p", "Wisp", "m").await.unwrap();
+        }
+        for (id, frame) in [("ask-a", "a"), ("ask-b", "b")] {
+            store
+                .insert_ask_user_request(id, frame, r#"{"question":"Which reference?"}"#)
+                .await
+                .unwrap();
+        }
+        let asks = Mutex::new(HashMap::from([
+            ("ask-a".into(), "a".into()),
+            ("ask-b".into(), "b".into()),
+        ]));
+        assert!(
+            answer_pending_question(&store, &asks, "ask-a", "yes", Some("b"))
+                .await
+                .is_err()
+        );
+        assert!(
+            answer_pending_question(&store, &asks, "ask-a", "  ", Some("a"))
+                .await
+                .is_err()
+        );
+        assert_eq!(asks.lock().await.len(), 2);
+        assert_eq!(
+            answer_pending_question(&store, &asks, "ask-a", " reference v2 ", Some("a"))
+                .await
+                .unwrap(),
+            "a"
+        );
+        assert!(
+            answer_pending_question(&store, &asks, "ask-a", "second", Some("a"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.poll_ask_user_answer("ask-a").await.unwrap(),
+            wisp_store::AskUserPoll::Answered("reference v2".into())
+        );
+        assert_eq!(
+            store.poll_ask_user_answer("ask-b").await.unwrap(),
+            wisp_store::AskUserPoll::Pending
+        );
+        store
+            .expire_ask_user_requests_except("b", &HashSet::new())
+            .await
+            .unwrap();
+        assert!(
+            answer_pending_question(&store, &asks, "ask-b", "late", Some("b"))
+                .await
+                .is_err()
+        );
+        assert!(asks.lock().await.is_empty());
+        drop(store);
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

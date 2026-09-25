@@ -33,14 +33,34 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let request_id: String?
     public let error: String?
     public let approvals: [ConversationApproval]
+    public let acp: ConversationAcpInteractions?
 
     public static func decode(_ value: SettingsValue, projectID: String, sessionID: String) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
         guard snapshot.schema == schemaID, !snapshot.epoch.isEmpty, snapshot.sequence > 0,
               snapshot.project_id == projectID, snapshot.session_id == sessionID,
-              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }) else { throw ProjectBrowserError.invalidResponse }
+              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }),
+              (snapshot.acp?.permissions ?? []).allSatisfy({ $0.frame_id == sessionID && !$0.request_id.isEmpty }) else { throw ProjectBrowserError.invalidResponse }
         return snapshot
     }
+}
+
+public struct ConversationAcpInteractions: Codable, Sendable {
+    public let permissions: [ConversationAcpPermission]
+    public let question_ids: [String]
+}
+public struct ConversationAcpPermission: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { request_id }
+    public let request_id: String
+    public let frame_id: String
+    public let title: String
+    public let preview: String
+    public let options: [ConversationAcpOption]
+}
+public struct ConversationAcpOption: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let kind: String
 }
 
 public protocol NativeConversationQuerying: Sendable {
