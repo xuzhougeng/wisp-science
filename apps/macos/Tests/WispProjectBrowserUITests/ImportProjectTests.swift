@@ -48,6 +48,23 @@ private actor ImportTransport: NativeSettingsQuerying {
 }
 
 final class ImportProjectTests: XCTestCase {
+    @MainActor func testRefreshClearsDismissedImportErrorOnlyAfterSuccessfulReload() async {
+        let transport = ImportTransport(); await transport.setMode("present")
+        let list = EmptyImportList()
+        let model = ProjectBrowserModel(client: list, databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: transport)
+        await model.refresh()
+        model.importOptionsPresented = true
+        await model.importChosenDirectory(URL(fileURLWithPath: "/tmp/duplicate"))
+        XCTAssertNotNil(model.importError); XCTAssertFalse(model.listRefreshFailed)
+        await model.refresh()
+        XCTAssertNotNil(model.importError, "An open import sheet keeps its error")
+        model.importOptionsPresented = false
+        await list.setFailure(true); await model.refresh()
+        XCTAssertNotNil(model.importError); XCTAssertTrue(model.listRefreshFailed)
+        await list.setFailure(false); await model.refresh()
+        XCTAssertNil(model.importError); XCTAssertNil(model.error); XCTAssertFalse(model.listRefreshFailed)
+        let count = await transport.callCount(); XCTAssertEqual(count, 1, "Reload must not retry the import")
+    }
     private func recoveryContract() throws -> SettingsValue {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }
@@ -260,9 +277,12 @@ final class ImportProjectTests: XCTestCase {
 
 private actor EmptyImportList: ProjectBrowserQuerying {
     var lists = 0
+    var failure = false
+    func setFailure(_ value: Bool) { failure = value }
     func listCount() -> Int { lists }
     func listProjects(databaseURL: URL) async throws -> ProjectListSnapshot {
         lists += 1
+        if failure { throw ProjectBrowserError.service("offline") }
         return ProjectListSnapshot(projects: [], activitySource: "persisted_only")
     }
     func listSessions(databaseURL: URL, projectID: String?) async throws -> [BrowserSession] { [] }

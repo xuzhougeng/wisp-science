@@ -44,6 +44,7 @@ public final class ProjectBrowserModel: ObservableObject {
     private var navigationGeneration = UUID()
     @Published public private(set) var isLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var listRefreshFailed = false
     @Published private(set) var savingProjectID: String?
     @Published private(set) var lastLoaded: Date?
     @Published private(set) var databaseURL: URL
@@ -114,9 +115,12 @@ public final class ProjectBrowserModel: ObservableObject {
             projects = snapshot.projects
             recentSessions = recent
             lastLoaded = Date()
+            listRefreshFailed = false
+            if !importBusy && !importOptionsPresented && recoveryPreview == nil { importError = nil }
             if let id = activeProjectID { await openProject(id, sessionID: activeSessionID) }
         } catch {
             self.error = error.localizedDescription
+            listRefreshFailed = true
         }
     }
 

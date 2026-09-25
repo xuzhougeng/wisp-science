@@ -72,7 +72,7 @@ private struct ProjectLanding: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header.padding(.bottom, 32)
-                    if let error = model.error { errorBanner(error).padding(.bottom, 20) }
+                    if let error = model.error { errorBanner(error, stale: model.listRefreshFailed).padding(.bottom, 20) }
                     if let error = model.importError { errorBanner(error).padding(.bottom, 20) }
                     let columns = geometry.size.width < 820
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 26))
@@ -225,11 +225,11 @@ private struct ProjectLanding: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color("border")))
     }
 
-    private func errorBanner(_ error: String) -> some View {
+    private func errorBanner(_ error: String, stale: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("项目操作未完成").font(WispDesign.font(size: 13, weight: .semibold))
             Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
-            if model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
+            if stale && model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
         }
         .padding(13).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

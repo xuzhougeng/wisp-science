@@ -181,3 +181,5 @@ See [native-windows-parity.md](native-windows-parity.md) for current verificatio
 and remaining platform/external-service acceptance, and
 [native-project-browser.md](native-project-browser.md#windows-alignment-after-1281)
 for build prerequisites, host/database boundaries and manual smoke steps.
+
+成功刷新项目列表后，已关闭导入表单的旧错误会清除；只有项目列表读取失败才显示缓存数据说明。打开中的导入表单仍保留错误，刷新不会重试导入。
