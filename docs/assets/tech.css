@@ -13,4 +13,20 @@
 .tech-close .hero-actions { justify-content: center; }
 @media (max-width: 960px) { .tech-loop { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .tech-loop { grid-template-columns: 1fr; } }
-.tech-map .section-head { max-width: 880px; }
+.tech-page .section-head { max-width: 900px; }
+.tech-page :is(h1, h2) { word-break: keep-all; overflow-wrap: anywhere; }
+.tech-timeline .tech-tag { align-self: flex-start; }
+.tech-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; margin: 48px 0 0; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.tech-stats div { padding: 22px 20px; background: var(--bg-elev); }
+.tech-stats dt { font-family: var(--font-serif); font-size: clamp(1.8rem, 3vw, 2.4rem); font-weight: 600; line-height: 1.1; color: var(--clay); }
+.tech-stats dd { margin: 8px 0 0; font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+.tech-tag { display: inline-block; margin-bottom: 10px; padding: 2px 8px; font-family: var(--font-mono); font-size: 0.75rem; color: var(--warm); background: rgba(217, 119, 6, 0.1); border-radius: 999px; }
+.tech-timeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 0; padding: 0; }
+.tech-timeline li { list-style: none; display: flex; flex-direction: column; padding: 18px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.tech-timeline li:last-child { border-color: var(--clay); box-shadow: 0 0 0 3px var(--clay-soft); }
+.tech-timeline strong { font-family: var(--font-serif); font-size: 1.05rem; line-height: 1.35; }
+.tech-timeline li > span:last-child { margin-top: 6px; font-size: 0.88rem; color: var(--text-muted); line-height: 1.6; }
+.tech-timeline-note { margin: 24px 0 0; }
+.tech-timeline-note a { color: var(--accent); font-weight: 500; }
+@media (max-width: 960px) { .tech-stats { grid-template-columns: repeat(3, 1fr); } .tech-timeline { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .tech-stats, .tech-timeline { grid-template-columns: repeat(2, 1fr); } .tech-stats div { padding: 16px 14px; } }
