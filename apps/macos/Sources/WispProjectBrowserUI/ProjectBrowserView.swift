@@ -39,6 +39,9 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.importOptionsPresented) {
                 NativeProjectImportSheet(model: model)
             }
+            .sheet(item: $model.exportProject) { project in
+                NativeProjectExportSheet(project: project, client: model.libraryClient()) { model.exportProject = nil }
+            }
             .sheet(isPresented: $library.presented) {
                 NativeLibrarySheet(model: model, library: library)
             }
@@ -174,6 +177,7 @@ private struct ProjectLanding: View {
                         ProjectCard(project: project, selected: false, busy: model.isLoading, saving: model.savingProjectID == project.id,
                                     toggleStar: { Task { await model.toggleStar(project.id) } },
                                     settings: { model.openProjectSettings(project.id) },
+                                    export: { model.exportProject = project },
                                     select: { Task { await model.openProject(project.id) } }, reveal: { model.reveal(project) })
                     }
                 }
@@ -261,6 +265,7 @@ private struct ProjectCard: View {
     let saving: Bool
     let toggleStar: () -> Void
     let settings: () -> Void
+    let export: () -> Void
     let select: () -> Void
     let reveal: () -> Void
     @Environment(\.colorScheme) private var scheme
@@ -319,7 +324,10 @@ private struct ProjectCard: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color(selected || hovering ? "clay" : "border")))
         .shadow(color: Color.black.opacity(0.035), radius: 2, y: 1)
         .onHover { hovering = $0 }
-        .contextMenu { Button("在 Finder 中显示", action: reveal).disabled(!ProjectBrowserModel.workspaceExists(project)) }
+        .contextMenu {
+            Button(action: reveal) { HStack { WispIcon(name: "folder"); Text("在 Finder 中显示") } }.disabled(!ProjectBrowserModel.workspaceExists(project))
+            Button(action: export) { HStack { WispIcon(name: "share"); Text("导出项目…") } }.disabled(busy)
+        }
     }
 }
 

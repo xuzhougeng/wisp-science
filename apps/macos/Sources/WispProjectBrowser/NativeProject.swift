@@ -2,6 +2,7 @@ import Foundation
 
 public enum NativeProjectCommand {
     public static let create = "native_project_create"
+    public static let exportProject = "native_project_export"
     public static let importArchive = "native_project_import"
     public static let importDirectory = "native_project_import_directory"
     public static let recoveryPreview = "native_project_recovery_preview"

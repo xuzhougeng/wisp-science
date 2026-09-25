@@ -490,6 +490,20 @@ is available through the status tooltip and VoiceOver label. Old payloads withou
 reported as saved. These indicators report the host snapshot and do not initiate
 network transfers or enable synchronization.
 
+## Exporting a project
+
+Right-click a macOS project card and choose **导出项目…**. The native sheet offers
+ZIP or an uncompressed project directory, using the system save picker. Both
+include project records and workspace files; large workspace data is copied only
+when the user explicitly exports. Canceling the picker sends no host request.
+`native_project_export` carries the explicit project ID, destination and format.
+The host reuses the WebView export lock, running-session/job checks and validated
+transfer writer. A directory destination must be new and outside the source
+workspace. ZIP output is verified before publishing. A confirmed response shows
+the destination with a Finder action; failures preserve the sheet without retry.
+The busy state blocks duplicate export and dismissal. Immediate Escape closes
+only the idle export sheet. Byte-level progress is not yet shown in the native UI.
+
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
 

@@ -8,6 +8,7 @@ pub const SCHEMA: &str = "wisp.native-projects.v1";
 pub const COMMANDS: &[&str] = &[
     "native_project_create",
     "native_project_import",
+    "native_project_export",
     "native_project_import_directory",
     "native_project_recovery_preview",
     "native_project_recover_workspace",
@@ -38,6 +39,27 @@ pub struct CreateProjectRequest {
 #[serde(deny_unknown_fields)]
 pub struct ImportProjectRequest {
     pub archive_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Zip,
+    Directory,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportProjectRequest {
+    pub destination_path: String,
+    pub format: ExportFormat,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ExportProjectResult {
+    pub project_id: String,
+    pub destination_path: String,
+    pub format: ExportFormat,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -88,6 +110,29 @@ pub struct ProjectFolder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_contract_requires_explicit_format_and_destination() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-projects/v1/export.json"
+        ))
+        .unwrap();
+        assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
+        assert!(!returns_project_summary("native_project_export"));
+        let request: ExportProjectRequest =
+            serde_json::from_value(fixture["args"].clone()).unwrap();
+        let result: ExportProjectResult =
+            serde_json::from_value(fixture["result"].clone()).unwrap();
+        assert_eq!(request.format, result.format);
+        assert_eq!(request.destination_path, result.destination_path);
+        assert_eq!(fixture["project_id"], result.project_id);
+        let mut args = fixture["args"].clone();
+        args["format"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<ExportProjectRequest>(args).is_err());
+        let mut args = fixture["args"].clone();
+        args["active_window"] = serde_json::json!("main");
+        assert!(serde_json::from_value::<ExportProjectRequest>(args).is_err());
+    }
 
     #[test]
     fn recovery_contract_reuses_shared_preview_and_result_shapes() {

@@ -12,6 +12,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var createError: String?
     @Published private(set) var importBusy = false
     @Published private(set) var importError: String?
+    @Published var exportProject: ProjectSummary?
     @Published var importOptionsPresented = false
     @Published var recoveryPreview: NativeWorkspaceRecoveryPreview?
     @Published var recoveryName = ""
@@ -136,7 +137,7 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     public func chooseDatabase() {
-        guard !isLoading, !importBusy else { return }
+        guard !isLoading, !importBusy, exportProject == nil else { return }
         let panel = NSOpenPanel()
         panel.title = "选择 Wisp 数据库"
         panel.message = "打开已有的 wisp.sqlite；点击项目星标会保存收藏状态，不执行数据库升级。"

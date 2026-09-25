@@ -48,6 +48,34 @@ pub(crate) async fn execute(
     }
 }
 
+pub(crate) async fn execute_export(
+    state: &crate::AppState,
+    request: &Request,
+) -> Result<serde_json::Value, String> {
+    let id = request
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or("A project is required")?;
+    let input: wisp_dto::native_projects::ExportProjectRequest =
+        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    let destination = std::path::Path::new(&input.destination_path);
+    crate::project_transfer::export_project_to(
+        state,
+        id,
+        destination,
+        input.format == wisp_dto::native_projects::ExportFormat::Directory,
+    )
+    .await?;
+    serde_json::to_value(wisp_dto::native_projects::ExportProjectResult {
+        project_id: id.into(),
+        destination_path: input.destination_path,
+        format: input.format,
+    })
+    .map_err(|error| error.to_string())
+}
+
 pub(crate) async fn execute_recovery(
     store: &wisp_store::Store,
     request: &Request,

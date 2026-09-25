@@ -142,6 +142,9 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     }
     if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        if request.command == "native_project_export" {
+            return crate::native_projects::execute_export(&state, request).await;
+        }
         if matches!(
             request.command.as_str(),
             "native_project_recovery_preview" | "native_project_recover_workspace"

@@ -1,0 +1,7 @@
+{
+  "schema": "wisp.native-projects.v1",
+  "command": "native_project_export",
+  "project_id": "research-1",
+  "args": { "destination_path": "/Users/researcher/Exports/RNA seq.zip", "format": "zip" },
+  "result": { "project_id": "research-1", "destination_path": "/Users/researcher/Exports/RNA seq.zip", "format": "zip" }
+}
