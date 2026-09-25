@@ -1,0 +1,16 @@
+.tech-loop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; counter-reset: loop; }
+.tech-loop li { list-style: none; padding: 24px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); counter-increment: loop; }
+.tech-loop li::before { content: "0" counter(loop); display: block; margin-bottom: 12px; font-family: var(--font-mono); font-size: 13px; color: var(--warm); }
+.tech-loop h3 { margin: 0 0 4px; font-family: var(--font-serif); font-size: 1.2rem; }
+.tech-loop em { display: block; margin-bottom: 10px; font-style: normal; font-size: 0.82rem; letter-spacing: 0.04em; color: var(--clay); }
+.tech-loop p { margin: 0; font-size: 0.95rem; color: var(--text-muted); line-height: 1.75; }
+.tech-term { display: block; margin-bottom: 6px; font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--clay); }
+.tech-impl { margin-top: 16px !important; padding-top: 14px; border-top: 1px dashed var(--border); font-size: 0.9rem; }
+.tech-impl code, .tech-map code { color: var(--clay); }
+.tech-map .doc-table td:first-child { color: var(--text); font-weight: 500; }
+.tech-close { text-align: center; }
+.tech-close .section-head { margin-inline: auto; }
+.tech-close .hero-actions { justify-content: center; }
+@media (max-width: 960px) { .tech-loop { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .tech-loop { grid-template-columns: 1fr; } }
+.tech-map .section-head { max-width: 880px; }

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page="tech"
+  data-title-zh="技术 | Wisp Science" data-title-en="Technology | Wisp Science"
+  data-desc-zh="Wisp Science 的核心技术：程序性知识结晶、反事实假设分叉、认知里程碑封存、全保真执行轨迹与主张—证据绑定。"
+  data-desc-en="Wisp Science technology: procedural knowledge crystallization, counterfactual hypothesis branching, epistemic milestone sealing, full-fidelity trajectories and claim–evidence binding.">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wisp Science 的核心技术：程序性知识结晶、反事实假设分叉、认知里程碑封存、全保真执行轨迹与主张—证据绑定。">
+  <title>技术 | Wisp Science</title>
+  <script>
+    (function () {
+      var lang = "zh";
+      try {
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "en" || q === "zh") lang = q;
+        else {
+          var s = localStorage.getItem("wisp-pages-lang");
+          if (s === "en" || s === "zh") lang = s;
+        }
+      } catch (e) {}
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="stylesheet" href="assets/tech.css">
+</head>
+<body class="doc-page tech-page">
+  <header class="site-nav">
+    <div class="container">
+      <a class="brand" href="index.html#top">
+        <img src="assets/logo.svg" alt="" width="28" height="28">
+        <span class="brand-name">Wisp Science</span>
+      </a>
+      <nav class="nav-links" data-i18n-aria="nav.aria" aria-label="页面导航">
+        <a href="index.html#features" data-i18n="nav.features">功能</a>
+        <a href="index.html#usecases" data-i18n="nav.usecases">场景</a>
+        <a href="index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="technology.html" aria-current="page" data-i18n="nav.tech">技术</a>
+        <a href="mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="index.html#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/README.md" data-i18n="nav.docs">文档</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="语言">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a class="btn btn-primary" href="index.html#download"><span class="btn-label-full" data-i18n="nav.downloadFull">下载桌面版</span><span class="btn-label-short" data-i18n="nav.downloadShort">下载</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="doc-hero">
+      <div class="container">
+        <div class="eyebrow" data-text-zh="技术 · 设计原理" data-text-en="Technology · Design principles">技术 · 设计原理</div>
+        <h1 data-text-zh="让每一次科研试错，都成为可验证、可复用的认知资产" data-text-en="Every research attempt becomes a verifiable, reusable epistemic asset">让每一次科研试错，都成为可验证、可复用的认知资产</h1>
+        <p class="lead" data-text-zh="Wisp Science 不是套在聊天框外的一层壳，而是一套面向科学发现的智能体工作台：人在回路的协同推理、可证伪的假设分叉、不可改写的阶段封存，以及程序性知识的持续结晶。全部本地运行，开源可审计。" data-text-en="Wisp Science is not a chat box with a wrapper. It is an agentic workbench for scientific discovery: human-in-the-loop co-reasoning, falsifiable hypothesis branching, immutable research milestones and continuous crystallization of procedural knowledge. Local-first, open source, auditable.">Wisp Science 不是套在聊天框外的一层壳，而是一套面向科学发现的智能体工作台：人在回路的协同推理、可证伪的假设分叉、不可改写的阶段封存，以及程序性知识的持续结晶。全部本地运行，开源可审计。</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="index.html#download" data-text-zh="下载桌面版" data-text-en="Download desktop">下载桌面版</a>
+          <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science" data-text-zh="阅读源码" data-text-en="Read the source">阅读源码</a>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="container">
+        <div class="section-label">
+          <span class="idx">[ T-01 ]</span>
+          <span data-text-zh="核心范式" data-text-en="Core paradigm">核心范式</span>
+        </div>
+        <div class="section-head">
+          <h2 data-text-zh="人机协同的递归式科研闭环" data-text-en="A recursive, human-in-the-loop research loop">人机协同的递归式科研闭环</h2>
+          <p data-text-zh="科学发现从来不是一次性的问答，而是提出、分叉、确证、结晶的螺旋上升。Wisp 把这条回路的每一环都做成一等公民：每一轮反馈都以结构化的形式保存下来，并抬高下一轮的起点。" data-text-en="Discovery is never a single Q&amp;A. It is a spiral of proposing, branching, confirming and crystallizing. Wisp makes every stage of that loop a first-class object, so each round of feedback is kept in structured form and raises the starting point of the next.">科学发现从来不是一次性的问答，而是提出、分叉、确证、结晶的螺旋上升。Wisp 把这条回路的每一环都做成一等公民：每一轮反馈都以结构化的形式保存下来，并抬高下一轮的起点。</p>
+        </div>
+        <ol class="tech-loop">
+          <li>
+            <h3 data-text-zh="提出" data-text-en="Propose">提出</h3>
+            <em data-text-zh="协同推理 · Co-reasoning" data-text-en="Co-reasoning">协同推理 · Co-reasoning</em>
+            <p data-text-zh="在常驻 Python／R 内核与约 80 个科研数据库之上，研究者与智能体围绕同一个项目共同推理。" data-text-en="Researcher and agent reason over one project, on resident Python/R kernels and ~80 scientific databases.">在常驻 Python／R 内核与约 80 个科研数据库之上，研究者与智能体围绕同一个项目共同推理。</p>
+          </li>
+          <li>
+            <h3 data-text-zh="分叉" data-text-en="Branch">分叉</h3>
+            <em data-text-zh="反事实探索 · Counterfactual exploration" data-text-en="Counterfactual exploration">反事实探索 · Counterfactual exploration</em>
+            <p data-text-zh="从任一结论处建立不可变检查点，并行展开相互隔离的竞争性假设。" data-text-en="Fork competing hypotheses in isolation from an immutable checkpoint at any conclusion.">从任一结论处建立不可变检查点，并行展开相互隔离的竞争性假设。</p>
+          </li>
+          <li>
+            <h3 data-text-zh="确证" data-text-en="Confirm">确证</h3>
+            <em data-text-zh="证据裁决 · Evidential adjudication" data-text-en="Evidential adjudication">证据裁决 · Evidential adjudication</em>
+            <p data-text-zh="比对分支差异，将胜出的假设原子化并入主线，其余候选彻底清理。" data-text-en="Diff the branches, merge the winning hypothesis into the mainline atomically and clean up every other candidate.">比对分支差异，将胜出的假设原子化并入主线，其余候选彻底清理。</p>
+          </li>
+          <li>
+            <h3 data-text-zh="结晶" data-text-en="Crystallize">结晶</h3>
+            <em data-text-zh="知识沉淀 · Knowledge consolidation" data-text-en="Knowledge consolidation">知识沉淀 · Knowledge consolidation</em>
+            <p data-text-zh="将研究阶段封存为不可改写的里程碑，把验证过的流程蒸馏为可复用的技能。" data-text-en="Seal the stage as an immutable milestone and distill the validated workflow into a reusable Skill.">将研究阶段封存为不可改写的里程碑，把验证过的流程蒸馏为可复用的技能。</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section>
+      <div class="container">
+        <div class="section-label">
+          <span class="idx">[ T-02 ]</span>
+          <span data-text-zh="关键技术" data-text-en="Key technologies">关键技术</span>
+        </div>
+        <div class="section-head">
+          <h2 data-text-zh="五项关键技术，支撑可信的科学智能体" data-text-en="Five technologies behind a trustworthy science agent">五项关键技术，支撑可信的科学智能体</h2>
+          <p data-text-zh="每一项都已在当前版本中落地，并对应到可以直接使用的命令或界面入口。" data-text-en="Each one ships in the current release and maps to a command or UI entry you can use today.">每一项都已在当前版本中落地，并对应到可以直接使用的命令或界面入口。</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card">
+            <div>
+              <span class="tech-term">Procedural Knowledge Crystallization</span>
+              <h3 data-text-zh="程序性知识结晶" data-text-en="Procedural knowledge crystallization">程序性知识结晶</h3>
+              <p data-text-zh="一次成功的研究流程，不应只躺在聊天记录里。Wisp 将经过验证的会话轨迹蒸馏为结构化的程序性记忆：保留方法论中的不变量——步骤、模板与核验规则，剥离一次性的路径、课题与结论。技能以渐进式披露（progressive disclosure）按需加载，不挤占上下文窗口，让方法论跨会话、跨项目迁移。" data-text-en="A successful workflow should not stay buried in a chat log. Wisp distills a validated session trajectory into structured procedural memory: it keeps the methodological invariants (steps, templates, verification rules) and strips one-off paths, topics and conclusions. Skills load on demand through progressive disclosure, so a method travels across sessions and projects without flooding the context window.">一次成功的研究流程，不应只躺在聊天记录里。Wisp 将经过验证的会话轨迹蒸馏为结构化的程序性记忆：保留方法论中的不变量——步骤、模板与核验规则，剥离一次性的路径、课题与结论。技能以渐进式披露（progressive disclosure）按需加载，不挤占上下文窗口，让方法论跨会话、跨项目迁移。</p>
+              <p class="tech-impl lang-zh">落地为：<code>/save-as-skill</code> → <code>SKILL.md</code>，<code>search_skills</code> / <code>use_skill</code> 渐进加载。<a href="tutorials/wisp-science-skills.html">阅读教程</a></p>
+              <p class="tech-impl lang-en">Ships as: <code>/save-as-skill</code> → <code>SKILL.md</code>, loaded progressively via <code>search_skills</code> / <code>use_skill</code>. <a href="tutorials/wisp-science-skills.html">Read the tutorial</a></p>
+            </div>
+            <div class="feature-visual">
+<pre class="lang-zh">/save-as-skill
+── 轨迹蒸馏 ─────────────────────
++ 保留  已确认的步骤、输出模板与核验规则
+- 剥离  本次文件路径、课题名称、一次性结论
+→ .wisp/skills/lab-paper-note/SKILL.md
+
+下一次研究：
+/lab-paper-note  以同一套方法论开工</pre>
+<pre class="lang-en">/save-as-skill
+── trajectory distillation ──────
++ keep   confirmed steps, output template, checks
+- strip  this run's paths, topic, one-off findings
+→ .wisp/skills/lab-paper-note/SKILL.md
+
+Next study:
+/lab-paper-note  start from the same method</pre>
+            </div>
+          </article>
+
+          <article class="feature-card reverse">
+            <div>
+              <span class="tech-term">Counterfactual Hypothesis Branching</span>
+              <h3 data-text-zh="反事实假设分叉" data-text-en="Counterfactual hypothesis branching">反事实假设分叉</h3>
+              <p data-text-zh="科学的本质，是在多个竞争性假设之间作出裁决。Wisp 在任一回答处建立不可变检查点（immutable checkpoint），派生彼此隔离的探索分支：每条分支拥有独立的工作区、产物、运行、决策与外部资源记录；裁决完成前主线被冻结，杜绝交叉污染。经差异比对后，「设为主线」将胜出的假设原子化并入主线，其余候选连同残留一并清理——这就是计算科研中的证据确证。" data-text-en="Science is adjudication between competing hypotheses. Wisp takes an immutable checkpoint at any response and forks isolated explorations: each gets its own workspace, artifacts, runs, decisions and external-resource records, while the mainline stays frozen until the round is resolved, so nothing cross-contaminates. After a diff review, Set as mainline merges the winning hypothesis atomically and cleans up every other candidate. This is evidential confirmation for computational research.">科学的本质，是在多个竞争性假设之间作出裁决。Wisp 在任一回答处建立不可变检查点（immutable checkpoint），派生彼此隔离的探索分支：每条分支拥有独立的工作区、产物、运行、决策与外部资源记录；裁决完成前主线被冻结，杜绝交叉污染。经差异比对后，「设为主线」将胜出的假设原子化并入主线，其余候选连同残留一并清理——这就是计算科研中的证据确证。</p>
+              <p class="tech-impl lang-zh">落地为：探索分支（开始探索 · 查看差异 · 设为主线），以及轻量对话分支 <code>/fork</code>。<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/exploration-branches.zh-CN.md">阅读说明</a></p>
+              <p class="tech-impl lang-en">Ships as: explorations (Start exploration · View diff · Set as mainline), plus lightweight conversation branches via <code>/fork</code>. <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/exploration-branches.md">Read the guide</a></p>
+            </div>
+            <div class="feature-visual">
+<pre class="lang-zh">main ──●── checkpoint · immutable
+       ├─ 探索 A  Leiden res=0.8    独立工作区
+       ├─ 探索 B  Leiden res=1.2    独立工作区
+       └─ 探索 C  去批次后重新聚类     独立工作区
+
+主线冻结 ─ 查看差异 ─ 设为主线
+→ 胜出假设原子并入，其余候选清理</pre>
+<pre class="lang-en">main ──●── checkpoint · immutable
+       ├─ explore A  Leiden res=0.8   isolated
+       ├─ explore B  Leiden res=1.2   isolated
+       └─ explore C  batch-corrected  isolated
+
+mainline frozen ─ View diff ─ Set as mainline
+→ winner merged atomically, others cleaned up</pre>
+            </div>
+          </article>
+
+          <article class="feature-card">
+            <div>
+              <span class="tech-term">Epistemic Milestone Sealing</span>
+              <h3 data-text-zh="认知里程碑封存" data-text-en="Epistemic milestone sealing">认知里程碑封存</h3>
+              <p data-text-zh="研究阶段完成后，它的问题、结论与局限、参数选择依据、关键脚本与数据被封存为研究历程中的里程碑：文件以校验和固定为快照，会话转为只读，此后的发送、压缩、撤销与删除都无法改写这段历史。新的发现可以修正旧结论，却永远不会覆盖它——这是面向科研的版本化认知（versioned epistemology）。" data-text-en="When a research stage is complete, its question, findings and limitations, parameter rationale, key scripts and data are sealed as a milestone in the research journey: files are pinned as checksummed snapshots, the conversation turns read-only, and later sends, compaction, undo or deletion cannot rewrite it. New findings may revise an old conclusion but never overwrite it. Versioned epistemology, for research.">研究阶段完成后，它的问题、结论与局限、参数选择依据、关键脚本与数据被封存为研究历程中的里程碑：文件以校验和固定为快照，会话转为只读，此后的发送、压缩、撤销与删除都无法改写这段历史。新的发现可以修正旧结论，却永远不会覆盖它——这是面向科研的版本化认知（versioned epistemology）。</p>
+              <p class="tech-impl lang-zh">落地为：<code>/archive</code> 研究归档 → 研究历程节点 → 继续研究。<a href="tutorials/wisp-science-research-journey.html">阅读教程</a></p>
+              <p class="tech-impl lang-en">Ships as: <code>/archive</code> → research-journey milestone → Continue research. <a href="tutorials/wisp-science-research-journey.html">Read the tutorial</a></p>
+            </div>
+            <div class="feature-visual">
+<pre class="lang-zh">/archive
+研究问题 · 发现与局限 · 参数比较与选择依据
+脚本汇编 · 材料清单
+┌ 保留快照   按校验和固定当前字节
+├ 原位保留   保留引用与校验和
+└ 永久删除   仅限已登记的中间产物
+
+→ 研究历程节点 · 继续研究</pre>
+<pre class="lang-en">/archive
+question · findings &amp; limits · parameter rationale
+assembled scripts · material inventory
+┌ Keep snapshot   checksummed bytes
+├ Keep in place   reference + checksum
+└ Delete          recorded intermediates only
+
+→ research-journey milestone · Continue research</pre>
+            </div>
+          </article>
+
+          <article class="feature-card reverse">
+            <div>
+              <span class="tech-term">Full-fidelity Agent Trajectory</span>
+              <h3 data-text-zh="全保真执行轨迹" data-text-en="Full-fidelity agent trajectory">全保真执行轨迹</h3>
+              <p data-text-zh="智能体的每一次工具调用、参数、返回、耗时与 token 消耗都被持久化为结构化轨迹，并以甘特时间线呈现。它不是日志，而是可审计的科研过程证据：何时、基于什么输入、得到了什么结果，一目了然。完整轨迹可一键导出为自包含 HTML，用于复盘、评审与方法学分析。" data-text-en="Every tool call, argument, result, duration and token count is persisted as a structured trajectory and drawn as a Gantt timeline. It is not a log; it is auditable evidence of the research process: what ran, when, on which inputs, with what result. The complete trajectory exports as a self-contained HTML file for retrospectives, peer review and methodological analysis.">智能体的每一次工具调用、参数、返回、耗时与 token 消耗都被持久化为结构化轨迹，并以甘特时间线呈现。它不是日志，而是可审计的科研过程证据：何时、基于什么输入、得到了什么结果，一目了然。完整轨迹可一键导出为自包含 HTML，用于复盘、评审与方法学分析。</p>
+              <p class="tech-impl lang-zh">落地为：<code>/trajectory</code> 轨迹视图 · 导出 HTML。<a href="tutorials/wisp-science-trajectory.html">阅读教程</a></p>
+              <p class="tech-impl lang-en">Ships as: the <code>/trajectory</code> inspector · Export HTML. <a href="tutorials/wisp-science-trajectory.html">Read the tutorial</a></p>
+            </div>
+            <div class="feature-visual">
+<pre class="lang-zh">Turn 3 ─────────────────────────────
+USER       比较三种批次校正方法
+TOOL       python {harmony …}  → ok    4.2s
+TOOL       python {scvi …}     → ok   38.7s
+USAGE      in 12.4k · out 1.1k · cache 86%
+ASSISTANT  Harmony 的整合指标最优 …
+
+3 turns · 14 steps | LLM 21s · tool 51s</pre>
+<pre class="lang-en">Turn 3 ─────────────────────────────
+USER       Compare three batch corrections
+TOOL       python {harmony …}  → ok    4.2s
+TOOL       python {scvi …}     → ok   38.7s
+USAGE      in 12.4k · out 1.1k · cache 86%
+ASSISTANT  Harmony scores best on integration …
+
+3 turns · 14 steps | LLM 21s · tool 51s</pre>
+            </div>
+          </article>
+
+          <article class="feature-card">
+            <div>
+              <span class="tech-term">Claim–Evidence Binding</span>
+              <h3 data-text-zh="主张—证据精确绑定" data-text-en="Claim–evidence binding">主张—证据精确绑定</h3>
+              <p data-text-zh="论文中的每一项主张，都锚定到精确的产物版本（ArtifactVersion）、生成它的运行及已登记的输入，构成可追溯的证据谱系（provenance lineage）。定稿修订只读冻结；新修订继承而非改写历史证据，版本漂移与替代关系一目了然。" data-text-en="Each manuscript claim is anchored to an exact ArtifactVersion, the Run that produced it and its registered inputs, forming a traceable provenance lineage. Frozen revisions are read-only; new revisions inherit historical evidence instead of rewriting it, with drift and supersession made explicit.">论文中的每一项主张，都锚定到精确的产物版本（ArtifactVersion）、生成它的运行及已登记的输入，构成可追溯的证据谱系（provenance lineage）。定稿修订只读冻结；新修订继承而非改写历史证据，版本漂移与替代关系一目了然。</p>
+              <p class="tech-impl lang-zh">落地为：项目侧栏「论文证据」工作区，产物与运行上的「用于论文」。</p>
+              <p class="tech-impl lang-en">Ships as: the Publication evidence workspace and <em>Use in publication</em> on Artifacts and Runs.</p>
+            </div>
+            <div class="feature-visual">
+<pre class="lang-zh">Claim 2 ─ “耗竭评分与预后相关”
+  ├ Figure 3  ArtifactVersion a41e…  exact
+  ├ Run       survival_cox.R        exit 0
+  └ Inputs    cohort.tsv            checksum ok
+
+Revision v2 · Frozen
+→ Clone revision 继续，历史证据不变</pre>
+<pre class="lang-en">Claim 2 ─ "Exhaustion score predicts outcome"
+  ├ Figure 3  ArtifactVersion a41e…  exact
+  ├ Run       survival_cox.R        exit 0
+  └ Inputs    cohort.tsv            checksum ok
+
+Revision v2 · Frozen
+→ Clone revision; history stays intact</pre>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="container">
+        <div class="section-label">
+          <span class="idx">[ T-03 ]</span>
+          <span data-text-zh="基础设施" data-text-en="Infrastructure">基础设施</span>
+        </div>
+        <div class="section-head">
+          <h2 data-text-zh="支撑长程科研的智能体基础设施" data-text-en="Agent infrastructure for long-horizon research">支撑长程科研的智能体基础设施</h2>
+          <p data-text-zh="研究往往持续数周乃至数月。下面这些底层能力，让智能体在长周期、多环境、高风险的任务中依然可控、可查、可延续。" data-text-en="Research runs for weeks or months. These foundations keep the agent controllable, inspectable and resumable across long, multi-environment, high-stakes work.">研究往往持续数周乃至数月。下面这些底层能力，让智能体在长周期、多环境、高风险的任务中依然可控、可查、可延续。</p>
+        </div>
+        <div class="feature-list">
+          <div class="feature-list-item">
+            <h4 data-text-zh="有状态计算连续体" data-text-en="Stateful compute continuum">有状态计算连续体</h4>
+            <p data-text-zh="每个项目、执行环境与语言独享常驻 Python／R 内核，命名空间跨单元、跨轮次持续存在，数据只需加载一次。" data-text-en="Each project, execution context and language gets a resident Python/R kernel whose namespace persists across cells and turns. Load data once.">每个项目、执行环境与语言独享常驻 Python／R 内核，命名空间跨单元、跨轮次持续存在，数据只需加载一次。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="存档优先的无损上下文压缩" data-text-en="Archive-first context compaction">存档优先的无损上下文压缩</h4>
+            <p data-text-zh="上下文用量达到 80% 时，先存档完整历史，再裁剪工具噪声、生成增量检查点摘要。旧对话从不被静默丢弃。" data-text-en="At 80% of the context budget, Wisp archives the full history first, then prunes tool noise and writes an incremental checkpoint summary. Old turns are never silently dropped.">上下文用量达到 80% 时，先存档完整历史，再裁剪工具噪声、生成增量检查点摘要。旧对话从不被静默丢弃。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="异构算力统一控制平面" data-text-en="One control plane for heterogeneous compute">异构算力统一控制平面</h4>
+            <p data-text-zh="本机、WSL 与 SSH 服务器共享同一套 Run 抽象：提交、监控、收取与传输，状态、日志和输出位置均有记录。大数据以带校验和的远程引用表示，而不是默认同步到本地。" data-text-en="Local, WSL and SSH hosts share one Run abstraction for submitting, monitoring, harvesting and transferring, with status, logs and output locations on record. Large data stays as checksummed remote references instead of syncing locally by default.">本机、WSL 与 SSH 服务器共享同一套 Run 抽象：提交、监控、收取与传输，状态、日志和输出位置均有记录。大数据以带校验和的远程引用表示，而不是默认同步到本地。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="可演化的智能体环境" data-text-en="A self-evolving agent environment">可演化的智能体环境</h4>
+            <p data-text-zh="项目级智能体宪章（AGENTS.md／.wisp/WISP.md）、/remember 记忆笔记、专家角色与技能库，让每一轮反馈都能改写下一轮的工作环境。" data-text-en="Project-level agent charters (AGENTS.md / .wisp/WISP.md), /remember notes, Specialists and the Skill library let each round of feedback reshape the environment for the next.">项目级智能体宪章（AGENTS.md／.wisp/WISP.md）、/remember 记忆笔记、专家角色与技能库，让每一轮反馈都能改写下一轮的工作环境。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="多智能体任务图编排" data-text-en="Multi-agent task-graph orchestration">多智能体任务图编排</h4>
+            <p data-text-zh="Agent Workflow 以依赖图（DAG）编排彼此独立的子任务，也能把已有技能拆解为任务图；/review 召唤审查员独立审阅，ACP 协议可调度外部编码智能体。" data-text-en="Agent Workflow runs independent sub-tasks as a dependency graph (DAG) and can decompose an existing Skill into one. /review brings in an independent reviewer, and ACP drives external coding agents as sub-agents.">Agent Workflow 以依赖图（DAG）编排彼此独立的子任务，也能把已有技能拆解为任务图；/review 召唤审查员独立审阅，ACP 协议可调度外部编码智能体。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="原生科学知识基座" data-text-en="Native scientific knowledge substrate">原生科学知识基座</h4>
+            <p data-text-zh="23 个原生连接器、247 个工具直达 PubMed、UniProt、ChEMBL 等约 80 个数据库；外部 MCP 工具按需检索、渐进加载。" data-text-en="23 native connectors and 247 tools reach ~80 databases such as PubMed, UniProt and ChEMBL; external MCP tools are searched and loaded on demand.">23 个原生连接器、247 个工具直达 PubMed、UniProt、ChEMBL 等约 80 个数据库；外部 MCP 工具按需检索、渐进加载。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="人在回路的细粒度干预" data-text-en="Fine-grained human-in-the-loop control">人在回路的细粒度干预</h4>
+            <p data-text-zh="/rewind 回退重来、/fork 分支对话、/btw 旁路问答、随时停止智能体与取消 Run：研究者可以在任意时刻质询、修正、否决与重跑。" data-text-en="/rewind to roll back and retry, /fork to branch, /btw for side questions, stop the agent or cancel a Run at any time: researchers can question, correct, veto and re-run whenever they choose.">/rewind 回退重来、/fork 分支对话、/btw 旁路问答、随时停止智能体与取消 Run：研究者可以在任意时刻质询、修正、否决与重跑。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="确定性行为评测门禁" data-text-en="Deterministic behavioral eval gate">确定性行为评测门禁</h4>
+            <p data-text-zh="持续集成在 Windows、macOS 与 Linux 上运行确定性的无头智能体评测套件，把智能体行为当作回归测试的契约，而不是演示。" data-text-en="CI runs a deterministic headless agent eval suite on Windows, macOS and Linux, treating agent behavior as a regression-tested contract rather than a demo.">持续集成在 Windows、macOS 与 Linux 上运行确定性的无头智能体评测套件，把智能体行为当作回归测试的契约，而不是演示。</p>
+          </div>
+          <div class="feature-list-item">
+            <h4 data-text-zh="本地优先与密钥隔离" data-text-en="Local-first, with isolated secrets">本地优先与密钥隔离</h4>
+            <p data-text-zh="项目与会话记录保存在本机数据库，文件留在工作区；API 密钥与 SSH 私钥交由操作系统钥匙串托管，从不写入数据库。" data-text-en="Projects and sessions live in a local database and files stay in your workspace. API keys and SSH private keys are held by the OS keyring, never written to the database.">项目与会话记录保存在本机数据库，文件留在工作区；API 密钥与 SSH 私钥交由操作系统钥匙串托管，从不写入数据库。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tech-map">
+      <div class="container">
+        <div class="section-label">
+          <span class="idx">[ T-04 ]</span>
+          <span data-text-zh="范式对照" data-text-en="Paradigm map">范式对照</span>
+        </div>
+        <div class="section-head">
+          <h2 data-text-zh="那些被称作“前沿”的理念，在 Wisp 里早已是日常" data-text-en="Ideas billed as the frontier are everyday tools in Wisp">那些被称作“前沿”的理念，在 Wisp 里早已是日常</h2>
+          <p data-text-zh="交互式科研智能体、递归自我改进、以研究轨迹构建可复用任务……这些提法近来频繁出现。下表把它们逐一对应到 Wisp 当前版本中可以直接使用的功能。" data-text-en="Interactive science agents, recursive self-improvement, trajectories turned into reusable tasks: these ideas come up often. The table maps each one to what already ships in Wisp.">交互式科研智能体、递归自我改进、以研究轨迹构建可复用任务……这些提法近来频繁出现。下表把它们逐一对应到 Wisp 当前版本中可以直接使用的功能。</p>
+        </div>
+        <div class="table-wrap lang-zh" tabindex="0" role="region" aria-label="范式对照表">
+          <table class="doc-table">
+            <thead><tr><th>理念</th><th>在 Wisp 中的实现</th></tr></thead>
+            <tbody>
+              <tr><td>交互式科研中的递归自我改进</td><td><code>/save-as-skill</code>、<code>/remember</code>、专家与项目级 <code>AGENTS.md</code>：每一轮反馈都沉淀为下一轮的起点</td></tr>
+              <tr><td>科学家的质询、修改、采纳、否定、重跑</td><td><code>/rewind</code> 回退、<code>/fork</code> 分支、探索分支的「设为主线」与「放弃探索」、Run 重新提交</td></tr>
+              <tr><td>工作环境随反馈持续演化</td><td>技能库、记忆笔记、专家与项目智能体上下文在项目内持久保存，随时修订</td></tr>
+              <tr><td>研究轨迹、工具调用与任务状态可重组复用</td><td>全保真轨迹与 HTML 导出、Run 记录、研究历程时间线、无头 CLI 确定性评测套件</td></tr>
+              <tr><td>问题、数据、文献、代码、假设与验证的结构化组织</td><td>项目控制平面：执行环境、数据、Run、产物、论文与决策统一管理，由研究历程串联</td></tr>
+              <tr><td>文献综述、代码执行与数据分析一体化</td><td>27 个内置技能、常驻 Python／R 内核、约 80 个科研数据库</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap lang-en" tabindex="0" role="region" aria-label="Paradigm map">
+          <table class="doc-table">
+            <thead><tr><th>Idea</th><th>How Wisp implements it</th></tr></thead>
+            <tbody>
+              <tr><td>Recursive self-improvement through interactive research</td><td><code>/save-as-skill</code>, <code>/remember</code>, Specialists and project <code>AGENTS.md</code>: every round of feedback becomes the starting point of the next</td></tr>
+              <tr><td>Scientists question, modify, adopt, reject and re-run</td><td><code>/rewind</code>, <code>/fork</code>, Set as mainline / Abandon exploration, Run resubmission</td></tr>
+              <tr><td>The work environment evolves with feedback</td><td>Skills, memory notes, Specialists and project agent context persist in the project and can be revised at any time</td></tr>
+              <tr><td>Trajectories, tool calls and task status become reusable</td><td>Full-fidelity trajectories with HTML export, Run records, the research-journey timeline and a deterministic headless eval suite</td></tr>
+              <tr><td>Questions, data, literature, code, hypotheses and verification, organized</td><td>A project control plane for execution contexts, data, Runs, Artifacts, papers and decisions, connected by the research journey</td></tr>
+              <tr><td>Literature review, code execution and data analysis in one place</td><td>27 bundled Skills, resident Python/R kernels and ~80 scientific databases</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tech-close">
+      <div class="container">
+        <div class="section-head">
+          <h2 data-text-zh="开源、本地优先、可审计" data-text-en="Open source. Local-first. Auditable.">开源、本地优先、可审计</h2>
+          <p data-text-zh="本页提到的每一项技术，都在同一个 AGPL-3.0 开源仓库中。欢迎阅读源码，逐项验证。" data-text-en="Every technology on this page lives in one AGPL-3.0 repository. Read the source and verify each claim.">本页提到的每一项技术，都在同一个 AGPL-3.0 开源仓库中。欢迎阅读源码，逐项验证。</p>
+        </div>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="index.html#download" data-text-zh="下载桌面版" data-text-en="Download desktop">下载桌面版</a>
+          <a class="btn btn-secondary" href="tutorials.html" data-text-zh="浏览教程" data-text-en="Browse tutorials">浏览教程</a>
+          <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science" data-text-zh="阅读源码" data-text-en="Read the source">阅读源码</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a class="brand" href="index.html#top">
+        <img src="assets/logo.svg" alt="" width="24" height="24">
+        Wisp Science
+      </a>
+      <nav class="footer-links">
+        <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="technology.html" data-i18n="nav.tech">技术</a>
+        <a href="mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/releases" data-i18n="footer.releases">版本记录</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/issues" data-i18n="footer.issues">问题反馈</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE">AGPL-3.0-only</a>
+      </nav>
+      <p class="footer-copy" data-i18n="footer.copy">© 2026 Wisp Science · 开源科学计算 Agent</p>
+    </div>
+  </footer>
+  <script src="assets/i18n.js"></script>
+</body>
+</html>

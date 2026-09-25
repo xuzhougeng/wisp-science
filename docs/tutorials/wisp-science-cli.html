@@ -38,6 +38,7 @@
         <a href="../index.html#features" data-i18n="nav.features">功能</a>
         <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
         <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
         <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
         <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
         <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
@@ -87,7 +88,7 @@ $credential = Get-Credential -UserName &quot;api&quot; -Message &quot;在密码�
 $env:WISP_API_KEY = $credential.GetNetworkCredential().Password
 wisp-science
 </code></pre>
-<p><code>WISP_PROVIDER</code> 可按服务协议选择 <code>openai</code>、<code>openai_responses</code> 或 <code>anthropic</code>。</p>
+<p><code>WISP_PROVIDER</code> 可按服务协议选择 <code>openai</code>、<code>openai_responses</code>、<code>openai_codex</code> 或 <code>anthropic</code>。<code>openai_codex</code> 使用 ChatGPT Plus/Pro 订阅：先运行 <code>wisp-science login codex</code>（远程或 WSL 可加 <code>--method device</code>），之后不需要 <code>WISP_API_KEY</code>。</p>
 <p><strong>用交互模式，在同一个项目目录中继续对话。</strong></p>
 <p>运行 <code>wisp-science</code> 后，在交互模式中输入自然语言任务。例如：</p>
 <blockquote>
@@ -229,6 +230,7 @@ wisp-science run --output jsonl &quot;Read-only: check the column names and miss
       </a>
       <nav class="footer-links">
         <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
         <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
         <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
         <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>
