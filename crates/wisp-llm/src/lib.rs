@@ -10,6 +10,7 @@
 //! normalized to a single `reasoning` string.
 
 pub mod anthropic;
+pub mod codex_auth;
 pub mod message;
 pub mod openai;
 pub mod provider;

@@ -1,11 +1,14 @@
 //! OpenAI first-party Responses API (`/v1/responses`).
 
+use crate::codex_auth::{self, account_id_from_access_token};
 use crate::message::{Content, Message, Part, Role, ToolCall, ToolSchema};
 use crate::provider::{
-    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, Result, StreamSink,
+    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, ProviderKind, Result,
+    StreamSink, Utf8Stream,
 };
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 
 pub struct OpenAiResponsesProvider {
@@ -19,8 +22,15 @@ impl OpenAiResponsesProvider {
         Self { cfg, client }
     }
 
+    fn is_codex(&self) -> bool {
+        matches!(self.cfg.kind, ProviderKind::OpenAiCodex)
+    }
+
     fn endpoint(&self) -> String {
         let base = self.cfg.base_url.trim_end_matches('/');
+        if self.is_codex() {
+            return codex_auth::codex_responses_url(base);
+        }
         if base.ends_with("/responses") {
             base.to_string()
         } else if base.ends_with("/v1") {
@@ -43,10 +53,36 @@ impl OpenAiResponsesProvider {
                 h.insert(reqwest::header::AUTHORIZATION, v);
             }
         }
+        if self.is_codex() {
+            if let Some(account) = account_id_from_access_token(&self.cfg.api_key) {
+                insert_header(&mut h, "chatgpt-account-id", &account);
+            }
+            insert_header(&mut h, "originator", codex_auth::ORIGINATOR);
+            insert_header(&mut h, "openai-beta", "responses=experimental");
+            h.insert(
+                reqwest::header::ACCEPT,
+                reqwest::header::HeaderValue::from_static("text/event-stream"),
+            );
+            if !self.cfg.session_id.is_empty() {
+                insert_header(&mut h, "session_id", &self.cfg.session_id);
+                insert_header(&mut h, "x-client-request-id", &self.cfg.session_id);
+            }
+        }
         h
     }
 
     fn build_body(&self, messages: &[Message], tools: &[ToolSchema]) -> Value {
+        if self.is_codex() {
+            return codex_request_body(
+                &self.cfg.model,
+                self.cfg.max_tokens,
+                self.cfg.reasoning_effort.as_deref(),
+                self.cfg.service_tier.as_deref(),
+                &self.cfg.session_id,
+                messages,
+                tools,
+            );
+        }
         // DeepSeek/OpenAI Responses reject unpaired function_call items with
         // "No tool output found for tool call …". Match chat-completions #74:
         // drop unanswered calls (and orphan outputs) before building `input`.
@@ -307,13 +343,22 @@ fn parse_usage(u: &Value) -> Usage {
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
     fn name(&self) -> &str {
-        "openai-responses"
+        if self.is_codex() {
+            "openai-codex"
+        } else {
+            "openai-responses"
+        }
     }
     fn model(&self) -> &str {
         &self.cfg.model
     }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
+        if self.is_codex() {
+            return self
+                .codex_round(messages, tools, &mut crate::provider::NullSink)
+                .await;
+        }
         let val = self.request(self.build_body(messages, tools)).await?;
         ensure_completed_response(&val)?;
         Ok(parse_completion(&val))
@@ -325,6 +370,9 @@ impl Provider for OpenAiResponsesProvider {
         tools: &[ToolSchema],
         sink: &mut dyn StreamSink,
     ) -> Result<Completion> {
+        if self.is_codex() {
+            return self.codex_round(messages, tools, sink).await;
+        }
         let comp = self.complete(messages, tools).await?;
         if !comp.content.is_empty() {
             sink.on_text(&comp.content);
@@ -334,6 +382,333 @@ impl Provider for OpenAiResponsesProvider {
         }
         sink.on_usage(comp.usage.clone());
         Ok(comp)
+    }
+}
+
+impl OpenAiResponsesProvider {
+    async fn codex_round(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> Result<Completion> {
+        if account_id_from_access_token(&self.cfg.api_key).is_none() {
+            return Err(LlmError::Config(
+                "Codex subscription token has no ChatGPT account id. Sign in again.".into(),
+            ));
+        }
+        let body = self.build_body(messages, tools);
+        let endpoint = self.endpoint();
+        tracing::info!(
+            target: "wisp",
+            provider = "openai_codex",
+            model = %self.cfg.model,
+            endpoint_kind = "codex_responses",
+            endpoint_host = %endpoint_host(&endpoint),
+            stream = true,
+            "llm_request_dispatch"
+        );
+        let response = self
+            .cfg
+            .request_headers(self.client.post(endpoint).headers(self.headers()))
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status >= 400 {
+            let text = response.text().await.unwrap_or_default();
+            return Err(LlmError::Api { status, body: text });
+        }
+        let mut bytes = response.bytes_stream();
+        let mut utf8 = Utf8Stream::default();
+        let mut sse = SseBuffer::default();
+        let mut raw = String::new();
+        let mut acc = CodexStream::default();
+        let mut streamed_calls = false;
+        while let Some(chunk) = bytes.next().await {
+            if sink.is_cancelled() {
+                return Ok(acc.into_completion(true));
+            }
+            let chunk = chunk?;
+            let text = utf8.push(&chunk);
+            raw.push_str(&text);
+            for data in sse.push(&text) {
+                let event: Value = serde_json::from_str(&data)?;
+                if apply_codex_event(&mut acc, &event, sink) {
+                    streamed_calls = true;
+                }
+                if let Some(message) = acc.failed.clone() {
+                    return Err(LlmError::Api {
+                        status: 200,
+                        body: message,
+                    });
+                }
+            }
+        }
+        for data in sse.finish() {
+            let event: Value = serde_json::from_str(&data)?;
+            if apply_codex_event(&mut acc, &event, sink) {
+                streamed_calls = true;
+            }
+        }
+        if sink.is_cancelled() {
+            return Ok(acc.into_completion(true));
+        }
+        if acc.final_response.is_none() {
+            if let Ok(value) = serde_json::from_str::<Value>(raw.trim()) {
+                if value.get("output").is_some() || value.get("output_text").is_some() {
+                    acc.final_response = Some(value);
+                }
+            }
+        }
+        let Some(final_response) = acc.final_response.clone() else {
+            return Err(LlmError::Incomplete);
+        };
+        ensure_completed_response(&final_response)?;
+        let mut completion = parse_completion(&final_response);
+        if completion.content.is_empty() {
+            completion.content = acc.text;
+        }
+        if completion.reasoning.is_none() && !acc.reasoning.is_empty() {
+            completion.reasoning = Some(acc.reasoning);
+        }
+        sink.on_usage(completion.usage.clone());
+        if !streamed_calls {
+            for (index, call) in completion.tool_calls.iter().enumerate() {
+                sink.on_tool_call(index, &call.function.name, &call.function.arguments);
+            }
+        }
+        Ok(completion)
+    }
+}
+
+fn insert_header(headers: &mut reqwest::header::HeaderMap, name: &'static str, value: &str) {
+    if let Ok(value) = reqwest::header::HeaderValue::from_str(value) {
+        headers.insert(reqwest::header::HeaderName::from_static(name), value);
+    }
+}
+
+fn codex_request_body(
+    model: &str,
+    max_tokens: u64,
+    reasoning_effort: Option<&str>,
+    service_tier: Option<&str>,
+    session_id: &str,
+    messages: &[Message],
+    tools: &[ToolSchema],
+) -> Value {
+    let mut instructions = String::new();
+    let mut input = Vec::new();
+    for message in sanitize_messages(messages) {
+        if message.role == Role::System {
+            let text = message.content.as_text();
+            if !text.is_empty() {
+                if !instructions.is_empty() {
+                    instructions.push('\n');
+                }
+                instructions.push_str(&text);
+            }
+        } else {
+            input.extend(message_to_input(&message));
+        }
+    }
+    if instructions.is_empty() {
+        instructions = "You are a helpful assistant.".into();
+    }
+    let mut body = json!({
+        "model": model,
+        "store": false,
+        "stream": true,
+        "instructions": instructions,
+        "input": input,
+        "max_output_tokens": max_tokens,
+    });
+    if !session_id.is_empty() {
+        body["prompt_cache_key"] = json!(session_id);
+    }
+    let tools_json: Vec<Value> = tools.iter().map(tool_to_responses).collect();
+    if !tools_json.is_empty() {
+        body["tools"] = json!(tools_json);
+        body["tool_choice"] = json!("auto");
+        body["parallel_tool_calls"] = json!(true);
+    }
+    if let Some(effort) = reasoning_effort {
+        body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
+    }
+    if let Some(tier) = service_tier {
+        body["service_tier"] = json!(tier);
+    }
+    body
+}
+
+#[derive(Default)]
+struct SseBuffer {
+    pending: String,
+}
+
+impl SseBuffer {
+    fn push(&mut self, chunk: &str) -> Vec<String> {
+        self.pending.push_str(chunk);
+        let mut events = Vec::new();
+        while let Some(index) = self.pending.find("\n\n") {
+            let raw = self.pending[..index].to_string();
+            self.pending.drain(..index + 2);
+            if let Some(data) = sse_data(&raw) {
+                events.push(data);
+            }
+        }
+        events
+    }
+
+    fn finish(&mut self) -> Vec<String> {
+        let raw = std::mem::take(&mut self.pending);
+        sse_data(&raw).into_iter().collect()
+    }
+}
+
+fn sse_data(raw: &str) -> Option<String> {
+    let data = raw
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_end_matches('\r');
+            line.strip_prefix("data:")
+                .map(|rest| rest.trim_start().to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() || data == "[DONE]" {
+        None
+    } else {
+        Some(data)
+    }
+}
+
+#[derive(Default)]
+struct CodexStream {
+    text: String,
+    reasoning: String,
+    calls: Vec<ToolCall>,
+    /// Responses item ids, parallel to `calls`. Argument deltas address these,
+    /// while the agent loop needs the separate `call_id`.
+    call_item_ids: Vec<String>,
+    final_response: Option<Value>,
+    failed: Option<String>,
+}
+
+impl CodexStream {
+    fn into_completion(self, cancelled: bool) -> Completion {
+        Completion {
+            content: self.text,
+            reasoning: if self.reasoning.is_empty() {
+                None
+            } else {
+                Some(self.reasoning)
+            },
+            tool_calls: self.calls,
+            finish_reason: cancelled.then(|| "cancelled".into()),
+            usage: Usage::default(),
+        }
+    }
+}
+
+/// Returns whether a function-call delta was forwarded to the sink.
+fn apply_codex_event(acc: &mut CodexStream, event: &Value, sink: &mut dyn StreamSink) -> bool {
+    let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
+    match kind {
+        "response.output_text.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                acc.text.push_str(delta);
+                sink.on_text(delta);
+            }
+            false
+        }
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                acc.reasoning.push_str(delta);
+                sink.on_reasoning(delta);
+            }
+            false
+        }
+        "response.output_item.added" => {
+            let Some(item) = event.get("item") else {
+                return false;
+            };
+            if item.get("type").and_then(Value::as_str) != Some("function_call") {
+                return false;
+            }
+            let call = function_call_item(item);
+            let index = acc.calls.len();
+            sink.on_tool_call(index, &call.function.name, &call.function.arguments);
+            acc.call_item_ids.push(
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(call.id.as_str())
+                    .to_string(),
+            );
+            acc.calls.push(call);
+            true
+        }
+        "response.function_call_arguments.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if delta.is_empty() || acc.calls.is_empty() {
+                return false;
+            }
+            let item_id = event.get("item_id").and_then(Value::as_str).unwrap_or("");
+            let index = acc
+                .call_item_ids
+                .iter()
+                .position(|id| id == item_id)
+                .or_else(|| acc.calls.iter().position(|call| call.id == item_id))
+                .unwrap_or(acc.calls.len() - 1);
+            acc.calls[index].function.arguments.push_str(delta);
+            let name = acc.calls[index].function.name.clone();
+            let arguments = acc.calls[index].function.arguments.clone();
+            sink.on_tool_call(index, &name, &arguments);
+            true
+        }
+        "response.completed" | "response.done" | "response.incomplete" | "response.failed" => {
+            if let Some(response) = event.get("response") {
+                acc.final_response = Some(response.clone());
+            }
+            false
+        }
+        "error" => {
+            let message = event
+                .pointer("/error/message")
+                .or_else(|| event.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("Codex response failed");
+            acc.failed = Some(message.to_string());
+            false
+        }
+        _ => false,
+    }
+}
+
+fn function_call_item(item: &Value) -> ToolCall {
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .map(openai_internal_tool_name)
+        .unwrap_or_default()
+        .to_string();
+    let arguments = item
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    ToolCall {
+        id,
+        kind: "function".into(),
+        function: FunctionCall { name, arguments },
     }
 }
 
@@ -695,5 +1070,102 @@ mod tests {
         let body = provider.build_body(&[Message::user("hi")], &[]);
         assert!(body.get("service_tier").is_none());
         assert_eq!(body["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn codex_body_is_stateless_and_moves_the_system_prompt() {
+        let body = codex_request_body(
+            "gpt-5.5",
+            1024,
+            Some("low"),
+            None,
+            "session-1",
+            &[
+                Message::system("Be precise."),
+                Message::user("hi"),
+                assistant_with_call("", "call_1", "python", "{}"),
+                Message::tool("call_1", "python", "ok"),
+            ],
+            &[ToolSchema::new(
+                "python",
+                "Run Python",
+                json!({"type": "object"}),
+            )],
+        );
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["instructions"], "Be precise.");
+        assert_eq!(body["prompt_cache_key"], "session-1");
+        assert_eq!(body["tools"][0]["name"], "wisp_python");
+        assert_eq!(body["tool_choice"], "auto");
+        let input = body["input"].as_array().unwrap();
+        assert!(input
+            .iter()
+            .all(|item| item.get("role").and_then(|role| role.as_str()) != Some("system")));
+        assert!(input.iter().any(|item| item["type"] == "function_call"));
+        assert!(input
+            .iter()
+            .any(|item| item["type"] == "function_call_output"));
+    }
+
+    struct Collect {
+        text: String,
+        calls: Vec<(usize, String, String)>,
+    }
+
+    impl StreamSink for Collect {
+        fn on_text(&mut self, delta: &str) {
+            self.text.push_str(delta);
+        }
+        fn on_reasoning(&mut self, _: &str) {}
+        fn on_tool_call(&mut self, index: usize, name: &str, arguments_so_far: &str) {
+            self.calls
+                .push((index, name.to_string(), arguments_so_far.to_string()));
+        }
+        fn on_usage(&mut self, _: Usage) {}
+    }
+
+    #[test]
+    fn codex_sse_forwards_text_and_assembles_the_completed_response() {
+        let mut buffer = SseBuffer::default();
+        let mut events = buffer.push(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n\
+             data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"wisp_python\",\"arguments\":\"\"}}\n\n\
+             data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"c1\",\"delta\":\"{}\"}\n\n",
+        );
+        events.extend(buffer.finish());
+        let mut acc = CodexStream::default();
+        let mut sink = Collect {
+            text: String::new(),
+            calls: Vec::new(),
+        };
+        for data in events {
+            let event: Value = serde_json::from_str(&data).unwrap();
+            apply_codex_event(&mut acc, &event, &mut sink);
+        }
+        apply_codex_event(
+            &mut acc,
+            &json!({
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "output_text": "Hi",
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "wisp_python",
+                        "arguments": "{}"
+                    }],
+                    "usage": {"input_tokens": 2, "output_tokens": 3}
+                }
+            }),
+            &mut sink,
+        );
+        assert_eq!(sink.text, "Hi");
+        assert_eq!(sink.calls.len(), 2);
+        let completion = parse_completion(acc.final_response.as_ref().unwrap());
+        assert_eq!(completion.content, "Hi");
+        assert_eq!(completion.tool_calls[0].function.name, "python");
+        assert_eq!(completion.usage.output_tokens, 3);
     }
 }

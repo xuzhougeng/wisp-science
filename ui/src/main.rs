@@ -126,7 +126,13 @@ fn supports_fast_service_tier(profile: &ModelProfile) -> bool {
     profile.is_chat_model()
         && matches!(
             profile.provider.trim(),
-            "openai" | "openai_responses" | "openai-responses" | "responses"
+            "openai"
+                | "openai_responses"
+                | "openai-responses"
+                | "responses"
+                | "openai_codex"
+                | "openai-codex"
+                | "codex"
         )
 }
 

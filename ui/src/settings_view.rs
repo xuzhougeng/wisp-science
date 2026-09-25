@@ -668,7 +668,412 @@ fn settings_provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
+        "openai_codex" | "openai-codex" | "codex" => "openai_codex",
         _ => "openai",
+    }
+}
+
+#[derive(Clone)]
+struct CodexLoginForm {
+    method: String,
+    login_id: String,
+    url: String,
+    user_code: String,
+    verification_uri: String,
+    redirect: String,
+    model: String,
+    label: String,
+    status: String,
+    message: String,
+    account_id: String,
+    profile_id: String,
+    saved_account: String,
+}
+
+fn blank_codex_login(profile_id: &str, model: &str, label: &str) -> CodexLoginForm {
+    CodexLoginForm {
+        method: "browser".into(),
+        login_id: String::new(),
+        url: String::new(),
+        user_code: String::new(),
+        verification_uri: String::new(),
+        redirect: String::new(),
+        model: if model.trim().is_empty() {
+            "gpt-5.5".into()
+        } else {
+            model.to_string()
+        },
+        label: label.to_string(),
+        status: "idle".into(),
+        message: String::new(),
+        account_id: String::new(),
+        profile_id: profile_id.to_string(),
+        saved_account: String::new(),
+    }
+}
+
+fn schedule_codex_poll(
+    login_id: String,
+    generation: u64,
+    codex_login: RwSignal<Option<CodexLoginForm>>,
+    codex_poll_gen: RwSignal<u64>,
+) {
+    set_timeout(
+        move || {
+            if codex_poll_gen.get_untracked() != generation {
+                return;
+            }
+            spawn_local(async move {
+                if codex_poll_gen.get_untracked() != generation {
+                    return;
+                }
+                let arg = to_value(&serde_json::json!({ "loginId": login_id })).unwrap();
+                match invoke_checked("codex_login_status", arg).await {
+                    Ok(value) => {
+                        let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value)
+                        else {
+                            return;
+                        };
+                        let state = status
+                            .get("status")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let message = status
+                            .get("message")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let account = status
+                            .get("account_id")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let still = codex_login
+                            .get_untracked()
+                            .is_some_and(|form| form.login_id == login_id);
+                        if !still {
+                            return;
+                        }
+                        codex_login.update(|form| {
+                            if let Some(form) = form {
+                                form.status = state.clone();
+                                form.message = message;
+                                form.account_id = account;
+                            }
+                        });
+                        if state == "pending" {
+                            schedule_codex_poll(login_id, generation, codex_login, codex_poll_gen);
+                        }
+                    }
+                    Err(error) => {
+                        codex_login.update(|form| {
+                            if let Some(form) = form {
+                                form.status = "error".into();
+                                form.message = js_error_text(error);
+                            }
+                        });
+                    }
+                }
+            });
+        },
+        std::time::Duration::from_millis(1200),
+    );
+}
+
+fn codex_login_pane(
+    locale: RwSignal<Locale>,
+    codex_login: RwSignal<Option<CodexLoginForm>>,
+    codex_poll_gen: RwSignal<u64>,
+    models: RwSignal<Vec<ModelProfile>>,
+    settings_busy: RwSignal<bool>,
+    close_settings_subpage: Callback<()>,
+) -> impl IntoView {
+    let start = move |_| {
+        let Some(form) = codex_login.get_untracked() else {
+            return;
+        };
+        if form.status == "pending" {
+            return;
+        }
+        let method = form.method.clone();
+        codex_login.update(|form| {
+            if let Some(form) = form {
+                form.status = "pending".into();
+                form.message.clear();
+                form.login_id.clear();
+            }
+        });
+        let generation = codex_poll_gen.get_untracked() + 1;
+        codex_poll_gen.set(generation);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "method": method })).unwrap();
+            match invoke_checked("start_codex_login", arg).await {
+                Ok(value) => {
+                    let Ok(challenge) = serde_wasm_bindgen::from_value::<serde_json::Value>(value)
+                    else {
+                        return;
+                    };
+                    let login_id = challenge
+                        .get("login_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = challenge
+                        .get("url")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let user_code = challenge
+                        .get("user_code")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let verification_uri = challenge
+                        .get("verification_uri")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let message = challenge
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    codex_login.update(|form| {
+                        if let Some(form) = form {
+                            form.login_id = login_id.clone();
+                            form.url = url.clone();
+                            form.user_code = user_code;
+                            form.verification_uri = verification_uri;
+                            form.status = "pending".into();
+                            form.message = message;
+                        }
+                    });
+                    if method == "browser" && !url.is_empty() {
+                        open_external_url(url);
+                    }
+                    schedule_codex_poll(login_id, generation, codex_login, codex_poll_gen);
+                }
+                Err(error) => {
+                    codex_login.update(|form| {
+                        if let Some(form) = form {
+                            form.status = "error".into();
+                            form.message = js_error_text(error);
+                        }
+                    });
+                }
+            }
+        });
+    };
+    let submit_redirect = move |_| {
+        let Some(form) = codex_login.get_untracked() else {
+            return;
+        };
+        let login_id = form.login_id.clone();
+        let redirect = form.redirect.clone();
+        if login_id.is_empty() || redirect.trim().is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "loginId": login_id,
+                "redirect": redirect,
+            }))
+            .unwrap();
+            match invoke_checked("submit_codex_login_redirect", arg).await {
+                Ok(value) => {
+                    if let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
+                        codex_login.update(|form| {
+                            if let Some(form) = form {
+                                form.status = status
+                                    .get("status")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("error")
+                                    .to_string();
+                                form.message = status
+                                    .get("message")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                form.account_id = status
+                                    .get("account_id")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                            }
+                        });
+                    }
+                }
+                Err(error) => {
+                    codex_login.update(|form| {
+                        if let Some(form) = form {
+                            form.status = "error".into();
+                            form.message = js_error_text(error);
+                        }
+                    });
+                }
+            }
+        });
+    };
+    let save = Callback::new(move |use_saved: bool| {
+        let Some(form) = codex_login.get_untracked() else {
+            return;
+        };
+        settings_busy.set(true);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "loginId": form.login_id,
+                "model": form.model,
+                "label": form.label,
+                "profileId": form.profile_id,
+                "useSaved": use_saved,
+            }))
+            .unwrap();
+            match invoke_checked("save_codex_login", arg).await {
+                Ok(value) => {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
+                        models.set(list);
+                    }
+                    codex_poll_gen.update(|generation| *generation += 1);
+                    codex_login.set(None);
+                    settings_busy.set(false);
+                }
+                Err(error) => {
+                    codex_login.update(|form| {
+                        if let Some(form) = form {
+                            form.status = "error".into();
+                            form.message = js_error_text(error);
+                        }
+                    });
+                    settings_busy.set(false);
+                }
+            }
+        });
+    });
+    view! {
+        <div class="settings-pane settings-pane-subpage" data-testid="codex-login-form">
+            <div class="conn-form model-form">
+                <p class="hint">{move || t(locale.get(), "codex.login.desc")}</p>
+                <div class="settings-form-grid">
+                    <label>{move || t(locale.get(), "codex.login.method")}
+                        <select data-testid="codex-login-method"
+                            on:change=move |ev| {
+                                let method = dom_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form {
+                                    form.method = method;
+                                });
+                            }>
+                            <option value="browser"
+                                prop:selected=move || codex_login.get().is_some_and(|form| form.method == "browser")>
+                                {move || t(locale.get(), "codex.login.browser")}
+                            </option>
+                            <option value="device"
+                                prop:selected=move || codex_login.get().is_some_and(|form| form.method == "device")>
+                                {move || t(locale.get(), "codex.login.device")}
+                            </option>
+                        </select>
+                    </label>
+                    <label>{move || t(locale.get(), "settings.model")}
+                        <input data-testid="codex-login-model"
+                            prop:value=move || codex_login.get().map(|form| form.model).unwrap_or_default()
+                            on:input=move |ev| {
+                                let model = event_target_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form { form.model = model; });
+                            } />
+                    </label>
+                    <label class="span-2">{move || t(locale.get(), "settings.label")}
+                        <input data-testid="codex-login-label"
+                            prop:value=move || codex_login.get().map(|form| form.label).unwrap_or_default()
+                            placeholder=move || t(locale.get(), "codex.login.label_ph")
+                            on:input=move |ev| {
+                                let label = event_target_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form { form.label = label; });
+                            } />
+                    </label>
+                </div>
+                <p class="hint">{move || t(locale.get(), if codex_login.get().is_some_and(|form| form.method == "device") {
+                    "codex.login.device_hint"
+                } else {
+                    "codex.login.browser_hint"
+                })}</p>
+                {move || codex_login.get().filter(|form| !form.saved_account.is_empty()).map(|form| {
+                    let account = form.saved_account;
+                    view! {
+                        <button type="button" data-testid="codex-use-saved" disabled=move || settings_busy.get()
+                            on:click=move |_| save.call(true)>
+                            {t(locale.get(), "codex.login.use_saved")}
+                            " "
+                            {account}
+                        </button>
+                    }
+                })}
+                {move || {
+                    let form = codex_login.get();
+                    let code = form.as_ref().map(|form| form.user_code.clone()).unwrap_or_default();
+                    let url = form.as_ref().map(|form| form.url.clone()).unwrap_or_default();
+                    let show_code = !code.is_empty();
+                    let show_url = !url.is_empty();
+                    view! {
+                        <div>
+                            {show_code.then(|| view! {
+                                <p data-testid="codex-user-code"><strong>{t(locale.get(), "codex.login.code")}</strong>" "{code}</p>
+                            })}
+                            {show_url.then(|| {
+                                let href = url.clone();
+                                view! {
+                                    <p><button type="button" class="linklike" data-testid="codex-open-url"
+                                        on:click=move |_| open_external_url(href.clone())>
+                                        {t(locale.get(), "codex.login.url")}
+                                    </button></p>
+                                }
+                            })}
+                        </div>
+                    }
+                }}
+                {move || (codex_login.get().is_some_and(|form| form.method == "browser")).then(|| view! {
+                    <label class="span-2">{move || t(locale.get(), "codex.login.paste")}
+                        <input data-testid="codex-login-redirect"
+                            prop:value=move || codex_login.get().map(|form| form.redirect).unwrap_or_default()
+                            placeholder=move || t(locale.get(), "codex.login.paste_ph")
+                            on:input=move |ev| {
+                                let redirect = event_target_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form { form.redirect = redirect; });
+                            } />
+                    </label>
+                    <button type="button" data-testid="codex-submit-redirect" on:click=submit_redirect>
+                        {move || t(locale.get(), "codex.login.submit")}
+                    </button>
+                })}
+                {move || {
+                    let form = codex_login.get();
+                    let message = form.as_ref().map(|form| form.message.clone()).unwrap_or_default();
+                    let ok = form.as_ref().is_some_and(|form| form.status == "success");
+                    (!message.is_empty()).then(|| view! {
+                        <div class="settings-status" class:ok=ok class:fail=move || !ok data-testid="codex-login-message">{message}</div>
+                    })
+                }}
+                <div class="row settings-footer">
+                    <button type="button" disabled=move || settings_busy.get()
+                        on:click=move |_| close_settings_subpage.call(())>
+                        {move || t(locale.get(), "settings.cancel")}
+                    </button>
+                    <button type="button" data-testid="codex-login-start" disabled=move || {
+                        settings_busy.get() || codex_login.get().is_some_and(|form| form.status == "pending")
+                    } on:click=start>
+                        {move || t(locale.get(), if codex_login.get().is_some_and(|form| form.status == "pending") {
+                            "codex.login.waiting"
+                        } else {
+                            "codex.login.start"
+                        })}
+                    </button>
+                    <button type="button" class="primary" data-testid="codex-login-save" disabled=move || {
+                        settings_busy.get() || !codex_login.get().is_some_and(|form| form.status == "success")
+                    } on:click=move |_| save.call(false)>
+                        {move || t(locale.get(), "codex.login.save")}
+                    </button>
+                </div>
+            </div>
+        </div>
     }
 }
 
@@ -1646,10 +2051,59 @@ pub(super) fn SettingsView(
             selected_skill.set(None);
         }
     });
+    let codex_login = create_rw_signal(None::<CodexLoginForm>);
+    let codex_poll_gen = create_rw_signal(0u64);
     let close_settings_subpage = Callback::new(move |_| {
         selected_skill.set(None);
+        if let Some(form) = codex_login.get_untracked() {
+            if !form.login_id.is_empty() {
+                let login_id = form.login_id;
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "loginId": login_id })).unwrap();
+                    let _ = invoke_checked("cancel_codex_login", arg).await;
+                });
+            }
+        }
+        codex_poll_gen.update(|generation| *generation += 1);
+        codex_login.set(None);
         close_settings_subpage.call(());
     });
+    let open_codex_login = Callback::new(
+        move |(profile_id, model, label): (String, String, String)| {
+            model_form.set(None);
+            model_form_key.set(String::new());
+            model_form_msg.set(None);
+            acp_form.set(None);
+            codex_poll_gen.update(|generation| *generation += 1);
+            codex_login.set(Some(blank_codex_login(&profile_id, &model, &label)));
+            spawn_local(async move {
+                let Ok(value) =
+                    invoke_checked("codex_subscription_status", JsValue::UNDEFINED).await
+                else {
+                    return;
+                };
+                let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) else {
+                    return;
+                };
+                if status
+                    .get("signed_in")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+                {
+                    let account = status
+                        .get("account_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    codex_login.update(|form| {
+                        if let Some(form) = form {
+                            form.saved_account = account;
+                        }
+                    });
+                }
+            });
+        },
+    );
     // Specialist skill whitelist picker: search query + filtered results, so a
     // large skill library never renders as an unbounded checkbox list.
     let specialist_skill_query = create_rw_signal(String::new());
@@ -1707,7 +2161,8 @@ pub(super) fn SettingsView(
             || specialist_form.get_untracked().is_some()
             || conn_form.get_untracked().is_some()
             || open_conn_key.get_untracked().is_some()
-            || channels_open.get_untracked().is_some();
+            || channels_open.get_untracked().is_some()
+            || codex_login.get_untracked().is_some();
         if has_subpage {
             close_settings_subpage.call(());
             return true;
@@ -1915,7 +2370,7 @@ pub(super) fn SettingsView(
         show_settings.get().then(|| view! {
         <div class="settings-page"
             class:workflow-studio-mode=move || settings_section.get() == "workflows"
-            class:model-list-mode=move || settings_section.get() == "models" && model_form.get().is_none() && acp_form.get().is_none()>
+            class:model-list-mode=move || settings_section.get() == "models" && model_form.get().is_none() && acp_form.get().is_none() && codex_login.get().is_none()>
             <SettingsNavigation locale settings_section go_settings_section show_settings />
             <div class="settings-content">
                 {move || {
@@ -1941,7 +2396,8 @@ pub(super) fn SettingsView(
                         (sec == "credentials").then(|| credential_page.get()).flatten()
                             .and_then(|id| CRED_GROUPS.iter().find(|group| group.id == id))
                             .map(|group| t(loc, group.name_key).to_string())
-                    }).or_else(|| selected_skill.get());
+                    }).or_else(|| selected_skill.get())
+                    .or_else(|| codex_login.get().map(|_| t(loc, "codex.login.title")));
                     view! {
                         <div class="settings-head">
                             <div class="settings-head-main">
@@ -3224,6 +3680,8 @@ pub(super) fn SettingsView(
                                 </div>
                             </div>
                         }.into_view()
+                    } else if codex_login.get().is_some() {
+                        codex_login_pane(locale, codex_login, codex_poll_gen, models, settings_busy, close_settings_subpage).into_view()
                     } else if model_form_open.get() {
                         if model_form_is_edit.get() {
                         view! {
@@ -3237,18 +3695,37 @@ pub(super) fn SettingsView(
                                         <span id="model-api-url-hint" class="hint span-2" data-testid="model-api-url-hint">
                                             {move || t(locale.get(), "settings.tip")}
                                         </span>
-                                        <label class="span-2">{move || t(locale.get(), "settings.api_key")}
-                                            <input type="password" id="model-form-api-key" prop:value=move || model_form_key.get()
-                                                placeholder=move || {
-                                                    let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
-                                                    if models.get().iter().any(|m| m.id == id && m.has_api_key) {
-                                                        t(locale.get(), "settings.stored_key").to_string()
-                                                    } else {
-                                                        String::new()
-                                                    }
-                                                }
-                                                autocomplete="new-password"
-                                                on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                        {move || {
+                                            let codex = model_form.get().is_some_and(|form| settings_provider_value(&form.provider) == "openai_codex");
+                                            if codex {
+                                                let profile_id = model_form.get().and_then(|form| form.id).unwrap_or_default();
+                                                let model = model_form.get().map(|form| form.model).unwrap_or_default();
+                                                let label = model_form.get().map(|form| form.label).unwrap_or_default();
+                                                view! {
+                                                    <div class="span-2">
+                                                        <p class="hint">{t(locale.get(), "codex.login.saved_hint")}</p>
+                                                        <button type="button" data-testid="codex-relogin" on:click=move |_| {
+                                                            open_codex_login.call((profile_id.clone(), model.clone(), label.clone()));
+                                                        }>{t(locale.get(), "codex.login.again")}</button>
+                                                    </div>
+                                                }.into_view()
+                                            } else {
+                                                view! {
+                                                    <label class="span-2">{move || t(locale.get(), "settings.api_key")}
+                                                        <input type="password" id="model-form-api-key" prop:value=move || model_form_key.get()
+                                                            placeholder=move || {
+                                                                let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
+                                                                if models.get().iter().any(|m| m.id == id && m.has_api_key) {
+                                                                    t(locale.get(), "settings.stored_key").to_string()
+                                                                } else {
+                                                                    String::new()
+                                                                }
+                                                            }
+                                                            autocomplete="new-password"
+                                                            on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                                }.into_view()
+                                            }
+                                        }}
                                         <label>{move || t(locale.get(), "settings.provider")}
                                             <select data-testid="settings-provider"
                                                 on:change=move|ev| {
@@ -3266,6 +3743,10 @@ pub(super) fn SettingsView(
                                                 <option value="openai_responses"
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_responses")>
                                                     {move || t(locale.get(), "settings.provider.openai_responses")}
+                                                </option>
+                                                <option value="openai_codex"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_codex")>
+                                                    {move || t(locale.get(), "settings.provider.openai_codex")}
                                                 </option>
                                                 <option value="anthropic"
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "anthropic")>
@@ -3540,7 +4021,7 @@ pub(super) fn SettingsView(
                                         {move || {
                                             let form = model_form.get();
                                             let provider = form.as_ref().map(|f| settings_provider_value(&f.provider)).unwrap_or_default();
-                                            matches!(provider, "openai" | "openai_responses").then(|| {
+                                            matches!(provider, "openai" | "openai_responses" | "openai_codex").then(|| {
                                                 let current = form.as_ref().map(|f| f.service_tier.clone()).unwrap_or_default();
                                                 let loc = locale.get();
                                                 let fast_selected = matches!(current.as_str(), "priority" | "fast");
@@ -4009,6 +4490,9 @@ pub(super) fn SettingsView(
                                         }.into_view()
                                     } else {
                                         view! {
+                                            <button type="button" class="settings-add-btn" data-testid="add-codex-login" on:click=move |_| {
+                                                open_codex_login.call((String::new(), String::new(), String::new()));
+                                            }>{move || t(locale.get(), "codex.login.button")}</button>
                                             <button type="button" class="settings-add-btn" data-testid="add-provider" on:click=move |_| {
                                                 show_acp_agents.set(false);
                                                 let form = new_model_form();

@@ -149,7 +149,7 @@ pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> 
         "opencode.ai" if path == "zen/go" || path.starts_with("zen/go/") => &["opencode-go"],
         "opencode.ai" if path == "zen" || path.starts_with("zen/") => &["opencode"],
         "api.anthropic.com" => &["anthropic"],
-        "api.openai.com" => &["openai"],
+        "api.openai.com" | "chatgpt.com" => &["openai"],
         "api.x.ai" => &["xai"],
         "api.deepseek.com" => &["deepseek"],
         "api.moonshot.ai" | "api.moonshot.cn" => &["moonshotai"],
@@ -166,7 +166,7 @@ pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> 
     out.extend_from_slice(by_host);
     let by_provider = match provider.trim() {
         "anthropic" => Some("anthropic"),
-        "openai" | "openai_responses" => Some("openai"),
+        "openai" | "openai_responses" | "openai_codex" => Some("openai"),
         _ => None,
     };
     if let Some(ns) = by_provider {

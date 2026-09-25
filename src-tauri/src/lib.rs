@@ -30,6 +30,7 @@ mod browser_bridge;
 mod browser_url_filters;
 mod channels;
 mod codex_import;
+mod codex_login;
 mod configure;
 mod connector_commands;
 mod context_probe;
@@ -3624,6 +3625,7 @@ fn normalized_provider(provider: &str) -> String {
         "anthropic" => "anthropic".into(),
         "openai" | "openai_compatible" => "openai".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
+        "openai_codex" | "openai-codex" | "codex" => "openai_codex".into(),
         "" => "openai".into(),
         other => other.into(),
     }
@@ -4167,7 +4169,10 @@ fn effective_reasoning_effort(raw: &str) -> Option<String> {
 
 fn effective_service_tier(raw: &str, provider: &str) -> Option<String> {
     let provider = normalized_provider(provider);
-    if !matches!(provider.as_str(), "openai" | "openai_responses") {
+    if !matches!(
+        provider.as_str(),
+        "openai" | "openai_responses" | "openai_codex"
+    ) {
         return None;
     }
     match raw.trim() {
@@ -5090,6 +5095,7 @@ fn default_api_url(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "https://api.anthropic.com",
         "openai_responses" => "https://api.openai.com/v1",
+        "openai_codex" => "https://chatgpt.com/backend-api",
         _ => "https://api.deepseek.com",
     }
 }
@@ -5097,7 +5103,7 @@ fn default_api_url(provider: &str) -> &'static str {
 fn default_model(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "claude-sonnet-5",
-        "openai_responses" => "gpt-5.5",
+        "openai_responses" | "openai_codex" => "gpt-5.5",
         _ => "deepseek-v4-flash",
     }
 }
@@ -5142,11 +5148,17 @@ fn build_provider_config(
         return Err("Model is required.".into());
     }
     if api_key.is_empty() {
-        return Err("No API key set. Open Settings and paste your provider API key.".into());
+        return Err(if provider == "openai_codex" {
+            "Sign in with ChatGPT (Codex) from Settings → Models, or run `wisp-science login codex`."
+                .into()
+        } else {
+            "No API key set. Open Settings and paste your provider API key.".into()
+        });
     }
     let mut cfg = match provider.as_str() {
         "anthropic" => ProviderConfig::anthropic(api_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(api_url, api_key, model),
+        "openai_codex" => ProviderConfig::openai_codex(api_url, api_key, model),
         "openai" => ProviderConfig::openai(api_url, api_key, model),
         _ => return Err(format!("Unsupported provider: {provider}")),
     };
@@ -7899,6 +7911,12 @@ pub fn run() {
             models::get_session_reasoning_effort,
             models::get_session_service_tier,
             models::save_model,
+            codex_login::start_codex_login,
+            codex_login::codex_login_status,
+            codex_login::submit_codex_login_redirect,
+            codex_login::cancel_codex_login,
+            codex_login::save_codex_login,
+            codex_login::codex_subscription_status,
             models::remove_model,
             models::reorder_models,
             models::set_active_model,
