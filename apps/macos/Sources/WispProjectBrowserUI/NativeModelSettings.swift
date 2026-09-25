@@ -9,6 +9,11 @@ struct NativeModelSettings: View {
     @State private var acpInfo: SettingsValue?
     @State private var testedAgent: SettingsValue?
     @State private var authTerminal: String?
+    private struct SubscriptionPresentation: Identifiable {
+        let id = UUID()
+        var profile: SettingsValue = .null
+    }
+    @State private var subscription: SubscriptionPresentation?
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             if model.section == .credentials { credentials } else {
@@ -24,6 +29,15 @@ struct NativeModelSettings: View {
                 Text(localized("模型配置由所有项目共享。默认模型用于新建对话，列表操作立即保存。")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
                 if showAgents { agents } else { models }
             }
+        }
+        .sheet(item: $subscription) { presentation in
+            NativeCodexLoginSheet(model: NativeCodexLoginModel(client: model.client, profile: presentation.profile), saved: {
+                Task { await model.load() }
+            }, close: { warning in
+                guard subscription?.id == presentation.id else { return }
+                subscription = nil
+                if let warning { model.error = warning }
+            })
         }
     }
 
@@ -43,6 +57,8 @@ struct NativeModelSettings: View {
                 Text(localized("快速接入")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
+                        Button("ChatGPT Plus / Pro") { subscription = SubscriptionPresentation() }
+                            .buttonStyle(NativeSettingsButtonStyle(compact: true))
                         ForEach(WispDesign.modelPresets, id: \.self) { preset in
                             Button(preset["label"] ?? "") { addModel(url: preset["url"] ?? "", name: preset["model"] ?? "") }.buttonStyle(NativeSettingsButtonStyle(compact: true))
                         }
@@ -70,6 +86,9 @@ struct NativeModelSettings: View {
                     }.padding(.horizontal, 20).padding(.vertical, 18)
                     .contextMenu {
                         Button(localized("编辑")) { editModel(row) }
+                        if row["provider"].string == "openai_codex" {
+                            Button(localized("重新登录 ChatGPT…")) { subscription = SubscriptionPresentation(profile: row) }
+                        }
                         Button(localized("上移")) { moveModel(row["id"].string, offset: -1) }.disabled(index == 0 || !query.isEmpty)
                         Button(localized("下移")) { moveModel(row["id"].string, offset: 1) }.disabled(index == rows.count - 1 || !query.isEmpty)
                     }
@@ -91,7 +110,7 @@ struct NativeModelSettings: View {
     private func editModel(_ row: SettingsValue) {
         model.editor = SettingsEditor(title: row["id"].string.isEmpty ? "添加 API 接入" : "编辑模型", draft: row, fields: [
             .init(key: "label", label: "显示名称"),
-            .init(key: "provider", label: "协议", kind: .choice([("openai", "OpenAI Chat Completions"), ("openai_responses", "OpenAI Responses"), ("anthropic", "Anthropic")])),
+            .init(key: "provider", label: "协议", kind: .choice([("openai", "OpenAI Chat Completions"), ("openai_responses", "OpenAI Responses"), ("anthropic", "Anthropic"), ("openai_codex", "ChatGPT 订阅")])),
             .init(key: "api_url", label: "API 根地址"),
             .init(key: "endpoint_suffix", label: "接口后缀"),
             .init(key: "model", label: "模型 ID"),
@@ -115,7 +134,7 @@ struct NativeModelSettings: View {
             .init(key: "user_agent", label: "User-Agent"),
             .init(key: "send_session_id", label: "发送会话标识", kind: .toggle),
             .init(key: "session_header_name", label: "会话请求头名称")
-        ], command: "save_model", parameter: "profile", destructiveCommand: row["id"].string.isEmpty ? nil : "remove_model", destructiveArgs: ["id": row["id"]])
+        ].filter { row["provider"].string != "openai_codex" || $0.key != "key" }, command: "save_model", parameter: "profile", destructiveCommand: row["id"].string.isEmpty ? nil : "remove_model", destructiveArgs: ["id": row["id"]])
     }
 
     private var agents: some View {

@@ -16,6 +16,7 @@
 | 项目目录导入 | 新旧目录格式共用 WebView 校验与原地登记；ZIP 保留；取消不请求 | Swift 导入流程及 Rust 新旧格式/重复/无效路径测试通过；CUA 文件选择器待验收 |
 | 历史恢复 | 只读预览、会话/消息/无效/重复数量、命名与确认；保持源归档 | 恢复/取消/未知结果不重试/嵌套 Escape，以及后端只读预览/源归档字节不变测试通过 |
 | ZIP/目录导出 | 显式项目与目标、复用独占锁/运行检查/校验与发布，显示确认后的目标 | Swift 5 项、Rust transfer 12 项通过；包含两种格式往返与目标保护；系统 Save Panel 待 CUA 验收 |
+| ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；未登录真实账户，CUA 待验收 |
 | 项目同步 | 卡片快照状态、启用文件夹快照、手动同步；显式本地/远端冲突决策 | Swift 状态 2 项及操作 7 项通过；Rust 项目测试 13 项通过，含同步范围与策略校验；真实交互待验收 |
 
 ## 后续范围（全部保留，不能因第一批完成而结项）
@@ -23,7 +24,7 @@
 - [x] 内置问题卡片：不覆盖草稿、pending/answered/expired、自由输入暂存、导航后旧回调隔离。ACP request ID 已解析，实时响应留在 ACP 项。
 - [ ] 计划与审批：反馈已完成；plan mode 决策与普通工具授权范围仍待实现；维持现有 Agent workflow 审批。
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
-- [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录。
+- [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；等待新 QA bundle 构建与 CUA 验收。
 - [ ] ACP：会话创建/恢复、发送/停止、审批与问题回复；fake ACP 验证。
 - [ ] 会话：重命名、删除/批量整理、置顶、跨项目复制/移动、导出、分支导航。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
@@ -40,10 +41,11 @@
 - 项目 DTO 4 tests 通过；增加同步 allowlist 后的 native DTO 29 项通过，日志 `/tmp/wisp-parity-sync-dto.log`。
 - `cargo fmt --all -- --check` 通过；同步 allowlist 更新后的 `ui` wasm check 通过，日志 `/tmp/wisp-parity-sync-wasm.log`。
 - WebView Playwright 全套：867 passed、2 skipped、3 failed。两项启动超时单独复测通过；原有首页文档按钮测试在 hydration 前读取空按钮列表，改为等待期望顺序。修复后的相关 4 项复测全部通过；没有把这次定向复测冒充整套绿色。日志：`/tmp/wisp-parity-playwright.log`、`/tmp/wisp-parity-playwright-verified.log`。
-- 最新 Swift 全套新增“启用时发现冲突”测试：UI 218 项通过，但两个既有 process transport 测试在启动临时脚本时超时；日志 `/tmp/wisp-parity-project-final-swift.log`。同时观察到 Git/Rust 子进程启动延迟和 `syspolicyd` 高负载，尚不据此确定因果；待运行中的 Rust 任务结束后定向复测，不放宽超时。
-- WebView 新一轮全套使用 2 workers，在多项子进程启动延迟后出现连续超时，已发送 SIGINT 停止这次并发复测：312 passed、2 failed、2 interrupted、556 did not run；日志 `/tmp/wisp-parity-projects-playwright.log`。待 Rust 结束后串行重跑。依赖安装已完成且 lockfile 未变；恢复本次生成的 research-journey 图片的 `git restore` 也正在等待启动，执行 session 14293，需确认完成。
-- Rust workspace 全套仍在执行：`/tmp/wisp-parity-rust-full.log`，执行 session 50690；已通过的输出没有失败，尚不能宣称全套通过。该 run 启动于本批项目改动前，不能将其结果当作新增同步/导出接口的完整回归。
-- 上一批标准 QA 构建与严格签名验证通过。本批含目录/历史/导出/同步的 `scripts/build_native_macos.sh --qa` 重新构建中，日志 `/tmp/wisp-parity-projects-build.log`，执行 session 99690。应用：`target/native-macos-qa/Wisp Science QA.app`；真实复验需在解锁后重新启动更新的 shell/helper。
+- 最新 Swift 全套：245 tests，0 failures（UI 230 + 基础 15），启用全部 opt-in render，包含 12 项订阅认证测试。日志 `/tmp/wisp-parity-auth-final-swift.log`。之前两个 process transport 超时已在本次全套通过，未放宽超时。Agent 面板首次渲染失败定位为测试未创建输出目录，已修复；全新目录中复测生成全部 7 张图片，日志 `/tmp/wisp-parity-agent-fresh-check.log`。
+- WebView 新一轮全套使用 2 workers，在多项子进程启动延迟后出现连续超时，已发送 SIGINT 停止这次并发复测：312 passed、2 failed、2 interrupted、556 did not run；日志 `/tmp/wisp-parity-projects-playwright.log`。依赖安装已完成且 lockfile 未变；已恢复本次生成的 research-journey 图片。Rust 重负载任务结束后已启动新一轮 2 workers 全套，日志 `/tmp/wisp-parity-auth-playwright.log`，尚未得到最终结果。
+- Rust workspace 全套已结束：Tauri 1000 passed、1 failed，失败为已有 terminal manager 测试等待 shell 输出的 5 秒超时；日志 `/tmp/wisp-parity-rust-full.log`。该项不改超时定向复测 1 passed（0.02 秒），日志 `/tmp/wisp-parity-terminal-rust-retry.log`。全套未全绿，后续 workspace 测试未全部执行，不能用定向复测替代全套结果。
+- 含目录/历史/导出/同步的标准 QA 构建与严格签名验证已通过，日志 `/tmp/wisp-parity-projects-build.log`；后续订阅认证改动仍需稳定重建。应用：`target/native-macos-qa/Wisp Science QA.app`；真实复验需在解锁后重新启动更新的 shell/helper。
+- 订阅认证共享 DTO 全套 60 passed，日志 `/tmp/wisp-parity-auth-dto.log`；wasm check 通过，日志 `/tmp/wisp-parity-auth-wasm.log`。
 - CUA 实机复验被 Mac 锁屏阻止，已请求用户解锁；没有据此将窗口生命周期或真实键盘路径标为完成。
 - 测试仅使用隔离合成数据库：`/private/tmp/wisp-parity-fixes-20260925/native/wisp.sqlite`。QA app 的 database preference 指向它；QA host 的 Application Support symlink 指向同一目录。之前的临时 QA 链接路径记录在 `/tmp/wisp-parity-fixes-previous-qa-link.txt`。
 - 未登录真实外部账户，未执行远程科学任务，未推送分支或创建远端 PR。
@@ -52,4 +54,4 @@
 
 1. 解锁后优先用 Computer Use 验收 Cmd+W/红叉 → Finder/Dock 重开、项目/草稿恢复、host 不重复启动；验证两种发送偏好、问题卡片和反馈 Escape。
 2. 收尾 Rust 完整回归结果；保留全套 WebView 的原始失败与复测记录。
-3. 收尾本批项目能力的构建/测试/实机闭环；随后接入订阅认证、ACP、会话管理、论文证据。全部剩余项仍属本目标范围，当前未结项。
+3. 收尾本批项目能力的构建/测试/实机闭环；订阅认证已接入，继续 ACP、会话管理、论文证据。全部剩余项仍属本目标范围，当前未结项。
