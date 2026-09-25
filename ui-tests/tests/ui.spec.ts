@@ -870,6 +870,19 @@ test("Memory project picker consumes Escape before leaving Settings", async ({ p
   await expect(page.locator(".settings-nav button.active")).toHaveText("Memory");
 });
 
+test("Codex subscription sign-in closes on Escape before leaving Settings", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("add-codex-login").click();
+  await expect(page.getByTestId("codex-login-form")).toBeVisible();
+  await expect(page.locator(".settings-breadcrumb")).toContainText("ChatGPT Plus/Pro");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("codex-login-form")).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Models");
+  await expect(page.getByTestId("add-codex-login")).toBeVisible();
+});
+
 test("settings subpages consume Escape before leaving Settings", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Memory");

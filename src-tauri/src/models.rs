@@ -151,7 +151,7 @@ impl Default for VideoGenerationOptions {
 }
 
 const PROFILES_KEY: &str = "model_profiles";
-const ACTIVE_KEY: &str = "active_model_id";
+pub(crate) const ACTIVE_KEY: &str = "active_model_id";
 const VISION_KEY: &str = "vision_model_id";
 const IMAGE_GENERATION_KEY: &str = "image_generation_model_id";
 const VIDEO_GENERATION_KEY: &str = "video_generation_model_id";
@@ -276,6 +276,14 @@ fn store_profile_key(
     api_url: &str,
     profiles: &[ModelProfile],
 ) -> Result<(), String> {
+    // A Codex subscription is an OAuth token pair, not a shared API key.
+    // Inheriting or rotating it would detach the refresh token from the access token.
+    if profiles
+        .iter()
+        .any(|profile| profile.id == id && profile.provider == "openai_codex")
+    {
+        return Ok(());
+    }
     if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
         let previous = key_for(id);
         secret_set(&secret_name(id), key)?;
@@ -879,6 +887,61 @@ fn key_for(id: &str) -> String {
     }
 }
 
+pub(crate) fn codex_oauth_secret(id: &str) -> String {
+    format!("codex_oauth:{id}")
+}
+
+pub(crate) fn store_codex_credentials(
+    profile_id: &str,
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(&secret_name(profile_id), &creds.access_token)?;
+    let json = creds.to_json();
+    secret_set(&codex_oauth_secret(profile_id), &json)?;
+    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &json)?;
+    Ok(())
+}
+
+pub(crate) fn load_global_codex() -> Option<wisp_llm::codex_auth::CodexCredentials> {
+    wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(
+        wisp_llm::codex_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+/// Access token for a turn. Codex profiles refresh before the token is inside
+/// the five-minute expiry window and write the rotated refresh token back.
+async fn fresh_access_token(provider: &str, id: &str) -> String {
+    let access = key_for(id);
+    if provider != "openai_codex" {
+        return access;
+    }
+    let Some(stored) =
+        wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(&codex_oauth_secret(id)))
+    else {
+        return access;
+    };
+    let mut creds = stored;
+    if !access.is_empty() {
+        creds.access_token = access.clone();
+    }
+    let client = wisp_llm::codex_auth::http_client(crate::llm_proxy().as_deref());
+    match wisp_llm::codex_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await
+    {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_codex_credentials(id, &next) {
+                    tracing::warn!(target: "wisp", %error, "codex token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "codex token refresh failed");
+            access
+        }
+    }
+}
+
 /// The active profile's `(provider, api_url, model, api_key)` for a turn.
 pub async fn active_config(store: &wisp_store::Store) -> (String, String, String, String) {
     let profiles = ensure(store).await;
@@ -892,7 +955,8 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
         return ("openai".into(), String::new(), String::new(), String::new());
     };
     let api_url = effective_api_url(&p);
-    (p.provider, api_url, p.model, key_for(&p.id))
+    let access = fresh_access_token(&p.provider, &p.id).await;
+    (p.provider, api_url, p.model, access)
 }
 
 pub(crate) const IMAGE_GENERATION_UNSUPPORTED: &str =
@@ -1108,13 +1172,13 @@ pub async fn vision_config(
     let p = profiles.iter().find(|p| p.id == id)?.clone();
     let api_url = effective_api_url(&p);
     Some((
-        p.provider,
+        p.provider.clone(),
         api_url,
-        p.model,
-        key_for(&p.id),
+        p.model.clone(),
+        fresh_access_token(&p.provider, &p.id).await,
         p.max_tokens,
-        p.reasoning_effort,
-        p.service_tier,
+        p.reasoning_effort.clone(),
+        p.service_tier.clone(),
         p.user_agent.clone(),
         p.send_user_agent,
         p.send_session_id,
@@ -1369,7 +1433,7 @@ pub async fn profile_llm(
         p.provider.clone(),
         effective_api_url(p),
         p.model.clone(),
-        key_for(&p.id),
+        fresh_access_token(&p.provider, &p.id).await,
         p.max_tokens,
         p.reasoning_effort.clone(),
         p.service_tier.clone(),
@@ -1378,6 +1442,13 @@ pub async fn profile_llm(
         p.send_session_id,
         p.session_header_name.clone(),
     ))
+}
+
+pub(crate) async fn profile_owned(store: &wisp_store::Store, id: &str) -> Option<ModelProfile> {
+    ensure(store)
+        .await
+        .into_iter()
+        .find(|profile| profile.id == id)
 }
 
 /// Stored key for a specific profile id, or None when the profile does not
@@ -1429,6 +1500,10 @@ async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
             p
         })
         .collect()
+}
+
+pub(crate) async fn decorated_models(store: &wisp_store::Store) -> Vec<ModelProfile> {
+    decorated(store).await
 }
 
 pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
@@ -1687,6 +1762,7 @@ pub async fn remove_model(
     profiles.retain(|p| p.id != id);
     save_raw(&state.store, &profiles).await?;
     let _ = secret_del(&secret_name(&id));
+    let _ = secret_del(&codex_oauth_secret(&id));
     // If we removed the active profile, fall back to the first remaining one.
     let cur = state
         .store
@@ -2798,6 +2874,28 @@ mod tests {
         added.api_url = "https://api.openai.com/v1".into();
         let added_url = added.api_url.clone();
         store_profile_key(&new_id, None, &added_url, &[existing, added]).unwrap();
+        assert!(key_for(&new_id).is_empty());
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn codex_subscription_does_not_inherit_or_replace_a_sibling_key() {
+        let prefix = uuid::Uuid::new_v4();
+        let existing_id = format!("{prefix}-a");
+        let new_id = format!("{prefix}-b");
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+        secret_set(&secret_name(&existing_id), "access-token").unwrap();
+        let mut existing = test_profile(&existing_id, "codex", "gpt-5.5");
+        existing.provider = "openai_codex".into();
+        existing.api_url = "https://chatgpt.com/backend-api".into();
+        let mut added = test_profile(&new_id, "codex-2", "gpt-5.5");
+        added.provider = "openai_codex".into();
+        added.api_url = "https://chatgpt.com/backend-api".into();
+        let added_url = added.api_url.clone();
+        store_profile_key(&new_id, Some("sk-pasted"), &added_url, &[existing, added]).unwrap();
+        assert_eq!(key_for(&existing_id), "access-token");
         assert!(key_for(&new_id).is_empty());
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));

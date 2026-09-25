@@ -93,6 +93,19 @@ Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
 [Zen](https://opencode.ai/docs/zen/#endpoints) endpoint documentation for the
 model ID and protocol supported by your chosen service.
 
+**ChatGPT Plus/Pro (Codex)** is a subscription login, separate from an OpenAI
+Platform API key. In **Settings → Models**, choose **ChatGPT Plus/Pro**.
+Browser sign-in opens ChatGPT and listens on `127.0.0.1:1455` for the
+redirect. Device-code sign-in shows a one-time code and works when the browser
+cannot reach this machine, including SSH and WSL. Paste the final redirect URL
+if the local callback does not arrive. Wisp stores the access token, refresh
+token, expiry, and ChatGPT account id in the OS keyring, refreshes the access
+token automatically, and sends chat requests to
+`https://chatgpt.com/backend-api/codex/responses`. The model ID is whatever
+that subscription can call, such as `gpt-5.5`. A sign-in from
+`wisp-science login codex` is stored on the same machine and can be reused
+from this page.
+
 Use the bare API model ID, without OpenCode's client-side provider prefix.
 Context and output ceilings continue to come from Wisp's baked models.dev
 catalog, using exact model IDs and the appropriate Go or Zen namespace.
@@ -403,10 +416,13 @@ The desktop app stores model profile metadata in `.wisp/wisp.sqlite`. Existing s
 ## Headless CLI
 
 The `wisp-science` headless CLI uses environment variables and supports the
-same API protocols:
+same API protocols. `wisp-science login codex` signs in with a ChatGPT
+Plus/Pro subscription (`--method device` for a one-time code). After that,
+`WISP_PROVIDER=openai_codex` uses the stored subscription and does not need
+`WISP_API_KEY`.
 
 ```powershell
-$env:WISP_PROVIDER = "openai"           # openai, openai_responses, or anthropic
+$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_codex, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your provider key>"
