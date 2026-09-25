@@ -616,3 +616,6 @@ turn releases its workflow lock, then stops. A second distinct draft is
 refused, and the button does not send another turn by itself. A lost reply
 is not retried. The command does not change the WebView's active project or
 session. WinUI enables 排队后续 only for a writable running turn. An uncertain result preserves the draft and blocks resubmission until the user explicitly acknowledges checking the result.
+
+Sync errors wrap inside the native status and confirmation sheets, keeping both
+the backend explanation and the no-automatic-retry notice readable.

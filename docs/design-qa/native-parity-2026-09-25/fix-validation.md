@@ -96,3 +96,14 @@ Mac 锁屏期间执行本地协议验收，**这不是 CUA 验收**。使用新�
 只读检查两端隔离注册库，project ID 均为 `252be348-e105-4391-a530-68db9859102e`。`.wisp/project.json` 导入前后 SHA-256 一致（`0a60c5f0b6b1f7c6f072ab388d97578fdf2d137ecd3345d2b78dedf01f662696`）；这是原地登记，没有创建另一个工作区。截图：[原生打开跨客户端项目](native-fixed-folder-import.jpg)。SQLite 可能因打开而变更，未声称数据库文件字节不变。
 
 目录选择器首次 Escape 未关闭，第二次关闭且父级导入 sheet 保留；因此“立即 Escape”仍需复验。WebView 的 Go to Folder 粘贴曾超时，实际字段未变化；通过 CUA 可访问性 setValue 输入路径后完成。未把这些工具/输入时序现象直接判为产品根因。旧格式目录自动化兼容已覆盖，但本次 CUA 仅验证当前 project.json 格式。
+
+
+## 多选辅助功能复验与同步冲突现场（21:28–21:32）
+
+重建 `f4b279e8` / dirty=false / 1.14.0，shell/helper 版本一致，严格签名通过（`/tmp/wisp-parity-selection-a11y-build.log`）。实际 CUA 在 hello CUA ACP 活动时进入多选，原活动行的 selected 清除；勾选另外两行，两行均报告 selected，原活动行仍未选；退出多选后仅原活动行恢复 selected。没有执行删除。
+
+同一隔离空项目启用文件夹快照成功。为只验冲突界面，复制已发布快照及描述符，保留数据库/hash/父链，将 revision ID 改为新的 UUID，device 标为 cua-synthetic-peer。该 fixture 为**同内容分叉**，不是实际第二设备或网盘测试；记录 `/private/tmp/wisp-parity-fixes-20260925/cua-sync-fork-local.json`。点击同步后正确显示冲突及本地/远端两个选项；没有自动选择、没有覆盖。随后 Mac 锁屏，远端确认按钮操作被工具拒绝，后续确认/立即 Escape/解决分叉尚未进行。保留分叉供解锁后继续。
+
+现场错误文字显示为单行省略，隐藏了“不自动重试”的说明。为两层 sheet 的错误文本加入垂直自适应换行，并新增错误状态与确认页的明暗渲染回归。定向 8 项通过，Swift 全套 281 项通过（UI 266 + 基础 15，全部 opt-in render；`/tmp/wisp-parity-sync-error-wrap.log`、`/tmp/wisp-parity-sync-error-wrap-full.log`）。四张渲染图已目视确认完整显示错误及说明；这是离屏 SwiftUI 渲染，不是锁屏后的 CUA。
+
+渲染证据：[冲突状态浅色](native-fixed-sync-status-light.png)、[版本确认深色](native-fixed-sync-confirmation-dark.png)。当前运行的 f4b279e8 包尚不含换行修复，需下次稳定重建再验。两个版本选择仍不算 CUA 通过。

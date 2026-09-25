@@ -26,7 +26,7 @@
 - [ ] 计划与审批：反馈已完成；plan mode 决策与普通工具授权范围仍待实现；维持现有 Agent workflow 审批。
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
-- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
+- [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA 已通过，首次发送前选择的持久化仍待完成。
 - [ ] 会话：重命名、置顶、删除/批量删除入口与会话范围操作已实现，删除后端及单个/批量 CUA 已通过；跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
@@ -86,3 +86,7 @@
 - 20:58 后 CUA 已恢复：重命名及立即 Escape、取消/恢复置顶、草稿保持、ACP 创建/回复/权限/运行 Stop/初始化 Stop、单个及批量删除通过。保存 4 张实际截图，详见 fix-validation。多选辅助功能标记发现问题并修复，Swift 定向 6 项、全套 280 项通过（`/tmp/wisp-parity-session-selection-a11y.log`、`/tmp/wisp-parity-selection-a11y-full-swift.log`）；新标记尚待重建 CUA。重负载期间延迟及快速输入现象保留，性能与 IME 不算通过。
 - 置顶及此前改动的 workspace 全套退出 0：2354 passed、0 failed，含 Tauri 1008 项与 ACP process harness（`/tmp/wisp-parity-session-pin-workspace.log`）。该轮开始于删除批之前，删除后改动仍需后续稳定全套验证。
 - 21:21–21:25，WebView 新建隔离项目 → 原生目录登记 CUA 通过：两端 project ID/路径一致，project.json 哈希不变，首页显示第五个项目；目录选择器首次 Escape 无效、第二次仅关闭最上层，立即 Escape 验收保留为待复验。截图 native-fixed-folder-import.jpg。同步冲突仍待 CUA。
+
+- `f4b279e8` clean QA 重建及严格签名通过；多选辅助功能 CUA 已验证：两行勾选各自 selected、未勾选活动行不 selected、退出恢复仅活动行 selected。
+- 同步冲突 CUA 已显示拦截及两种选择，使用同内容的合成 revision 分叉，仅验证界面路由，未运行真实双设备/网盘。随后 Mac 锁屏，确认/取消/解决仍待继续；fixture 保留。修复现场发现的错误文字省略，新增明暗渲染测试，Swift 全套 281 passed（`/tmp/wisp-parity-sync-error-wrap-full.log`），4 张图目视检查通过。最新运行包尚不含换行修复。
+- 为会话管理后的 UI/Tauri 改动启动新一轮 npm ci + WebView 全套（2 workers，`/tmp/wisp-parity-session-management-playwright.log`），仍在运行；不可用先前 870 项绿色代替此次结果。删除之后的稳定 Rust 全套待此轮结束后运行，以减少测试负载互扰。

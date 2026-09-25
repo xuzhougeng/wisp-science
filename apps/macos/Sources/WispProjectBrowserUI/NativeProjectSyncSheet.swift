@@ -91,7 +91,10 @@ struct NativeProjectSyncSheet: View {
                 }
             }
             if model.busy { HStack { ProgressView().controlSize(.small); Text("正在同步…") } }
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+            if let error = model.error {
+                Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack { Spacer(); Button("关闭", action: close).disabled(model.busy) }
         }.padding(24).frame(width: 500).buttonStyle(WispButtonStyle())
             .interactiveDismissDisabled(model.busy || model.confirmation != nil)
@@ -107,7 +110,10 @@ struct NativeProjectSyncConflictSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(choice.title).font(.headline)
             Text(choice.detail).fixedSize(horizontal: false, vertical: true)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+            if let error = model.error {
+                Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 if model.busy { ProgressView().controlSize(.small) }
                 Spacer()

@@ -17,7 +17,7 @@ private actor SyncTransport: NativeSettingsQuerying {
         calls.append((command, args, projectID))
         if mode == "hang" { return try await withCheckedThrowingContinuation { pending = $0 } }
         if mode == "lost" { throw ProjectBrowserError.service("connection lost") }
-        if mode == "conflict" { throw ProjectBrowserError.service("Sync conflict: both copies changed") }
+        if mode == "conflict" { throw ProjectBrowserError.service("Sync conflict: this device and another device both changed the project folder. No data was overwritten.") }
         return .object(["status": .string(mode), "direction": .string("none"), "revision": .string("r1"), "uploaded_files": .integer(0), "downloaded_files": .integer(0), "skipped_paths": .array([])])
     }
 }
@@ -121,6 +121,35 @@ final class NativeProjectSyncTests: XCTestCase {
         let calls = await client.count(); XCTAssertEqual(calls, 1)
         await client.finish(); await first.value
         XCTAssertTrue(model.configured)
+    }
+
+    @MainActor func testRenderConflictAndConfirmationWithCompleteError() async throws {
+        guard let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] else { throw XCTSkip("Opt-in rendering") }
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let client = SyncTransport(); await client.setMode("conflict")
+        let model = NativeProjectSyncModel(project: try project("saved"), client: client)
+        await model.synchronize()
+        XCTAssertTrue(model.conflict)
+        XCTAssertTrue(model.error?.contains("不会自动重试或选择冲突版本") == true)
+        for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+            for (kind, root) in [
+                ("status", AnyView(NativeProjectSyncSheet(model: model, close: {}))),
+                ("confirmation", AnyView(NativeProjectSyncConflictSheet(model: model, choice: .remote))),
+            ] {
+                let view = NSHostingView(rootView: root
+                    .background(WispDesign.color("bg-app", scheme))
+                    .foregroundStyle(WispDesign.color("text", scheme))
+                    .environment(\.colorScheme, scheme))
+                view.frame.size = view.fittingSize
+                view.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                XCTAssertGreaterThan(png.count, 1000)
+                try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("project-sync-\(kind)-\(name).png"))
+            }
+        }
+        let calls = await client.count(); XCTAssertEqual(calls, 1)
     }
 
     @MainActor func testImmediateEscapeClosesConflictConfirmationAndKeepsSyncOpen() async throws {
