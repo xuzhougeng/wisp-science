@@ -55,6 +55,7 @@ final class NativeConversationModel: ObservableObject {
     private var queuedBySession: [String: String] = [:]
     private var stagedFiles: [String: [ComposerFile]] = [:]
     private var drafts: [String: String] = [:]
+    private var questionDrafts: [String: (target: NativeQuestionTarget, text: String, prefix: String)] = [:]
     private var projectID: String?
     private var sessionID: String?
     private var generation = UUID()
@@ -250,6 +251,36 @@ final class NativeConversationModel: ObservableObject {
         return true
     }
     func acknowledgeUncertainSend() { if let sessionID { pendingSends[sessionID] = nil }; uncertainSend = false; pending = nil; operationError = nil }
+    func questionTarget(_ item: ConversationItem, index: Int) -> NativeQuestionTarget {
+        NativeQuestionTarget(session: sessionID ?? "", index: index, text: item.text, generation: generation)
+    }
+    func questionState(_ target: NativeQuestionTarget) -> NativeQuestion.State {
+        guard target.session == sessionID, target.generation == generation,
+              visibleItems.indices.contains(target.index), visibleItems[target.index].role == "question",
+              visibleItems[target.index].text == target.text, let question = NativeQuestion(target.text) else { return .expired }
+        if question.state != .pending { return question.state }
+        if visibleItems.dropFirst(target.index + 1).contains(where: { $0.role == "user" }) { return .answered }
+        return .pending
+    }
+    func canStageQuestion(_ target: NativeQuestionTarget) -> Bool {
+        questionState(target) == .pending && NativeQuestion(target.text)?.requestID == nil
+            && snapshot?.read_only == false && !showingHistory && !busy && !uncertainSend && connectionError == nil
+    }
+    @discardableResult
+    func stageQuestionAnswer(_ text: String, target: NativeQuestionTarget) -> Bool {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canStageQuestion(target), !answer.isEmpty else { return false }
+        let prefix: String
+        if let previous = questionDrafts[target.session], previous.target.isSameQuestion(as: target), previous.text == draft {
+            prefix = previous.prefix
+        } else {
+            prefix = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : draft
+        }
+        draft = prefix.isEmpty ? answer : prefix + (prefix.hasSuffix("\n\n") ? "" : "\n\n") + answer
+        questionDrafts[target.session] = (target, draft, prefix)
+        drafts[target.session] = draft
+        return true
+    }
     func stop() async { await action("native_conversation_stop", [:]) }
     func approve(_ approval: ConversationApproval, allowed: Bool) async {
         await action("native_conversation_approve", ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)])

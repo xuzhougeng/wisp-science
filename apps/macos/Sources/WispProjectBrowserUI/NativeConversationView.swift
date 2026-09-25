@@ -117,17 +117,9 @@ struct NativeConversationView: View {
                     if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
                     selectableMessage(item, index: index)
                 } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
-            } else if item.role == "question", let data = item.text.data(using: .utf8), let question = try? JSONDecoder().decode(SettingsValue.self, from: data) {
-                Text(question["question"].string).font(WispDesign.font(size: 14)).textSelection(.enabled)
-                ForEach(Array(question["options"].array.enumerated()), id: \.offset) { _, option in
-                    Button { conversation.draft = option["label"].string } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(option["label"].string)
-                            if !option["description"].string.isEmpty { Text(option["description"].string).font(.caption).foregroundStyle(.secondary) }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.disabled(conversation.showingHistory || conversation.snapshot?.read_only == true)
-                }
-                Text("选择选项会填入输入框，点击发送后继续。").font(WispDesign.font(size: 11)).foregroundStyle(.secondary)
+            } else if item.role == "question", let question = NativeQuestion(item.text) {
+                NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
+                    .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
             } else {
                 selectableMessage(item, index: index)
                 if item.role == "user" {

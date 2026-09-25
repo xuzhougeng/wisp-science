@@ -74,8 +74,14 @@ Stop targets only the supplied session. A cancellation request that races runtim
 creation is repeated until the host-owned turn completes. Approval removal checks
 both project ownership and the exact one-shot approval ID under the same lock;
 an old button cannot approve the next request. This phase never grants permanent
-approval scopes. Normal `ask_user` questions display readable choices that fill
-the composer; the user sends their chosen answer as the next message.
+approval scopes. Normal `ask_user` questions stage an editable answer in the
+composer, including the option description. Existing notes are preserved even
+when the user switches options; edits made after staging are also retained.
+Freeform answers use the same staging action. The card remains pending until a
+later user message appears in the authoritative transcript. Answered/expired
+cards are inactive; stale callbacks cannot edit another conversation's draft.
+ACP request IDs are retained but remain inactive until the native ACP reply
+protocol is implemented.
 
 ## WinUI integration
 
