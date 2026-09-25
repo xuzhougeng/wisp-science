@@ -52,6 +52,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_trajectory_html",
     "native_conversation_outline",
     "native_conversation_create",
+    "native_conversation_rename",
     "native_conversation_snapshot",
     "native_conversation_send",
     "native_conversation_attach",
@@ -235,6 +236,12 @@ pub struct SessionRequest {
     #[serde(default)]
     pub before_seq: Option<i64>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameRequest {
+    pub session_id: String,
+    pub title: String,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SendRequest {
@@ -379,6 +386,18 @@ pub struct Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rename_requires_an_explicit_session_and_title() {
+        let request: RenameRequest =
+            serde_json::from_str(r#"{"session_id":"s","title":"样本分析"}"#).unwrap();
+        assert_eq!(request.session_id, "s");
+        assert_eq!(request.title, "样本分析");
+        assert!(serde_json::from_str::<RenameRequest>(r#"{"title":"new"}"#).is_err());
+        assert!(serde_json::from_str::<RenameRequest>(
+            r#"{"session_id":"s","title":"new","project_id":"other"}"#
+        )
+        .is_err());
+    }
     #[test]
     fn create_preserves_http_default_and_accepts_explicit_acp_profile() {
         assert!(serde_json::from_str::<CreateRequest>("{}")

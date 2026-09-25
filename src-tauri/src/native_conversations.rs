@@ -248,6 +248,16 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     }
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_rename" => {
+            let args: dto::RenameRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "rename_session",
+                json!({"id":session,"title":args.title}),
+            )
+            .await
+        }
         "native_conversation_share" => {
             let _: dto::SessionRequest = decode(&request.args)?;
             let state = broker.app.state::<crate::AppState>();

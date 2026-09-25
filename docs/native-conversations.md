@@ -23,6 +23,13 @@ copy its original content or a table to copy TSV. Quote and highlight actions
 work across blocks. Task state is shown as readable completion labels. Formula
 rendering and inline images remain separate follow-ups; tool output stays literal.
 
+The edit action next to the macOS conversation title opens a rename editor.
+Saving uses the selected project and session IDs, trims surrounding whitespace,
+and refreshes the sidebar after confirmed success. Empty names are rejected.
+A failed or ambiguous response preserves the input and never retries by itself;
+navigation invalidates the editor's pending callback. Immediate Escape closes
+only the editor, without writing or closing its parent.
+
 ## Transport and recovery
 
 `wisp-dto::native_conversations` is the authoritative v1 protocol. Requests use
@@ -36,6 +43,7 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 | Command | Arguments | Result |
 | --- | --- | --- |
 | `native_conversation_create` | optional `acp_agent_id` | New session ID; omitted uses HTTP |
+| `native_conversation_rename` | `session_id`, `title` | Rename the owned, unarchived conversation |
 | `native_conversation_snapshot` | `session_id`, optional `before_seq` | `Snapshot` replacement event |
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |
@@ -103,6 +111,9 @@ one creates a fresh conversation and preserves the previous conversation's draft
 The host validates the exact profile before creating the session. Send and Stop
 reuse the shared ACP turn pipeline, including stored binding recovery after a
 host restart, profile/workspace validation and cancellation during startup.
+Stop also interrupts initialization before the agent has returned a session
+handle; dropping the pending launch aborts its actor and releases the child
+process. A dead cached process is evicted without retaining the cache lock.
 The additive `acp_agent_id` snapshot field identifies a persisted ACP binding;
 a provisional choice is shown as `acp:<profile id>` until the first connection.
 Follow-ups cannot be queued before that binding exists. An ACP conversation cannot

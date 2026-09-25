@@ -29,6 +29,7 @@ struct ProjectWorkspace: View {
     @State private var inboxPresented = false
     @StateObject private var inbox = NativeInboxModel()
     @StateObject private var groups = NativeSessionGroups()
+    @StateObject private var sessionRename = NativeSessionRename()
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
     var body: some View {
@@ -45,6 +46,11 @@ struct ProjectWorkspace: View {
                     }
                     Text(model.sessions.first(where: { $0.id == model.activeSessionID })?.title ?? project.name)
                         .font(WispDesign.font(size: 14, weight: .semibold)).lineLimit(1)
+                    Button {
+                        if let session = model.sessions.first(where: { $0.id == model.activeSessionID }) { sessionRename.begin(session) }
+                    } label: { WispIcon(name: "edit", size: 14) }
+                        .buttonStyle(.plain).help("重命名会话").accessibilityLabel("重命名会话")
+                        .disabled(model.activeSessionID == nil || conversation.snapshot?.read_only == true)
                     Spacer()
                     Button { conversation.outlinePresented.toggle() } label: { WispIcon(name: "list") }
                         .buttonStyle(.plain).help("会话大纲").accessibilityLabel("会话大纲")
@@ -152,6 +158,21 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset() }
+        .onChange(of: project.id) { _ in sessionRename.reset() }
+        .onDisappear { sessionRename.reset() }
+        .sheet(isPresented: Binding(get: { sessionRename.target != nil }, set: { if !$0 { sessionRename.dismiss() } })) {
+            NativeSessionRenameSheet(model: sessionRename) {
+                let database = model.databaseURL
+                Task {
+                    if let renamed = await sessionRename.save(conversation.client),
+                       model.databaseURL == database, model.activeProjectID == renamed.projectID,
+                       model.activeSessionID == renamed.id {
+                        await model.openProject(renamed.projectID, sessionID: renamed.id)
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $groups.creating) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("新建分组").font(.headline)

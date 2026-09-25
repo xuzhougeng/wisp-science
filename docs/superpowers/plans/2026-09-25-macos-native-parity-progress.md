@@ -27,7 +27,7 @@
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
 - [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
-- [ ] 会话：重命名、删除/批量整理、置顶、跨项目复制/移动、导出、分支导航。
+- [ ] 会话：重命名入口与会话范围保存已实现，CUA 待验；删除/批量整理、置顶、跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
 - [ ] 阅读：数学/图片、Markdown/CSV 预览、科学 viewer 支持表与对应实现。
@@ -69,3 +69,5 @@
 
 - ACP 初始化取消修复：native startup 路由测试 1 passed（`/tmp/wisp-parity-acp-startup-routing-rust.log`）；ACP lib 全套 3 passed（`/tmp/wisp-parity-acp-startup-lib-verified.log`）；真实 fake-agent process harness 通过，含初始化不回复时取消后心跳停止（`/tmp/wisp-parity-acp-startup-process.log`）。最初以远端 SDK handler 的退出作为清理信号的测试超时，保留 `/tmp/wisp-parity-acp-startup-cancel.log`；改为直接观察传输 drop，并另用真实进程心跳证明子进程清理。还修复 dead-runtime 恢复时 if-let 暂存 guard 导致的重复加锁，恢复 CUA 仍待验。
 - QA peer 新增 `--stall-initialize`，可稳定复现初始化等待，两个 Python 子进程测试通过。Mac 再次锁屏，已请求手动解锁；不把无法执行的 CUA 写成通过。
+
+- 会话重命名：顶部编辑入口、显式项目/会话参数、成功后刷新标题、失败保留输入、不自动重试、导航隔离、窗口级立即 Escape。新增 5 项 Swift 回归通过；全套 Swift 263 passed（UI 248 + 基础 15，含所有 opt-in render），日志 `/tmp/wisp-parity-session-rename-full-swift.log`；DTO 63 passed（`/tmp/wisp-parity-session-rename-dto.log`）；wasm check 通过（`/tmp/wisp-parity-session-rename-wasm.log`）。宿主 QA 重建中，尚未 CUA 验收。
