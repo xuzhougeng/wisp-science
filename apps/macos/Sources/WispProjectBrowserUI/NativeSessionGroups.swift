@@ -75,6 +75,10 @@ final class NativeSessionGroups: ObservableObject {
     @Published private(set) var error: String?
     @Published var menuPresented = false
 
+    func isSelected(_ sessionID: String, activeSessionID: String?) -> Bool {
+        selecting ? selected.contains(sessionID) : activeSessionID == sessionID
+    }
+
     func sections(_ sessions: [BrowserSession]) -> [SessionSection] {
         SessionArrangement.sections(sessions, folders: folders, sort: sort, group: group)
     }

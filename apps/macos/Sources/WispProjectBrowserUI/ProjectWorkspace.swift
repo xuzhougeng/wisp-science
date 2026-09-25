@@ -437,7 +437,7 @@ struct ProjectWorkspace: View {
                                 .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("surface-hover") : .clear), in: RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
-                            .accessibilityAddTraits(session.id == model.activeSessionID ? [.isSelected] : [])
+                            .accessibilityAddTraits(groups.isSelected(session.id, activeSessionID: model.activeSessionID) ? [.isSelected] : [])
                         }
                     }
                 }

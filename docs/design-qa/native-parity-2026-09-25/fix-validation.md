@@ -70,3 +70,29 @@ Mac 锁屏期间执行本地协议验收，**这不是 CUA 验收**。使用新�
 - 确认会话空闲后重启此次 QA helper（48350 → 48979），再次读取仍为 true；没有发送模型消息或修改用户数据。
 
 脚本 `/tmp/wisp-parity-native-pin-host-smoke.py`；日志 `/tmp/wisp-parity-native-pin-host-smoke.log`、`/tmp/wisp-parity-native-pin-host-restart.log`。置顶分区、按钮及导航保留仍需解锁后的 CUA 验收。
+
+
+## 会话管理与 ACP 的 CUA 复验（20:58–21:15）
+
+使用稳定构建 `70857150` / dirty=false / 1.14.0，标准 QA 构建与严格签名检查通过（`/tmp/wisp-parity-session-delete-build.log`）。隔离 helper 为 PID 50191。Mac 解锁后恢复 Computer Use；本节使用实际 SwiftUI 窗口与合成 ACP peer，无真实账户、模型或远程任务。
+
+- `QA ACP protocol smoke` 重命名为合成验收标题，侧栏和顶部一致；恢复原名称。打开重命名 sheet 后立即 Escape 只关闭 sheet。取消置顶/重新置顶使分区正确消失/恢复；输入的“保留原生验收草稿”始终保留。
+- 从 QA normal 创建 ACP 会话，切回原会话后草稿保留，切回新会话为空白，未再出现 `Session not found in project`。发送 `hello CUA ACP` 得到合成回复，首轮标题自动更新。
+- 权限卡选择 allow 后收到确认回复；等待权限期间输入的“审批期间保留草稿”保留。确认输入框值后发送 wait，Stop 使运行恢复空闲并显示取消回复。
+- QA startup-stall 在 initialize 不回复时可 Stop，恢复空闲。该合成会话删除预览立即 Escape 取消；再次打开确认后删除，其他会话保留。
+- 新建的 CUA bulk delete A/B 在多选模式下共同高亮，删除预览只列这两项；确认后两行消失、退出多选并清空已删除的活动会话。只读 SQLite 确认单删和批删的三个目标均不存在，原 ACP、此次新 ACP 和历史恢复会话仍在。
+- 批量多选的视觉状态正确，但辅助功能 selected 标记只跟随打开的会话。已修复为多选时跟随勾选集合，普通导航时跟随活动会话；6 项定向测试及 Swift 全套 280 项通过。此修复不在本节 `70857150` 包内，重建后仍须 CUA 复验。
+
+限制与原始观察：并发 Rust 全套期间，删除/刷新曾等待到分钟量级，host 日志包含约 2–7.5 秒的连接获取和 1–5 秒的 SQL 查询，swap 约 7 GB；功能结果通过，性能未通过，尚未证明延迟根因。一次连续 select-all/paste/Enter 发送了旧的合成草稿，逐步确认 AX 值后可正确替换和发送；不把快速粘贴或真实 IME 算作通过。没有重复提交结果未知的删除。
+
+截图：[置顶与保留草稿](native-fixed-pin-draft.jpg)、[ACP Stop](native-fixed-acp-stop.jpg)、[删除后的空状态](native-fixed-delete-empty.jpg)、[批量删除目标预览](native-fixed-batch-confirm.jpg)。新 ACP 会话 ID 为 `f46d0d2a-4984-4ea4-b5d2-dfa315141677`；其余验收记录保留。
+
+同一构建的真实宿主删除协议验收也通过（`/tmp/wisp-parity-native-delete-host-smoke.log`）：拒绝跨项目/游标/重复目标、删除准确目标、丢弃响应后只读 exists 确认不存在、删除运行中的合成 ACP 并清理子进程；不回放删除请求。此协议证据与以上 CUA 分开记录。
+
+## WebView 项目 → 原生目录登记（21:21–21:25）
+
+通过 WebView QA 的“新建项目”创建 `CUA WebView 文件夹导入`，目录 `/private/tmp/wisp-parity-fixes-20260925/webview-folder-import`，然后返回 WebView 首页。在原生“导入项目 → 打开项目文件夹”选择同一目录，登记成功后打开项目，名称与路径一致，首页项目数由 4 变为 5。
+
+只读检查两端隔离注册库，project ID 均为 `252be348-e105-4391-a530-68db9859102e`。`.wisp/project.json` 导入前后 SHA-256 一致（`0a60c5f0b6b1f7c6f072ab388d97578fdf2d137ecd3345d2b78dedf01f662696`）；这是原地登记，没有创建另一个工作区。截图：[原生打开跨客户端项目](native-fixed-folder-import.jpg)。SQLite 可能因打开而变更，未声称数据库文件字节不变。
+
+目录选择器首次 Escape 未关闭，第二次关闭且父级导入 sheet 保留；因此“立即 Escape”仍需复验。WebView 的 Go to Folder 粘贴曾超时，实际字段未变化；通过 CUA 可访问性 setValue 输入路径后完成。未把这些工具/输入时序现象直接判为产品根因。旧格式目录自动化兼容已覆盖，但本次 CUA 仅验证当前 project.json 格式。

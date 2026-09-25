@@ -42,8 +42,10 @@ without a confirmed pin state leave the action disabled until a saved row is
 available.
 
 The trash action opens a confirmation listing the selected conversation. Sidebar
-multi-selection also offers “删除所选会话”. Deletion uses the existing host checks
-for ownership, archives and branches, and stops the selected conversation's running
+multi-selection also offers “删除所选会话”. The sidebar's accessibility selection
+follows the checked rows in multi-selection mode and the open conversation in
+normal navigation. Deletion uses the existing host checks for ownership, archives
+and branches, and stops the selected conversation's running
 work before removing it. A batch is sequential, not atomic: confirmed deletions
 are removed locally, and the first error stops all later requests. An ambiguous
 response never triggers another deletion automatically. The error banner provides

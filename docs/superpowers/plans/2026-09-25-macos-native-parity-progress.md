@@ -13,10 +13,10 @@
 | block Markdown v1 | 标题/列表/引用/代码/原生表格；代码及表格右键复制；跨块选择/收藏 | 布局/复制/跨块选择测试通过；浅色及深色窄窗截图目视检查通过 |
 | 问题卡片 | 保留已有草稿与描述、可编辑选项/自由回答、状态判定与导航隔离 | 5 项 fake snapshot 测试通过；ACP 实时回复仍属于下批范围 |
 | 审批反馈 | 复用反馈字段；当前 session/approval ID 检查；窗口级 Escape | 反馈失败不重试、过期请求拒绝、实际反馈视图立即 Escape 测试通过 |
-| 项目目录导入 | 新旧目录格式共用 WebView 校验与原地登记；ZIP 保留；取消不请求 | Swift 导入流程及 Rust 新旧格式/重复/无效路径测试通过；CUA 文件选择器待验收 |
+| 项目目录导入 | 新旧目录格式共用 WebView 校验与原地登记；ZIP 保留；取消不请求 | Swift 导入流程及 Rust 新旧格式/重复/无效路径测试通过；CUA WebView 创建的当前格式项目原地登记通过；旧格式及立即 Escape 仍待复验 |
 | 历史恢复 | 只读预览、会话/消息/无效/重复数量、命名与确认；保持源归档 | 恢复/取消/未知结果不重试/嵌套 Escape，以及后端只读预览/源归档字节不变测试通过；CUA 预览/立即 Escape/确认恢复/消息可读及源 SHA-256 不变通过 |
 | ZIP/目录导出 | 显式项目与目标、复用独占锁/运行检查/校验与发布，显示确认后的目标 | Swift 5 项、Rust transfer 12 项通过；包含两种格式往返与目标保护；CUA ZIP/目录导出完成、ZIP CRC 通过，立即 Escape 仅关闭 Save Panel |
-| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；会话创建/发送/停止、权限回复、进程退出与 host 重启恢复已通过隔离真实宿主协议验收；CUA 待解锁复验 |
+| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；会话创建/发送/停止、权限回复、进程退出与 host 重启恢复已通过隔离真实宿主协议验收；CUA 普通回复、权限、运行/初始化 Stop 和草稿保留通过 |
 | ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；CUA 入口及菜单/sheet 两层 Escape 通过；未登录真实账户 |
 | 项目同步 | 卡片快照状态、启用文件夹快照、手动同步；显式本地/远端冲突决策 | Swift 状态 2 项及操作 7 项通过；Rust 项目测试 13 项通过，含同步范围与策略校验；CUA 启用/同步及首页状态通过，冲突交互仍待实机验收 |
 
@@ -27,7 +27,7 @@
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
 - [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
-- [ ] 会话：重命名、置顶、删除/批量删除入口与会话范围操作已实现，删除后端及 CUA 待验；跨项目复制/移动、导出、分支导航仍待完成。
+- [ ] 会话：重命名、置顶、删除/批量删除入口与会话范围操作已实现，删除后端及单个/批量 CUA 已通过；跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
 - [ ] 阅读：数学/图片、Markdown/CSV 预览、科学 viewer 支持表与对应实现。
@@ -81,3 +81,8 @@
 - 删除/批量删除：列出目标后确认、复用宿主停止/分支/归档检查、串行执行遇到首个错误停止、不自动重试、迟到响应不关闭新弹窗、已确认删除移除本地草稿。未命名草稿的未知删除结果由同项目只读 existence 查询核对，查询失败保留草稿，仍存在时在后续刷新继续检查。定向 Swift 19 passed；全套 Swift 279 passed（UI 264 + 基础 15，含所有 opt-in render，`/tmp/wisp-parity-session-delete-full-swift.log`）；wasm、格式及资源同步检查通过。Rust native conversation 定向运行中（`/tmp/wisp-parity-session-delete-rust.log`）；之前启动的 workspace 全套只覆盖置顶及此前改动，不包括删除批次。
 - 删除批 Rust native conversation 5 passed、0 failed（同上日志），含删除请求参数边界以及存在性查询的所有权/不存在检查。稳定 QA 重建、真实宿主删除/停止/未知结果恢复与 CUA 仍待验收；DTO 全套复测进行中（`/tmp/wisp-parity-session-delete-dto.log`）。
 - 删除批提交 `029b0a7c`；DTO 全套复测 64 passed（同上日志），工作树干净。稳定源码的 QA 重建进行中（`/tmp/wisp-parity-session-delete-build.log`）。为替换应用，已确认隔离宿主 48979 空闲并停止；构建结束后需重新启动 helper。真实宿主删除验收脚本已准备，仅操作现场新建的合成会话，不删除既有 ACP/历史恢复验收记录；尚未运行，不能计为通过。
+
+- `70857150` 稳定 QA 构建及严格签名通过，真实宿主删除 smoke 通过：范围拒绝、精确删除、丢失响应后只读确认、运行中 ACP 清理（`/tmp/wisp-parity-native-delete-host-smoke.log`）。
+- 20:58 后 CUA 已恢复：重命名及立即 Escape、取消/恢复置顶、草稿保持、ACP 创建/回复/权限/运行 Stop/初始化 Stop、单个及批量删除通过。保存 4 张实际截图，详见 fix-validation。多选辅助功能标记发现问题并修复，Swift 定向 6 项、全套 280 项通过（`/tmp/wisp-parity-session-selection-a11y.log`、`/tmp/wisp-parity-selection-a11y-full-swift.log`）；新标记尚待重建 CUA。重负载期间延迟及快速输入现象保留，性能与 IME 不算通过。
+- 置顶及此前改动的 workspace 全套退出 0：2354 passed、0 failed，含 Tauri 1008 项与 ACP process harness（`/tmp/wisp-parity-session-pin-workspace.log`）。该轮开始于删除批之前，删除后改动仍需后续稳定全套验证。
+- 21:21–21:25，WebView 新建隔离项目 → 原生目录登记 CUA 通过：两端 project ID/路径一致，project.json 哈希不变，首页显示第五个项目；目录选择器首次 Escape 无效、第二次仅关闭最上层，立即 Escape 验收保留为待复验。截图 native-fixed-folder-import.jpg。同步冲突仍待 CUA。
