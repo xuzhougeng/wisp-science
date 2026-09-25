@@ -47,3 +47,16 @@
 - Enter 发送 `hello native ACP smoke` 后显示处理中；ACP Python 子进程启动，但没有创建事件日志或保存 ACP binding。进程采样显示 Python 阻塞于启动导入阶段的 `open` 系统调用（`/tmp/wisp-parity-acp-peer-sample.txt`），尚不能认定为协议错误，也未确认文件访问等待的根因。
 - 点击 Stop 后最终显示“正在停止…”，未自行结束。源码确认 ACP 初始化回复前尚无 `AcpRuntime` 可供 `cancel_frame` 关闭，启动 future 也未观察会话取消标记。已开始修复初始化取消与 actor drop 清理；未以此失败场景宣称发送/停止通过。
 - 退出 QA 壳后，核对 PID/命令，终止此次隔离 host 和合成 Python 子进程。没有终止其他应用或 Rust 全量测试。下一次需重新构建并验收普通回复、权限选择、停止、已绑定会话重启恢复；脚本可复制到同一 `/private/tmp` QA 目录，避免验收依赖仓库脚本所在目录的访问状态。
+
+## ACP 与重命名的真实宿主协议验收（20:08–20:10）
+
+Mac 锁屏期间执行本地协议验收，**这不是 CUA 验收**。使用新构建 `fca972e3532f1c9c7589826e1cb6e41e4a4c3a6b` / dirty=false / 1.14.0，严格签名验证通过（`/tmp/wisp-parity-acp-cancel-rename-build.log`）。只运行隔离 QA helper 和本地合成 Python peer，无真实模型/账户/远程任务。
+
+- 将已知 QA peer 的副本放入 `/private/tmp/wisp-parity-fixes-20260925/qa_native_acp.py`，SHA-256 `c302b37211aac6cb5011f21cf7b32841382102fc828303b5d4cb878a34e2acb1`。不再依赖该测试进程读取 Documents 下的仓库脚本；这不证明此前 open 阻塞的根因。
+- 使用 authenticated loopback `/invoke` 和明确 project ID，创建合成配置与会话 `b6f70910-0a9c-44ef-8e2f-d3126da6688a`。普通发送完成，snapshot 含回复与持久 ACP profile binding；权限卡可见，选择 exact `allow` 后正常结束，回复写入 transcript。
+- 只终止命令行和父 PID 均匹配此次 log/peer 的合成子进程，然后对同一会话继续发送。宿主成功清除 dead cache 并 `session/resume` 到同一 ACP session ID；没有卡在重复加锁处。
+- 运行中的合成 wait 回合可停止。另用 `--stall-initialize` 创建 `5917509e-d6c7-423f-925b-a0fcdcbda2f5`，等日志确认 initialize 已收到但没有回复后 Stop；snapshot 恢复 idle，未产生错误 binding，子进程退出，耗时约 0.283 秒。
+- 重命名接口接受已归属会话的名称，拒绝另一 project 和空白名称；用只读 `wisp-service list_sessions` 确认保存的名称为 `QA ACP protocol smoke`，首轮消息没有覆盖手动名称。
+- 确认所有回合结束后重启隔离 QA helper（43274 → 43632），再次读取同一会话，历史消息/权限结果仍在，发送成功并走 `session/resume`。真实外部 ACP 产品的账户和实现未被测试。
+
+脚本与日志：`/tmp/wisp-parity-native-acp-host-smoke.py`、`/tmp/wisp-parity-native-acp-host-smoke.log`、`/tmp/wisp-parity-native-acp-host-resume.py`、`/tmp/wisp-parity-native-acp-host-resume.log`。peer 事件日志为隔离目录下 `qa-parity-fba149f10b-normal.jsonl` 与 `qa-parity-fba149f10b-startup-stall.jsonl`，仅记录方法和 ACP session ID，不记录 prompt 或 token。QA helper 保持可用供后续 CUA 连接；仍需实机验证输入、卡片操作、重命名入口及窗口恢复。

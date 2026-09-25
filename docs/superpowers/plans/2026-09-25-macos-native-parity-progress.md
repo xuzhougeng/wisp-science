@@ -16,7 +16,7 @@
 | 项目目录导入 | 新旧目录格式共用 WebView 校验与原地登记；ZIP 保留；取消不请求 | Swift 导入流程及 Rust 新旧格式/重复/无效路径测试通过；CUA 文件选择器待验收 |
 | 历史恢复 | 只读预览、会话/消息/无效/重复数量、命名与确认；保持源归档 | 恢复/取消/未知结果不重试/嵌套 Escape，以及后端只读预览/源归档字节不变测试通过；CUA 预览/立即 Escape/确认恢复/消息可读及源 SHA-256 不变通过 |
 | ZIP/目录导出 | 显式项目与目标、复用独占锁/运行检查/校验与发布，显示确认后的目标 | Swift 5 项、Rust transfer 12 项通过；包含两种格式往返与目标保护；CUA ZIP/目录导出完成、ZIP CRC 通过，立即 Escape 仅关闭 Save Panel |
-| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；会话创建/发送/停止已接入共享流程，完整进程 CUA 待验收 |
+| ACP 实时交互 | 新增会话范围的权限选项/取消与问题回复，复用现有 resolver；保留草稿、阻止重复提交 | 8 项 Swift（含明暗窄窗渲染）、3 项 Rust scoped resolver 测试通过；会话创建/发送/停止、权限回复、进程退出与 host 重启恢复已通过隔离真实宿主协议验收；CUA 待解锁复验 |
 | ChatGPT 订阅 | 复用现有 keyring 认证、浏览器/设备码登录、状态轮询、手动回调、取消/过期/重登与已存账户 | 12 项隔离 transport 测试通过，涵盖旧回调、取消、保存结果不确定和嵌套 Escape；CUA 入口及菜单/sheet 两层 Escape 通过；未登录真实账户 |
 | 项目同步 | 卡片快照状态、启用文件夹快照、手动同步；显式本地/远端冲突决策 | Swift 状态 2 项及操作 7 项通过；Rust 项目测试 13 项通过，含同步范围与策略校验；CUA 启用/同步及首页状态通过，冲突交互仍待实机验收 |
 
@@ -71,3 +71,5 @@
 - QA peer 新增 `--stall-initialize`，可稳定复现初始化等待，两个 Python 子进程测试通过。Mac 再次锁屏，已请求手动解锁；不把无法执行的 CUA 写成通过。
 
 - 会话重命名：顶部编辑入口、显式项目/会话参数、成功后刷新标题、失败保留输入、不自动重试、导航隔离、窗口级立即 Escape。新增 5 项 Swift 回归通过；全套 Swift 263 passed（UI 248 + 基础 15，含所有 opt-in render），日志 `/tmp/wisp-parity-session-rename-full-swift.log`；DTO 63 passed（`/tmp/wisp-parity-session-rename-dto.log`）；wasm check 通过（`/tmp/wisp-parity-session-rename-wasm.log`）。宿主 QA 重建中，尚未 CUA 验收。
+
+- `fca972e3` QA 重建与签名验证通过；隔离真实宿主协议验收全部通过：发送、权限选择、dead process 恢复、运行中 Stop、初始化 Stop（约 0.283 秒且子进程退出）、host 重启后的持久绑定恢复。重命名拒绝跨项目/空名称，名称经只读查询确认持久保存。日志 `/tmp/wisp-parity-native-acp-host-smoke.log`、`/tmp/wisp-parity-native-acp-host-resume.log`。这些是 API/进程验收，不能代替仍待解锁的 CUA。
