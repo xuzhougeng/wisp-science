@@ -13878,10 +13878,13 @@ test("scratch chat opens from landing and closes on Escape", async ({ page }) =>
 test("home docs button sits to the right of settings and opens tutorials", async ({ page }) => {
   await page.goto("/");
   const actions = page.locator(".projects-actions");
-  const labels = await actions.locator("button").evaluateAll((buttons) =>
-    buttons.map((button) => button.getAttribute("data-testid") || button.getAttribute("aria-label"))
-  );
-  expect(labels[labels.indexOf("Settings") + 1]).toBe("open-tutorials");
+  // Hydration and the saved locale can settle after page.goto resolves.
+  await expect.poll(async () => {
+    const labels = await actions.locator("button").evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("data-testid") || button.getAttribute("aria-label"))
+    );
+    return labels[labels.indexOf("Settings") + 1];
+  }).toBe("open-tutorials");
   const docs = page.getByTestId("open-tutorials");
   await expect(docs).toHaveAttribute("aria-label", "Documentation");
   await docs.click();
