@@ -51,11 +51,12 @@ public struct BrowserSession: Codable, Identifiable, Equatable, Sendable {
     public let ts: Int64
     public let status: String
     public let folderID: String?
-    public init(id: String, projectID: String, title: String, ts: Int64, status: String, folderID: String? = nil) {
-        self.id = id; self.projectID = projectID; self.title = title; self.ts = ts; self.status = status; self.folderID = folderID
+    public let pinned: Bool?
+    public init(id: String, projectID: String, title: String, ts: Int64, status: String, folderID: String? = nil, pinned: Bool? = nil) {
+        self.id = id; self.projectID = projectID; self.title = title; self.ts = ts; self.status = status; self.folderID = folderID; self.pinned = pinned
     }
     enum CodingKeys: String, CodingKey {
-        case id, title, ts, status
+        case id, title, ts, status, pinned
         case projectID = "project_id"
         case folderID = "folder_id"
     }

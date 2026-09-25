@@ -229,5 +229,10 @@
   "重命名会话": "Rename conversation",
   "会话名称": "Conversation name",
   "请填写会话名称。": "Enter a conversation name.",
-  "会话名称未能确认保存，不会自动重试。\n": "The conversation name could not be confirmed saved. It will not retry automatically.\n"
+  "会话名称未能确认保存，不会自动重试。\n": "The conversation name could not be confirmed saved. It will not retry automatically.\n",
+  "置顶会话": "Pin conversation",
+  "取消置顶会话": "Unpin conversation",
+  "刷新会话": "Refresh conversations",
+  "已置顶": "Pinned",
+  "置顶状态未能确认保存，不会自动重试。\n": "The pin state could not be confirmed saved. It will not retry automatically.\n"
 }

@@ -108,6 +108,13 @@ pub async fn list_browser_sessions(
             "Project not found"
         );
         let roles = store.list_session_last_roles(project_id).await?;
+        // This reader may open an older database without migrating it. Missing
+        // pin metadata must not hide otherwise readable history or claim false.
+        let pinned: Option<HashSet<_>> = store
+            .list_pinned_sessions(project_id)
+            .await
+            .ok()
+            .map(|rows| rows.into_iter().map(|row| row.0).collect());
         Ok(store
             .list_sessions(project_id)
             .await?
@@ -119,6 +126,7 @@ pub async fn list_browser_sessions(
                         && matches!(role.as_deref(), Some("assistant" | "internal"))
                 });
                 wisp_dto::RecentSession {
+                    pinned: pinned.as_ref().map(|pinned| pinned.contains(&id)),
                     id,
                     project_id: project_id.to_owned(),
                     title,
@@ -143,6 +151,7 @@ pub async fn list_browser_sessions(
                     ts: row.created_at,
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
                     folder_id: None,
+                    pinned: None,
                 }
             })
             .collect())

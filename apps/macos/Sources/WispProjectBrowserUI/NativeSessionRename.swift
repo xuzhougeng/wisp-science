@@ -26,7 +26,7 @@ final class NativeSessionRename: ObservableObject {
         do {
             _ = try await client.invoke("native_conversation_rename", args: ["session_id": .string(target.id), "title": .string(title)], projectID: target.projectID)
             guard current == generation else { return nil }
-            let result = BrowserSession(id: target.id, projectID: target.projectID, title: title, ts: target.ts, status: target.status, folderID: target.folderID)
+            let result = BrowserSession(id: target.id, projectID: target.projectID, title: title, ts: target.ts, status: target.status, folderID: target.folderID, pinned: target.pinned)
             self.target = nil; draft = ""
             return result
         } catch {

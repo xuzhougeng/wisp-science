@@ -30,6 +30,17 @@ A failed or ambiguous response preserves the input and never retries by itself;
 navigation invalidates the editor's pending callback. Immediate Escape closes
 only the editor, without writing or closing its parent.
 
+The pin action beside the title saves the explicit pin/unpin state for the
+selected project and session. Pinned conversations appear once in a leading
+“已置顶” section, retaining the chosen name/date order within that section.
+Folder membership is preserved; unpinning restores the normal grouping.
+Sidebar metadata refreshes after a confirmed rename/pin or a completed turn
+without reopening the transcript, changing its history page, or clearing drafts.
+Stale navigation replies are ignored. A lost pin response is not retried;
+“刷新会话” reads the saved state. Older hosts and unsaved empty conversations
+without a confirmed pin state leave the action disabled until a saved row is
+available.
+
 ## Transport and recovery
 
 `wisp-dto::native_conversations` is the authoritative v1 protocol. Requests use
@@ -44,6 +55,7 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 | --- | --- | --- |
 | `native_conversation_create` | optional `acp_agent_id` | New session ID; omitted uses HTTP |
 | `native_conversation_rename` | `session_id`, `title` | Rename the owned, unarchived conversation |
+| `native_conversation_pin` | `session_id`, boolean `pinned` | Set the owned, unarchived conversation's pin state |
 | `native_conversation_snapshot` | `session_id`, optional `before_seq` | `Snapshot` replacement event |
 | `native_conversation_send` | `session_id`, UUID `request_id`, `message` | Acceptance with host epoch and request/session IDs |
 | `native_conversation_stop` | `session_id` | Successful void |

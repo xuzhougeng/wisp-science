@@ -30,6 +30,8 @@ struct ProjectWorkspace: View {
     @StateObject private var inbox = NativeInboxModel()
     @StateObject private var groups = NativeSessionGroups()
     @StateObject private var sessionRename = NativeSessionRename()
+    @StateObject private var sessionPin = NativeSessionPin()
+    private var selectedSession: BrowserSession? { model.sessions.first { $0.id == model.activeSessionID } }
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
     var body: some View {
@@ -51,6 +53,21 @@ struct ProjectWorkspace: View {
                     } label: { WispIcon(name: "edit", size: 14) }
                         .buttonStyle(.plain).help("重命名会话").accessibilityLabel("重命名会话")
                         .disabled(model.activeSessionID == nil || conversation.snapshot?.read_only == true)
+                    Button {
+                        guard let session = selectedSession else { return }
+                        let database = model.databaseURL
+                        Task {
+                            if await sessionPin.toggle(session, client: conversation.client),
+                               model.databaseURL == database, model.activeProjectID == session.projectID,
+                               model.activeSessionID == session.id {
+                                await model.refreshSessionMetadata(projectID: session.projectID, sessionID: session.id, database: database)
+                            }
+                        }
+                    } label: { WispIcon(name: "pin", size: 14).foregroundStyle(selectedSession?.pinned == true ? color("clay") : color("text-muted")) }
+                        .buttonStyle(.plain)
+                        .help(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
+                        .accessibilityLabel(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
+                        .disabled(selectedSession?.pinned == nil || sessionPin.busy || model.sessionsLoading || conversation.snapshot?.read_only == true)
                     Spacer()
                     Button { conversation.outlinePresented.toggle() } label: { WispIcon(name: "list") }
                         .buttonStyle(.plain).help("会话大纲").accessibilityLabel("会话大纲")
@@ -87,6 +104,18 @@ struct ProjectWorkspace: View {
                     HStack {
                         Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
                         Button("重试") { Task { await model.openProject(project.id, sessionID: model.activeSessionID) } }
+                    }.padding().foregroundStyle(.orange)
+                }
+                if let error = sessionPin.error {
+                    HStack {
+                        Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
+                        Button("刷新会话") {
+                            guard let session = model.activeSessionID else { return }
+                            let database = model.databaseURL
+                            Task {
+                                if await model.refreshSessionMetadata(projectID: project.id, sessionID: session, database: database) { sessionPin.reset() }
+                            }
+                        }.disabled(model.sessionsLoading)
                     }.padding().foregroundStyle(.orange)
                 }
                 if publication.presented && publication.projectID == project.id {
@@ -158,9 +187,17 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset() }
-        .onChange(of: project.id) { _ in sessionRename.reset() }
-        .onDisappear { sessionRename.reset() }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset() }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset() }
+        .onDisappear { sessionRename.reset(); sessionPin.reset() }
+        .onChange(of: conversation.snapshot?.running) { running in
+            guard running == false, !model.sessionsLoading, !sessionPin.busy,
+                  let session = conversation.snapshot?.session_id else { return }
+            let database = model.databaseURL
+            Task {
+                await model.refreshSessionMetadata(projectID: project.id, sessionID: session, database: database)
+            }
+        }
         .sheet(isPresented: Binding(get: { sessionRename.target != nil }, set: { if !$0 { sessionRename.dismiss() } })) {
             NativeSessionRenameSheet(model: sessionRename) {
                 let database = model.databaseURL
@@ -168,7 +205,7 @@ struct ProjectWorkspace: View {
                     if let renamed = await sessionRename.save(conversation.client),
                        model.databaseURL == database, model.activeProjectID == renamed.projectID,
                        model.activeSessionID == renamed.id {
-                        await model.openProject(renamed.projectID, sessionID: renamed.id)
+                        await model.refreshSessionMetadata(projectID: renamed.projectID, sessionID: renamed.id, database: database)
                     }
                 }
             }
@@ -328,7 +365,7 @@ struct ProjectWorkspace: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(groups.sections(model.sessions)) { section in
-                        if groups.group != "none" {
+                        if groups.group != "none" || model.sessions.contains(where: { $0.pinned == true }) {
                             HStack {
                                 Text(section.title).font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint"))
                                 Spacer()

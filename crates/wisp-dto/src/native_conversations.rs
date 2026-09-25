@@ -53,6 +53,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_outline",
     "native_conversation_create",
     "native_conversation_rename",
+    "native_conversation_pin",
     "native_conversation_snapshot",
     "native_conversation_send",
     "native_conversation_attach",
@@ -242,6 +243,12 @@ pub struct RenameRequest {
     pub session_id: String,
     pub title: String,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinRequest {
+    pub session_id: String,
+    pub pinned: bool,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SendRequest {
@@ -386,6 +393,20 @@ pub struct Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pin_request_requires_explicit_boolean_state() {
+        let request: PinRequest =
+            serde_json::from_str(r#"{"session_id":"s","pinned":true}"#).unwrap();
+        assert!(request.pinned);
+        assert_eq!(request.session_id, "s");
+        for invalid in [
+            r#"{"session_id":"s"}"#,
+            r#"{"session_id":"s","pinned":"false"}"#,
+            r#"{"session_id":"s","pinned":false,"project_id":"other"}"#,
+        ] {
+            assert!(serde_json::from_str::<PinRequest>(invalid).is_err());
+        }
+    }
     #[test]
     fn rename_requires_an_explicit_session_and_title() {
         let request: RenameRequest =

@@ -239,6 +239,32 @@ public final class ProjectBrowserModel: ObservableObject {
         if generation == transcriptGeneration { transcriptLoading = false }
     }
 
+    /// Refresh sidebar metadata without reopening the selected transcript or
+    /// changing the live conversation's draft/history page.
+    @discardableResult
+    func refreshSessionMetadata(projectID: String, sessionID: String, database: URL) async -> Bool {
+        guard !sessionsLoading, databaseURL == database,
+              activeProjectID == projectID, activeSessionID == sessionID else { return false }
+        let generation = navigationGeneration
+        sessionsLoading = true
+        defer { if generation == navigationGeneration { sessionsLoading = false } }
+        do {
+            var rows = try await client.listSessions(databaseURL: database, projectID: projectID)
+            guard generation == navigationGeneration, databaseURL == database,
+                  activeProjectID == projectID, activeSessionID == sessionID else { return false }
+            for row in rows { nativeDrafts[row.id] = nil }
+            rows.insert(contentsOf: nativeDrafts.values.filter { $0.projectID == projectID }.sorted { $0.ts > $1.ts }, at: 0)
+            sessions = rows
+            sessionError = rows.contains { $0.id == sessionID } ? nil : "这个会话已不存在，请刷新项目列表。"
+            return sessionError == nil
+        } catch {
+            guard generation == navigationGeneration, databaseURL == database,
+                  activeProjectID == projectID, activeSessionID == sessionID else { return false }
+            sessionError = error.localizedDescription
+            return false
+        }
+    }
+
     func dismissNewProject() {
         guard !createBusy else { return }
         createPresented = false

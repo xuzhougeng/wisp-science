@@ -27,7 +27,7 @@
 - [ ] 项目：目录导入、ZIP/目录导出、历史恢复、快照状态与同步操作均已实现；收尾后端检查、完整回归及 CUA 导入/导出/同步闭环验收。
 - [ ] ChatGPT 订阅：已有 keyring/认证路径的登录、状态、取消、过期与重新登录已实现；标准 QA 构建和 CUA 入口/两层 Escape 已通过；真实 OAuth 过程未发起，生命周期由隔离 transport 测试覆盖。
 - [ ] ACP：权限选项/取消与问题回复已实现；会话创建/恢复、发送/停止已接入；完整 fake ACP process CUA、首次发送前选择的持久化仍待完成。
-- [ ] 会话：重命名入口与会话范围保存已实现，CUA 待验；删除/批量整理、置顶、跨项目复制/移动、导出、分支导航仍待完成。
+- [ ] 会话：重命名与置顶入口、会话范围保存已实现，CUA 待验；删除/批量整理、跨项目复制/移动、导出、分支导航仍待完成。
 - [ ] 论文：论文/版本导航、条目/证据管理、检查、冻结。
 - [ ] 输入与上下文：@/#/slash、上下文快照与手动压缩。
 - [ ] 阅读：数学/图片、Markdown/CSV 预览、科学 viewer 支持表与对应实现。
@@ -73,3 +73,6 @@
 - 会话重命名：顶部编辑入口、显式项目/会话参数、成功后刷新标题、失败保留输入、不自动重试、导航隔离、窗口级立即 Escape。新增 5 项 Swift 回归通过；全套 Swift 263 passed（UI 248 + 基础 15，含所有 opt-in render），日志 `/tmp/wisp-parity-session-rename-full-swift.log`；DTO 63 passed（`/tmp/wisp-parity-session-rename-dto.log`）；wasm check 通过（`/tmp/wisp-parity-session-rename-wasm.log`）。宿主 QA 重建中，尚未 CUA 验收。
 
 - `fca972e3` QA 重建与签名验证通过；隔离真实宿主协议验收全部通过：发送、权限选择、dead process 恢复、运行中 Stop、初始化 Stop（约 0.283 秒且子进程退出）、host 重启后的持久绑定恢复。重命名拒绝跨项目/空名称，名称经只读查询确认持久保存。日志 `/tmp/wisp-parity-native-acp-host-smoke.log`、`/tmp/wisp-parity-native-acp-host-resume.log`。这些是 API/进程验收，不能代替仍待解锁的 CUA。
+
+- 会话置顶：复用持久状态与共享 pin 图标，置顶分区不重复列出分组中的会话；未知状态禁用、请求失败不重试、导航后旧回调隔离。侧栏元数据刷新保留会话选择、草稿和历史页游标。定向 Swift 26 passed（`/tmp/wisp-parity-session-pin-navigation-swift.log`）；全套 Swift 271 passed（UI 256 + 基础 15，含全部 opt-in render，`/tmp/wisp-parity-session-pin-full-swift.log`）；wasm check、设计/契约同步检查、格式检查通过。Rust 项目查询首轮 7 passed、DTO 全套 64 passed（`/tmp/wisp-parity-session-pin-rust.log`）；旧数据库 pin 字段缺失时保持历史可读，新增兼容测试另轮运行中（`/tmp/wisp-parity-session-pin-compat-rust.log`）。稳定代码的 workspace 全套运行中（`/tmp/wisp-parity-session-pin-workspace.log`）；新版 QA 包/CUA 待完成。
+- ACP/重命名之后的 workspace 全套未完成：编译期间修改了 DTO，旧 `RecentSession` 编译产物与新增 `pinned` 调用不一致，编译退出 101，未进入完整测试；保留 `/tmp/wisp-parity-acp-rename-workspace.log`。稳定代码后重新执行全套，不把此前全绿结果当作本批验证。

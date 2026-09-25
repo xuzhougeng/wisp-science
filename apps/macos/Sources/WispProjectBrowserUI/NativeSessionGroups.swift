@@ -15,7 +15,7 @@ struct SessionSection: Equatable, Identifiable {
 
 enum SessionArrangement {
     static func sections(_ sessions: [BrowserSession], folders: [ProjectFolder], sort: String, group: String) -> [SessionSection] {
-        let ordered = sessions.sorted { left, right in
+        let all = sessions.sorted { left, right in
             if sort == "name" {
                 let order = left.title.localizedStandardCompare(right.title)
                 if order != .orderedSame { return order == .orderedAscending }
@@ -24,6 +24,9 @@ enum SessionArrangement {
             if left.ts != right.ts { return left.ts > right.ts }
             return left.id < right.id
         }
+        let pinned = all.filter { $0.pinned == true }
+        let ordered = all.filter { $0.pinned != true }
+        var result: [SessionSection]
         switch group {
         case "folder":
             var sections = folders.map { folder in
@@ -33,7 +36,7 @@ enum SessionArrangement {
             if !ungrouped.isEmpty || sections.isEmpty {
                 sections.append(SessionSection(title: "未分组", folderID: nil, sessions: ungrouped))
             }
-            return sections
+            result = sections
         case "date":
             let formatter = DateFormatter()
             formatter.dateStyle = .medium
@@ -45,10 +48,15 @@ enum SessionArrangement {
                 if grouped[title] == nil { titles.append(title) }
                 grouped[title, default: []].append(session)
             }
-            return titles.map { SessionSection(title: $0, folderID: nil, sessions: grouped[$0] ?? []) }
+            result = titles.map { SessionSection(title: $0, folderID: nil, sessions: grouped[$0] ?? []) }
         default:
-            return [SessionSection(title: "会话", folderID: nil, sessions: ordered)]
+            result = [SessionSection(title: "会话", folderID: nil, sessions: ordered)]
         }
+        if !pinned.isEmpty {
+            result.removeAll { $0.folderID == nil && $0.sessions.isEmpty }
+            result.insert(SessionSection(title: "已置顶", folderID: nil, sessions: pinned), at: 0)
+        }
+        return result
     }
 }
 

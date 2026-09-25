@@ -248,6 +248,16 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     }
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_pin" => {
+            let args: dto::PinRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "set_session_pinned",
+                json!({"id":session,"pinned":args.pinned}),
+            )
+            .await
+        }
         "native_conversation_rename" => {
             let args: dto::RenameRequest = decode(&request.args)?;
             call(

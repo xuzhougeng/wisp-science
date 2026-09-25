@@ -24,13 +24,14 @@ private actor RenameClient: NativeConversationQuerying {
 
 final class NativeSessionRenameTests: XCTestCase {
     private func session(_ id: String = "s", project: String = "p") -> BrowserSession {
-        BrowserSession(id: id, projectID: project, title: "Old title", ts: 42, status: "complete", folderID: "folder")
+        BrowserSession(id: id, projectID: project, title: "Old title", ts: 42, status: "complete", folderID: "folder", pinned: true)
     }
     @MainActor func testSaveUsesExactProjectAndSessionAndReturnsConfirmedTitle() async throws {
         let client = RenameClient(); let model = NativeSessionRename()
         model.begin(session()); model.draft = "  样本分析  \n"
         let result = await model.save(client)
         XCTAssertEqual(result?.title, "样本分析"); XCTAssertEqual(result?.folderID, "folder")
+        XCTAssertEqual(result?.pinned, true)
         XCTAssertNil(model.target); XCTAssertFalse(model.busy)
         let writes = await client.writes()
         XCTAssertEqual(writes.count, 1); XCTAssertEqual(writes[0].0, "native_conversation_rename")
