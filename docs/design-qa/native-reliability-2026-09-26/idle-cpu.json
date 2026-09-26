@@ -1,0 +1,37 @@
+{
+  "pids": {
+    "native_shell": 21759,
+    "native_helper": 39125,
+    "webview_host": 28337
+  },
+  "samples": [
+    {
+      "iteration": 1,
+      "seconds": 10.019229375058785,
+      "cpu_percent_one_core": {
+        "native_shell": 1.697,
+        "native_helper": 1.198,
+        "webview_host": 0.998
+      }
+    },
+    {
+      "iteration": 2,
+      "seconds": 10.020433166995645,
+      "cpu_percent_one_core": {
+        "native_shell": 1.896,
+        "native_helper": 1.098,
+        "webview_host": 0.998
+      }
+    },
+    {
+      "iteration": 3,
+      "seconds": 10.016963165951893,
+      "cpu_percent_one_core": {
+        "native_shell": 1.997,
+        "native_helper": 1.198,
+        "webview_host": 1.098
+      }
+    }
+  ],
+  "scope": "Application main process and native helper only. Excludes WebKit auxiliary/XPC processes, so not a whole-product CPU comparison. Both clients on 35-turn history, no build/test workload or CUA actions during sampling."
+}

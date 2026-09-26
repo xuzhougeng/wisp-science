@@ -178,6 +178,19 @@ user choice. Attachments, ACP composers and PNG share export remain follow-ups.
 
 ## Verification and manual smoke
 
+The [2026-09-26 reliability acceptance record](design-qa/native-reliability-2026-09-26/README.md)
+contains a reusable legacy 35-turn fixture, paired native/WebView screenshots,
+loopback HTTP evidence for both send preferences and rapid paste, and warm
+conversation-switch measurements. In-process session/window draft recovery was
+verified. Draft preservation during a normal HTTP tool approval was also verified, including
+navigation, feedback-editor Escape and rejection. The user manually verified Chinese IME confirmation under both send preferences;
+CUA and HTTP/store checks confirmed the retained draft and one explicit send. The
+candidate overlay itself was not independently recorded, so this is collaborative
+manual evidence, not an automated IME test. The
+performance record includes Computer Use overhead, not frame timing, and its CPU
+scope excludes WebKit auxiliary processes. English preferences still leave Chinese
+workspace labels; raw Usage JSON in the transcript is another recorded follow-up.
+
 Automated tests use temporary stores and fake native transports, without API keys,
 SSH hosts or external network calls. They cover ownership, duplicate-send handling,
 stale approvals, ACP reply scope/expiry/duplicate handling, shared fixtures, snapshot order/host restarts, read failures,

@@ -1,0 +1,12 @@
+{"at": 1790400049.086894, "path": "/v1/chat/completions", "text": "快速粘贴验收 02：确认新文本"}
+{"at": 1790400078.9780679, "path": "/v1/chat/completions", "text": "快速粘贴验收 03：只保留新文本"}
+{"at": 1790400080.995862, "path": "/v1/chat/completions", "text": "快速粘贴验收 04：只保留新文本"}
+{"at": 1790400082.703849, "path": "/v1/chat/completions", "text": "快速粘贴验收 05：只保留新文本"}
+{"at": 1790400086.212042, "path": "/v1/chat/completions", "text": "快速粘贴验收 06：只保留新文本"}
+{"at": 1790400089.1870358, "path": "/v1/chat/completions", "text": "快速粘贴验收 07：只保留新文本"}
+{"at": 1790400103.02989, "path": "/v1/chat/completions", "text": "Shift 换行验收：第一行\n第二行"}
+{"at": 1790400184.921963, "path": "/v1/chat/completions", "text": "组合键模式第一行\n第二行"}
+{"at": 1790406723.762367, "path": "/v1/chat/completions", "text": "普通审批草稿验收"}
+{"at": 1790406767.1134012, "path": "/v1/chat/completions", "text": "普通审批草稿验收"}
+{"at": 1790407039.414978, "path": "/v1/chat/completions", "text": "审批等待时保留的草稿，不自动发送"}
+{"at": 1790407374.7548008, "path": "/v1/chat/completions", "text": "shi"}

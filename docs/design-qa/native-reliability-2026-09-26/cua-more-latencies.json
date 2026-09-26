@@ -1,0 +1,154 @@
+[
+  {
+    "client": "webview",
+    "metric": "home_recent_open",
+    "iteration": 1,
+    "ms": 1283,
+    "visible": true,
+    "history_visible": true,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "webview",
+    "metric": "home_recent_open",
+    "iteration": 2,
+    "ms": 1552,
+    "visible": true,
+    "history_visible": true,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "webview",
+    "metric": "home_recent_open",
+    "iteration": 3,
+    "ms": 1695,
+    "visible": true,
+    "history_visible": true,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "webview",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 1,
+    "ms": 832,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ]
+  },
+  {
+    "client": "webview",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 2,
+    "ms": 1313,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ]
+  },
+  {
+    "client": "webview",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 3,
+    "ms": 1301,
+    "visible_samples": [
+      "S32",
+      "S33",
+      "S34",
+      "S35"
+    ]
+  },
+  {
+    "client": "native",
+    "metric": "home_recent_open",
+    "iteration": 1,
+    "ms": 1737,
+    "visible": false,
+    "history_visible": true,
+    "visible_samples": [
+      "S33",
+      "S34"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "native",
+    "metric": "home_recent_open",
+    "iteration": 2,
+    "ms": 1790,
+    "visible": false,
+    "history_visible": true,
+    "visible_samples": [
+      "S33",
+      "S34"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "native",
+    "metric": "home_recent_open",
+    "iteration": 3,
+    "ms": 1722,
+    "visible": false,
+    "history_visible": true,
+    "visible_samples": [
+      "S33",
+      "S34"
+    ],
+    "measurement_note": "Home recent-session click to first AX observation containing the target history; visible field retains whether S35 was in that first observation. Warm process, not OS/process cold start."
+  },
+  {
+    "client": "native",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 1,
+    "ms": 965,
+    "visible_samples": [
+      "S33",
+      "S34",
+      "S35"
+    ]
+  },
+  {
+    "client": "native",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 2,
+    "ms": 987,
+    "visible_samples": [
+      "S33",
+      "S34",
+      "S35"
+    ]
+  },
+  {
+    "client": "native",
+    "metric": "scroll_up_one_page_ax",
+    "iteration": 3,
+    "ms": 1048,
+    "visible_samples": [
+      "S34",
+      "S35"
+    ]
+  }
+]

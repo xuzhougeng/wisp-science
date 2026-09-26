@@ -1,0 +1,7 @@
+{
+  "project_id": "phase2-reliability-20260926-v2",
+  "database_sha256": "593b9479471b445ae408656b8468e5fb98cc1782b0de70603fd182a0ba3aa469",
+  "messages": 72,
+  "sessions": 2,
+  "format": "archive_kind=wisp-project, archive_version=1"
+}

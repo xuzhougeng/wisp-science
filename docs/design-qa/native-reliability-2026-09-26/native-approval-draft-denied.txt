@@ -1,0 +1,85 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 快速粘贴验收 02：确认新文本
+		6 menu button 会话操作
+		7 button 会话大纲
+		8 button 分享
+		9 button 运行轨迹
+		10 button 研究归档
+		11 button 待查看
+		12 button 终端
+		13 button 切换侧面板
+		14 button 新建会话
+		15 button 搜索, ⌘K
+		16 button Description: 新建分组, ID: new-session-group
+		17 button Description: 文件, ID: sidebar-files
+		18 button Description: 研究历程, ID: sidebar-journey
+		19 button Description: 论文证据, ID: sidebar-publication
+		20 button Description: 收藏, ID: sidebar-library
+		21 text 会话
+		22 button 选择
+		23 button 排序与分组
+		24 scroll area
+			25 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				26 button (selected) Description: 快速粘贴验收 02：确认新文本, ID: session-87bb2a7c-453d-4504-87ad-a24d30a631a6
+				27 button Description: 35-turn 可靠性基线, ID: session-phase2-v2-35-turns
+				28 button Description: 旧格式导入验收, ID: session-phase2-v2-legacy-history
+		29 scroll area Secondary Actions: Scroll Up, Scroll Down
+			30 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				31 text Wisp Science
+				32 text entry area {"input":0,"output":0,"reasoning":0,"cached":0,"ctx_tokens":13348,"max_context":128000,"context_usage":{"system_prompt":1912,"tool_definitions":1980,"rules":570,"skills":590,"mcp_dynamic_tools":7749,"subagent_definitions":193,"conversation":354}}
+
+				33 text 你
+				34 text entry area 组合键模式第一行 第二行
+
+				35 text Wisp Science
+				36 text entry area 本地验收服务收到：组合键模式第一行 第二行
+
+				37 text Wisp Science
+				38 text entry area {"input":0,"output":0,"reasoning":0,"cached":0,"ctx_tokens":13465,"max_context":128000,"context_usage":{"system_prompt":1912,"tool_definitions":1980,"rules":570,"skills":590,"mcp_dynamic_tools":7749,"subagent_definitions":193,"conversation":471}}
+
+				39 text 你
+				40 text entry area 普通审批草稿验收
+
+				41 text shell
+				42 text 失败
+				43 disclosure triangle Description: tool 'shell' was denied by the user, Value: off
+				44 text Wisp Science
+				45 text entry area 本地验收服务收到：普通审批草稿验收
+
+				46 text Wisp Science
+				47 text entry area {"input":0,"output":0,"reasoning":0,"cached":0,"ctx_tokens":13592,"max_context":128000,"context_usage":{"system_prompt":1912,"tool_definitions":1980,"rules":570,"skills":590,"mcp_dynamic_tools":7749,"subagent_definitions":193,"conversation":598}}
+
+			48 scroll bar (settable, float) 0.9915004903563256
+				49 value indicator (settable, float) 0.9915004903563256
+				50 increment arrow button
+				51 decrement arrow button
+				52 increment page button
+				53 decrement page button
+		54 button Description: 能力, ID: sidebar-capabilities
+		55 button Description: 反馈问题, ID: sidebar-feedback
+		56 scroll area
+			57 text entry area (settable) Description: 消息输入框, Value: 审批等待时保留的草稿，不自动发送
+		58 button 设置
+		59 button Description: 对话附件, Help: 添加到消息, ID: composer-attach
+		60 menu button QA 本地输入验收
+		61 button 发送
+		62 text Help: /private/tmp/wisp-reliability-20260926/legacy-native-v2/workspace, Value: /private/tmp/wisp-reliability-20260926/legacy-native-v2/workspace Enter 发送 · Shift+Enter 换行
+		63 checkbox Description: 跟随最新回复, Value: 1
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text Wisp Science — 原生预览
+68 menu bar
+	69 Wisp Science QA
+	70 File
+	71 Edit
+	72 View
+	73 Window
+	74 Help
+
+The focused UI element is 57 text entry area (settable) Description: 消息输入框, Value: 审批等待时保留的草稿，不自动发送

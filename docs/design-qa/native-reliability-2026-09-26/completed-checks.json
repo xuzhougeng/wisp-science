@@ -1,0 +1,72 @@
+[
+  {
+    "check": "cargo fmt",
+    "result": "passed",
+    "local_log": "/tmp/wisp-phase2-fmt.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "check": "Swift focused",
+    "result": "29 passed",
+    "local_log": "/tmp/wisp-phase2-focused-swift.log",
+    "sha256": "b85f33d39042a24a5139a8eb569e233baeed7b38cd02709f5dcc6c4ddb0590f6",
+    "bytes": 10118
+  },
+  {
+    "check": "Swift full",
+    "result": "289 passed",
+    "local_log": "/tmp/wisp-phase2-full-swift.log",
+    "sha256": "80b1d0afec8ed34213c9e443d4b4af4d274e47e619038e3d2e155462fa9c9756",
+    "bytes": 90435
+  },
+  {
+    "check": "native QA build",
+    "result": "passed",
+    "local_log": "/tmp/wisp-phase2-native-build.log",
+    "sha256": "c78d9b45a017b19fccc8c7fc0d945b099eddd3472a62d98af6600a4fca360885",
+    "bytes": 10352
+  },
+  {
+    "check": "WebView UI build",
+    "result": "passed",
+    "local_log": "/tmp/wisp-phase2-web-ui-build.log",
+    "sha256": "f125c2e8c32798e0779ee9c7af044618e131dd42be043b9a71c748ab5178c860",
+    "bytes": 266
+  },
+  {
+    "check": "WebView host build",
+    "result": "passed",
+    "local_log": "/tmp/wisp-phase2-web-build.log",
+    "sha256": "fe021f520aad65d4123b46875f80eff8b578452186ee66b4407c2aeec4714145",
+    "bytes": 9658
+  },
+  {
+    "check": "npm ci",
+    "result": "passed",
+    "local_log": "/tmp/wisp-phase2-npm-ci.log",
+    "sha256": "2d097be94f8ea14f971e69823d5fd2273d3bcb5b679d3c4e5cb61fa6a294682d",
+    "bytes": 121
+  },
+  {
+    "check": "Rust workspace",
+    "result": "2361 passed, 0 failed across 41 standard result summaries; complete through final doc-test",
+    "local_log": "/tmp/wisp-phase2-full-rust.log",
+    "sha256": "b99836e3fbd6617d13ccde566a710056b99a60744141e0f4a2cee6b6116e82e4",
+    "bytes": 214318
+  },
+  {
+    "check": "wasm check",
+    "result": "exit 0",
+    "local_log": "/tmp/wisp-phase2-wasm.log",
+    "sha256": "32d47f791eadf1ea833d9f8c84fbfea5cab1f438e113e93be05bd5b908e1c2ac",
+    "bytes": 72
+  },
+  {
+    "check": "Playwright full",
+    "result": "exit 0; 870 passed, 2 skipped; 19.0 minutes",
+    "local_log": "/tmp/wisp-phase2-playwright.log",
+    "sha256": "1f2e0570026e317bd0b3377066032c798f0d33b780b61955e9828a33b48a26f9",
+    "bytes": 105401
+  }
+]

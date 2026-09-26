@@ -1,0 +1,14 @@
+{
+  "method": "User manually created Sogou composition and confirmed key behavior; CUA observed the retained draft afterward. Candidate overlay itself was not independently captured.",
+  "enter_mode_user_report": "文字仍留在输入框、没有发送",
+  "modifier_mode_user_report": "文字仍在输入框，未发送",
+  "observed_draft": "shi",
+  "user_messages_before_explicit_send": 10,
+  "http_requests_before_explicit_send": 11,
+  "handoff_trial_excluded": "An earlier CUA Return sent the old synthetic approval draft before an observable composition was established; excluded from successful manual IME cases.",
+  "user_messages_after_explicit_send": 11,
+  "http_requests_after_explicit_send": 12,
+  "explicit_send_text": "shi",
+  "explicit_send_count": 1,
+  "send_preference_restored": "Enter sends / Shift+Enter newline"
+}

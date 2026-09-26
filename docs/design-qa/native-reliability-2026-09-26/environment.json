@@ -1,0 +1,20 @@
+{
+  "date": "2026-09-26",
+  "timezone": "Asia/Shanghai",
+  "os": "26.6.2",
+  "os_build": "25G83",
+  "hardware": "MacBookPro18,2",
+  "cpu": "Apple M1 Max",
+  "ram_bytes": 34359738368,
+  "requested_window_points": [
+    1100,
+    800
+  ],
+  "paired_screenshot_pixels": [
+    1056,
+    768
+  ],
+  "window_note": "CUA bottom-right resize; dimensions not independently queried. Both returned images have the same pixel dimensions.",
+  "load": "No heavy test/build commands during warm-switch samples; other user applications remained open. No isolated laboratory claim.",
+  "renderer_note": "Native snapshot API paginates latest 20 user turns; 35-turn storage fixture does not imply all 70 messages are mounted simultaneously."
+}
