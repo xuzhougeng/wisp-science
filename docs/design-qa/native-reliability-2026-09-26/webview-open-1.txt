@@ -1,0 +1,227 @@
+Window: "wisp science — 可靠性阶段2验收", App: Wisp Science Parity WebView.
+0 standard window wisp science — 可靠性阶段2验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 可靠性阶段2验收, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 可靠性阶段2验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 今天
+				18 button 35-turn 可靠性基线
+				19 button 会话操作
+				20 button 旧格式导入验收
+				21 button 会话操作
+				22 text 29 技能 · 23 MCP · 0 记忆
+				23 button 能力
+				24 button 反馈
+				25 button 设置
+			26 container (showing 341-441 of 441 items)
+				27 summary 已生成 · 1, Value: off
+					28 text 已生成 · 1
+				29 button 记忆
+				30 button 审查
+				31 button 开始探索
+				32 button 分支
+				33 button 复制消息
+				34 text 第 32 轮：检查合成样本 S32。
+				35 container 发送于 2026/9/26 13:18:58
+					36 text 13:18
+				37 button 复制
+				38 button 回溯
+				39 button 分支
+				40 text WISP-SCIENCE
+				41 container 回复于 2026/9/26 13:18:59
+					42 text 13:18
+				43 heading 样本 S32 检查结果, Value: 2
+					44 text 样本 S32 检查结果
+				45 text 这是第 32 轮的固定验收内容，不来自真实实验。
+				46 content list
+					47 container 读取：完成
+						48 list marker •
+						49 text 读取：完成
+					50 container 样本名称：S32
+						51 list marker •
+						52 text 样本名称：S32
+				53 button 复制表格
+				54 table
+					55 row (selectable) 指标
+数值
+					56 row (selectable)
+						57 cell (selectable) reads
+						58 cell (selectable) 32000
+					59 row (selectable)
+						60 cell (selectable) ratio
+						61 cell (selectable) 0.95
+				62 button 复制代码
+				63 container
+					64 text print ( "S32" )
+
+				65 text 两个客户端应显示相同的文本与结构。
+				66 summary 已生成 · 1, Value: off
+					67 text 已生成 · 1
+				68 button 记忆
+				69 button 审查
+				70 button 开始探索
+				71 button 分支
+				72 button 复制消息
+				73 text 第 33 轮：检查合成样本 S33。
+				74 container 发送于 2026/9/26 13:19:00
+					75 text 13:19
+				76 button 复制
+				77 button 回溯
+				78 button 分支
+				79 text WISP-SCIENCE
+				80 container 回复于 2026/9/26 13:19:01
+					81 text 13:19
+				82 heading 样本 S33 检查结果, Value: 2
+					83 text 样本 S33 检查结果
+				84 text 这是第 33 轮的固定验收内容，不来自真实实验。
+				85 content list
+					86 container 读取：完成
+						87 list marker •
+						88 text 读取：完成
+					89 container 样本名称：S33
+						90 list marker •
+						91 text 样本名称：S33
+				92 button 复制表格
+				93 table
+					94 row (selectable) 指标
+数值
+					95 row (selectable)
+						96 cell (selectable) reads
+						97 cell (selectable) 33000
+					98 row (selectable)
+						99 cell (selectable) ratio
+						100 cell (selectable) 0.95
+				101 button 复制代码
+				102 container
+					103 text print ( "S33" )
+
+				104 text 两个客户端应显示相同的文本与结构。
+				105 summary 已生成 · 1, Value: off
+					106 text 已生成 · 1
+				107 button 记忆
+				108 button 审查
+				109 button 开始探索
+				110 button 分支
+				111 button 复制消息
+				112 text 第 34 轮：检查合成样本 S34。
+				113 container 发送于 2026/9/26 13:19:02
+					114 text 13:19
+				115 button 复制
+				116 button 回溯
+				117 button 分支
+				118 text WISP-SCIENCE
+				119 container 回复于 2026/9/26 13:19:03
+					120 text 13:19
+				121 heading 样本 S34 检查结果, Value: 2
+					122 text 样本 S34 检查结果
+				123 text 这是第 34 轮的固定验收内容，不来自真实实验。
+				124 content list
+					125 container 读取：完成
+						126 list marker •
+						127 text 读取：完成
+					128 container 样本名称：S34
+						129 list marker •
+						130 text 样本名称：S34
+				131 button 复制表格
+				132 table
+					133 row (selectable) 指标
+数值
+					134 row (selectable)
+						135 cell (selectable) reads
+						136 cell (selectable) 34000
+					137 row (selectable)
+						138 cell (selectable) ratio
+						139 cell (selectable) 0.95
+				140 button 复制代码
+				141 container
+					142 text print ( "S34" )
+
+				143 text 两个客户端应显示相同的文本与结构。
+				144 summary 已生成 · 1, Value: off
+					145 text 已生成 · 1
+				146 button 记忆
+				147 button 审查
+				148 button 开始探索
+				149 button 分支
+				150 button 复制消息
+				151 text 第 35 轮：检查合成样本 S35。
+				152 container 发送于 2026/9/26 13:19:04
+					153 text 13:19
+				154 button 复制
+				155 button 回溯
+				156 button 分支
+				157 text WISP-SCIENCE
+				158 container 回复于 2026/9/26 13:19:05
+					159 text 13:19
+				160 heading 样本 S35 检查结果, Value: 2
+					161 text 样本 S35 检查结果
+				162 text 这是第 35 轮的固定验收内容，不来自真实实验。
+				163 content list
+					164 container 读取：完成
+						165 list marker •
+						166 text 读取：完成
+					167 container 样本名称：S35
+						168 list marker •
+						169 text 样本名称：S35
+				170 button 复制表格
+				171 table
+					172 row (selectable) 指标
+数值
+					173 row (selectable)
+						174 cell (selectable) reads
+						175 cell (selectable) 35000
+					176 row (selectable)
+						177 cell (selectable) ratio
+						178 cell (selectable) 0.95
+				179 button 复制代码
+				180 container
+					181 text print ( "S35" )
+
+				182 text 两个客户端应显示相同的文本与结构。
+				183 summary 已生成 · 1, Value: off
+					184 text 已生成 · 1
+				185 button 记忆
+				186 button 审查
+				187 button 开始探索
+				188 button 分支
+				189 button 复制消息
+				190 button 撤销
+				191 container 当前对话绑定的服务器与运行时
+					192 button 打开 Local 的交互运行时
+					193 button 打开 Local 上的 Python
+					194 button 打开 Local 上的 R
+				195 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					196 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				197 button 添加到消息
+				198 button Agent 选项
+				199 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				200 button QA HTTP (offline) ▾
+				201 button 发送
+				202 button 消息选项
+				203 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+	204 close button
+	205 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	206 minimize button
+	207 text wisp science — 可靠性阶段2验收
+208 menu bar
+	209 Wisp Science Parity WebView
+	210 文件
+	211 编辑
+	212 视图
+	213 窗口
+	214 帮助
+
+The focused UI element is 2 HTML content Description: wisp science — 可靠性阶段2验收, URL: tauri://localhost

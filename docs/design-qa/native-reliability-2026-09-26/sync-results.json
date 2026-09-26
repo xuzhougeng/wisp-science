@@ -1,0 +1,30 @@
+[
+  {
+    "revision_id": "f2ea1abc-088a-4736-8ea0-316cb85ae7e6",
+    "parents": [
+      "5b6346df-5063-4d94-9848-e8c96634d6ff",
+      "8e10c7a8-c3d7-4c05-bb62-50a246dd092e"
+    ],
+    "database_available_at_evidence_collection": false
+  },
+  {
+    "revision_id": "c361b8d1-b41a-4264-b3a3-113f002a28cd",
+    "parents": [
+      "b2eb3400-bfe5-4287-b5f4-ec6a7bc25645",
+      "f2ea1abc-088a-4736-8ea0-316cb85ae7e6"
+    ],
+    "database_available_at_evidence_collection": true,
+    "description": "",
+    "database_hash_matches": true
+  },
+  {
+    "revision_id": "5f0a0752-ca9b-409e-848e-566ac6a58cc5",
+    "parents": [
+      "c361b8d1-b41a-4264-b3a3-113f002a28cd",
+      "ed7b3fb1-c3ef-4549-a9a8-f8e392e90c36"
+    ],
+    "database_available_at_evidence_collection": true,
+    "description": "REMOTE phase2: adopted via explicit confirmation",
+    "database_hash_matches": true
+  }
+]

@@ -1,0 +1,96 @@
+{
+  "initial": [
+    {
+      "client": "native",
+      "metric": "warm_switch_35_turns",
+      "iteration": 1,
+      "ms": 1103,
+      "visible": false
+    },
+    {
+      "client": "native",
+      "metric": "warm_switch_35_turns",
+      "iteration": 2,
+      "ms": 1152,
+      "visible": true
+    },
+    {
+      "client": "native",
+      "metric": "warm_switch_35_turns",
+      "iteration": 3,
+      "ms": 1143,
+      "visible": true
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_35_turns",
+      "iteration": 1,
+      "ms": 1351,
+      "visible": true
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_35_turns",
+      "iteration": 2,
+      "ms": 1357,
+      "visible": true
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_35_turns",
+      "iteration": 3,
+      "ms": 1297,
+      "visible": true
+    }
+  ],
+  "verified": [
+    {
+      "client": "native",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 1,
+      "ms": 1130,
+      "visible": true,
+      "probes": 1
+    },
+    {
+      "client": "native",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 2,
+      "ms": 1050,
+      "visible": true,
+      "probes": 1
+    },
+    {
+      "client": "native",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 3,
+      "ms": 1106,
+      "visible": true,
+      "probes": 1
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 1,
+      "ms": 1367,
+      "visible": true,
+      "probes": 1
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 2,
+      "ms": 1347,
+      "visible": true,
+      "probes": 1
+    },
+    {
+      "client": "webview",
+      "metric": "warm_switch_visible_35_turns",
+      "iteration": 3,
+      "ms": 1398,
+      "visible": true,
+      "probes": 1
+    }
+  ]
+}

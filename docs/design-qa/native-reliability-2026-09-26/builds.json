@@ -1,0 +1,10 @@
+{
+  "revision": "82256473838ddb281e8eb6bd1a758286fc356e0c",
+  "native": "target/native-macos-qa/Wisp Science QA.app",
+  "webview": "target/parity-20260925/Wisp Science Parity WebView.app",
+  "ui_dist": "target/parity-20260925/web-dist",
+  "code_baseline": "f684c799; only phase scope docs differ",
+  "native_log": "/tmp/wisp-phase2-native-build.log",
+  "web_ui_log": "/tmp/wisp-phase2-web-ui-build.log",
+  "web_host_log": "/tmp/wisp-phase2-web-build.log"
+}

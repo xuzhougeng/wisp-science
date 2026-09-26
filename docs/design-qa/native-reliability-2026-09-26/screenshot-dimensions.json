@@ -1,0 +1,66 @@
+{
+  "native-zh-light-wide.jpg": [
+    1056,
+    768
+  ],
+  "native-zh-light-narrow.jpg": [
+    800,
+    768
+  ],
+  "native-zh-dark-wide.jpg": [
+    1056,
+    768
+  ],
+  "native-zh-dark-narrow.jpg": [
+    800,
+    768
+  ],
+  "native-en-light-wide.jpg": [
+    1056,
+    768
+  ],
+  "native-en-light-narrow.jpg": [
+    800,
+    768
+  ],
+  "native-en-dark-wide.jpg": [
+    1056,
+    768
+  ],
+  "native-en-dark-narrow.jpg": [
+    800,
+    768
+  ],
+  "webview-zh-light-wide.jpg": [
+    1056,
+    768
+  ],
+  "webview-zh-light-narrow.jpg": [
+    800,
+    768
+  ],
+  "webview-zh-dark-wide.jpg": [
+    1056,
+    768
+  ],
+  "webview-zh-dark-narrow.jpg": [
+    800,
+    768
+  ],
+  "webview-en-light-wide.jpg": [
+    1056,
+    768
+  ],
+  "webview-en-light-narrow.jpg": [
+    800,
+    768
+  ],
+  "webview-en-dark-wide.jpg": [
+    1056,
+    768
+  ],
+  "webview-en-dark-narrow.jpg": [
+    800,
+    768
+  ]
+}

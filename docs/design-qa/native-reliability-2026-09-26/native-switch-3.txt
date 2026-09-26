@@ -1,0 +1,103 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 35-turn 可靠性基线
+		6 menu button 会话操作
+		7 button 会话大纲
+		8 button 分享
+		9 button 运行轨迹
+		10 button 研究归档
+		11 button 待查看
+		12 button 终端
+		13 button 切换侧面板
+		14 button 新建会话
+		15 button 搜索, ⌘K
+		16 button Description: 新建分组, ID: new-session-group
+		17 button Description: 文件, ID: sidebar-files
+		18 button Description: 研究历程, ID: sidebar-journey
+		19 button Description: 论文证据, ID: sidebar-publication
+		20 button Description: 收藏, ID: sidebar-library
+		21 text 会话
+		22 button 选择
+		23 button 排序与分组
+		24 scroll area
+			25 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				26 button Description: 快速粘贴验收 02：确认新文本, ID: session-87bb2a7c-453d-4504-87ad-a24d30a631a6
+				27 button (selected) Description: 35-turn 可靠性基线, ID: session-phase2-v2-35-turns
+				28 button Description: 旧格式导入验收, ID: session-phase2-v2-legacy-history
+		29 scroll area Secondary Actions: Scroll Up, Scroll Down
+			30 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				31 text Wisp Science
+				32 text entry area **样本 S33 检查结果**
+这是第 33 轮的固定验收内容，不来自真实实验。
+• 读取：完成
+• 样本名称：S33
+**指标
+数值**
+reads
+33000
+ratio
+0.95
+print("S33")
+两个客户端应显示相同的文本与结构。
+
+					33 unknown Description: 复制表格, ID: message-block-copy-table-8
+						34 button Description: 复制表格, ID: message-block-copy-table-8
+					35 unknown Description: 复制代码, ID: message-block-copy-code-18
+						36 button Description: 复制代码, ID: message-block-copy-code-18
+				37 text 你
+				38 text entry area 第 34 轮：检查合成样本 S34。
+
+				39 text Wisp Science
+				40 text entry area **样本 S34 检查结果**
+这是第 34 轮的固定验收内容，不来自真实实验。
+• 读取：完成
+• 样本名称：S34
+**指标
+数值**
+reads
+34000
+ratio
+0.95
+print("S34")
+两个客户端应显示相同的文本与结构。
+
+					41 unknown Description: 复制表格, ID: message-block-copy-table-8
+						42 button Description: 复制表格, ID: message-block-copy-table-8
+					43 unknown Description: 复制代码, ID: message-block-copy-code-18
+						44 button Description: 复制代码, ID: message-block-copy-code-18
+				45 text 你
+				46 text entry area 第 35 轮：检查合成样本 S35。
+
+			47 scroll bar (settable, float) 0.9437367303609342
+				48 value indicator (settable, float) 0.9437367303609342
+				49 increment arrow button
+				50 decrement arrow button
+				51 increment page button
+				52 decrement page button
+		53 button Description: 能力, ID: sidebar-capabilities
+		54 button Description: 反馈问题, ID: sidebar-feedback
+		55 scroll area
+			56 text entry area (settable) 消息输入框
+		57 button 设置
+		58 button Description: 对话附件, Help: 添加到消息, ID: composer-attach
+		59 menu button QA 本地输入验收
+		60 button (disabled) 发送
+		61 text Help: /private/tmp/wisp-reliability-20260926/legacy-native-v2/workspace, Value: /private/tmp/wisp-reliability-20260926/legacy-native-v2/workspace ⌘Enter 发送 · Enter 换行
+		62 checkbox Description: 跟随最新回复, Value: 1
+	63 close button
+	64 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	65 minimize button
+	66 text Wisp Science — 原生预览
+67 menu bar
+	68 Wisp Science QA
+	69 File
+	70 Edit
+	71 View
+	72 Window
+	73 Help
+
+The focused UI element is 56 text entry area (settable) 消息输入框

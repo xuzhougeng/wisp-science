@@ -2,6 +2,10 @@
 
 Wisp has SwiftUI (macOS) and WinUI 3 (Windows) project browsers alongside the existing Tauri client.
 
+The next GitHub Release containing the packaging change also provides signed,
+notarized **SwiftUI Preview** DMGs for Apple Silicon and Intel, alongside the
+WebView installers. See [installation, shared data, and manual preview updates](app-updates.md#swiftui-preview-alongside-the-macos-release).
+
 For current Windows coverage of PRs #1332–#1351, validation, and remaining differences, see [Windows native parity](native-windows-parity.md). Earlier milestone sections below describe their original delivery boundaries.
 It lists real projects, preserves the desktop's ordering and metadata, searches
 names/descriptions/paths, refreshes on demand, and reveals a selected workspace
@@ -450,6 +454,13 @@ flight the submit button stays disabled, including a second click.
 WinUI provides the corresponding native form, folder picker, standard-layout convention and host call through `INativeProjectClient.CreateAsync`.
 
 ## Importing a project
+
+The [2026-09-26 reliability acceptance record](design-qa/native-reliability-2026-09-26/README.md)
+verifies legacy directory registration and readable history, immediate Escape
+from the macOS directory picker, and explicit local/remote conflict resolution
+with different-content synthetic revisions. It includes failure/retry evidence
+and a reusable synthetic archive. These checks use isolated local stores and do
+not claim real cloud-drive or multi-device validation.
 
 The macOS home **导入项目** button opens native import options. **打开项目文件夹**
 uses a directory-only system picker and sends `native_project_import_directory`
