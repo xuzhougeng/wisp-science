@@ -150,7 +150,13 @@
     },
     {
       "command": "codex_subscription_status",
-      "arguments": [],
+      "arguments": [
+        {
+          "name": "provider",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
       "result": "Result<CodexSubscriptionStatus, String>",
       "source": "src-tauri/src/codex_login.rs"
     },
@@ -1073,6 +1079,11 @@
           "name": "useSaved",
           "rust_type": "Option<bool>",
           "optional": true
+        },
+        {
+          "name": "provider",
+          "rust_type": "Option<String>",
+          "optional": true
         }
       ],
       "result": "Result<Vec<ModelProfile>, String>",
@@ -1609,6 +1620,11 @@
           "name": "method",
           "rust_type": "String",
           "optional": false
+        },
+        {
+          "name": "provider",
+          "rust_type": "Option<String>",
+          "optional": true
         }
       ],
       "result": "Result<CodexLoginChallenge, String>",

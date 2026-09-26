@@ -191,7 +191,7 @@ pub fn account_id_from_access_token(token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn decode_b64url(input: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_b64url(input: &str) -> Option<Vec<u8>> {
     let mut padded = input.replace('-', "+").replace('_', "/");
     while padded.len() % 4 != 0 {
         padded.push('=');
@@ -469,12 +469,12 @@ pub async fn poll_device_until_complete(
     }
 }
 
-async fn sleep_or_cancel(duration: Duration, cancel: &AtomicBool) -> Result<(), String> {
+pub(crate) async fn sleep_or_cancel(duration: Duration, cancel: &AtomicBool) -> Result<(), String> {
     let step = Duration::from_millis(200);
     let mut left = duration;
     while left > Duration::ZERO {
         if cancel.load(Ordering::Relaxed) {
-            return Err("Codex sign-in cancelled".into());
+            return Err("Sign-in cancelled".into());
         }
         let slice = left.min(step);
         tokio::time::sleep(slice).await;
@@ -483,7 +483,7 @@ async fn sleep_or_cancel(duration: Duration, cancel: &AtomicBool) -> Result<(), 
     Ok(())
 }
 
-fn form_pairs(pairs: &[(&str, &str)]) -> String {
+pub(crate) fn form_pairs(pairs: &[(&str, &str)]) -> String {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     for (key, value) in pairs {
         serializer.append_pair(key, value);

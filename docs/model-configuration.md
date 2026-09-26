@@ -106,6 +106,19 @@ that subscription can call, such as `gpt-5.5`. A sign-in from
 `wisp-science login codex` is stored on the same machine and can be reused
 from this page.
 
+**SuperGrok / X Premium+ (xAI)** is also a subscription login, separate from an
+xAI API key. In **Settings → Models**, choose **SuperGrok**. Wisp starts an
+xAI device-code sign-in and opens the `accounts.x.ai` page. Approve it there,
+and enter the one-time code if the page asks for it. This works over SSH and
+WSL because no local callback is needed. Wisp stores the access token, refresh
+token, expiry, and xAI token endpoint in the OS keyring, refreshes the access
+token automatically, and sends chat requests to
+`https://api.x.ai/v1/chat/completions`. The token is only ever sent to HTTPS
+hosts on `x.ai`. The default model is `grok-4.6`. xAI may refuse some
+subscription tiers with HTTP 403 even after a successful sign-in. In that case,
+use an xAI API key instead. A sign-in from `wisp-science login xai` can be
+reused from this page.
+
 Use the bare API model ID, without OpenCode's client-side provider prefix.
 Context and output ceilings continue to come from Wisp's baked models.dev
 catalog, using exact model IDs and the appropriate Go or Zen namespace.
@@ -419,10 +432,12 @@ The `wisp-science` headless CLI uses environment variables and supports the
 same API protocols. `wisp-science login codex` signs in with a ChatGPT
 Plus/Pro subscription (`--method device` for a one-time code). After that,
 `WISP_PROVIDER=openai_codex` uses the stored subscription and does not need
-`WISP_API_KEY`.
+`WISP_API_KEY`. `wisp-science login xai` does the same for a SuperGrok or
+X Premium+ subscription with an xAI device code; then use
+`WISP_PROVIDER=xai_oauth`.
 
 ```powershell
-$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_codex, or anthropic
+$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_codex, xai_oauth, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your provider key>"

@@ -38,7 +38,7 @@ $env:WISP_API_KEY = $credential.GetNetworkCredential().Password
 wisp-science
 ```
 
-`WISP_PROVIDER` 可按服务协议选择 `openai`、`openai_responses`、`openai_codex` 或 `anthropic`。`openai_codex` 使用 ChatGPT Plus/Pro 订阅：先运行 `wisp-science login codex`（远程或 WSL 可加 `--method device`），之后不需要 `WISP_API_KEY`。
+`WISP_PROVIDER` 可按服务协议选择 `openai`、`openai_responses`、`openai_codex`、`xai_oauth` 或 `anthropic`。`openai_codex` 使用 ChatGPT Plus/Pro 订阅：先运行 `wisp-science login codex`（远程或 WSL 可加 `--method device`），之后不需要 `WISP_API_KEY`。`xai_oauth` 使用 SuperGrok 或 X Premium+ 订阅：先运行 `wisp-science login xai`（设备码登录），之后同样不需要 `WISP_API_KEY`。
 
 **用交互模式，在同一个项目目录中继续对话。**
 

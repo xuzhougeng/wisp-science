@@ -252,10 +252,20 @@ fn same_endpoint(left: &str, right: &str) -> bool {
     !left.is_empty() && left == normalize_endpoint(right)
 }
 
+/// Subscription profiles hold an OAuth access token that rotates with its
+/// refresh token. It is not an API key and must not be shared with siblings.
+pub(crate) fn is_subscription_provider(provider: &str) -> bool {
+    matches!(provider, "openai_codex" | "xai_oauth")
+}
+
 fn sibling_key(profiles: &[ModelProfile], api_url: &str, exclude_id: &str) -> String {
     profiles
         .iter()
-        .filter(|profile| profile.id != exclude_id && same_endpoint(&profile.api_url, api_url))
+        .filter(|profile| {
+            profile.id != exclude_id
+                && !is_subscription_provider(&profile.provider)
+                && same_endpoint(&profile.api_url, api_url)
+        })
         .map(|profile| key_for(&profile.id))
         .find(|key| !key.is_empty())
         .unwrap_or_default()
@@ -276,11 +286,11 @@ fn store_profile_key(
     api_url: &str,
     profiles: &[ModelProfile],
 ) -> Result<(), String> {
-    // A Codex subscription is an OAuth token pair, not a shared API key.
+    // A subscription is an OAuth token pair, not a shared API key.
     // Inheriting or rotating it would detach the refresh token from the access token.
     if profiles
         .iter()
-        .any(|profile| profile.id == id && profile.provider == "openai_codex")
+        .any(|profile| profile.id == id && is_subscription_provider(&profile.provider))
     {
         return Ok(());
     }
@@ -290,6 +300,7 @@ fn store_profile_key(
         if !previous.is_empty() && previous != key {
             for profile in profiles {
                 if profile.id != id
+                    && !is_subscription_provider(&profile.provider)
                     && same_endpoint(&profile.api_url, api_url)
                     && key_for(&profile.id) == previous
                 {
@@ -908,10 +919,60 @@ pub(crate) fn load_global_codex() -> Option<wisp_llm::codex_auth::CodexCredentia
     ))
 }
 
-/// Access token for a turn. Codex profiles refresh before the token is inside
-/// the five-minute expiry window and write the rotated refresh token back.
+pub(crate) fn xai_oauth_secret(id: &str) -> String {
+    format!("xai_oauth:{id}")
+}
+
+pub(crate) fn store_xai_credentials(
+    profile_id: &str,
+    creds: &wisp_llm::xai_auth::XaiCredentials,
+) -> Result<(), String> {
+    secret_set(&secret_name(profile_id), &creds.access_token)?;
+    let json = creds.to_json();
+    secret_set(&xai_oauth_secret(profile_id), &json)?;
+    secret_set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &json)?;
+    Ok(())
+}
+
+pub(crate) fn load_global_xai() -> Option<wisp_llm::xai_auth::XaiCredentials> {
+    wisp_llm::xai_auth::XaiCredentials::from_json(&secret_get(
+        wisp_llm::xai_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+async fn fresh_xai_access_token(id: &str, access: String) -> String {
+    let Some(mut creds) =
+        wisp_llm::xai_auth::XaiCredentials::from_json(&secret_get(&xai_oauth_secret(id)))
+    else {
+        return access;
+    };
+    if !access.is_empty() {
+        creds.access_token = access.clone();
+    }
+    let client = wisp_llm::codex_auth::http_client(crate::llm_proxy().as_deref());
+    match wisp_llm::xai_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_xai_credentials(id, &next) {
+                    tracing::warn!(target: "wisp", %error, "xai token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "xai token refresh failed");
+            access
+        }
+    }
+}
+
+/// Access token for a turn. Subscription profiles refresh before the token is
+/// inside the five-minute expiry window and write the rotated refresh token back.
 async fn fresh_access_token(provider: &str, id: &str) -> String {
     let access = key_for(id);
+    if provider == "xai_oauth" {
+        return fresh_xai_access_token(id, access).await;
+    }
     if provider != "openai_codex" {
         return access;
     }
@@ -1763,6 +1824,7 @@ pub async fn remove_model(
     save_raw(&state.store, &profiles).await?;
     let _ = secret_del(&secret_name(&id));
     let _ = secret_del(&codex_oauth_secret(&id));
+    let _ = secret_del(&xai_oauth_secret(&id));
     // If we removed the active profile, fall back to the first remaining one.
     let cur = state
         .store
@@ -2905,6 +2967,29 @@ mod tests {
         assert!(key_for(&new_id).is_empty());
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn xai_api_key_profile_neither_inherits_nor_rotates_the_subscription_token() {
+        let prefix = uuid::Uuid::new_v4();
+        let oauth_id = format!("{prefix}-oauth");
+        let api_id = format!("{prefix}-api");
+        let _ = secret_del(&secret_name(&api_id));
+        secret_set(&secret_name(&oauth_id), "xai-access-token").unwrap();
+        let mut oauth = test_profile(&oauth_id, "grok", "grok-4.6");
+        oauth.provider = "xai_oauth".into();
+        oauth.api_url = "https://api.x.ai/v1".into();
+        let mut api = test_profile(&api_id, "grok-api", "grok-4.6");
+        api.api_url = "https://api.x.ai".into();
+        let profiles = [oauth, api];
+        store_profile_key(&api_id, None, "https://api.x.ai", &profiles).unwrap();
+        assert!(key_for(&api_id).is_empty());
+        secret_set(&secret_name(&api_id), "xai-access-token").unwrap();
+        store_profile_key(&api_id, Some("xai-pasted"), "https://api.x.ai", &profiles).unwrap();
+        assert_eq!(key_for(&oauth_id), "xai-access-token");
+        assert_eq!(key_for(&api_id), "xai-pasted");
+        let _ = secret_del(&secret_name(&oauth_id));
+        let _ = secret_del(&secret_name(&api_id));
     }
 
     #[test]

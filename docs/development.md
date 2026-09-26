@@ -218,7 +218,7 @@ one of these lines names the step that never returned.
 
 ```bash
 export WISP_API_KEY=<your provider key>
-export WISP_PROVIDER=openai            # openai | openai_responses | openai_codex | anthropic
+export WISP_PROVIDER=openai            # openai | openai_responses | openai_codex | xai_oauth | anthropic
 export WISP_MODEL=deepseek-v4-flash
 cargo run -p wisp-cli                  # interactive agent
 cargo run -p wisp-cli -- run "Summarize the files in this project"
@@ -233,7 +233,7 @@ Eval and the long-lived JSONL RPC protocol:
 | Variable             | Purpose                                                       |
 |----------------------|---------------------------------------------------------------|
 | `WISP_API_KEY`       | Provider API key (CLI). Desktop uses the OS keyring.          |
-| `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, `openai_codex`, or `anthropic`. `openai_codex` uses `wisp-science login codex` instead of `WISP_API_KEY`. |
+| `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, `openai_codex`, `xai_oauth`, or `anthropic`. `openai_codex` uses `wisp-science login codex` and `xai_oauth` uses `wisp-science login xai` instead of `WISP_API_KEY`. |
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
 | `WISP_VISION`        | `1`/`true` if the primary model can read images natively (default off) |

@@ -3626,6 +3626,7 @@ fn normalized_provider(provider: &str) -> String {
         "openai" | "openai_compatible" => "openai".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
         "openai_codex" | "openai-codex" | "codex" => "openai_codex".into(),
+        "xai_oauth" | "xai-oauth" | "grok_oauth" => "xai_oauth".into(),
         "" => "openai".into(),
         other => other.into(),
     }
@@ -5096,6 +5097,7 @@ fn default_api_url(provider: &str) -> &'static str {
         "anthropic" => "https://api.anthropic.com",
         "openai_responses" => "https://api.openai.com/v1",
         "openai_codex" => "https://chatgpt.com/backend-api",
+        "xai_oauth" => wisp_llm::xai_auth::DEFAULT_BASE_URL,
         _ => "https://api.deepseek.com",
     }
 }
@@ -5104,6 +5106,7 @@ fn default_model(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "claude-sonnet-5",
         "openai_responses" | "openai_codex" => "gpt-5.5",
+        "xai_oauth" => wisp_llm::xai_auth::DEFAULT_MODEL,
         _ => "deepseek-v4-flash",
     }
 }
@@ -5151,15 +5154,22 @@ fn build_provider_config(
         return Err(if provider == "openai_codex" {
             "Sign in with ChatGPT (Codex) from Settings → Models, or run `wisp-science login codex`."
                 .into()
+        } else if provider == "xai_oauth" {
+            "Sign in with SuperGrok (xAI) from Settings → Models, or run `wisp-science login xai`."
+                .into()
         } else {
             "No API key set. Open Settings and paste your provider API key.".into()
         });
+    }
+    if provider == "xai_oauth" {
+        wisp_llm::xai_auth::validate_xai_url(api_url)?;
     }
     let mut cfg = match provider.as_str() {
         "anthropic" => ProviderConfig::anthropic(api_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(api_url, api_key, model),
         "openai_codex" => ProviderConfig::openai_codex(api_url, api_key, model),
-        "openai" => ProviderConfig::openai(api_url, api_key, model),
+        // The subscription token is a Bearer key for xAI's Chat Completions API.
+        "openai" | "xai_oauth" => ProviderConfig::openai(api_url, api_key, model),
         _ => return Err(format!("Unsupported provider: {provider}")),
     };
     apply_llm_advanced(

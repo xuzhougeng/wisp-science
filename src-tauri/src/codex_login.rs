@@ -1,8 +1,10 @@
-//! ChatGPT Plus/Pro sign-in for a Codex subscription.
+//! Subscription sign-in: ChatGPT Plus/Pro (Codex) and SuperGrok (xAI).
 //!
-//! Browser login listens on the Codex client's fixed localhost callback.
+//! Codex browser login listens on the Codex client's fixed localhost callback.
 //! Device-code login works when that callback cannot reach this machine
-//! (SSH, WSL, a remote browser). Tokens are stored in the OS keyring.
+//! (SSH, WSL, a remote browser); xAI only offers device code. The commands keep
+//! their Codex names for native hosts; `provider: "xai"` selects xAI.
+//! Tokens are stored in the OS keyring.
 
 use crate::models::{self, ModelProfile, DEFAULT_CONTEXT_WINDOW};
 use std::collections::HashMap;
@@ -13,15 +15,39 @@ use wisp_llm::codex_auth::{
     self, authorize_url, generate_pkce, parse_authorization_input, random_state, BrowserCallback,
     CodexCredentials, REDIRECT_URI,
 };
+use wisp_llm::xai_auth::{self, XaiCredentials};
 
 pub use wisp_dto::codex_login::{CodexLoginChallenge, CodexLoginSnapshot, CodexSubscriptionStatus};
+
+#[derive(Clone)]
+enum Credentials {
+    Codex(CodexCredentials),
+    Xai(XaiCredentials),
+}
+
+impl Credentials {
+    fn account(&self) -> String {
+        match self {
+            Self::Codex(creds) => creds.account_id.clone(),
+            Self::Xai(creds) => creds.display_account(),
+        }
+    }
+}
+
+fn is_xai(provider: &Option<String>) -> Result<bool, String> {
+    match provider.as_deref().map(str::trim) {
+        None | Some("") | Some("codex") | Some("openai_codex") => Ok(false),
+        Some("xai") | Some("xai_oauth") => Ok(true),
+        Some(other) => Err(format!("Unknown subscription provider: {other}")),
+    }
+}
 
 struct LoginSession {
     cancel: Arc<AtomicBool>,
     done: AtomicBool,
     status: Mutex<String>,
     message: Mutex<String>,
-    creds: Mutex<Option<CodexCredentials>>,
+    creds: Mutex<Option<Credentials>>,
     verifier: Mutex<String>,
     state: Mutex<String>,
 }
@@ -47,7 +73,7 @@ fn snapshot(session: &LoginSession) -> CodexLoginSnapshot {
         .lock()
         .unwrap()
         .as_ref()
-        .map(|creds| creds.account_id.clone())
+        .map(Credentials::account)
         .unwrap_or_default();
     CodexLoginSnapshot {
         status,
@@ -73,7 +99,7 @@ async fn finish_with_code(session: &LoginSession, code: &str, verifier: &str, re
     match codex_auth::exchange_authorization_code(&client, code, verifier, redirect_uri).await {
         Ok(creds) => {
             let account = creds.account_id.clone();
-            *session.creds.lock().unwrap() = Some(creds);
+            *session.creds.lock().unwrap() = Some(Credentials::Codex(creds));
             set_status(
                 session,
                 "success",
@@ -89,11 +115,18 @@ async fn finish_with_code(session: &LoginSession, code: &str, verifier: &str, re
 }
 
 #[tauri::command]
-pub async fn codex_subscription_status() -> Result<CodexSubscriptionStatus, String> {
-    Ok(match models::load_global_codex() {
+pub async fn codex_subscription_status(
+    provider: Option<String>,
+) -> Result<CodexSubscriptionStatus, String> {
+    let saved = if is_xai(&provider)? {
+        models::load_global_xai().map(Credentials::Xai)
+    } else {
+        models::load_global_codex().map(Credentials::Codex)
+    };
+    Ok(match saved {
         Some(creds) => CodexSubscriptionStatus {
             signed_in: true,
-            account_id: creds.account_id,
+            account_id: creds.account(),
         },
         None => CodexSubscriptionStatus {
             signed_in: false,
@@ -103,8 +136,13 @@ pub async fn codex_subscription_status() -> Result<CodexSubscriptionStatus, Stri
 }
 
 #[tauri::command]
-pub async fn start_codex_login(method: String) -> Result<CodexLoginChallenge, String> {
+pub async fn start_codex_login(
+    method: String,
+    provider: Option<String>,
+) -> Result<CodexLoginChallenge, String> {
+    let xai = is_xai(&provider)?;
     let method = match method.trim() {
+        _ if xai => "device",
         "device" | "device_code" => "device",
         "browser" | "" => "browser",
         other => return Err(format!("Unknown Codex sign-in method: {other}")),
@@ -120,7 +158,52 @@ pub async fn start_codex_login(method: String) -> Result<CodexLoginChallenge, St
         verifier: Mutex::new(String::new()),
         state: Mutex::new(String::new()),
     });
-    let challenge = if method == "device" {
+    let challenge = if xai {
+        let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+        let token_endpoint = xai_auth::discover_token_endpoint(&client).await?;
+        let device = xai_auth::start_device_login(&client).await?;
+        set_status(
+            &session,
+            "pending",
+            "Approve the sign-in on the xAI page. Enter the code if it asks for one.",
+        );
+        let polling = session.clone();
+        let device_for_poll = device.clone();
+        tokio::spawn(async move {
+            let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+            let result = xai_auth::poll_device_until_complete(
+                &client,
+                device_for_poll,
+                &token_endpoint,
+                &cancel,
+            )
+            .await;
+            match result {
+                Ok(creds) => {
+                    if polling.done.swap(true, Ordering::SeqCst) {
+                        return;
+                    }
+                    let account = creds.display_account();
+                    *polling.creds.lock().unwrap() = Some(Credentials::Xai(creds));
+                    set_status(&polling, "success", format!("Signed in to {account}"));
+                }
+                Err(error) => {
+                    if cancel.load(Ordering::Relaxed) || is_status(&polling, "success") {
+                        return;
+                    }
+                    set_status(&polling, "error", error);
+                }
+            }
+        });
+        CodexLoginChallenge {
+            login_id: login_id.clone(),
+            method: method.into(),
+            url: device.verification_uri_complete,
+            user_code: device.user_code,
+            verification_uri: device.verification_uri,
+            message: session.message.lock().unwrap().clone(),
+        }
+    } else if method == "device" {
         let client = codex_auth::http_client(crate::llm_proxy().as_deref());
         let device = codex_auth::start_device_login(&client).await?;
         set_status(
@@ -138,7 +221,7 @@ pub async fn start_codex_login(method: String) -> Result<CodexLoginChallenge, St
                         return;
                     }
                     let account = creds.account_id.clone();
-                    *polling.creds.lock().unwrap() = Some(creds);
+                    *polling.creds.lock().unwrap() = Some(Credentials::Codex(creds));
                     set_status(
                         &polling,
                         "success",
@@ -247,7 +330,7 @@ pub async fn submit_codex_login_redirect(
 pub fn cancel_codex_login(login_id: String) -> Result<(), String> {
     if let Some(session) = sessions().lock().unwrap().remove(&login_id) {
         session.cancel.store(true, Ordering::Relaxed);
-        set_status(&session, "error", "Codex sign-in cancelled");
+        set_status(&session, "error", "Sign-in cancelled");
     }
     Ok(())
 }
@@ -261,13 +344,24 @@ pub async fn save_codex_login(
     profile_id: Option<String>,
     api_url: Option<String>,
     use_saved: Option<bool>,
+    provider: Option<String>,
 ) -> Result<Vec<ModelProfile>, String> {
+    let xai = is_xai(&provider)?;
     let creds = if use_saved.unwrap_or(false) {
-        let Some(saved) = models::load_global_codex() else {
-            return Err("No ChatGPT subscription is signed in on this machine.".into());
-        };
         let client = codex_auth::http_client(crate::llm_proxy().as_deref());
-        codex_auth::refresh_if_due(&client, saved, codex_auth::now_ms()).await?
+        if xai {
+            let Some(saved) = models::load_global_xai() else {
+                return Err("No SuperGrok subscription is signed in on this machine.".into());
+            };
+            Credentials::Xai(xai_auth::refresh_if_due(&client, saved, codex_auth::now_ms()).await?)
+        } else {
+            let Some(saved) = models::load_global_codex() else {
+                return Err("No ChatGPT subscription is signed in on this machine.".into());
+            };
+            Credentials::Codex(
+                codex_auth::refresh_if_due(&client, saved, codex_auth::now_ms()).await?,
+            )
+        }
     } else {
         let session = session(&login_id)?;
         let creds = session
@@ -275,14 +369,32 @@ pub async fn save_codex_login(
             .lock()
             .unwrap()
             .clone()
-            .ok_or_else(|| "Finish ChatGPT sign-in before saving the model.".to_string())?;
+            .ok_or_else(|| "Finish sign-in before saving the model.".to_string())?;
+        if matches!(creds, Credentials::Xai(_)) != xai {
+            return Err("That sign-in belongs to a different subscription.".into());
+        }
         sessions().lock().unwrap().remove(&login_id);
         creds
+    };
+    let (provider, default_model, vendor, default_url) = if xai {
+        (
+            "xai_oauth",
+            xai_auth::DEFAULT_MODEL,
+            "Grok",
+            xai_auth::DEFAULT_BASE_URL,
+        )
+    } else {
+        (
+            "openai_codex",
+            codex_auth::DEFAULT_MODEL,
+            "ChatGPT",
+            codex_auth::DEFAULT_BASE_URL,
+        )
     };
     let model = {
         let trimmed = model.trim();
         if trimmed.is_empty() {
-            codex_auth::DEFAULT_MODEL.to_string()
+            default_model.to_string()
         } else {
             trimmed.to_string()
         }
@@ -290,7 +402,7 @@ pub async fn save_codex_login(
     let label = {
         let trimmed = label.trim();
         if trimmed.is_empty() {
-            format!("ChatGPT {model}")
+            format!("{vendor} {model}")
         } else {
             trimmed.to_string()
         }
@@ -299,17 +411,20 @@ pub async fn save_codex_login(
         let trimmed = api_url.unwrap_or_default();
         let trimmed = trimmed.trim();
         if trimmed.is_empty() {
-            codex_auth::DEFAULT_BASE_URL.to_string()
+            default_url.to_string()
         } else {
             trimmed.to_string()
         }
     };
+    if xai {
+        xai_auth::validate_xai_url(&api_url)?;
+    }
     let profile_id = profile_id.unwrap_or_default();
     let profile = if profile_id.is_empty() {
         ModelProfile {
             id: String::new(),
             label,
-            provider: "openai_codex".into(),
+            provider: provider.into(),
             api_url,
             endpoint_suffix: String::new(),
             model,
@@ -340,7 +455,7 @@ pub async fn save_codex_login(
         let Some(mut existing) = models::profile_owned(&state.store, &profile_id).await else {
             return Err("Model profile not found.".into());
         };
-        existing.provider = "openai_codex".into();
+        existing.provider = provider.into();
         existing.api_url = api_url;
         existing.model = model;
         existing.label = label;
@@ -372,9 +487,12 @@ pub async fn save_codex_login(
         saved_id
     };
     if id.is_empty() {
-        return Err("Could not save the Codex model.".into());
+        return Err("Could not save the subscription model.".into());
     }
-    models::store_codex_credentials(&id, &creds)?;
+    match &creds {
+        Credentials::Codex(creds) => models::store_codex_credentials(&id, creds)?,
+        Credentials::Xai(creds) => models::store_xai_credentials(&id, creds)?,
+    }
     crate::clear_idle_agents(&state).await;
     Ok(models::decorated_models(&state.store).await)
 }
