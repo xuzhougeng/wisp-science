@@ -16,10 +16,17 @@ jobs:
       - run: python3 scripts/sync_native_design.py --check
       - run: python3 scripts/sync_native_settings_contract.py --check
       - run: python3 scripts/test_sync_native_settings_contract.py
-      - run: python3 scripts/test_stamp_native_macos.py
+      - run: python3 -m unittest discover -s scripts -p 'test_*native_macos.py'
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: swift test --package-path apps/macos --scratch-path target/native-macos/swift
       - run: bash scripts/build_native_macos.sh
+      - name: Archive unnotarized SwiftUI CI preview
+        run: ditto -c -k --keepParent 'target/native-macos/Wisp Science Preview.app' target/Wisp-Science-SwiftUI-Preview-CI.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wisp-Science-SwiftUI-Preview-CI-${{ runner.arch }}
+          path: target/Wisp-Science-SwiftUI-Preview-CI.zip
+          if-no-files-found: error
 
   winui:
     runs-on: windows-latest

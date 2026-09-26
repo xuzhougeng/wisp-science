@@ -97,6 +97,60 @@ The first updater-capable release must still be installed manually by users of
 an older build whose release feed has no updater manifest. Updates between later
 updater-capable releases use the in-app flow.
 
+## SwiftUI Preview alongside the macOS release
+
+Starting with the next tag that includes this packaging change, **macOS Release**
+also attaches separate SwiftUI Preview installers and SHA-256 files:
+
+- `Wisp-Science-SwiftUI-Preview_<version>_aarch64.dmg` for Apple Silicon.
+- `Wisp-Science-SwiftUI-Preview_<version>_x86_64.dmg` for Intel.
+- A matching `.dmg.sha256` file for each installer.
+
+The preview requires macOS 13 or later. Drag **Wisp Science Preview.app** to
+Applications; its name allows it to coexist with **wisp-science.app**. The
+preview uses the existing desktop project database, settings and keyring by
+default, so installing a separate app does **not** isolate user data. Use the
+documented QA build and isolated database for destructive testing.
+
+Preview updates are manual downloads from GitHub Releases. These installers do
+not enter the stable Tauri `latest.json` feed, and the existing WebView installers
+and updater remain available. Preview publishing only attaches assets; it never
+rewrites the release title or notes. Mention SwiftUI Preview and its known
+limitations in the bilingual notes when cutting the next release.
+
+The release job builds optimized Swift and Rust executables for the same target,
+then validates the shell/helper versions, clean source stamp and all three
+binary architectures. It reuses the existing Developer ID certificate and
+`APPLE_ID`, `APPLE_APP_PASSWORD`, and `APPLE_TEAM_ID` secrets. The service, embedded
+host and shell are signed inside out with hardened runtime; the app and DMG are
+notarized and stapled before upload. Any signing, notarization or validation
+failure stops preview upload. Notarization results are retained as Actions
+artifacts. The final verification job requires both preview installers and
+checksums alongside the stable updater manifest.
+
+For a local optimized build (ad-hoc signed, not a distributable release):
+
+```bash
+bash scripts/build_native_macos.sh --release --target aarch64-apple-darwin
+# Or --target x86_64-apple-darwin, with that Rust target installed.
+```
+
+The app is written to `target/native-macos-release/<target>/Wisp Science Preview.app`.
+Omitting `--target` uses the host architecture and the parent output directory.
+Normal debug and `--qa` outputs keep their existing paths. The native-preview CI
+workflow uploads a separate, ad-hoc signed and **unnotarized** ZIP as an Actions
+artifact; that ZIP is not the GitHub Release installer. Rebuilding an older tag
+from the release workflow on `main` skips preview packaging when that tag lacks
+the packaging script.
+
+For the first published preview, verify each downloaded checksum, run
+`codesign --verify --deep --strict` and `spctl --assess --type execute` on the
+installed app, and launch it from Finder on Apple Silicon and Intel. Confirm the
+embedded helper starts, projects and settings load, and the WebView app remains
+launchable. Actual Developer ID notarization and downloaded-app Gatekeeper
+behavior require this release CI/manual validation; local ad-hoc builds and
+mocked packaging tests do not establish them.
+
 ## Manual smoke test
 
 1. Publish the next tagged release from an updater-capable build with both

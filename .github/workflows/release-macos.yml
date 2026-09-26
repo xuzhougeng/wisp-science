@@ -16,6 +16,8 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest
+    outputs:
+      swiftui-preview: ${{ steps.swiftui.outputs.enabled }}
     strategy:
       fail-fast: false
       # Serial so the two jobs merge latest.json in order instead of racing
@@ -35,6 +37,9 @@ jobs:
           ref: ${{ github.sha }}
           sparse-checkout: .github/actions/wait-for-release
           path: _release_ci
+
+      - name: Exclude release orchestration checkout from source stamp
+        run: echo '/_release_ci/' >> .git/info/exclude
 
       - name: Wait for GitHub release
         id: release
@@ -115,6 +120,45 @@ jobs:
           uploadUpdaterSignatures: true
           args: --config tauri.updater.conf.json --target ${{ matrix.target }} --bundles app,dmg
 
+      # Additional manual-install preview; never replace stable updater assets.
+      # Older tags can still be rebuilt from main without preview tooling.
+      - name: Build SwiftUI Preview
+        id: swiftui
+        if: hashFiles('scripts/package_native_macos.py') != ''
+        run: |
+          bash scripts/build_native_macos.sh --release --target '${{ matrix.target }}'
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+
+      - name: Sign and notarize SwiftUI Preview
+        if: steps.swiftui.outputs.enabled == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          python3 scripts/package_native_macos.py \
+            'target/native-macos-release/${{ matrix.target }}/Wisp Science Preview.app' \
+            --target '${{ matrix.target }}' --tag "$RELEASE_TAG" \
+            --output 'target/swiftui-release/${{ matrix.target }}'
+
+      - name: Attach SwiftUI Preview installer
+        if: steps.swiftui.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            target/swiftui-release/${{ matrix.target }}/*.dmg \
+            target/swiftui-release/${{ matrix.target }}/*.dmg.sha256 --clobber
+
+      - name: Preserve SwiftUI notarization results
+        if: always() && steps.swiftui.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-notarization-${{ matrix.target }}
+          path: target/swiftui-release/${{ matrix.target }}/*-notary.json
+          if-no-files-found: ignore
+
       - name: Clean up keychain
         if: always()
         run: |
@@ -145,3 +189,20 @@ jobs:
             (.platforms["darwin-x86_64"].url | type == "string" and length > 0) and
             (.platforms["darwin-x86_64"].signature | length > 0)
           ' "${manifest_dir}/latest.json"
+
+      - name: Verify both SwiftUI Preview installers
+        if: needs.release.outputs.swiftui-preview == 'true'
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            > "${RUNNER_TEMP}/wisp-release-assets.json"
+          for arch in aarch64 x86_64; do
+            asset="Wisp-Science-SwiftUI-Preview_${version}_${arch}.dmg"
+            jq -e --arg name "$asset" \
+              '.assets | any(.name == $name and .size > 0)' \
+              "${RUNNER_TEMP}/wisp-release-assets.json"
+            jq -e --arg name "${asset}.sha256" \
+              '.assets | any(.name == $name and .size > 0)' \
+              "${RUNNER_TEMP}/wisp-release-assets.json"
+          done

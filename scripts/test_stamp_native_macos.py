@@ -25,9 +25,12 @@ class NativeMetadataTests(unittest.TestCase):
                 self.assertEqual(info["CFBundleVersion"], "1.14.0")
                 self.assertEqual(info["WispSourceRevision"], "a" * 40)
                 self.assertTrue(info["WispSourceDirty"])
+                self.assertEqual(info["WispBuildConfiguration"], "debug")
                 self.assertTrue(info["LSUIElement"])
-            stamp(shell, **dict(metadata, version="1.15.0", dirty=False))
-            self.assertFalse(plistlib.loads(shell.read_bytes())["WispSourceDirty"])
+            stamp(shell, **dict(metadata, version="1.15.0", dirty=False, configuration="release"))
+            info = plistlib.loads(shell.read_bytes())
+            self.assertFalse(info["WispSourceDirty"])
+            self.assertEqual(info["WispBuildConfiguration"], "release")
 
 
 if __name__ == "__main__":
