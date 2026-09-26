@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WispProjectBrowser
 
@@ -9,6 +10,8 @@ struct NativePanelView: View {
     @State private var draggedTab: String?
     @Environment(\.colorScheme) private var scheme
     @State private var query = ""
+    @State private var transcriptPreview: NativeTranscriptArtifact?
+    private var transcriptArtifacts: [NativeTranscriptArtifact] { NativeTranscriptArtifact.collect(transcript) }
     @State private var activity: NativeContextActivitySelection?
     @State private var fileAction: NativeFileActionSelection?
     private var availableTabs: [String] { NativePanelTabs.defaults + ["notebook", "highlights", "provenance"] + (sideChat == nil ? [] : ["sidechat"]) }
@@ -64,7 +67,12 @@ struct NativePanelView: View {
                                     Button("查看溯源") { var value = layout; value.show("provenance"); store(value) }
                                 }
                         }
-                        if model.artifacts.isEmpty && !model.loading { Text("这个会话暂无产物").foregroundStyle(.secondary).padding() }
+                        ForEach(transcriptArtifacts.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }) { artifact in
+                            Button { transcriptPreview = artifact } label: {
+                                row(title: artifact.title, subtitle: artifact.kind == "table" ? "表格 · 来自消息" : "LaTeX · 来自消息", icon: "doc")
+                            }.buttonStyle(.plain)
+                        }
+                        if model.artifacts.isEmpty && transcriptArtifacts.isEmpty && !model.loading && model.error == nil { Text("这个会话暂无产物").foregroundStyle(.secondary).padding() }
                     } else if tab == "notebook" {
                         NativeNotebookView(model: model, cells: NativeNotebookCell.collect(transcript), query: query).id(transcriptPage)
                     } else if tab == "highlights" {
@@ -112,6 +120,23 @@ struct NativePanelView: View {
                     })
                 }
             }
+            .sheet(item: $transcriptPreview) { artifact in
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text(artifact.title).font(.headline)
+                        Spacer()
+                        Button("复制源内容") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(artifact.source, forType: .string) }
+                        Button("关闭") { transcriptPreview = nil }
+                    }
+                    if artifact.kind == "latex" { Text("LaTeX 源码").font(.caption).foregroundStyle(.secondary) }
+                    ScrollView {
+                        NativeSelectableMessage(text: AttributedString(artifact.source), saved: [], quote: nil, save: nil,
+                                                monospaced: artifact.kind == "latex", markdown: artifact.kind == "table" ? artifact.source : nil)
+                    }
+                }.padding(24).frame(width: 600, height: 420)
+                    .background(NativeSettingsEscape { transcriptPreview = nil })
+            }
+            .onChange(of: transcriptPage) { _ in transcriptPreview = nil }
             .sheet(item: $model.agentResult, onDismiss: model.dismissPreview) { result in
                 NativeAgentResultView(result: result, close: model.dismissPreview)
             }
@@ -127,10 +152,11 @@ struct NativePanelView: View {
     private var layout: NativePanelTabs { NativePanelTabs(saved: savedTabs, selected: tab, available: availableTabs) }
     private func store(_ value: NativePanelTabs) { savedTabs = value.saved; tab = value.selected }
     private func title(_ id: String) -> String {
+        if id == "artifacts" { return "产物 (\(model.artifacts.count + transcriptArtifacts.count))" }
         if id == "notebook" { return "笔记本 (\(NativeNotebookCell.collect(transcript).count))" }
         if id == "highlights" { return "划线 (\(model.highlights.count))" }
         if id == "provenance" { return "溯源 (\(NativeProvenanceRow.collect(transcript).count))" }
-        return ["artifacts": "产物", "agents": "代理", "files": "文件", "hosts": "执行环境", "sidechat": "侧聊"][id] ?? id
+        return ["artifacts": "产物", "agents": "代理", "files": "文件", "hosts": "环境", "sidechat": "侧聊"][id] ?? id
     }
     private func removeTab(_ id: String) {
         var value = layout; value.remove(id); store(value)

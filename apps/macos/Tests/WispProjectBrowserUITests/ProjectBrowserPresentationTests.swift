@@ -74,7 +74,7 @@ final class ProjectBrowserPresentationTests: XCTestCase {
             XCTAssertEqual(image.size, NSSize(width: 520, height: 344))
             XCTAssertNotNil(image.tiffRepresentation)
         }
-        for icon in ["search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock"] {
+        for icon in ["search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "copy", "more"] {
             let image = WispDesign.image("icon-\(icon)")
             XCTAssertEqual(image.size, NSSize(width: 24, height: 24))
             XCTAssertNotNil(image.tiffRepresentation)

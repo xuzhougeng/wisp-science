@@ -197,3 +197,32 @@ long response, switch sessions/projects while another runs, and reopen the app t
 check saved history. Interrupt the host connection and verify the transcript stays
 visible and the draft is not automatically retransmitted. Check narrow windows,
 model-menu Escape, and the ambiguous-send confirmation's immediate Escape behavior.
+
+## Native UI alignment (2026-09-26)
+
+The macOS workspace uses regular navigation rows and a session-actions menu for
+rename, pin and delete. The composer shows a placeholder, grows with its draft
+between 64 and 160 points, and retains the existing Return/IME policy. Height
+measurement uses a separate text layout so it cannot alter the live editor's
+wrapping or click target.
+
+Markdown code and table blocks expose visible, accessible copy buttons alongside
+the existing context-menu commands. Code containers, table padding, quote borders
+and paragraph spacing now follow the WebView's reading hierarchy while retaining
+one selectable AppKit document. Formula typesetting and syntax highlighting are
+not included in this iteration.
+
+The artifacts panel also projects completed Markdown tables and `$$` block
+formulas from assistant messages in the displayed transcript page. These cards
+are read-only and do not create database artifacts or files. Table cards open a
+native table preview; formula cards explicitly show LaTeX source with a copy
+action. User/tool messages, fenced and indented code, and incomplete formulas do
+not create cards. Other WebView projections (CSV/FASTA/file references) remain
+outside this projection's scope. Escape dismisses the preview while preserving
+the panel and conversation.
+
+The home page includes the documentation link and inline recent-session status
+badges. General settings group workspace interaction and notifications, offer an
+explicit send-shortcut choice, and place local environments before network
+settings. See the [alignment implementation record](superpowers/plans/2026-09-26-swiftui-webview-ui-alignment-implementation.md)
+for verification and remaining work.

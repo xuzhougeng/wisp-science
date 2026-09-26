@@ -144,17 +144,28 @@ struct NativeSettingsView: View {
 
     private var general: some View {
         VStack(spacing: 24) {
-            NativeSettingsGroup(title: "工作区与通知") {
+            NativeSettingsGroup(title: "工作区与交互") {
                 fields("get_settings", [
                     .init(key: "locale", label: "语言", kind: .choice([("zh", "简体中文"), ("en", "English")])),
                     .init(key: "workspace_dir", label: "工作目录", kind: .path, hint: "留空使用默认目录；下次启动生效。"),
-                    .init(key: "resume_last_session", label: "恢复最近会话", kind: .toggle),
-                    .init(key: "notifications_enabled", label: "桌面通知", kind: .toggle)
+                    .init(key: "resume_last_session", label: "打开工作区时继续上次对话", kind: .toggle, hint: "打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。")
                 ])
-                fields("get_appearance_prefs", [.init(key: "send_with_modifier", label: "使用 ⌘Enter 发送", kind: .toggle), .init(key: "selection_popup_enabled", label: "选中文本快捷菜单", kind: .toggle)])
-                save {
-                    await state.saveSettings()
-                    if state.error == nil, let prefs = state.values["get_appearance_prefs"] { _ = await state.run("set_appearance_prefs", ["prefs": prefs]) }
+                NativePreferenceRow(title: "发送与换行快捷键") {
+                    Picker(localized("发送与换行快捷键"), selection: Binding(get: { state.values["get_appearance_prefs"]?["send_with_modifier"].bool ?? false }, set: { state.binding("get_appearance_prefs", "send_with_modifier").wrappedValue = .bool($0) })) {
+                        Text(localized("Enter 发送 · Shift+Enter 换行")).tag(false)
+                        Text(localized("⌘Enter 发送 · Enter 换行")).tag(true)
+                    }.labelsHidden().fixedSize().disabled(state.values["get_appearance_prefs"] == nil)
+                }
+                fields("get_appearance_prefs", [.init(key: "selection_popup_enabled", label: "选中文本快捷菜单", kind: .toggle)])
+                Divider().padding(.vertical, 8)
+                Text(localized("通知与更新")).font(WispDesign.font(size: 15, weight: .semibold))
+                fields("get_settings", [.init(key: "notifications_enabled", label: "桌面通知", kind: .toggle, hint: "窗口不在前台时，任务完成、失败或等待确认会发送系统通知。")])
+                HStack {
+                    Button(localized("取消")) { state.discardDrafts() }
+                    save {
+                        await state.saveSettings()
+                        if state.error == nil, let prefs = state.values["get_appearance_prefs"] { _ = await state.run("set_appearance_prefs", ["prefs": prefs]) }
+                    }
                 }
                 immediateToggle("自动检查更新", read: "get_update_check_enabled", write: "set_update_check_enabled")
                 Button(localized("检查更新")) { Task { update = await state.run("check_for_updates", refresh: false, success: "检查完成") } }
@@ -168,6 +179,7 @@ struct NativeSettingsView: View {
                     }
                 }
             }
+            NativeLocalEnvironmentSettings(model: state)
             NativeSettingsGroup(title: "网络与软件源") {
                 fields("get_network_settings", [
                     .init(key: "model_proxy_url", label: "模型 API 代理", hint: "留空跟随系统；none 为直连；支持 HTTP / HTTPS / SOCKS5。"),
@@ -179,7 +191,6 @@ struct NativeSettingsView: View {
                 ])
                 save("保存网络设置") { _ = await state.run("set_network_settings", ["settings": state.values["get_network_settings"] ?? .null]) }
             }
-            NativeLocalEnvironmentSettings(model: state)
         }
     }
 

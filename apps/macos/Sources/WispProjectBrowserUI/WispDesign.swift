@@ -134,3 +134,20 @@ struct WispUnavailableAction: View {
 func localized(_ text: String) -> String {
     UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? (WispDesign.english[text] ?? text) : text
 }
+
+/// Workspace navigation has the same reading rhythm as the WebView sidebar.
+/// Keep this separate from compact buttons used inside dense inspectors.
+struct WispSidebarButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(WispDesign.font(size: 14))
+            .foregroundStyle(WispDesign.color("text-muted", scheme))
+            .padding(.horizontal, 12).frame(height: 40)
+            .background(configuration.isPressed ? WispDesign.color("surface-hover", scheme) : .clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .opacity(enabled ? 1 : 0.45)
+    }
+}
