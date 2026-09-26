@@ -10086,115 +10086,116 @@ fn App() -> impl IntoView {
         let open_gate = project_open_gate.clone();
         let load_session = load_session.clone();
         let app_shell_entering = app_shell_entering;
-        Callback::new(move |(project_id, session_id, show_files): (String, Option<String>, bool)| {
-            if project_transfer
-                .get_untracked()
-                .is_some_and(|transfer| transfer.is_exporting_project(&project_id))
-            {
-                let message = t(locale.get_untracked(), "projects.transfer.export_locked");
-                project_open_error.set(Some(message.clone()));
-                status.set(message);
-                return;
-            }
-            let calendar_day = calendar_journey_request
-                .get_untracked()
-                .filter(|(id, _)| id == &project_id)
-                .map(|(_, day)| day);
-            calendar_journey_request.set(None);
-            home_calendar_open.set(false);
-            journey_initial_day.set(None);
-            let request_epoch = transition_epoch.get().wrapping_add(1);
-            transition_epoch.set(request_epoch);
-            *transition_target.borrow_mut() = Some(project_id.clone());
+        Callback::new(
+            move |(project_id, session_id, show_files): (String, Option<String>, bool)| {
+                if project_transfer
+                    .get_untracked()
+                    .is_some_and(|transfer| transfer.is_exporting_project(&project_id))
+                {
+                    let message = t(locale.get_untracked(), "projects.transfer.export_locked");
+                    project_open_error.set(Some(message.clone()));
+                    status.set(message);
+                    return;
+                }
+                let calendar_day = calendar_journey_request
+                    .get_untracked()
+                    .filter(|(id, _)| id == &project_id)
+                    .map(|(_, day)| day);
+                calendar_journey_request.set(None);
+                home_calendar_open.set(false);
+                journey_initial_day.set(None);
+                let request_epoch = transition_epoch.get().wrapping_add(1);
+                transition_epoch.set(request_epoch);
+                *transition_target.borrow_mut() = Some(project_id.clone());
 
-            project_open_error.set(None);
-            status.set(String::new());
-            show_proj_menu.set(false);
-            show_research_graph.set(false);
-            research_graph.set(ResearchGraph::default());
-            demo_mode.set(false);
-            // Move the visible rows into the inactive cache so background
-            // sessions keep streaming without cloning a long transcript.
-            replace_visible_transcript(
-                active_session.get_untracked(),
-                None,
-                Vec::new(),
-                items,
-                transcripts,
-                running,
-            );
-            // Folder navigation belongs to the project, even when neither
-            // project has a conversation to trigger the session-tab reset.
-            // Let the session effect stash outgoing conversation tabs itself.
-            if active_session.get_untracked().is_none() {
-                center_file.set(None);
-                center_files.set(Vec::new());
-            }
-            active_session.set(None);
-            file_source.set("local".into());
-            file_cwd.set(".".into());
-            file_query.set(String::new());
-            file_entries.set(Vec::new());
-            file_search_hits.set(Vec::new());
-            collapsed_folders.set(HashSet::new());
-            selecting_workspace_entries.set(false);
-            selected_workspace_paths.set(HashSet::new());
-            project_info.set(None);
-            app_shell_entering.set(true);
-            {
-                let transition_epoch = transition_epoch.clone();
-                let app_shell_entering = app_shell_entering;
-                set_timeout(
-                    move || {
-                        if transition_epoch.get() == request_epoch {
-                            app_shell_entering.set(false);
-                        }
-                    },
-                    std::time::Duration::from_millis(520),
+                project_open_error.set(None);
+                status.set(String::new());
+                show_proj_menu.set(false);
+                show_research_graph.set(false);
+                research_graph.set(ResearchGraph::default());
+                demo_mode.set(false);
+                // Move the visible rows into the inactive cache so background
+                // sessions keep streaming without cloning a long transcript.
+                replace_visible_transcript(
+                    active_session.get_untracked(),
+                    None,
+                    Vec::new(),
+                    items,
+                    transcripts,
+                    running,
                 );
-            }
-            show_projects.set(false);
-
-            let transition_epoch = transition_epoch.clone();
-            let transition_target = transition_target.clone();
-            let open_gate = open_gate.clone();
-            let load_session = load_session.clone();
-            spawn_local(async move {
-                let _permit = acquire_project_open_gate(open_gate).await;
-                if !project_transition_is_current(
-                    &transition_epoch,
-                    &transition_target,
-                    request_epoch,
-                    &project_id,
-                ) {
-                    return;
+                // Folder navigation belongs to the project, even when neither
+                // project has a conversation to trigger the session-tab reset.
+                // Let the session effect stash outgoing conversation tabs itself.
+                if active_session.get_untracked().is_none() {
+                    center_file.set(None);
+                    center_files.set(Vec::new());
                 }
-
-                let args = to_value(&serde_json::json!({ "id": project_id.clone() })).unwrap();
-                let open_result = invoke_checked("open_project", args).await;
-                if !project_transition_is_current(
-                    &transition_epoch,
-                    &transition_target,
-                    request_epoch,
-                    &project_id,
-                ) {
-                    return;
+                active_session.set(None);
+                file_source.set("local".into());
+                file_cwd.set(".".into());
+                file_query.set(String::new());
+                file_entries.set(Vec::new());
+                file_search_hits.set(Vec::new());
+                collapsed_folders.set(HashSet::new());
+                selecting_workspace_entries.set(false);
+                selected_workspace_paths.set(HashSet::new());
+                project_info.set(None);
+                app_shell_entering.set(true);
+                {
+                    let transition_epoch = transition_epoch.clone();
+                    let app_shell_entering = app_shell_entering;
+                    set_timeout(
+                        move || {
+                            if transition_epoch.get() == request_epoch {
+                                app_shell_entering.set(false);
+                            }
+                        },
+                        std::time::Duration::from_millis(520),
+                    );
                 }
+                show_projects.set(false);
 
-                let project_result = match open_result {
-                    Ok(_) => invoke_checked("get_project_info", JsValue::UNDEFINED).await,
-                    Err(error) => Err(error),
-                };
-                if !project_transition_is_current(
-                    &transition_epoch,
-                    &transition_target,
-                    request_epoch,
-                    &project_id,
-                ) {
-                    return;
-                }
+                let transition_epoch = transition_epoch.clone();
+                let transition_target = transition_target.clone();
+                let open_gate = open_gate.clone();
+                let load_session = load_session.clone();
+                spawn_local(async move {
+                    let _permit = acquire_project_open_gate(open_gate).await;
+                    if !project_transition_is_current(
+                        &transition_epoch,
+                        &transition_target,
+                        request_epoch,
+                        &project_id,
+                    ) {
+                        return;
+                    }
 
-                let result = project_result
+                    let args = to_value(&serde_json::json!({ "id": project_id.clone() })).unwrap();
+                    let open_result = invoke_checked("open_project", args).await;
+                    if !project_transition_is_current(
+                        &transition_epoch,
+                        &transition_target,
+                        request_epoch,
+                        &project_id,
+                    ) {
+                        return;
+                    }
+
+                    let project_result = match open_result {
+                        Ok(_) => invoke_checked("get_project_info", JsValue::UNDEFINED).await,
+                        Err(error) => Err(error),
+                    };
+                    if !project_transition_is_current(
+                        &transition_epoch,
+                        &transition_target,
+                        request_epoch,
+                        &project_id,
+                    ) {
+                        return;
+                    }
+
+                    let result = project_result
                     .map_err(js_error_text)
                     .and_then(|value| {
                         serde_wasm_bindgen::from_value::<ProjectInfo>(value)
@@ -10210,57 +10211,58 @@ fn App() -> impl IntoView {
                         }
                     });
 
-                let project = match result {
-                    Ok(project) => project,
-                    Err(raw_error) => {
-                        let loc = locale.get_untracked();
-                        let detail = localize_backend(loc, &raw_error);
-                        let message = tf(loc, "projects.open_failed", &[("msg", &detail)]);
-                        project_open_error.set(Some(message.clone()));
-                        status.set(message);
-                        project_info.set(None);
-                        *transition_target.borrow_mut() = None;
-                        show_projects.set(true);
+                    let project = match result {
+                        Ok(project) => project,
+                        Err(raw_error) => {
+                            let loc = locale.get_untracked();
+                            let detail = localize_backend(loc, &raw_error);
+                            let message = tf(loc, "projects.open_failed", &[("msg", &detail)]);
+                            project_open_error.set(Some(message.clone()));
+                            status.set(message);
+                            project_info.set(None);
+                            *transition_target.borrow_mut() = None;
+                            show_projects.set(true);
+                            return;
+                        }
+                    };
+
+                    let session_id = match session_id {
+                        Some(session_id) => Some(session_id),
+                        None if calendar_day.is_none()
+                            && settings.get_untracked().resume_last_session =>
+                        {
+                            invoke_latest_used_session().await
+                        }
+                        None => None,
+                    };
+                    if !project_transition_is_current(
+                        &transition_epoch,
+                        &transition_target,
+                        request_epoch,
+                        &project_id,
+                    ) {
                         return;
                     }
-                };
-
-                let session_id = match session_id {
-                    Some(session_id) => Some(session_id),
-                    None if calendar_day.is_none()
-                        && settings.get_untracked().resume_last_session =>
-                    {
-                        invoke_latest_used_session().await
+                    project_info.set(Some(project));
+                    if let Some(day) = calendar_day {
+                        journey_initial_day.set(Some(day));
+                        show_research_graph.set(true);
+                        refresh_research_graph(research_graph);
                     }
-                    None => None,
-                };
-                if !project_transition_is_current(
-                    &transition_epoch,
-                    &transition_target,
-                    request_epoch,
-                    &project_id,
-                ) {
-                    return;
-                }
-                project_info.set(Some(project));
-                if let Some(day) = calendar_day {
-                    journey_initial_day.set(Some(day));
-                    show_research_graph.set(true);
-                    refresh_research_graph(research_graph);
-                }
-                if let Some(session_id) = session_id {
-                    load_session.call(session_id);
-                }
-                if show_files {
-                    ensure_right_tab(RightTab::File, show_right, open_right_tabs, right_tab);
-                }
-                if show_right.get_untracked() && right_tab.get_untracked() == RightTab::File {
-                    refresh_dir(file_cwd, file_entries);
-                }
-                refresh_session_history();
-                refresh_folders(folders);
-            });
-        })
+                    if let Some(session_id) = session_id {
+                        load_session.call(session_id);
+                    }
+                    if show_files {
+                        ensure_right_tab(RightTab::File, show_right, open_right_tabs, right_tab);
+                    }
+                    if show_right.get_untracked() && right_tab.get_untracked() == RightTab::File {
+                        refresh_dir(file_cwd, file_entries);
+                    }
+                    refresh_session_history();
+                    refresh_folders(folders);
+                });
+            },
+        )
     };
     let open_project_transition = Callback::new(move |(id, session): (String, Option<String>)| {
         open_project_with_files.call((id, session, false));
@@ -10758,7 +10760,8 @@ fn App() -> impl IntoView {
             Some(id.clone()),
         )));
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({ "id": id.clone(), "directory": directory })).unwrap();
+            let args =
+                to_value(&serde_json::json!({ "id": id.clone(), "directory": directory })).unwrap();
             match invoke_checked("export_project", args).await {
                 Ok(value) => {
                     if let Ok(Some(path)) = serde_wasm_bindgen::from_value::<Option<String>>(value)
