@@ -2226,7 +2226,8 @@ button.workflow-graph-port.output {
 }
 .settings-toolbar-end .settings-toolbar-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
   justify-self: end;
