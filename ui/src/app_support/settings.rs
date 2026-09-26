@@ -178,6 +178,9 @@ mod provider_form_tests {
             &models,
             "https://api.openai.com/v1"
         ));
+        let mut grok = profile("https://api.x.ai/v1", true);
+        grok.provider = "xai_oauth".into();
+        assert!(!endpoint_has_stored_key(&[grok], "https://api.x.ai"));
     }
 }
 
@@ -949,16 +952,24 @@ pub(crate) fn apply_base_url_suggestions(form: &mut ModelForm, api_url: &str) {
     form.entries = suggested_base_url_models(&form.api_url);
 }
 
+/// A reusable API key on this endpoint. Subscription tokens (Codex, SuperGrok)
+/// are never shared, so they do not count.
+fn shares_endpoint_key(profile: &ModelProfile, api_url: &str) -> bool {
+    profile.has_api_key
+        && !matches!(profile.provider.as_str(), "openai_codex" | "xai_oauth")
+        && same_endpoint(&profile.api_url, api_url)
+}
+
 pub(crate) fn endpoint_has_stored_key(models: &[ModelProfile], api_url: &str) -> bool {
     models
         .iter()
-        .any(|profile| profile.has_api_key && same_endpoint(&profile.api_url, api_url))
+        .any(|profile| shares_endpoint_key(profile, api_url))
 }
 
 pub(crate) fn sibling_profile_id<'a>(models: &'a [ModelProfile], api_url: &str) -> Option<&'a str> {
     models
         .iter()
-        .find(|profile| profile.has_api_key && same_endpoint(&profile.api_url, api_url))
+        .find(|profile| shares_endpoint_key(profile, api_url))
         .map(|profile| profile.id.as_str())
 }
 

@@ -18,6 +18,7 @@ const EVENT_SCHEMA: &str = "wisp.agent-event.v1";
 const USAGE: &str = "Usage:
   wisp-science
   wisp-science login codex [--method browser|device]
+  wisp-science login xai
   wisp-science run [--output console|jsonl] <prompt>
   wisp-science rpc
   wisp-science eval [--mode offline|live] [--suite suite.yaml] [options]
@@ -53,6 +54,7 @@ enum CliCommand {
     LoginCodex {
         method: String,
     },
+    LoginXai,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -78,11 +80,17 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<CliCommand> {
 
     match command.as_str() {
         "login" => {
-            let provider = args
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("login requires a provider; supported: codex"))?;
+            let provider = args.next().ok_or_else(|| {
+                anyhow::anyhow!("login requires a provider; supported: codex, xai")
+            })?;
+            if provider == "xai" {
+                if let Some(arg) = args.next() {
+                    bail!("unknown login option '{arg}'; xai always uses a device code");
+                }
+                return Ok(CliCommand::LoginXai);
+            }
             if provider != "codex" {
-                bail!("login supports: codex");
+                bail!("login supports: codex, xai");
             }
             let mut method = "browser".to_string();
             while let Some(arg) = args.next() {
@@ -706,6 +714,7 @@ fn parse_provider_kind(raw: &str) -> String {
         "anthropic" => "anthropic".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
         "openai_codex" | "openai-codex" | "codex" => "openai_codex".into(),
+        "xai_oauth" | "xai-oauth" | "grok_oauth" => "xai_oauth".into(),
         _ => "openai".into(),
     }
 }
@@ -715,6 +724,7 @@ fn default_provider_url(kind: &str) -> &'static str {
         "anthropic" => "https://api.anthropic.com",
         "openai_responses" => "https://api.openai.com/v1",
         "openai_codex" => "https://chatgpt.com/backend-api",
+        "xai_oauth" => wisp_llm::xai_auth::DEFAULT_BASE_URL,
         _ => "https://api.deepseek.com",
     }
 }
@@ -723,6 +733,7 @@ fn default_provider_model(kind: &str) -> &'static str {
     match kind {
         "anthropic" => "claude-sonnet-5",
         "openai_responses" | "openai_codex" => "gpt-5.5",
+        "xai_oauth" => wisp_llm::xai_auth::DEFAULT_MODEL,
         _ => "deepseek-v4-flash",
     }
 }
@@ -744,6 +755,7 @@ fn build_named_provider_config(
         "anthropic" => ProviderConfig::anthropic(base_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(base_url, api_key, model),
         "openai_codex" => ProviderConfig::openai_codex(base_url, api_key, model),
+        // xai_oauth: the subscription token is a Bearer key for Chat Completions.
         _ => ProviderConfig::openai(base_url, api_key, model),
     }
 }
@@ -784,18 +796,47 @@ async fn load_codex_access_token() -> Result<String> {
     Ok(fresh.access_token)
 }
 
+async fn load_xai_access_token() -> Result<String> {
+    let raw = wisp_store::secrets::Secret::get(wisp_llm::xai_auth::SUBSCRIPTION_SECRET)
+        .context("SuperGrok subscription is not signed in. Run `wisp-science login xai`.")?;
+    let creds = wisp_llm::xai_auth::XaiCredentials::from_json(&raw).context(
+        "Stored SuperGrok subscription is unreadable. Run `wisp-science login xai` again.",
+    )?;
+    let client = wisp_llm::codex_auth::http_client(None);
+    let fresh = wisp_llm::xai_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms())
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let json = fresh.to_json();
+    if json != raw {
+        wisp_store::secrets::Secret::set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &json)?;
+    }
+    Ok(fresh.access_token)
+}
+
+/// Subscription access token for `kind`, or None for API-key providers.
+async fn subscription_access_token(kind: &str) -> Result<Option<String>> {
+    Ok(match kind {
+        "openai_codex" => Some(load_codex_access_token().await?),
+        "xai_oauth" => Some(load_xai_access_token().await?),
+        _ => None,
+    })
+}
+
 async fn provider_config() -> Result<ProviderConfig> {
     let kind = parse_provider_kind(&env("WISP_PROVIDER", "openai"));
     let api_key = env("WISP_API_KEY", "");
     let base_url = env("WISP_API_URL", default_provider_url(&kind));
     let model = env("WISP_MODEL", default_provider_model(&kind));
-    let api_key = if api_key.is_empty() && kind == "openai_codex" {
-        load_codex_access_token().await?
+    let api_key = if api_key.is_empty() {
+        subscription_access_token(&kind).await?.unwrap_or_default()
     } else {
         api_key
     };
     if api_key.is_empty() {
         anyhow::bail!("WISP_API_KEY is not set (required). Set it to your provider API key.");
+    }
+    if kind == "xai_oauth" {
+        wisp_llm::xai_auth::validate_xai_url(&base_url).map_err(anyhow::Error::msg)?;
     }
     let mut cfg = build_named_provider_config(&kind, base_url, api_key, model);
     cfg.max_tokens = parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
@@ -862,12 +903,11 @@ async fn vision_provider_config() -> Result<Option<ProviderConfig>> {
     let provider = env_opt("WISP_VISION_PROVIDER").or_else(|| env_opt("WISP_PROVIDER"));
     if env_opt("WISP_VISION_MODEL").is_some()
         && api_key.is_none()
-        && provider
-            .as_deref()
-            .is_some_and(|kind| parse_provider_kind(kind) == "openai_codex")
         && env_opt("WISP_API_KEY").is_none()
     {
-        api_key = Some(load_codex_access_token().await?);
+        if let Some(kind) = provider.as_deref() {
+            api_key = subscription_access_token(&parse_provider_kind(kind)).await?;
+        }
     }
     vision_provider_from_values(
         env_opt("WISP_VISION_MODEL").as_deref(),
@@ -1063,6 +1103,33 @@ async fn login_codex(method: &str) -> Result<()> {
     Ok(())
 }
 
+async fn login_xai() -> Result<()> {
+    let client = wisp_llm::codex_auth::http_client(None);
+    let token_endpoint = wisp_llm::xai_auth::discover_token_endpoint(&client)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let device = wisp_llm::xai_auth::start_device_login(&client)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    println!(
+        "Open {} and approve the sign-in. If it asks for a code, enter:\n",
+        device.verification_uri_complete
+    );
+    println!("{}\n", device.user_code);
+    let _ = open_browser(&device.verification_uri_complete);
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let creds =
+        wisp_llm::xai_auth::poll_device_until_complete(&client, device, &token_endpoint, &cancel)
+            .await
+            .map_err(anyhow::Error::msg)?;
+    wisp_store::secrets::Secret::set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &creds.to_json())?;
+    println!("Signed in to {}.", creds.display_account());
+    println!(
+        "Start a session with WISP_PROVIDER=xai_oauth. Settings → Models can use this same sign-in."
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let command = parse_command(std::env::args().skip(1))?;
@@ -1107,6 +1174,9 @@ async fn main() -> Result<()> {
     }
     if let CliCommand::LoginCodex { method } = &command {
         return login_codex(method).await;
+    }
+    if command == CliCommand::LoginXai {
+        return login_xai().await;
     }
     let mut cfg = match provider_config().await {
         Ok(cfg) => cfg,
@@ -1442,6 +1512,8 @@ mod tests {
                 method: "device".into()
             }
         );
+        assert_eq!(command(&["login", "xai"]).unwrap(), CliCommand::LoginXai);
+        assert!(command(&["login", "xai", "--method", "browser"]).is_err());
         assert!(command(&["login", "openai"]).is_err());
     }
 

@@ -18,6 +18,7 @@ pub mod responses;
 pub mod routed;
 pub mod scripted;
 mod system_proxy;
+pub mod xai_auth;
 
 pub use message::{
     tool_call_pairing, Completion, Content, FunctionCall, ImageUrl, Message, Part, Role, ToolCall,

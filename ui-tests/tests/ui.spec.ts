@@ -883,6 +883,36 @@ test("Codex subscription sign-in closes on Escape before leaving Settings", asyn
   await expect(page.getByTestId("add-codex-login")).toBeVisible();
 });
 
+test("SuperGrok sign-in uses a device code and saves an xAI subscription model", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("add-xai-login").click();
+  const form = page.getByTestId("codex-login-form");
+  await expect(form).toBeVisible();
+  await expect(page.locator(".settings-breadcrumb")).toContainText("SuperGrok / X Premium+");
+  await expect(page.getByTestId("codex-login-method")).toBeHidden();
+  await expect(page.getByTestId("codex-login-redirect")).toHaveCount(0);
+  await expect(page.getByTestId("codex-login-model")).toHaveValue("grok-4.6");
+
+  await page.getByTestId("codex-login-start").click();
+  await expect(page.getByTestId("codex-user-code")).toContainText("GROK-1234");
+  await expect(page.getByTestId("codex-login-message")).toContainText("grok@example.com");
+  await page.getByTestId("codex-login-save").click();
+  await expect(form).toHaveCount(0);
+
+  const calls = await page.evaluate(() => (window as any).__skillInvokeLog
+    .filter((call: any) => ["start_codex_login", "save_codex_login"].includes(call.cmd))
+    .map((call: any) => ({
+      cmd: call.cmd,
+      provider: call.args instanceof Map ? call.args.get("provider") : call.args?.provider,
+    })));
+  expect(calls).toEqual([
+    { cmd: "start_codex_login", provider: "xai" },
+    { cmd: "save_codex_login", provider: "xai" },
+  ]);
+  await expect(page.locator(".settings-page")).toContainText("Grok grok-4.6");
+});
+
 test("settings subpages consume Escape before leaving Settings", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Memory");

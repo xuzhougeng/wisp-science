@@ -3985,6 +3985,34 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             });
             return mockModels;
           }
+          case "codex_subscription_status":
+            return { signed_in: false, account_id: "" };
+          case "start_codex_login":
+            return arg("provider") === "xai"
+              ? {
+                  login_id: "xai-login",
+                  method: "device",
+                  url: "https://accounts.x.ai/device?code=GROK-1234",
+                  user_code: "GROK-1234",
+                  verification_uri: "https://accounts.x.ai/device",
+                  message: "Approve the sign-in on the xAI page.",
+                }
+              : null;
+          case "codex_login_status":
+            return { status: "success", message: "Signed in to grok@example.com", account_id: "grok@example.com" };
+          case "save_codex_login": {
+            const xai = arg("provider") === "xai";
+            mockModels = [...mockModels, {
+              ...mockModels[0],
+              id: `sub-${mockModels.length + 1}`,
+              label: arg("label") || `${xai ? "Grok" : "ChatGPT"} ${arg("model")}`,
+              provider: xai ? "xai_oauth" : "openai_codex",
+              api_url: xai ? "https://api.x.ai/v1" : "https://chatgpt.com/backend-api",
+              model: arg("model"),
+              has_api_key: true,
+            }];
+            return mockModels;
+          }
           case "remove_model": {
             const id = arg("id") ?? "";
             mockModels = mockModels.filter((m) => m.id !== id);

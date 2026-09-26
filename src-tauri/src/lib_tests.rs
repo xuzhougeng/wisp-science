@@ -107,6 +107,32 @@ fn model_user_agent_is_validated_before_building_a_provider() {
         .contains("User-Agent"));
 }
 
+#[test]
+fn xai_subscription_uses_chat_completions_and_only_sends_its_token_to_x_ai() {
+    let config = |url, key| {
+        super::build_provider_config(
+            "xai-oauth",
+            url,
+            key,
+            "grok-4.6",
+            1024,
+            "",
+            "",
+            "",
+            true,
+            None,
+            "",
+            None,
+        )
+    };
+    let cfg = config("https://api.x.ai/v1", "xai-access").unwrap();
+    assert!(matches!(cfg.kind, wisp_llm::ProviderKind::OpenAiCompatible));
+    assert!(config("https://gateway.example/v1", "xai-access").is_err());
+    assert!(config("https://api.x.ai/v1", "")
+        .unwrap_err()
+        .contains("login xai"));
+}
+
 #[tokio::test]
 async fn exploration_creation_shares_project_activity_but_serializes_round_initialization() {
     let locks = Arc::new(ProjectActivityLocks::default());

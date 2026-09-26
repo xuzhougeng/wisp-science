@@ -669,12 +669,16 @@ fn settings_provider_value(provider: &str) -> &'static str {
         "anthropic" => "anthropic",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
         "openai_codex" | "openai-codex" | "codex" => "openai_codex",
+        "xai_oauth" | "xai-oauth" | "grok_oauth" => "xai_oauth",
         _ => "openai",
     }
 }
 
+/// Subscription sign-in form for ChatGPT (Codex) and SuperGrok (xAI).
 #[derive(Clone)]
 struct CodexLoginForm {
+    /// `codex` or `xai`; sent to the login commands as `provider`.
+    provider: String,
     method: String,
     login_id: String,
     url: String,
@@ -690,18 +694,22 @@ struct CodexLoginForm {
     saved_account: String,
 }
 
-fn blank_codex_login(profile_id: &str, model: &str, label: &str) -> CodexLoginForm {
+fn blank_codex_login(provider: &str, profile_id: &str, model: &str, label: &str) -> CodexLoginForm {
+    let xai = provider == "xai";
     CodexLoginForm {
-        method: "browser".into(),
+        provider: provider.into(),
+        method: if xai { "device" } else { "browser" }.into(),
         login_id: String::new(),
         url: String::new(),
         user_code: String::new(),
         verification_uri: String::new(),
         redirect: String::new(),
-        model: if model.trim().is_empty() {
-            "gpt-5.5".into()
-        } else {
+        model: if !model.trim().is_empty() {
             model.to_string()
+        } else if xai {
+            "grok-4.6".into()
+        } else {
+            "gpt-5.5".into()
         },
         label: label.to_string(),
         status: "idle".into(),
@@ -709,6 +717,23 @@ fn blank_codex_login(profile_id: &str, model: &str, label: &str) -> CodexLoginFo
         account_id: String::new(),
         profile_id: profile_id.to_string(),
         saved_account: String::new(),
+    }
+}
+
+/// xAI replaces the vendor-specific Codex strings; the rest are shared.
+fn login_key(provider: &str, codex_key: &'static str) -> &'static str {
+    if provider != "xai" {
+        return codex_key;
+    }
+    match codex_key {
+        "codex.login.title" => "xai.login.title",
+        "codex.login.desc" => "xai.login.desc",
+        "codex.login.label_ph" => "xai.login.label_ph",
+        "codex.login.device_hint" => "xai.login.device_hint",
+        "codex.login.use_saved" => "xai.login.use_saved",
+        "codex.login.waiting" => "xai.login.waiting",
+        "codex.login.saved_hint" => "xai.login.saved_hint",
+        other => other,
     }
 }
 
@@ -797,6 +822,7 @@ fn codex_login_pane(
             return;
         }
         let method = form.method.clone();
+        let provider = form.provider.clone();
         codex_login.update(|form| {
             if let Some(form) = form {
                 form.status = "pending".into();
@@ -807,7 +833,8 @@ fn codex_login_pane(
         let generation = codex_poll_gen.get_untracked() + 1;
         codex_poll_gen.set(generation);
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "method": method })).unwrap();
+            let arg =
+                to_value(&serde_json::json!({ "method": method, "provider": provider })).unwrap();
             match invoke_checked("start_codex_login", arg).await {
                 Ok(value) => {
                     let Ok(challenge) = serde_wasm_bindgen::from_value::<serde_json::Value>(value)
@@ -849,7 +876,8 @@ fn codex_login_pane(
                             form.message = message;
                         }
                     });
-                    if method == "browser" && !url.is_empty() {
+                    // xAI's device URL already carries the code, so open it too.
+                    if (method == "browser" || provider == "xai") && !url.is_empty() {
                         open_external_url(url);
                     }
                     schedule_codex_poll(login_id, generation, codex_login, codex_poll_gen);
@@ -927,6 +955,7 @@ fn codex_login_pane(
                 "label": form.label,
                 "profileId": form.profile_id,
                 "useSaved": use_saved,
+                "provider": form.provider,
             }))
             .unwrap();
             match invoke_checked("save_codex_login", arg).await {
@@ -950,12 +979,18 @@ fn codex_login_pane(
             }
         });
     });
+    let provider = move || {
+        codex_login
+            .get()
+            .map(|form| form.provider)
+            .unwrap_or_default()
+    };
     view! {
         <div class="settings-pane settings-pane-subpage" data-testid="codex-login-form">
             <div class="conn-form model-form">
-                <p class="hint">{move || t(locale.get(), "codex.login.desc")}</p>
+                <p class="hint">{move || t(locale.get(), login_key(&provider(), "codex.login.desc"))}</p>
                 <div class="settings-form-grid">
-                    <label>{move || t(locale.get(), "codex.login.method")}
+                    <label style:display=move || if provider() == "xai" { "none" } else { "" }>{move || t(locale.get(), "codex.login.method")}
                         <select data-testid="codex-login-method"
                             on:change=move |ev| {
                                 let method = dom_value(&ev);
@@ -984,7 +1019,7 @@ fn codex_login_pane(
                     <label class="span-2">{move || t(locale.get(), "settings.label")}
                         <input data-testid="codex-login-label"
                             prop:value=move || codex_login.get().map(|form| form.label).unwrap_or_default()
-                            placeholder=move || t(locale.get(), "codex.login.label_ph")
+                            placeholder=move || t(locale.get(), login_key(&provider(), "codex.login.label_ph"))
                             on:input=move |ev| {
                                 let label = event_target_value(&ev);
                                 codex_login.update(|form| if let Some(form) = form { form.label = label; });
@@ -992,7 +1027,7 @@ fn codex_login_pane(
                     </label>
                 </div>
                 <p class="hint">{move || t(locale.get(), if codex_login.get().is_some_and(|form| form.method == "device") {
-                    "codex.login.device_hint"
+                    login_key(&provider(), "codex.login.device_hint")
                 } else {
                     "codex.login.browser_hint"
                 })}</p>
@@ -1001,7 +1036,7 @@ fn codex_login_pane(
                     view! {
                         <button type="button" data-testid="codex-use-saved" disabled=move || settings_busy.get()
                             on:click=move |_| save.call(true)>
-                            {t(locale.get(), "codex.login.use_saved")}
+                            {t(locale.get(), login_key(&form.provider, "codex.login.use_saved"))}
                             " "
                             {account}
                         </button>
@@ -1061,7 +1096,7 @@ fn codex_login_pane(
                         settings_busy.get() || codex_login.get().is_some_and(|form| form.status == "pending")
                     } on:click=start>
                         {move || t(locale.get(), if codex_login.get().is_some_and(|form| form.status == "pending") {
-                            "codex.login.waiting"
+                            login_key(&provider(), "codex.login.waiting")
                         } else {
                             "codex.login.start"
                         })}
@@ -2069,17 +2104,16 @@ pub(super) fn SettingsView(
         close_settings_subpage.call(());
     });
     let open_codex_login = Callback::new(
-        move |(profile_id, model, label): (String, String, String)| {
+        move |(provider, profile_id, model, label): (String, String, String, String)| {
             model_form.set(None);
             model_form_key.set(String::new());
             model_form_msg.set(None);
             acp_form.set(None);
             codex_poll_gen.update(|generation| *generation += 1);
-            codex_login.set(Some(blank_codex_login(&profile_id, &model, &label)));
+            codex_login.set(Some(blank_codex_login(&provider, &profile_id, &model, &label)));
             spawn_local(async move {
-                let Ok(value) =
-                    invoke_checked("codex_subscription_status", JsValue::UNDEFINED).await
-                else {
+                let arg = to_value(&serde_json::json!({ "provider": provider })).unwrap();
+                let Ok(value) = invoke_checked("codex_subscription_status", arg).await else {
                     return;
                 };
                 let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) else {
@@ -2397,7 +2431,7 @@ pub(super) fn SettingsView(
                             .and_then(|id| CRED_GROUPS.iter().find(|group| group.id == id))
                             .map(|group| t(loc, group.name_key).to_string())
                     }).or_else(|| selected_skill.get())
-                    .or_else(|| codex_login.get().map(|_| t(loc, "codex.login.title")));
+                    .or_else(|| codex_login.get().map(|form| t(loc, login_key(&form.provider, "codex.login.title"))));
                     view! {
                         <div class="settings-head">
                             <div class="settings-head-main">
@@ -3696,16 +3730,20 @@ pub(super) fn SettingsView(
                                             {move || t(locale.get(), "settings.tip")}
                                         </span>
                                         {move || {
-                                            let codex = model_form.get().is_some_and(|form| settings_provider_value(&form.provider) == "openai_codex");
-                                            if codex {
+                                            let subscription = model_form.get().and_then(|form| match settings_provider_value(&form.provider) {
+                                                "openai_codex" => Some("codex"),
+                                                "xai_oauth" => Some("xai"),
+                                                _ => None,
+                                            });
+                                            if let Some(subscription) = subscription {
                                                 let profile_id = model_form.get().and_then(|form| form.id).unwrap_or_default();
                                                 let model = model_form.get().map(|form| form.model).unwrap_or_default();
                                                 let label = model_form.get().map(|form| form.label).unwrap_or_default();
                                                 view! {
                                                     <div class="span-2">
-                                                        <p class="hint">{t(locale.get(), "codex.login.saved_hint")}</p>
+                                                        <p class="hint">{t(locale.get(), login_key(subscription, "codex.login.saved_hint"))}</p>
                                                         <button type="button" data-testid="codex-relogin" on:click=move |_| {
-                                                            open_codex_login.call((profile_id.clone(), model.clone(), label.clone()));
+                                                            open_codex_login.call((subscription.to_string(), profile_id.clone(), model.clone(), label.clone()));
                                                         }>{t(locale.get(), "codex.login.again")}</button>
                                                     </div>
                                                 }.into_view()
@@ -3747,6 +3785,10 @@ pub(super) fn SettingsView(
                                                 <option value="openai_codex"
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_codex")>
                                                     {move || t(locale.get(), "settings.provider.openai_codex")}
+                                                </option>
+                                                <option value="xai_oauth"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "xai_oauth")>
+                                                    {move || t(locale.get(), "settings.provider.xai_oauth")}
                                                 </option>
                                                 <option value="anthropic"
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "anthropic")>
@@ -4491,8 +4533,11 @@ pub(super) fn SettingsView(
                                     } else {
                                         view! {
                                             <button type="button" class="settings-add-btn" data-testid="add-codex-login" on:click=move |_| {
-                                                open_codex_login.call((String::new(), String::new(), String::new()));
+                                                open_codex_login.call(("codex".into(), String::new(), String::new(), String::new()));
                                             }>{move || t(locale.get(), "codex.login.button")}</button>
+                                            <button type="button" class="settings-add-btn" data-testid="add-xai-login" on:click=move |_| {
+                                                open_codex_login.call(("xai".into(), String::new(), String::new(), String::new()));
+                                            }>{move || t(locale.get(), "xai.login.button")}</button>
                                             <button type="button" class="settings-add-btn" data-testid="add-provider" on:click=move |_| {
                                                 show_acp_agents.set(false);
                                                 let form = new_model_form();
