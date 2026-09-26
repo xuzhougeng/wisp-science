@@ -85,12 +85,63 @@ final class NativeSelectionAction: NSObject {
     @objc func invoke(_ sender: Any?) { perform() }
 }
 class NativeMessageTextView: NSTextView {
+    var copyBlock: (String) -> Void = { text in
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+    }
+    private var copyLayoutWidth: CGFloat = -1
+    private var copyButtons: [NSButton] = []
+    private var copyActions: [NativeSelectionAction] = []
+    override func accessibilityChildren() -> [Any]? {
+        let existing = super.accessibilityChildren() ?? []
+        return existing + copyButtons.filter { button in !existing.contains { ($0 as? NSView) === button } }
+    }
+    override func layout() {
+        super.layout()
+        layoutCopyButtons()
+    }
+    /// Buttons are native children, so keyboard/VoiceOver can reach each block
+    /// without replacing the selectable document with disconnected SwiftUI text.
+    func layoutCopyButtons() {
+        guard bounds.width != copyLayoutWidth else { return }
+        copyLayoutWidth = bounds.width
+        let previous = Dictionary(uniqueKeysWithValues: copyButtons.compactMap { button in button.identifier.map { ($0.rawValue, button) } })
+        copyButtons = []; copyActions = []
+        guard let storage = textStorage, let layout = layoutManager, let container = textContainer else { return }
+        var seenBlocks: Set<String> = []
+        storage.enumerateAttribute(NativeMarkdownContent.copyBlockID, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let blockID = value as? String, range.length > 0, seenBlocks.insert(blockID).inserted else { return }
+            let code = storage.attribute(NativeMarkdownContent.codeCopy, at: range.location, effectiveRange: nil) as? String
+            let table = storage.attribute(NativeMarkdownContent.tableCopy, at: range.location, effectiveRange: nil) as? String
+            guard let text = code ?? table else { return }
+            let title = code == nil ? "复制表格" : "复制代码"
+            let identifier = "message-block-copy-" + blockID
+            let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            let action = NativeSelectionAction { [copyBlock] in copyBlock(text) }
+            let button = previous[identifier] ?? NSButton(title: "", target: nil, action: nil)
+            button.target = action; button.action = #selector(NativeSelectionAction.invoke(_:))
+            button.image = WispDesign.image("icon-copy")
+            button.imageScaling = .scaleProportionallyDown
+            button.bezelStyle = .regularSquare
+            button.isBordered = true
+            button.toolTip = title
+            button.setAccessibilityLabel(title)
+            button.identifier = NSUserInterfaceItemIdentifier(identifier)
+            button.frame = NSRect(x: max(0, bounds.width - 32), y: max(0, textContainerOrigin.y + rect.minY - 28), width: 24, height: 24)
+            if button.superview !== self { addSubview(button) }
+            copyButtons.append(button); copyActions.append(action)
+        }
+        for button in previous.values where !copyButtons.contains(where: { $0 === button }) { button.removeFromSuperview() }
+    }
+
     var quote: ((String) -> Void)?
     var save: ((String) -> Void)?
     func apply(_ content: NSAttributedString) {
         guard let storage = textStorage, !storage.isEqual(to: content) else { return }
         let selected = selectedRange()
         storage.setAttributedString(content)
+        copyLayoutWidth = -1
+        needsLayout = true
         let start = min(selected.location, storage.length)
         setSelectedRange(NSRange(location: start, length: min(selected.length, storage.length - start)))
     }

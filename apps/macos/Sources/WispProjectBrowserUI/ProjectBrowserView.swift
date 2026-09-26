@@ -136,6 +136,9 @@ private struct ProjectLanding: View {
                 .accessibilityIdentifier("home-library")
             searchAction
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
+            Link(destination: URL(string: "https://wispscience.com/tutorials.html")!) { WispIcon(name: "doc") }
+                .buttonStyle(WispButtonStyle()).help("文档").accessibilityLabel("文档")
+                .accessibilityIdentifier("home-docs")
             Button { Task { await model.scratch.open(model.calendarClient()) } } label: { Text("随手一聊") }
                 .buttonStyle(WispButtonStyle())
                 .disabled(model.scratch.busy || model.scratch.presented)
@@ -201,9 +204,11 @@ private struct ProjectLanding: View {
                 Button { Task { await model.openProject(session.projectID, sessionID: session.id) } } label: {
                     HStack(spacing: 10) {
                         Text(session.title).font(WispDesign.font(size: 14, weight: .semibold)).lineLimit(1)
-                        Spacer(minLength: 0)
                         Text(session.status == "needs_you" ? "待查看" : "已完成")
-                            .font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
+                            .font(WispDesign.font(size: 11)).foregroundStyle(color(session.status == "needs_you" ? "clay-strong" : "text-muted"))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(color("bg-sunken"), in: Capsule())
+                        Spacer(minLength: 0)
                     }
                     .padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 10))

@@ -1,9 +1,46 @@
 import AppKit
+import SwiftUI
 import XCTest
 import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
 final class NativeSideChatInputTests: XCTestCase {
+    @MainActor func testPlaceholderNeverBecomesDraftAndContentHeightIsBounded() {
+        let (window, editor) = editor(); defer { window.close() }
+        editor.placeholder = "请输入问题…"
+        let widthBefore = editor.textContainer?.containerSize.width
+        let tracksBefore = editor.textContainer?.widthTracksTextView
+        XCTAssertTrue(editor.showsPlaceholder)
+        XCTAssertEqual(editor.string, "")
+        XCTAssertEqual(editor.fittedHeight(width: 300), 64)
+        editor.apply(String(repeating: "long text wraps across the composer width\n", count: 30))
+        XCTAssertFalse(editor.showsPlaceholder)
+        XCTAssertEqual(editor.fittedHeight(width: 300), 160)
+        _ = editor.fittedHeight(width: 1)
+        XCTAssertEqual(editor.textContainer?.containerSize.width, widthBefore)
+        XCTAssertEqual(editor.textContainer?.widthTracksTextView, tracksBefore)
+        editor.apply("")
+        XCTAssertTrue(editor.showsPlaceholder)
+        XCTAssertEqual(editor.fittedHeight(width: 300), 64)
+    }
+    @MainActor func testHostedEmptyComposerHasClickableEditorAndMeasurementDoesNotCollapseIt() throws {
+        let host = NSHostingView(rootView: NativeMessageInput(text: .constant(""), canSubmit: { false }, submit: {}, placeholder: "请输入问题…", fitsContent: true)
+            .fixedSize(horizontal: false, vertical: true))
+        host.frame = NSRect(x: 0, y: 0, width: 380, height: 160)
+        host.layoutSubtreeIfNeeded()
+        func find(_ view: NSView) -> NativeComposerTextView? {
+            if let editor = view as? NativeComposerTextView { return editor }
+            return view.subviews.compactMap(find).first
+        }
+        let editor = try XCTUnwrap(find(host))
+        XCTAssertGreaterThan(editor.frame.width, 300)
+        XCTAssertGreaterThanOrEqual(editor.frame.height, 64)
+        XCTAssertTrue(editor.textContainer?.widthTracksTextView == true)
+        _ = editor.fittedHeight(width: 1)
+        XCTAssertGreaterThan(editor.frame.width, 300)
+        editor.insertText("sample draft", replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertEqual(editor.string, "sample draft")
+    }
     @MainActor func testModifierPreferenceChangesLiveAndShiftAlwaysMakesNewline() {
         let (window, editor) = editor(); defer { window.close() }
         var sends = 0

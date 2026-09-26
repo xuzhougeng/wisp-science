@@ -44,7 +44,7 @@ struct NativeConversationView: View {
                             HStack(spacing: 8) { ProgressView().controlSize(.small); Text(conversation.snapshot?.stopping == true ? "正在停止…" : "正在处理…").font(WispDesign.font(size: 12)) }
                         }
                         Color.clear.frame(height: 1).id("latest")
-                    }.frame(maxWidth: 800).padding(24).frame(maxWidth: .infinity)
+                    }.frame(maxWidth: 800).padding(.horizontal, 16).padding(.vertical, 26).frame(maxWidth: .infinity)
                 }
                 .onChange(of: conversation.scrollRevision) { _ in
                     if let target = conversation.scrollTarget { expandedTools.insert(target); followLatest = false; scroll.scrollTo(target, anchor: .center) }
@@ -181,12 +181,15 @@ struct NativeConversationView: View {
                 }
                 NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend }, submit: { Task { await conversation.send() } },
                                    sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
-                                   accessibilityLabel: "消息输入框", fontSize: 14)
-                    .frame(minHeight: 58, maxHeight: 110)
+                                   accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "请输入问题…", fitsContent: true)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("对话附件") { attachFiles() }
+                    Button { attachFiles() } label: { WispIcon(name: "plus", size: 17).frame(width: 32, height: 32)
+                        .background(color("bg-elev"), in: Circle()).overlay(Circle().strokeBorder(color("border-strong"))) }
+                        .buttonStyle(.plain).help("添加到消息").accessibilityLabel("对话附件")
                         .disabled(!conversation.canAttach)
                         .accessibilityIdentifier("composer-attach")
+                    Spacer(minLength: 8)
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
                             Button(profile["label"].string.isEmpty ? profile["model"].string : profile["label"].string) { Task { await conversation.selectModel(profile["id"].string) } }
@@ -202,8 +205,9 @@ struct NativeConversationView: View {
                         }
                     } label: {
                         Text(conversation.modelLabel).lineLimit(1)
-                    }.frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
-                    Spacer()
+                    }.menuStyle(.borderlessButton).padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(color("bg-elev"), in: Capsule()).overlay(Capsule().strokeBorder(color("border")))
+                        .frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
                     if conversation.snapshot?.running == true {
                         Button("排队后续") { Task { await conversation.queueFollowUp() } }
                             .disabled(!conversation.canQueueFollowUp)
@@ -213,14 +217,14 @@ struct NativeConversationView: View {
                         Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend)
                     }
                 }
-            }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(color("border")))
+            }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(color("border")))
             HStack {
                 Text(sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
-        }.frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 16)
+        }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)
     }
     private func attachFiles() {
         let panel = NSOpenPanel()

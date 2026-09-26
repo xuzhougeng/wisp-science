@@ -5,6 +5,7 @@ import WispProjectBrowser
 /// Foundation parses CommonMark/GFM; AppKit keeps the result in one selectable
 /// document, including table cells and code, so quote/save can span blocks.
 enum NativeMarkdownContent {
+    static let copyBlockID = NSAttributedString.Key("WispCopyBlockID")
     static let codeCopy = NSAttributedString.Key("WispCodeCopy")
     static let tableCopy = NSAttributedString.Key("WispTableCopy")
 
@@ -14,6 +15,14 @@ enum NativeMarkdownContent {
         var identity: Int? { intents.first?.identity }
         var tableID: Int? { intents.first { if case .table = $0.kind { return true }; return false }?.identity }
         var tableRow: Int { intents.compactMap { if case .tableRow(let row) = $0.kind { return row }; return nil }.first ?? 0 }
+    }
+
+    private static func fullWidthBlock() -> NSTextTableBlock {
+        let table = NSTextTable()
+        table.numberOfColumns = 1
+        table.layoutAlgorithm = .fixedLayoutAlgorithm
+        table.setValue(100, type: .percentageValueType, for: .width)
+        return NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)
     }
 
     static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme) -> NSAttributedString {
@@ -45,8 +54,8 @@ enum NativeMarkdownContent {
             let code = block.intents.contains { if case .codeBlock = $0.kind { return true }; return false }
             let value = NSMutableAttributedString(attributedString: NativeSelectableMessage.content(block.text, saved: [], scheme: scheme, monospaced: code))
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 3
-            paragraph.paragraphSpacing = 9
+            paragraph.lineSpacing = 6
+            paragraph.paragraphSpacing = 16
             paragraph.lineBreakMode = .byWordWrapping
             var indent = 0
             var listItem: PresentationIntent.IntentType?
@@ -58,14 +67,18 @@ enum NativeMarkdownContent {
                     let base = (value.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize ?? 14
                     let size = base * [1.65, 1.4, 1.2, 1.1, 1, 1][min(5, max(0, level - 1))]
                     value.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: NSRange(location: 0, length: value.length))
-                    paragraph.paragraphSpacingBefore = 10
+                    paragraph.paragraphSpacingBefore = 18
                 case .listItem:
                     if listItem == nil { listItem = component }
                 case .orderedList, .unorderedList:
                     if indent == 0 { ordered = component.kind == .orderedList }
                     indent += 1
                 case .blockQuote:
-                    paragraph.headIndent += 16; paragraph.firstLineHeadIndent += 16
+                    let quote = fullWidthBlock()
+                    quote.setWidth(16, type: .absoluteValueType, for: .padding)
+                    quote.setWidth(3, type: .absoluteValueType, for: .border, edge: .minX)
+                    quote.setBorderColor(NSColor(WispDesign.color("clay", scheme)).withAlphaComponent(0.5))
+                    paragraph.textBlocks = [quote]
                     value.addAttribute(.foregroundColor, value: NSColor(WispDesign.color("text-muted", scheme)), range: NSRange(location: 0, length: value.length))
                 case .tableHeaderRow: header = true
                 default: break
@@ -85,12 +98,19 @@ enum NativeMarkdownContent {
                 }
                 paragraph.firstLineHeadIndent += CGFloat(max(0, indent - 1)) * 20
                 paragraph.headIndent += CGFloat(indent) * 20
-                paragraph.paragraphSpacing = 4
+                paragraph.paragraphSpacing = 10
             }
             if code {
                 paragraph.paragraphSpacing = 0
-                value.addAttributes([codeCopy: String(block.text.characters), .backgroundColor: NSColor(WispDesign.color("bg-sunken", scheme))], range: NSRange(location: 0, length: value.length))
-                paragraph.firstLineHeadIndent += 10; paragraph.headIndent += 10
+                value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters), .backgroundColor: NSColor(WispDesign.color("bg-sunken", scheme))], range: NSRange(location: 0, length: value.length))
+                let box = fullWidthBlock()
+                box.backgroundColor = NSColor(WispDesign.color("bg-sunken", scheme))
+                box.setWidth(12, type: .absoluteValueType, for: .padding)
+                box.setWidth(34, type: .absoluteValueType, for: .padding, edge: .minY)
+                box.setWidth(12, type: .absoluteValueType, for: .margin, edge: .maxY)
+                box.setWidth(0.5, type: .absoluteValueType, for: .border)
+                box.setBorderColor(NSColor(WispDesign.color("border", scheme)))
+                paragraph.textBlocks = [box]
             }
             if let id = block.tableID,
                let columns = block.intents.compactMap({ if case .table(let columns) = $0.kind { return columns }; return nil }).first,
@@ -103,9 +123,10 @@ enum NativeMarkdownContent {
                 tables[id] = table
                 let cell = NSTextTableBlock(table: table, startingRow: block.tableRow, rowSpan: 1, startingColumn: column, columnSpan: 1)
                 cell.setValue(100 / CGFloat(max(1, columns.count)), type: .percentageValueType, for: .width)
-                cell.setWidth(7, type: .absoluteValueType, for: .padding)
+                cell.setWidth(10, type: .absoluteValueType, for: .padding)
                 cell.setWidth(0.5, type: .absoluteValueType, for: .border)
                 cell.setBorderColor(NSColor(WispDesign.color("border", scheme)))
+                if header { cell.setWidth(32, type: .absoluteValueType, for: .padding, edge: .minY) }
                 if header { cell.backgroundColor = NSColor(WispDesign.color("bg-sunken", scheme)) }
                 paragraph.textBlocks = [cell]
                 paragraph.paragraphSpacing = 0
@@ -120,13 +141,20 @@ enum NativeMarkdownContent {
                 if header, value.length > 0, let font = value.attribute(.font, at: 0, effectiveRange: nil) as? NSFont {
                     value.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: NSRange(location: 0, length: value.length))
                 }
-                value.addAttribute(tableCopy, value: tableText[id] ?? "", range: NSRange(location: 0, length: value.length))
+                value.addAttributes([copyBlockID: "table-\(id)", tableCopy: tableText[id] ?? ""], range: NSRange(location: 0, length: value.length))
             }
             // A paragraph separator is essential: full Markdown parsing strips
             // block delimiters. Preserve fenced-code line breaks exactly.
             if !value.string.hasSuffix("\n") {
                 let attributes = value.length > 0 ? value.attributes(at: value.length - 1, effectiveRange: nil) : [:]
                 value.append(NSAttributedString(string: "\n", attributes: attributes))
+            }
+            // Empty cells still own a paragraph and belong to the table's
+            // single copy action. Apply identity after inserting its newline.
+            if let id = block.tableID {
+                value.addAttributes([copyBlockID: "table-\(id)", tableCopy: tableText[id] ?? ""], range: NSRange(location: 0, length: value.length))
+            } else if code {
+                value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters)], range: NSRange(location: 0, length: value.length))
             }
             value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))
             result.append(value)

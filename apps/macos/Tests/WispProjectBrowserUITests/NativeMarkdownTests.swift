@@ -46,7 +46,7 @@ final class NativeMarkdownTests: XCTestCase {
         let bold = (value.string as NSString).range(of: "A passed").location
         XCTAssertTrue(NSFontManager.shared.traits(of: try XCTUnwrap(value.attribute(.font, at: bold, effectiveRange: nil) as? NSFont)).contains(.boldFontMask))
         let quote = try XCTUnwrap(value.attribute(.paragraphStyle, at: (value.string as NSString).range(of: "Keep").location, effectiveRange: nil) as? NSParagraphStyle)
-        XCTAssertGreaterThan(quote.headIndent, 0)
+        XCTAssertEqual(quote.textBlocks.first?.width(for: .border, edge: .minX), 3)
         let nested = try XCTUnwrap(value.attribute(.paragraphStyle, at: (value.string as NSString).range(of: "Nested").location, effectiveRange: nil) as? NSParagraphStyle)
         XCTAssertEqual(nested.headIndent, 40)
     }
@@ -68,6 +68,52 @@ final class NativeMarkdownTests: XCTestCase {
         view.apply(NSAttributedString(string: "later stream"))
         for item in codeMenu + tableMenu { (item.representedObject as? NativeSelectionAction)?.invoke(nil) }
         XCTAssertEqual(copied, ["first = 1\nsecond = first + 2\nprint(second)\n", "Sample\tReads\nA\t120\nB\t240"])
+    }
+    @MainActor func testVisibleCopyButtonsPreserveSelectionAndHaveDistinctBlockActions() throws {
+        let view = NativeMessageTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 1000))
+        view.textContainer?.containerSize = NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude)
+        view.apply(NativeMarkdownContent.render(source, saved: [], scheme: .light))
+        view.setSelectedRange(NSRange(location: 0, length: 14))
+        var copied: [String] = []
+        view.copyBlock = { copied.append($0) }
+        view.layoutCopyButtons()
+        let buttons = view.subviews.compactMap { $0 as? NSButton }
+        XCTAssertEqual(Set(buttons.compactMap(\.toolTip)), ["复制代码", "复制表格"])
+        XCTAssertEqual(buttons.count, 2)
+        XCTAssertEqual(view.accessibilityChildren()?.compactMap { $0 as? NSButton }.count, 2)
+        buttons.first { $0.toolTip == "复制代码" }?.performClick(nil)
+        buttons.first { $0.toolTip == "复制表格" }?.performClick(nil)
+        XCTAssertEqual(copied, ["first = 1\nsecond = first + 2\nprint(second)\n", "Sample\tReads\nA\t120\nB\t240"])
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 0, length: 14))
+        view.layoutCopyButtons()
+        XCTAssertEqual(view.subviews.compactMap { $0 as? NSButton }.count, 2)
+        for button in buttons { XCTAssertTrue(view.bounds.contains(button.frame)) }
+        view.apply(NSAttributedString(string: "plain reply"))
+        view.layoutCopyButtons()
+        XCTAssertTrue(view.subviews.compactMap { $0 as? NSButton }.isEmpty)
+    }
+    @MainActor func testIdenticalAdjacentCodeBlocksHaveIndependentStableCopyButtons() throws {
+        let view = NativeMessageTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 1000))
+        let source = "```\nx = 1\n```\n\n```\nx = 1\n```"
+        view.apply(NativeMarkdownContent.render(source, saved: [], scheme: .light))
+        view.layoutCopyButtons()
+        let first = view.subviews.compactMap { $0 as? NSButton }
+        XCTAssertEqual(first.count, 2)
+        view.apply(NativeMarkdownContent.render(source, saved: ["x"], scheme: .light))
+        view.layoutCopyButtons()
+        let second = view.subviews.compactMap { $0 as? NSButton }
+        XCTAssertEqual(second.count, 2)
+        XCTAssertTrue(zip(first, second).allSatisfy { $0 === $1 })
+    }
+    @MainActor func testEmptyTableCellsKeepOneCopyActionAcrossLayoutUpdates() {
+        let view = NativeMessageTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 1000))
+        let source = "| A | B |\n| --- | --- |\n| | value |\n| tail | |"
+        view.apply(NativeMarkdownContent.render(source, saved: [], scheme: .light))
+        view.layoutCopyButtons()
+        XCTAssertEqual(view.subviews.compactMap { $0 as? NSButton }.count, 1)
+        view.frame.size.width = 280
+        view.layoutCopyButtons()
+        XCTAssertEqual(view.subviews.compactMap { $0 as? NSButton }.count, 1)
     }
     @MainActor func testMarksAndSelectionsCanSpanBlocksAndUnicode() throws {
         let view = NativeMessageTextView(frame: .zero)

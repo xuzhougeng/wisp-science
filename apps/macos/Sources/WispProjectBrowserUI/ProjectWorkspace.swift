@@ -39,7 +39,7 @@ struct ProjectWorkspace: View {
     var body: some View {
         HStack(spacing: 0) {
             if sidebarVisible {
-                sidebar.frame(width: 260)
+                sidebar.frame(width: 248)
                 Rectangle().fill(color("border")).frame(width: 1)
             }
             VStack(spacing: 0) {
@@ -49,10 +49,14 @@ struct ProjectWorkspace: View {
                             .buttonStyle(.plain).help("展开侧边栏").accessibilityLabel("展开侧边栏")
                     }
                     Text(model.sessions.first(where: { $0.id == model.activeSessionID })?.title ?? project.name)
-                        .font(WispDesign.font(size: 14, weight: .semibold)).lineLimit(1)
+                        .font(WispDesign.font(size: 14)).lineLimit(1)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(color("border")))
+                    Menu {
                     Button {
                         if let session = model.sessions.first(where: { $0.id == model.activeSessionID }) { sessionRename.begin(session) }
-                    } label: { WispIcon(name: "edit", size: 14) }
+                    } label: { Label { Text("重命名会话") } icon: { WispIcon(name: "edit", size: 14) } }
                         .buttonStyle(.plain).help("重命名会话").accessibilityLabel("重命名会话")
                         .disabled(model.activeSessionID == nil || conversation.snapshot?.read_only == true)
                     Button {
@@ -65,14 +69,16 @@ struct ProjectWorkspace: View {
                                 await model.refreshSessionMetadata(projectID: session.projectID, sessionID: session.id, database: database)
                             }
                         }
-                    } label: { WispIcon(name: "pin", size: 14).foregroundStyle(selectedSession?.pinned == true ? color("clay") : color("text-muted")) }
+                    } label: { Label { Text(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话") } icon: { WispIcon(name: "pin", size: 14) } }
                         .buttonStyle(.plain)
                         .help(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
                         .accessibilityLabel(selectedSession?.pinned == true ? "取消置顶会话" : "置顶会话")
                         .disabled(selectedSession?.pinned == nil || sessionPin.busy || model.sessionsLoading || conversation.snapshot?.read_only == true)
-                    Button { if let session = selectedSession { sessionDelete.begin([session]) } } label: { WispIcon(name: "trash", size: 14) }
+                    Button { if let session = selectedSession { sessionDelete.begin([session]) } } label: { Label { Text("删除会话") } icon: { WispIcon(name: "trash", size: 14) } }
                         .buttonStyle(.plain).help("删除会话").accessibilityLabel("删除会话")
                         .disabled(selectedSession == nil || sessionDelete.busy || conversation.snapshot?.read_only == true)
+                    } label: { WispIcon(name: "more", size: 16) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted")).accessibilityLabel("会话操作")
                     Spacer()
                     Button { conversation.outlinePresented.toggle() } label: { WispIcon(name: "list") }
                         .buttonStyle(.plain).help("会话大纲").accessibilityLabel("会话大纲")
@@ -103,7 +109,7 @@ struct ProjectWorkspace: View {
                     Button { panelVisible.toggle() } label: { WispIcon(name: "panel") }
                         .buttonStyle(.plain).help("切换侧面板").accessibilityLabel("切换侧面板").disabled(model.activeSessionID == nil)
                 }
-                .padding(16)
+                .padding(.horizontal, 16).frame(height: 64)
                 Rectangle().fill(color("border")).frame(height: 1)
                 if let error = model.sessionError {
                     HStack {
@@ -321,15 +327,15 @@ struct ProjectWorkspace: View {
                 Button { sidebarVisible = false } label: { WispIcon(name: "chevron-left", size: 16) }
                     .buttonStyle(.plain).help("收起侧边栏").accessibilityLabel("收起侧边栏")
             }
-            VStack(spacing: 4) {
-                Button { createSession() } label: { HStack { WispIcon(name: "plus", size: 16); Text("新建会话"); Spacer() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(conversation.busy)
+            VStack(spacing: 0) {
+                Button { createSession() } label: { HStack { WispIcon(name: "plus", size: 16); Text("新建会话"); Spacer() } }.buttonStyle(WispSidebarButtonStyle()).disabled(conversation.busy)
                 Button { model.searchPresented = true } label: {
-                    HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer() }
-                }.buttonStyle(WispButtonStyle(compact: true))
+                    HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer(); Text("⌘K").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint")) }
+                }.buttonStyle(WispSidebarButtonStyle())
                 Button { groups.creating = true } label: {
                     HStack { WispIcon(name: "folder-plus", size: 16); Text("新建分组"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .accessibilityLabel("新建分组")
                 .accessibilityIdentifier("new-session-group")
                 Button {
@@ -340,28 +346,28 @@ struct ProjectWorkspace: View {
                 } label: {
                     HStack { WispIcon(name: "doc", size: 16); Text("文件"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .help("文件")
                 .accessibilityLabel("文件")
                 .accessibilityIdentifier("sidebar-files")
                 Button { model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) } label: {
                     HStack { WispIcon(name: "research-trail", size: 16); Text("研究历程"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .help("研究历程")
                 .accessibilityLabel("研究历程")
                 .accessibilityIdentifier("sidebar-journey")
                 Button { publication.open(projectID: project.id) } label: {
                     HStack { WispIcon(name: "book", size: 16); Text("论文证据"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .help("论文证据")
                 .accessibilityLabel("论文证据")
                 .accessibilityIdentifier("sidebar-publication")
                 Button { model.library.presented = true } label: {
                     HStack { WispIcon(name: "star", size: 16); Text("收藏"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .help("收藏")
                 .accessibilityLabel("收藏")
                 .accessibilityIdentifier("sidebar-library")
@@ -430,11 +436,11 @@ struct ProjectWorkspace: View {
                                 }
                             } label: {
                                 HStack {
-                                    Text(session.title).font(WispDesign.font(size: 13)).lineLimit(1)
+                                    Text(session.title).font(WispDesign.font(size: 14)).lineLimit(1)
                                     Spacer()
                                 }
                                 .padding(10)
-                                .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("surface-hover") : .clear), in: RoundedRectangle(cornerRadius: 8))
+                                .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("bg-elev") : .clear), in: RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
                             .accessibilityAddTraits(groups.isSelected(session.id, activeSessionID: model.activeSessionID) ? [.isSelected] : [])
@@ -443,27 +449,27 @@ struct ProjectWorkspace: View {
                 }
             }
             Spacer(minLength: 0)
-            VStack(spacing: 4) {
+            VStack(spacing: 0) {
                 Button { model.capabilities.open(projectID: project.id) } label: {
                     HStack { WispIcon(name: "grid", size: 16); Text("能力"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .help("能力")
                 .accessibilityLabel("能力")
                 .accessibilityIdentifier("sidebar-capabilities")
                 Button { Task { await model.prepareIssueReport() } } label: {
                     HStack { WispIcon(name: "chat", size: 16); Text("反馈问题"); Spacer() }
                 }
-                .buttonStyle(WispButtonStyle(compact: true))
+                .buttonStyle(WispSidebarButtonStyle())
                 .disabled(!IssueReportDraft.offered(activeSessionID: model.activeSessionID))
                 .help("反馈问题")
                 .accessibilityLabel("反馈问题")
                 .accessibilityIdentifier("sidebar-feedback")
-                Button { model.settingsPresented = true } label: { HStack { WispIcon(name: "gear"); Text("设置"); Spacer() } }.buttonStyle(WispButtonStyle())
+                Button { model.settingsPresented = true } label: { HStack { WispIcon(name: "gear"); Text("设置"); Spacer() } }.buttonStyle(WispSidebarButtonStyle())
             }
             Text(project.workspaceDirectory).font(WispDesign.font(size: 10)).lineLimit(1).truncationMode(.head)
                 .foregroundStyle(color("text-faint")).help(project.workspaceDirectory)
         }
-        .padding(16).background(color("bg-sunken"))
+        .padding(.horizontal, 10).padding(.vertical, 16).background(color("bg-sunken"))
     }
 }
