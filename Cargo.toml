@@ -34,7 +34,7 @@ tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
 tao = { path = "vendor/tao" }
 
 [workspace.package]
-version = "1.14.0"
+version = "1.15.0"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
