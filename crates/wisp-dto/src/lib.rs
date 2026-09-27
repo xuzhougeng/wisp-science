@@ -3802,6 +3802,8 @@ pub struct ModelForm {
     pub use_for_vision: bool,
     pub use_for_image_generation: bool,
     pub image_generation_capable: bool,
+    /// Explicit recovery intent; ordinary assignment changes keep the role.
+    pub restore_chat_model: bool,
     pub image_size: String,
     pub image_quality: String,
     pub image_aspect_ratio: String,

@@ -1072,12 +1072,30 @@ fn profile_is_image_model(profile: &ModelProfile) -> bool {
         || is_image_generation_model(&profile.model)
 }
 
-fn normalize_image_role(profile: &mut ModelProfile, existing: Option<&ModelProfile>) {
+fn normalize_image_role(
+    profile: &mut ModelProfile,
+    existing: Option<&ModelProfile>,
+    restore_chat_model: bool,
+) -> Result<(), String> {
+    if restore_chat_model {
+        if profile.use_for_image_generation
+            || profile.use_for_video_generation
+            || is_image_generation_model(&profile.model)
+            || is_video_generation_model(&profile.model)
+        {
+            return Err(
+                "A dedicated image or video model cannot be restored as a chat model.".into(),
+            );
+        }
+        profile.image_generation_capable = false;
+        return Ok(());
+    }
     profile.image_generation_capable = profile.use_for_image_generation
         || is_image_generation_model(&profile.model)
         || existing.is_some_and(|old| {
             old.model.trim() == profile.model.trim() && profile_is_image_model(old)
         });
+    Ok(())
 }
 
 fn normalize_image_options(profile: &mut ModelProfile) -> Result<(), String> {
@@ -1688,6 +1706,7 @@ pub async fn save_model(
     use_for_vision: Option<bool>,
     use_for_image_generation: Option<bool>,
     use_for_video_generation: Option<bool>,
+    restore_chat_model: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
     // Explicit top-level param: the flag nested inside `profile` was observed
     // arriving as false through the webview IPC boundary, losing the
@@ -1700,10 +1719,32 @@ pub async fn save_model(
     profile.use_for_vision = assign_vision;
     profile.use_for_image_generation = assign_image_generation;
     profile.use_for_video_generation = assign_video_generation;
+    let result = save_model_profile(
+        &state.store,
+        profile,
+        key.as_deref(),
+        restore_chat_model.unwrap_or(false),
+    )
+    .await?;
+    crate::clear_idle_agents(&state).await;
+    Ok(result)
+}
+
+// Keep the persistence path independent of Tauri so role transitions and
+// failed saves can be exercised against a temporary store.
+async fn save_model_profile(
+    store: &wisp_store::Store,
+    mut profile: ModelProfile,
+    key: Option<&str>,
+    restore_chat_model: bool,
+) -> Result<Vec<ModelProfile>, String> {
+    let assign_vision = profile.use_for_vision;
+    let assign_image_generation = profile.use_for_image_generation;
+    let assign_video_generation = profile.use_for_video_generation;
     if assign_image_generation && assign_video_generation {
         return Err("Choose either image or video generation for a model profile.".into());
     }
-    let mut profiles = ensure(&state.store).await;
+    let mut profiles = ensure(store).await;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
@@ -1717,7 +1758,7 @@ pub async fn save_model(
     profile.session_header_name =
         wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
     let existing = profiles.iter().find(|old| old.id == profile.id);
-    normalize_image_role(&mut profile, existing);
+    normalize_image_role(&mut profile, existing, restore_chat_model)?;
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
@@ -1747,73 +1788,63 @@ pub async fn save_model(
     } else {
         profiles.push(profile);
     }
-    save_raw(&state.store, &profiles).await?;
-    store_profile_key(&id, key.as_deref(), &api_url, &profiles)?;
-    if assign_vision {
-        let _ = state.store.set_setting(VISION_KEY, &id).await;
-    } else {
-        let cur = state
-            .store
-            .get_setting(VISION_KEY)
+    let mut assignments = Vec::new();
+    for (setting, assign) in [
+        (VISION_KEY, assign_vision),
+        (IMAGE_GENERATION_KEY, assign_image_generation),
+        (VIDEO_GENERATION_KEY, assign_video_generation),
+    ] {
+        let current = store
+            .get_setting(setting)
             .await
-            .ok()
-            .flatten()
+            .map_err(|error| error.to_string())?
             .unwrap_or_default();
-        if cur == id
-            && !profiles
-                .iter()
-                .any(|p| can_describe_images(p) && p.id != id)
+        let value = if assign {
+            id.clone()
+        } else if current == id
+            && (setting != VISION_KEY
+                || !profiles
+                    .iter()
+                    .any(|p| can_describe_images(p) && p.id != id))
         {
-            let _ = state.store.set_setting(VISION_KEY, "").await;
-        }
+            String::new()
+        } else {
+            current
+        };
+        assignments.push((setting, value));
     }
-    if assign_image_generation {
-        let _ = state.store.set_setting(IMAGE_GENERATION_KEY, &id).await;
-    } else {
-        let current = state
-            .store
-            .get_setting(IMAGE_GENERATION_KEY)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        if current == id {
-            let _ = state.store.set_setting(IMAGE_GENERATION_KEY, "").await;
-        }
-    }
-    if assign_video_generation {
-        let _ = state.store.set_setting(VIDEO_GENERATION_KEY, &id).await;
-    } else {
-        let current = state
-            .store
-            .get_setting(VIDEO_GENERATION_KEY)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        if current == id {
-            let _ = state.store.set_setting(VIDEO_GENERATION_KEY, "").await;
-        }
-    }
-    // Land the user on a freshly added model so they can edit/use it right away.
+    let mut active = store
+        .get_setting(ACTIVE_KEY)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    // Restoring an existing chat profile does not change the current default.
     if is_new && profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
-        let _ = state.store.set_setting(ACTIVE_KEY, &id).await;
-    } else if !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
-        let active = state
-            .store
-            .get_setting(ACTIVE_KEY)
-            .await
-            .ok()
-            .flatten()
+        active = id.clone();
+    } else if active == id && !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
+        active = profiles
+            .iter()
+            .find(|p| is_chat_model(p))
+            .map(|p| p.id.clone())
             .unwrap_or_default();
-        if active == id {
-            if let Some(first) = profiles.iter().find(|p| is_chat_model(p)) {
-                let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
-            }
-        }
     }
-    crate::clear_idle_agents(&state).await;
-    Ok(decorated(&state.store).await)
+    assignments.push((ACTIVE_KEY, active));
+    assignments.push((
+        PROFILES_KEY,
+        serde_json::to_string(&profiles).map_err(|error| error.to_string())?,
+    ));
+    // A keyring failure must not publish the role change. Role recovery with
+    // a blank key keeps the existing credentials, as with any ordinary edit.
+    store_profile_key(&id, key, &api_url, &profiles)?;
+    let settings: Vec<_> = assignments
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    store
+        .set_global_settings(&settings)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(decorated(store).await)
 }
 
 #[tauri::command]
@@ -2590,7 +2621,7 @@ mod tests {
         image.use_for_image_generation = true;
         image.image_size = "1536x1024".into();
         image.image_quality = "high".into();
-        normalize_image_role(&mut image, None);
+        normalize_image_role(&mut image, None, false).unwrap();
         normalize_image_options(&mut image).unwrap();
         assert!(image.image_generation_capable);
         save_raw(&store, &[chat.clone(), image.clone()])
@@ -2613,7 +2644,7 @@ mod tests {
         assert!(!deselected.use_for_image_generation);
         assert!(deselected.image_generation_capable);
         assert!(!is_chat_model(&deselected));
-        normalize_image_role(&mut deselected, Some(&image));
+        normalize_image_role(&mut deselected, Some(&image), false).unwrap();
         save_raw(&store, &[chat, deselected.clone()]).await.unwrap();
         assert_eq!(
             delegation_profiles(&store)
@@ -2625,11 +2656,140 @@ mod tests {
         );
         assert!(image_generation_config(&store).await.is_none());
         deselected.model = "renamed-chat-id".into();
-        normalize_image_role(&mut deselected, Some(&image));
+        normalize_image_role(&mut deselected, Some(&image), false).unwrap();
         assert!(!deselected.image_generation_capable);
         assert!(is_chat_model(&deselected));
         drop(store);
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn explicit_chat_recovery_keeps_identity_credentials_and_restores_vision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("models.sqlite"))
+            .await
+            .unwrap();
+        let id = format!("recover-{}", uuid::Uuid::new_v4());
+        let mut profile = test_profile(&id, "original", "gateway/custom-chat-id");
+        profile.supports_vision = true;
+        profile.use_for_vision = true;
+        let fallback = test_profile("fallback", "fallback", "other-chat-id");
+        // Use the in-memory secret cache: this test never writes real credentials.
+        secret_cache()
+            .lock()
+            .unwrap()
+            .insert(secret_name(&id), "test-key".into());
+        save_raw(&store, &[profile.clone(), fallback])
+            .await
+            .unwrap();
+        store.set_setting(ACTIVE_KEY, &id).await.unwrap();
+        store.set_setting(VISION_KEY, &id).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        store
+            .create_frame("session", "p", "OPERON", &id)
+            .await
+            .unwrap();
+
+        profile.use_for_vision = false;
+        profile.supports_vision = false;
+        profile.use_for_image_generation = true;
+        profile.image_size = "1536x1024".into();
+        let saved = save_model_profile(&store, profile, None, false)
+            .await
+            .unwrap();
+        let mut image = saved.into_iter().find(|p| p.id == id).unwrap();
+        assert!(image.image_generation_capable);
+        assert_eq!(active_profile_id(&store).await, "fallback");
+        assert_eq!(session_profile_id(&store, "session").await, "fallback");
+
+        // Assignment-only deselection, including an old client with a false
+        // capability field, must retain the custom image-only role.
+        image.use_for_image_generation = false;
+        image.image_generation_capable = false;
+        let saved = save_model_profile(&store, image, None, false)
+            .await
+            .unwrap();
+        let mut restored = saved.into_iter().find(|p| p.id == id).unwrap();
+        assert!(restored.image_generation_capable);
+        assert!(!is_chat_model(&restored));
+        assert!(image_generation_config(&store).await.is_none());
+
+        // Explicit recovery runs before vision eligibility validation.
+        restored.supports_vision = true;
+        restored.use_for_vision = true;
+        let saved = save_model_profile(&store, restored, None, true)
+            .await
+            .unwrap();
+        let restored = saved.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(restored.model, "gateway/custom-chat-id");
+        assert_eq!(restored.label, "original");
+        assert!(!restored.image_generation_capable);
+        assert!(restored.use_for_vision);
+        assert!(restored.has_api_key);
+        assert_eq!(key_for(&id), "test-key");
+        assert!(restored.image_size.is_empty());
+        assert!(delegation_profiles(&store).await.iter().any(|p| p.id == id));
+        assert_eq!(active_profile_id(&store).await, "fallback");
+        assert_eq!(session_profile_id(&store, "session").await, "fallback");
+        store.set_setting(ACTIVE_KEY, &id).await.unwrap();
+        assert_eq!(active_profile_id(&store).await, id);
+        let reloaded = decorated(&store).await;
+        assert!(reloaded
+            .iter()
+            .any(|p| p.id == id && p.active && p.use_for_vision));
+        secret_cache().lock().unwrap().remove(&secret_name(&id));
+    }
+
+    #[tokio::test]
+    async fn failed_chat_recovery_does_not_change_saved_role_or_assignments() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("models.sqlite"))
+            .await
+            .unwrap();
+        let mut image = test_profile("image", "image", "custom-image-id");
+        image.image_generation_capable = true;
+        image.use_for_image_generation = true;
+        save_raw(
+            &store,
+            &[test_profile("chat", "chat", "chat-id"), image.clone()],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "chat").await.unwrap();
+        store
+            .set_setting(IMAGE_GENERATION_KEY, "image")
+            .await
+            .unwrap();
+        let before = store.get_setting(PROFILES_KEY).await.unwrap();
+        image.use_for_image_generation = false;
+        image.use_for_vision = true;
+        image.supports_vision = false;
+        assert!(save_model_profile(&store, image, None, true).await.is_err());
+        assert_eq!(store.get_setting(PROFILES_KEY).await.unwrap(), before);
+        assert_eq!(
+            store
+                .get_setting(IMAGE_GENERATION_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("image")
+        );
+        assert_eq!(active_profile_id(&store).await, "chat");
+    }
+
+    #[test]
+    fn chat_recovery_rejects_generation_assignment_and_known_dedicated_models() {
+        for model in [
+            "gpt-image-2",
+            "vendor/grok-imagine-image-2.0",
+            "grok-imagine-video",
+        ] {
+            let mut profile = test_profile("image", "image", model);
+            assert!(normalize_image_role(&mut profile, None, true).is_err());
+        }
+        let mut profile = test_profile("image", "image", "custom-id");
+        profile.use_for_image_generation = true;
+        assert!(normalize_image_role(&mut profile, None, true).is_err());
     }
 
     #[test]

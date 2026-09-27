@@ -3934,6 +3934,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return run ?? null;
           }
           case "save_model": {
+            if ((window as any).__failSaveModel) throw new Error("Could not save model");
             const profile = plain(arg("profile") ?? {});
             // Mirror the backend: catalog-known models clamp context/output
             // to their documented ceilings.
@@ -3971,7 +3972,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               use_for_vision: useForVision,
               use_for_image_generation: useForImageGeneration,
               image_generation_capable: useForImageGeneration
-                || (m.model === profile.model && Boolean(m.image_generation_capable)),
+                || ["gpt-image-2", "grok-imagine-image-2.0"].includes(String(profile.model).split("/").pop()!.toLowerCase())
+                || (!arg("restoreChatModel") && m.model === profile.model && Boolean(m.image_generation_capable)),
               use_for_video_generation: useForVideoGeneration,
             } : {
               ...m,
@@ -3983,6 +3985,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 ? false
                 : m.use_for_video_generation,
             });
+            const isChatModel = (model: any) => !model.image_generation_capable
+              && !model.use_for_video_generation
+              && !["grok-imagine-video", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview"].includes(String(model.model).split("/").pop()!.toLowerCase());
+            if (mockModels.some((model) => model.active && !isChatModel(model))) {
+              const fallback = mockModels.find(isChatModel)?.id;
+              mockModels = mockModels.map((model) => ({ ...model, active: model.id === fallback }));
+            }
             return mockModels;
           }
           case "codex_subscription_status":

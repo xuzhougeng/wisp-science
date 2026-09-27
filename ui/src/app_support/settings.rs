@@ -817,6 +817,7 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         use_for_vision: m.use_for_vision,
         use_for_image_generation: m.use_for_image_generation,
         image_generation_capable: m.image_generation_capable,
+        restore_chat_model: false,
         image_size: m.image_size.clone(),
         image_quality: m.image_quality.clone(),
         image_aspect_ratio: m.image_aspect_ratio.clone(),

@@ -256,7 +256,22 @@ pickers.
 
 The persistent `image_generation_capable` role is separate from the currently
 assigned image profile: deselecting an image profile does not accidentally make
-it a chat model. Renaming a profile to a different model resets the old role
+it a chat model. The list always shows an **Image-only** type badge, separately
+from the **Image generation** assignment badge. For a chat model mistakenly
+assigned to image generation, open the profile, choose **Restore as chat model**,
+optionally enable **Supports image input** / **Use for image analysis**, and
+save. This keeps the profile ID, model ID, and stored credentials; no deletion or
+temporary model rename is needed. Known dedicated image/video IDs cannot be
+restored as chat models.
+
+Role edits remain local to the form until Save; Cancel discards them. The profile
+and its role assignments/default are persisted together. Converting the default
+chat profile to image-only selects another chat profile; sessions bound to it
+fall back on their next use. Restoring chat eligibility does not automatically
+change the current default or sessions that have already switched: choose
+**Set as default** or select the restored model in the relevant conversation.
+
+Renaming a profile to a different model resets the old role
 unless image generation is explicitly selected for the new ID. Existing
 profiles without the new marker retain backwards-compatible known-name and
 assignment hints. Chat catalog limits still use exact model-ID matching.

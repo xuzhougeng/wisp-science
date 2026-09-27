@@ -502,6 +502,7 @@ pub async fn save_codex_login(
         Some(use_for_vision),
         Some(use_for_image),
         Some(use_for_video),
+        None,
     )
     .await?;
     if !login_id.is_empty() {

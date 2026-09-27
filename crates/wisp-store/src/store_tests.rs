@@ -1,5 +1,31 @@
 use super::*;
 
+#[tokio::test]
+async fn global_settings_batch_rolls_back_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("settings.sqlite"))
+        .await
+        .unwrap();
+    store
+        .set_global_settings(&[("models", "old"), ("active_model", "chat")])
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER reject_assignment BEFORE UPDATE ON settings WHEN NEW.key = 'active_model' BEGIN SELECT RAISE(ABORT, 'failed assignment'); END")
+        .execute(&store.pool).await.unwrap();
+    assert!(store
+        .set_global_settings(&[("models", "new"), ("active_model", "other")])
+        .await
+        .is_err());
+    assert_eq!(
+        store.get_setting("models").await.unwrap().as_deref(),
+        Some("old")
+    );
+    assert_eq!(
+        store.get_setting("active_model").await.unwrap().as_deref(),
+        Some("chat")
+    );
+}
+
 fn nested_test_step(
     id: &str,
     workflow_id: &str,

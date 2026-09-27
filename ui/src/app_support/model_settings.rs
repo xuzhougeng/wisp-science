@@ -253,6 +253,7 @@ impl ModelSettingsState {
                 "useForVision": form.use_for_vision,
                 "useForImageGeneration": form.use_for_image_generation,
                 "useForVideoGeneration": form.use_for_video_generation,
+                "restoreChatModel": form.restore_chat_model,
             }))
             .unwrap();
             match invoke_checked("save_model", arg).await {

@@ -9253,6 +9253,8 @@ for (const locale of ["en", "zh"]) {
     await expect(image).toBeChecked();
     await expect(video).toHaveCount(0);
     await image.uncheck();
+    await expect(video).toHaveCount(0);
+    await page.getByTestId("restore-chat-model").click();
     await expect(video).not.toBeChecked();
     await video.check();
     await expect(image).not.toBeChecked();
@@ -10099,11 +10101,83 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await expect(page.getByTestId("image-size")).toBeVisible();
     await page.getByRole("button", { name: "Save" }).click();
     await expect(row.getByRole("button", { name: "Set as default" })).toHaveCount(0);
+    await expect(row.getByTestId("image-role-badge")).toHaveText("Image-only");
+    await expect(row.locator(".settings-cap-badge", { hasText: "Image generation" })).toHaveCount(0);
     await page.locator(".settings-head-close").click();
     await page.locator(".model-picker-btn").click();
     await expect(page.locator(".model-menu")).not.toContainText(modelId);
   });
 }
+
+test("misclassified chat model can recover its role without changing identity or credentials", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  const row = page.locator(".settings-list-row", { hasText: "deepseek-v4-pro" });
+  await row.click();
+  await expect(page.getByTestId("use-for-image-generation")).toHaveAccessibleDescription(/Sessions using this profile/);
+  await page.getByTestId("use-for-image-generation").check();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(row.getByTestId("image-role-badge")).toHaveText("Image-only");
+  await expect(row.locator(".settings-model-default")).toHaveCount(0);
+  await expect(page.locator(".settings-list-row", { hasText: "opus-4.8" }).locator(".settings-model-default")).toBeVisible();
+
+  await row.click();
+  await page.getByTestId("use-for-image-generation").uncheck();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+  await row.click();
+  await page.getByRole("button", { name: "Restore as chat model" }).click();
+  // Re-selecting then deselecting the assignment must not display chat fields
+  // while the backend would still inherit the original image role.
+  await page.getByTestId("use-for-image-generation").check();
+  await page.getByTestId("use-for-image-generation").uncheck();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByTestId("restore-chat-model").click();
+  await expect(page.getByTestId("image-size")).toHaveCount(0);
+  await expect(page.getByLabel("Supports image input")).toBeVisible();
+  await expect(page.getByTestId("restore-chat-hint")).toContainText("current default and sessions");
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+
+  // A rejected save leaves both the saved role and the existing default alone.
+  await row.click();
+  await page.getByTestId("restore-chat-model").click();
+  await page.getByLabel("Supports image input").check();
+  await page.getByLabel("Use for image analysis").check();
+  await page.evaluate(() => { (window as any).__failSaveModel = true; });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".settings-status.fail")).toContainText("Could not save model");
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+  await row.click();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByTestId("restore-chat-model").click();
+  await page.getByLabel("Supports image input").check();
+  await page.getByLabel("Use for image analysis").check();
+  await page.evaluate(() => { (window as any).__failSaveModel = false; });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
+    restoreChatModel: true,
+    key: undefined,
+    useForVision: true,
+    useForImageGeneration: false,
+    profile: { id: "default", model: "deepseek-v4-pro", supports_vision: true },
+  });
+  await expect(row.getByTestId("image-role-badge")).toHaveCount(0);
+  await row.getByRole("button", { name: "Set as default" }).click();
+  await expect(row.locator(".settings-model-default")).toBeVisible();
+  await row.click();
+  await expect(page.getByLabel("Supports image input")).toBeChecked();
+  await expect(page.getByLabel("Use for image analysis")).toBeChecked();
+  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("deepseek-v4-pro");
+  await expect(page.locator("#model-form-api-key")).toHaveValue("");
+  await expect(page.locator("#model-form-api-key")).toHaveAttribute("placeholder", /.+/);
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await page.locator(".settings-head-close").click();
+  await page.locator(".model-picker-btn").click();
+  await expect(page.locator(".model-menu")).toContainText("deepseek-v4-pro");
+});
 
 test("gpt-image-2 can be assigned for generation but not selected for chat", async ({ page }) => {
   await enterApp(page);
@@ -10118,6 +10192,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await expect(page.getByLabel("Supports image input")).toHaveCount(0);
   await expect(page.getByTestId("image-size")).toBeVisible();
   await expect(page.getByTestId("image-quality")).toBeVisible();
+  await expect(page.getByTestId("restore-chat-model")).toHaveCount(0);
   await page.getByTestId("image-size").selectOption("1536x1024");
   await page.getByTestId("image-quality").selectOption("high");
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();

@@ -2181,6 +2181,21 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically update account-wide settings (for example model profiles
+    /// and their assignments). Project/frame settings must use `set_setting`.
+    pub async fn set_global_settings(&self, values: &[(&str, &str)]) -> Result<()> {
+        let global = self.route_global();
+        let store = global.as_ref().unwrap_or(self);
+        let mut tx = store.begin_write().await?;
+        for (key, value) in values {
+            sqlx::query("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                .bind(key).bind(value)
+                .execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
         if let Some(store) = self.route_setting(key).await? {
             return Box::pin(store.get_setting(key)).await;

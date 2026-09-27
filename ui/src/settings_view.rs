@@ -3980,11 +3980,13 @@ pub(super) fn SettingsView(
                                                         o.model = event_target_input(&ev).value();
                                                         o.image_generation_capable = false;
                                                         if is_image_generation_model(&o.model) {
+                                                            o.restore_chat_model = false;
                                                             o.supports_vision = false;
                                                             o.use_for_vision = false;
                                                             o.use_for_image_generation = true;
                                                             o.use_for_video_generation = false;
                                                         } else if is_video_generation_model(&o.model) {
+                                                            o.restore_chat_model = false;
                                                             o.supports_vision = false;
                                                             o.use_for_vision = false;
                                                             o.use_for_image_generation = false;
@@ -4144,12 +4146,29 @@ pub(super) fn SettingsView(
                                                         }
                                                     }}
                                                     <span class="hint span-2">{move || t(locale.get(), "settings.image_defaults_hint")}</span>
+                                                    <div class="span-2">
+                                                        <p class="hint" data-testid="image-role-hint">{move || t(locale.get(), "settings.image_role_hint")}</p>
+                                                        <Show when=move || model_form.get().is_some_and(|f| !is_image_generation_model(&f.model) && !is_video_generation_model(&f.model))>
+                                                            <button type="button" data-testid="restore-chat-model" disabled=move || settings_busy.get()
+                                                                on:click=move |_| {
+                                                                    model_form.update(|form| if let Some(form) = form {
+                                                                        form.image_generation_capable = false;
+                                                                        form.use_for_image_generation = false;
+                                                                        form.use_for_video_generation = false;
+                                                                        form.restore_chat_model = true;
+                                                                    });
+                                                                    apply_catalog_limits(model_form, model_catalog_limits);
+                                                                }>{move || t(locale.get(), "settings.restore_chat_model")}</button>
+                                                        </Show>
+                                                    </div>
                                                     <label class="settings-check span-2">
                                                         <input type="checkbox" data-testid="use-for-image-generation"
                                                             prop:checked=move || model_form.get().map(|f| f.use_for_image_generation).unwrap_or(false)
                                                             on:change=move|ev| model_form.update(|o| if let Some(o)=o {
                                                                 o.use_for_image_generation = event_target_checked(&ev);
                                                                 if o.use_for_image_generation {
+                                                                    o.image_generation_capable = true;
+                                                                    o.restore_chat_model = false;
                                                                     o.use_for_vision = false;
                                                                     o.supports_vision = false;
                                                                     o.use_for_video_generation = false;
@@ -4309,6 +4328,8 @@ pub(super) fn SettingsView(
                                                     on:change=move|ev| model_form.update(|o| if let Some(o)=o {
                                                         o.use_for_image_generation = event_target_checked(&ev);
                                                         if o.use_for_image_generation {
+                                                            o.image_generation_capable = true;
+                                                            o.restore_chat_model = false;
                                                             o.use_for_vision = false;
                                                             o.supports_vision = false;
                                                             o.use_for_video_generation = false;
@@ -4339,6 +4360,9 @@ pub(super) fn SettingsView(
                                         }}
                                     </div>
                                     <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>{model_advanced_options(locale, model_form)}</Show>
+                                    <Show when=move || model_form.get().is_some_and(|f| f.restore_chat_model)>
+                                        <p class="hint" data-testid="restore-chat-hint">{move || t(locale.get(), "settings.restore_chat_hint")}</p>
+                                    </Show>
                                     {move || model_form_msg.get().map(|(ok, text)| view! {
                                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                                     })}
@@ -5027,6 +5051,9 @@ pub(super) fn SettingsView(
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
                                                                 {m.use_for_vision.then(|| view! { <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.vision")}</span> })}
+                                                                {(m.image_generation_capable || m.use_for_image_generation || is_image_generation_model(&m.model)).then(|| view! {
+                                                                    <span class="settings-cap-badge" data-testid="image-role-badge">{move || t(locale.get(), "models.capability.image_only")}</span>
+                                                                })}
                                                                 {m.use_for_image_generation.then(|| view! {
                                                                     <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.image")}</span>
                                                                 })}
