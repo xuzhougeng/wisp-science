@@ -24,14 +24,23 @@ impl Store {
             );
         }
         let now = chrono::Utc::now().timestamp();
+        let mut tx = self.begin_write().await?;
+        let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
         sqlx::query(
             "INSERT INTO projects(id,name,description,workspace_dir,created_at,updated_at) VALUES(?,?,'',?,?,?) \
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace_dir=excluded.workspace_dir, updated_at=excluded.updated_at",
         )
         .bind(id).bind(name).bind(workspace_dir).bind(now).bind(now)
-        .execute(&self.pool).await?;
-        if self.registry.is_some() && self.project_scope.is_none() {
-            Box::pin(self.migrate_project_storage(id)).await?;
+        .execute(&mut *tx).await?;
+        if !existing && self.registry.is_some() && self.project_scope.is_none() {
+            Box::pin(self.prepare_project_storage(id, Some(tx))).await?;
+        } else {
+            // Desktop startup upserts the default project. Updating a legacy
+            // registration must not implicitly copy the entire database.
+            tx.commit().await?;
         }
         Ok(())
     }

@@ -327,6 +327,9 @@ impl Store {
             .await?
             .context("Project not found")?;
         let workspace = PathBuf::from(workspace);
+        // Legacy projects stay in the application database at startup. This
+        // explicit folder-publishing operation needs self-contained storage.
+        self.migrate_project_storage(project_id).await?;
         let live = self.registered_database(project_id).await?;
         anyhow::ensure!(
             live == workspace.join(project_storage::PROJECT_DATABASE),

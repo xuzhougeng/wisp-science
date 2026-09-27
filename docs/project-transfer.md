@@ -35,12 +35,20 @@ directory; copy its entire `.wisp` directory too. Use export for a consistent
 snapshot while Wisp is running. Ordinary source folders without project metadata
 still belong under **New project**.
 
-Old projects migrate on application startup using a verified, filtered database
-copy. Their local runtime state is preserved during this same-device migration.
-If a legacy workspace is unavailable or unwritable, its original records remain
-in the application database and migration is retried on the next startup. A
-missing database for an already migrated project is an error; Wisp never creates
-a blank replacement or uses stale exported metadata as a fallback.
+Upgrading no longer moves old projects during application startup. Legacy
+conversations and research records remain readable and writable in the application
+database, avoiding a full database copy before the Windows window can respond.
+New projects get an independent database without copying existing history.
+
+Enabling folder snapshots explicitly migrates a legacy project using a verified,
+filtered database copy that preserves its local runtime state. Until then, use
+project export to transfer legacy records; copying its workspace folder alone
+does not include records still in the application database. If migration fails
+or is interrupted, the original records remain available on restart without
+automatically retrying the copy. An already committed migration can finish its
+metadata publication on restart. A missing database for an already migrated
+project is an error; Wisp never creates a blank replacement or uses stale
+exported metadata as a fallback.
 
 To move a project from Windows to macOS:
 

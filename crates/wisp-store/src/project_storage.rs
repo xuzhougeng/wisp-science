@@ -221,8 +221,9 @@ impl Store {
         pool.close().await;
         Ok(metadata.project_id)
     }
-    /// Production entry point. Legacy projects are migrated before background
-    /// workers can write. Snapshot/test stores can still use `open` explicitly.
+    /// Production entry point. Upgrade schemas and register project routing, but
+    /// keep legacy records in place: copying the application database here blocks
+    /// desktop setup before the window can render or process Windows messages.
     pub async fn open_application(path: &Path) -> Result<Self> {
         let mut store = Self::open(path).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
@@ -247,18 +248,6 @@ impl Store {
         store.enable_project_registry(false).await?;
         if let Some(registry) = store.registry.as_mut().and_then(Arc::get_mut) {
             registry.migrate_on_open = true;
-        }
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM projects WHERE id NOT IN (SELECT project_id FROM project_locations)",
-        )
-        .fetch_all(&store.pool)
-        .await?;
-        for id in ids {
-            if let Err(error) = store.migrate_project_storage(&id).await {
-                // A disconnected legacy workspace must not prevent application
-                // startup or destroy its only copy. Retry on the next startup.
-                tracing::error!(project_id=%id, %error, "Project storage migration deferred; legacy records retained");
-            }
         }
         let locations: Vec<(String, String)> =
             sqlx::query_as("SELECT project_id,database_path FROM project_locations")
@@ -532,6 +521,17 @@ impl Store {
     /// Migrate without the portable export's runtime sanitization. Work on a
     /// private snapshot, prune other projects, validate, then publish and cut over.
     pub async fn migrate_project_storage(&self, id: &str) -> Result<()> {
+        self.prepare_project_storage(id, None).await
+    }
+
+    /// A transaction containing a newly inserted project lets creation seed an
+    /// empty database without copying unrelated history. Publish the project
+    /// and its location atomically, without an intermediate legacy registration.
+    pub(super) async fn prepare_project_storage(
+        &self,
+        id: &str,
+        new_project: Option<sqlx::Transaction<'static, sqlx::Sqlite>>,
+    ) -> Result<()> {
         anyhow::ensure!(
             self.registry.is_some() && self.project_scope.is_none(),
             "Application store required"
@@ -539,10 +539,15 @@ impl Store {
         if self.route_project(id).await?.is_some() {
             return Ok(());
         }
+        let is_new = new_project.is_some();
+        let mut cutover = match new_project {
+            Some(tx) => tx,
+            None => self.begin_write().await?,
+        };
         let (_, workspace): (String, String) =
             sqlx::query_as("SELECT name,workspace_dir FROM projects WHERE id=?")
                 .bind(id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *cutover)
                 .await?;
         anyhow::ensure!(
             !workspace.trim().is_empty(),
@@ -583,13 +588,26 @@ impl Store {
         );
         let staging = Path::new(&application_database)
             .with_file_name(format!("project-migration-{}.sqlite", uuid::Uuid::new_v4()));
-        // Keep legacy writers out until registration and legacy removal commit.
-        let mut cutover = self.begin_write().await?;
-        sqlx::query("VACUUM INTO ?")
-            .bind(staging.to_string_lossy().as_ref())
-            .execute(&self.pool)
-            .await?;
+        // Explicit migration still snapshots legacy history. New projects only
+        // need their own registration, even when the global database is huge.
+        if !is_new {
+            sqlx::query("VACUUM INTO ?")
+                .bind(staging.to_string_lossy().as_ref())
+                .execute(&self.pool)
+                .await?;
+        }
         let local = Self::open_snapshot(&staging).await?;
+        if is_new {
+            let project = sqlx::query("SELECT * FROM projects WHERE id=?")
+                .bind(id)
+                .fetch_all(&mut *cutover)
+                .await?;
+            let mut tx = local.begin_write().await?;
+            insert_rows(&mut tx, "projects", project).await?;
+            sqlx::query("CREATE TABLE project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
+                .execute(&mut *tx).await?;
+            tx.commit().await?;
+        }
         let others: Vec<String> = sqlx::query_scalar("SELECT id FROM projects WHERE id<>?")
             .bind(id)
             .fetch_all(&local.pool)
@@ -691,7 +709,9 @@ impl Store {
             .await?;
         let memory_sources: Vec<(String,String)> = sqlx::query_as("SELECT id,source_frame_id FROM global_memories WHERE source_frame_id IN (SELECT id FROM frames WHERE project_id=?)")
             .bind(id).fetch_all(&mut *cutover).await?;
-        super::project_transfer::delete_project_children(&mut cutover, id).await?;
+        if !is_new {
+            super::project_transfer::delete_project_children(&mut cutover, id).await?;
+        }
         for (memory, frame) in memory_sources {
             sqlx::query("UPDATE global_memories SET source_frame_id=? WHERE id=?")
                 .bind(frame)
@@ -776,6 +796,206 @@ async fn rebase_workspace_paths(pool: &SqlitePool, old: &str, workspace: &Path) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_and_default_project_upsert_leave_legacy_history_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let legacy = Store::open(&path).await.unwrap();
+        legacy
+            .create_project("default", "Workspace", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        legacy
+            .create_frame("f", "default", "agent", "model")
+            .await
+            .unwrap();
+        legacy
+            .append_message("f", 1, &wisp_llm::Message::user("before upgrade"))
+            .await
+            .unwrap();
+        legacy.pool.close().await;
+
+        for seq in 2..=3 {
+            let store = Store::open_application(&path).await.unwrap();
+            // The desktop performs this upsert immediately after opening the
+            // store; it must not become a second implicit migration entry point.
+            store
+                .create_project("default", "Workspace", workspace.to_str().unwrap())
+                .await
+                .unwrap();
+            assert!(!workspace.join(".wisp").exists());
+            assert_eq!(store.message_count("f").await.unwrap(), seq - 1);
+            store
+                .append_message("f", seq, &wisp_llm::Message::user("after upgrade"))
+                .await
+                .unwrap();
+            assert_eq!(store.list_projects().await.unwrap().len(), 1);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM project_locations")
+                    .fetch_one(&store.pool)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("project-migration-")));
+            store.pool.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn new_project_does_not_copy_the_legacy_database() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let old_workspace = root.path().join("old");
+        std::fs::create_dir_all(&old_workspace).unwrap();
+        let legacy = Store::open(&path).await.unwrap();
+        legacy
+            .create_project("old", "Old", old_workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        legacy
+            .create_frame("old-frame", "old", "agent", "model")
+            .await
+            .unwrap();
+        legacy
+            .append_message(
+                "old-frame",
+                1,
+                &wisp_llm::Message::user("unrelated history"),
+            )
+            .await
+            .unwrap();
+        // A sentinel outside project tables detects whole-database copying
+        // without a flaky performance threshold or a gigabyte-sized fixture.
+        sqlx::query("CREATE TABLE unrelated_payload (data BLOB)")
+            .execute(&legacy.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO unrelated_payload VALUES(zeroblob(1048576))")
+            .execute(&legacy.pool)
+            .await
+            .unwrap();
+        legacy.pool.close().await;
+
+        let store = Store::open_application(&path).await.unwrap();
+        let workspace = root.path().join("new");
+        store
+            .create_project("new", "New", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("new-frame", "new", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("new-frame", 1, &wisp_llm::Message::user("new history"))
+            .await
+            .unwrap();
+        let local = Store::open_read_only(&workspace.join(PROJECT_DATABASE))
+            .await
+            .unwrap();
+        assert!(!sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='unrelated_payload')"
+        )
+        .fetch_one(&local.pool)
+        .await
+        .unwrap());
+        assert_eq!(local.message_count("new-frame").await.unwrap(), 1);
+        assert_eq!(local.message_count("old-frame").await.unwrap(), 0);
+        assert_eq!(store.message_count("old-frame").await.unwrap(), 1);
+        assert_eq!(store.list_projects().await.unwrap().len(), 2);
+        assert!(!old_workspace.join(".wisp").exists());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames WHERE id='new-frame'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_new_project_publication_rolls_back_registration_and_can_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let workspace = root.path().join("workspace");
+        let store = Store::open_application(&path).await.unwrap();
+        // Fail after the prepared database is published but before the global
+        // project and location transaction commits.
+        sqlx::query("CREATE TRIGGER fail_project_location BEFORE INSERT ON project_locations BEGIN SELECT RAISE(ABORT, 'simulated publication failure'); END")
+            .execute(&store.pool).await.unwrap();
+        assert!(store
+            .create_project("p", "Project", workspace.to_str().unwrap())
+            .await
+            .is_err());
+        assert!(store.get_project("p").await.unwrap().is_none());
+        let marker = workspace.join(".wisp/storage-migration.json");
+        assert!(marker.is_file());
+        assert!(workspace.join(PROJECT_DATABASE).is_file());
+        assert!(!workspace.join(PROJECT_METADATA).exists());
+        sqlx::query("DROP TRIGGER fail_project_location")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.pool.close().await;
+
+        let reopened = Store::open_application(&path).await.unwrap();
+        assert!(reopened.list_projects().await.unwrap().is_empty());
+        assert!(marker.exists());
+        reopened
+            .create_project("p", "Project", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(!marker.exists());
+        assert!(workspace.join(PROJECT_METADATA).is_file());
+        reopened
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap();
+        reopened
+            .append_message("f", 1, &wisp_llm::Message::user("after retry"))
+            .await
+            .unwrap();
+        let local = Store::open_read_only(&workspace.join(PROJECT_DATABASE))
+            .await
+            .unwrap();
+        assert_eq!(local.message_count("f").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn folder_snapshots_explicitly_migrate_legacy_history() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let legacy = Store::open(&path).await.unwrap();
+        legacy
+            .create_project("p", "Project", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        legacy
+            .create_frame("f", "p", "agent", "model")
+            .await
+            .unwrap();
+        legacy
+            .append_message("f", 1, &wisp_llm::Message::user("legacy question"))
+            .await
+            .unwrap();
+        legacy.pool.close().await;
+        let store = Store::open_application(&path).await.unwrap();
+        assert!(!workspace.join(PROJECT_DATABASE).exists());
+        store.enable_folder_snapshots("p", "device").await.unwrap();
+        assert_eq!(store.message_count("f").await.unwrap(), 1);
+        assert!(workspace.join(PROJECT_METADATA).exists());
+        assert_eq!(store.folder_snapshot_projects().await.unwrap(), vec!["p"]);
+    }
 
     #[tokio::test]
     async fn live_writes_survive_removing_registration_and_new_global_database() {
@@ -897,6 +1117,7 @@ mod tests {
             .unwrap();
         legacy.pool.close().await;
         let migrated = Store::open_application(&path).await.unwrap();
+        migrated.migrate_project_storage("p").await.unwrap();
         migrated.set_project_starred("p", false).await.unwrap();
         assert!(!migrated.starred_project_ids().await.unwrap().contains("p"));
         assert_eq!(migrated.message_count("f").await.unwrap(), 1);
@@ -957,6 +1178,7 @@ mod tests {
             .unwrap();
         std::fs::write(workspace.join(PROJECT_DATABASE), b"unknown existing file").unwrap();
         let deferred = Store::open_application(&path).await.unwrap();
+        assert!(deferred.migrate_project_storage("p").await.is_err());
         assert_eq!(deferred.message_count("f").await.unwrap(), 1);
         assert_eq!(
             std::fs::read(workspace.join(PROJECT_DATABASE)).unwrap(),
@@ -1007,6 +1229,10 @@ mod tests {
         std::fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
         let store = Store::open_application(&path).await.unwrap();
         assert_eq!(store.message_count("f").await.unwrap(), 1);
+        // Restart serves the newer legacy records without retrying a large copy.
+        assert!(marker_path.exists());
+        assert!(!workspace.join(PROJECT_METADATA).exists());
+        store.migrate_project_storage("p").await.unwrap();
         assert!(!marker_path.exists());
         std::fs::remove_file(workspace.join(PROJECT_METADATA)).unwrap();
         std::fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();

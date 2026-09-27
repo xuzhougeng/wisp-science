@@ -69,6 +69,9 @@ jobs:
       - name: Run MCP process-tree shutdown regression
         run: cargo test -p wisp-mcp --test process_tree_shutdown
 
+      - name: Run project storage startup and migration regressions
+        run: cargo test -p wisp-store project_storage::tests
+
       # Interpreters are often launchers: Windows Rscript.exe re-launches
       # bin\x64\Rscript.exe through cmd.exe. Stopping a runtime must reclaim
       # that whole tree, which only a real per-OS process tree can prove.
