@@ -417,7 +417,10 @@ impl OpenAiResponsesProvider {
         let status = response.status().as_u16();
         if status >= 400 {
             let text = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api { status, body: text });
+            return Err(LlmError::Api {
+                status,
+                body: codex_auth::http_error("model request", status, &text),
+            });
         }
         let mut bytes = response.bytes_stream();
         let mut utf8 = Utf8Stream::default();

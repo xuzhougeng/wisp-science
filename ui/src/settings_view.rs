@@ -692,6 +692,15 @@ struct CodexLoginForm {
     account_id: String,
     profile_id: String,
     saved_account: String,
+    save_error: String,
+    account_only: bool,
+}
+
+fn is_subscription_provider(provider: &str) -> bool {
+    matches!(
+        settings_provider_value(provider),
+        "openai_codex" | "xai_oauth"
+    )
 }
 
 fn blank_codex_login(provider: &str, profile_id: &str, model: &str, label: &str) -> CodexLoginForm {
@@ -717,6 +726,8 @@ fn blank_codex_login(provider: &str, profile_id: &str, model: &str, label: &str)
         account_id: String::new(),
         profile_id: profile_id.to_string(),
         saved_account: String::new(),
+        save_error: String::new(),
+        account_only: true,
     }
 }
 
@@ -774,6 +785,9 @@ fn schedule_codex_poll(
                             .and_then(|value| value.as_str())
                             .unwrap_or("")
                             .to_string();
+                        if codex_poll_gen.get_untracked() != generation {
+                            return;
+                        }
                         let still = codex_login
                             .get_untracked()
                             .is_some_and(|form| form.login_id == login_id);
@@ -792,6 +806,9 @@ fn schedule_codex_poll(
                         }
                     }
                     Err(error) => {
+                        if codex_poll_gen.get_untracked() != generation {
+                            return;
+                        }
                         codex_login.update(|form| {
                             if let Some(form) = form {
                                 form.status = "error".into();
@@ -814,6 +831,27 @@ fn codex_login_pane(
     settings_busy: RwSignal<bool>,
     close_settings_subpage: Callback<()>,
 ) -> impl IntoView {
+    let cancel_attempt = Callback::new(move |_: ()| {
+        codex_poll_gen.update(|generation| *generation += 1);
+        if let Some(form) = codex_login.get_untracked() {
+            let login_id = form.login_id.clone();
+            let mut reset =
+                blank_codex_login(&form.provider, &form.profile_id, &form.model, &form.label);
+            reset.account_only = form.account_only;
+            reset.method = form.method;
+            reset.saved_account = form.saved_account;
+            codex_login.set(Some(reset));
+            if !login_id.is_empty() {
+                spawn_local(async move {
+                    let _ = invoke_checked(
+                        "cancel_codex_login",
+                        to_value(&serde_json::json!({"loginId": login_id})).unwrap(),
+                    )
+                    .await;
+                });
+            }
+        }
+    });
     let start = move |_| {
         let Some(form) = codex_login.get_untracked() else {
             return;
@@ -821,6 +859,7 @@ fn codex_login_pane(
         if form.status == "pending" {
             return;
         }
+        cancel_attempt.call(());
         let method = form.method.clone();
         let provider = form.provider.clone();
         codex_login.update(|form| {
@@ -846,6 +885,14 @@ fn codex_login_pane(
                         .and_then(|value| value.as_str())
                         .unwrap_or("")
                         .to_string();
+                    if codex_poll_gen.get_untracked() != generation {
+                        let _ = invoke_checked(
+                            "cancel_codex_login",
+                            to_value(&serde_json::json!({"loginId": login_id})).unwrap(),
+                        )
+                        .await;
+                        return;
+                    }
                     let url = challenge
                         .get("url")
                         .and_then(|value| value.as_str())
@@ -883,6 +930,9 @@ fn codex_login_pane(
                     schedule_codex_poll(login_id, generation, codex_login, codex_poll_gen);
                 }
                 Err(error) => {
+                    if codex_poll_gen.get_untracked() != generation {
+                        return;
+                    }
                     codex_login.update(|form| {
                         if let Some(form) = form {
                             form.status = "error".into();
@@ -902,6 +952,7 @@ fn codex_login_pane(
         if login_id.is_empty() || redirect.trim().is_empty() {
             return;
         }
+        let generation = codex_poll_gen.get_untracked();
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
                 "loginId": login_id,
@@ -910,6 +961,9 @@ fn codex_login_pane(
             .unwrap();
             match invoke_checked("submit_codex_login_redirect", arg).await {
                 Ok(value) => {
+                    if codex_poll_gen.get_untracked() != generation {
+                        return;
+                    }
                     if let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
                         codex_login.update(|form| {
                             if let Some(form) = form {
@@ -933,6 +987,9 @@ fn codex_login_pane(
                     }
                 }
                 Err(error) => {
+                    if codex_poll_gen.get_untracked() != generation {
+                        return;
+                    }
                     codex_login.update(|form| {
                         if let Some(form) = form {
                             form.status = "error".into();
@@ -947,6 +1004,15 @@ fn codex_login_pane(
         let Some(form) = codex_login.get_untracked() else {
             return;
         };
+        if settings_busy.get_untracked() {
+            return;
+        }
+        let generation = codex_poll_gen.get_untracked();
+        codex_login.update(|form| {
+            if let Some(form) = form {
+                form.save_error.clear();
+            }
+        });
         settings_busy.set(true);
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
@@ -956,6 +1022,7 @@ fn codex_login_pane(
                 "profileId": form.profile_id,
                 "useSaved": use_saved,
                 "provider": form.provider,
+                "accountOnly": form.account_only,
             }))
             .unwrap();
             match invoke_checked("save_codex_login", arg).await {
@@ -963,15 +1030,20 @@ fn codex_login_pane(
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
                         models.set(list);
                     }
-                    codex_poll_gen.update(|generation| *generation += 1);
-                    codex_login.set(None);
+                    if codex_poll_gen.get_untracked() == generation {
+                        codex_poll_gen.update(|generation| *generation += 1);
+                        codex_login.set(None);
+                    }
                     settings_busy.set(false);
                 }
                 Err(error) => {
+                    settings_busy.set(false);
+                    if codex_poll_gen.get_untracked() != generation {
+                        return;
+                    }
                     codex_login.update(|form| {
                         if let Some(form) = form {
-                            form.status = "error".into();
-                            form.message = js_error_text(error);
+                            form.save_error = js_error_text(error);
                         }
                     });
                     settings_busy.set(false);
@@ -987,11 +1059,13 @@ fn codex_login_pane(
     };
     view! {
         <div class="settings-pane settings-pane-subpage" data-testid="codex-login-form">
-            <div class="conn-form model-form">
+            <div class="conn-form model-form subscription-login">
+                <Show when=move || codex_login.get().is_some_and(|f| f.account_only)>
+                <h3>{move || t(locale.get(), "subscriptions.sign_in")}</h3>
                 <p class="hint">{move || t(locale.get(), login_key(&provider(), "codex.login.desc"))}</p>
                 <div class="settings-form-grid">
                     <label style:display=move || if provider() == "xai" { "none" } else { "" }>{move || t(locale.get(), "codex.login.method")}
-                        <select data-testid="codex-login-method"
+                        <select data-testid="codex-login-method" disabled=move || settings_busy.get() || codex_login.get().is_some_and(|f| f.status == "pending")
                             on:change=move |ev| {
                                 let method = dom_value(&ev);
                                 codex_login.update(|form| if let Some(form) = form {
@@ -1008,46 +1082,22 @@ fn codex_login_pane(
                             </option>
                         </select>
                     </label>
-                    <label>{move || t(locale.get(), "settings.model")}
-                        <input data-testid="codex-login-model"
-                            prop:value=move || codex_login.get().map(|form| form.model).unwrap_or_default()
-                            on:input=move |ev| {
-                                let model = event_target_value(&ev);
-                                codex_login.update(|form| if let Some(form) = form { form.model = model; });
-                            } />
-                    </label>
-                    <label class="span-2">{move || t(locale.get(), "settings.label")}
-                        <input data-testid="codex-login-label"
-                            prop:value=move || codex_login.get().map(|form| form.label).unwrap_or_default()
-                            placeholder=move || t(locale.get(), login_key(&provider(), "codex.login.label_ph"))
-                            on:input=move |ev| {
-                                let label = event_target_value(&ev);
-                                codex_login.update(|form| if let Some(form) = form { form.label = label; });
-                            } />
-                    </label>
                 </div>
                 <p class="hint">{move || t(locale.get(), if codex_login.get().is_some_and(|form| form.method == "device") {
                     login_key(&provider(), "codex.login.device_hint")
                 } else {
                     "codex.login.browser_hint"
                 })}</p>
-                {move || codex_login.get().filter(|form| !form.saved_account.is_empty()).map(|form| {
-                    let account = form.saved_account;
-                    view! {
-                        <button type="button" data-testid="codex-use-saved" disabled=move || settings_busy.get()
-                            on:click=move |_| save.call(true)>
-                            {t(locale.get(), login_key(&form.provider, "codex.login.use_saved"))}
-                            " "
-                            {account}
-                        </button>
-                    }
+                {move || codex_login.get().filter(|form| !form.saved_account.is_empty()).map(|form| view! {
+                    <p class="subscription-status" data-testid="codex-saved-account">{t(locale.get(), "subscriptions.signed_in")}" · "{form.saved_account}</p>
                 })}
                 {move || {
                     let form = codex_login.get();
                     let code = form.as_ref().map(|form| form.user_code.clone()).unwrap_or_default();
                     let url = form.as_ref().map(|form| form.url.clone()).unwrap_or_default();
-                    let show_code = !code.is_empty();
-                    let show_url = !url.is_empty();
+                    let pending = form.as_ref().is_some_and(|form| form.status == "pending");
+                    let show_code = pending && !code.is_empty();
+                    let show_url = pending && !url.is_empty();
                     view! {
                         <div>
                             {show_code.then(|| view! {
@@ -1065,7 +1115,8 @@ fn codex_login_pane(
                         </div>
                     }
                 }}
-                {move || (codex_login.get().is_some_and(|form| form.method == "browser")).then(|| view! {
+                <Show when=move || codex_login.get().is_some_and(|form| form.method == "browser" && !form.login_id.is_empty() && form.status != "success")>
+                    <details class="subscription-manual"><summary>{move || t(locale.get(), "codex.login.manual")}</summary>
                     <label class="span-2">{move || t(locale.get(), "codex.login.paste")}
                         <input data-testid="codex-login-redirect"
                             prop:value=move || codex_login.get().map(|form| form.redirect).unwrap_or_default()
@@ -1078,13 +1129,18 @@ fn codex_login_pane(
                     <button type="button" data-testid="codex-submit-redirect" on:click=submit_redirect>
                         {move || t(locale.get(), "codex.login.submit")}
                     </button>
-                })}
+                    </details>
+                </Show>
                 {move || {
                     let form = codex_login.get();
                     let message = form.as_ref().map(|form| form.message.clone()).unwrap_or_default();
                     let ok = form.as_ref().is_some_and(|form| form.status == "success");
+                    let save_error = form.as_ref().map(|form| form.save_error.clone()).unwrap_or_default();
+                    let failed = !save_error.is_empty() || form.as_ref().is_some_and(|form| form.status == "error");
+                    let pending = form.as_ref().is_some_and(|form| form.status == "pending");
+                    let message = if !save_error.is_empty() { save_error } else if ok { t(locale.get(), "codex.login.ready") } else if pending && !message.starts_with("Could not") { t(locale.get(), "codex.login.pending") } else { message };
                     (!message.is_empty()).then(|| view! {
-                        <div class="settings-status" class:ok=ok class:fail=move || !ok data-testid="codex-login-message">{message}</div>
+                        <div class="settings-status" class:ok=move || ok && !failed class:fail=failed role="status" data-testid="codex-login-message">{message}</div>
                     })
                 }}
                 <div class="row settings-footer">
@@ -1097,16 +1153,52 @@ fn codex_login_pane(
                     } on:click=start>
                         {move || t(locale.get(), if codex_login.get().is_some_and(|form| form.status == "pending") {
                             login_key(&provider(), "codex.login.waiting")
+                        } else if codex_login.get().is_some_and(|form| form.status == "success" || !form.saved_account.is_empty()) {
+                            "codex.login.again"
                         } else {
                             "codex.login.start"
                         })}
                     </button>
-                    <button type="button" class="primary" data-testid="codex-login-save" disabled=move || {
-                        settings_busy.get() || !codex_login.get().is_some_and(|form| form.status == "success")
-                    } on:click=move |_| save.call(false)>
-                        {move || t(locale.get(), "codex.login.save")}
-                    </button>
+                    <Show when=move || codex_login.get().is_some_and(|form| form.status == "pending")>
+                        <button type="button" data-testid="codex-cancel-attempt" on:click=move |_| cancel_attempt.call(())>{move || t(locale.get(), "codex.login.cancel_attempt")}</button>
+                    </Show>
                 </div>
+                <Show when=move || codex_login.get().is_some_and(|form| form.status == "success")>
+                    <button type="button" class="primary" data-testid="codex-login-save" disabled=move || settings_busy.get() on:click=move |_| save.call(false)>{move || t(locale.get(), "subscriptions.save_account")}</button>
+                </Show>
+                </Show>
+                <Show when=move || codex_login.get().is_some_and(|form| !form.account_only)>
+                    <section class="subscription-model-step">
+                        <h3>{move || t(locale.get(), "subscriptions.add_model")}</h3><p class="hint">{move || t(locale.get(), "subscriptions.managed")}</p>
+                        <div class="settings-form-grid">
+                    <label class="span-2">{move || t(locale.get(), "settings.model")}
+                        <input data-testid="codex-login-model"
+                            prop:value=move || codex_login.get().map(|form| form.model).unwrap_or_default()
+                            on:input=move |ev| {
+                                let model = event_target_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form { form.model = model; });
+                            } />
+                    </label>
+                    <label class="span-2">{move || t(locale.get(), "settings.label")}
+                        <input data-testid="codex-login-label"
+                            prop:value=move || codex_login.get().map(|form| form.label).unwrap_or_default()
+                            placeholder=move || t(locale.get(), login_key(&provider(), "codex.login.label_ph"))
+                            on:input=move |ev| {
+                                let label = event_target_value(&ev);
+                                codex_login.update(|form| if let Some(form) = form { form.label = label; });
+                            } />
+                    </label>
+                        </div>
+                        {move || codex_login.get().filter(|f| !f.save_error.is_empty()).map(|f| view! { <div class="settings-status fail" data-testid="subscription-save-error">{f.save_error}</div> })}
+                        <div class="row settings-footer">
+                            <button type="button" on:click=move |_| close_settings_subpage.call(())>{move || t(locale.get(), "settings.cancel")}</button>
+                            <button type="button" class="primary" data-testid="codex-login-save" disabled=move || settings_busy.get() || codex_login.get().is_none_or(|form| form.model.trim().is_empty() || form.saved_account.is_empty())
+                                on:click=move |_| save.call(codex_login.get_untracked().is_some_and(|form| form.status != "success"))>
+                                {move || t(locale.get(), "codex.login.save")}
+                            </button>
+                        </div>
+                    </section>
+                </Show>
             </div>
         </div>
     }
@@ -2086,7 +2178,15 @@ pub(super) fn SettingsView(
             selected_skill.set(None);
         }
     });
+    let subscription_model_edit = create_memo(move |_| {
+        model_form
+            .get()
+            .is_some_and(|form| is_subscription_provider(&form.provider))
+    });
+    let show_subscriptions = create_rw_signal(false);
     let codex_login = create_rw_signal(None::<CodexLoginForm>);
+    // Only mount/unmount the page when it opens/closes, not on every keystroke or poll.
+    let codex_login_open = create_memo(move |_| codex_login.get().is_some());
     let codex_poll_gen = create_rw_signal(0u64);
     let close_settings_subpage = Callback::new(move |_| {
         selected_skill.set(None);
@@ -2104,18 +2204,30 @@ pub(super) fn SettingsView(
         close_settings_subpage.call(());
     });
     let open_codex_login = Callback::new(
-        move |(provider, profile_id, model, label): (String, String, String, String)| {
+        move |(provider, profile_id, model, label, account_only): (
+            String,
+            String,
+            String,
+            String,
+            bool,
+        )| {
             model_form.set(None);
             model_form_key.set(String::new());
             model_form_msg.set(None);
             acp_form.set(None);
             codex_poll_gen.update(|generation| *generation += 1);
-            codex_login.set(Some(blank_codex_login(&provider, &profile_id, &model, &label)));
+            let mut form = blank_codex_login(&provider, &profile_id, &model, &label);
+            form.account_only = account_only;
+            codex_login.set(Some(form));
+            let generation = codex_poll_gen.get_untracked();
             spawn_local(async move {
                 let arg = to_value(&serde_json::json!({ "provider": provider })).unwrap();
                 let Ok(value) = invoke_checked("codex_subscription_status", arg).await else {
                     return;
                 };
+                if codex_poll_gen.get_untracked() != generation {
+                    return;
+                }
                 let Ok(status) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) else {
                     return;
                 };
@@ -2138,6 +2250,51 @@ pub(super) fn SettingsView(
             });
         },
     );
+    let go_settings_section = Callback::new(move |section: String| {
+        close_settings_subpage.call(());
+        go_settings_section.call(section);
+    });
+    create_effect(move |_| {
+        if !show_settings.get() && codex_login.get_untracked().is_some() {
+            close_settings_subpage.call(());
+        }
+    });
+    let subscription_status =
+        create_rw_signal(std::collections::HashMap::<String, Result<bool, String>>::new());
+    let subscription_status_gen = create_rw_signal(0u64);
+    create_effect(move |_| {
+        let visible = show_settings.get()
+            && settings_section.get() == "models"
+            && show_subscriptions.get()
+            && !codex_login_open.get();
+        subscription_status_gen.update(|generation| *generation += 1);
+        if visible {
+            let generation = subscription_status_gen.get_untracked();
+            subscription_status.set(Default::default());
+            for provider in ["codex", "xai"] {
+                spawn_local(async move {
+                    let status = invoke_checked(
+                        "codex_subscription_status",
+                        to_value(&serde_json::json!({"provider": provider})).unwrap(),
+                    )
+                    .await
+                    .map_err(js_error_text)
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<
+                            crate::dto::codex_login::CodexSubscriptionStatus,
+                        >(value)
+                        .map(|status| status.signed_in)
+                        .map_err(|error| error.to_string())
+                    });
+                    if subscription_status_gen.get_untracked() == generation {
+                        subscription_status.update(|statuses| {
+                            statuses.insert(provider.into(), status);
+                        });
+                    }
+                });
+            }
+        }
+    });
     // Specialist skill whitelist picker: search query + filtered results, so a
     // large skill library never renders as an unbounded checkbox list.
     let specialist_skill_query = create_rw_signal(String::new());
@@ -3714,14 +3871,38 @@ pub(super) fn SettingsView(
                                 </div>
                             </div>
                         }.into_view()
-                    } else if codex_login.get().is_some() {
+                    } else if codex_login_open.get() {
                         codex_login_pane(locale, codex_login, codex_poll_gen, models, settings_busy, close_settings_subpage).into_view()
                     } else if model_form_open.get() {
-                        if model_form_is_edit.get() {
+                        if subscription_model_edit.get() {
+                            view! {
+                                <div class="settings-pane settings-pane-subpage" data-testid="subscription-model-form">
+                                    <div class="conn-form subscription-login">
+                                        <p class="hint">{move || t(locale.get(), "subscriptions.managed")}</p>
+                                        <div class="settings-form-grid">
+                                            <label>{move || t(locale.get(), "settings.model")}
+                                                <input data-testid="subscription-model-id" prop:value=move || model_form.get().map(|f| f.model).unwrap_or_default()
+                                                    on:input=move |ev| model_form.update(|f| if let Some(f)=f { f.model = event_target_value(&ev); }) />
+                                            </label>
+                                            <label>{move || t(locale.get(), "settings.label")}
+                                                <input data-testid="subscription-model-label" prop:value=move || model_form.get().map(|f| f.label).unwrap_or_default()
+                                                    on:input=move |ev| model_form.update(|f| if let Some(f)=f { f.label = event_target_value(&ev); }) />
+                                            </label>
+                                        </div>
+                                        {move || model_form_msg.get().map(|(ok, text)| view! { <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div> })}
+                                        <div class="row settings-footer">
+                                            <button type="button" disabled=move || settings_busy.get() on:click=move |_| close_settings_subpage.call(())>{move || t(locale.get(), "settings.cancel")}</button>
+                                            <button type="button" class="primary" data-testid="save-subscription-model" disabled=move || settings_busy.get() || model_form.get().is_none_or(|f| f.model.trim().is_empty()) on:click=move |ev| save_model_form.call(ev)>{move || t(locale.get(), "settings.save")}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            }.into_view()
+                        } else if model_form_is_edit.get() {
                         view! {
                             <div class="settings-pane settings-pane-subpage">
                                 <div class="conn-form model-form">
                                     <div class="settings-form-grid">
+                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
                                             <input aria-describedby="model-api-url-hint"
                                                 prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
@@ -3729,6 +3910,7 @@ pub(super) fn SettingsView(
                                         <span id="model-api-url-hint" class="hint span-2" data-testid="model-api-url-hint">
                                             {move || t(locale.get(), "settings.tip")}
                                         </span>
+                                        </Show>
                                         {move || {
                                             let subscription = model_form.get().and_then(|form| match settings_provider_value(&form.provider) {
                                                 "openai_codex" => Some("codex"),
@@ -3741,9 +3923,9 @@ pub(super) fn SettingsView(
                                                 let label = model_form.get().map(|form| form.label).unwrap_or_default();
                                                 view! {
                                                     <div class="span-2">
-                                                        <p class="hint">{t(locale.get(), login_key(subscription, "codex.login.saved_hint"))}</p>
+                                                        <p class="hint">{t(locale.get(), "subscriptions.connection")}</p>
                                                         <button type="button" data-testid="codex-relogin" on:click=move |_| {
-                                                            open_codex_login.call((subscription.to_string(), profile_id.clone(), model.clone(), label.clone()));
+                                                            open_codex_login.call((subscription.to_string(), profile_id.clone(), model.clone(), label.clone(), true));
                                                         }>{t(locale.get(), "codex.login.again")}</button>
                                                     </div>
                                                 }.into_view()
@@ -3764,6 +3946,7 @@ pub(super) fn SettingsView(
                                                 }.into_view()
                                             }
                                         }}
+                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
                                         <label>{move || t(locale.get(), "settings.provider")}
                                             <select data-testid="settings-provider"
                                                 on:change=move|ev| {
@@ -3782,20 +3965,13 @@ pub(super) fn SettingsView(
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_responses")>
                                                     {move || t(locale.get(), "settings.provider.openai_responses")}
                                                 </option>
-                                                <option value="openai_codex"
-                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_codex")>
-                                                    {move || t(locale.get(), "settings.provider.openai_codex")}
-                                                </option>
-                                                <option value="xai_oauth"
-                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "xai_oauth")>
-                                                    {move || t(locale.get(), "settings.provider.xai_oauth")}
-                                                </option>
                                                 <option value="anthropic"
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "anthropic")>
                                                     {move || t(locale.get(), "settings.provider.anthropic")}
                                                 </option>
                                             </select>
                                         </label>
+                                        </Show>
                                         <label>{move || t(locale.get(), "settings.model")}
                                             <input prop:value=move || model_form.get().map(|f| f.model.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.model_ph")
@@ -3817,13 +3993,13 @@ pub(super) fn SettingsView(
                                                     });
                                                     apply_catalog_limits(model_form, model_catalog_limits);
                                                 } /></label>
-                                        <label>{move || t(locale.get(), "settings.endpoint_suffix")}
+                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")><label>{move || t(locale.get(), "settings.endpoint_suffix")}
                                             <input data-testid="model-endpoint-suffix"
                                                 prop:value=move || model_form.get().map(|f| f.endpoint_suffix.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.endpoint_suffix_ph")
                                                 on:input=move |ev| model_form.update(|o| if let Some(o)=o {
                                                     o.endpoint_suffix = event_target_input(&ev).value();
-                                                }) /></label>
+                                                }) /></label></Show>
                                         <label>{move || t(locale.get(), "settings.label")}
                                             <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.label_ph")
@@ -4125,6 +4301,7 @@ pub(super) fn SettingsView(
                                             </div>
                                             <span id="model-vision-hint" class="hint">{move || t(locale.get(), "settings.vision_hint")}</span>
                                             </div>
+                                            <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
                                             <div class="model-capability">
                                             <label class="settings-check span-2">
                                                 <input type="checkbox" data-testid="use-for-image-generation" aria-describedby="model-image-generation-hint"
@@ -4155,12 +4332,13 @@ pub(super) fn SettingsView(
                                             </label>
                                             <span id="model-video-generation-hint" class="hint">{move || t(locale.get(), "settings.video_generation_hint")}</span>
                                             </div>
+                                            </Show>
                                         </div>
                                                 }.into_view()
                                             }
                                         }}
                                     </div>
-                                    {model_advanced_options(locale, model_form)}
+                                    <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>{model_advanced_options(locale, model_form)}</Show>
                                     {move || model_form_msg.get().map(|(ok, text)| view! {
                                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                                     })}
@@ -4501,12 +4679,12 @@ pub(super) fn SettingsView(
                             <div class="settings-toolbar settings-toolbar-end model-category-toolbar">
                                 <div class="settings-category-tabs" role="tablist" aria-label=move || t(locale.get(), "models.categories")>
                                     <button type="button" role="tab" class="settings-category-tab"
-                                        class:active=move || !show_acp_agents.get()
-                                        aria-selected=move || (!show_acp_agents.get()).to_string()
+                                        class:active=move || !show_acp_agents.get() && !show_subscriptions.get()
+                                        aria-selected=move || (!show_acp_agents.get() && !show_subscriptions.get()).to_string()
                                         data-testid="models-category-http"
-                                        on:click=move |_| show_acp_agents.set(false)>
+                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(false); }>
                                         {move || {
-                                            let n = models.get().len();
+                                            let n = models.get().iter().filter(|m| !is_subscription_provider(&m.provider)).count();
                                             format!("{} ({n})", t(locale.get(), "models.category.http"))
                                         }}
                                     </button>
@@ -4514,14 +4692,21 @@ pub(super) fn SettingsView(
                                         class:active=move || show_acp_agents.get()
                                         aria-selected=move || show_acp_agents.get().to_string()
                                         data-testid="open-acp-agents-from-settings"
-                                        on:click=move |_| show_acp_agents.set(true)>
+                                        on:click=move |_| { show_acp_agents.set(true); show_subscriptions.set(false); }>
                                         {move || {
                                             let n = acp_agents.get().len();
                                             format!("{} ({n})", t(locale.get(), "models.acp_open"))
                                         }}
                                     </button>
+                                    <button type="button" role="tab" class="settings-category-tab"
+                                        class:active=move || show_subscriptions.get()
+                                        aria-selected=move || show_subscriptions.get().to_string()
+                                        data-testid="models-category-subscriptions"
+                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(true); }>
+                                        {move || t(locale.get(), "settings.nav.subscriptions")}
+                                    </button>
                                 </div>
-                                <div class="settings-toolbar-actions">
+                                <div class="settings-toolbar-actions" style:display=move || if show_subscriptions.get() { "none" } else { "" }>
                                     {move || if show_acp_agents.get() {
                                         view! {
                                             <button type="button" class="settings-add-btn" data-testid="add-acp-agent-settings" on:click=move |_| {
@@ -4532,12 +4717,6 @@ pub(super) fn SettingsView(
                                         }.into_view()
                                     } else {
                                         view! {
-                                            <button type="button" class="settings-add-btn" data-testid="add-codex-login" on:click=move |_| {
-                                                open_codex_login.call(("codex".into(), String::new(), String::new(), String::new()));
-                                            }>{move || t(locale.get(), "codex.login.button")}</button>
-                                            <button type="button" class="settings-add-btn" data-testid="add-xai-login" on:click=move |_| {
-                                                open_codex_login.call(("xai".into(), String::new(), String::new(), String::new()));
-                                            }>{move || t(locale.get(), "xai.login.button")}</button>
                                             <button type="button" class="settings-add-btn" data-testid="add-provider" on:click=move |_| {
                                                 show_acp_agents.set(false);
                                                 let form = new_model_form();
@@ -4553,7 +4732,63 @@ pub(super) fn SettingsView(
                                     }}
                                 </div>
                             </div>
-                            {move || if show_acp_agents.get() {
+                            {move || if show_subscriptions.get() {
+                                view! {
+                                    <div class="subscription-settings" data-testid="subscriptions-page">
+                                        <p class="hint">{move || t(locale.get(), "subscriptions.desc")}</p>
+                                        {[ ("codex", "ChatGPT", "subscriptions.chatgpt", "openai_codex"), ("xai", "SuperGrok", "subscriptions.xai", "xai_oauth") ].into_iter().map(|(provider, title, description, profile_provider)| {
+                                            view! {
+                                                <section class="subscription-account-card" data-testid=format!("subscription-account-{provider}")>
+                                                    <div class="subscription-account-heading">
+                                                        <div><h3>{title}</h3><p class="hint">{move || t(locale.get(), description)}</p></div>
+                                                        <span class="subscription-status" role="status">{move || t(locale.get(), match subscription_status.get().get(provider) {
+                                                            None => "subscriptions.loading", Some(Ok(true)) => "subscriptions.signed_in", Some(Ok(false)) => "subscriptions.signed_out", Some(Err(_)) => "subscriptions.status_error",
+                                                        })}</span>
+                                                    </div>
+                                                    <div class="row">
+                                                        <button type="button" data-testid=format!("add-{provider}-login") on:click=move |_| {
+                                                            open_codex_login.call((provider.into(), String::new(), String::new(), String::new(), true));
+                                                        }>{move || t(locale.get(), if subscription_status.get().get(provider) == Some(&Ok(true)) { "subscriptions.manage" } else { "codex.login.start" })}</button>
+                                                        <button type="button" class="primary" data-testid=format!("add-{provider}-model") disabled=move || subscription_status.get().get(provider) != Some(&Ok(true)) on:click=move |_| {
+                                                            open_codex_login.call((provider.into(), String::new(), String::new(), String::new(), false));
+                                                        }>{move || t(locale.get(), "subscriptions.add_model")}</button>
+                                                    </div>
+                                                    <div class="subscription-models">
+                                                        <Show when=move || !models.get().iter().any(|m| settings_provider_value(&m.provider) == profile_provider)>
+                                                            <p class="hint">{move || t(locale.get(), "subscriptions.empty")}</p>
+                                                        </Show>
+                                                        <For each=move || { models.get().into_iter().filter(|m| settings_provider_value(&m.provider) == profile_provider).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.label.clone(), m.model.clone()) let:m>
+                                                            {let edit = m.clone(); let pick = m.id.clone(); let delete = m.clone(); view! {
+                                                                <div class="subscription-model-row" data-testid="subscription-model">
+                                                                    <button type="button" class="subscription-model-edit" on:click=move |_| {
+                                                                        model_form.set(Some(profile_to_form(&edit)));
+                                                                        model_form_key.set(String::new()); model_form_msg.set(None);
+                                                                    }><strong>{m.label}</strong><span class="hint">{m.model}</span></button>
+                                                                    {if m.active { view! { <span class="settings-model-default">{move || t(locale.get(), "models.default")}</span> }.into_view() } else { view! {
+                                                                        <button type="button" disabled=move || settings_busy.get() on:click=move |_| {
+                                                                            let id = pick.clone(); settings_busy.set(true);
+                                                                            spawn_local(async move {
+                                                                                match invoke_checked("set_active_model", to_value(&serde_json::json!({"id": id})).unwrap()).await {
+                                                                                    Ok(value) => if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) { models.set(list); },
+                                                                                    Err(error) => settings_message.set(Some((false, js_error_text(error)))),
+                                                                                }
+                                                                                settings_busy.set(false);
+                                                                            });
+                                                                        }>{move || t(locale.get(), "models.use")}</button>
+                                                                        <button type="button" title=move || t(locale.get(), "models.remove") on:click=move |_| {
+                                                                            delete_confirm.set(Some(DeleteConfirm::Model { id: delete.id.clone(), label: delete.label.clone() }));
+                                                                        }>{compose_icon("close")}</button>
+                                                                    }.into_view()}}
+                                                                </div>
+                                                            }}
+                                                        </For>
+                                                    </div>
+                                                </section>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                }.into_view()
+                            } else if show_acp_agents.get() {
                                 view! {
                                     <div class="acp-agents-pane" data-testid="acp-agents-settings">
                                         <p class="hint">{move || t(locale.get(), "models.acp_subpage_hint")}</p>
@@ -4713,7 +4948,7 @@ pub(super) fn SettingsView(
                                         }).collect_view()}
                                     </div>
                                     <div class="settings-list">
-                                        <For each=move || models.get() key=|m| (m.id.clone(), m.active) let:m>
+                                        <For each=move || { models.get().into_iter().filter(|m| !is_subscription_provider(&m.provider)).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active) let:m>
                                             {
                                                 let pick_id = m.id.clone();
                                                 let del_id = m.id.clone();

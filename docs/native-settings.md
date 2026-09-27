@@ -27,18 +27,22 @@ Native settings never switch the WebView's active project or active session.
 No mutation is automatically retried following a timeout. The user can refresh
 to discover whether the previous operation completed.
 
-## ChatGPT subscription sign-in on macOS
+## Subscription accounts on macOS
 
-Models → **快速接入 → ChatGPT Plus / Pro** opens the native subscription sheet.
-It supports browser login, manual redirect submission, device-code login, and
-explicit reuse of an account already saved on this device. The saved-account
-indicator reports keyring presence, not a promise that credentials have not
-expired; saving through the existing host refreshes credentials when required.
-An empty model ID uses the backend's default rather than duplicating a model
-catalog rule in Swift. Existing subscription models expose **重新登录 ChatGPT…**
-in their context menu and retain their profile ID and endpoint on save. Their
-ordinary model editor retains the subscription provider and omits the API-key
-field.
+**模型 → 订阅账号** sits alongside **API 模型** and **ACP Agents**. Each
+ChatGPT / SuperGrok card has sign-in management and an **添加模型** action.
+Saving account authorization does not create a model. Add multiple models using
+the saved account; each add/edit form exposes only model ID and alias. Connection,
+token, reasoning and capability controls are managed by Wisp. API lists, counts
+and protocol menus exclude both subscription adapters.
+
+ChatGPT supports browser login, manual callback and device code. SuperGrok uses
+xAI device authorization. Native URL validation allows only the appropriate
+provider's HTTPS authorization host. The saved-account indicator reports keyring
+presence; adding a model refreshes credentials when required. Saving a new login
+reconnects existing models for that provider without changing their configuration.
+An empty model ID uses the backend default. Both account-only save and model save
+keep the existing array response contract; `accountOnly` is optional for older clients.
 
 The six existing `codex_*` sign-in commands are allowlisted on the native settings
 transport. Their response types live in `wisp-dto::codex_login`, with a shared

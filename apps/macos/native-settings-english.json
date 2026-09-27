@@ -249,5 +249,7 @@
   "打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。": "Resume the most recent conversation with messages, excluding drafts that were only renamed.",
   "发送与换行快捷键": "Send and newline shortcuts",
   "窗口不在前台时，任务完成、失败或等待确认会发送系统通知。": "Notify when a task completes, fails, or needs confirmation while the window is in the background.",
-  "⌘Enter 发送 · Enter 换行": "⌘Enter sends · Enter inserts a newline"
+  "⌘Enter 发送 · Enter 换行": "⌘Enter sends · Enter inserts a newline",
+  "通过 SuperGrok / X Premium+ 订阅登录。登录凭据保存在系统钥匙串中。": "Sign in with your SuperGrok / X Premium+ subscription. Credentials are stored in the system keychain.",
+  "打开 xAI 验证页面并批准登录，需要时输入一次性代码。": "Open the xAI verification page and approve sign-in. Enter the one-time code if requested."
 }

@@ -49,6 +49,51 @@ final class NativeCodexLoginTests: XCTestCase {
         XCTFail("Request was not suspended")
     }
 
+    @MainActor func testXaiAccountOnlyUsesDeviceFlowAndCanSaveWithoutModels() async throws {
+        let data = try fixture(); let client = LoginTransport(data)
+        let challenge: SettingsValue = .object(["login_id": .string("xai-test"), "method": .string("device"), "url": .string("https://accounts.x.ai/device?code=TEST-1234"), "verification_uri": .string("https://accounts.x.ai/device"), "user_code": .string("TEST-1234"), "message": .string("")])
+        await client.respond("start_codex_login", challenge)
+        await client.respond("codex_login_status", data["success"])
+        await client.respond("save_codex_login", .array([]))
+        let model = NativeCodexLoginModel(client: client, provider: "xai", accountOnly: true, automaticallyPoll: false)
+        XCTAssertEqual(model.method, "device")
+        let url = await model.start()
+        XCTAssertEqual(url?.host, "accounts.x.ai")
+        await model.pollOnce()
+        let result = await model.save()
+        XCTAssertEqual(result, .array([]))
+        let saved = await client.last("save_codex_login")
+        XCTAssertEqual(saved?.1["provider"], .string("xai"))
+        XCTAssertEqual(saved?.1["accountOnly"], .bool(true))
+    }
+
+    @MainActor func testAccountSaveFailureRetainsAuthorizationForManualRetry() async throws {
+        let client = LoginTransport(try fixture())
+        let model = NativeCodexLoginModel(client: client, accountOnly: true, automaticallyPoll: false)
+        _ = await model.start()
+        model.redirect = "fixture-code"
+        await model.submitRedirect()
+        await client.fail("save_codex_login")
+        _ = await model.save()
+        XCTAssertEqual(model.phase, .success)
+        XCTAssertTrue(model.canSave)
+        await client.fail(nil)
+        await client.respond("save_codex_login", .array([]))
+        let result = await model.save()
+        XCTAssertEqual(result, .array([]))
+    }
+
+    @MainActor func testSavedAccountCannotSaveWhileANewAuthorizationIsPending() async throws {
+        let client = LoginTransport(try fixture())
+        let model = NativeCodexLoginModel(client: client, automaticallyPoll: false)
+        await model.loadSavedAccount()
+        XCTAssertTrue(model.canUseSaved)
+        _ = await model.start()
+        XCTAssertEqual(model.phase, .pending)
+        XCTAssertFalse(model.canUseSaved)
+        _ = await model.cancel()
+    }
+
     @MainActor func testBrowserRedirectAndProfileSaveUseTheSharedGlobalContract() async throws {
         let data = try fixture(); let client = LoginTransport(data)
         let profile: SettingsValue = .object(["id": .string("subscription-test"), "model": .string("fixture-model"), "label": .string("My subscription"), "api_url": .string("https://chatgpt.com/backend-api")])
@@ -67,7 +112,7 @@ final class NativeCodexLoginTests: XCTestCase {
         XCTAssertEqual(result, data["saved_models"])
         XCTAssertEqual(model.phase, .saved)
         let saved = await client.last("save_codex_login")
-        XCTAssertEqual(saved?.1, ["loginId": .string("browser-test"), "model": .string("fixture-model"), "label": .string("My subscription"), "profileId": .string("subscription-test"), "apiUrl": .string("https://chatgpt.com/backend-api"), "useSaved": .bool(false)])
+        XCTAssertEqual(saved?.1, ["loginId": .string("browser-test"), "model": .string("fixture-model"), "label": .string("My subscription"), "profileId": .string("subscription-test"), "apiUrl": .string("https://chatgpt.com/backend-api"), "useSaved": .bool(false), "provider": .string("codex"), "accountOnly": .bool(false)])
         _ = await model.save()
         let saves = await client.count("save_codex_login"); XCTAssertEqual(saves, 1)
         let global = await client.allGlobal(); XCTAssertTrue(global)

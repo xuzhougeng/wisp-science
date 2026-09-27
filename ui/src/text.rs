@@ -68,6 +68,8 @@ pub(crate) fn dom_value(ev: &web_sys::Event) -> String {
 pub(crate) fn provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
+        "openai_codex" | "openai-codex" | "codex" => "openai_codex",
+        "xai" | "xai_oauth" | "xai-oauth" => "xai_oauth",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
         _ => "openai",
     }

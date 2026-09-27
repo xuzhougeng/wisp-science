@@ -61,9 +61,35 @@ final class NativeSettingsModelTests: XCTestCase {
         model.leave(); await client.finish(); await loading.value
         XCTAssertNil(model.values["get_settings"])
     }
+    @MainActor func testModelCategorySurvivesSaveRefreshAndEditorDismissal() async {
+        let model = NativeSettingsModel(client: SettingsFake(), projectID: nil)
+        model.section = .models
+        model.modelCategory = "subscriptions"
+        model.editor = SettingsEditor(title: "编辑模型", draft: .object([:]), fields: [], command: "save_model")
+        _ = await model.run("save_model", ["profile": .object([:])])
+        model.editor = nil
+        XCTAssertEqual(model.modelCategory, "subscriptions")
+    }
+
     func testNineteenSectionsMatchSharedNavigation() {
         XCTAssertEqual(NativeSettingsSection.allCases.count, 19)
         XCTAssertEqual(NativeSettingsSection.allCases.map(\.rawValue), ["general", "session", "appearance", "pet", "models", "quick-actions", "workflows", "specialists", "memory", "skills", "plugins", "browser", "connections", "channels", "credentials", "permissions", "environments", "storage", "usage"])
+    }
+    func testSubscriptionSearchAndClassificationKeepApiProfilesSeparate() {
+        XCTAssertTrue(NativeSettingsSection.models.matches("ChatGPT 登录"))
+        for provider in ["openai_codex", "openai-codex", "codex", "xai_oauth", "xai-oauth", "xai"] {
+            XCTAssertTrue(NativeModelSettings.isSubscription(.object(["provider": .string(provider)])))
+        }
+        for provider in ["openai", "openai_responses", "anthropic"] {
+            XCTAssertFalse(NativeModelSettings.isSubscription(.object(["provider": .string(provider)])))
+        }
+    }
+    func testApiReorderSkipsSubscriptionsWithoutMovingTheirSlots() {
+        func row(_ id: String, _ provider: String) -> SettingsValue { .object(["id": .string(id), "provider": .string(provider)]) }
+        let rows = [row("a", "openai"), row("subscription", "openai_codex"), row("b", "anthropic")]
+        let result = NativeModelSettings.reorderAPIModels(rows, id: "b", offset: -1)
+        XCTAssertEqual(result.map { $0["id"].string }, ["b", "subscription", "a"])
+        XCTAssertEqual(NativeModelSettings.reorderAPIModels(rows, id: "a", offset: -1), rows)
     }
     func testSearchUsesWebViewAliasesAndRequiresEveryTerm() {
         XCTAssertTrue(NativeSettingsSection.channels.matches("同步"))

@@ -17,6 +17,8 @@ final class NativeCodexLoginModel: ObservableObject {
     @Published private(set) var accountID = ""
     @Published private(set) var message = ""
     @Published private(set) var error: String?
+    let provider: String
+    let accountOnly: Bool
     private let client: any NativeSettingsQuerying
     private let profileID: String
     private let apiURL: String
@@ -26,9 +28,11 @@ final class NativeCodexLoginModel: ObservableObject {
     private var pollTask: Task<Void, Never>?
     var canClose: Bool { phase != .saving }
     var canSave: Bool { phase == .success && !busy }
-    var canUseSaved: Bool { savedAccount?.signed_in == true && !busy && phase != .closed && phase != .saved }
+    var canUseSaved: Bool { savedAccount?.signed_in == true && !busy && phase != .pending && phase != .closed && phase != .saved }
 
-    init(client: any NativeSettingsQuerying, profile: SettingsValue = .null, automaticallyPoll: Bool = true) {
+    init(client: any NativeSettingsQuerying, profile: SettingsValue = .null, provider: String = "codex", accountOnly: Bool = false, automaticallyPoll: Bool = true) {
+        self.provider = provider; self.accountOnly = accountOnly
+        self.method = provider == "xai" ? "device" : "browser"
         self.client = client; self.automaticallyPoll = automaticallyPoll
         profileID = profile["id"].string; apiURL = profile["api_url"].string
         modelID = profile["model"].string; label = profile["label"].string
@@ -41,7 +45,7 @@ final class NativeCodexLoginModel: ObservableObject {
         defer { checkingSaved = false }
         let current = generation
         do {
-            let value = try await client.invoke("codex_subscription_status", args: [:], projectID: nil)
+            let value = try await client.invoke("codex_subscription_status", args: ["provider": .string(provider)], projectID: nil)
             let status = try decode(NativeCodexSubscriptionStatus.self, value)
             guard current == generation else { return }
             savedAccount = status
@@ -63,7 +67,7 @@ final class NativeCodexLoginModel: ObservableObject {
                 guard current == generation else { return nil }
                 challenge = nil
             }
-            let value = try await client.invoke("start_codex_login", args: ["method": .string(method)], projectID: nil)
+            let value = try await client.invoke("start_codex_login", args: ["method": .string(method), "provider": .string(provider)], projectID: nil)
             let next = try decode(NativeCodexLoginChallenge.self, value)
             guard !next.login_id.isEmpty else { throw ProjectBrowserError.invalidResponse }
             guard current == generation else {
@@ -71,20 +75,20 @@ final class NativeCodexLoginModel: ObservableObject {
                 return nil
             }
             challenge = next
-            guard next.method == method, Self.authorizationURL(next) != nil,
+            guard next.method == method, Self.authorizationURL(next, provider: provider) != nil,
                   next.method != "device" || !next.user_code.isEmpty else { throw ProjectBrowserError.invalidResponse }
             message = next.message; phase = .pending
             if automaticallyPoll { schedulePolling() }
-            return next.method == "browser" ? Self.authorizationURL(next) : nil
+            return next.method == "browser" || provider == "xai" ? Self.authorizationURL(next, provider: provider) : nil
         } catch {
             if current == generation { self.error = error.localizedDescription; phase = .failed }
             return nil
         }
     }
 
-    static func authorizationURL(_ challenge: NativeCodexLoginChallenge) -> URL? {
-        let raw = challenge.method == "device" ? challenge.verification_uri : challenge.url
-        guard let url = URL(string: raw), url.scheme == "https", url.host == "auth.openai.com",
+    static func authorizationURL(_ challenge: NativeCodexLoginChallenge, provider: String = "codex") -> URL? {
+        let raw = provider == "xai" ? challenge.url : challenge.method == "device" ? challenge.verification_uri : challenge.url
+        guard let url = URL(string: raw), url.scheme == "https", url.host == (provider == "xai" ? "accounts.x.ai" : "auth.openai.com"),
               url.user == nil, url.password == nil else { return nil }
         return url
     }
@@ -145,6 +149,7 @@ final class NativeCodexLoginModel: ObservableObject {
     func save(useSaved: Bool = false) async -> SettingsValue? {
         guard useSaved ? canUseSaved : canSave else { return nil }
         let current = generation
+        let authorized = phase == .success
         busy = true; phase = .saving; error = nil
         pollTask?.cancel(); pollTask = nil
         defer { if current == generation { busy = false } }
@@ -152,16 +157,16 @@ final class NativeCodexLoginModel: ObservableObject {
             let value = try await client.invoke("save_codex_login", args: [
                 "loginId": .string(challenge?.login_id ?? ""), "model": .string(modelID), "label": .string(label),
                 "profileId": profileID.isEmpty ? .null : .string(profileID), "apiUrl": apiURL.isEmpty ? .null : .string(apiURL),
-                "useSaved": .bool(useSaved)
+                "useSaved": .bool(useSaved), "provider": .string(provider), "accountOnly": .bool(accountOnly)
             ], projectID: nil)
             guard current == generation else { return nil }
-            guard case .array(let rows) = value, rows.contains(where: { $0["provider"].string == "openai_codex" && (profileID.isEmpty || $0["id"].string == profileID) }) else { throw ProjectBrowserError.invalidResponse }
+            guard case .array(let rows) = value, (accountOnly || rows.contains(where: { $0["provider"].string == (provider == "xai" ? "xai_oauth" : "openai_codex") && (profileID.isEmpty || $0["id"].string == profileID) })) else { throw ProjectBrowserError.invalidResponse }
             if let challenge { _ = try? await client.invoke("cancel_codex_login", args: ["loginId": .string(challenge.login_id)], projectID: nil) }
             challenge = nil; redirect = ""; phase = .saved
             return value
         } catch {
             if current == generation {
-                phase = .failed
+                phase = authorized ? .success : .failed
                 self.error = localized("保存结果未能确认。请刷新模型列表核对；不会自动重试。") + "\n" + error.localizedDescription
             }
             return nil

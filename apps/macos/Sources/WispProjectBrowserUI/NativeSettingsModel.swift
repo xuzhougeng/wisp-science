@@ -44,6 +44,7 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
 final class NativeSettingsModel: ObservableObject {
     @Published var section: NativeSettingsSection = .general
     @Published var projectID: String?
+    @Published var modelCategory = "api"
     @Published var search = ""
     @Published var values: [String: SettingsValue] = [:]
     @Published var loading = false

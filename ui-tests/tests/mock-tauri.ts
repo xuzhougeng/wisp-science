@@ -3986,7 +3986,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return mockModels;
           }
           case "codex_subscription_status":
-            return { signed_in: false, account_id: "" };
+            return { signed_in: !!(window as any).__savedSubscriptions?.[arg("provider") ?? "codex"], account_id: "account-test" };
           case "start_codex_login":
             return arg("provider") === "xai"
               ? {
@@ -4002,6 +4002,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return { status: "success", message: "Signed in to grok@example.com", account_id: "grok@example.com" };
           case "save_codex_login": {
             const xai = arg("provider") === "xai";
+            (window as any).__savedSubscriptions ??= {};
+            (window as any).__savedSubscriptions[xai ? "xai" : "codex"] = true;
+            if (arg("accountOnly")) return mockModels;
             mockModels = [...mockModels, {
               ...mockModels[0],
               id: `sub-${mockModels.length + 1}`,

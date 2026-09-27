@@ -4,7 +4,7 @@ import WispProjectBrowser
 struct NativeModelSettings: View {
     @ObservedObject var model: NativeSettingsModel
     @State private var query = ""
-    @State private var showAgents = false
+    @State private var accounts: [String: SettingsValue] = [:]
     @Environment(\.colorScheme) private var scheme
     @State private var acpInfo: SettingsValue?
     @State private var testedAgent: SettingsValue?
@@ -12,27 +12,31 @@ struct NativeModelSettings: View {
     private struct SubscriptionPresentation: Identifiable {
         let id = UUID()
         var profile: SettingsValue = .null
+        var provider = "codex"
+        var accountOnly = true
     }
     @State private var subscription: SubscriptionPresentation?
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             if model.section == .credentials { credentials } else {
                 HStack(spacing: 6) {
-                    tab("API 模型", count: model.values["list_models"]?.array.count ?? 0, agents: false)
-                    tab("ACP Agents", count: model.values["list_acp_agents"]?.array.count ?? 0, agents: true)
+                    tab("API 模型", count: apiModels.count, category: "api")
+                    tab("ACP Agents", count: model.values["list_acp_agents"]?.array.count ?? 0, category: "acp")
+                    tab("订阅账号", count: nil, category: "subscriptions")
                     Spacer()
-                    Button(localized(showAgents ? "添加智能体" : "添加 API 接入")) {
-                        if showAgents { editAgent(.object(["id": .string(""), "label": .string(""), "command": .string(""), "args": .array([])])) }
+                    if model.modelCategory != "subscriptions" { Button(localized(model.modelCategory == "acp" ? "添加智能体" : "添加 API 接入")) {
+                        if model.modelCategory == "acp" { editAgent(.object(["id": .string(""), "label": .string(""), "command": .string(""), "args": .array([])])) }
                         else { addModel() }
-                    }.buttonStyle(NativeSettingsButtonStyle(primary: true))
+                    }.buttonStyle(NativeSettingsButtonStyle(primary: true)) }
                 }
                 Text(localized("模型配置由所有项目共享。默认模型用于新建对话，列表操作立即保存。")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
-                if showAgents { agents } else { models }
+                if model.modelCategory == "subscriptions" { subscriptions } else if model.modelCategory == "acp" { agents } else { models }
             }
         }
+        .task { await loadAccounts() }
         .sheet(item: $subscription) { presentation in
-            NativeCodexLoginSheet(model: NativeCodexLoginModel(client: model.client, profile: presentation.profile), saved: {
-                Task { await model.load() }
+            NativeCodexLoginSheet(model: NativeCodexLoginModel(client: model.client, profile: presentation.profile, provider: presentation.provider, accountOnly: presentation.accountOnly), saved: {
+                Task { await model.load(); await loadAccounts() }
             }, close: { warning in
                 guard subscription?.id == presentation.id else { return }
                 subscription = nil
@@ -41,10 +45,65 @@ struct NativeModelSettings: View {
         }
     }
 
-    private func tab(_ title: String, count: Int, agents: Bool) -> some View {
-        Button { showAgents = agents } label: {
-            HStack(spacing: 8) { Text(localized(title)); Text("\(count)").font(WispDesign.font(size: 11)).padding(.horizontal, 6).padding(.vertical, 2).background(Color.primary.opacity(0.05), in: Capsule()) }
-        }.buttonStyle(NativeSettingsButtonStyle(primary: showAgents == agents, compact: true))
+    static func isSubscription(_ row: SettingsValue) -> Bool {
+        ["openai_codex", "openai-codex", "codex", "xai_oauth", "xai-oauth", "xai"].contains(row["provider"].string)
+    }
+    private var apiModels: [SettingsValue] {
+        (model.values["list_models"]?.array ?? []).filter { !Self.isSubscription($0) }
+    }
+    private func loadAccounts() async {
+        guard model.section == .models else { return }
+        for provider in ["codex", "xai"] {
+            do {
+                accounts[provider] = try await model.client.invoke("codex_subscription_status", args: ["provider": .string(provider)], projectID: nil)
+            } catch { model.error = error.localizedDescription }
+        }
+    }
+
+    private var subscriptions: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text(localized("登录已有账号，再选择用于对话的模型。")).font(.caption).foregroundStyle(.secondary)
+            ForEach(["codex", "xai"], id: \.self) { provider in
+                NativeSettingsGroup(title: provider == "xai" ? "SuperGrok" : "ChatGPT") {
+                    let account = accounts[provider]
+                    Text(localized(account == nil ? "正在检查账号…" : account?["signed_in"].bool == true ? "已保存账号" : "未登录")).font(.caption)
+                    HStack {
+                        Button(localized(account?["signed_in"].bool == true ? "管理登录" : "登录")) {
+                            subscription = SubscriptionPresentation(provider: provider)
+                        }
+                        Button(localized("添加模型")) {
+                            subscription = SubscriptionPresentation(provider: provider, accountOnly: false)
+                        }.buttonStyle(NativeSettingsButtonStyle(primary: true)).disabled(account?["signed_in"].bool != true)
+                    }
+                    let rows = (model.values["list_models"]?.array ?? []).filter { row in
+                        Self.isSubscription(row) && (row["provider"].string.hasPrefix("xai") == (provider == "xai"))
+                    }
+                    if rows.isEmpty { Text(localized("登录后在这里添加模型，即可在对话中使用。")).foregroundStyle(.secondary) }
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        HStack {
+                            Button { editModel(row) } label: {
+                                VStack(alignment: .leading) {
+                                    Text(row["label"].string).fontWeight(.semibold)
+                                    Text(row["model"].string).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.buttonStyle(.plain)
+                            Spacer()
+                            if row["active"].bool { Text(localized("默认模型")).font(.caption) }
+                            else { Button(localized("设为默认模型")) { Task { _ = await model.run("set_active_model", ["id": row["id"]]) } } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func tab(_ title: String, count: Int?, category value: String) -> some View {
+        Button { model.modelCategory = value } label: {
+            HStack(spacing: 8) {
+                Text(localized(title))
+                if let count { Text("\(count)").font(WispDesign.font(size: 11)).padding(.horizontal, 6).padding(.vertical, 2).background(Color.primary.opacity(0.05), in: Capsule()) }
+            }
+        }.buttonStyle(NativeSettingsButtonStyle(primary: model.modelCategory == value, compact: true))
     }
 
     private func addModel(url: String = "https://api.openai.com/v1", name: String = "") {
@@ -57,8 +116,6 @@ struct NativeModelSettings: View {
                 Text(localized("快速接入")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        Button("ChatGPT Plus / Pro") { subscription = SubscriptionPresentation() }
-                            .buttonStyle(NativeSettingsButtonStyle(compact: true))
                         ForEach(WispDesign.modelPresets, id: \.self) { preset in
                             Button(preset["label"] ?? "") { addModel(url: preset["url"] ?? "", name: preset["model"] ?? "") }.buttonStyle(NativeSettingsButtonStyle(compact: true))
                         }
@@ -66,7 +123,7 @@ struct NativeModelSettings: View {
                 }
             }
             TextField(localized("搜索名称、服务商或模型"), text: $query).textFieldStyle(NativeSettingsTextFieldStyle())
-            let rows = (model.values["list_models"]?.array ?? []).filter { query.isEmpty || ($0["label"].string + $0["model"].string + $0["provider"].string).localizedCaseInsensitiveContains(query) }
+            let rows = apiModels.filter { query.isEmpty || ($0["label"].string + $0["model"].string + $0["provider"].string).localizedCaseInsensitiveContains(query) }
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                     HStack(spacing: 12) {
@@ -100,17 +157,25 @@ struct NativeModelSettings: View {
         }
     }
 
+    static func reorderAPIModels(_ rows: [SettingsValue], id: String, offset: Int) -> [SettingsValue] {
+        let visible = rows.filter { !isSubscription($0) }
+        guard let position = visible.firstIndex(where: { $0["id"].string == id }),
+              visible.indices.contains(position + offset),
+              let source = rows.firstIndex(where: { $0["id"].string == id }),
+              let target = rows.firstIndex(where: { $0["id"] == visible[position + offset]["id"] }) else { return rows }
+        var result = rows
+        result.swapAt(source, target)
+        return result
+    }
     private func moveModel(_ id: String, offset: Int) {
-        var rows = model.values["list_models"]?.array ?? []
-        guard let index = rows.firstIndex(where: { $0["id"].string == id }), rows.indices.contains(index + offset) else { return }
-        rows.swapAt(index, index + offset)
+        let rows = Self.reorderAPIModels(model.values["list_models"]?.array ?? [], id: id, offset: offset)
         Task { _ = await model.run("reorder_models", ["ids": .array(rows.map { $0["id"] })]) }
     }
 
     private func editModel(_ row: SettingsValue) {
         model.editor = SettingsEditor(title: row["id"].string.isEmpty ? "添加 API 接入" : "编辑模型", draft: row, fields: [
             .init(key: "label", label: "显示名称"),
-            .init(key: "provider", label: "协议", kind: .choice([("openai", "OpenAI Chat Completions"), ("openai_responses", "OpenAI Responses"), ("anthropic", "Anthropic"), ("openai_codex", "ChatGPT 订阅")])),
+            .init(key: "provider", label: "对话协议", kind: .choice([("openai", "OpenAI Chat Completions"), ("openai_responses", "OpenAI Responses"), ("anthropic", "Anthropic")])),
             .init(key: "api_url", label: "API 根地址"),
             .init(key: "endpoint_suffix", label: "接口后缀"),
             .init(key: "model", label: "模型 ID"),
@@ -134,7 +199,7 @@ struct NativeModelSettings: View {
             .init(key: "user_agent", label: "User-Agent"),
             .init(key: "send_session_id", label: "发送会话标识", kind: .toggle),
             .init(key: "session_header_name", label: "会话请求头名称")
-        ].filter { row["provider"].string != "openai_codex" || $0.key != "key" }, command: "save_model", parameter: "profile", destructiveCommand: row["id"].string.isEmpty ? nil : "remove_model", destructiveArgs: ["id": row["id"]])
+        ].filter { !Self.isSubscription(row) || ["model", "label"].contains($0.key) }, command: "save_model", parameter: "profile", destructiveCommand: row["id"].string.isEmpty ? nil : "remove_model", destructiveArgs: ["id": row["id"]])
     }
 
     private var agents: some View {

@@ -180,15 +180,45 @@ fn nonempty(value: Option<String>) -> Option<String> {
 }
 
 pub fn account_id_from_access_token(token: &str) -> Option<String> {
-    let payload = token.split('.').nth(1)?;
-    let bytes = decode_b64url(payload)?;
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let value = token_claims(token)?;
     value
         .get(JWT_AUTH_CLAIM)
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
+}
+
+// Claims are used only as metadata for an OAuth-issued token, not to verify identity.
+fn token_claims(token: &str) -> Option<Value> {
+    let payload = token.split('.').nth(1)?;
+    serde_json::from_slice(&decode_b64url(payload)?).ok()
+}
+
+/// Do not render an upstream HTML challenge (or token response) in the chat.
+pub fn is_html_response(body: &str) -> bool {
+    let prefix: String = body
+        .trim_start()
+        .chars()
+        .take(256)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    prefix.starts_with("<!doctype html") || prefix.starts_with("<html") || prefix.contains("<head>")
+}
+
+pub fn http_error(stage: &str, status: u16, body: &str) -> String {
+    let reason = if is_html_response(body) {
+        "The service returned a web access or verification page. Check the network/proxy used by Wisp, then retry. Browser sign-in alone cannot resolve this response."
+    } else if status == 401 {
+        "The authorization has expired or was rejected. Sign in to ChatGPT again from Settings → Models → Subscription accounts."
+    } else if status == 403 {
+        "Access was denied. Check this account's Codex access and Wisp's network/proxy settings."
+    } else if status == 429 {
+        "The service limit was reached. Wait before retrying and check the account's usage."
+    } else {
+        "The service could not complete the request. Retry, or check the account and network settings."
+    };
+    format!("ChatGPT {stage} failed (HTTP {status}). {reason}")
 }
 
 pub(crate) fn decode_b64url(input: &str) -> Option<Vec<u8>> {
@@ -207,12 +237,12 @@ pub fn credentials_from_token_body(
     now_ms: i64,
 ) -> Result<CodexCredentials, String> {
     let value: Value = serde_json::from_str(body)
-        .map_err(|_| format!("Codex token response was not JSON: {body}"))?;
+        .map_err(|_| "ChatGPT token response was not JSON".to_string())?;
     let access = value
         .get("access_token")
         .and_then(Value::as_str)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| format!("Codex token response missing access_token: {body}"))?
+        .ok_or_else(|| "ChatGPT token response missing access_token".to_string())?
         .to_string();
     let refresh = value
         .get("refresh_token")
@@ -221,35 +251,46 @@ pub fn credentials_from_token_body(
         .map(str::to_string)
         .or_else(|| previous_refresh.map(str::to_string))
         .ok_or_else(|| "Codex token response missing refresh_token".to_string())?;
-    let expires_in = value
+    let relative_expiry = value
         .get("expires_in")
         .and_then(Value::as_i64)
         .filter(|secs| *secs > 0)
-        .ok_or_else(|| format!("Codex token response missing expires_in: {body}"))?;
+        .map(|secs| now_ms.saturating_add(secs.saturating_mul(1000)));
+    let token_expiry = token_claims(&access)
+        .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+        .filter(|secs| *secs > 0)
+        .map(|secs| secs.saturating_mul(1000));
+    // Some OAuth responses omit expires_in; the access token still carries exp.
+    // If both exist, refresh at the earlier deadline.
+    let expires_at_ms = match (relative_expiry, token_expiry) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(value), None) | (None, Some(value)) => value,
+        (None, None) => return Err("ChatGPT token response has no expiry information".into()),
+    };
     let account_id = account_id_from_access_token(&access)
         .ok_or_else(|| "Codex access token has no ChatGPT account id".to_string())?;
     Ok(CodexCredentials {
         access_token: access,
         refresh_token: refresh,
-        expires_at_ms: now_ms.saturating_add(expires_in.saturating_mul(1000)),
+        expires_at_ms,
         account_id,
     })
 }
 
 pub fn parse_device_code(body: &str) -> Result<DeviceCode, String> {
     let value: Value = serde_json::from_str(body)
-        .map_err(|_| format!("Codex device code response was not JSON: {body}"))?;
+        .map_err(|_| "Codex device code response was not JSON".to_string())?;
     let device_auth_id = value
         .get("device_auth_id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| format!("Codex device code response missing device_auth_id: {body}"))?
+        .ok_or_else(|| "Codex device code response missing device_auth_id".to_string())?
         .to_string();
     let user_code = value
         .get("user_code")
         .and_then(Value::as_str)
         .filter(|code| !code.is_empty())
-        .ok_or_else(|| format!("Codex device code response missing user_code: {body}"))?
+        .ok_or_else(|| "Codex device code response missing user_code".to_string())?
         .to_string();
     let interval = match value.get("interval") {
         Some(Value::Number(n)) => n.as_u64().unwrap_or(5),
@@ -264,9 +305,12 @@ pub fn parse_device_code(body: &str) -> Result<DeviceCode, String> {
 }
 
 pub fn interpret_device_poll(status: u16, body: &str) -> DevicePoll {
+    if is_html_response(body) {
+        return DevicePoll::Failed(http_error("device authorization", status, body));
+    }
     if (200..300).contains(&status) {
         let Ok(value) = serde_json::from_str::<Value>(body) else {
-            return DevicePoll::Failed(format!("Codex device poll was not JSON: {body}"));
+            return DevicePoll::Failed("Codex device poll was not JSON".to_string());
         };
         let code = value
             .get("authorization_code")
@@ -277,17 +321,12 @@ pub fn interpret_device_poll(status: u16, body: &str) -> DevicePoll {
             .and_then(Value::as_str)
             .unwrap_or("");
         if code.is_empty() || verifier.is_empty() {
-            return DevicePoll::Failed(format!(
-                "Codex device poll missing authorization_code: {body}"
-            ));
+            return DevicePoll::Failed("Codex device poll missing authorization_code".into());
         }
         return DevicePoll::Complete {
             authorization_code: code.to_string(),
             code_verifier: verifier.to_string(),
         };
-    }
-    if status == 403 || status == 404 {
-        return DevicePoll::Pending;
     }
     let code = serde_json::from_str::<Value>(body).ok().and_then(|value| {
         let error = value.get("error")?;
@@ -302,7 +341,13 @@ pub fn interpret_device_poll(status: u16, body: &str) -> DevicePoll {
     match code.as_deref() {
         Some("deviceauth_authorization_pending") => DevicePoll::Pending,
         Some("slow_down") => DevicePoll::SlowDown,
-        _ => DevicePoll::Failed(format!("Codex device poll failed ({status}): {body}")),
+        // Preserve empty/JSON polling responses without an explicit OAuth error.
+        None if (status == 403 || status == 404)
+            && (body.trim().is_empty() || serde_json::from_str::<Value>(body).is_ok()) =>
+        {
+            DevicePoll::Pending
+        }
+        _ => DevicePoll::Failed(http_error("device authorization", status, body)),
     }
 }
 
@@ -355,7 +400,7 @@ pub async fn exchange_authorization_code(
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status >= 400 {
-        return Err(format!("Codex token exchange failed ({status}): {body}"));
+        return Err(http_error("sign-in", status, &body));
     }
     credentials_from_token_body(&body, None, now_ms())
 }
@@ -378,7 +423,7 @@ pub async fn refresh_credentials(
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status >= 400 {
-        return Err(format!("Codex token refresh failed ({status}): {body}"));
+        return Err(http_error("session refresh", status, &body));
     }
     credentials_from_token_body(&body, Some(&creds.refresh_token), now_ms())
 }
@@ -407,9 +452,7 @@ pub async fn start_device_login(client: &reqwest::Client) -> Result<DeviceCode, 
         return Err("Codex device-code login is not enabled. Use browser sign-in instead.".into());
     }
     if status >= 400 {
-        return Err(format!(
-            "Codex device code request failed ({status}): {body}"
-        ));
+        return Err(http_error("device sign-in", status, &body));
     }
     parse_device_code(&body)
 }
@@ -662,6 +705,56 @@ mod tests {
             Some("acct-1")
         );
         assert!(account_id_from_access_token("not-a-jwt").is_none());
+    }
+
+    #[test]
+    fn token_expiry_can_come_from_jwt_without_expires_in() {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            r#"{"exp":7200,"https://api.openai.com/auth":{"chatgpt_account_id":"acct-1"}}"#,
+        );
+        let body = json!({"access_token": format!("e30.{payload}.sig"), "refresh_token": "secret-refresh"});
+        let creds = credentials_from_token_body(&body.to_string(), None, 1000).unwrap();
+        assert_eq!(creds.expires_at_ms, 7_200_000);
+        let mut both = body;
+        both["expires_in"] = json!(3600);
+        assert_eq!(
+            credentials_from_token_body(&both.to_string(), None, 1000)
+                .unwrap()
+                .expires_at_ms,
+            3_601_000
+        );
+    }
+
+    #[test]
+    fn malformed_token_errors_never_echo_secrets() {
+        for body in [
+            r#"{"refresh_token":"secret-refresh"}"#.to_string(),
+            json!({"access_token": sample_jwt("acct-1"), "refresh_token": "secret-refresh"})
+                .to_string(),
+        ] {
+            let error = credentials_from_token_body(&body, None, 0).unwrap_err();
+            assert!(!error.contains("secret-refresh"));
+            assert!(!error.contains(".sig"));
+        }
+    }
+
+    #[test]
+    fn device_poll_rejects_html_and_explicit_denials_instead_of_waiting() {
+        let html = "<html><head><title>Access denied</title></head></html>";
+        let DevicePoll::Failed(error) = interpret_device_poll(403, html) else {
+            panic!("must fail");
+        };
+        assert!(error.contains("HTTP 403"));
+        assert!(!error.contains("<html>"));
+        assert!(matches!(
+            interpret_device_poll(403, r#"{"error":"access_denied"}"#),
+            DevicePoll::Failed(_)
+        ));
+        assert_eq!(interpret_device_poll(403, ""), DevicePoll::Pending);
+        assert_eq!(
+            interpret_device_poll(403, r#"{"detail":"Authorization pending"}"#),
+            DevicePoll::Pending
+        );
     }
 
     #[test]

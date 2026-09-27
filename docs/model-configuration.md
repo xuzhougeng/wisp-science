@@ -93,10 +93,18 @@ Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
 [Zen](https://opencode.ai/docs/zen/#endpoints) endpoint documentation for the
 model ID and protocol supported by your chosen service.
 
-**ChatGPT Plus/Pro (Codex)** is a subscription login, separate from an OpenAI
-Platform API key. In **Settings → Models**, choose **ChatGPT Plus/Pro**.
+**ChatGPT** lives in **Settings → Models → Subscription accounts**. Sign in to your account,
+save the account, then use **Add model**. Each model only asks for its model ID
+and an optional alias. You can add multiple models using the same account. The account card reports saved credentials; it
+does not guarantee current entitlement or network access. Subscription models
+are listed here and in the conversation model picker, separately from API models.
+Subscription is an authentication method, not a conversation protocol: Wisp
+manages the Responses connection and all other model parameters. The Models page
+has three peer tabs: API models, ACP Agents and Subscription accounts. Editing a
+subscription model only exposes its ID and alias; API and advanced controls are absent.
 Browser sign-in opens ChatGPT and listens on `127.0.0.1:1455` for the
-redirect. Device-code sign-in shows a one-time code and works when the browser
+redirect. Enable device-code login in ChatGPT security settings or workspace
+permissions before using the one-time-code alternative when the browser
 cannot reach this machine, including SSH and WSL. Paste the final redirect URL
 if the local callback does not arrive. Wisp stores the access token, refresh
 token, expiry, and ChatGPT account id in the OS keyring, refreshes the access
@@ -106,8 +114,15 @@ that subscription can call, such as `gpt-5.5`. A sign-in from
 `wisp-science login codex` is stored on the same machine and can be reused
 from this page.
 
+Canceling or leaving the sign-in page cancels the attempt. An HTML 403 is
+reported as a web access/verification response with network and proxy guidance,
+without displaying the HTML. It is not treated as a successful login or as
+indefinite device authorization. A 401 asks you to sign in again.
+See the [official authentication guide](https://learn.chatgpt.com/docs/auth)
+for account and device-code requirements.
+
 **SuperGrok / X Premium+ (xAI)** is also a subscription login, separate from an
-xAI API key. In **Settings → Models**, choose **SuperGrok**. Wisp starts an
+xAI API key. In **Settings → Models → Subscription accounts**, choose **SuperGrok**. Wisp starts an
 xAI device-code sign-in and opens the `accounts.x.ai` page. Approve it there,
 and enter the one-time code if the page asks for it. This works over SSH and
 WSL because no local callback is needed. Wisp stores the access token, refresh

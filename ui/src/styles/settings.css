@@ -3639,3 +3639,38 @@ body { font-size: var(--ui-font-size, 14px); }
   .skill-store-loading, .skill-store-loading-icon svg { animation: none; }
   .skill-store-loading > button { transition: none; }
 }
+
+/* Subscription accounts are a Models category; each account owns its model list. */
+.subscription-settings { max-width: 920px; }
+.subscription-account-card {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  margin-top: 20px;
+}
+.subscription-account-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.subscription-account-heading h3, .subscription-models h3, .subscription-login h3 { margin: 0 0 10px; }
+.subscription-status { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.subscription-model-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.subscription-model-row svg { width: 16px; height: 16px; }
+.subscription-model-edit { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; background: transparent; border: 0; text-align: left; min-width: 0; }
+.subscription-model-edit strong { overflow-wrap: anywhere; }
+.subscription-models { margin-top: 16px; }
+.subscription-model-step { margin: 0; padding: 0; }
+.subscription-manual { margin-top: 16px; }
+.subscription-manual summary { cursor: pointer; color: var(--text-muted); margin-bottom: 12px; }
+.subscription-login .settings-status { overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .subscription-account-heading { flex-direction: column; gap: 12px; }
+  .subscription-model-row { flex-wrap: wrap; }
+}
+
+.subscription-model-row > button:not(.subscription-model-edit) {
+  font: inherit; font-size: 12px; padding: 6px 12px;
+  color: var(--text); background: var(--bg-input);
+  border: 1px solid var(--border-strong); border-radius: 8px; cursor: pointer;
+}
+.subscription-model-row > button:hover, .subscription-model-edit:hover { background: var(--bg-hover); }
+.subscription-model-edit { padding: 8px 6px; border-radius: 8px; font: inherit; color: var(--text); cursor: pointer; }
+.subscription-login { max-width: 920px; margin-inline: auto; }

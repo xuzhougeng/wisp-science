@@ -1084,6 +1084,11 @@
           "name": "provider",
           "rust_type": "Option<String>",
           "optional": true
+        },
+        {
+          "name": "accountOnly",
+          "rust_type": "Option<bool>",
+          "optional": true
         }
       ],
       "result": "Result<Vec<ModelProfile>, String>",

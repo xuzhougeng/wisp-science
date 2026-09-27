@@ -29,6 +29,7 @@ an error and preserves the previous selection so it can be retried.
 
 | Page | Organization | Applying changes |
 | --- | --- | --- |
+| Models → Subscription accounts | Alongside API models and ACP Agents; separate ChatGPT and SuperGrok account cards with multiple models each | Save account authorization separately, then add models by ID and alias only; default selection applies immediately |
 | General | Workspace/interaction and notifications/updates; separate local environment and network cards | Preference Save is separate from environment and network saves |
 | Session | Run limits, context management, follow-up interaction | Save applies session preferences; the automatic continuation limit is editable when automatic continuation is enabled |
 | Appearance | Theme and font controls beside a live text/code preview | Changes apply immediately; expand Custom theme to paste, import or clear CSS |
@@ -98,3 +99,13 @@ mocked Tauri bridge, rather than the earlier generated design proposals.
 ### Remote access
 
 ![Project sync and channels](assets/settings-layout/remote-access.png)
+
+9. In Models → Subscription accounts, start sign-in and press Escape immediately: return to the
+   subscription page while Settings stays open. Switch to General during a pending
+   challenge and confirm the old attempt cannot reopen the form. Check browser
+   and device-code flows for ChatGPT and xAI, a failed save and a retry. Save an
+   account without creating a model; add two models with distinct aliases and
+   confirm add/edit only offers model ID and alias. Confirm API
+   counts/lists/protocol choices exclude subscription models while the conversation
+   model picker still includes them. A real-account smoke test must also verify
+   a model request after sign-in; mocked success does not establish network access.

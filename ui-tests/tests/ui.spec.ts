@@ -873,9 +873,10 @@ test("Memory project picker consumes Escape before leaving Settings", async ({ p
 test("Codex subscription sign-in closes on Escape before leaving Settings", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
+  await page.getByTestId("models-category-subscriptions").click();
   await page.getByTestId("add-codex-login").click();
   await expect(page.getByTestId("codex-login-form")).toBeVisible();
-  await expect(page.locator(".settings-breadcrumb")).toContainText("ChatGPT Plus/Pro");
+  await expect(page.locator(".settings-breadcrumb")).toContainText("ChatGPT");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("codex-login-form")).toHaveCount(0);
   await expect(page.locator(".settings-page")).toBeVisible();
@@ -886,19 +887,24 @@ test("Codex subscription sign-in closes on Escape before leaving Settings", asyn
 test("SuperGrok sign-in uses a device code and saves an xAI subscription model", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
+  await page.getByTestId("models-category-subscriptions").click();
   await page.getByTestId("add-xai-login").click();
   const form = page.getByTestId("codex-login-form");
   await expect(form).toBeVisible();
   await expect(page.locator(".settings-breadcrumb")).toContainText("SuperGrok / X Premium+");
   await expect(page.getByTestId("codex-login-method")).toBeHidden();
   await expect(page.getByTestId("codex-login-redirect")).toHaveCount(0);
-  await expect(page.getByTestId("codex-login-model")).toHaveValue("grok-4.6");
+  await expect(page.getByTestId("codex-login-model")).toHaveCount(0);
 
   await page.getByTestId("codex-login-start").click();
   await expect(page.getByTestId("codex-user-code")).toContainText("GROK-1234");
-  await expect(page.getByTestId("codex-login-message")).toContainText("grok@example.com");
+  await expect(page.getByTestId("codex-login-save")).toBeVisible();
   await page.getByTestId("codex-login-save").click();
   await expect(form).toHaveCount(0);
+
+  await page.getByTestId("add-xai-model").click();
+  await expect(page.getByTestId("codex-login-model")).toHaveValue("grok-4.6");
+  await page.getByTestId("codex-login-save").click();
 
   const calls = await page.evaluate(() => (window as any).__skillInvokeLog
     .filter((call: any) => ["start_codex_login", "save_codex_login"].includes(call.cmd))
@@ -908,6 +914,7 @@ test("SuperGrok sign-in uses a device code and saves an xAI subscription model",
     })));
   expect(calls).toEqual([
     { cmd: "start_codex_login", provider: "xai" },
+    { cmd: "save_codex_login", provider: "xai" },
     { cmd: "save_codex_login", provider: "xai" },
   ]);
   await expect(page.locator(".settings-page")).toContainText("Grok grok-4.6");

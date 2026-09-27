@@ -291,6 +291,10 @@ pub async fn start_codex_login(
     };
     let mut guard = sessions().lock().unwrap();
     if guard.len() > 8 {
+        for session in guard.values() {
+            session.cancel.store(true, Ordering::Relaxed);
+            session.done.store(true, Ordering::SeqCst);
+        }
         guard.clear();
     }
     guard.insert(login_id, session);
@@ -330,6 +334,7 @@ pub async fn submit_codex_login_redirect(
 pub fn cancel_codex_login(login_id: String) -> Result<(), String> {
     if let Some(session) = sessions().lock().unwrap().remove(&login_id) {
         session.cancel.store(true, Ordering::Relaxed);
+        session.done.store(true, Ordering::SeqCst);
         set_status(&session, "error", "Sign-in cancelled");
     }
     Ok(())
@@ -345,6 +350,7 @@ pub async fn save_codex_login(
     api_url: Option<String>,
     use_saved: Option<bool>,
     provider: Option<String>,
+    account_only: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
     let xai = is_xai(&provider)?;
     let creds = if use_saved.unwrap_or(false) {
@@ -373,9 +379,16 @@ pub async fn save_codex_login(
         if matches!(creds, Credentials::Xai(_)) != xai {
             return Err("That sign-in belongs to a different subscription.".into());
         }
-        sessions().lock().unwrap().remove(&login_id);
         creds
     };
+    if account_only.unwrap_or(false) {
+        save_account_credentials(&state.store, &creds).await?;
+        if let Some(session) = sessions().lock().unwrap().remove(&login_id) {
+            session.cancel.store(true, Ordering::Relaxed);
+        }
+        crate::clear_idle_agents(&state).await;
+        return Ok(models::decorated_models(&state.store).await);
+    }
     let (provider, default_model, vendor, default_url) = if xai {
         (
             "xai_oauth",
@@ -407,6 +420,7 @@ pub async fn save_codex_login(
             trimmed.to_string()
         }
     };
+    let has_custom_api_url = api_url.as_ref().is_some_and(|url| !url.trim().is_empty());
     let api_url = {
         let trimmed = api_url.unwrap_or_default();
         let trimmed = trimmed.trim();
@@ -422,7 +436,15 @@ pub async fn save_codex_login(
     let profile_id = profile_id.unwrap_or_default();
     let profile = if profile_id.is_empty() {
         ModelProfile {
-            id: String::new(),
+            // Retrying a save after a keyring/store failure keeps one model identity.
+            id: format!(
+                "{provider}-{}",
+                if login_id.is_empty() {
+                    uuid::Uuid::new_v4().simple().to_string()
+                } else {
+                    login_id.clone()
+                }
+            ),
             label,
             provider: provider.into(),
             api_url,
@@ -456,16 +478,23 @@ pub async fn save_codex_login(
             return Err("Model profile not found.".into());
         };
         existing.provider = provider.into();
-        existing.api_url = api_url;
+        if has_custom_api_url {
+            existing.api_url = api_url;
+        }
         existing.model = model;
         existing.label = label;
         existing.endpoint_suffix.clear();
         existing
     };
-    let saved_id = profile.id.clone();
+    let id = profile.id.clone();
     let use_for_vision = profile.use_for_vision;
     let use_for_image = profile.use_for_image_generation;
     let use_for_video = profile.use_for_video_generation;
+    // A failed keyring write must not publish a model without credentials.
+    match &creds {
+        Credentials::Codex(creds) => models::store_codex_credentials(&id, creds)?,
+        Credentials::Xai(creds) => models::store_xai_credentials(&id, creds)?,
+    }
     models::save_model(
         state.clone(),
         profile,
@@ -475,24 +504,90 @@ pub async fn save_codex_login(
         Some(use_for_video),
     )
     .await?;
-    let id = if saved_id.is_empty() {
-        state
-            .store
-            .get_setting(models::ACTIVE_KEY)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    } else {
-        saved_id
-    };
-    if id.is_empty() {
-        return Err("Could not save the subscription model.".into());
-    }
-    match &creds {
-        Credentials::Codex(creds) => models::store_codex_credentials(&id, creds)?,
-        Credentials::Xai(creds) => models::store_xai_credentials(&id, creds)?,
+    if !login_id.is_empty() {
+        if let Some(session) = sessions().lock().unwrap().remove(&login_id) {
+            session.cancel.store(true, Ordering::Relaxed);
+        }
     }
     crate::clear_idle_agents(&state).await;
     Ok(models::decorated_models(&state.store).await)
+}
+
+/// Saving an account also reconnects its existing models, without changing their settings.
+async fn save_account_credentials(
+    store: &wisp_store::Store,
+    creds: &Credentials,
+) -> Result<(), String> {
+    let profiles = models::decorated_models(store).await;
+    write_account_credentials(&profiles, creds, |id, creds| match (id, creds) {
+        (None, Credentials::Codex(creds)) => models::store_global_codex(creds),
+        (None, Credentials::Xai(creds)) => models::store_global_xai(creds),
+        (Some(id), Credentials::Codex(creds)) => models::store_codex_credentials(id, creds),
+        (Some(id), Credentials::Xai(creds)) => models::store_xai_credentials(id, creds),
+    })
+}
+
+fn write_account_credentials(
+    profiles: &[ModelProfile],
+    creds: &Credentials,
+    mut write: impl FnMut(Option<&str>, &Credentials) -> Result<(), String>,
+) -> Result<(), String> {
+    write(None, creds)?;
+    for profile in profiles {
+        let matches = match creds {
+            Credentials::Codex(_) => matches!(
+                profile.provider.as_str(),
+                "openai_codex" | "openai-codex" | "codex"
+            ),
+            Credentials::Xai(_) => {
+                matches!(profile.provider.as_str(), "xai" | "xai_oauth" | "xai-oauth")
+            }
+        };
+        if matches {
+            write(Some(&profile.id), creds)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_save_reconnects_all_matching_profiles_without_creating_or_editing_models() {
+        let profiles: Vec<ModelProfile> = serde_json::from_value(serde_json::json!([
+            {"id": "chat-1", "provider": "openai_codex", "model": "gpt-5.5", "label": "Research", "api_url": "https://chatgpt.com/backend-api"},
+            {"id": "chat-2", "provider": "openai_codex", "model": "gpt-5.5", "label": "Writing", "api_url": "https://chatgpt.com/backend-api"},
+            {"id": "grok", "provider": "xai_oauth", "model": "grok-4.6", "label": "Grok", "api_url": "https://api.x.ai/v1"},
+            {"id": "api", "provider": "openai", "model": "grok-4.6", "label": "API", "api_url": "https://api.x.ai/v1"}
+        ])).unwrap();
+        let codex = Credentials::Codex(CodexCredentials {
+            access_token: "fixture-access".into(),
+            refresh_token: "fixture-refresh".into(),
+            expires_at_ms: i64::MAX,
+            account_id: "fixture-account".into(),
+        });
+        let mut writes = Vec::new();
+        write_account_credentials(&profiles, &codex, |id, _| {
+            writes.push(id.map(str::to_string));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![None, Some("chat-1".into()), Some("chat-2".into())]
+        );
+        writes.clear();
+        write_account_credentials(&[], &codex, |id, _| {
+            writes.push(id.map(str::to_string));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(writes, vec![None]);
+        let failure = write_account_credentials(&profiles, &codex, |_, _| {
+            Err("fixture keyring failure".into())
+        });
+        assert_eq!(failure.unwrap_err(), "fixture keyring failure");
+    }
 }

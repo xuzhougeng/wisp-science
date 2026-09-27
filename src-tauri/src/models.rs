@@ -913,6 +913,12 @@ pub(crate) fn store_codex_credentials(
     Ok(())
 }
 
+pub(crate) fn store_global_codex(
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &creds.to_json())
+}
+
 pub(crate) fn load_global_codex() -> Option<wisp_llm::codex_auth::CodexCredentials> {
     wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(
         wisp_llm::codex_auth::SUBSCRIPTION_SECRET,
@@ -932,6 +938,10 @@ pub(crate) fn store_xai_credentials(
     secret_set(&xai_oauth_secret(profile_id), &json)?;
     secret_set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &json)?;
     Ok(())
+}
+
+pub(crate) fn store_global_xai(creds: &wisp_llm::xai_auth::XaiCredentials) -> Result<(), String> {
+    secret_set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &creds.to_json())
 }
 
 pub(crate) fn load_global_xai() -> Option<wisp_llm::xai_auth::XaiCredentials> {

@@ -1034,7 +1034,7 @@ pub(crate) const SETTINGS_NAV_GROUPS: &[(&str, &[(&str, &str)])] = &[
     (
         "settings.nav.ai",
         &[
-            ("models", "api key acp provider 模型 密钥 服务商"),
+            ("models", "api key acp provider chatgpt xai subscription account login 模型 密钥 服务商 订阅 账号 登录"),
             ("quick-actions", "shortcuts 快捷"),
             ("workflows", "automation 自动化"),
             ("specialists", "agents 专家 智能体"),
@@ -1092,6 +1092,7 @@ pub(crate) fn settings_section_label(loc: Locale, section: &str) -> String {
         "pet" => t(loc, "settings.nav.pet"),
         "environments" => t(loc, "settings.nav.environments"),
         "models" => t(loc, "settings.nav.models"),
+        "subscriptions" => t(loc, "settings.nav.subscriptions"),
         "quick-actions" => t(loc, "settings.nav.quick_actions"),
         "workflows" => t(loc, "settings.nav.workflows"),
         "specialists" => t(loc, "settings.nav.specialists"),
