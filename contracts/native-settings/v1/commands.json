@@ -1133,6 +1133,11 @@
           "name": "useForVideoGeneration",
           "rust_type": "Option<bool>",
           "optional": true
+        },
+        {
+          "name": "restoreChatModel",
+          "rust_type": "Option<bool>",
+          "optional": true
         }
       ],
       "result": "Result<Vec<ModelProfile>, String>",
