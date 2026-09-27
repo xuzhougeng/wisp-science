@@ -38,8 +38,12 @@ jobs:
           sparse-checkout: .github/actions/wait-for-release
           path: _release_ci
 
-      - name: Exclude release orchestration checkout from source stamp
-        run: echo '/_release_ci/' >> .git/info/exclude
+      # tauri-action writes the merged updater manifest to ./latest.json. Neither
+      # it nor the orchestration checkout is source, so keep both out of the
+      # SwiftUI Preview's clean-source stamp. This lives here, not in .gitignore,
+      # so rebuilds of existing tags (dispatched from main) get it too.
+      - name: Exclude release byproducts from source stamp
+        run: printf '%s\n' '/_release_ci/' '/latest.json' >> .git/info/exclude
 
       - name: Wait for GitHub release
         id: release
