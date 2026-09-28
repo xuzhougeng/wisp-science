@@ -38,7 +38,7 @@ pub(crate) fn valid_json_tool_arguments(arguments: &str) -> String {
 
 /// reqwest's Display hides the useful part ("connection refused", "proxy
 /// unreachable", dns errors) in `source()`; walk the chain so users see it (#77).
-fn error_chain(e: &reqwest::Error) -> String {
+pub(crate) fn error_chain(e: &reqwest::Error) -> String {
     let mut s = e.to_string();
     let mut src = std::error::Error::source(e);
     while let Some(cause) = src {

@@ -7,7 +7,9 @@
 //! `api.x.ai/v1/chat/completions` endpoint. Tokens stay with the caller
 //! (the OS keyring). This module never writes them.
 
-use crate::codex_auth::{decode_b64url, form_pairs, needs_refresh, now_ms, sleep_or_cancel};
+use crate::codex_auth::{
+    decode_b64url, form_pairs, needs_refresh, now_ms, sleep_or_cancel, transport_error,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -226,7 +228,7 @@ async fn post_form(
         .body(form_pairs(pairs))
         .send()
         .await
-        .map_err(|error| format!("xAI {what} failed: {error}"))?;
+        .map_err(|error| transport_error(&format!("xAI {what}"), error))?;
     let status = response.status().as_u16();
     Ok((status, response.text().await.unwrap_or_default()))
 }
@@ -237,7 +239,7 @@ pub async fn discover_token_endpoint(client: &reqwest::Client) -> Result<String,
         .header("accept", "application/json")
         .send()
         .await
-        .map_err(|error| format!("xAI OIDC discovery failed: {error}"))?;
+        .map_err(|error| transport_error("xAI OIDC discovery", error))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status >= 400 {
@@ -350,6 +352,38 @@ mod tests {
     use base64::Engine;
 
     const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
+
+    #[tokio::test]
+    async fn discovery_transport_error_exposes_the_proxy_failure_before_browser_launch() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut request = [0; 4096];
+            let n = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..n]).starts_with("CONNECT auth.x.ai:443 "));
+            stream
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let client = crate::codex_auth::http_client(Some(&proxy));
+        let error = discover_token_endpoint(&client).await.unwrap_err();
+        server.await.unwrap();
+        assert!(error.contains("xAI OIDC discovery failed"));
+        assert!(
+            error.contains("tunnel"),
+            "missing underlying cause: {error}"
+        );
+        assert!(error.contains("Model API proxy"));
+        assert!(error.contains("Direct disables the system proxy"));
+    }
 
     fn jwt(claims: &str) -> String {
         let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);

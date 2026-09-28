@@ -121,6 +121,27 @@ indefinite device authorization. A 401 asks you to sign in again.
 See the [official authentication guide](https://learn.chatgpt.com/docs/auth)
 for account and device-code requirements.
 
+Subscription sign-in, token refresh, and model requests all use **Settings →
+Network → Model API proxy**. **Direct** explicitly disables the system and
+environment proxies, even if your browser uses a proxy. If the browser opens
+but Wisp's token exchange fails, check this route; select **System** to follow
+the environment/system proxy, or configure the intended proxy explicitly, save,
+and start a new sign-in. Wisp reports OpenAI's
+`unsupported_country_region_territory` response as a network-location rejection,
+not evidence that the account lacks Codex access. Use a network location
+supported by the provider. xAI must fetch OIDC metadata and a device code before
+it has a verification URL to open; a discovery transport failure therefore
+occurs before browser launch. Transport errors include the underlying cause
+(such as timeout, TLS, or proxy connection failure).
+
+For a credential-free manual network check, run
+`cargo run -p wisp-llm --example auth_network_probe` (system/environment route),
+or append `-- none` / `-- http://host:port` for an explicit route. The check
+fetches public xAI discovery metadata and sends an intentionally invalid OpenAI
+authorization code: a normal OAuth 400/401 means validation was reached, not
+that a real account was signed in. This manual example is not an automated
+external-service test and never reads the keyring.
+
 **SuperGrok / X Premium+ (xAI)** is also a subscription login, separate from an
 xAI API key. In **Settings → Models → Subscription accounts**, choose **SuperGrok**. Wisp starts an
 xAI device-code sign-in and opens the `accounts.x.ai` page. Approve it there,

@@ -207,8 +207,19 @@ pub fn is_html_response(body: &str) -> bool {
 }
 
 pub fn http_error(stage: &str, status: u16, body: &str) -> String {
+    // Only recognize known error codes; never echo arbitrary token/error bodies.
+    let unsupported_region = serde_json::from_str::<Value>(body)
+        .ok()
+        .is_some_and(|value| {
+            value.pointer("/error/code").and_then(Value::as_str)
+                == Some("unsupported_country_region_territory")
+                || value.get("error").and_then(Value::as_str)
+                    == Some("unsupported_country_region_territory")
+        });
     let reason = if is_html_response(body) {
         "The service returned a web access or verification page. Check the network/proxy used by Wisp, then retry. Browser sign-in alone cannot resolve this response."
+    } else if unsupported_region {
+        "OpenAI rejected the network location used by Wisp (unsupported_country_region_territory). Check Settings → Network → Model API proxy: Direct disables the system proxy even when your browser uses it. Use a supported network location, then start a new sign-in."
     } else if status == 401 {
         "The authorization has expired or was rejected. Sign in to ChatGPT again from Settings → Models → Subscription accounts."
     } else if status == 403 {
@@ -219,6 +230,13 @@ pub fn http_error(stage: &str, status: u16, body: &str) -> String {
         "The service could not complete the request. Retry, or check the account and network settings."
     };
     format!("ChatGPT {stage} failed (HTTP {status}). {reason}")
+}
+
+/// reqwest's Display omits the cause (timeout, DNS, TLS, refused proxy).
+/// Subscription auth uses the Model API route, independently of the browser.
+pub(crate) fn transport_error(stage: &str, error: reqwest::Error) -> String {
+    let detail = crate::provider::error_chain(&error.without_url());
+    format!("{stage} failed: {detail}. Check Settings → Network → Model API proxy. Direct disables the system proxy; browser sign-in may use a different network route.")
 }
 
 pub(crate) fn decode_b64url(input: &str) -> Option<Vec<u8>> {
@@ -396,7 +414,7 @@ pub async fn exchange_authorization_code(
         ]))
         .send()
         .await
-        .map_err(|error| format!("Codex token exchange failed: {error}"))?;
+        .map_err(|error| transport_error("ChatGPT token exchange", error))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status >= 400 {
@@ -419,7 +437,7 @@ pub async fn refresh_credentials(
         ]))
         .send()
         .await
-        .map_err(|error| format!("Codex token refresh failed: {error}"))?;
+        .map_err(|error| transport_error("ChatGPT token refresh", error))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status >= 400 {
@@ -445,7 +463,7 @@ pub async fn start_device_login(client: &reqwest::Client) -> Result<DeviceCode, 
         .json(&json!({ "client_id": CLIENT_ID }))
         .send()
         .await
-        .map_err(|error| format!("Codex device code request failed: {error}"))?;
+        .map_err(|error| transport_error("ChatGPT device code request", error))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     if status == 404 {
@@ -469,7 +487,7 @@ pub async fn poll_device_once(
         }))
         .send()
         .await
-        .map_err(|error| format!("Codex device poll failed: {error}"))?;
+        .map_err(|error| transport_error("ChatGPT device poll", error))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
     Ok(interpret_device_poll(status, &body))
@@ -736,6 +754,65 @@ mod tests {
             assert!(!error.contains("secret-refresh"));
             assert!(!error.contains(".sig"));
         }
+    }
+
+    #[test]
+    fn region_denials_explain_the_app_browser_network_difference_without_echoing_body() {
+        for error in [
+            json!({"code": "unsupported_country_region_territory"}),
+            json!("unsupported_country_region_territory"),
+        ] {
+            let body = json!({"error": error, "access_token": "secret-access"}).to_string();
+            let message = http_error("sign-in", 403, &body);
+            assert!(message.contains("unsupported_country_region_territory"));
+            assert!(message.contains("Model API proxy"));
+            assert!(message.contains("Direct disables the system proxy"));
+            assert!(!message.contains("account's Codex access"));
+            assert!(!message.contains("secret-access"));
+        }
+        let unknown = http_error("sign-in", 403, r#"{"error":{"code":"secret-code"}}"#);
+        assert!(!unknown.contains("secret-code"));
+        assert!(unknown.contains("Access was denied"));
+    }
+
+    #[tokio::test]
+    async fn auth_client_honors_explicit_proxy_and_direct_routes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn endpoint(body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                let (mut stream, _) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let mut request = vec![0; 4096];
+                let n = stream.read(&mut request).await.unwrap();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                String::from_utf8_lossy(&request[..n]).into_owned()
+            });
+            (address, task)
+        }
+        let (origin, origin_task) = endpoint("direct").await;
+        let (proxy, proxy_task) = endpoint("proxied").await;
+        let target = format!("{origin}/auth-check");
+        let response = http_client(Some(&proxy)).get(&target).send().await.unwrap();
+        assert_eq!(response.text().await.unwrap(), "proxied");
+        assert!(proxy_task
+            .await
+            .unwrap()
+            .starts_with(&format!("GET {target} HTTP/1.1")));
+        let response = http_client(Some("none")).get(&target).send().await.unwrap();
+        assert_eq!(response.text().await.unwrap(), "direct");
+        assert!(origin_task
+            .await
+            .unwrap()
+            .starts_with("GET /auth-check HTTP/1.1"));
     }
 
     #[test]
