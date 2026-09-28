@@ -28,8 +28,9 @@ elif name=='cargo':
 elif name=='swift':
  path=Path(value('--scratch-path'))/value('--configuration')/'bin';path.mkdir(parents=True,exist_ok=True)
  (path/'WispSciencePreview').write_text('swift binary')
- for n in ['WispSciencePreview_WispProjectBrowserUI.bundle','SwiftTerm_SwiftTerm.bundle']:
+ for n in ['WispSciencePreview_WispProjectBrowserUI.bundle','SwiftTerm_SwiftTerm.bundle','SwiftMath_SwiftMath.bundle']:
   (path/n).mkdir(exist_ok=True)
+  (path/n/'resource.txt').write_text(n)
  if '--show-bin-path' in args:print(path)
 '''
 
@@ -57,6 +58,18 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
         return [json.loads(x) for x in (self.root/'calls.jsonl').read_text().splitlines()]
 
+    def assert_swift_resources(self, app):
+        for bundle in ['WispSciencePreview_WispProjectBrowserUI.bundle',
+                       'SwiftTerm_SwiftTerm.bundle', 'SwiftMath_SwiftMath.bundle']:
+            with self.subTest(bundle=bundle):
+                resource = app / 'Contents/Resources' / bundle / 'resource.txt'
+                self.assertTrue(resource.is_file(), f'Missing packaged resource: {resource}')
+                self.assertEqual(resource.read_text(), bundle)
+
+    def test_default_debug_preview_packages_all_swift_resources(self):
+        self.build()
+        self.assert_swift_resources(self.root/'target/native-macos/Wisp Science Preview.app')
+
     def test_both_release_architectures_route_all_three_binaries(self):
         for target, triple in [('aarch64-apple-darwin','arm64-apple-macosx13.0'),('x86_64-apple-darwin','x86_64-apple-macosx13.0')]:
             with self.subTest(target=target):
@@ -69,6 +82,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
                 for call in swift:
                     self.assertIn('release',call['args']);self.assertIn(triple,call['args'])
                 app=self.root/'target/native-macos-release'/target/'Wisp Science Preview.app'
+                self.assert_swift_resources(app)
                 info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
                 self.assertEqual(info['WispBuildConfiguration'],'release')
                 self.assertIn(target,(app/'Contents/MacOS/wisp-service').read_text())
@@ -78,6 +92,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
     def test_existing_qa_debug_mode_keeps_its_isolated_identifier_and_path(self):
         calls=self.build('--qa')
         app=self.root/'target/native-macos-qa/Wisp Science QA.app'
+        self.assert_swift_resources(app)
         info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
         self.assertEqual(info['CFBundleIdentifier'],'science.wisp-science.native-toolbar-qa.preview')
         self.assertEqual(info['WispBuildConfiguration'],'debug')
@@ -87,6 +102,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
 
     def test_native_release_does_not_overwrite_the_running_debug_preview(self):
         self.build('--release')
+        self.assert_swift_resources(self.root/'target/native-macos-release/Wisp Science Preview.app')
         self.assertTrue((self.root/'target/native-macos-release/Wisp Science Preview.app').exists())
         self.assertFalse((self.root/'target/native-macos/Wisp Science Preview.app').exists())
 
