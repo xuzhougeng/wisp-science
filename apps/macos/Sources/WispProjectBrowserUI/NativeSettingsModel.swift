@@ -94,7 +94,11 @@ final class NativeSettingsModel: ObservableObject {
     }
 
     var hasUnsavedChanges: Bool { values.contains { key, value in snapshots[key] != nil && snapshots[key] != value } }
-    func discardDrafts() { for (key, value) in snapshots { values[key] = value } }
+    func discardDrafts() {
+        for (key, value) in snapshots { values[key] = value }
+        error = nil
+        message = nil
+    }
 
     func leave() { generation = UUID(); editor = nil }
 
@@ -131,7 +135,29 @@ final class NativeSettingsModel: ObservableObject {
         })
     }
 
-    func saveSettings() async { _ = await run("set_settings", ["settings": values["get_settings"] ?? .null]) }
+    static let numberLabels = ["max_iter": "每轮最大 Agent 迭代次数", "auto_continue_limit": "自动继续次数上限", "semantic_compact_idle_hours": "空闲多久后提示语义压缩"]
+    static let numberDefaults: [String: Int64] = ["max_iter": 100, "auto_continue_limit": 10, "semantic_compact_idle_hours": 24]
+
+    func numberText(_ key: String) -> String {
+        // Absent fields in an older host use the documented defaults; an edited
+        // empty value remains empty so validation can explain it without data loss.
+        guard let value = values["get_settings"]?.object[key] else { return String(Self.numberDefaults[key] ?? 0) }
+        return value.string
+    }
+
+    func saveSettings() async {
+        guard let document = values["get_settings"], !document.object.isEmpty, !loading, !busy else { return }
+        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours"] {
+            guard let value = document.object[key] else { continue }
+            let minimum: Int64 = key == "auto_continue_limit" ? 1 : 0
+            guard case .integer(let number) = value, number >= minimum else {
+                error = localized(Self.numberLabels[key]!) + ": " + localized(minimum == 0 ? "请输入不小于 0 的整数。" : "请输入不小于 1 的整数。")
+                message = nil
+                return
+            }
+        }
+        _ = await run("set_settings", ["settings": document])
+    }
 }
 
 struct SettingsField: Identifiable {

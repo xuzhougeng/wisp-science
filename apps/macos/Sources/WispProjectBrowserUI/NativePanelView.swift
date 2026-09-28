@@ -56,23 +56,13 @@ struct NativePanelView: View {
                 NativeSideChatView(model: sideChat)
             } else {
             ScrollView {
-                LazyVGrid(columns: grid && ["artifacts", "files"].contains(tab) ? [GridItem(.adaptive(minimum: 130), alignment: .top)] : [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
+                LazyVGrid(columns: grid && tab == "files" ? [GridItem(.adaptive(minimum: 130), alignment: .top)] : [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
                     if tab == "artifacts" {
-                        ForEach(model.artifacts.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }) { artifact in
-                            Button { Task { await model.readArtifact(artifact.id) } } label: {
-                                row(title: artifact.name, subtitle: artifact.kind + " · " + (artifact.logical_path ?? artifact.path), icon: "doc")
-                            }.buttonStyle(.plain)
-                                .contextMenu {
-                                    Button("打开预览") { Task { await model.readArtifact(artifact.id) } }
-                                    Button("查看溯源") { var value = layout; value.show("provenance"); store(value) }
-                                }
-                        }
-                        ForEach(transcriptArtifacts.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }) { artifact in
-                            Button { transcriptPreview = artifact } label: {
-                                row(title: artifact.title, subtitle: artifact.kind == "table" ? "表格 · 来自消息" : "LaTeX · 来自消息", icon: "doc")
-                            }.buttonStyle(.plain)
-                        }
-                        if model.artifacts.isEmpty && transcriptArtifacts.isEmpty && !model.loading && model.error == nil { Text("这个会话暂无产物").foregroundStyle(.secondary).padding() }
+                        NativeArtifactCollection(registered: model.artifacts, messages: transcriptArtifacts, query: query, grid: grid, loading: model.loading, failed: model.error != nil, openRegistered: { id in
+                            Task { await model.readArtifact(id) }
+                        }, openMessage: { transcriptPreview = $0 }, provenance: {
+                            var value = layout; value.show("provenance"); store(value)
+                        })
                     } else if tab == "notebook" {
                         NativeNotebookView(model: model, cells: NativeNotebookCell.collect(transcript), query: query).id(transcriptPage)
                     } else if tab == "highlights" {
@@ -100,6 +90,7 @@ struct NativePanelView: View {
             }
             }
         }.padding(12).frame(maxHeight: .infinity).background(WispDesign.color("bg-sunken", scheme))
+            .background(NativeSettingsEscape(close: close))
             .onAppear { var value = layout; value.reopen(); store(value) }
             .task(id: tab) {
                 if !availableTabs.contains(tab) { tab = "artifacts" }
@@ -125,13 +116,13 @@ struct NativePanelView: View {
                     HStack {
                         Text(artifact.title).font(.headline)
                         Spacer()
-                        Button("复制源内容") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(artifact.source, forType: .string) }
-                        Button("关闭") { transcriptPreview = nil }
+                        Button(localized("复制源内容")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(artifact.source, forType: .string) }
+                        Button(localized("关闭")) { transcriptPreview = nil }
                     }
-                    if artifact.kind == "latex" { Text("LaTeX 源码").font(.caption).foregroundStyle(.secondary) }
+                    Text(localized("内容来自当前消息页；复制保留原始内容。")) .font(.caption).foregroundStyle(.secondary)
                     ScrollView {
                         NativeSelectableMessage(text: AttributedString(artifact.source), saved: [], quote: nil, save: nil,
-                                                monospaced: artifact.kind == "latex", markdown: artifact.kind == "table" ? artifact.source : nil)
+                                                markdown: artifact.kind == "table" ? artifact.source : "$$\n" + artifact.source + "\n$$")
                     }
                 }.padding(24).frame(width: 600, height: 420)
                     .background(NativeSettingsEscape { transcriptPreview = nil })
@@ -152,11 +143,11 @@ struct NativePanelView: View {
     private var layout: NativePanelTabs { NativePanelTabs(saved: savedTabs, selected: tab, available: availableTabs) }
     private func store(_ value: NativePanelTabs) { savedTabs = value.saved; tab = value.selected }
     private func title(_ id: String) -> String {
-        if id == "artifacts" { return "产物 (\(model.artifacts.count + transcriptArtifacts.count))" }
+        if id == "artifacts" { return localized("产物") + " (\(model.artifacts.count + transcriptArtifacts.count))" }
         if id == "notebook" { return "笔记本 (\(NativeNotebookCell.collect(transcript).count))" }
         if id == "highlights" { return "划线 (\(model.highlights.count))" }
         if id == "provenance" { return "溯源 (\(NativeProvenanceRow.collect(transcript).count))" }
-        return ["artifacts": "产物", "agents": "代理", "files": "文件", "hosts": "环境", "sidechat": "侧聊"][id] ?? id
+        return ["artifacts": "产物", "agents": "Agents", "files": "文件", "hosts": "环境", "sidechat": "侧聊"][id] ?? id
     }
     private func removeTab(_ id: String) {
         var value = layout; value.remove(id); store(value)

@@ -1,0 +1,69 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 button 返回首页
+		3 text 研究日历
+		4 button 上个月
+		5 button 下个月
+		6 button 刷新
+		7 scroll area Secondary Actions: Scroll Left, Scroll Right
+			8 button (selected) 所有项目
+			9 button Workspace
+			10 button 可靠性阶段2验收
+			11 button 可靠性阶段2验收
+			12 button CUA WebView 文件夹导入
+			13 button CUA 历史恢复验收
+			14 button 跨项目验收
+			15 button 原生工具栏验收
+			16 scroll bar (settable, float) 0
+				17 value indicator (settable, float) 0
+				18 increment arrow button
+				19 decrement arrow button
+				20 increment page button
+				21 decrement page button
+		22 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+			23 button 2026-09-01
+			24 button 2026-09-02
+			25 button 2026-09-03
+			26 button 2026-09-04
+			27 button 2026-09-05
+			28 button 2026-09-06
+			29 button 2026-09-07
+			30 button 2026-09-08
+			31 button 2026-09-09
+			32 button 2026-09-10
+			33 button 2026-09-11
+			34 button 2026-09-12
+			35 button 2026-09-13
+			36 button 2026-09-14
+			37 button 2026-09-15
+			38 button 2026-09-16
+			39 button 2026-09-17
+			40 button 2026-09-18
+			41 button 2026-09-19
+			42 button 2026-09-20
+			43 button 2026-09-21
+			44 text 1
+			45 button 2026-09-22
+			46 button 2026-09-23
+			47 button 2026-09-24
+			48 button 2026-09-25
+			49 text 3
+			50 button 2026-09-26
+			51 text 2
+			52 button 2026-09-27
+			53 button (selected) 2026-09-28
+			54 button 2026-09-29
+			55 button 2026-09-30
+		56 text 2026-09-28
+		57 scroll area
+			58 text 当天没有已记录的研究活动。
+59 menu bar
+	60 Wisp Science QA
+	61 File
+	62 Edit
+	63 View
+	64 Window
+	65 Help
+
+The focused UI element is 2 button 返回首页

@@ -145,6 +145,8 @@ struct NativeSettingsView: View {
     private var general: some View {
         VStack(spacing: 24) {
             NativeSettingsGroup(title: "工作区与交互") {
+                Text(localized("全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好；网络设置单独保存。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 fields("get_settings", [
                     .init(key: "locale", label: "语言", kind: .choice([("zh", "简体中文"), ("en", "English")])),
                     .init(key: "workspace_dir", label: "工作目录", kind: .path, hint: "留空使用默认目录；下次启动生效。"),
@@ -167,6 +169,8 @@ struct NativeSettingsView: View {
                         if state.error == nil, let prefs = state.values["get_appearance_prefs"] { _ = await state.run("set_appearance_prefs", ["prefs": prefs]) }
                     }
                 }
+                Text(localized("以下更新开关立即保存；取消不会撤销。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 immediateToggle("自动检查更新", read: "get_update_check_enabled", write: "set_update_check_enabled")
                 Button(localized("检查更新")) { Task { update = await state.run("check_for_updates", refresh: false, success: "检查完成") } }
                 if let update {
@@ -181,6 +185,8 @@ struct NativeSettingsView: View {
             }
             NativeLocalEnvironmentSettings(model: state)
             NativeSettingsGroup(title: "网络与软件源") {
+                Text(localized("网络配置单独保存，对后续请求和新启动的命令生效。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 fields("get_network_settings", [
                     .init(key: "model_proxy_url", label: "模型 API 代理", hint: "留空跟随系统；none 为直连；支持 HTTP / HTTPS / SOCKS5。"),
                     .init(key: "mcp_proxy_url", label: "MCP 代理"),
@@ -196,24 +202,28 @@ struct NativeSettingsView: View {
 
     private var session: some View {
         NativeSettingsGroup(title: "运行限制") {
-            NativePreferenceRow(title: "最大迭代次数", hint: "每轮对话最多执行的工具调用轮次，0 表示不限制。") { number("max_iter") }
-            NativePreferenceRow(title: "自动继续", hint: "达到迭代上限时自动继续执行。") { settingToggle("auto_continue") }
-            if state.values["get_settings"]?["auto_continue"].bool == true {
-                NativePreferenceRow(title: "自动继续轮次", hint: "限制单轮请求的连续执行次数。") { number("auto_continue_limit") }
-            }
+            Text(localized("这些设置对所有项目生效；运行限制从下一轮开始应用。保存会提交通用、对话、桌宠和同步的全部设置草稿。"))
+                .font(.caption).foregroundStyle(.secondary)
+            NativePreferenceRow(title: "每轮最大 Agent 迭代次数", hint: "限制单轮对话中的模型/工具循环次数；达到上限后额外生成一次无工具收尾总结。默认 100，0 表示不限制。") { number("max_iter") }
+            NativePreferenceRow(title: "截断后自动继续", hint: "模型达到输出 token 上限时，自动继续当前任务。") { settingToggle("auto_continue") }
+            NativePreferenceRow(title: "每轮自动继续次数上限", hint: "默认 10 次；达到上限后恢复现有的手动「继续执行」操作。") { number("auto_continue_limit").disabled(state.values["get_settings"]?["auto_continue"].bool != true) }
             Divider().padding(.vertical, 10)
             Text(localized("上下文管理")).font(WispDesign.font(size: 15, weight: .semibold))
-            NativePreferenceRow(title: "自动压缩上下文", hint: "接近上下文容量时压缩较早的对话记录。") { settingToggle("auto_compact") }
+            NativePreferenceRow(title: "自动压缩过长对话", hint: "默认开启。每次模型调用前，当预估上下文达到 80% 时，Wisp 会先归档完整对话，再自动压缩。该路径先收工具输出，只有窗口仍然不够时才写语义摘要。") { settingToggle("auto_compact") }
+            NativePreferenceRow(title: "切换模型时自动语义压缩", hint: "默认关闭。更换本对话模型后，把较早轮次折成摘要 checkpoint，让新模型从摘要而不是全量历史开始。") { settingToggle("semantic_compact_on_model_switch") }
+            NativePreferenceRow(title: "空闲多久后提示语义压缩", hint: "默认 24 小时。重新打开空闲这么久的对话时，询问是否写语义摘要。0 表示不提示。") { number("semantic_compact_idle_hours") }
             Divider().padding(.vertical, 10)
             Text(localized("后续交互")).font(WispDesign.font(size: 15, weight: .semibold))
-            NativePreferenceRow(title: "建议后续问题", hint: "回复完成后提供可继续探索的问题。") { settingToggle("follow_up_questions") }
+            NativePreferenceRow(title: "生成后续问题", hint: "每次回复后，使用当前对话模型生成 3 个后续问题。") { settingToggle("follow_up_questions") }
+            Text(localized("以下开关立即保存，只影响新会话的默认值；取消不会撤销。"))
+                .font(.caption).foregroundStyle(.secondary)
             immediateToggle("自动审核（新会话默认）", read: "get_auto_review_enabled", write: "set_auto_review_enabled")
             HStack { Spacer(); Button(localized("取消")) { state.discardDrafts() }; Button(localized("保存")) { Task { await state.saveSettings() } }.buttonStyle(NativeSettingsButtonStyle(primary: true)) }
-        }
+        }.disabled(state.loading || state.values["get_settings"] == nil)
     }
     private func number(_ key: String) -> some View {
-        TextField("", text: Binding(get: { state.values["get_settings"]?[key].string ?? "" }, set: { state.binding("get_settings", key).wrappedValue = $0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0)) }))
-            .textFieldStyle(NativeSettingsTextFieldStyle()).frame(width: 112).accessibilityLabel(key)
+        TextField("", text: Binding(get: { state.numberText(key) }, set: { state.binding("get_settings", key).wrappedValue = $0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0)) }))
+            .textFieldStyle(NativeSettingsTextFieldStyle()).frame(width: 112).accessibilityLabel(localized(NativeSettingsModel.numberLabels[key] ?? key)).accessibilityIdentifier("native-setting-" + key)
     }
     private func settingToggle(_ key: String) -> some View {
         Toggle("", isOn: Binding(get: { state.values["get_settings"]?[key].bool ?? false }, set: { state.binding("get_settings", key).wrappedValue = .bool($0) })).toggleStyle(.switch).labelsHidden().accessibilityLabel(key)

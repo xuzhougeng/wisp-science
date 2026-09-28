@@ -67,6 +67,7 @@ install -m 755 "$RUST_BIN/wisp-service" "$APP/Contents/MacOS/wisp-service"
 cp "$ROOT/src-tauri/icons/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$SWIFT_BIN/WispSciencePreview_WispProjectBrowserUI.bundle" "$APP/Contents/Resources/"
 cp -R "$SWIFT_BIN/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
+cp -R "$SWIFT_BIN/SwiftMath_SwiftMath.bundle" "$APP/Contents/Resources/"
 # SwiftTerm 1.19 probes Contents/Resources itself. A resource symlink at the
 # .app root makes codesign reject the bundle as unsealed; remove the legacy
 # link left by earlier native preview builds.

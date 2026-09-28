@@ -7,6 +7,9 @@ public struct ConversationItem: Codable, Equatable, Sendable {
     public let input: String?
     public let ok: Bool?
     public let status: String?
+    public let duration_ms: UInt64?
+    public let model_name: String?
+    public let timestamp: Int64?
 }
 public struct ConversationApproval: Codable, Equatable, Identifiable, Sendable {
     public var id: String { approval_id }

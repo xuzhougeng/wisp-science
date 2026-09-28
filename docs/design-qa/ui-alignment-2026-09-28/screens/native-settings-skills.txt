@@ -1,0 +1,152 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button (selected) Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 技能
+		36 pop up button 项目, Value: Workspace
+		37 button 重新载入
+		38 scroll area Secondary Actions: Scroll Up, Scroll Down (showing 0-100 of 128 items)
+			39 text 项目技能
+			40 text field (settable) 搜索技能与标签
+			41 button 导入…
+			42 button 重新扫描
+			43 checkbox Description: agent-infini, Value: 1
+			44 button 文件
+			45 button 管理
+			46 text Use the InfiniSynapse CLI (`agent_infini`) for multi-turn AI data-analysis tasks, database/RAG context, and task workspace files. Use when the user mentions InfiniSynapse, agent_infini, database or RAG analysis, or asks to delegate analysis through InfiniSynapse.
+			47 checkbox Description: algorithmic-art, Value: 1
+			48 button 文件
+			49 button 管理
+			50 text Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations.
+			51 checkbox Description: analysis-workflow, Value: 1
+			52 button 文件
+			53 button 管理
+			54 text Organize multi-step scientific analyses into reproducible, self-contained modules. Use for workflows such as QC→PCA→DEG→GSEA that produce scripts, inputs, figures, tables, and methods. Creates a stable module layout, records exact inputs/parameters/package and database versions in each module README, keeps large data as references instead of copies, and verifies outputs before completion.
+			55 checkbox Description: audit-biomedical-paper-evidence, Value: 1
+			56 button 文件
+			57 button 管理
+			58 text 审读用户提供的生命科学或生物医学论文、PDF、摘要、正文、figure、panel、caption 或截图，定位核心科学问题，逐图解释实验设计和证据链，审计机制、因果性、rescue、方法边界、正交验证与局限。材料缺失时请求补充或转介检索；不提供医疗建议、临床决策或可直接执行的湿实验 SOP。
+			59 checkbox Description: browser-use, Value: 1
+			60 button 文件
+			61 button 管理
+			62 text Use this skill to drive Wisp Browser Runtime sessions (shared daily Chrome or workspace Chrome) — open pages, read them, click, fill and submit forms, navigate, switch tabs, or scrape content that needs the user's existing cookies and login state. Triggers when the user asks to do something in their browser, log into a site and act inside it, fill out a web form, click through a flow, or extract data from a page that requires being signed in. Tools: browser_setup (check/connect the extension), web_open_tab
+			63 checkbox Description: compute-env-setup, Value: 1
+			64 button 文件
+			65 button 管理
+			66 text Set up and validate a reproducible Python or R environment on a Wisp execution context. Use for a selected local, WSL, or direct SSH context when installing scientific packages, configuring caches, recording interpreter activation, or producing an environment smoke test. Do not use for scheduler clusters or managed cloud providers that Wisp cannot track yet.
+			67 checkbox Description: computer-use, Value: 1
+			68 button 文件
+			69 button 管理
+			70 text Use Cua Driver through MCP to inspect and operate the user's native desktop apps on Windows, macOS, or Linux. Trigger when a task requires a desktop application, native file dialog, OS window, signed-in browser UI, screenshot-grounded interaction, or a result that must be verified in the application. Keep browser page work in browser-use when the page bridge is sufficient.
+			71 checkbox Description: custom-theme, Value: 1
+			72 button 文件
+			73 button 管理
+			74 text Author a Wisp custom theme CSS file that uses documented tokens and import constraints. Use when the user wants a custom look, hide the paragraph lead bar, restyle chat Markdown, override colors, or import a stylesheet under Settings → Appearance.
+			75 checkbox Description: customize, Value: 1
+			76 button 文件
+			77 button 管理
+			78 text Create a Wisp specialist or author a project-local skill using the tools Wisp actually exposes. Use when the user wants a custom Agent persona, a restricted specialist loadout, a new skill, or changes to an existing project-local skill.
+			79 checkbox Description: distill-concept-books, Value: 1
+			80 button 文件
+			81 button 管理
+			82 text 将概念、理论或分析方法类图书蒸馏为证据可追溯、经人工门禁审核且不暴露书名、作者、出版社等来源身份的任务型 Skill 候选。用于新建或恢复图书蒸馏、以本地 Tesseract 扫描 DOCX 全部内嵌图像或 Poppler 渲染的扫描 PDF 全页、建立 source map 与 evidence/claim/relation/capability rule、用第一性原理重构可迁移方法，以及按权威 task contract 防止上下文压缩后的产品任务漂移；仅在本元 Skill 自身的 owning distillation 中路由其 Gate 4 评测。不用于单纯摘要、事实问答、人物思维模仿、实验或临床 SOP、临床决策，也不作为其他 Skill 的通用物化、评测、Git、发布或部署工具。
+			83 checkbox Description: figure-composer, Value: 1
+			84 button 文件
+			85 button 管理
+			86 text Compose or improve a publication-grade multi-panel scientific figure from a claim, concrete data paths, or an existing image. Use for figure outlining, parallel panel rendering, exact-grid composition, visual inspection, and adversarial figure review. Use figure-style for one standalone plot and paper-narrative for whole-paper figure ordering.
+			87 checkbox Description: figure-style, Value: 1
+			88 button 文件
+			89 button 管理
+			90 text Correctness and legibility checklist for publication figures, plus a matplotlib sidecar. Load before plotting anything and call `apply_figure_style()` (role-mapped font ladder, outward ticks, frameless legends, 300-dpi saves, CJK-safe fonts). Covers data fidelity, label budgets, axis/colour/type rules, chart choice by data shape, composition, and a mandatory render-then-inspect QA pass (bbox collisions + per-panel visual crops). Helpers: focal_palette, bar_with_points, strip_with_median, end_of_line_labels,
+			91 checkbox Description: indication-dossier, Value: 1
+			92 button 文件
+			93 button 管理
+			94 text Build a sourced research dossier for one therapeutic indication — patient population, epidemiology, disease biology, standard of care, regulatory path, and landmark trials. Use when the user asks for an indication overview, disease landscape, or trial-design background.
+			95 checkbox Description: journal-club-ppt, Value: 1
+			96 button 文件
+			97 button 管理
+			98 text Use this skill whenever the user provides a scientific paper PDF and asks for a group-meeting literature report, journal-club slides, 文献汇报PPT, 组会PPT, paper presentation, article walkthrough, or to explain a paper with PowerPoint. The skill first reconstructs the paper's scientific logic, then builds author/background sections, chooses an evidence-driven slide outline, crops only main-text figure panels from the PDF, and creates an academic PPT with 10–30 slides including title and conclusion/discussion. Alw
+			99 checkbox Description: literature-review, Value: 1
+			100 button 文件
+			101 button 管理
+			102 text Retrieve, verify, and synthesize scientific literature. Use for seminal-paper lookups, evidence summaries, method comparisons, and gap analyses. Every citation must come from a live lookup, never from memory; retractions are checked; the deliverable is argued prose with resolvable DOI links.
+			103 checkbox Description: local-env-setup, Value: 1
+			104 button 文件
+			105 button 管理
+			106 text Prepare optional local Python/R runtimes, user-configured Python MCP servers, Node/scimaster-cli, and pixi for the user’s task. Reuse detected paths, configure Wisp interpreters, and apply mirrors when needed. Use for 配置环境, missing runtime dependencies, or requested local installations. For remote SSH compute use compute-env-setup. china · environment · install · linux · macos · mirror · node · npm · pixi · python · r · scimaster · uv · windows
+			107 checkbox Description: openai-docs, Value: 1
+			108 button 文件
+			109 button 管理
+			110 text Use when the user asks how to build with OpenAI products or APIs, asks about Codex itself or choosing Codex surfaces, needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; use OpenAI docs MCP tools for non-Codex docs questions, use the Codex manual helper first for broad Codex self-knowledge, and restrict fallback browsing to official OpenAI domains.
+			111 checkbox Description: paper-narrative, Value: 1
+			112 button 文件
+			113 button 管理
+			114 text Judge and reshape the story told by a manuscript and its figure deck. Use when revising paper structure, testing whether Figure 1 is a hook, ordering figures, moving panels, identifying missing analyses, or defining the claim passed to figure-composer.
+			115 checkbox Description: pdf-explore, Value: 1
+			116 button 文件
+			117 button 管理
+			118 text Use this skill when the user has attached a PDF, paper, report, or other document and the answer needs its content: summarize a section, compare sections, read specific pages, check the table of contents, or read a value off a figure. The `read` tool cannot parse PDF binary — python is the extraction path. Provides `pdf_pages` (pages as text or rendered PNGs, cached) and `pdf_outline` (embedded-bookmark TOC) in the persistent python kernel; load them once via the Runtime Sidecar exec line that `use_skill` a
+			119 checkbox Description: pixi-environment-builder, Value: 1
+			120 button 文件
+			121 button 管理
+			122 text Use when creating, migrating, or debugging pixi environments, especially for scientific Python, bioinformatics, single-cell analysis, CUDA/PyTorch, Jupyter/VS Code kernels, conda-to-pixi migration, or conda + PyPI mixed dependency issues.
+			123 checkbox Description: probe-compute-environment, Value: 1
+			124 button 文件
+			125 button 管理
+			126 text Inspect a registered execution server before compute planning and interpret its persisted capability profile. Use when a server is added, when the user clicks Probe, before enabling an unfamiliar SSH/WSL resource, or when deciding whether GPU, sudo/root, a scheduler, Python, R, conda, mamba, or environment modules are available.
+			127 checkbox Description: public-data-access, Value: 1
+			128 button 文件
+			129 button 管理
+			130 text Plan, validate, and document public-bioinformatics data acquisition for GEO/GSE/GSM/GPL/GDS, SRA/ENA, TCGA/GDC, GTEx, and DepMap. Covers expression matrices, raw reads, download manifests, caches, and optional geokit SOFT/Series Matrix acquisition for R workflows.
+			131 checkbox Description: remote-compute-ssh, Value: 1
+			132 button 文件
+			133 button 管理
+			134 text Submit recoverable SSH-direct research Runs with live progress cards and model-free monitoring.
+			135 checkbox Description: research-integrity-audit, Value: 1
+			136 button 文件
+			137 button 管理
+	138 close button
+	139 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	140 minimize button
+	141 text Wisp Science — 原生预览
+142 menu bar
+	143 Wisp Science QA
+	144 File
+	145 Edit
+	146 View
+	147 Window
+	148 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

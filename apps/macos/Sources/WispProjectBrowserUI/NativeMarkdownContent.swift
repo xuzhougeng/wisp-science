@@ -25,8 +25,9 @@ enum NativeMarkdownContent {
         return NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)
     }
 
-    static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme) -> NSAttributedString {
-        guard let parsed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) else {
+    static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme, width: CGFloat = 600) -> NSAttributedString {
+        let prepared = NativeMathContent.prepare(source)
+        guard let parsed = try? AttributedString(markdown: prepared.markdown, options: .init(interpretedSyntax: .full)) else {
             return NativeSelectableMessage.content(AttributedString(source), saved: saved, scheme: scheme)
         }
         var blocks: [Block] = []
@@ -44,7 +45,9 @@ enum NativeMarkdownContent {
         for block in blocks {
             guard let id = block.tableID else { continue }
             let separator = lastRows[id] == nil ? "" : lastRows[id] == block.tableRow ? "\t" : "\n"
-            tableText[id, default: ""] += separator + String(block.text.characters)
+            var cellText = String(block.text.characters)
+            for formula in prepared.formulas { cellText = cellText.replacingOccurrences(of: formula.token, with: formula.source) }
+            tableText[id, default: ""] += separator + cellText
             lastRows[id] = block.tableRow
         }
         let result = NSMutableAttributedString(string: "")
@@ -87,20 +90,29 @@ enum NativeMarkdownContent {
             if let item = listItem, case .listItem(let ordinal) = item.kind {
                 if seenListItems.insert(item.identity).inserted {
                     var prefix = ordered ? "\(ordinal). " : "• "
-                    // Task status is readable and copyable, including by VoiceOver.
-                    for (marker, label) in [("[x] ", "[已完成] "), ("[X] ", "[已完成] "), ("[ ] ", "[待完成] ")] where value.string.hasPrefix(marker) {
+                    var task: String?
+                    for marker in ["[x] ", "[X] ", "[ ] "] where value.string.hasPrefix(marker) {
                         value.deleteCharacters(in: NSRange(location: 0, length: marker.count))
-                        prefix = label
+                        task = marker
+                        prefix = " "
                         break
                     }
                     let attrs = value.length > 0 ? value.attributes(at: 0, effectiveRange: nil) : [:]
                     value.insert(NSAttributedString(string: prefix, attributes: attrs), at: 0)
+                    if let task {
+                        let attachment = NSTextAttachment(); attachment.attachmentCell = NativeTaskCell(checked: task != "[ ] ")
+                        let check = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                        check.addAttribute(NativeMathContent.sourceKey, value: String(task.dropLast()), range: NSRange(location: 0, length: 1))
+                        value.insert(check, at: 0)
+                    }
                 }
                 paragraph.firstLineHeadIndent += CGFloat(max(0, indent - 1)) * 20
                 paragraph.headIndent += CGFloat(indent) * 20
                 paragraph.paragraphSpacing = 10
             }
             if code {
+                let language = block.intents.compactMap { if case .codeBlock(let language) = $0.kind { return language }; return nil }.first
+                NativeCodeHighlight.apply(to: value, language: language, scheme: scheme)
                 paragraph.paragraphSpacing = 0
                 value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters), .backgroundColor: NSColor(WispDesign.color("bg-sunken", scheme))], range: NSRange(location: 0, length: value.length))
                 let box = fullWidthBlock()
@@ -159,11 +171,12 @@ enum NativeMarkdownContent {
             value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))
             result.append(value)
         }
-        let plain = result.string
+        NativeMathContent.replace(in: result, formulas: prepared.formulas, scheme: scheme, width: width)
+        let plain = NativeMathContent.plainText(result)
         func range(_ match: Range<Int>) -> NSRange {
             let start = plain.index(plain.startIndex, offsetBy: match.lowerBound)
             let end = plain.index(plain.startIndex, offsetBy: match.upperBound)
-            return NSRange(start..<end, in: plain)
+            return NativeMathContent.renderedRange(NSRange(start..<end, in: plain), in: result)
         }
         for excerpt in Set(saved) {
             for match in NativeSavedExcerpt.ranges(in: plain, excerpt: excerpt) {

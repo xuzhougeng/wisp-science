@@ -1,0 +1,26 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 公式 1
+		3 button 复制源内容
+		4 button 关闭
+		5 text 内容来自当前消息页；复制保留原始内容。
+		6 scroll area
+			7 text entry area $$
+y = \alpha + \beta x
+$$
+
+				8 attached text
+y = \alpha + \beta x
+
+				9 unknown Description: 复制公式, ID: message-block-copy-formula-WISPMATHTOKEN0END
+					10 button Description: 复制公式, ID: message-block-copy-formula-WISPMATHTOKEN0END
+11 menu bar
+	12 Wisp Science QA
+	13 File
+	14 Edit
+	15 View
+	16 Window
+	17 Help
+
+The focused UI element is 3 button 复制源内容

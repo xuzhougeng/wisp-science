@@ -1,0 +1,62 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button (selected) Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 模型
+		36 button 重新载入
+		37 scroll area
+			38 button API 模型, 2
+			39 button ACP Agents, 4
+			40 button 订阅账号
+			41 text 模型配置由所有项目共享。默认模型用于新建对话，列表操作立即保存。 登录已有账号，再选择用于对话的模型。 ChatGPT 未登录
+			42 button 登录
+			43 button (disabled) 添加模型
+			44 text 登录后在这里添加模型，即可在对话中使用。 SuperGrok 未登录
+			45 button 登录
+			46 button (disabled) 添加模型
+			47 text 登录后在这里添加模型，即可在对话中使用。
+	48 close button
+	49 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	50 minimize button
+	51 text Wisp Science — 原生预览
+52 menu bar
+	53 Wisp Science QA
+	54 File
+	55 Edit
+	56 View
+	57 Window
+	58 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

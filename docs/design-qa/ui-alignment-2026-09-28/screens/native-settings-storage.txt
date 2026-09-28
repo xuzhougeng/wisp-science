@@ -1,0 +1,86 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button (selected) Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 1
+				30 value indicator (settable, float) 1
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 存储
+		36 pop up button 项目, Value: Workspace
+		37 button 重新载入
+		38 scroll area Secondary Actions: Scroll Up, Scroll Down
+			39 text 本地存储 35.1 MB /Users/xuzhougeng/Library/Application Support/science.wisp-science.native-toolbar-qa/wisp-science
+			40 button 在 Finder 中显示
+			41 text database 1.4 MB python Zero KB plugins Zero KB workspace 12.4 MB other 21.3 MB Workspace 1.2 MB
+			42 button 定位
+			43 text 可靠性阶段2验收 1.3 MB
+			44 button 定位
+			45 text 可靠性阶段2验收 1.3 MB
+			46 button 定位
+			47 text CUA WebView 文件夹导入 3.7 MB
+			48 button 定位
+			49 text CUA 历史恢复验收 1.2 MB
+			50 button 定位
+			51 text 跨项目验收 1.3 MB
+			52 button 定位
+			53 text 原生工具栏验收 2.5 MB
+			54 button 定位
+			55 text 项目保留策略 留空使用默认值。修改策略不会立即删除文件。
+			56 container
+				57 text 成功运行保留天数
+				58 text field (settable) 成功运行保留天数
+			59 container
+				60 text 失败运行保留天数
+				61 text field (settable) 失败运行保留天数
+			62 container
+				63 text 孤立文件保留天数
+				64 text field (settable) 孤立文件保留天数
+			65 button 保存保留策略
+			66 scroll bar (settable, float) 0
+				67 value indicator (settable, float) 0
+				68 increment arrow button
+				69 decrement arrow button
+				70 increment page button
+				71 decrement page button
+	72 close button
+	73 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	74 minimize button
+	75 text Wisp Science — 原生预览
+76 menu bar
+	77 Wisp Science QA
+	78 File
+	79 Edit
+	80 View
+	81 Window
+	82 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

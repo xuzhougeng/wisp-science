@@ -1,0 +1,95 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 heading Wisp Science, Value: 1
+				4 image Wisp Science
+			5 text 严谨做科研，
+			6 text Wisp Science 在身边。
+			7 button 研究日历
+			8 button 收藏库
+			9 button 搜索
+			10 button 设置
+			11 button 文档
+			12 button 随手一聊
+			13 button 导入项目
+			14 button +新建项目
+			15 heading 项目, Value: 2
+				16 text 项目
+			17 button 示例项目示例 6 个会话
+			18 button Workspace 刚刚 /private/tmp/wisp-parity-20260925-data/native/default-workspace 0 个会话 0 个产物
+			19 toggle button 星标项目并置顶, Value: off
+			20 button 项目设置
+			21 button 立即同步
+			22 button 复制设备码
+			23 button 导出项目
+			24 button 在新窗口打开
+			25 button 删除
+			26 button 可靠性阶段2验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/phase2-reliability-20260926-v2 3 个会话 0 个产物
+			27 toggle button 星标项目并置顶, Value: off
+			28 button 项目设置
+			29 button 立即同步
+			30 button 复制设备码
+			31 button 导出项目
+			32 button 在新窗口打开
+			33 button 删除
+			34 button 可靠性阶段2验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/phase2-reliability-20260926 0 个会话 0 个产物
+			35 toggle button 星标项目并置顶, Value: off
+			36 button 项目设置
+			37 button 立即同步
+			38 button 复制设备码
+			39 button 导出项目
+			40 button 在新窗口打开
+			41 button 删除
+			42 button CUA WebView 文件夹导入 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/252be348-e105-4391-a530-68db9859102e 0 个会话 0 个产物 已保存到文件夹 · 1 天
+			43 toggle button 星标项目并置顶, Value: off
+			44 button 项目设置
+			45 button 立即同步
+			46 button 导出项目
+			47 button 在新窗口打开
+			48 button 删除
+			49 button CUA 历史恢复验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/2dd53a15-9c93-4c75-a5cb-c1694f0a6efd 3 个会话 0 个产物
+			50 toggle button 星标项目并置顶, Value: off
+			51 button 项目设置
+			52 button 立即同步
+			53 button 复制设备码
+			54 button 导出项目
+			55 button 在新窗口打开
+			56 button 删除
+			57 button 跨项目验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/toolbar-qa-other 2 个会话 2 个产物
+			58 toggle button 星标项目并置顶, Value: off
+			59 button 项目设置
+			60 button 立即同步
+			61 button 复制设备码
+			62 button 导出项目
+			63 button 在新窗口打开
+			64 button 删除
+			65 button 原生工具栏验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/toolbar-qa 4 个会话 2 个产物 已保存到文件夹 · 刚刚
+			66 toggle button 星标项目并置顶, Value: off
+			67 button 项目设置
+			68 button 立即同步
+			69 button 导出项目
+			70 button 在新窗口打开
+			71 button 删除
+			72 heading 最近会话, Value: 2
+				73 text 最近会话
+			74 button 快速粘贴验收 02：确认新文本 已完成
+			75 button 35-turn 可靠性基线 已完成
+			76 button 旧格式导入验收 已完成
+			77 button hello CUA ACP 已完成
+			78 button QA ACP protocol smoke 已完成
+			79 text 如果 Wisp 对你的工作有帮助，欢迎到
+			80 button GitHub 点个 Star ★
+	81 close button
+	82 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	83 minimize button
+	84 text wisp science
+85 menu bar
+	86 Wisp WebView QA
+	87 文件
+	88 编辑
+	89 视图
+	90 窗口
+	91 帮助
+
+The focused UI element is 2 HTML content Description: wisp science, URL: tauri://localhost

@@ -122,6 +122,12 @@ struct NativeConversationView: View {
                     .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
                 if let ok = item.ok { Text(ok ? "已完成" : "失败").font(WispDesign.font(size: 11)).foregroundStyle(ok ? color("clay") : .orange) }
                 if let status = item.status { Text(status).font(.caption).foregroundStyle(.secondary) }
+                if let duration = item.duration_ms { Text(String(format: "%.1f s", Double(duration) / 1000)).font(.caption).foregroundStyle(.secondary).help(localized("工具耗时")) }
+                if let name = item.model_name, !name.isEmpty { Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(name) }
+                if let timestamp = item.timestamp, timestamp > 0 {
+                    Text(Date(timeIntervalSince1970: Double(timestamp)), style: .time).font(.caption).foregroundStyle(.secondary)
+                        .help(Date(timeIntervalSince1970: Double(timestamp)).formatted(date: .abbreviated, time: .standard))
+                }
             }
             if item.role == "tool" {
                 DisclosureGroup(isExpanded: Binding(get: {
@@ -147,6 +153,13 @@ struct NativeConversationView: View {
                             .accessibilityLabel("附件 \((file as NSString).lastPathComponent)")
                     }
                 }
+            }
+            if ["user", "assistant", "reasoning"].contains(item.role), !item.text.isEmpty {
+                NativeMessageActions(source: item.role == "user" ? SavedAttachments.body(in: item.text) : item.text, quote: quoteSelection, save: { _ in
+                    guard let projectID, let sessionID else { return }
+                    let selection = NativeConversationModel.renderedText(item)
+                    Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
+                })
             }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
             .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))

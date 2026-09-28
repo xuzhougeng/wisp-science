@@ -1,0 +1,111 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button 展开侧边栏
+		3 text HTTP 富文本对比
+		4 menu button 会话操作
+		5 button 会话大纲
+		6 button 分享
+		7 button 运行轨迹
+		8 button 研究归档
+		9 button 待查看
+		10 button 终端
+		11 button 切换侧面板
+		12 scroll area
+			13 button (selected) 产物 (2)
+			14 button 关闭产物 (2)
+			15 button 文件
+			16 button 关闭文件
+			17 button 环境
+			18 button 关闭环境
+			19 button 溯源 (0)
+			20 button 关闭溯源 (0)
+			21 button 侧聊
+			22 button 关闭侧聊
+		23 menu button 添加面板
+		24 button 刷新
+		25 button 关闭面板
+		26 button Description: 列表, Value: 已选择
+		27 button Description: 网格, Value: 未选择
+		28 scroll area Secondary Actions: Scroll Up, Scroll Down
+			29 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				30 text 你
+				31 text Help: 2026年9月25日 16:35:35, Value: 16:35
+				32 text entry area 展示合成研究结果（仅界面对比）
+
+				33 button 复制消息
+				34 button 引用到侧聊
+				35 button 收藏消息
+				36 text Wisp Science
+				37 text Help: 2026年9月25日 16:35:36, Value: 16:35
+				38 text entry area 合成研究结果
+样本质量
+这是 加粗文本、斜体 与 inline_code。记录只用于 UI 对比。
+样本
+计数
+A
+12
+B
+24
+counts = {'A': 12, 'B': 24}
+print(sum(counts.values()))
+[x] 完成读取
+[ ] 待独立复核
+均值公式 $\bar{x}=\frac{1}{n}\sum_i x_i$。
+$$
+y = \alpha + \beta x
+$$
+合成结果，无真实研究数据。
+
+					39 attached text 已完成
+					40 attached text 待完成
+					41 attached text \bar{x}=\frac{1}{n}\sum_i x_i
+					42 attached text
+y = \alpha + \beta x
+
+					43 unknown Description: 复制表格, ID: message-block-copy-table-4
+						44 button Description: 复制表格, ID: message-block-copy-table-4
+					45 unknown Description: 复制代码, ID: message-block-copy-code-14
+						46 button Description: 复制代码, ID: message-block-copy-code-14
+					47 unknown Description: 复制公式, ID: message-block-copy-formula-WISPMATHTOKEN1END
+						48 button Description: 复制公式, ID: message-block-copy-formula-WISPMATHTOKEN1END
+				49 button 复制消息
+				50 button 引用到侧聊
+				51 button 收藏消息
+			52 scroll bar (settable, float) 0.9414414414414415
+				53 value indicator (settable, float) 0.9414414414414415
+				54 increment arrow button
+				55 decrement arrow button
+				56 increment page button
+				57 decrement page button
+		58 text field (settable) 筛选名称
+		59 scroll area
+			60 text entry area (settable) 消息输入框
+		61 button Description: 对话附件, Help: 添加到消息, ID: composer-attach
+		62 menu button QA HTTP (offline)
+		63 button (disabled) 发送
+		64 text Enter 发送 · Shift+Enter 换行
+		65 checkbox Description: 跟随最新回复, Value: 1
+		66 scroll area
+			67 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				68 text 文件来自当前会话；表格和公式来自当前显示的消息页。 公式 1
+				69 button Description: 公式 1, LaTeX · 当前消息页, Help: 公式 1
+LaTeX · 当前消息页, 公式 1
+LaTeX · 当前消息页
+				70 text 表格 1
+				71 button Description: 表格 1, 2 行 × 2 列 · 当前消息页, Help: 表格 1
+2 行 × 2 列 · 当前消息页, 表格 1
+2 行 × 2 列 · 当前消息页
+	72 close button
+	73 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	74 minimize button
+	75 text Wisp Science — 原生预览
+76 menu bar
+	77 Wisp Science QA
+	78 File
+	79 Edit
+	80 View
+	81 Window
+	82 Help
+
+The focused UI element is 58 text field (settable) 筛选名称

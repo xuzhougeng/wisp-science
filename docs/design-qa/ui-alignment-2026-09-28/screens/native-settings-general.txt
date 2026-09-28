@@ -1,0 +1,41 @@
+The following is a diff from the previous accessibility tree for Window: "Wisp Science — 原生预览" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+Removed element IDs: 94-95
++		178 button 重新载入
++			179 text 工作区与交互
+~				98 menu button 简体中文, Description: 语言
+~				101 text field (settable) Value: /private/tmp/wisp-parity-20260925-data/native/default-workspace, Placeholder: 工作目录
+~				102 button 选择…
+~				105 text 打开工作区时继续上次对话
++				180 text 打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。
+~				106 toggle button Description: 打开工作区时继续上次对话, Value: off
+~			108 pop up button Description: 发送与换行快捷键, Value: Enter 发送 · Shift+Enter 换行
+~				111 toggle button Description: 选中文本快捷菜单, Value: on
+~				114 text 桌面通知
++				181 text 窗口不在前台时，任务完成、失败或等待确认会发送系统通知。
+~				115 toggle button Description: 桌面通知, Value: on
+~			117 button 保存
+~			118 checkbox Description: 自动检查更新, Value: 1
+~				123 text field (settable) Value: /opt/homebrew/bin/python3, Placeholder: Python
+~				124 button 选择…
+~				127 text field (settable) Value: /usr/local/bin/Rscript, Placeholder: Rscript
+~				128 button 选择…
+~				131 text field (settable) Value: /opt/homebrew/bin/node, Placeholder: Node.js
+~				132 button 选择…
+~				135 text field (settable) Value: /opt/homebrew/bin/npm, Placeholder: npm
+~				136 button 选择…
+~				139 text field (settable) Value: /Users/xuzhougeng/.local/bin/uv, Placeholder: uv
+~				140 button 选择…
+~				143 text field (settable) Value: /Users/xuzhougeng/.pixi/bin/pixi, Placeholder: Pixi
+~				144 button 选择…
+~				147 text field (settable) Value: /opt/homebrew/bin/sci, Placeholder: sci
+~				148 button 选择…
+~			149 button 重新检测
+~			150 button 保存路径
+~				154 text field (settable) 模型 API 代理
+~				158 text field (settable) MCP 代理
+~				161 text field (settable) 代码与命令代理
+~				164 text field (settable) Conda 镜像
+~				167 text field (settable) Python 软件源
+~				170 text field (settable) CA 证书路径
+~			171 button 保存网络设置
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

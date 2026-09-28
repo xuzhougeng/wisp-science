@@ -1,0 +1,251 @@
+{
+  "date": "2026-09-28T12:34:13.221519+08:00",
+  "base_revision": "9ea5f411f7b90f4ba8c44f698f84ce0f7086e7b5",
+  "dirty": true,
+  "product_version": "1.15.0",
+  "scope": [
+    "A settings semantics",
+    "B1 message reading/actions",
+    "B2 offline native math",
+    "D1 artifacts/Agents",
+    "C contract audit only"
+  ],
+  "apps": {
+    "native": {
+      "path": "target/native-macos-qa/Wisp Science QA.app",
+      "executable_sha256": "c31accb2018245deebee7f3fe90895956740dfd9ef4f8b9f88b69a7f6ab12bbd",
+      "codesign_verify_deep_strict": "passed",
+      "configuration": "debug arm64"
+    },
+    "webview": {
+      "path": "target/ui-alignment-20260928/Wisp WebView QA.app",
+      "executable_sha256": "ad855b52cfef140794c2d55bfd027f12998ae7e1dcff0d4328a8232139805ced",
+      "codesign_verify_deep_strict": "passed",
+      "configuration": "debug arm64"
+    }
+  },
+  "source_files_sha256": {
+    "apps/macos/Package.resolved": "cd49a2487079ba6c1eba655e19d603891c27a7fc8336e7764c4a9b1732c61d79",
+    "apps/macos/Package.swift": "fa776d338ff3d19838e572abb07b9ece7c96951fde255c8cf48dd5d4fd6e6e2e",
+    "apps/macos/Sources/WispProjectBrowser/NativeConversationClient.swift": "6ee8a41ff6a9c2b021c50845aee03051c46bf5c79e9c4bd2ff4802ec86c3e29a",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeAgentPanelView.swift": "7790d35d300e982ee7be48ea1192e1f754fd34d04bc1a2acff6d97bd29a11802",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeArtifactCollection.swift": "db01258428b37d73a30c9ebcf2b3be4ff05a9417f629e01005870b2483d26f53",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeCodeHighlight.swift": "faedfd83f9228ed0dd38b2c33f931ea3f93f269f3b10e6dc57212f18e81a6e2e",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeConversationModel.swift": "350a890d532bfcf7359dddcd2cf42336c79c1c4a5ce7ce766d8afb3bdcf167e0",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeConversationView.swift": "f2562a4d5082c94846abde7a5ac183c6c8e9d752c6f30fe7c03603e7e5d45e79",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeMarkdownContent.swift": "d62b61d9c97550c6d626163659aabaf31fec2180da87a8107a55cf1ab0b53ed9",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeMathContent.swift": "95d110c8a33fbc1f3521abbc292bd74c0f2de4cd452f65e22385a1460cb16b18",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeMessageActions.swift": "5e484cbe699c4ad15e539cb37fdde7391895fe1cef43ae87fb43e3cd34cedd86",
+    "apps/macos/Sources/WispProjectBrowserUI/NativePanelView.swift": "b21ed620d5177863c4d1a66fae001cc35eb96b17cbe7304f0654ed9a57d484a8",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeSelectableMessage.swift": "7775f4790c421a2c039720a80fcad980b7a9d813d8c3b3f61217df8bc65f665b",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeSettingsControls.swift": "23aa83381acd06ce32ca2470baad8b3f311aa9d05f9060faebb3b3e350114fe5",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeSettingsModel.swift": "1840e578889ed36a30341e12889b123e6ecba5e832877e42262ca909929f1a5e",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeSettingsView.swift": "a3f6839deb854d6987428945d6ac7077ea1d4439f965aec0c615ebeb1b151e09",
+    "apps/macos/Sources/WispProjectBrowserUI/NativeTranscriptArtifact.swift": "391d43b370af0983a042463b05ff2a85266572162f2e0f3c2c34bd9b95dca1ad",
+    "apps/macos/Sources/WispProjectBrowserUI/ProjectWorkspace.swift": "dc8c24c9bb2ca2a42947633509fee08ff6753bd8092657abe7d494eb1e67ac9e",
+    "apps/macos/Sources/WispProjectBrowserUI/Resources/SwiftMath.LICENSE": "75c39d3db0d038a4966dfb86e4703748ee56434e188959e4423cfc91a54a93af",
+    "apps/macos/Sources/WispProjectBrowserUI/Resources/highlight.LICENSE": "6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490",
+    "apps/macos/Sources/WispProjectBrowserUI/Resources/highlight.min.js": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846",
+    "apps/macos/Sources/WispProjectBrowserUI/Resources/native-english.json": "1db13d9d0a4c6ea9f8c0b5403dd48eeec54df2e1423713d1f7bb0e210bab3d62",
+    "apps/macos/Tests/WispProjectBrowserTests/NativeMessageMetadataTests.swift": "a85cf9811c8f778356a734e545d440304b821b8a55a699d8f91e5206f7069d02",
+    "apps/macos/Tests/WispProjectBrowserUITests/NativeMarkdownTests.swift": "0248556a6e914050e15488f33a5e2f9afc5f600e315feebe385ef633182255f4",
+    "apps/macos/Tests/WispProjectBrowserUITests/NativeMathContentTests.swift": "94fd421510781a5d056429927ee7aadbfe72147ef1fd37a244b4b2e51f46f8fe",
+    "apps/macos/Tests/WispProjectBrowserUITests/NativeSettingsModelTests.swift": "b75ce424dad9db5316e21c1a739db578f0a8a296eb25652466f14f7bed887472",
+    "apps/macos/Tests/WispProjectBrowserUITests/NativeTranscriptArtifactTests.swift": "eea7c7ceec97439ddf66e869e255b01ceab131b1ab82a32c7ed5581b3c33db1e",
+    "apps/macos/native-settings-english.json": "6fae641cb3d06786323e851897846d08d9aff240334e9530a3c5bdbeaa54e74f",
+    "crates/wisp-dto/src/native_conversations.rs": "cc589a97f1efc869c2aaaaeb12976f06058d771e58e23be9937954f1ce137408",
+    "scripts/build_native_macos.sh": "8c96ee64b7ca708ff179c4e85ab873ed0a1de66ae46a706d03562a298981ee64",
+    "scripts/sync_native_design.py": "985704bb831b525540af56d10764c4968098e1f1e64dac900b31fa8cb7da8f1b",
+    "src-tauri/src/native_conversations.rs": "16b8d9b3094da9799ae1fdc3a374c291d881f48ef319a673992fb59c14790e93"
+  },
+  "fixtures": {
+    "implementation-native": {
+      "database": "/private/tmp/wisp-ui-alignment-20260928/implementation-native/project-cache/toolbar-qa.sqlite",
+      "frames": 4,
+      "messages": 75,
+      "messages_sha256": "83fcaa4d430b49fba6972e7359aae56a540b4552ec764495562b700df4549e54"
+    },
+    "webview": {
+      "database": "/private/tmp/wisp-ui-alignment-20260928/webview/project-cache/toolbar-qa.sqlite",
+      "frames": 4,
+      "messages": 75,
+      "messages_sha256": "83fcaa4d430b49fba6972e7359aae56a540b4552ec764495562b700df4549e54"
+    }
+  },
+  "fixture_hash_encoding": "UTF-8 JSON tuples frame_id,seq,role,content sorted by all four columns; ensure_ascii=False, separators=(comma,colon)",
+  "checks": [
+    {
+      "command": "cargo test --workspace",
+      "result": "2381 passed, 0 failed, 0 ignored",
+      "local_log": "target/ui-alignment-20260928/workspace-implementation-test.log",
+      "log_sha256": "aba792c72df01184ab0a6a8667651d5e760e689129bf800b5c7edb952c1f1d11"
+    },
+    {
+      "command": "WISP_NATIVE_SNAPSHOT_DIR=... swift test --package-path apps/macos --scratch-path target/native-macos-qa/swift --disable-sandbox",
+      "result": "307 passed (291 UI + 16 client), 0 failed, 0 skipped",
+      "local_log": "target/ui-alignment-20260928/swift-implementation-final-test.log",
+      "log_sha256": "ab3a93c6ed44c1a946a38ce7ebdd9b62d57eafa714a98d927c6b321b3a783a70"
+    },
+    {
+      "command": "cd ui && cargo check --target wasm32-unknown-unknown",
+      "result": "passed",
+      "local_log": "target/ui-alignment-20260928/wasm-implementation-check.log",
+      "log_sha256": "b57d5aedf343609a6d5e2b783e49869cc385f75b3c8b8cc9a934815d2b07ddeb"
+    },
+    {
+      "command": "cd ui-tests && npm ci",
+      "result": "passed",
+      "local_log": "target/ui-alignment-20260928/npm-implementation-ci.log",
+      "log_sha256": "8198cca4523bb71f01a58e01f28b413766399709fb12e2115c6f914b5b0aa404"
+    },
+    {
+      "command": "UI_TEST_PORT=1434 npx playwright test",
+      "result": "877 passed, 4 timeout failures, 2 skipped",
+      "local_log": "target/ui-alignment-20260928/playwright-implementation-test.log",
+      "log_sha256": "e4aa4d025478aa51e3714d6c10c720340e9e5a24729f4d7672e0ee081267c3a4"
+    },
+    {
+      "command": "UI_TEST_PORT=1434 npx playwright test --last-failed --workers=1",
+      "result": "4 passed, 0 failed; no code/test changes between attempts",
+      "local_log": "target/ui-alignment-20260928/playwright-implementation-retry.log",
+      "log_sha256": "5618fb2f72b529b9eb4fa0068bcdd1e9e9b9c7fd3a3e64dc38ea752b9e090a8b"
+    },
+    {
+      "command": "WISP_CATALOG_OFFLINE=1 bash scripts/build_native_macos.sh --qa",
+      "result": "passed",
+      "local_log": "target/ui-alignment-20260928/native-implementation-build-final.log",
+      "log_sha256": "a8db4e76d53c5edf3c03279fa39a42e8245166951e052019a5e6c995c70f7b28"
+    },
+    {
+      "command": "WISP_CATALOG_OFFLINE=1 bash target/ui-alignment-20260928/build-webview.sh",
+      "result": "passed",
+      "local_log": "target/ui-alignment-20260928/webview-implementation-build.log",
+      "log_sha256": "b9c74a5ceb59841fc7fa7d867eec5267e27d14ee47362e8d51d8e15610780fe1"
+    }
+  ],
+  "other_checks": {
+    "cargo_fmt_all_check": "passed",
+    "git_diff_check": "passed",
+    "sync_native_design_check": "passed",
+    "sync_native_settings_contract_check": "passed",
+    "live_QA": "passed for the paths listed in README; one initial nonresponsive window recovered after restart and not reproduced in final build"
+  },
+  "playwright_skips": [
+    "real Motif MCP App sends its internal sequence range through the Wisp host",
+    "real SnapGene annotations render in the real Motif MCP App"
+  ],
+  "cleanup": {
+    "qa_apps_and_helper": "stopped",
+    "native_qa_data_link": "/private/tmp/wisp-parity-fixes-20260925/native",
+    "chat_sent": false,
+    "settings_qa_idle_hours_restored": 24
+  },
+  "artifacts": [
+    {
+      "file": "math-dark.png",
+      "sha256": "6380755825fb3ba46d0dc221d6ce29b29ec716a34630d0a7ef3e646b9c45955d",
+      "origin": "Swift NSHostingView rendering"
+    },
+    {
+      "file": "math-light.png",
+      "sha256": "0aa9e40f0349b9ff56581091e843f68211e5a0e0293d7076d0a61d7527ea0f21",
+      "origin": "Swift NSHostingView rendering"
+    },
+    {
+      "file": "math-narrow.png",
+      "sha256": "2971a7d6c2e3f15daceef5b83895c72b782714083efe79ddef5cbdab87fe6b8e",
+      "origin": "Swift NSHostingView rendering"
+    },
+    {
+      "file": "native-agents.jpg",
+      "sha256": "9c1bd27eabaea0007fb66f5f97f3b55a9513e29c4eb3353523ecb99fbadb7681",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-agents.txt",
+      "sha256": "55f4e4d5d0e9f56a92effa802d6b72004ed34a0ba89bd57cf33ba118ee4af60e",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-artifact-groups.jpg",
+      "sha256": "5009c1dc5d98d8223195e82a4431775f9c5ccffa9fa9bd92a509e3909cb5224c",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-artifact-groups.txt",
+      "sha256": "a671574abb31b5852e8cd1c0ec051fe7c44b69e1bbf7213b41edc61b5b2072ac",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-artifacts-empty.jpg",
+      "sha256": "1611c7d3e8e822f72bb3464d0aa8d05f15eaff687b9f60230b9f423a1791c5bc",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-artifacts-empty.txt",
+      "sha256": "12455dfb59eeaee26d3c409c4a710c013a78d0cd22e41cf12c7a6e63287423e2",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-artifacts-narrow.jpg",
+      "sha256": "d1226beeb0b97447f48f3d80eff2eda152b09cc01fbc2c00ce7bd381e5559311",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-artifacts-narrow.txt",
+      "sha256": "86068d5e83f665b4fca7fbdcd217afe6f02c2c399c1208ba45da563f44877ebe",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-formula-preview.jpg",
+      "sha256": "d689e0111474e37ebe1f122d49714bfe9996be664df33ae1da717bec8a2ffeef",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-formula-preview.txt",
+      "sha256": "2f66000b192799d53d6934ef1b6144b366ecbe56331b1913610c76bff3e2c1df",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-settings-session-bottom.jpg",
+      "sha256": "cfbb5237f6abce4df8296c8745d5edf832b5fc76f467f2f5b8b93de54121f931",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-settings-session-bottom.txt",
+      "sha256": "e3b81be420517f584c0769a6c7f8256a9767ec256b1d99180a7e841529c7e765",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-settings-session.jpg",
+      "sha256": "54f7d4255fc8dbb78fec9482dd430be12086371c9b56362c4506a0284df526d8",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-settings-session.txt",
+      "sha256": "51a7483d75ef72a0a772ac86672b99773f1719cb6f9fe4055d8b5420d697e372",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "native-sync-selection.jpg",
+      "sha256": "670b4151f5dbc07142e9358f96f5b1b591bf508d2b84be759194a772095d4e11",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "native-sync-selection.txt",
+      "sha256": "0d3b4c64727bf7d2a26afde9c542a8fa89666405ff8111acf99e6373a04182e8",
+      "origin": "Computer Use accessibility state"
+    },
+    {
+      "file": "webview-artifact-groups.jpg",
+      "sha256": "d8c72ebac6caad3962c72456913d59447f8497ecf4e74aee93a23f4aa88ce296",
+      "origin": "Computer Use native screenshot"
+    },
+    {
+      "file": "webview-artifact-groups.txt",
+      "sha256": "475e9991c924efaf9e37fcf5370be7d95d27c32b3de96c878c81cefb7eca8724",
+      "origin": "Computer Use accessibility state"
+    }
+  ],
+  "accessibility_text_normalization": "Trailing whitespace removed and final newline normalized before commit; screenshots are unchanged."
+}

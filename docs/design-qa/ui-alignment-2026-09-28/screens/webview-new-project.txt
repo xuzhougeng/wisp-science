@@ -1,0 +1,38 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 container 新建项目
+				4 heading 新建项目, Value: 2
+					5 text 新建项目
+				6 button 取消
+				7 container
+					8 text 名称
+					9 text field (settable) 名称, Placeholder: 项目名称
+				10 container
+					11 text 项目目录
+					12 button 项目目录
+				13 container
+					14 text 描述 显示在项目切换器中供你参考 —— 不会包含在 Agent 的提示词里。
+					15 text entry area (settable) 描述 显示在项目切换器中供你参考 —— 不会包含在 Agent 的提示词里。
+				16 container
+					17 checkbox 使用标准科研目录结构 创建下方列出的目录。关闭则保留你自己的结构，改为在下方描述它。, Value: 0
+					18 text 使用标准科研目录结构 创建下方列出的目录。关闭则保留你自己的结构，改为在下方描述它。
+				19 container
+					20 text Agent 上下文 会包含在本项目每个 Agent 的系统提示词中。可用于填写背景信息、约定或所有 Agent 都应遵循的指令。下次新建会话时生效。
+					21 text entry area (settable) Agent 上下文 会包含在本项目每个 Agent 的系统提示词中。可用于填写背景信息、约定或所有 Agent 都应遵循的指令。下次新建会话时生效。
+				22 button 取消
+				23 button (disabled) 创建
+	24 close button
+	25 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	26 minimize button
+	27 text wisp science
+28 menu bar
+	29 Wisp WebView QA
+	30 文件
+	31 编辑
+	32 视图
+	33 窗口
+	34 帮助
+
+The focused UI element is 9 text field (settable) 名称, Placeholder: 项目名称

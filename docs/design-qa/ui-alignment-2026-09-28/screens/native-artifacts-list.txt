@@ -1,0 +1,114 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text HTTP 富文本对比
+		6 menu button 会话操作
+		7 button 会话大纲
+		8 button 分享
+		9 button 运行轨迹
+		10 button 研究归档
+		11 button 待查看
+		12 button 终端
+		13 button 切换侧面板
+		14 scroll area
+			15 button (selected) 产物 (2)
+			16 button 关闭产物 (2)
+			17 button 代理
+			18 button 关闭代理
+			19 button 文件
+			20 button 关闭文件
+			21 button 环境
+			22 button 关闭环境
+			23 button 溯源 (0)
+			24 button 关闭溯源 (0)
+			25 button 侧聊
+			26 button 关闭侧聊
+		27 menu button 添加面板
+		28 button 刷新
+		29 button 关闭面板
+		30 button 新建会话
+		31 button Description: 列表, Value: 已选择
+		32 button Description: 网格, Value: 未选择
+		33 button 搜索, ⌘K
+		34 button Description: 新建分组, ID: new-session-group
+		35 button Description: 文件, ID: sidebar-files
+		36 button Description: 研究历程, ID: sidebar-journey
+		37 button Description: 论文证据, ID: sidebar-publication
+		38 button Description: 收藏, ID: sidebar-library
+		39 text 会话
+		40 button 选择
+		41 button 排序与分组
+		42 scroll area
+			43 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				44 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				45 button (selected) Description: HTTP 富文本对比, ID: session-parity-http-rich
+				46 button Description: 空会话验收, ID: session-toolbar-qa-empty
+				47 button Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+		48 scroll area Secondary Actions: Scroll Up, Scroll Down
+			49 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				50 text 你
+				51 text entry area 展示合成研究结果（仅界面对比）
+
+				52 text Wisp Science
+				53 text entry area **合成研究结果
+样本质量**
+这是 **加粗文本**、斜体 与 inline_code。记录只用于 UI 对比。
+**样本
+计数**
+A
+12
+B
+24
+counts = {'A': 12, 'B': 24}
+print(sum(counts.values()))
+[已完成] 完成读取
+[待完成] 待独立复核
+均值公式 $\bar{x}=\frac{1}{n}\sum_i x_i$。
+$$ y = \alpha + \beta x $$
+合成结果，无真实研究数据。
+
+					54 unknown Description: 复制表格, ID: message-block-copy-table-4
+						55 button Description: 复制表格, ID: message-block-copy-table-4
+					56 unknown Description: 复制代码, ID: message-block-copy-code-14
+						57 button Description: 复制代码, ID: message-block-copy-code-14
+			58 scroll bar (settable, float) 0.928374655647383
+				59 value indicator (settable, float) 0.928374655647383
+				60 increment arrow button
+				61 decrement arrow button
+				62 increment page button
+				63 decrement page button
+		64 text field (settable) 筛选名称
+		65 button Description: 能力, ID: sidebar-capabilities
+		66 button Description: 反馈问题, ID: sidebar-feedback
+		67 scroll area
+			68 text entry area (settable) 消息输入框
+		69 button 设置
+		70 button Description: 对话附件, Help: 添加到消息, ID: composer-attach
+		71 menu button QA HTTP (offline)
+		72 button (disabled) 发送
+		73 text Help: /private/tmp/wisp-ui-alignment-20260928/native/workspaces/toolbar-qa, Value: /private/tmp/wisp-ui-alignment-20260928/native/workspaces/toolbar-qa Enter 发送 · Shift+Enter 换行
+		74 checkbox Description: 跟随最新回复, Value: 1
+		75 scroll area
+			76 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				77 button Description: 表格 1, 表格 · 来自消息, Help: 表格 1
+表格 · 来自消息, 表格 1
+表格 · 来自消息
+				78 button Description: 公式 1, LaTeX · 来自消息, Help: 公式 1
+LaTeX · 来自消息, 公式 1
+LaTeX · 来自消息
+	79 close button
+	80 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	81 minimize button
+	82 text Wisp Science — 原生预览
+83 menu bar
+	84 Wisp Science QA
+	85 File
+	86 Edit
+	87 View
+	88 Window
+	89 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

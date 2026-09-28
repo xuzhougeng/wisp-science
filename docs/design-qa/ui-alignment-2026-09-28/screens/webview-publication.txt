@@ -1,0 +1,78 @@
+Window: "wisp science — 原生工具栏验收", App: Wisp WebView QA.
+0 standard window wisp science — 原生工具栏验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 更早
+				18 button HTTP 富文本对比
+				19 button 会话操作
+				20 button ACP 富文本对比
+				21 button 会话操作
+				22 button 空会话验收
+				23 button 会话操作
+				24 button 35 轮工具栏验收
+				25 button 会话操作
+				26 text 29 技能 · 23 MCP · 0 记忆
+				27 button 能力
+				28 button 反馈
+				29 button 设置
+			30 container 论文证据
+				31 container
+					32 heading 论文证据, Value: 2
+						33 text 论文证据
+					34 text 关联图表与结论的分析来源，保留定稿时的证据。
+					35 button 刷新
+					36 button 关闭论文证据工作区
+				37 container
+					38 text 论文
+					39 pop up button 论文, Value: 合成论文 A：样本质量
+				40 container
+					41 text 版本
+					42 pop up button 版本, Value: 合成修订 2 · 草稿
+				43 text 草稿
+				44 button 创建新版本
+				45 button 添加证据
+				46 container 论文证据
+					47 toggle button 证据整理, Value: off
+					48 button 定稿检查
+					49 button 版本记录
+				50 heading 论文结构, Value: 3
+					51 text 论文结构
+				52 button 添加条目
+				53 button 全部证据 0
+				54 button 章节 摘要 0
+				55 button 结论 主要发现 0
+				56 button 方法 方法 0
+				57 heading 证据, Value: 3
+					58 text 证据
+				59 text 0
+				60 heading 从论文里的一张图开始, Value: 3
+					61 text 从论文里的一张图开始
+				62 text 选择一个结果，关联到图表或结论，并记录采用它的理由。
+				63 button 添加证据
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text wisp science — 原生工具栏验收
+68 menu bar
+	69 Wisp WebView QA
+	70 文件
+	71 编辑
+	72 视图
+	73 窗口
+	74 帮助
+
+The focused UI element is 2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost

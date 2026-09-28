@@ -287,12 +287,15 @@ struct NativeSettingsChoice: View {
     let label: String
     @Binding var selection: String
     let choices: [(String, String)]
+    static func selectedTitle(_ selection: String, choices: [(String, String)]) -> String {
+        choices.first(where: { $0.0 == selection })?.1 ?? selection
+    }
     var body: some View {
         Menu {
             ForEach(choices, id: \.0) { key, title in Button(localized(title)) { selection = key } }
         } label: {
             HStack {
-                Text(localized(choices.first(where: { $0.0 == selection })?.1 ?? selection)).lineLimit(1)
+                Text(localized(Self.selectedTitle(selection, choices: choices))).lineLimit(1)
                 Spacer(minLength: 8)
                 WispIcon(name: "chevron-down", size: 13).foregroundStyle(.secondary)
             }

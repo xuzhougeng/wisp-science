@@ -1,0 +1,40 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 运行轨迹 parity-http-offline-20260925
+		3 button 刷新
+		4 button 导出 HTML
+		5 button 关闭
+		6 时间轴
+			7 radio button Description: 耗时, Value: 1
+			8 radio button Description: 轮次, Value: 0
+			9 radio button Description: 调用, Value: 0
+		10 text field (settable) 搜索步骤、输入或输出
+		11 text 1 轮 · 0 步 · 模型 0 ms · 工具 0 ms 输入 0 · 输出 0 · 缓存 0 · — tok/s · 缓存命中 — 输入
+		12 button 展示合成研究结果（仅界面对比）
+		13 text 模型
+		14 button # 合成研究结果
+		15 text 工具
+		16 scroll area
+			17 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				18 text 第 1 轮
+				19 button USER, 展示合成研究结果（仅界面对比）
+				20 button ASSISTANT, # 合成研究结果
+		21 text 步骤详情
+		22 button 关闭详情
+		23 详情
+			24 radio button Description: 摘要, Value: 1
+			25 radio button Description: 预览, Value: 0
+			26 radio button Description: 原始, Value: 0
+			27 radio button Description: 来源, Value: 0
+		28 scroll area
+			29 text 展示合成研究结果（仅界面对比） 来源：user · 已完成 耗时：— 16:35 展示合成研究结果（仅界面对比）
+30 menu bar
+	31 Wisp Science QA
+	32 File
+	33 Edit
+	34 View
+	35 Window
+	36 Help
+
+The focused UI element is 5 button 关闭

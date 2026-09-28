@@ -1,0 +1,19 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 确认研究归档
+		3 button 关闭
+		4 text No API key set. Open Settings and paste your provider API key.
+		5 button 重新读取
+		6 checkbox (disabled) Description: 我已检查归档材料。确认后会话将只读，所选文件立即永久删除，无法撤销。, Value: 0
+		7 button 重新整理
+		8 button (disabled) 确认归档并清理
+9 menu bar
+	10 Wisp Science QA
+	11 File
+	12 Edit
+	13 View
+	14 Window
+	15 Help
+
+The focused UI element is 0 sheet Secondary Actions: Raise

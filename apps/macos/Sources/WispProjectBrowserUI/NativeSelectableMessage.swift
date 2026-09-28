@@ -28,12 +28,12 @@ struct NativeSelectableMessage: NSViewRepresentable {
     private func configure(_ view: NativeMessageTextView) {
         view.quote = quote; view.save = save
         view.linkTextAttributes = [.foregroundColor: NSColor(WispDesign.color("clay", scheme)), .underlineStyle: NSUnderlineStyle.single.rawValue]
-        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme) }
+        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme, width: view.bounds.width > 0 ? view.bounds.width : 600) }
                    ?? Self.content(text, saved: saved, scheme: scheme, monospaced: monospaced))
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeMessageTextView, context: Context) -> CGSize? {
         let width = max(1, proposal.width ?? 400)
-        nsView.frame.size.width = width
+        if nsView.frame.size.width != width { nsView.frame.size.width = width; configure(nsView) }
         guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
         container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
@@ -85,6 +85,14 @@ final class NativeSelectionAction: NSObject {
     @objc func invoke(_ sender: Any?) { perform() }
 }
 class NativeMessageTextView: NSTextView {
+    override func accessibilityValue() -> String? {
+        textStorage.map { NativeMathContent.plainText($0) } ?? ""
+    }
+    override func copy(_ sender: Any?) {
+        guard let textStorage, selectedRange().location != NSNotFound, selectedRange().length > 0,
+              NSMaxRange(selectedRange()) <= textStorage.length else { return }
+        copyBlock(NativeMathContent.plainText(textStorage.attributedSubstring(from: selectedRange())))
+    }
     var copyBlock: (String) -> Void = { text in
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
     }
@@ -112,8 +120,9 @@ class NativeMessageTextView: NSTextView {
             guard let blockID = value as? String, range.length > 0, seenBlocks.insert(blockID).inserted else { return }
             let code = storage.attribute(NativeMarkdownContent.codeCopy, at: range.location, effectiveRange: nil) as? String
             let table = storage.attribute(NativeMarkdownContent.tableCopy, at: range.location, effectiveRange: nil) as? String
-            guard let text = code ?? table else { return }
-            let title = code == nil ? "复制表格" : "复制代码"
+            let formula = storage.attribute(NativeMathContent.formulaCopy, at: range.location, effectiveRange: nil) as? String
+            guard let text = code ?? table ?? formula else { return }
+            let title = localized(code != nil ? "复制代码" : table != nil ? "复制表格" : "复制公式")
             let identifier = "message-block-copy-" + blockID
             let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
@@ -150,7 +159,7 @@ class NativeMessageTextView: NSTextView {
         let source = string as NSString
         guard range.location != NSNotFound, range.length > 0, range.location <= source.length,
               range.length <= source.length - range.location else { return [] }
-        let selected = source.substring(with: range)
+        let selected = textStorage.map { NativeMathContent.plainText($0.attributedSubstring(from: range)) } ?? source.substring(with: range)
         guard !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         return [("引用到侧聊", "chat", quote), ("收藏划线", "star", save)].compactMap { title, icon, callback in
             guard let callback else { return nil }
@@ -172,7 +181,7 @@ class NativeMessageTextView: NSTextView {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
     }) -> [NSMenuItem] {
         guard let storage = textStorage, index >= 0, index < storage.length else { return [] }
-        return [("复制代码", NativeMarkdownContent.codeCopy), ("复制表格", NativeMarkdownContent.tableCopy)].compactMap { title, key in
+        return [("复制代码", NativeMarkdownContent.codeCopy), ("复制表格", NativeMarkdownContent.tableCopy), ("复制公式", NativeMathContent.formulaCopy)].compactMap { title, key in
             guard let text = storage.attribute(key, at: index, effectiveRange: nil) as? String else { return nil }
             let action = NativeSelectionAction { copy(text) }
             let item = NSMenuItem(title: title, action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")

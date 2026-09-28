@@ -1,0 +1,75 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button (selected) Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 1
+				30 value indicator (settable, float) 1
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 远程接入
+		36 pop up button 项目, Value: Workspace
+		37 button 重新载入
+		38 scroll area Secondary Actions: Scroll Up, Scroll Down
+			39 text 项目同步
+			40 container
+				41 text 同步方式
+				42 menu button 同步方式
+			43 container
+				44 text 同步文件夹
+				45 text field (settable) Value: /private/tmp/wisp-ui-alignment-20260928/native/sync, Placeholder: 同步文件夹
+				46 button 选择…
+			47 button 保存同步配置
+			48 button 立即同步
+			49 button 生成加入代码
+			50 button 加入同步项目
+			51 text 消息与设备接入 连接消息平台与设备，远程查看项目并发起对话。
+			52 button 飞书机器人, 飞书 / Lark, 未启用
+			53 button 微信机器人, iLink, 未启用
+			54 button StickS3 设备桥接, 局域网 / 本机, 未启用
+			55 scroll bar (settable, float) 0
+				56 value indicator (settable, float) 0
+				57 increment arrow button
+				58 decrement arrow button
+				59 increment page button
+				60 decrement page button
+	61 close button
+	62 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	63 minimize button
+	64 text Wisp Science — 原生预览
+65 menu bar
+	66 Wisp Science QA
+	67 File
+	68 Edit
+	69 View
+	70 Window
+	71 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

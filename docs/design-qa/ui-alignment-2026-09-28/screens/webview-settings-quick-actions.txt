@@ -1,0 +1,114 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 更早
+				18 button HTTP 富文本对比
+				19 button 会话操作
+				20 button ACP 富文本对比
+				21 button 会话操作
+				22 button 空会话验收
+				23 button 会话操作
+				24 button 35 轮工具栏验收
+				25 button 会话操作
+				26 text 29 技能 · 23 MCP · 0 记忆
+				27 button 能力
+				28 button 反馈
+				29 button 设置
+			30 container
+				31 tab group (selectable) 新建会话
+				32 button (disabled) 分享对话, Help: 暂时没有可分享的内容——对话还是空的
+				33 button 轨迹
+				34 button (disabled) 研究归档
+				35 button 0 个待处理
+				36 button 打开终端
+				37 button 切换面板
+				38 image Wisp Science
+				39 heading 有数据集、问题，还是想解读一篇论文？, Value: 1
+					40 text 有数据集、问题，还是想解读一篇论文？
+				41 text 设计实验、分析数据，或探索约 80 个生物数据库——全部在本地运行。
+				42 container 当前对话绑定的服务器与运行时
+					43 button 打开 Local 的交互运行时
+					44 button 打开 Local 上的 Python
+					45 button 打开 Local 上的 R
+				46 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					47 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				48 button 添加到消息
+				49 button Agent 选项
+				50 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				51 button QA 本地输入验收 ▾
+				52 button 发送
+				53 button 消息选项
+				54 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+			55 container 设置
+				56 button 返回应用
+				57 text 设置
+				58 search text field (settable) 搜索设置
+					59 text 搜索设置
+				60 container 基础偏好
+					61 text 基础偏好
+					62 button 常规
+					63 button 对话
+					64 button 外观
+					65 button 宠物
+				66 container AI 配置
+					67 text AI 配置
+					68 button 模型
+					69 button 快捷动作
+					70 button 工作流
+					71 button 专家
+					72 button 记忆
+				73 container 工具与连接
+					74 text 工具与连接
+					75 button 技能
+					76 button 插件
+					77 button 浏览器
+					78 button 连接
+					79 button 远程接入
+				80 container 系统与资源
+					81 text 系统与资源
+					82 button 凭据
+					83 button 权限
+					84 button 环境
+					85 button 存储
+					86 button 用量
+			87 heading 快捷动作, Value: 2
+				88 text 快捷动作
+			89 heading 快捷动作, Value: 3
+				90 text 快捷动作
+			91 text 用可复用动作处理选中文本；文献调研会准备当前会话，自定义动作则运行所绑定的工作流。
+			92 button + 新建动作
+			93 container
+				94 text 文献调研 内置 Prepare the selected passage for a literature-review turn in the current conversation. Literature evidence review
+			95 container 选中文本时显示
+				96 checkbox 选中文本时显示, Value: 1
+			97 button 打开工作流
+			98 button 编辑快捷动作
+	99 close button
+	100 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	101 minimize button
+	102 text wisp science
+103 menu bar
+	104 Wisp WebView QA
+	105 文件
+	106 编辑
+	107 视图
+	108 窗口
+	109 帮助
+
+The focused UI element is 2 HTML content Description: wisp science, URL: tauri://localhost

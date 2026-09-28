@@ -1,0 +1,36 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text field (settable) Placeholder: 搜索项目、会话…, ID: project-search
+		3 button 关闭
+		4 scroll area Secondary Actions: Scroll Up, Scroll Down
+			5 text 项目
+			6 button (selected) Workspace
+			7 button 可靠性阶段2验收
+			8 button 可靠性阶段2验收
+			9 button CUA WebView 文件夹导入
+			10 button CUA 历史恢复验收
+			11 button 跨项目验收
+			12 button 原生工具栏验收
+			13 text 最近会话
+			14 button 快速粘贴验收 02：确认新文本
+			15 button 35-turn 可靠性基线
+			16 button 旧格式导入验收
+			17 button hello CUA ACP
+			18 button QA ACP protocol smoke
+			19 scroll bar (settable, float) 0
+				20 value indicator (settable, float) 0
+				21 increment arrow button
+				22 decrement arrow button
+				23 increment page button
+				24 decrement page button
+		25 text ↑↓ 选择    ↵ 打开    esc 关闭
+26 menu bar
+	27 Wisp Science QA
+	28 File
+	29 Edit
+	30 View
+	31 Window
+	32 Help
+
+The focused UI element is 2 text field (settable) Placeholder: 搜索项目、会话…, ID: project-search

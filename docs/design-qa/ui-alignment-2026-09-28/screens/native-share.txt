@@ -1,0 +1,68 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 分享对话
+		3 button 关闭
+		4 text 选择要导出的消息。思考内容默认不选中；编辑和脱敏只影响导出副本。
+		5 button 全选
+		6 button 全不选
+		7 text 已选 2/2
+		8 switch 预览, Value: off
+		9 scroll area Secondary Actions: Scroll Up, Scroll Down
+			10 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				11 checkbox Description: 你, Value: 1
+				12 scroll area Secondary Actions: Scroll Up, Scroll Down
+					13 text entry area (settable) 展示合成研究结果（仅界面对比）
+					14 scroll bar (disabled, settable, float) 0
+				15 checkbox Description: Wisp Science, Value: 1
+				16 scroll area Secondary Actions: Scroll Up, Scroll Down
+					17 text entry area (settable) # 合成研究结果
+
+## 样本质量
+
+这是 **加粗文本**、*斜体* 与 `inline_code`。记录只用于 UI 对比。
+
+| 样本 | 计数 |
+| --- | ---: |
+| A | 12 |
+| B | 24 |
+
+```python
+counts = {'A': 12, 'B': 24}
+print(sum(counts.values()))
+```
+
+- [x] 完成读取
+- [ ] 待独立复核
+
+均值公式 $\bar{x}=\frac{1}{n}\sum_i x_i$。
+
+$$
+y = \alpha + \beta x
+$$
+
+> 合成结果，无真实研究数据。
+
+					18 scroll bar (disabled, settable, float) 0
+			19 scroll bar (settable, float) 0
+				20 value indicator (settable, float) 0
+				21 increment arrow button
+				22 decrement arrow button
+				23 increment page button
+				24 decrement page button
+		25 text field (settable) 脱敏关键词，以逗号分隔
+		26 导出格式
+			27 radio button Description: PNG, Value: 1
+			28 radio button Description: HTML, Value: 0
+		29 text field (settable) Value: 840, Placeholder: 图片宽度
+		30 text 320–2400 px
+		31 button 导出 PNG
+32 menu bar
+	33 Wisp Science QA
+	34 File
+	35 Edit
+	36 View
+	37 Window
+	38 Help
+
+The focused UI element is 3 button 关闭

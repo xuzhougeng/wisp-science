@@ -1,0 +1,91 @@
+Window: "wisp science — 原生工具栏验收", App: Wisp WebView QA.
+0 standard window wisp science — 原生工具栏验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 更早
+				18 button HTTP 富文本对比
+				19 button 会话操作
+				20 button ACP 富文本对比
+				21 button 会话操作
+				22 button 空会话验收
+				23 button 会话操作
+				24 button 35 轮工具栏验收
+				25 button 会话操作
+				26 text 29 技能 · 23 MCP · 0 记忆
+				27 button 能力
+				28 button 反馈
+				29 button 设置
+			30 container
+				31 tab group (selectable) 空会话验收
+				32 toggle button 完整记录, Value: on
+				33 toggle button 模型视角, Value: off
+				34 button (disabled) 分享对话, Help: 暂时没有可分享的内容——对话还是空的
+				35 button 轨迹
+				36 button 研究归档
+				37 button 0 个待处理
+				38 button 打开终端
+				39 button 切换面板
+				40 image Wisp Science
+				41 heading 有数据集、问题，还是想解读一篇论文？, Value: 1
+					42 text 有数据集、问题，还是想解读一篇论文？
+				43 text 文献检索、正反证据、选题评估等技能，需要时一键启用。
+				44 container 当前对话绑定的服务器与运行时
+					45 button 打开 Local 的交互运行时
+					46 button 打开 Local 上的 Python
+					47 button 打开 Local 上的 R
+				48 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					49 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				50 button 添加到消息
+				51 button Agent 选项
+				52 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				53 button QA HTTP (offline) ▾
+				54 button 发送
+				55 button 消息选项
+				56 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+			57 container
+				58 button 产物
+				59 button 关闭标签
+			60 container
+				61 button Agents
+				62 button 关闭标签
+			63 container
+				64 button 文件
+				65 button 关闭标签
+			66 container
+				67 button 环境
+				68 button 关闭标签
+			69 button 添加面板
+			70 container
+				71 toggle button Description: 详细模式, Value: on
+				72 toggle button Description: 平铺模式, Value: off
+			73 button 关闭面板
+			74 text 暂无产物
+			75 text Markdown 表格、CSV 块、公式和文件预览会显示在这里。
+	76 close button
+	77 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	78 minimize button
+	79 text wisp science — 原生工具栏验收
+80 menu bar
+	81 Wisp WebView QA
+	82 文件
+	83 编辑
+	84 视图
+	85 窗口
+	86 帮助
+
+The focused UI element is 2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost

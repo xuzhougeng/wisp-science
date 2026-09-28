@@ -1,0 +1,92 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button (selected) Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 外观
+		36 button 重新载入
+		37 scroll area Secondary Actions: Scroll Up, Scroll Down
+			38 text 预览 主题
+			39 button (selected) 跟随系统
+			40 button 浅色
+			41 button 深色
+			42 text Wisp Science 新对话 帮我查看这个项目的数据，整理分析思路。 我会先检查数据和项目记录，再列出下一步分析。 分析计划 配色
+			43 container
+				44 text 浅色配色
+				45 menu button Paper, Description: 浅色配色
+			46 text 1. 查看样本和文件
+2. 确认分析目标
+3. 汇总结果与图表 Python
+			47 container
+				48 text 深色配色
+				49 menu button Charcoal, Description: 深色配色
+			50 text import pandas as pd
+data = pd.read_csv("samples.csv")
+data.head() 强调色 背景 文字 输入消息… 字体 预览展示主题与字号。保存后应用到原生客户端及 WebView。 界面字号 14 px
+			51 slider Description: 界面字号, Value: 14, Secondary Actions: Increment, Decrement
+				52 value indicator 14
+			53 text 代码字号 12 px
+			54 slider Description: 代码字号, Value: 12, Secondary Actions: Increment, Decrement
+				55 value indicator 12
+			56 container
+				57 text 界面字体
+				58 text field (settable) 界面字体
+				59 text 留空使用系统字体。
+			60 container
+				61 text 代码字体
+				62 text field (settable) 代码字体
+				63 text 留空使用系统等宽字体。
+			64 text 高级
+			65 disclosure triangle Description: 自定义 CSS, Value: off
+			66 button 取消
+			67 button 保存
+			68 scroll bar (settable, float) 0
+				69 value indicator (settable, float) 0
+				70 increment arrow button
+				71 decrement arrow button
+				72 increment page button
+				73 decrement page button
+	74 close button
+	75 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	76 minimize button
+	77 text Wisp Science — 原生预览
+78 menu bar
+	79 Wisp Science QA
+	80 File
+	81 Edit
+	82 View
+	83 Window
+	84 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

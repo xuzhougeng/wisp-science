@@ -1,0 +1,27 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 新建项目 名称
+		3 text field (settable) 名称
+		4 text 工作目录
+		5 text field (settable) 项目目录
+		6 button 选择文件夹
+		7 text 说明
+		8 text field (settable) 说明
+		9 text Agent Context
+		10 scroll area Secondary Actions: Scroll Up, Scroll Down
+			11 text entry area (settable)
+			12 scroll bar (disabled, settable, float) 0
+		13 checkbox Description: 标准布局, Value: 0
+		14 text 使用标准科研目录结构。关闭后不预建 data/、figures/ 等目录。
+		15 button 取消
+		16 button Description: 创建, ID: create-project-submit
+17 menu bar
+	18 Wisp Science QA
+	19 File
+	20 Edit
+	21 View
+	22 Window
+	23 Help
+
+The focused UI element is 3 text field (settable) 名称

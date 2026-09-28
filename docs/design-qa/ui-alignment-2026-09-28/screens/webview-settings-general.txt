@@ -1,0 +1,183 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 更早
+				18 button HTTP 富文本对比
+				19 button 会话操作
+				20 button ACP 富文本对比
+				21 button 会话操作
+				22 button 空会话验收
+				23 button 会话操作
+				24 button 35 轮工具栏验收
+				25 button 会话操作
+				26 text 29 技能 · 23 MCP · 0 记忆
+				27 button 能力
+				28 button 反馈
+				29 button 设置
+			30 container
+				31 tab group (selectable) 新建会话
+				32 button (disabled) 分享对话, Help: 暂时没有可分享的内容——对话还是空的
+				33 button 轨迹
+				34 button (disabled) 研究归档
+				35 button 0 个待处理
+				36 button 打开终端
+				37 button 切换面板
+				38 image Wisp Science
+				39 heading 有数据集、问题，还是想解读一篇论文？, Value: 1
+					40 text 有数据集、问题，还是想解读一篇论文？
+				41 text 设计实验、分析数据，或探索约 80 个生物数据库——全部在本地运行。
+				42 container 当前对话绑定的服务器与运行时
+					43 button 打开 Local 的交互运行时
+					44 button 打开 Local 上的 Python
+					45 button 打开 Local 上的 R
+				46 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					47 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				48 button 添加到消息
+				49 button Agent 选项
+				50 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				51 button QA 本地输入验收 ▾
+				52 button 发送
+				53 button 消息选项
+				54 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+			55 container 设置
+				56 button 返回应用
+				57 text 设置
+				58 search text field (settable) 搜索设置
+					59 text 搜索设置
+				60 container 基础偏好
+					61 text 基础偏好
+					62 button 常规
+					63 button 对话
+					64 button 外观
+					65 button 宠物
+				66 container AI 配置
+					67 text AI 配置
+					68 button 模型
+					69 button 快捷动作
+					70 button 工作流
+					71 button 专家
+					72 button 记忆
+				73 container 工具与连接
+					74 text 工具与连接
+					75 button 技能
+					76 button 插件
+					77 button 浏览器
+					78 button 连接
+					79 button 远程接入
+				80 container 系统与资源
+					81 text 系统与资源
+					82 button 凭据
+					83 button 权限
+					84 button 环境
+					85 button 存储
+					86 button 用量
+			87 heading 常规, Value: 2
+				88 text 常规
+			89 container 工作区与交互
+				90 heading 工作区与交互, Value: 3
+					91 text 工作区与交互
+				92 container
+					93 text 语言
+					94 pop up button 语言, Value: 中文
+				95 container
+					96 text 工作区目录（留空=默认；重启后生效）
+					97 text field (settable) 工作区目录（留空=默认；重启后生效）, Value: /private/tmp/wisp-parity-20260925-data/native/default-workspace, Placeholder: /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/toolbar-qa
+				98 text 打开工作区时继续上次对话
+				99 text 默认开启。打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。
+				100 checkbox 打开工作区时继续上次对话, Value: 0
+				101 container
+					102 text 发送与换行快捷键
+					103 pop up button 发送与换行快捷键, Value: Enter 发送 · Shift+Enter 换行
+				104 text 划选即弹出快捷操作
+				105 text 选中文本后立即弹出操作条；关闭后可在选区上右键使用这些操作
+				106 checkbox 划选即弹出快捷操作, Value: 1
+			107 container 通知与更新
+				108 heading 通知与更新, Value: 3
+					109 text 通知与更新
+				110 text 桌面通知
+				111 text 窗口不在前台时，任务完成、失败或等待确认会发送系统通知；对应会话只会在启动任务的窗口打开。
+				112 checkbox 桌面通知, Value: 1
+				113 text 检查更新
+				114 text 启动时检查 GitHub Releases，有新版本时在侧边栏显示提示。
+				115 checkbox 检查更新, Value: 1
+				116 text wisp-science v1.15.0
+				117 button 检查更新
+			118 text 保存以上偏好；本地环境和网络设置分别保存。
+			119 button 取消
+			120 button 保存
+			121 heading 本地环境（可选）, Value: 3
+				122 text 本地环境（可选）
+			123 text 检测到的路径会保存到 Local，保留已有配置。缺少工具不影响启动；需要时可在启动后使用 local-env-setup 配置。
+			124 description list
+				125 text Python
+				126 text /opt/homebrew/bin/python3
+				127 text Rscript
+				128 text /usr/local/bin/Rscript
+				129 text uv
+				130 text /Users/xuzhougeng/.local/bin/uv
+				131 text Node
+				132 text /opt/homebrew/bin/node
+				133 text npm
+				134 text /opt/homebrew/bin/npm
+				135 text sci
+				136 text /opt/homebrew/bin/sci
+				137 text pixi
+				138 text /Users/xuzhougeng/.pixi/bin/pixi
+			139 button 重新检测路径
+			140 button 编辑路径
+			141 heading 网络, Value: 3
+				142 text 网络
+			143 heading 连接, Value: 3
+				144 text 连接
+			145 text 分别管理各类请求的代理地址。「跟随系统」使用系统或继承的代理环境变量；「直连」跳过代理。支持 HTTP、HTTPS 和 SOCKS5 地址。
+			146 text 模型 API
+			147 text 跟随系统
+			148 pop up button 模型 API, Value: 跟随系统
+			149 button 清除
+			150 button 保存
+			151 text 用于模型 API 请求，包括图片和视频生成，从下一轮对话生效。正在进行的请求继续使用原配置。
+			152 text MCP 服务
+			153 text 跟随系统
+			154 pop up button MCP 服务, Value: 跟随系统
+			155 button 清除
+			156 button 保存
+			157 text 用于内置科学连接、HTTP MCP / OAuth 请求及本地 MCP 服务。本地服务须支持代理环境变量，已有连接需重新连接后生效。
+			158 text 代码请求 · curl / Python
+			159 text 跟随系统
+			160 pop up button 代码请求 · curl / Python, Value: 跟随系统
+			161 button 清除
+			162 button 保存
+			163 text 为新的本地 shell 命令、Run 和 Python/R 解释器设置代理环境变量。已有解释器需重启；请求库须支持代理环境变量。SSH / WSL 上的请求使用各自环境的网络配置。
+			164 heading 包镜像, Value: 3
+				165 text 包镜像
+			166 text 未配置 · Agent 使用默认软件包来源。
+			167 button 配置
+	168 close button
+	169 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	170 minimize button
+	171 text wisp science
+172 menu bar
+	173 Wisp WebView QA
+	174 文件
+	175 编辑
+	176 视图
+	177 窗口
+	178 帮助
+
+The focused UI element is 2 HTML content Description: wisp science, URL: tauri://localhost

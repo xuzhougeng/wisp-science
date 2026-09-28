@@ -1,0 +1,560 @@
+{
+  "date": "2026-09-28",
+  "revision": "9ea5f411f7b90f4ba8c44f698f84ce0f7086e7b5",
+  "product_version": "1.15.0",
+  "architecture": "arm64",
+  "configuration": "debug",
+  "capture": "Computer Use: cua_repl native app screenshots and accessibility trees",
+  "theme": "light",
+  "locale": "zh",
+  "apps": {
+    "native": {
+      "path": "target/native-macos-qa/Wisp Science QA.app",
+      "bundle_identifier": "science.wisp-science.native-toolbar-qa.preview",
+      "revision": "9ea5f411f7b90f4ba8c44f698f84ce0f7086e7b5",
+      "dirty": false,
+      "executable_sha256": "cc4487403c0d71d5922967c905a3592578e41fabfc49f4e5225132797cbf70fd"
+    },
+    "webview": {
+      "path": "target/ui-alignment-20260928/Wisp WebView QA.app",
+      "bundle_identifier": "science.wisp-science.alignment-20260928.webview",
+      "revision": "9ea5f411f7b90f4ba8c44f698f84ce0f7086e7b5",
+      "dirty": false,
+      "executable_sha256": "f32689a608c374fbfd900ff0c6a227a3f6d3845f9fc05def3f7d4518d610cff7"
+    }
+  },
+  "fixtures": {
+    "native": {
+      "project_database": "/private/tmp/wisp-ui-alignment-20260928/native/project-cache/toolbar-qa.sqlite",
+      "frames": 4,
+      "messages": 75,
+      "messages_sha256": "3063e605e397323c66225c1c6a46cdb919a736f2201bf95e49b9f9fb44043914",
+      "rich_session": "parity-http-rich",
+      "empty_session": "toolbar-qa-empty",
+      "project_id": "toolbar-qa"
+    },
+    "webview": {
+      "project_database": "/private/tmp/wisp-ui-alignment-20260928/webview/project-cache/toolbar-qa.sqlite",
+      "frames": 4,
+      "messages": 75,
+      "messages_sha256": "3063e605e397323c66225c1c6a46cdb919a736f2201bf95e49b9f9fb44043914",
+      "rich_session": "parity-http-rich",
+      "empty_session": "toolbar-qa-empty",
+      "project_id": "toolbar-qa"
+    }
+  },
+  "screens": [
+    {
+      "file": "screens/native-agents.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "6560af861d079dce395dc4ede1fe8efa1748343ea221add37a31ab2c9e8e8d41",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-archive-error.jpg",
+      "width": 850,
+      "height": 520,
+      "sha256": "4427743fcabf4baa820b2e64b4857b6603ce23bf1fa01d73dd829adf9963e49d",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-artifacts-list.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "f051365889d51c2863fe012b176ab500884b6e511d012728224d876f10a49c6f",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-artifacts.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "84051972785434bbdc79fb805f478eb8d570c260bc5f07cfab6184b2ec11ce5a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-calendar.jpg",
+      "width": 640,
+      "height": 520,
+      "sha256": "80ddf63cee3408f316948029ed55149ba752a1b0950a075648c4abca032b3151",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-contexts.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "bb0513698610dbb07ccad2962431c2e20ccbfd2cef7624b7de9c506549eb1c4a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-conversation.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "d17c3254d9916d9722a3c0e32b318ef3f3c89e7d3ffe9c1876ea4a294ddceff3",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-empty.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "0e5b052e234c7c063576c533f4df323250f5745db927c46f2c171e4b051b60cb",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-files.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "324d32507d28cad1d0309991fd1d59ab3f8b2ddffefc0572733d983098a8d49a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-home.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "f25c6c7ac4d2411d920e4fed895bf28048eca648764323a79e8cf200d88c8af9",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-journey.jpg",
+      "width": 480,
+      "height": 420,
+      "sha256": "5257ea938149a4620d0c95f9967e56db4fca9464c2c5cb132dc529a9e6fc46fa",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-library.jpg",
+      "width": 560,
+      "height": 460,
+      "sha256": "4ee56b9bfff18af8c6b9ae16d1b27b4007a8539b08bbb7f9da7cf4c28e4c4abc",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-new-project.jpg",
+      "width": 560,
+      "height": 506,
+      "sha256": "e912abbe3ba531adf567d5a207ec7743faca3be1098beea821b807163c0a0a13",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-publication.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "fd774ffb8717b3742118167226f0d271e75e3b6a7fa230c2fe34a87f3a7afea7",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-search.jpg",
+      "width": 560,
+      "height": 380,
+      "sha256": "1e260743de5a61c627185dc0642019bc3790a085126ccc7a4e4fea1807640ace",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-appearance.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "ac9209a431e646c490a520e5db15fbb907eb248a2a8c0a401029eedb10d12e23",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-browser.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "fbc749f23eea3b671cd3fe4b1762ec53482dcd49526da0779b1ad1af4bacd420",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-channels.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "da42442ae3e42981df9aeb201caa8f76a5d18c5a881ead9fd7d489b4f77d7699",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-connections.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "49bf04b99f72326d845b13b536b830e2433f08bf29f9969fb788aa8eb98cbfc6",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-credentials.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "aacf499f95b74821c5909cb15a123157960ed473862d314a0571496fbf7c68a1",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-environments.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "767f75ad121fb39efce83ea1bbc4b1fb28ea60d774adb9b84d912dbdbec7a517",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-general.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "548d292d6a399b0a2c074a74800669e29fdddf0040677baac9010c841572a17a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-memory.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "d54d0a45873b74e8058ea025d33e1509805bdd10be1d8b49ffa7e8b56322a04c",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-models.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "8799726266bbe7554180519ba1cc2f041ad15230863691db607e865da807df2f",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-permissions.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "d6ff19bdc682b7dd6bcfba08b6c220097c2ca4c417c70fd13e88db41c3f4c8f3",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-pet.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "a17c4f8d33bb01dc07f9fee565661ab782291a113f85a93be043d80874ef2c16",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-plugins.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "b6364715cd76896a0ed79f429d776157a4658586ffa60c667ca84ba055478ced",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-quick-actions.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "f4e40d8a945ef381dcb3769132325d45495d851f6c56a25b0bf176edce83b8fb",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-session.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "83344fcddfec7ed48060ec00eb7a249fe0a82af4a2bdc11a7f85090fac5fd3c0",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-skills.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "7bb11a06989e7b5ad1ffa14c1339349073651f272bda9aa81176a3105e520214",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-specialists.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "b0b230d4fcff38358dd882ed67ec7b0c78d5f4afd560ed019abced33202c34cd",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-storage.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "8206ddd0fbbb17a1f3a6f7c702200c8f1ccfbe3a5c44e059616cacddb34e35e7",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-subscriptions.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "0d1aad437254970dabc9cf558133eb067a779ac1483fc2ae7e95c66998d4afd4",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-usage.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "0fcebbf00ea7f86549b8bcc957986b2356e8eaf1f9ad50fabfa3f715a026b085",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-settings-workflows.jpg",
+      "width": 1056,
+      "height": 768,
+      "sha256": "de77c3de34f5935e4b785105f725f9b16d74f9eed0a3182debbb5a551fd50835",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-share.jpg",
+      "width": 820,
+      "height": 700,
+      "sha256": "8aeeda9ab3592f7ba86fc9006e2aa18dc9202510aee1cd5261a99af14aa2b8a0",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/native-trajectory.jpg",
+      "width": 980,
+      "height": 650,
+      "sha256": "ed9b95d25fc781a1090a7fe739ad324f7546de6668114f2541c8fbed2f30e06f",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-agents.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "6e6a9a57229b04a37a27d219dd464c5224f509fb27f451b7c8d4e86202bf132d",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-artifacts-list.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "e134362e33c76d3c2a2fb5e2d073c95e0485d5c066588246369938f0a46dba0d",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-artifacts.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "a253627229242cd49815a67611a3cd3dc466cde458cbf1cee80e104275c17f77",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-calendar.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "dbab0108b38046d39051e82519c31006e2e930b64879211f5e931ad38af50770",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-contexts.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "f4df3cded712adb3747d259a6f1ff2756265711bdd348b313a93474d3683e829",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-conversation.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "755d0ae305562139b4d198a94c9fee6ffa81ad5489d4a1b952cde136ad68fe8d",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-empty.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "b73909ef7c63d202888dd464412de74962ebfd13d61d05e44a54ccd91066f548",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-files.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "61a0efb8053bcd002c365c553988dfff4aef3331461bc07ffe3fa80e5167ec36",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-home.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "346d3425eead54cd6aea2197f304eb5527dd7f31b2816b3a055646ae46fbc27f",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-journey.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "6ec13a47a64a6a9b62c9e5c52f1dcaace58449b0c95c8cd37cf723391900e8cd",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-library.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "d48a9600c764a0ad49dfc487d1acd95ff748ef46ec4379b7ce0140f7e1c12d1a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-new-project.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "f905a89566f62b12f48c1a4effb245a5a7c23f1b9933b37a7fdd94f07b894bd6",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-publication.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "188bafd1a35ae4c34336668ff6174d5a8d3fb3d5d873d4bbc3979674d4b977ad",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-search.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "509a04c622f01801e4330a62dd478045e79b164dcb97bc10915dcb95c2037cb9",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-appearance.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "1c1c6a8b78abb70c541a282ce5b5369cf331ce83c7f14a04d5790099bc899d24",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-browser.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "639a3b01beaea5a81b29fd8d1fd9bc73d2b9fc53baa5aea7d28d94a7f9512268",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-channels.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "01a9ca6f441b91808f9b2a878aa04f7e31543cd0e5a47f5feed12fb5008bf492",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-connections.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "7a7f380b736d1e11bcfcd6e59f02fee0b16054bd5d5aa134ee28939b84c1433e",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-credentials.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "220b54d2b3c71e03310ef5fbab70feef2bd7e610f565635bc05d8c09a2919d76",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-environments.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "ebf9294a11fb16ee20eca0d067d813c26bf6d43af5a232112acd5f1dbdd8ba8c",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-general.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "4e214d2d54064a68ef983dc0c793b25aaf8cefbed68ae3466762e751de466bbe",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-memory.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "cbddc07c9a768c8a4cf924e7374e2dc7ac6c26066abea0eea5f9a29d2a75eafa",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-models.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "c666500532e23e41165c4c77b4ed25bd965be71d4fbd99cf04d8d5c8d8f9d441",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-permissions.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "282a97ac8f2cecceb17127987c6caa0f5d5b85438f7e561d63e9298485b83ef8",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-pet.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "2a146df2ef42f85e6ce1f9207be02103cf27f5f1f211cdf0254adbf959636ee8",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-plugins.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "b874461b1b604ab499cc0c666a42a36625d512f87bf2f407c092b4e3a5664bf3",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-quick-actions.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "d3fb9357adf84e2a307144ca849157baa1b86fca3dcf89bde02c644eb3044461",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-session.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "ded199595d47593cb01f867593eb8ce858235f494e0da6cac4bcd89e1d3f4458",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-skills.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "1f52d2863e02a7382f97f46fcb9f1e4ba0cd2fb54cef8d083e6abd44ba5cfd3a",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-specialists.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "e039f0982dfbe9bb039abaf501eda004f1bd14c27eb4cde93bceb75883d7eb95",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-storage.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "c31de10db3795abcd4b1cf36cd2996dc17969d0b70ac4e7b54c12294062f4d93",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-subscriptions.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "b86bd2bdf8a188729e9497b2114b4833003beef7212b1e243664239d69a083d0",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-usage.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "02455b5d5cce6edaae13c102c513748f1aa42a71299645c048e1a92aca8d3b11",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-settings-workflows.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "bd1a393afd67a9853c161ea14764c46eeb46660acedc1bfea946c4b874e69109",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-share.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "397b969774078a82d4f75fdf0cd6f0f4fd3a4e98e8650672506b89f750c71720",
+      "encoding": "JPEG"
+    },
+    {
+      "file": "screens/webview-trajectory.jpg",
+      "width": 1100,
+      "height": 760,
+      "sha256": "35792efd964629ea571aa2b986a9ecee10b7bb97b23c64ac7ff9a4528551e16a",
+      "encoding": "JPEG"
+    }
+  ],
+  "paired_fixture_messages_equal": true
+}

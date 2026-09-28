@@ -1,0 +1,106 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button (selected) Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 工作流
+		36 button 重新载入
+		37 scroll area Secondary Actions: Scroll Up, Scroll Down
+			38 text 工作流
+			39 button 添加工作流
+			40 text Data-driven research design 内置
+			41 button 编辑
+			42 button 复制
+			43 text Parallel data and literature assessment followed by an eight-part, source-marked research design. Develop computational method 内置
+			44 button 编辑
+			45 button 复制
+			46 text Audit evidence and a baseline, freeze an evaluator contract, run a durable method search, then review and report verified finalists. Literature evidence review 内置
+			47 button 编辑
+			48 button 复制
+			49 text Two independent literature searches run in parallel before a dependent synthesis. Roundtable 内置
+			50 button 编辑
+			51 button 复制
+			52 text Two parallel perspectives cross-review each other before a neutral chair synthesis. 从技能或旧模板转换
+			53 text field (settable) 描述研究目标
+			54 pop up button 转换模型, Value: 选择模型
+			55 pop up button 旧模板（可选）, Value: 从技能选择
+			56 checkbox Description: agent-infini, Value: 0
+			57 checkbox Description: algorithmic-art, Value: 0
+			58 checkbox Description: analysis-workflow, Value: 0
+			59 checkbox Description: audit-biomedical-paper-evidence, Value: 0
+			60 checkbox Description: browser-use, Value: 0
+			61 checkbox Description: compute-env-setup, Value: 0
+			62 checkbox Description: computer-use, Value: 0
+			63 checkbox Description: custom-theme, Value: 0
+			64 checkbox Description: customize, Value: 0
+			65 checkbox Description: distill-concept-books, Value: 0
+			66 checkbox Description: figure-composer, Value: 0
+			67 checkbox Description: figure-style, Value: 0
+			68 checkbox Description: indication-dossier, Value: 0
+			69 checkbox Description: journal-club-ppt, Value: 0
+			70 checkbox Description: literature-review, Value: 0
+			71 checkbox Description: local-env-setup, Value: 0
+			72 checkbox Description: openai-docs, Value: 0
+			73 checkbox Description: paper-narrative, Value: 0
+			74 checkbox Description: pdf-explore, Value: 0
+			75 checkbox Description: pixi-environment-builder, Value: 0
+			76 checkbox Description: probe-compute-environment, Value: 0
+			77 checkbox Description: public-data-access, Value: 0
+			78 checkbox Description: remote-compute-ssh, Value: 0
+			79 checkbox Description: research-integrity-audit, Value: 0
+			80 checkbox Description: self-awareness, Value: 0
+			81 checkbox Description: singlecell-qc, Value: 0
+			82 checkbox Description: skill-creator, Value: 0
+			83 checkbox Description: social-note, Value: 0
+			84 checkbox Description: word-zotero-citations, Value: 0
+			85 button (disabled) 生成可审核草稿
+			86 scroll bar (settable, float) 0
+				87 value indicator (settable, float) 0
+				88 increment arrow button
+				89 decrement arrow button
+				90 increment page button
+				91 decrement page button
+	92 close button
+	93 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	94 minimize button
+	95 text Wisp Science — 原生预览
+96 menu bar
+	97 Wisp Science QA
+	98 File
+	99 Edit
+	100 View
+	101 Window
+	102 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

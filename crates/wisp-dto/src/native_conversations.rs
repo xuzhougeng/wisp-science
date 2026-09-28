@@ -359,6 +359,14 @@ pub struct Item {
     pub input: Option<String>,
     pub ok: Option<bool>,
     pub status: Option<String>,
+    /// Recorded tool elapsed time; absent in older hosts and live pending calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    /// Unix seconds from the owning persisted user turn, not a client clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
     /// Present when a saved user message carries composer files. Omitted when
     /// empty so older snapshots stay unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

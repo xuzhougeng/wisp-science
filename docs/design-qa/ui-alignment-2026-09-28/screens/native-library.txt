@@ -1,0 +1,22 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 收藏库
+		3 text field (settable) 搜索标题、代码或项目
+		4 button 搜索
+		5 button (selected) 全部
+		6 button 代码
+		7 button 图片
+		8 button 文本
+		9 scroll area
+			10 text 收藏库是空的
+			11 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+12 menu bar
+	13 Wisp Science QA
+	14 File
+	15 Edit
+	16 View
+	17 Window
+	18 Help
+
+The focused UI element is 0 sheet Secondary Actions: Raise

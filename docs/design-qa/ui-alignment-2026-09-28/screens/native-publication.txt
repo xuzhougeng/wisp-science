@@ -1,0 +1,82 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text HTTP 富文本对比
+		6 menu button 会话操作
+		7 button 会话大纲
+		8 button 分享
+		9 button 运行轨迹
+		10 button 研究归档
+		11 button 待查看
+		12 button 终端
+		13 button 切换侧面板
+		14 scroll area
+			15 button (selected) 产物 (2)
+			16 button 关闭产物 (2)
+			17 button 代理
+			18 button 关闭代理
+			19 button 文件
+			20 button 关闭文件
+			21 button 环境
+			22 button 关闭环境
+			23 button 溯源 (0)
+			24 button 关闭溯源 (0)
+			25 button 侧聊
+			26 button 关闭侧聊
+		27 menu button 添加面板
+		28 button 刷新
+		29 button 关闭面板
+		30 button 新建会话
+		31 button Description: 列表, Value: 未选择
+		32 button Description: 网格, Value: 已选择
+		33 button 搜索, ⌘K
+		34 text 论文证据
+		35 button 返回对话
+		36 text 合成论文 A：样本质量
+		37 button Description: 新建分组, ID: new-session-group
+		38 text 合成修订 2 · draft
+		39 button Description: 文件, ID: sidebar-files
+		40 text Synthetic UI comparison only section · 摘要
+		41 button Description: 研究历程, ID: sidebar-journey
+		42 text claim · 主要发现
+		43 button Description: 论文证据, ID: sidebar-publication
+		44 text methods · 方法
+		45 button Description: 收藏, ID: sidebar-library
+		46 text 会话
+		47 button 选择
+		48 button 排序与分组
+		49 scroll area
+			50 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				51 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				52 button (selected) Description: HTTP 富文本对比, ID: session-parity-http-rich
+				53 button Description: 空会话验收, ID: session-toolbar-qa-empty
+				54 button Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+		55 button Description: 能力, ID: sidebar-capabilities
+		56 button Description: 反馈问题, ID: sidebar-feedback
+		57 button 设置
+		58 text /private/tmp/wisp-ui-alignment-20260928/native/workspaces/toolbar-qa
+		59 text field (settable) 筛选名称
+		60 scroll area
+			61 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				62 button Description: 表格 1, 表格 · 来自消息, Help: 表格 1
+表格 · 来自消息, 表格 1
+表格 · 来自消息
+				63 button Description: 公式 1, LaTeX · 来自消息, Help: 公式 1
+LaTeX · 来自消息, 公式 1
+LaTeX · 来自消息
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text Wisp Science — 原生预览
+68 menu bar
+	69 Wisp Science QA
+	70 File
+	71 Edit
+	72 View
+	73 Window
+	74 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

@@ -1,0 +1,153 @@
+Window: "wisp science — 原生工具栏验收", App: Wisp WebView QA.
+0 standard window wisp science — 原生工具栏验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 更早
+				18 button HTTP 富文本对比
+				19 button 会话操作
+				20 button ACP 富文本对比
+				21 button 会话操作
+				22 button 空会话验收
+				23 button 会话操作
+				24 button 35 轮工具栏验收
+				25 button 会话操作
+				26 text 29 技能 · 23 MCP · 0 记忆
+				27 button 能力
+				28 button 反馈
+				29 button 设置
+			30 container
+				31 tab group (selectable) HTTP 富文本对比
+				32 toggle button 完整记录, Value: on
+				33 toggle button 模型视角, Value: off
+				34 button (collapsed) 展开对话目录, Help: 展开对话目录 · 1 个问题, Secondary Actions: Expand
+				35 button 分享对话
+				36 button 轨迹
+				37 button 研究归档
+				38 button 0 个待处理
+				39 button 打开终端
+				40 button 切换面板
+				41 text 展示合成研究结果（仅界面对比）
+				42 container 发送于 2026/9/25 16:35:35
+					43 text 09-25 16:35
+				44 button 复制
+				45 button 回溯
+				46 button 分支
+				47 text WISP-SCIENCE
+				48 container 回复于 2026/9/25 16:35:36
+					49 text 09-25 16:35
+				50 heading 合成研究结果, Value: 1
+					51 text 合成研究结果
+				52 heading 样本质量, Value: 2
+					53 text 样本质量
+				54 text 这是  加粗文本 、 斜体  与
+				55 text inline_code
+				56 text 。记录只用于 UI 对比。
+				57 button 复制表格
+				58 table
+					59 row (selectable) 样本
+计数
+					60 row (selectable)
+						61 cell (selectable) A
+						62 cell (selectable) 12
+					63 row (selectable)
+						64 cell (selectable) B
+						65 cell (selectable) 24
+				66 button 复制代码
+				67 container
+					68 text counts = { 'A' :  12 ,  'B' :  24 }
+ print ( sum (counts.values()))
+
+				69 content list
+					70 container 完成读取
+						71 list marker •
+						72 checkbox (disabled) 1
+						73 text  完成读取
+					74 container 待独立复核
+						75 list marker •
+						76 checkbox (disabled) 0
+						77 text  待独立复核
+				78 text 均值公式
+				79 container
+					80 text x
+					81 text ˉ
+					82 text =
+					83 text 1
+					84 text n
+					85 text ∑
+					86 text i
+					87 text x
+					88 text i
+				89 text 。
+				90 container
+					91 text y = α + β x
+				92 text 合成结果，无真实研究数据。
+				93 summary 已生成 · 2, Value: off
+					94 text 已生成 · 2
+				95 button 记忆
+				96 button 审查
+				97 button 开始探索
+				98 button 分支
+				99 button 复制消息
+				100 button 撤销
+				101 container 当前对话绑定的服务器与运行时
+					102 button 打开 Local 的交互运行时
+					103 button 打开 Local 上的 Python
+					104 button 打开 Local 上的 R
+				105 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					106 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				107 button 添加到消息
+				108 button Agent 选项
+				109 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				110 button QA HTTP (offline) ▾
+				111 button 发送
+				112 button 消息选项
+				113 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+			114 container
+				115 button 产物 (2)
+				116 button 关闭标签
+			117 container
+				118 button Agents
+				119 button 关闭标签
+			120 container
+				121 button 文件
+				122 button 关闭标签
+			123 container
+				124 button 环境
+				125 button 关闭标签
+			126 button 添加面板
+			127 container
+				128 toggle button Description: 详细模式, Value: on
+				129 toggle button Description: 平铺模式, Value: off
+			130 button 关闭面板
+			131 button (expanded) ▾ 公式 1, Secondary Actions: Collapse
+			132 button 公式 1 LaTeX LATEX
+			133 button (expanded) ▾ 表格 1, Secondary Actions: Collapse
+			134 button 表格 1 2 行 × 2 列 TABLE
+	135 close button
+	136 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	137 minimize button
+	138 text wisp science — 原生工具栏验收
+139 menu bar
+	140 Wisp WebView QA
+	141 文件
+	142 编辑
+	143 视图
+	144 窗口
+	145 帮助
+
+The focused UI element is 2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost

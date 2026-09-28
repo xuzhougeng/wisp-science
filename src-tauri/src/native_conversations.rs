@@ -91,7 +91,32 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
         input: item.input,
         ok: item.ok,
         status: item.status,
+        duration_ms: item.duration_ms,
+        model_name: item.model_name,
+        timestamp: None,
         attachments,
+    }
+}
+
+fn timestamp_items(
+    items: &mut [dto::Item],
+    user_offset: usize,
+    outline: &[(i64, String, i64, Option<i64>)],
+) {
+    let mut turn = None;
+    for item in items {
+        if matches!(item.role.as_str(), "user" | "queued_user") {
+            turn = Some(turn.map_or(user_offset, |index| index + 1));
+        }
+        let Some((_, _, sent_at, response_at)) = turn.and_then(|index| outline.get(index)) else {
+            continue;
+        };
+        item.timestamp = match item.role.as_str() {
+            "user" | "queued_user" => Some(*sent_at),
+            "assistant" => *response_at,
+            _ => None,
+        }
+        .filter(|value| *value > 0);
     }
 }
 
@@ -465,13 +490,20 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             }
             record.sequence += 1;
             let read_only = frozen;
+            let mut items: Vec<_> = items.into_iter().map(snapshot_item).collect();
+            let outline = state
+                .store
+                .load_session_user_messages(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            timestamp_items(&mut items, user_offset, &outline);
             let snapshot = dto::Snapshot {
                 schema: dto::SCHEMA.into(),
                 epoch: broker.conversations.epoch.clone(),
                 sequence: record.sequence,
                 project_id: project.into(),
                 session_id: session.into(),
-                items: items.into_iter().map(snapshot_item).collect(),
+                items,
                 next_before_seq,
                 user_offset,
                 running: record.running || running(broker, session).await,
@@ -696,6 +728,40 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn message_metadata_uses_owning_turn_and_page_offset() {
+        let outline = vec![
+            (1, "same".into(), 10, Some(12)),
+            (5, "same".into(), 20, Some(25)),
+            (9, "last".into(), 30, None),
+        ];
+        let mut items: Vec<crate::native_conversations::dto::Item> = [
+            "assistant",
+            "user",
+            "tool",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        .into_iter()
+        .map(|role| serde_json::from_value(serde_json::json!({"role":role,"text":"same"})).unwrap())
+        .collect();
+        super::timestamp_items(&mut items, 1, &outline);
+        assert_eq!(
+            items.iter().map(|item| item.timestamp).collect::<Vec<_>>(),
+            vec![None, Some(20), None, Some(25), Some(30), None]
+        );
+        assert!(items[0].duration_ms.is_none());
+        assert!(items[0].model_name.is_none());
+        let metadata: super::dto::Item = serde_json::from_value(serde_json::json!({
+            "role":"tool", "text":"done", "duration_ms":1250, "model_name":"exact-model", "timestamp":20
+        })).unwrap();
+        assert_eq!(metadata.duration_ms, Some(1250));
+        assert_eq!(
+            serde_json::to_value(metadata).unwrap()["model_name"],
+            "exact-model"
+        );
+    }
     #[test]
     fn deletion_uses_only_the_explicit_session_and_rejects_history_or_scope_overrides() {
         assert_eq!(

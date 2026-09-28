@@ -22,7 +22,7 @@ struct ProjectWorkspace: View {
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
     @AppStorage("native.workspace.panel.tabs") private var panelTabs = ""
-    @State private var panelWidth: CGFloat = 340
+    @State private var panelWidth: CGFloat = 380
     @State private var panelDragStart: CGFloat?
     @State private var terminalHeight: CGFloat = 300
     @State private var terminalDragStart: CGFloat?
@@ -37,15 +37,17 @@ struct ProjectWorkspace: View {
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
     var body: some View {
+        GeometryReader { geometry in
+        let showsSidebar = sidebarVisible && (!panelVisible || geometry.size.width >= 960)
         HStack(spacing: 0) {
-            if sidebarVisible {
+            if showsSidebar {
                 sidebar.frame(width: 248)
                 Rectangle().fill(color("border")).frame(width: 1)
             }
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    if !sidebarVisible {
-                        Button { sidebarVisible = true } label: { WispIcon(name: "chevron-right") }
+                    if !showsSidebar {
+                        Button { if geometry.size.width < 960 { panelVisible = false }; sidebarVisible = true } label: { WispIcon(name: "chevron-right") }
                             .buttonStyle(.plain).help("展开侧边栏").accessibilityLabel("展开侧边栏")
                     }
                     Text(model.sessions.first(where: { $0.id == model.activeSessionID })?.title ?? project.name)
@@ -177,15 +179,16 @@ struct ProjectWorkspace: View {
                 Rectangle().fill(color("border")).frame(width: 5)
                     .gesture(DragGesture().onChanged { value in
                         if panelDragStart == nil { panelDragStart = panelWidth }
-                        panelWidth = min(600, max(280, (panelDragStart ?? 340) - value.translation.width))
+                        panelWidth = min(600, max(280, (panelDragStart ?? 380) - value.translation.width))
                     }.onEnded { _ in panelDragStart = nil })
                 NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.nativeTerminal(projectID: project.id, sessionID: session).requestOpen(context)
                     terminalVisible = true
                 }) { panelVisible = false }
-                    .frame(width: panelWidth).id(project.id + ":" + session)
+                    .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar)).id(project.id + ":" + session)
             }
+        }
         }
         .sheet(isPresented: $sharePresented) {
             if let session = model.activeSessionID {
@@ -305,6 +308,11 @@ struct ProjectWorkspace: View {
         await model.openProject(project.id, sessionID: model.activeSessionID)
     }
 
+    static func panelWidth(preferred: CGFloat, available: CGFloat, sidebar: Bool) -> CGFloat {
+        // Preserve a usable composer when a wide inspector is reopened in a
+        // smaller window. The drag preference remains local to this workspace.
+        max(220, min(preferred, 600, available - (sidebar ? 249 : 0) - 360))
+    }
     private func createSession(acpAgentID: String? = nil) {
         let database = model.databaseURL; let sourceSession = model.activeSessionID
         Task { if let id = await conversation.create(project: project.id, acpAgentID: acpAgentID) { await model.openNativeDraft(id, projectID: project.id, database: database, sourceSession: sourceSession) } }

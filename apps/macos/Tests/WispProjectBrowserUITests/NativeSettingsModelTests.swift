@@ -29,6 +29,61 @@ private actor SettingsFake: NativeSettingsQuerying {
 }
 
 final class NativeSettingsModelTests: XCTestCase {
+    @MainActor func testSessionDefaultsDoNotOverwriteUnknownFieldsAndCancelRestoresDraft() async {
+        let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: "project-a")
+        model.section = .session; await model.load()
+        XCTAssertEqual(model.numberText("max_iter"), "100")
+        XCTAssertEqual(model.numberText("auto_continue_limit"), "10")
+        XCTAssertEqual(model.numberText("semantic_compact_idle_hours"), "24")
+        model.binding("get_settings", "semantic_compact_on_model_switch").wrappedValue = .bool(true)
+        model.binding("get_settings", "semantic_compact_idle_hours").wrappedValue = .integer(0)
+        model.binding("get_settings", "max_iter").wrappedValue = .integer(0)
+        model.binding("get_settings", "auto_continue_limit").wrappedValue = .integer(1)
+        await model.saveSettings()
+        let write = await client.lastWrite()
+        XCTAssertEqual(write?.1["settings"]?["semantic_compact_idle_hours"], .integer(0))
+        XCTAssertEqual(write?.1["settings"]?["semantic_compact_on_model_switch"], .bool(true))
+        XCTAssertEqual(write?.1["settings"]?["future_option"], .string("preserve"))
+        XCTAssertFalse(model.hasUnsavedChanges)
+        model.binding("get_settings", "semantic_compact_idle_hours").wrappedValue = .integer(12)
+        model.discardDrafts()
+        XCTAssertEqual(model.numberText("semantic_compact_idle_hours"), "0")
+    }
+
+    @MainActor func testInvalidSessionNumbersDoNotReachHostOrDiscardDraft() async {
+        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours"] {
+            for invalid in [SettingsValue.null, .string("abc"), .string("1.5"), .string("9223372036854775808"), .integer(-1)] {
+                let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: nil)
+                await model.load()
+                model.binding("get_settings", key).wrappedValue = invalid
+                await model.saveSettings()
+                let count = await client.writeCount()
+                XCTAssertEqual(count, 0, key)
+                XCTAssertNotNil(model.error)
+                XCTAssertEqual(model.values["get_settings"]?[key], invalid)
+                XCTAssertTrue(model.hasUnsavedChanges)
+            }
+        }
+        let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: nil)
+        await model.load()
+        model.binding("get_settings", "auto_continue").wrappedValue = .bool(false)
+        model.binding("get_settings", "auto_continue_limit").wrappedValue = .integer(0)
+        await model.saveSettings()
+        let count = await client.writeCount()
+        XCTAssertEqual(count, 0, "Disabled control must still preserve a valid saved limit")
+    }
+
+    @MainActor func testSyncChoiceUsesStoredValueAndPreservesUnknownBackend() async {
+        let model = NativeSettingsModel(client: SettingsFake(), projectID: nil)
+        await model.load()
+        for backend in ["folder", "relay", "future-backend"] {
+            model.binding("get_settings", "sync_backend").wrappedValue = .string(backend)
+            XCTAssertEqual(NativeSettingsChoice.selectedTitle(backend, choices: [("relay", "中继服务"), ("folder", "同步文件夹")]), ["folder": "同步文件夹", "relay": "中继服务"][backend] ?? backend)
+            await model.saveSettings()
+            XCTAssertEqual(model.values["get_settings"]?["sync_backend"].string, backend)
+        }
+    }
+
     @MainActor func testDraftSurvivesTabsAndSaveKeepsUneditedFieldsAndProject() async {
         let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: "project-a")
         await model.load()
@@ -52,6 +107,8 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.values["get_settings"]?["locale"], .string("en"))
         model.discardDrafts(); XCTAssertFalse(model.hasUnsavedChanges)
         XCTAssertEqual(model.values["get_settings"]?["locale"], .string("zh"))
+        XCTAssertNil(model.error)
+        XCTAssertNil(model.message)
     }
     @MainActor func testLeavingIgnoresLateRead() async {
         let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: "a")

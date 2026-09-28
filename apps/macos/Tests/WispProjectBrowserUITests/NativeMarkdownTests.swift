@@ -35,8 +35,8 @@ final class NativeMarkdownTests: XCTestCase {
         XCTAssertTrue(value.string.hasPrefix("Quality report\nSample A passed."))
         XCTAssertTrue(value.string.contains("first = 1\nsecond = first + 2\nprint(second)\n"))
         XCTAssertTrue(value.string.contains("3. Third\n4. Fourth"))
-        XCTAssertTrue(value.string.contains("[已完成] Checked"))
-        XCTAssertTrue(value.string.contains("[待完成] Pending"))
+        XCTAssertTrue(NativeMathContent.plainText(value).contains("[x] Checked"))
+        XCTAssertTrue(NativeMathContent.plainText(value).contains("[ ] Pending"))
         func font(_ text: String) throws -> NSFont {
             try XCTUnwrap(value.attribute(.font, at: (value.string as NSString).range(of: text).location, effectiveRange: nil) as? NSFont)
         }

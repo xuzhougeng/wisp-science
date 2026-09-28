@@ -17,6 +17,9 @@ COLORS = ("bg-app", "bg-elev", "bg-sunken", "surface-hover", "text", "text-muted
 
 
 def exports():
+    # Use the same pinned language grammars as WebView; JavaScriptCore produces
+    # token ranges while AppKit keeps the text selectable and renders it natively.
+    yield "highlight.min.js", (ROOT / "ui/vendor-src/highlight.min.js").read_bytes()
     for theme in ("light", "dark"):
         yield f"wordmark-{theme}.svg", (ROOT / f"docs/assets/wordmark-{theme}.svg").read_bytes()
     source = (ROOT / "ui/src/app_support/messages.rs").read_text(encoding="utf-8")

@@ -1,0 +1,2 @@
+There has been no change in the accessibility tree for Window: "Wisp Science — 原生预览".
+The focused UI element is 58 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

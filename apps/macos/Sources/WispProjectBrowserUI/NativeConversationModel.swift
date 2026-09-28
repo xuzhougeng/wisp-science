@@ -434,7 +434,7 @@ final class NativeConversationModel: ObservableObject {
     static func renderedText(_ item: ConversationItem) -> String {
         if item.role == "tool" { return item.text }
         let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
-        return NativeMarkdownContent.render(source, saved: [], scheme: .light).string
+        return NativeMathContent.plainText(NativeMarkdownContent.render(source, saved: [], scheme: .light))
     }
     func clearExcerpt(revision: Int) { if scrollRevision == revision { revealedExcerpt = nil } }
     static func questionItemIndex(_ target: Int, offset: Int, items: [ConversationItem]) -> Int? {

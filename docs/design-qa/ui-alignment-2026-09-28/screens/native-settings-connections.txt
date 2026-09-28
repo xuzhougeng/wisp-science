@@ -1,0 +1,85 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button (selected) Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 连接
+		36 button 重新载入
+		37 scroll area Secondary Actions: Scroll Up, Scroll Down
+			38 text 内置连接器与工具审批
+			39 disclosure triangle Description: BioMart, Value: off
+			40 disclosure triangle Description: bioRxiv, Value: off
+			41 disclosure triangle Description: Cancer Models, Value: off
+			42 disclosure triangle Description: CellGuide, Value: off
+			43 disclosure triangle Description: ChEMBL, Value: off
+			44 disclosure triangle Description: Chemistry, Value: off
+			45 disclosure triangle Description: Clinical Genomics, Value: off
+			46 disclosure triangle Description: Clinical Trials, Value: off
+			47 disclosure triangle Description: Drug Regulatory, Value: off
+			48 disclosure triangle Description: Expression, Value: off
+			49 disclosure triangle Description: Genes Ontologies, Value: off
+			50 disclosure triangle Description: Genomes, Value: off
+			51 disclosure triangle Description: Human Genetics, Value: off
+			52 disclosure triangle Description: Literature, Value: off
+			53 disclosure triangle Description: Omics Archives, Value: off
+			54 disclosure triangle Description: Protein Annotation, Value: off
+			55 disclosure triangle Description: PubMed, Value: off
+			56 disclosure triangle Description: Regulation, Value: off
+			57 disclosure triangle Description: Research Resources, Value: off
+			58 disclosure triangle Description: RNA, Value: off
+			59 disclosure triangle Description: Structures Interactions, Value: off
+			60 disclosure triangle Description: Variants, Value: off
+			61 disclosure triangle Description: ZINC, Value: off
+			62 text 自定义 MCP
+			63 button 添加命令连接
+			64 button 添加 HTTP 连接
+			65 scroll bar (settable, float) 0
+				66 value indicator (settable, float) 0
+				67 increment arrow button
+				68 decrement arrow button
+				69 increment page button
+				70 decrement page button
+	71 close button
+	72 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	73 minimize button
+	74 text Wisp Science — 原生预览
+75 menu bar
+	76 Wisp Science QA
+	77 File
+	78 Edit
+	79 View
+	80 Window
+	81 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

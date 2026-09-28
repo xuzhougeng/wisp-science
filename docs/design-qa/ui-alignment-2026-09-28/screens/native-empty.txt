@@ -1,0 +1,83 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 空会话验收
+		6 menu button 会话操作
+		7 button 会话大纲
+		8 button 分享
+		9 button 运行轨迹
+		10 button 研究归档
+		11 button 待查看
+		12 button 终端
+		13 button 切换侧面板
+		14 scroll area
+			15 button 产物 (0)
+			16 button 关闭产物 (0)
+			17 button 代理
+			18 button 关闭代理
+			19 button 文件
+			20 button 关闭文件
+			21 button (selected) 环境
+			22 button 关闭环境
+			23 button 溯源 (0)
+			24 button 关闭溯源 (0)
+			25 button 侧聊
+			26 button 关闭侧聊
+		27 menu button 添加面板
+		28 button 刷新
+		29 button 关闭面板
+		30 button 新建会话
+		31 text field (settable) 筛选名称
+		32 button 搜索, ⌘K
+		33 button Description: 新建分组, ID: new-session-group
+		34 button Description: 文件, ID: sidebar-files
+		35 button Description: 研究历程, ID: sidebar-journey
+		36 button Description: 论文证据, ID: sidebar-publication
+		37 button Description: 收藏, ID: sidebar-library
+		38 text 会话
+		39 button 选择
+		40 button 排序与分组
+		41 scroll area
+			42 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				43 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				44 button Description: HTTP 富文本对比, ID: session-parity-http-rich
+				45 button (selected) Description: 空会话验收, ID: session-toolbar-qa-empty
+				46 button Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+		47 scroll area
+			48 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				49 text 向 Wisp Science 提问，开始这个会话。
+		50 button Description: 能力, ID: sidebar-capabilities
+		51 button Description: 反馈问题, ID: sidebar-feedback
+		52 scroll area
+			53 text entry area (settable) 消息输入框
+		54 button 设置
+		55 button Description: 对话附件, Help: 添加到消息, ID: composer-attach
+		56 menu button QA HTTP (offline)
+		57 button (disabled) 发送
+		58 text Help: /private/tmp/wisp-ui-alignment-20260928/native/workspaces/toolbar-qa, Value: /private/tmp/wisp-ui-alignment-20260928/native/workspaces/toolbar-qa Enter 发送 · Shift+Enter 换行
+		59 checkbox Description: 跟随最新回复, Value: 1
+		60 scroll area
+			61 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				62 text Local
+				63 text local · 尚未探测
+				64 button 探测
+				65 button 终端
+				66 button 运行时
+				67 button 任务列表
+				68 disclosure triangle Description: 机器信息, Value: off
+	69 close button
+	70 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	71 minimize button
+	72 text Wisp Science — 原生预览
+73 menu bar
+	74 Wisp Science QA
+	75 File
+	76 Edit
+	77 View
+	78 Window
+	79 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

@@ -1,0 +1,138 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 container Search
+				4 text field (settable) 搜索对话、项目或文件…
+				5 text 项目
+				6 button 原生工具栏验收 ⌘↵ 新窗口打开
+				7 button CUA WebView 文件夹导入 REMOTE phase2: adopted via explicit confirmation
+				8 button CUA 历史恢复验收
+				9 button Workspace
+				10 button 可靠性阶段2验收 Legacy import and deterministic 35-turn fixture
+				11 button 可靠性阶段2验收 Legacy import and deterministic 35-turn fixture
+				12 button 跨项目验收
+				13 text 文件
+				14 button counts.csv 原生工具栏验收
+				15 button report.md 原生工具栏验收
+				16 button counts.csv 跨项目验收
+				17 button report.md 跨项目验收
+				18 text 对话
+				19 button ACP 富文本对比 原生工具栏验收
+				20 button HTTP 富文本对比 原生工具栏验收
+				21 button 空会话验收 原生工具栏验收
+				22 button 35 轮工具栏验收 原生工具栏验收
+				23 button 快速粘贴验收 02：确认新文本 可靠性阶段2验收
+				24 button 35-turn 可靠性基线 可靠性阶段2验收
+				25 button 旧格式导入验收 可靠性阶段2验收
+				26 button hello CUA ACP CUA 历史恢复验收
+				27 button QA ACP protocol smoke CUA 历史恢复验收
+				28 button 空会话验收 跨项目验收
+				29 button 35 轮工具栏验收 跨项目验收
+				30 button CUA 合成历史问题：请检查样本。 CUA 历史恢复验收
+				31 text 命令
+				32 button 随手一聊
+				33 button 新建项目
+				34 button 检查更新
+				35 button 去 GitHub 点个 Star
+				36 button 项目设置
+				37 button 技能
+				38 text ↑↓
+				39 text 切换
+				40 text ↵
+				41 text 打开
+				42 text ⇧↵
+				43 text 引用
+				44 text esc
+				45 text 关闭 v1.15.0
+			46 heading Wisp Science, Value: 1
+				47 image Wisp Science
+			48 text 严谨做科研，
+			49 text Wisp Science 在身边。
+			50 button 研究日历
+			51 button 收藏库
+			52 button 搜索
+			53 button 设置
+			54 button 文档
+			55 button 随手一聊
+			56 button 导入项目
+			57 button +新建项目
+			58 heading 项目, Value: 2
+				59 text 项目
+			60 button 示例项目示例 6 个会话
+			61 button Workspace 刚刚 /private/tmp/wisp-parity-20260925-data/native/default-workspace 0 个会话 0 个产物
+			62 toggle button 星标项目并置顶, Value: off
+			63 button 项目设置
+			64 button 立即同步
+			65 button 复制设备码
+			66 button 导出项目
+			67 button 在新窗口打开
+			68 button 删除
+			69 button 可靠性阶段2验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/phase2-reliability-20260926-v2 3 个会话 0 个产物
+			70 toggle button 星标项目并置顶, Value: off
+			71 button 项目设置
+			72 button 立即同步
+			73 button 复制设备码
+			74 button 导出项目
+			75 button 在新窗口打开
+			76 button 删除
+			77 button 可靠性阶段2验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/phase2-reliability-20260926 0 个会话 0 个产物
+			78 toggle button 星标项目并置顶, Value: off
+			79 button 项目设置
+			80 button 立即同步
+			81 button 复制设备码
+			82 button 导出项目
+			83 button 在新窗口打开
+			84 button 删除
+			85 button CUA WebView 文件夹导入 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/252be348-e105-4391-a530-68db9859102e 0 个会话 0 个产物 已保存到文件夹 · 1 天
+			86 toggle button 星标项目并置顶, Value: off
+			87 button 项目设置
+			88 button 立即同步
+			89 button 导出项目
+			90 button 在新窗口打开
+			91 button 删除
+			92 button CUA 历史恢复验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/2dd53a15-9c93-4c75-a5cb-c1694f0a6efd 3 个会话 0 个产物
+			93 toggle button 星标项目并置顶, Value: off
+			94 button 项目设置
+			95 button 立即同步
+			96 button 复制设备码
+			97 button 导出项目
+			98 button 在新窗口打开
+			99 button 删除
+			100 button 跨项目验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/toolbar-qa-other 2 个会话 2 个产物
+			101 toggle button 星标项目并置顶, Value: off
+			102 button 项目设置
+			103 button 立即同步
+			104 button 复制设备码
+			105 button 导出项目
+			106 button 在新窗口打开
+			107 button 删除
+			108 button 原生工具栏验收 2 天 /private/tmp/wisp-ui-alignment-20260928/webview/workspaces/toolbar-qa 4 个会话 2 个产物 已保存到文件夹 · 刚刚
+			109 toggle button 星标项目并置顶, Value: off
+			110 button 项目设置
+			111 button 立即同步
+			112 button 导出项目
+			113 button 在新窗口打开
+			114 button 删除
+			115 heading 最近会话, Value: 2
+				116 text 最近会话
+			117 button 快速粘贴验收 02：确认新文本 已完成
+			118 button 35-turn 可靠性基线 已完成
+			119 button 旧格式导入验收 已完成
+			120 button hello CUA ACP 已完成
+			121 button QA ACP protocol smoke 已完成
+			122 text 如果 Wisp 对你的工作有帮助，欢迎到
+			123 button GitHub 点个 Star ★
+	124 close button
+	125 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	126 minimize button
+	127 text wisp science
+128 menu bar
+	129 Wisp WebView QA
+	130 文件
+	131 编辑
+	132 视图
+	133 窗口
+	134 帮助
+
+The focused UI element is 4 text field (settable) 搜索对话、项目或文件…

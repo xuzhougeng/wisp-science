@@ -1,0 +1,74 @@
+Window: "wisp science", App: Wisp WebView QA.
+0 standard window wisp science, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science, URL: tauri://localhost
+			3 container 研究日历
+				4 button 返回首页
+				5 container
+					6 heading 研究日历, Value: 2
+						7 text 研究日历
+					8 text 把每个项目的探索，放回同一条时间线。
+					9 button 刷新日历
+				10 container 日历项目范围
+					11 toggle button 所有项目, Value: on
+					12 toggle button Workspace, Value: off
+					13 toggle button 可靠性阶段2验收, Value: off
+					14 toggle button 可靠性阶段2验收, Value: off
+					15 toggle button CUA WebView 文件夹导入, Value: off
+					16 toggle button CUA 历史恢复验收, Value: off
+					17 toggle button 跨项目验收, Value: off
+					18 toggle button 原生工具栏验收, Value: off
+				19 text 2026年 9月
+				20 button 上个月
+				21 button 下个月
+				22 button 今天
+				23 text 所有项目 一 二 三 四 五 六 日
+				24 toggle button 2026-09-01, Value: off
+				25 toggle button 2026-09-02, Value: off
+				26 toggle button 2026-09-03, Value: off
+				27 toggle button 2026-09-04, Value: off
+				28 toggle button 2026-09-05, Value: off
+				29 toggle button 2026-09-06, Value: off
+				30 toggle button 2026-09-07, Value: off
+				31 toggle button 2026-09-08, Value: off
+				32 toggle button 2026-09-09, Value: off
+				33 toggle button 2026-09-10, Value: off
+				34 toggle button 2026-09-11, Value: off
+				35 toggle button 2026-09-12, Value: off
+				36 toggle button 2026-09-13, Value: off
+				37 toggle button 2026-09-14, Value: off
+				38 toggle button 2026-09-15, Value: off
+				39 toggle button 2026-09-16, Value: off
+				40 toggle button 2026-09-17, Value: off
+				41 toggle button 2026-09-18, Value: off
+				42 toggle button 2026-09-19, Value: off
+				43 toggle button 2026-09-20, Value: off
+				44 toggle button 2026-09-21, Value: off
+				45 toggle button 2026-09-22, Value: off
+				46 toggle button 2026-09-23, Value: off
+				47 toggle button 2026-09-24, Value: off
+				48 toggle button 2026-09-25, Value: off
+				49 toggle button 2026-09-26, Value: off
+				50 toggle button 2026-09-27, Value: off
+				51 toggle button 2026-09-28, Value: on
+				52 toggle button 2026-09-29, Value: off
+				53 toggle button 2026-09-30, Value: off
+				54 container
+					55 heading 2026-09-28 · 今天, Value: 3
+						56 text 2026-09-28  · 今天
+					57 text 当天没有已记录的研究活动。
+				58 container
+					59 text 本月 · 5 个活跃项目 · 3 个活动日 仅展示主线已记录活动 · 日期按本地时区
+	60 close button
+	61 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	62 minimize button
+	63 text wisp science
+64 menu bar
+	65 Wisp WebView QA
+	66 文件
+	67 编辑
+	68 视图
+	69 窗口
+	70 帮助
+
+The focused UI element is 2 HTML content Description: wisp science, URL: tauri://localhost

@@ -1,0 +1,23 @@
+Window: "", App: Wisp Science QA.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 研究历程
+		3 button 关闭
+		4 text field (settable) 搜索研究记录
+		5 scroll area Secondary Actions: Scroll Up, Scroll Down
+			6 text HTTP 富文本对比 ACP 富文本对比 report.md counts.csv 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收 35 轮工具栏验收
+			7 scroll bar (settable, float) 0
+				8 value indicator (settable, float) 0
+				9 increment arrow button
+				10 decrement arrow button
+				11 increment page button
+				12 decrement page button
+13 menu bar
+	14 Wisp Science QA
+	15 File
+	16 Edit
+	17 View
+	18 Window
+	19 Help
+
+The focused UI element is 3 button 关闭

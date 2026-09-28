@@ -9,6 +9,18 @@ struct NativeTranscriptArtifact: Identifiable, Equatable {
     let title: String
     let source: String
 
+    var tableDimensions: (rows: Int, columns: Int)? {
+        guard kind == "table", let parsed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) else { return nil }
+        var rows: Set<Int> = []; var columns = 0
+        for run in parsed.runs {
+            for intent in run.presentationIntent?.components ?? [] {
+                if case .table(let cells) = intent.kind { columns = cells.count }
+                if case .tableRow(let row) = intent.kind { rows.insert(row) }
+            }
+        }
+        return (rows.count, columns)
+    }
+
     static func collect(_ items: [ConversationItem]) -> [Self] {
         var result: [Self] = []
         var counts: [String: Int] = [:]

@@ -1,0 +1,76 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 scroll area Secondary Actions: Scroll Up, Scroll Down
+			3 button 返回应用
+			4 text 设置
+			5 text field (settable) 搜索设置
+			6 text 基础偏好
+			7 button Description: 常规, ID: native-settings-nav-general
+			8 button (selected) Description: 对话, ID: native-settings-nav-session
+			9 button Description: 外观, ID: native-settings-nav-appearance
+			10 button Description: 宠物, ID: native-settings-nav-pet
+			11 text AI 配置
+			12 button Description: 模型, ID: native-settings-nav-models
+			13 button Description: 快捷动作, ID: native-settings-nav-quick-actions
+			14 button Description: 工作流, ID: native-settings-nav-workflows
+			15 button Description: 专家, ID: native-settings-nav-specialists
+			16 button Description: 记忆, ID: native-settings-nav-memory
+			17 text 工具与连接
+			18 button Description: 技能, ID: native-settings-nav-skills
+			19 button Description: 插件, ID: native-settings-nav-plugins
+			20 button Description: 浏览器, ID: native-settings-nav-browser
+			21 button Description: 连接, ID: native-settings-nav-connections
+			22 button Description: 远程接入, ID: native-settings-nav-channels
+			23 text 系统与资源
+			24 button Description: 凭据, ID: native-settings-nav-credentials
+			25 button Description: 权限, ID: native-settings-nav-permissions
+			26 button Description: 环境, ID: native-settings-nav-environments
+			27 button Description: 存储, ID: native-settings-nav-storage
+			28 button Description: 用量, ID: native-settings-nav-usage
+			29 scroll bar (settable, float) 0
+				30 value indicator (settable, float) 0
+				31 increment arrow button
+				32 decrement arrow button
+				33 increment page button
+				34 decrement page button
+		35 text 对话
+		36 button 重新载入
+		37 scroll area Secondary Actions: Scroll Up, Scroll Down
+			38 text 运行限制 这些设置对所有项目生效；运行限制从下一轮开始应用。保存会提交通用、对话、桌宠和同步的全部设置草稿。 每轮最大 Agent 迭代次数 限制单轮对话中的模型/工具循环次数；达到上限后额外生成一次无工具收尾总结。默认 100，0 表示不限制。
+			39 text field (settable) Description: 每轮最大 Agent 迭代次数, Value: 100, ID: native-setting-max_iter
+			40 text 截断后自动继续
+			41 toggle button Description: auto_continue, Value: off
+			42 text 模型达到输出 token 上限时，自动继续当前任务。 每轮自动继续次数上限 默认 10 次；达到上限后恢复现有的手动「继续执行」操作。
+			43 text field (disabled) Description: 自动继续次数上限, Value: 10, ID: native-setting-auto_continue_limit
+			44 text 上下文管理 自动压缩过长对话 默认开启。每次模型调用前，当预估上下文达到 80% 时，Wisp 会先归档完整对话，再自动压缩。该路径先收工具输出，只有窗口仍然不够时才写语义摘要。
+			45 toggle button Description: auto_compact, Value: on
+			46 text 切换模型时自动语义压缩
+			47 toggle button Description: semantic_compact_on_model_switch, Value: off
+			48 text 默认关闭。更换本对话模型后，把较早轮次折成摘要 checkpoint，让新模型从摘要而不是全量历史开始。 空闲多久后提示语义压缩 默认 24 小时。重新打开空闲这么久的对话时，询问是否写语义摘要。0 表示不提示。
+			49 text field (settable) Description: 空闲多久后提示语义压缩, Value: 24, ID: native-setting-semantic_compact_idle_hours
+			50 text 后续交互 生成后续问题
+			51 toggle button Description: follow_up_questions, Value: on
+			52 text 每次回复后，使用当前对话模型生成 3 个后续问题。 以下开关立即保存，只影响新会话的默认值；取消不会撤销。
+			53 checkbox Description: 自动审核（新会话默认）, Value: 0
+			54 button 取消
+			55 button 保存
+			56 scroll bar (settable, float) 1
+				57 value indicator (settable, float) 1
+				58 increment arrow button
+				59 decrement arrow button
+				60 increment page button
+				61 decrement page button
+	62 close button
+	63 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	64 minimize button
+	65 text Wisp Science — 原生预览
+66 menu bar
+	67 Wisp Science QA
+	68 File
+	69 Edit
+	70 View
+	71 Window
+	72 Help
+
+The focused UI element is 49 text field (settable) Description: 空闲多久后提示语义压缩, Value: 24, ID: native-setting-semantic_compact_idle_hours
