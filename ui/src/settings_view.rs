@@ -2661,8 +2661,8 @@ pub(super) fn SettingsView(
                             <select data-testid="send-shortcut"
                                 prop:value=move || if send_with_modifier.get() { "modifier_enter" } else { "enter" }
                                 on:change=move |ev| send_with_modifier.set(dom_value(&ev) == "modifier_enter")>
-                                <option value="enter">{move || t(locale.get(), "settings.send_shortcut.enter")}</option>
-                                <option value="modifier_enter">{move || tf(
+                                <option value="enter" prop:selected=move || !send_with_modifier.get()>{move || t(locale.get(), "settings.send_shortcut.enter")}</option>
+                                <option value="modifier_enter" prop:selected=move || send_with_modifier.get()>{move || tf(
                                     locale.get(),
                                     "settings.send_shortcut.modifier_enter",
                                     &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],

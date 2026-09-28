@@ -22,6 +22,11 @@ struct NativeSettingsView: View {
         _state = StateObject(wrappedValue: model)
     }
 
+    init(model: NativeSettingsModel, projects: [ProjectSummary] = [], close: @escaping () -> Void = {}) {
+        self.projects = projects; self.close = close; self.editProject = false
+        _state = StateObject(wrappedValue: model)
+    }
+
     var body: some View {
         GeometryReader { geometry in
         HStack(spacing: 0) {
@@ -45,7 +50,7 @@ struct NativeSettingsView: View {
                     }.frame(maxWidth: 180).disabled(state.busy)
                     }
                     Button { Task { await state.load() } } label: { WispIcon(name: "refresh") }
-                        .buttonStyle(WispButtonStyle()).disabled(state.loading || state.busy).help("重新载入")
+                        .buttonStyle(WispButtonStyle()).disabled(state.loading || state.busy).help(localized("重新载入"))
                 }.padding(.horizontal, 24).padding(.vertical, 22)
                     .frame(maxWidth: state.section == .models && state.editor == nil ? 920 : 1040)
                     .overlay(alignment: .bottom) { WispDesign.color("border", scheme).frame(height: 1) }
@@ -54,7 +59,7 @@ struct NativeSettingsView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         if state.loading { HStack { ProgressView().controlSize(.small); Text(localized("正在读取设置…")).foregroundStyle(.secondary) } }
                         if let error = state.error { Text(error).foregroundStyle(.red).textSelection(.enabled).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 8)) }
-                        if let message = state.message { Text(message).foregroundStyle(WispDesign.color("clay", scheme)).accessibilityAddTraits(.updatesFrequently) }
+                        if let message = state.message { Text(localized(message)).foregroundStyle(WispDesign.color("clay", scheme)).accessibilityAddTraits(.updatesFrequently) }
                         if let editor = state.editor { NativeSettingsEditorView(model: state, editor: editor).id(editor.id) }
                         else { pane.disabled(state.busy) }
                     }.padding(24).frame(maxWidth: state.section == .models && state.editor == nil ? 920 : 1040, alignment: .leading).frame(maxWidth: .infinity)
@@ -75,11 +80,11 @@ struct NativeSettingsView: View {
         .onChange(of: state.section) { _ in state.editor = nil; state.detailSection = nil; Task { await state.load() } }
         .onChange(of: state.projectID) { _ in state.editor = nil; Task { await state.load() } }
         .background(NativeSettingsEscape(enabled: state.editor == nil && !confirmLeave && !confirmInstall) { requestClose() })
-        .confirmationDialog("放弃尚未保存的修改？", isPresented: $confirmLeave) {
+        .confirmationDialog(localized("放弃尚未保存的修改？"), isPresented: $confirmLeave) {
             Button(localized("放弃修改"), role: .destructive) { state.discardDrafts(); if changingProject { state.projectID = pendingProject; changingProject = false } else { state.leave(); close() } }
             Button(localized("继续编辑"), role: .cancel) { changingProject = false }
         }
-        .confirmationDialog("安装更新将重启桌面宿主。", isPresented: $confirmInstall) {
+        .confirmationDialog(localized("安装更新将重启桌面宿主。"), isPresented: $confirmInstall) {
             Button(localized("安装并重启")) { Task { _ = await state.run("install_update", refresh: false, success: "正在安装") } }
             Button(localized("取消"), role: .cancel) {}
         }
@@ -147,36 +152,42 @@ struct NativeSettingsView: View {
             NativeSettingsGroup(title: "工作区与交互") {
                 Text(localized("全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好；网络设置单独保存。"))
                     .font(.caption).foregroundStyle(.secondary)
+                NativePreferenceRow(title: "语言") {
+                    NativeSettingsChoice(label: localized("语言"), selection: Binding(
+                        get: { state.values["get_settings"]?["locale"].string ?? "" },
+                        set: { state.binding("get_settings", "locale").wrappedValue = .string($0) }
+                    ), choices: [("zh", "简体中文"), ("en", "English")])
+                }.disabled(state.values["get_settings"] == nil)
                 fields("get_settings", [
-                    .init(key: "locale", label: "语言", kind: .choice([("zh", "简体中文"), ("en", "English")])),
-                    .init(key: "workspace_dir", label: "工作目录", kind: .path, hint: "留空使用默认目录；下次启动生效。"),
+                    .init(key: "workspace_dir", label: "工作目录", kind: .directory, hint: "留空使用默认目录；下次启动生效。"),
                     .init(key: "resume_last_session", label: "打开工作区时继续上次对话", kind: .toggle, hint: "打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。")
                 ])
                 NativePreferenceRow(title: "发送与换行快捷键") {
                     Picker(localized("发送与换行快捷键"), selection: Binding(get: { state.values["get_appearance_prefs"]?["send_with_modifier"].bool ?? false }, set: { state.binding("get_appearance_prefs", "send_with_modifier").wrappedValue = .bool($0) })) {
                         Text(localized("Enter 发送 · Shift+Enter 换行")).tag(false)
                         Text(localized("⌘Enter 发送 · Enter 换行")).tag(true)
-                    }.labelsHidden().fixedSize().disabled(state.values["get_appearance_prefs"] == nil)
+                    }.labelsHidden().disabled(state.values["get_appearance_prefs"] == nil)
                 }
                 fields("get_appearance_prefs", [.init(key: "selection_popup_enabled", label: "选中文本快捷菜单", kind: .toggle)])
                 Divider().padding(.vertical, 8)
                 Text(localized("通知与更新")).font(WispDesign.font(size: 15, weight: .semibold))
                 fields("get_settings", [.init(key: "notifications_enabled", label: "桌面通知", kind: .toggle, hint: "窗口不在前台时，任务完成、失败或等待确认会发送系统通知。")])
                 HStack {
+                    Spacer()
                     Button(localized("取消")) { state.discardDrafts() }
-                    save {
+                    Button(localized("保存")) { Task {
                         await state.saveSettings()
                         if state.error == nil, let prefs = state.values["get_appearance_prefs"] { _ = await state.run("set_appearance_prefs", ["prefs": prefs]) }
-                    }
+                    } }.buttonStyle(NativeSettingsButtonStyle(primary: true)).disabled(state.loading || state.busy)
                 }
                 Text(localized("以下更新开关立即保存；取消不会撤销。"))
                     .font(.caption).foregroundStyle(.secondary)
                 immediateToggle("自动检查更新", read: "get_update_check_enabled", write: "set_update_check_enabled")
                 Button(localized("检查更新")) { Task { update = await state.run("check_for_updates", refresh: false, success: "检查完成") } }
                 if let update {
-                    Text(update["update_available"].bool ? "发现版本 " + update["latest_version"].string : "当前已是最新版本")
+                    Text(update["update_available"].bool ? localized("发现版本 ") + update["latest_version"].string : localized("当前已是最新版本"))
                     Text(update["notes"].string).font(.caption).textSelection(.enabled)
-                    if let url = URL(string: update["release_url"].string) { Link("查看发布说明", destination: url) }
+                    if let url = URL(string: update["release_url"].string) { Link(localized("查看发布说明"), destination: url) }
                     if update["update_available"].bool && update["install_supported"].bool {
                         if update["downloaded"].bool { Button(localized("安装桌面宿主更新…")) { confirmInstall = true } }
                         else { Button(localized("下载并验证更新")) { Task { if await state.run("native_download_update", refresh: false, success: "更新包已验证") != nil { self.update = await state.run("check_for_updates", refresh: false, success: "更新可安装") } } } }
@@ -231,17 +242,10 @@ struct NativeSettingsView: View {
 
     private var appearancePane: some View { NativeAppearanceSettings(model: state) }
 
-    private var pet: some View {
-        NativeSettingsGroup(title: "桌宠") {
-            fields("get_settings", [.init(key: "pet_enabled", label: "启用桌宠", kind: .toggle), .init(key: "pet_directory", label: "资源目录", kind: .path)])
-            save { await state.saveSettings() }
-            if let pet = state.values["get_pet"], !pet["error"].string.isEmpty { Text(pet["error"].string).foregroundStyle(.red) }
-            if let runtime = state.values["get_pet_runtime_status"] { Text("运行中 \(runtime["running"].array.count) · 等待审批 \(runtime["waiting"].array.count) · 审核中 \(runtime["reviewing"].array.count)").foregroundStyle(.secondary) }
-        }
-    }
+    private var pet: some View { NativePetSettings(model: state) }
 
     private func immediateToggle(_ label: String, read: String, write: String) -> some View {
-        Toggle(label, isOn: Binding(get: { state.values[read]?.bool ?? false }, set: { value in Task { _ = await state.run(write, ["enabled": .bool(value)]) } })).disabled(state.values[read] == nil || state.loading)
+        Toggle(localized(label), isOn: Binding(get: { state.values[read]?.bool ?? false }, set: { value in Task { _ = await state.run(write, ["enabled": .bool(value)]) } })).disabled(state.values[read] == nil || state.loading)
     }
 }
 

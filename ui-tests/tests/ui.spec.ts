@@ -571,6 +571,11 @@ test("general settings can use Ctrl+Enter to send and Enter for newline", async 
   await page.locator(".proj-card-main").first().click();
   await expect(page.locator(".composer-hint")).toContainText("Ctrl+Enter to send · Enter for newline");
 
+  await openSettingsSection(page, "General");
+  await expect(page.getByTestId("send-shortcut")).toHaveValue("modifier_enter");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-page")).toHaveCount(0);
+
   const input = composer(page);
   await input.fill("first line");
   await input.press("Enter");

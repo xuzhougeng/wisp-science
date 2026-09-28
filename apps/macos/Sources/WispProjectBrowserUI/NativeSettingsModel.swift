@@ -47,6 +47,7 @@ final class NativeSettingsModel: ObservableObject {
     @Published var modelCategory = "api"
     @Published var search = ""
     @Published var values: [String: SettingsValue] = [:]
+    @Published private(set) var readRevision = UUID()
     @Published var loading = false
     @Published var busy = false
     @Published var error: String?
@@ -90,7 +91,7 @@ final class NativeSettingsModel: ObservableObject {
                 }
             }
         }
-        if current == generation { loading = false }
+        if current == generation { loading = false; readRevision = UUID() }
     }
 
     var hasUnsavedChanges: Bool { values.contains { key, value in snapshots[key] != nil && snapshots[key] != value } }
@@ -161,7 +162,7 @@ final class NativeSettingsModel: ObservableObject {
 }
 
 struct SettingsField: Identifiable {
-    enum Kind { case text, secure, multiline, json, lines, integer, toggle, choice([(String, String)]), path, file
+    enum Kind { case text, secure, multiline, json, lines, integer, toggle, choice([(String, String)]), path, file, directory
         indirect case object([SettingsField])
         indirect case records([SettingsField]) }
     let key: String
