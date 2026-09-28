@@ -2193,6 +2193,9 @@ struct Settings {
     /// Restore the most recent conversation when a workspace opens.
     #[serde(default = "default_resume_last_session")]
     resume_last_session: bool,
+    /// Store new projects in their own folders. Existing locations are preserved.
+    #[serde(default)]
+    decentralized_project_storage: bool,
     /// Max output tokens per LLM turn. 0 = provider default.
     #[serde(default)]
     max_tokens: u64,

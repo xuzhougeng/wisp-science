@@ -404,5 +404,7 @@
   "登录 SuperGrok / X Premium+ 账号，可用范围取决于套餐。": "Sign in with a SuperGrok / X Premium+ account. Availability depends on your plan.",
   "使用 ChatGPT 账号提供的 Codex 权限；可用范围取决于套餐和工作区。": "Use the Codex access included with your ChatGPT account. Availability depends on your plan and workspace.",
   "已保存": "Saved",
-  "检测已安装的解释器，或指定可执行文件路径。": "Detect installed interpreters or choose their executable paths."
+  "检测已安装的解释器，或指定可执行文件路径。": "Detect installed interpreters or choose their executable paths.",
+  "项目去中心化存储": "Decentralized project storage",
+  "开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。": "Save new projects in their own folders. When off, new projects share the app database. Existing projects stay where they are. Off by default; upgrades from v1.15.0 keep it on."
 }

@@ -1611,7 +1611,10 @@ impl Store {
             .await;
         drop(connection);
         result.context("could not import project metadata")?;
-        if self.registry.is_some() && self.project_scope.is_none() {
+        if self.registry.is_some()
+            && self.project_scope.is_none()
+            && self.decentralized_project_storage().await?
+        {
             self.migrate_project_storage(project_id).await?;
         }
         Ok(())

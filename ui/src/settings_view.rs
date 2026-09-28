@@ -2647,6 +2647,18 @@ pub(super) fn SettingsView(
                         </label>
                         <div class="appearance-config-row">
                             <div>
+                                <strong id="general-decentralized-storage-label">{move || t(locale.get(), "settings.decentralized_project_storage")}</strong>
+                                <span>{move || t(locale.get(), "settings.decentralized_project_storage_hint")}</span>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="decentralized-project-storage" aria-labelledby="general-decentralized-storage-label"
+                                    prop:checked=move || settings.get().decentralized_project_storage
+                                    on:change=move |ev| settings.update(|current| current.decentralized_project_storage = event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
+                        <div class="appearance-config-row">
+                            <div>
                                 <strong id="general-resume-last-session-label">{move || t(locale.get(), "settings.resume_last_session")}</strong>
                                 <span>{move || t(locale.get(), "settings.resume_last_session_hint")}</span>
                             </div>

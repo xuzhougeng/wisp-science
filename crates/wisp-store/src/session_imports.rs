@@ -136,7 +136,10 @@ impl Store {
             frame_ids.push(frame_id);
         }
         tx.commit().await?;
-        if self.registry.is_some() && self.project_scope.is_none() {
+        if self.registry.is_some()
+            && self.project_scope.is_none()
+            && self.decentralized_project_storage().await?
+        {
             self.migrate_project_storage(project_id).await?;
         }
         Ok(frame_ids)

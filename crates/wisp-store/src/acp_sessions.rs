@@ -407,6 +407,10 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("application.sqlite");
         let store = Store::open_application(&path).await.unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
         for project in ["p", "q"] {
             let workspace = temporary.path().join(project);
             std::fs::create_dir(&workspace).unwrap();

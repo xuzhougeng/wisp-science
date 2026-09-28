@@ -526,6 +526,10 @@ mod tests {
         let store = wisp_store::Store::open_application(&source.workspace("owned.sqlite"))
             .await
             .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
         let id = crate::project_commands::create_project_record(
             &store,
             serde_json::from_value(input(workspace.to_str().unwrap(), false)).unwrap(),

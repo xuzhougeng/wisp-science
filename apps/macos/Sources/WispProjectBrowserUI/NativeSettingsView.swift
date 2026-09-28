@@ -160,6 +160,7 @@ struct NativeSettingsView: View {
                 }.disabled(state.values["get_settings"] == nil)
                 fields("get_settings", [
                     .init(key: "workspace_dir", label: "工作目录", kind: .directory, hint: "留空使用默认目录；下次启动生效。"),
+                    .init(key: "decentralized_project_storage", label: "项目去中心化存储", kind: .toggle, hint: "开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"),
                     .init(key: "resume_last_session", label: "打开工作区时继续上次对话", kind: .toggle, hint: "打开工作区时恢复最近有过对话的会话，不会进入仅改了名、还没发过消息的草稿。")
                 ])
                 NativePreferenceRow(title: "发送与换行快捷键") {

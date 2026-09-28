@@ -1,5 +1,6 @@
-//! Project databases are authoritative. The application database only registers
-//! their locations; it never serves as a fallback when a registered file is lost.
+//! Registered project databases are authoritative; the application database
+//! never serves as their fallback. Centralized projects keep their records in
+//! the application database alongside those registrations.
 use super::Store;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -226,8 +227,18 @@ impl Store {
     /// desktop setup before the window can render or process Windows messages.
     pub async fn open_application(path: &Path) -> Result<Self> {
         let mut store = Self::open(path).await?;
+        // v1.15 created this table even with no projects or failed migrations.
+        // Detect it before creating it, and persist the inferred preference in
+        // the same transaction so a crash cannot turn a fresh install into v1.15.
+        let mut tx = store.begin_write().await?;
+        let used_project_storage: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_locations')",
+        ).fetch_one(&mut *tx).await?;
+        sqlx::query("INSERT INTO settings(key,value) VALUES('decentralized_project_storage',?) ON CONFLICT(key) DO NOTHING")
+            .bind(used_project_storage.to_string()).execute(&mut *tx).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
-            .execute(&store.pool).await?;
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
         // Memory content is application-wide; its optional source is now a
         // cross-database reference and cannot be a SQLite foreign key.
         if !sqlx::query("PRAGMA foreign_key_list(global_memories)")
@@ -264,6 +275,16 @@ impl Store {
             }
         }
         Ok(store)
+    }
+
+    /// Preference for newly created/imported records. Existing registered
+    /// databases always retain their authoritative routing, even when disabled.
+    pub async fn decentralized_project_storage(&self) -> Result<bool> {
+        Ok(self
+            .get_setting("decentralized_project_storage")
+            .await?
+            .as_deref()
+            == Some("true"))
     }
 
     pub(super) async fn enable_project_registry(&mut self, read_only: bool) -> Result<()> {
@@ -797,6 +818,148 @@ async fn rebase_workspace_paths(pool: &SqlitePool, old: &str, workspace: &Path) 
 mod tests {
     use super::*;
 
+    async fn open_portable_application(path: &Path) -> Result<Store> {
+        let store = Store::open_application(path).await?;
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await?;
+        Ok(store)
+    }
+
+    #[tokio::test]
+    async fn storage_preference_defaults_follow_upgrade_origin_and_persist() {
+        for from_v115 in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("global.sqlite");
+            let legacy = Store::open(&path).await.unwrap();
+            if from_v115 {
+                // Empty registry also identifies a v1.15 install whose projects
+                // were never migrated (or whose migration failed).
+                sqlx::query("CREATE TABLE project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
+                    .execute(&legacy.pool).await.unwrap();
+            }
+            legacy.pool.close().await;
+            for _ in 0..2 {
+                let store = Store::open_application(&path).await.unwrap();
+                assert_eq!(
+                    store.decentralized_project_storage().await.unwrap(),
+                    from_v115
+                );
+                store.pool.close().await;
+            }
+            let store = Store::open_application(&path).await.unwrap();
+            store
+                .set_setting("decentralized_project_storage", &(!from_v115).to_string())
+                .await
+                .unwrap();
+            store.pool.close().await;
+            let reopened = Store::open_application(&path).await.unwrap();
+            assert_eq!(
+                reopened.decentralized_project_storage().await.unwrap(),
+                !from_v115
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn switching_storage_only_changes_new_projects_and_preserves_history() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let store = Store::open_application(&path).await.unwrap();
+        assert!(!store.decentralized_project_storage().await.unwrap());
+        for (id, enabled) in [
+            ("central", false),
+            ("portable", true),
+            ("central-again", false),
+        ] {
+            store
+                .set_setting("decentralized_project_storage", &enabled.to_string())
+                .await
+                .unwrap();
+            let workspace = root.path().join(id);
+            store
+                .create_project(id, id, workspace.to_str().unwrap())
+                .await
+                .unwrap();
+            store.create_frame(id, id, "agent", "model").await.unwrap();
+            store
+                .append_message(id, 1, &wisp_llm::Message::user("retained history"))
+                .await
+                .unwrap();
+            assert_eq!(workspace.join(PROJECT_DATABASE).exists(), enabled);
+        }
+        // Reopening while disabled must still route portable history and writes.
+        let reopened = Store::open_application(&path).await.unwrap();
+        for id in ["central", "portable", "central-again"] {
+            assert_eq!(reopened.message_count(id).await.unwrap(), 1);
+            reopened
+                .append_message(id, 2, &wisp_llm::Message::user("after switch"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages")
+                .fetch_one(&reopened.pool)
+                .await
+                .unwrap(),
+            4
+        );
+        let local = Store::open_read_only(&root.path().join("portable").join(PROJECT_DATABASE))
+            .await
+            .unwrap();
+        assert_eq!(local.message_count("portable").await.unwrap(), 2);
+        let archive = root.path().join("export.sqlite");
+        reopened
+            .export_project_database("central", &archive)
+            .await
+            .unwrap();
+        let imported = Store::open_application(&root.path().join("import.sqlite"))
+            .await
+            .unwrap();
+        let imported_root = root.path().join("imported");
+        std::fs::create_dir_all(&imported_root).unwrap();
+        imported
+            .import_project_database(&archive, "central", &imported_root)
+            .await
+            .unwrap();
+        assert_eq!(imported.message_count("central").await.unwrap(), 2);
+        assert!(!imported_root.join(PROJECT_DATABASE).exists());
+    }
+
+    #[tokio::test]
+    async fn recovered_workspace_import_respects_storage_preference() {
+        for enabled in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let store = Store::open_application(&root.path().join("global.sqlite"))
+                .await
+                .unwrap();
+            store
+                .set_setting("decentralized_project_storage", &enabled.to_string())
+                .await
+                .unwrap();
+            let workspace = root.path().join("recovered");
+            std::fs::create_dir_all(&workspace).unwrap();
+            let frames = store
+                .create_recovered_workspace_project(
+                    "p",
+                    "Recovered",
+                    workspace.to_str().unwrap(),
+                    "model",
+                    &[crate::RecoveredWorkspaceSession {
+                        source_session_id: "source".into(),
+                        source_path: "archive.json".into(),
+                        messages: vec![wisp_llm::Message::user("recovered history")],
+                        created_at: 1,
+                        updated_at: 2,
+                    }],
+                )
+                .await
+                .unwrap();
+            assert_eq!(store.message_count(&frames[0]).await.unwrap(), 1);
+            assert_eq!(workspace.join(PROJECT_DATABASE).exists(), enabled);
+        }
+    }
+
     #[tokio::test]
     async fn startup_and_default_project_upsert_leave_legacy_history_in_place() {
         let root = tempfile::tempdir().unwrap();
@@ -884,7 +1047,7 @@ mod tests {
             .unwrap();
         legacy.pool.close().await;
 
-        let store = Store::open_application(&path).await.unwrap();
+        let store = open_portable_application(&path).await.unwrap();
         let workspace = root.path().join("new");
         store
             .create_project("new", "New", workspace.to_str().unwrap())
@@ -926,7 +1089,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("global.sqlite");
         let workspace = root.path().join("workspace");
-        let store = Store::open_application(&path).await.unwrap();
+        let store = open_portable_application(&path).await.unwrap();
         // Fail after the prepared database is published but before the global
         // project and location transaction commits.
         sqlx::query("CREATE TRIGGER fail_project_location BEFORE INSERT ON project_locations BEGIN SELECT RAISE(ABORT, 'simulated publication failure'); END")
@@ -946,7 +1109,7 @@ mod tests {
             .unwrap();
         store.pool.close().await;
 
-        let reopened = Store::open_application(&path).await.unwrap();
+        let reopened = open_portable_application(&path).await.unwrap();
         assert!(reopened.list_projects().await.unwrap().is_empty());
         assert!(marker.exists());
         reopened
@@ -1002,7 +1165,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
-        let store = Store::open_application(&root.path().join("global.sqlite"))
+        let store = open_portable_application(&root.path().join("global.sqlite"))
             .await
             .unwrap();
         store
@@ -1116,7 +1279,7 @@ mod tests {
             .await
             .unwrap();
         legacy.pool.close().await;
-        let migrated = Store::open_application(&path).await.unwrap();
+        let migrated = open_portable_application(&path).await.unwrap();
         migrated.migrate_project_storage("p").await.unwrap();
         migrated.set_project_starred("p", false).await.unwrap();
         assert!(!migrated.starred_project_ids().await.unwrap().contains("p"));
@@ -1177,7 +1340,7 @@ mod tests {
             .await
             .unwrap();
         std::fs::write(workspace.join(PROJECT_DATABASE), b"unknown existing file").unwrap();
-        let deferred = Store::open_application(&path).await.unwrap();
+        let deferred = open_portable_application(&path).await.unwrap();
         assert!(deferred.migrate_project_storage("p").await.is_err());
         assert_eq!(deferred.message_count("f").await.unwrap(), 1);
         assert_eq!(
@@ -1227,7 +1390,7 @@ mod tests {
         };
         let marker_path = workspace.join(".wisp/storage-migration.json");
         std::fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
-        let store = Store::open_application(&path).await.unwrap();
+        let store = open_portable_application(&path).await.unwrap();
         assert_eq!(store.message_count("f").await.unwrap(), 1);
         // Restart serves the newer legacy records without retrying a large copy.
         assert!(marker_path.exists());
@@ -1236,7 +1399,7 @@ mod tests {
         assert!(!marker_path.exists());
         std::fs::remove_file(workspace.join(PROJECT_METADATA)).unwrap();
         std::fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
-        let reopened = Store::open_application(&path).await.unwrap();
+        let reopened = open_portable_application(&path).await.unwrap();
         assert_eq!(reopened.message_count("f").await.unwrap(), 1);
         assert!(workspace.join(PROJECT_METADATA).exists());
         assert!(!marker_path.exists());
@@ -1246,7 +1409,7 @@ mod tests {
     async fn independent_projects_support_concurrent_writes_search_copy_and_native_reads() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("global.sqlite");
-        let store = Store::open_application(&path).await.unwrap();
+        let store = open_portable_application(&path).await.unwrap();
         for id in ["a", "b"] {
             store
                 .create_project(id, id, root.path().join(id).to_str().unwrap())
@@ -1336,7 +1499,7 @@ mod tests {
     #[tokio::test]
     async fn missing_registered_database_never_creates_a_blank_replacement() {
         let root = tempfile::tempdir().unwrap();
-        let store = Store::open_application(&root.path().join("global.sqlite"))
+        let store = open_portable_application(&root.path().join("global.sqlite"))
             .await
             .unwrap();
         let workspace = root.path().join("workspace");
@@ -1363,7 +1526,7 @@ mod tests {
     #[tokio::test]
     async fn export_import_and_sync_target_the_live_project_database() {
         let root = tempfile::tempdir().unwrap();
-        let source = Store::open_application(&root.path().join("source.sqlite"))
+        let source = open_portable_application(&root.path().join("source.sqlite"))
             .await
             .unwrap();
         source
@@ -1382,7 +1545,7 @@ mod tests {
         source.export_project_database("p", &archive).await.unwrap();
         let destination = root.path().join("target");
         std::fs::create_dir_all(&destination).unwrap();
-        let target = Store::open_application(&root.path().join("target.sqlite"))
+        let target = open_portable_application(&root.path().join("target.sqlite"))
             .await
             .unwrap();
         target

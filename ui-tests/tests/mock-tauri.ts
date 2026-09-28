@@ -179,6 +179,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   const mockOtherExplorationSession = query.get("mockOtherExplorationSession") === "1";
   const mockBranchFlow = query.get("mockBranches") === "1";
   const mockHistoricalExploration = query.get("mockHistoricalExploration") === "1";
+  let mockDecentralizedStorage = query.get("mockDecentralizedStorage") === "1";
   let mockLocale = query.get("mockLocale") === "zh" ? "zh" : "en";
   let mockNetworkSettings = {
     model_proxy_url: query.get("mockLegacyProxy") ?? "",
@@ -2869,6 +2870,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               auto_continue_limit: 10,
               follow_up_questions: true,
               resume_last_session: true,
+              decentralized_project_storage: mockDecentralizedStorage,
               max_tokens: 4096,
               reasoning_effort: "",
               supports_vision: true,
@@ -4826,6 +4828,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockPetEnabled = Boolean(next.pet_enabled);
             mockPetDirectory = String(next.pet_directory ?? "");
             mockLocale = String(next.locale ?? mockLocale);
+            mockDecentralizedStorage = Boolean(next.decentralized_project_storage ?? mockDecentralizedStorage);
             (window as any).__lastSetSettings = next;
             return null;
           }
@@ -6477,6 +6480,7 @@ export function parallelMock(): void {
             auto_compact: true,
             follow_up_questions: true,
             resume_last_session: true,
+            decentralized_project_storage: false,
             supports_vision: true,
             sync_backend: "relay",
             sync_relay_url: "https://relay.example.test",

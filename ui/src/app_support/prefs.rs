@@ -253,6 +253,7 @@ pub(crate) struct AppPrefsPatch {
     pub auto_continue_limit: Option<u64>,
     pub follow_up_questions: Option<bool>,
     pub resume_last_session: Option<bool>,
+    pub decentralized_project_storage: Option<bool>,
     pub notifications_enabled: Option<bool>,
 }
 
@@ -330,6 +331,9 @@ pub(crate) fn parse_app_prefs_payload(payload: &serde_json::Value) -> AppPrefsPa
             .and_then(|value| value.as_u64()),
         follow_up_questions: payload
             .get("follow_up_questions")
+            .and_then(|value| value.as_bool()),
+        decentralized_project_storage: payload
+            .get("decentralized_project_storage")
             .and_then(|value| value.as_bool()),
         resume_last_session: payload
             .get("resume_last_session")
@@ -416,6 +420,9 @@ pub(crate) fn apply_prefs_patch(
         }
         if let Some(value) = patch.follow_up_questions {
             cfg.follow_up_questions = value;
+        }
+        if let Some(value) = patch.decentralized_project_storage {
+            cfg.decentralized_project_storage = value;
         }
         if let Some(value) = patch.resume_last_session {
             cfg.resume_last_session = value;
@@ -859,13 +866,15 @@ mod app_prefs_payload_tests {
             "ui_font_size": 18,
             "theme": "dark",
             "locale": "zh",
-            "auto_compact": false
+            "auto_compact": false,
+            "decentralized_project_storage": true
         });
         let patch = parse_app_prefs_payload(&payload);
         assert_eq!(patch.ui_font_size, Some(18));
         assert_eq!(patch.theme.as_deref(), Some("dark"));
         assert_eq!(patch.locale.as_deref(), Some("zh"));
         assert_eq!(patch.auto_compact, Some(false));
+        assert_eq!(patch.decentralized_project_storage, Some(true));
         assert_eq!(patch.code_font_size, None);
         assert_eq!(patch.custom_css, None);
     }

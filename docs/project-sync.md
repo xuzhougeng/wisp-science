@@ -18,15 +18,20 @@ Each revision contains:
 - an encrypted workspace manifest using `/`-separated relative paths; and
 - encrypted content-addressed blobs for changed workspace files.
 
-Project-owned storage does not change this revision protocol. Snapshots are
-exported from the live `.wisp/project.sqlite`, and pulls replace that project's
-rows. The workspace scanner excludes the live database, its WAL/SHM/journal files
+**Settings → General → Decentralized project storage** controls new projects.
+It is off for fresh installs and direct upgrades from v1.14.0, and on for
+installations that have run v1.15.0. Saved choices survive subsequent upgrades.
+Switching it does not move existing project records: centralized projects use
+the app database, while independent projects keep their own databases.
+
+Both storage modes use the same revision protocol. Snapshots are exported from
+the project's current database, and pulls replace that project's rows. The workspace scanner excludes the live database, its WAL/SHM/journal files
 and project identity metadata; copying those as ordinary blobs would produce
 inconsistent database copies. Device sync configuration stays in the application
 database. A pull also commits a pending cursor with the project rows so an
 interrupted device-cursor update can recover the existing workspace journal.
 
-Project directories are now self-contained, but a cloud-drive client cannot
+With decentralized storage, project directories are self-contained, but a cloud-drive client cannot
 copy an open SQLite database consistently. Close Wisp before copying a live
 project directory, use **Sync now** / project export, or keep the project folder
 in a cloud drive with the mode below.
@@ -35,7 +40,8 @@ in a cloud drive with the mode below.
 
 When the whole project folder lives in Nutstore, Baidu Netdisk, OneDrive,
 iCloud Drive or Dropbox, open **Project Settings** and press **Save safely for
-cloud-drive sync**. Enable it while Wisp is closed on other devices. Wisp then:
+cloud-drive sync**. This explicitly migrates a centralized project too, regardless
+of the General setting. Enable it while Wisp is closed on other devices. Wisp then:
 
 - moves the live database out of the folder into this device's application
   data (`project-cache/`), where WAL writes never reach the drive client;

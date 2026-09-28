@@ -23,6 +23,7 @@ impl Store {
                 "This is an existing project folder; import it instead"
             );
         }
+        let decentralized = self.decentralized_project_storage().await?;
         let now = chrono::Utc::now().timestamp();
         let mut tx = self.begin_write().await?;
         let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
@@ -35,7 +36,7 @@ impl Store {
         )
         .bind(id).bind(name).bind(workspace_dir).bind(now).bind(now)
         .execute(&mut *tx).await?;
-        if !existing && self.registry.is_some() && self.project_scope.is_none() {
+        if !existing && self.registry.is_some() && self.project_scope.is_none() && decentralized {
             Box::pin(self.prepare_project_storage(id, Some(tx))).await?;
         } else {
             // Desktop startup upserts the default project. Updating a legacy

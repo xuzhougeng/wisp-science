@@ -1663,6 +1663,10 @@ mod tests {
         let store = wisp_store::Store::open_application(&base.path().join("device.sqlite"))
             .await
             .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
         import_project_directory(&store, base.path(), &package, None)
             .await
             .unwrap();

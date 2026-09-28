@@ -29,6 +29,19 @@ private actor SettingsFake: NativeSettingsQuerying {
 }
 
 final class NativeSettingsModelTests: XCTestCase {
+    @MainActor func testProjectStoragePreferenceSavesAndReloadsBothModes() async {
+        let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: nil)
+        await model.load()
+        for enabled in [true, false] {
+            model.binding("get_settings", "decentralized_project_storage").wrappedValue = .bool(enabled)
+            await model.saveSettings()
+            let write = await client.lastWrite()
+            XCTAssertEqual(write?.1["settings"]?["decentralized_project_storage"], .bool(enabled))
+            await model.load()
+            XCTAssertEqual(model.values["get_settings"]?["decentralized_project_storage"], .bool(enabled))
+        }
+    }
+
     @MainActor func testSessionDefaultsDoNotOverwriteUnknownFieldsAndCancelRestoresDraft() async {
         let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: "project-a")
         model.section = .session; await model.load()

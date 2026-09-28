@@ -17720,3 +17720,17 @@ test("project star save failure leaves ordering and state unchanged", async ({ p
   await expect(other.getByTestId("project-card-star")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".proj-card:not(.proj-example)").first()).not.toContainText("Other project");
 });
+
+for (const initial of [false, true]) {
+  test(`general project storage preserves and saves ${initial ? "v1.15" : "centralized"} preference`, async ({ page }) => {
+    await page.goto(`/?mockDecentralizedStorage=${initial ? "1" : "0"}`);
+    await openSettingsSection(page, "General");
+    const toggle = page.getByTestId("decentralized-project-storage");
+    await expect(toggle).toBeChecked({ checked: initial });
+    await toggle.locator("..").click();
+    await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+      settings: { decentralized_project_storage: !initial },
+    });
+  });
+}

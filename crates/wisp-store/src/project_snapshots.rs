@@ -1061,6 +1061,10 @@ mod tests {
         let store = Store::open_application(&root.path().join("global.sqlite"))
             .await
             .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
         for id in ["a", "b"] {
             store
                 .create_project(id, id, root.path().join(id).to_str().unwrap())

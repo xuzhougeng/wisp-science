@@ -52,6 +52,8 @@ internal sealed partial class NativeSettingsSectionPage
         {
             Choice(Form, "语言", S(d, "locale"), [("zh", "简体中文"), ("en", "English")], v => d["locale"] = v);
             PathField(d, "workspace_dir", "工作目录（留空使用默认目录，下次启动生效）", directory: true);
+            Boolean(d, "decentralized_project_storage", "项目去中心化存储");
+            Form.Children.Add(Mute("开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"));
             Boolean(d, "resume_last_session", "恢复最近会话"); Boolean(d, "notifications_enabled", "桌面通知");
         });
         Preference("输入与选择", "get_appearance_prefs", "set_appearance_prefs", "prefs", d =>

@@ -957,3 +957,22 @@ fn project_summary_star_defaults_for_older_payloads_and_roundtrips() {
     let decoded: wisp_dto::ProjectSummary = serde_json::from_value(payload).unwrap();
     assert!(decoded.starred);
 }
+
+#[test]
+fn project_storage_setting_roundtrips_between_backend_and_ui() {
+    let baseline = serde_json::to_value(wisp_dto::Settings::default()).unwrap();
+    for enabled in [false, true] {
+        let mut payload = baseline.clone();
+        payload["decentralized_project_storage"] = json!(enabled);
+        let backend: crate::Settings = serde_json::from_value(payload).unwrap();
+        let ui: wisp_dto::Settings = roundtrip(&backend);
+        assert_eq!(ui.decentralized_project_storage, enabled);
+    }
+    let mut legacy = baseline;
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("decentralized_project_storage");
+    let ui: wisp_dto::Settings = serde_json::from_value(legacy).unwrap();
+    assert!(!ui.decentralized_project_storage);
+}

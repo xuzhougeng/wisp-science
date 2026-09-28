@@ -203,6 +203,11 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         auto_continue_limit: auto_continue_limit as u64,
         follow_up_questions,
         resume_last_session,
+        decentralized_project_storage: state
+            .store
+            .decentralized_project_storage()
+            .await
+            .map_err(|e| e.to_string())?,
         max_tokens,
         reasoning_effort,
         service_tier,
@@ -410,6 +415,14 @@ pub(super) async fn set_settings(
         .set_setting(
             "resume_last_session",
             &settings.resume_last_session.to_string(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting(
+            "decentralized_project_storage",
+            &settings.decentralized_project_storage.to_string(),
         )
         .await
         .map_err(|e| e.to_string())?;

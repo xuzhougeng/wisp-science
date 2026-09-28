@@ -1831,6 +1831,9 @@ pub struct Settings {
     pub follow_up_questions: bool,
     #[serde(default = "default_resume_last_session")]
     pub resume_last_session: bool,
+    /// Store new projects in their own folders. Existing locations are preserved.
+    #[serde(default)]
+    pub decentralized_project_storage: bool,
     #[serde(default)]
     pub max_tokens: u64,
     #[serde(default)]
@@ -2148,6 +2151,7 @@ impl Default for Settings {
             auto_continue_limit: default_auto_continue_limit(),
             follow_up_questions: true,
             resume_last_session: true,
+            decentralized_project_storage: false,
             max_tokens: 8192,
             reasoning_effort: String::new(),
             service_tier: String::new(),
