@@ -1,0 +1,53 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 论文证据 只读工作区
+		6 button 刷新
+		7 button 返回对话
+		8 button 新建会话
+		9 pop up button 论文, Value: RNA-seq 研究证据
+		10 button 搜索, ⌘K
+		11 pop up button 修订, Value: 初稿 v1 · 草稿
+		12 button Description: 新建分组, ID: new-session-group
+		13 button Description: 文件, ID: sidebar-files
+		14 button Description: 研究历程, ID: sidebar-journey
+		15 button Description: 论文证据, ID: sidebar-publication
+		16 button Description: 收藏, ID: sidebar-library
+		17 text 会话
+		18 button 选择
+		19 button 排序与分组
+		20 scroll area
+			21 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				22 button (selected) Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+				23 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				24 button Description: HTTP 富文本对比, ID: session-parity-http-rich
+				25 button Description: 空会话验收, ID: session-toolbar-qa-empty
+		26 button Description: 能力, ID: sidebar-capabilities
+		27 button Description: 反馈问题, ID: sidebar-feedback
+		28 button 设置
+		29 text /private/tmp/wisp-research-pages-20260928/native/workspaces/toolbar-qa
+		30 scroll area
+			31 text 论文结构
+			32 button 全部证据（1）
+			33 button 章节, 结果
+			34 button 论点, 处理改变基因表达
+		35 scroll area
+			36 text 处理改变基因表达 qa-rev-a1 的结构正文 关联证据（1）
+			37 button 产物版本, 差异表达结果 1, 已选用 · 未审阅 · 未重现
+			38 text 证据来源详情 来源 ID：1f635b58-548d-4feb-8271-69df216b89d2 证据 ID：qa-rev-a1-binding-0 修订 ID：qa-rev-a1 可见性：私有 来源快照 {"title": "差异表达表", "version_id": "1f635b58-548d-4feb-8271-69df216b89d2"}
+	39 close button
+	40 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	41 minimize button
+	42 text Wisp Science — 原生预览
+43 menu bar
+	44 Wisp Science QA
+	45 File
+	46 Edit
+	47 View
+	48 Window
+	49 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

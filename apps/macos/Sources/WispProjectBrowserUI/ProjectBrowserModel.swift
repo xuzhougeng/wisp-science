@@ -380,13 +380,30 @@ public final class ProjectBrowserModel: ObservableObject {
         }
     }
 
+    func returnToConversation() {
+        journey.dismiss()
+        publication.dismiss()
+        journeyFocus = nil
+    }
+
+    func openJourneySession(_ sessionID: String, projectID: String) async {
+        guard journey.presented, journey.projectID == projectID,
+              journey.entries.contains(where: { $0.frameID == sessionID }) else { return }
+        journey.dismiss()
+        journeyFocus = nil
+        publication.dismiss()
+        await openProject(projectID, sessionID: sessionID)
+    }
+
     func openCalendarJourney(projectID: String, day: Int64) async {
         guard calendar.presented else { return }
         guard calendar.dayGroups().contains(where: { $0.projectID == projectID }) else { return }
-        calendar.presented = false
+        let retainedSession = activeProjectID == projectID ? activeSessionID : nil
+        calendar.dismiss()
+        publication.dismiss()
         journeyFocus = JourneyFocus(projectID: projectID, day: day)
         journey.open(projectID: projectID, day: day)
-        await openProject(projectID)
+        await openProject(projectID, sessionID: retainedSession)
     }
 
     func openLibrarySource(_ item: LibraryEntry) async {

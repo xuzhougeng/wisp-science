@@ -11,6 +11,91 @@ final class NativeJourneyTests: XCTestCase {
         return calendar
     }
 
+    func testGroupsByLocalDayAndSessionIdentityWithoutDroppingArtifactVersions() {
+        var calendar = utc
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        func entry(_ id: String, _ kind: String, _ source: String, _ time: Int64) -> CalendarEntry {
+            var value = CalendarEntry(id: id, kind: kind, title: "Same title", occurredAt: time, status: "recorded", manual: false)
+            value.sourceID = source
+            return value
+        }
+        let days = NativeJourneyDay.grouped([
+            entry("m1", "session", "s1", 0), entry("m2", "session", "s1", 100),
+            entry("m3", "session", "s2", 200), entry("m4", "session", "s1", 60_000),
+            entry("v1", "artifact", "version1", 300), entry("v2", "artifact", "version2", 400),
+        ], calendar: calendar)
+        XCTAssertEqual(days.map(\.id), [57_600, -28_800])
+        XCTAssertEqual(days[0].entries.map(\.id), ["m4"])
+        XCTAssertEqual(days[1].entries.map(\.id), ["v2", "v1", "m3", "m2"])
+        XCTAssertEqual(days[1].sessionActivityCounts, ["s1": 2, "s2": 1])
+    }
+
+    @MainActor func testArtifactDetailUsesExactVersionAndIgnoresReplyAfterClosing() async throws {
+        let host = JourneyTransport()
+        let journey = NativeJourneyModel()
+        journey.open(projectID: "research-1", day: 100)
+        var page = try JourneyTransport.fixturePage()
+        var entry = page["entries"].array[0]
+        entry["kind"] = .string("artifact")
+        entry["source_id"] = .string("immutable-v1")
+        page["entries"] = .array([entry])
+        await host.setPage(page)
+        await journey.reload(host)
+        await host.suspend()
+        let task = Task { await journey.showDetail(journey.entries[0], client: host) }
+        while !(await host.isHanging()) { await Task.yield() }
+        let call = await host.lastCall()
+        XCTAssertEqual(call.command, "native_research_journey_artifact")
+        XCTAssertEqual(call.projectID, "research-1")
+        XCTAssertEqual(call.args["version_id"], .string("immutable-v1"))
+        XCTAssertTrue(journey.detailBusy)
+        journey.closeDetail()
+        await host.resume(with: .null)
+        await task.value
+        XCTAssertNil(journey.selectedEntry)
+        XCTAssertNil(journey.artifact)
+        XCTAssertNil(journey.detailError)
+        XCTAssertTrue(journey.presented)
+    }
+
+    @MainActor func testMonthNavigationClearsDayAndStaleRowsOnFailure() async throws {
+        let host = JourneyTransport()
+        let journey = NativeJourneyModel()
+        journey.calendar = utc
+        journey.open(projectID: "research-1", day: 100)
+        await journey.reload(host)
+        XCTAssertFalse(journey.entries.isEmpty)
+        await host.setMode("lost")
+        await journey.shiftMonth(-1, client: host)
+        XCTAssertNil(journey.day)
+        XCTAssertTrue(journey.entries.isEmpty)
+        XCTAssertNotNil(journey.error)
+        let call = await host.lastCall()
+        XCTAssertEqual(call.args["from"], .integer(-2678400))
+        XCTAssertEqual(call.args["until"], .integer(0))
+    }
+
+    @MainActor func testTruncatedHistoryEmptyRangeAndReadFailureAreDifferentStates() async throws {
+        let host = JourneyTransport()
+        var page = try JourneyTransport.fixturePage()
+        page["truncated"] = .bool(true)
+        await host.setPage(page)
+        let journey = NativeJourneyModel()
+        journey.open(projectID: "research-1", day: 100)
+        await journey.reload(host)
+        XCTAssertTrue(journey.truncated)
+        XCTAssertFalse(journey.entries.isEmpty)
+        await host.setMode("lost")
+        await journey.reload(host)
+        XCTAssertNotNil(journey.error)
+        await host.setMode("ok")
+        await host.setPage(.object(["entries": .array([]), "truncated": .bool(false)]))
+        await journey.reload(host)
+        XCTAssertFalse(journey.truncated)
+        XCTAssertTrue(journey.entries.isEmpty)
+        XCTAssertNil(journey.error)
+    }
+
     @MainActor func testReloadUsesTheExplicitProjectAndDoesNotRetryALostRead() async throws {
         let host = JourneyTransport()
         let journey = NativeJourneyModel()
@@ -65,7 +150,8 @@ final class NativeJourneyTests: XCTestCase {
 
     @MainActor func testImmediateEscapeClosesOnlyTheJourney() {
         _ = NSApplication.shared
-        let journey = NativeJourneyModel()
+        let model = ProjectBrowserModel(client: JourneyProjectList(), databaseURL: URL(fileURLWithPath: "/unused/escape.sqlite"), projectTransport: JourneyTransport())
+        let journey = model.journey
         journey.open(projectID: "research-1", day: nil)
         var parent = true
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280), styleMask: [.titled], backing: .buffered, defer: false)
@@ -79,7 +165,7 @@ final class NativeJourneyTests: XCTestCase {
         owner.view = parentView
         owner.install()
         defer { owner.remove() }
-        let host = NSHostingView(rootView: JourneyEscapeSheet(journey: journey))
+        let host = NSHostingView(rootView: NativeJourneyPage(model: model, journey: journey))
         root.addSubview(host)
         host.frame = root.bounds
         host.layoutSubtreeIfNeeded()
@@ -93,17 +179,11 @@ final class NativeJourneyTests: XCTestCase {
     }
 }
 
-private struct JourneyEscapeSheet: View {
-    @ObservedObject var journey: NativeJourneyModel
-    var body: some View {
-        Text("研究历程")
-            .background(NativeSettingsEscape(enabled: !journey.busy) { journey.dismiss() })
-    }
-}
-
 private actor JourneyTransport: NativeSettingsQuerying {
     private var recorded: [(command: String, args: [String: SettingsValue], projectID: String?)] = []
     private var mode = "ok"
+    private var page: SettingsValue?
+    func setPage(_ page: SettingsValue) { self.page = page }
     private var release: CheckedContinuation<SettingsValue, Error>?
     func setMode(_ mode: String) { self.mode = mode }
     func callCount() -> Int { recorded.count }
@@ -115,6 +195,7 @@ private actor JourneyTransport: NativeSettingsQuerying {
         recorded.append((command, args, projectID))
         if mode == "lost" { throw ProjectBrowserError.service("connection reset") }
         if mode == "hang" { return try await withCheckedThrowingContinuation { release = $0 } }
+        if let page { return page }
         return try Self.fixturePage()
     }
     static func fixturePage() throws -> SettingsValue {

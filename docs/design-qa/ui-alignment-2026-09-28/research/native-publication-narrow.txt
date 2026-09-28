@@ -1,0 +1,58 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 论文证据 只读工作区
+		6 button 刷新
+		7 button 返回对话
+		8 button 新建会话
+		9 pop up button 论文, Value: RNA-seq 研究证据
+		10 button 搜索, ⌘K
+		11 pop up button 修订, Value: 复核 v2 · 草稿
+		12 button Description: 新建分组, ID: new-session-group
+		13 button Description: 文件, ID: sidebar-files
+		14 button Description: 研究历程, ID: sidebar-journey
+		15 button Description: 论文证据, ID: sidebar-publication
+		16 button Description: 收藏, ID: sidebar-library
+		17 text 会话
+		18 button 选择
+		19 button 排序与分组
+		20 scroll area Secondary Actions: Scroll Up, Scroll Down
+			21 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				22 button (selected) Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+				23 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				24 button Description: HTTP 富文本对比, ID: session-parity-http-rich
+				25 button Description: 空会话验收, ID: session-toolbar-qa-empty
+			26 scroll bar (settable, float) 0
+				27 value indicator (settable, float) 0
+				28 increment arrow button
+				29 decrement arrow button
+				30 increment page button
+				31 decrement page button
+		32 button Description: 能力, ID: sidebar-capabilities
+		33 button Description: 反馈问题, ID: sidebar-feedback
+		34 button 设置
+		35 text /private/tmp/wisp-research-pages-20260928/native/workspaces/toolbar-qa
+		36 scroll area
+			37 text 论文结构
+			38 button 全部证据（2）
+			39 button 章节, 结果
+			40 button 论点, 处理改变基因表达
+			41 text RNA-seq 研究证据 只读页面验收 fixture 关联证据（2）
+			42 button 产物版本, 差异表达结果 1, 已选用 · 未审阅 · 未重现
+			43 button 产物版本, 差异表达结果 2, 已选用 · 未审阅 · 未重现
+	44 close button
+	45 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	46 minimize button
+	47 text Wisp Science — 原生预览
+48 menu bar
+	49 Wisp Science QA
+	50 File
+	51 Edit
+	52 View
+	53 Window
+	54 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

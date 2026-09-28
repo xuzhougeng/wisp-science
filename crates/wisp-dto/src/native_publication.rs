@@ -46,6 +46,12 @@ pub struct NativePublicationItem {
     pub title: String,
     pub kind: String,
     pub ordinal: i64,
+    #[serde(default)]
+    pub revision_id: String,
+    #[serde(default)]
+    pub parent_item_id: Option<String>,
+    #[serde(default)]
+    pub content: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -54,11 +60,45 @@ pub struct NativePublicationWorkspace {
     pub publication: Option<NativePublication>,
     pub revision: Option<NativePublicationRevision>,
     pub items: Vec<NativePublicationItem>,
+    #[serde(default)]
+    pub revisions: Vec<NativePublicationRevision>,
+    #[serde(default)]
+    pub bindings: Vec<crate::PublicationEvidenceBinding>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evidence_fixture_preserves_revision_item_and_source_identity() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-publication/v1/workspace-evidence.json"
+        ))
+        .unwrap();
+        let page: NativePublicationWorkspace =
+            serde_json::from_value(fixture["result"].clone()).unwrap();
+        let revision = page.revision.as_ref().unwrap();
+        assert_eq!(page.revisions, vec![revision.clone()]);
+        assert!(page
+            .items
+            .iter()
+            .all(|item| item.revision_id == revision.id));
+        let claim = &page.items[1];
+        assert_eq!(
+            claim.parent_item_id.as_deref(),
+            Some(page.items[0].id.as_str())
+        );
+        assert!(!claim.content.is_empty());
+        let binding = &page.bindings[0];
+        assert_eq!(binding.revision_id, revision.id);
+        assert_eq!(binding.item_id.as_deref(), Some(claim.id.as_str()));
+        assert_eq!(binding.source_id, "artifact-version-17");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&binding.source_snapshot_json).unwrap();
+        assert_eq!(snapshot["version"], 17);
+        assert_eq!(serde_json::to_value(&page).unwrap(), fixture["result"]);
+    }
 
     #[test]
     fn publication_fixture_requires_a_project_id() {

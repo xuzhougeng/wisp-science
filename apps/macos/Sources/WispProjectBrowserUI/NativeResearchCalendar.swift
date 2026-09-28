@@ -13,10 +13,19 @@ struct CalendarEntry: Codable, Identifiable, Equatable {
     var occurredAt: Int64
     var status: String
     var manual: Bool
+    var summary: String? = nil
+    var sourceID: String? = nil
+    var frameID: String? = nil
+    var contentType: String? = nil
+    var versionNumber: Int64? = nil
+    var sourceDiscarded: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, kind, title, status, manual
         case occurredAt = "occurred_at"
+        case summary
+        case sourceID = "source_id", frameID = "frame_id", contentType = "content_type"
+        case versionNumber = "version_number", sourceDiscarded = "source_discarded"
     }
 }
 
@@ -75,6 +84,28 @@ func filteredProjectIDs(_ projectIDs: [String], privacyActive: Bool, privacy: Se
 }
 
 enum NativeCalendarClock {
+    /// Monday-first, matching the WebView. Nil cells preserve the weekday of
+    /// the first date; dates advance by calendar days, never fixed seconds.
+    static func monthCells(containing date: Date, calendar: Calendar) -> [Date?] {
+        let bounds = monthInterval(containing: date, calendar: calendar)
+        let first = Date(timeIntervalSince1970: TimeInterval(bounds.0))
+        let offset = (calendar.component(.weekday, from: first) + 5) % 7
+        let count = calendar.range(of: .day, in: .month, for: first)?.count ?? 0
+        var cells = Array<Date?>(repeating: nil, count: offset)
+        cells += (0..<count).map { calendar.date(byAdding: .day, value: $0, to: first) }
+        cells += Array<Date?>(repeating: nil, count: (7 - cells.count % 7) % 7)
+        return cells
+    }
+
+    static func label(_ date: Date, format: String, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? "en_US" : "zh_CN")
+        formatter.dateFormat = format
+        return formatter.string(from: date)
+    }
+
     static func monthInterval(containing date: Date, calendar: Calendar) -> (Int64, Int64) {
         let parts = calendar.dateComponents([.year, .month], from: date)
         let start = calendar.date(from: parts) ?? date
@@ -117,8 +148,7 @@ final class NativeCalendarModel: ObservableObject {
     var calendar = Calendar.current
 
     func dismiss() {
-        guard !busy else { return }
-        presented = false
+        invalidate()
     }
 
     func invalidate() {
@@ -126,6 +156,7 @@ final class NativeCalendarModel: ObservableObject {
         monthGeneration = UUID()
         dayGeneration = UUID()
         presented = false
+        busy = false
     }
 
     static func requestedIDs(_ projectIDs: [String], privacyActive: Bool, privacy: Set<String>) -> [String] {
@@ -133,7 +164,11 @@ final class NativeCalendarModel: ObservableObject {
     }
 
     func visibleProjects(_ rows: [CalendarProject]) -> [CalendarProject] {
-        rows.filter { projectFilter == nil || $0.projectID == projectFilter }
+        guard navigationEnabled else { return [] }
+        return rows.filter {
+            (!privacyActive || !privacyProjectIDs.contains($0.projectID))
+                && (projectFilter == nil || $0.projectID == projectFilter)
+        }
     }
 
     func markedDays() -> [Int64: [String]] {
@@ -153,7 +188,7 @@ final class NativeCalendarModel: ObservableObject {
         visibleProjects(dayRows).filter { $0.error != nil || !$0.history.entries.isEmpty }
     }
 
-    static func sorted(_ entries: [CalendarEntry]) -> [CalendarEntry] {
+    nonisolated static func sorted(_ entries: [CalendarEntry]) -> [CalendarEntry] {
         entries.sorted { left, right in
             if left.occurredAt != right.occurredAt { return left.occurredAt > right.occurredAt }
             return left.id > right.id
@@ -175,6 +210,11 @@ final class NativeCalendarModel: ObservableObject {
         let token = UUID()
         privacyToken = token
         privacyGate = .unresolved
+        monthGeneration = UUID()
+        dayGeneration = UUID()
+        busy = true
+        error = nil
+        defer { if privacyToken == token { busy = false } }
         do {
             let value = try await client.invoke(NativeCalendarCommand.privacy, args: [:], projectID: nil)
             guard privacyToken == token, presented else { return }
@@ -190,39 +230,54 @@ final class NativeCalendarModel: ObservableObject {
     }
 
     func reloadMonth(_ client: any NativeSettingsQuerying, projectIDs: [String]) async {
+        guard presented, navigationEnabled else { return }
         let bounds = NativeCalendarClock.monthInterval(containing: clock, calendar: calendar)
         monthStart = bounds.0
         if selectedDay == 0 { selectedDay = NativeCalendarClock.dayInterval(containing: clock, calendar: calendar).0 }
-        await load(client, projectIDs: projectIDs, from: bounds.0, until: bounds.1, month: true)
-        guard presented, error == nil else { return }
+        dayGeneration = UUID()
+        let accepted = await load(client, projectIDs: projectIDs, from: bounds.0, until: bounds.1, month: true)
+        guard accepted, presented, error == nil else { return }
         await reloadDay(client, projectIDs: projectIDs)
     }
 
     func showDay(_ day: Int64, client: any NativeSettingsQuerying, projectIDs: [String]) async {
+        guard presented, navigationEnabled else { return }
         selectedDay = day
+        dayRows = []
         await reloadDay(client, projectIDs: projectIDs)
     }
 
     func shiftMonth(_ delta: Int, client: any NativeSettingsQuerying, projectIDs: [String]) async {
+        guard presented, navigationEnabled else { return }
         guard let next = calendar.date(byAdding: .month, value: delta, to: Date(timeIntervalSince1970: TimeInterval(monthStart == 0 ? Int64(clock.timeIntervalSince1970) : monthStart))) else { return }
         clock = next
         selectedDay = NativeCalendarClock.dayInterval(containing: next, calendar: calendar).0
+        monthRows = []; dayRows = []
+        await reloadMonth(client, projectIDs: projectIDs)
+    }
+
+    func showToday(_ client: any NativeSettingsQuerying, projectIDs: [String], today: Date = Date()) async {
+        guard presented, navigationEnabled else { return }
+        clock = today
+        selectedDay = NativeCalendarClock.dayInterval(containing: today, calendar: calendar).0
+        monthRows = []; dayRows = []
         await reloadMonth(client, projectIDs: projectIDs)
     }
 
     private func reloadDay(_ client: any NativeSettingsQuerying, projectIDs: [String]) async {
         let bounds = NativeCalendarClock.dayInterval(containing: Date(timeIntervalSince1970: TimeInterval(selectedDay)), calendar: calendar)
-        await load(client, projectIDs: projectIDs, from: bounds.0, until: bounds.1, month: false)
+        _ = await load(client, projectIDs: projectIDs, from: bounds.0, until: bounds.1, month: false)
     }
 
-    private func load(_ client: any NativeSettingsQuerying, projectIDs: [String], from: Int64, until: Int64, month: Bool) async {
-        guard presented else { return }
-        guard let ids = CalendarPrivacyDecision.admit(privacyGate, projectIDs: projectIDs) else { return }
+    private func load(_ client: any NativeSettingsQuerying, projectIDs: [String], from: Int64, until: Int64, month: Bool) async -> Bool {
+        guard presented else { return false }
+        guard let ids = CalendarPrivacyDecision.admit(privacyGate, projectIDs: projectIDs) else { return false }
         let generation = UUID()
         if month { monthGeneration = generation } else { dayGeneration = generation }
         if ids.isEmpty {
             if month { monthRows = [] } else { dayRows = [] }
-            return
+            error = nil
+            return true
         }
         busy = true
         error = nil
@@ -240,110 +295,166 @@ final class NativeCalendarModel: ObservableObject {
                 ],
                 projectID: nil)
             let current = month ? monthGeneration : dayGeneration
-            guard current == generation, presented else { return }
+            guard current == generation, presented else { return false }
             let rows = try JSONDecoder().decode([CalendarProject].self, from: JSONEncoder().encode(value))
             if month { monthRows = rows } else { dayRows = rows }
             error = nil
+            return true
         } catch {
             let current = month ? monthGeneration : dayGeneration
-            guard current == generation, presented else { return }
+            guard current == generation, presented else { return false }
             self.error = "研究日历未能确认读取，不会自动重试。\n" + error.localizedDescription
+            return false
         }
     }
 }
 
-struct NativeCalendarSheet: View {
+struct NativeCalendarPage: View {
     @ObservedObject var model: ProjectBrowserModel
     @ObservedObject var calendar: NativeCalendarModel
-
-    private var projectIDs: [String] {
-        model.projects.map(\.id)
+    @Environment(\.colorScheme) private var scheme
+    @State private var filtersExpanded = false
+    private var projectIDs: [String] { model.projects.map(\.id) }
+    private var allowedProjects: [ProjectSummary] {
+        guard calendar.navigationEnabled else { return [] }
+        return model.projects.filter { !calendar.privacyActive || !calendar.privacyProjectIDs.contains($0.id) }
     }
+    private var displayedMonth: Date {
+        calendar.monthStart == 0 ? calendar.clock : Date(timeIntervalSince1970: TimeInterval(calendar.monthStart))
+    }
+    private func color(_ key: String) -> Color { WispDesign.color(key, scheme) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Button("返回首页") { calendar.dismiss() }
-                Text("研究日历").font(.headline)
-                Spacer()
-                Button("上个月") { Task { await calendar.shiftMonth(-1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
-                Button("下个月") { Task { await calendar.shiftMonth(1, client: model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
-                Button("刷新") { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } }.disabled(!calendar.navigationEnabled || calendar.busy)
-            }
-            ScrollView(.horizontal) {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Button("所有项目") { calendar.projectFilter = nil }
-                        .accessibilityAddTraits(calendar.projectFilter == nil ? .isSelected : [])
-                    ForEach(model.projects.filter { !calendar.privacyActive || !calendar.privacyProjectIDs.contains($0.id) }) { project in
-                        Button(project.name) { calendar.projectFilter = project.id }
-                            .accessibilityAddTraits(calendar.projectFilter == project.id ? .isSelected : [])
+                    Button(localized("返回首页")) { calendar.dismiss() }
+                    Text(localized("研究日历")).font(.title2.bold())
+                    Spacer()
+                    Button { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } } label: { WispIcon(name: "refresh") }
+                        .help(localized("刷新")).accessibilityLabel(localized("刷新"))
+                        .disabled(calendar.busy)
+                }.padding(20)
+                Divider()
+                HStack(alignment: .top, spacing: 0) {
+                    if geometry.size.width >= 820 {
+                        projectFilters.frame(width: 180).padding(20)
+                        Divider()
                     }
-                }
-            }
-            if let error = calendar.error {
-                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-            }
-            let marks = calendar.markedDays()
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7)) {
-                ForEach(days, id: \.self) { day in
-                    let start = NativeCalendarClock.dayInterval(containing: day, calendar: calendar.calendar).0
-                    Button("\(calendar.calendar.component(.day, from: day))") { Task { await calendar.showDay(start, client: model.calendarClient(), projectIDs: projectIDs) } }
-                        .disabled(!calendar.navigationEnabled || calendar.busy)
-                        .accessibilityLabel(dayLabel(day))
-                        .accessibilityAddTraits(calendar.selectedDay == start ? .isSelected : [])
-                        .overlay(alignment: .bottom) {
-                            if let ids = marks[start], !ids.isEmpty { Text("\(ids.count)").font(.caption2) }
-                        }
-                }
-            }
-            Text(dayLabel(Date(timeIntervalSince1970: TimeInterval(calendar.selectedDay)))).font(.subheadline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(calendar.dayGroups()) { project in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(name(project.projectID)).font(.headline)
-                                Spacer()
-                                Button("打开研究历程") { Task { await model.openCalendarJourney(projectID: project.projectID, day: calendar.selectedDay) } }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if geometry.size.width < 820 {
+                                DisclosureGroup(localized("筛选项目"), isExpanded: $filtersExpanded) { projectFilters }
                             }
-                            if let error = project.error { Text(error).foregroundStyle(.red).font(.caption) }
-                            ForEach(NativeCalendarModel.sorted(project.history.entries)) { entry in
-                                Text(entry.title).font(.body)
+                            monthHeader
+                            if calendar.busy { ProgressView(localized("正在读取研究活动…")) }
+                            if let error = calendar.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                            if calendar.navigationEnabled {
+                                ForEach(calendar.visibleProjects(calendar.monthRows).filter { $0.error != nil || $0.history.truncated }) { row in
+                                    Text(name(row.projectID) + "：" + (row.error ?? localized("仅展示最近 2,000 条活动；选择日期可读取当日记录。")))
+                                        .font(.caption).foregroundStyle(row.error == nil ? color("text-muted") : .red)
+                                }
+                                monthGrid
+                                Divider()
+                                dayDetail
                             }
-                        }
-                    }
-                    if calendar.dayGroups().isEmpty && calendar.error == nil {
-                        Text("当天没有已记录的研究活动。").foregroundStyle(.secondary)
+                        }.padding(24)
                     }
                 }
-            }
+            }.background(color("bg-app"))
         }
-        .padding(20)
-        .frame(width: 640, height: 520)
-        .interactiveDismissDisabled(calendar.busy)
-        .background(NativeSettingsEscape(enabled: !calendar.busy) { calendar.dismiss() })
+        .background(NativeSettingsEscape { calendar.dismiss() })
         .task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) }
     }
 
-    private var days: [Date] {
-        let start = Date(timeIntervalSince1970: TimeInterval(calendar.monthStart))
-        let range = calendar.calendar.range(of: .day, in: .month, for: start) ?? 1..<2
-        return range.compactMap { day in
-            calendar.calendar.date(bySetting: .day, value: day, of: start)
+    private var projectFilters: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(localized("项目")).font(.headline)
+            Button { calendar.projectFilter = nil } label: {
+                HStack { Text(localized("所有项目")); Spacer(); if calendar.projectFilter == nil { WispIcon(name: "check", size: 14) } }
+            }.accessibilityAddTraits(calendar.projectFilter == nil ? .isSelected : [])
+            ForEach(allowedProjects) { project in
+                Button { calendar.projectFilter = project.id } label: {
+                    HStack { Text(project.name).lineLimit(2); Spacer(); if calendar.projectFilter == project.id { WispIcon(name: "check", size: 14) } }
+                }.accessibilityAddTraits(calendar.projectFilter == project.id ? .isSelected : [])
+            }
+        }.buttonStyle(WispSidebarButtonStyle()).disabled(!calendar.navigationEnabled)
+    }
+
+    private var monthHeader: some View {
+        HStack(spacing: 14) {
+            Text(NativeCalendarClock.label(displayedMonth, format: localized("yyyy年M月"), calendar: calendar.calendar))
+                .font(.title2.weight(.semibold)).accessibilityIdentifier("calendar-month-title")
+            Spacer()
+            Button { Task { await calendar.shiftMonth(-1, client: model.calendarClient(), projectIDs: projectIDs) } } label: { WispIcon(name: "chevron-left", size: 16) }
+                .help(localized("上个月")).accessibilityLabel(localized("上个月"))
+            Button(localized("今天")) { Task { await calendar.showToday(model.calendarClient(), projectIDs: projectIDs) } }
+            Button { Task { await calendar.shiftMonth(1, client: model.calendarClient(), projectIDs: projectIDs) } } label: { WispIcon(name: "chevron-right", size: 16) }
+                .help(localized("下个月")).accessibilityLabel(localized("下个月"))
+        }.disabled(!calendar.navigationEnabled || calendar.busy)
+    }
+
+    private var monthGrid: some View {
+        let marks = calendar.markedDays()
+        let cells = NativeCalendarClock.monthCells(containing: displayedMonth, calendar: calendar.calendar)
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
+            ForEach(["周一", "周二", "周三", "周四", "周五", "周六", "周日"], id: \.self) { title in
+                Text(localized(title)).font(.caption.weight(.semibold)).foregroundStyle(color("text-muted"))
+                    .frame(maxWidth: .infinity).padding(.bottom, 8)
+            }
+            ForEach(cells.indices, id: \.self) { index in
+                if let day = cells[index] {
+                    let start = NativeCalendarClock.dayStart(Int64(day.timeIntervalSince1970), calendar: calendar.calendar)
+                    let selected = calendar.selectedDay == start
+                    let count = marks[start]?.count ?? 0
+                    let today = calendar.calendar.isDateInToday(day)
+                    Button { Task { await calendar.showDay(start, client: model.calendarClient(), projectIDs: projectIDs) } } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(calendar.calendar.component(.day, from: day))")
+                                .font(.body.weight(today || selected ? .bold : .regular))
+                            HStack(spacing: 3) {
+                                if count > 0 { Circle().fill(color("clay")).frame(width: 5, height: 5); Text("\(count)").font(.caption2) }
+                                else { Text(" ").font(.caption2) }
+                            }.foregroundStyle(color("text-muted"))
+                        }.frame(maxWidth: .infinity, minHeight: 54, alignment: .leading).padding(.horizontal, 8)
+                            .background(selected ? color("bg-sunken") : color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected || today ? color("clay") : color("border"), lineWidth: selected ? 2 : 1))
+                    }.buttonStyle(.plain).disabled(calendar.busy)
+                        .accessibilityLabel(dayLabel(day) + (today ? " · " + localized("今天") : "") + " · \(count) " + localized("个项目有活动"))
+                        .accessibilityIdentifier("calendar-day-\(start)")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                } else { Color.clear.frame(height: 54).accessibilityHidden(true) }
+            }
         }
     }
 
-    private func dayLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar.calendar
-        formatter.timeZone = calendar.calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+    private var dayDetail: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(dayLabel(Date(timeIntervalSince1970: TimeInterval(calendar.selectedDay)))).font(.headline)
+            ForEach(calendar.dayGroups()) { project in
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(name(project.projectID)).font(.headline)
+                        Spacer()
+                        Button(localized("打开研究历程")) { Task { await model.openCalendarJourney(projectID: project.projectID, day: calendar.selectedDay) } }
+                            .disabled(project.error != nil || calendar.busy)
+                    }
+                    if let error = project.error { Text(error).foregroundStyle(.red).font(.caption) }
+                    else {
+                        Text(String(format: localized("%d 条研究记录"), project.history.entries.count)).font(.caption).foregroundStyle(color("text-muted"))
+                        ForEach(Array(NativeJourneyDay.grouped(project.history.entries, calendar: calendar.calendar).flatMap(\.entries).prefix(3))) { entry in
+                            Text(entry.title).lineLimit(2)
+                        }
+                        if project.history.truncated { Text(localized("当日记录已截断，仅展示最近 2,000 条。")).font(.caption) }
+                    }
+                }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 10))
+            }
+            if calendar.dayGroups().isEmpty && calendar.error == nil && !calendar.busy {
+                Text(localized("当天没有已记录的研究活动。")).foregroundStyle(color("text-muted"))
+            }
+        }
     }
 
-    private func name(_ id: String) -> String {
-        model.projects.first { $0.id == id }?.name ?? id
-    }
+    private func dayLabel(_ date: Date) -> String { NativeCalendarClock.label(date, format: localized("yyyy年M月d日 EEEE"), calendar: calendar.calendar) }
+    private func name(_ id: String) -> String { model.projects.first { $0.id == id }?.name ?? id }
 }
-
-

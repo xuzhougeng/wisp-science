@@ -4064,7 +4064,7 @@ pub struct PublicationItemLinkInfo {
     pub relation: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationEvidenceBinding {
     pub id: String,
     pub revision_id: String,

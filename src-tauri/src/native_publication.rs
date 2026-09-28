@@ -66,15 +66,26 @@ fn summarize(
     NativePublicationWorkspace {
         publications: workspace.publications.iter().map(publication).collect(),
         publication: workspace.publication.as_ref().map(publication),
-        revision: workspace.revision.as_ref().map(|revision| {
-            wisp_dto::native_publication::NativePublicationRevision {
-                id: revision.id.clone(),
-                publication_id: revision.publication_id.clone(),
-                revision_number: revision.revision_number,
-                label: revision.label.clone(),
-                state: revision.state.as_str().to_string(),
-            }
-        }),
+        revision: workspace.revision.as_ref().map(revision),
+        revisions: workspace.revisions.iter().map(revision).collect(),
+        bindings: workspace
+            .bindings
+            .iter()
+            .map(|binding| wisp_dto::PublicationEvidenceBinding {
+                id: binding.id.clone(),
+                revision_id: binding.revision_id.clone(),
+                item_id: binding.item_id.clone(),
+                source_kind: binding.source_kind.as_str().into(),
+                source_id: binding.source_id.clone(),
+                purpose: binding.purpose.clone(),
+                supported_claim_item_id: binding.supported_claim_item_id.clone(),
+                selection_state: binding.selection_state.as_str().into(),
+                review_state: binding.review_state.as_str().into(),
+                reproduction_state: binding.reproduction_state.as_str().into(),
+                visibility: binding.visibility.as_str().into(),
+                source_snapshot_json: binding.source_snapshot_json.clone(),
+            })
+            .collect(),
         items: workspace
             .items
             .iter()
@@ -83,8 +94,23 @@ fn summarize(
                 title: item.title.clone(),
                 kind: item.kind.as_str().to_string(),
                 ordinal: item.ordinal,
+                revision_id: item.revision_id.clone(),
+                parent_item_id: item.parent_item_id.clone(),
+                content: item.content.clone(),
             })
             .collect(),
+    }
+}
+
+fn revision(
+    item: &wisp_store::PublicationRevision,
+) -> wisp_dto::native_publication::NativePublicationRevision {
+    wisp_dto::native_publication::NativePublicationRevision {
+        id: item.id.clone(),
+        publication_id: item.publication_id.clone(),
+        revision_number: item.revision_number,
+        label: item.label.clone(),
+        state: item.state.as_str().into(),
     }
 }
 

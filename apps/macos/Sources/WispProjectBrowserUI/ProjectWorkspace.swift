@@ -8,10 +8,12 @@ struct ProjectWorkspace: View {
     let project: ProjectSummary
     @ObservedObject private var conversation: NativeConversationModel
     @ObservedObject private var publication: NativePublicationModel
+    @ObservedObject private var journey: NativeJourneyModel
     init(model: ProjectBrowserModel, project: ProjectSummary) {
         self.model = model; self.project = project
         self.conversation = model.nativeConversation()
         self.publication = model.publication
+        self.journey = model.journey
     }
     @Environment(\.colorScheme) private var scheme
     @State private var sidebarVisible = true
@@ -38,13 +40,21 @@ struct ProjectWorkspace: View {
 
     var body: some View {
         GeometryReader { geometry in
-        let showsSidebar = sidebarVisible && (!panelVisible || geometry.size.width >= 960)
+        let readingResearch = (publication.presented && publication.projectID == project.id) || (journey.presented && journey.projectID == project.id)
+        let showsSidebar = sidebarVisible && (!panelVisible || readingResearch || geometry.size.width >= 960)
         HStack(spacing: 0) {
             if showsSidebar {
                 sidebar.frame(width: 248)
                 Rectangle().fill(color("border")).frame(width: 1)
             }
             VStack(spacing: 0) {
+                if readingResearch && !showsSidebar {
+                    HStack {
+                        Button("展开侧边栏") { sidebarVisible = true }
+                        Spacer()
+                    }.padding(.horizontal, 20).padding(.top, 8)
+                }
+                if !readingResearch {
                 HStack(spacing: 8) {
                     if !showsSidebar {
                         Button { if geometry.size.width < 960 { panelVisible = false }; sidebarVisible = true } label: { WispIcon(name: "chevron-right") }
@@ -113,6 +123,7 @@ struct ProjectWorkspace: View {
                 }
                 .padding(.horizontal, 16).frame(height: 64)
                 Rectangle().fill(color("border")).frame(height: 1)
+                }
                 if let error = model.sessionError {
                     HStack {
                         Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
@@ -146,6 +157,8 @@ struct ProjectWorkspace: View {
                 }
                 if publication.presented && publication.projectID == project.id {
                     NativePublicationColumn(model: model, publication: publication)
+                } else if journey.presented && journey.projectID == project.id {
+                    NativeJourneyPage(model: model, journey: journey)
                 } else if let session = model.activeSessionID {
                     NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session, createAcpConversation: { agent in createSession(acpAgentID: agent) }) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
@@ -165,7 +178,7 @@ struct ProjectWorkspace: View {
                         Button("新建会话") { createSession() }.buttonStyle(WispButtonStyle(primary: true)).disabled(conversation.busy)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                if terminalVisible, let session = model.activeSessionID {
+                if terminalVisible && !readingResearch, let session = model.activeSessionID {
                     Rectangle().fill(color("border")).frame(height: 5)
                         .gesture(DragGesture().onChanged { value in
                             if terminalDragStart == nil { terminalDragStart = terminalHeight }
@@ -175,7 +188,7 @@ struct ProjectWorkspace: View {
                         .frame(height: terminalHeight).id(project.id + ":" + session)
                 }
             }
-            if panelVisible, let session = model.activeSessionID {
+            if panelVisible && !readingResearch, let session = model.activeSessionID {
                 Rectangle().fill(color("border")).frame(width: 5)
                     .gesture(DragGesture().onChanged { value in
                         if panelDragStart == nil { panelDragStart = panelWidth }
@@ -272,9 +285,6 @@ struct ProjectWorkspace: View {
             .interactiveDismissDisabled(groups.busy)
             .background(NativeSettingsEscape(enabled: !groups.busy) { groups.dismissRename() })
         }
-        .sheet(isPresented: Binding(get: { model.journey.presented && model.journey.projectID == project.id }, set: { if !$0 { model.journey.presented = false; model.journeyFocus = nil } })) {
-            NativeJourneySheet(model: model, journey: model.journey)
-        }
         .task(id: project.id + "-inbox") {
             inbox.reset()
             while !Task.isCancelled {
@@ -314,6 +324,7 @@ struct ProjectWorkspace: View {
         max(220, min(preferred, 600, available - (sidebar ? 249 : 0) - 360))
     }
     private func createSession(acpAgentID: String? = nil) {
+        model.returnToConversation()
         let database = model.databaseURL; let sourceSession = model.activeSessionID
         Task { if let id = await conversation.create(project: project.id, acpAgentID: acpAgentID) { await model.openNativeDraft(id, projectID: project.id, database: database, sourceSession: sourceSession) } }
     }
@@ -328,7 +339,7 @@ struct ProjectWorkspace: View {
                     Button("项目设置") { model.openProjectSettings(project.id) }
                     Divider()
                     ForEach(model.projects) { item in
-                        Button(item.name) { Task { await model.openProject(item.id) } }
+                        Button(item.name) { model.returnToConversation(); Task { await model.openProject(item.id) } }
                     }
                 } label: { Text(project.name).font(WispDesign.font(size: 14, weight: .semibold)).lineLimit(1) }
                 .menuStyle(.borderlessButton).accessibilityLabel("切换项目")
@@ -347,6 +358,7 @@ struct ProjectWorkspace: View {
                 .accessibilityLabel("新建分组")
                 .accessibilityIdentifier("new-session-group")
                 Button {
+                    model.returnToConversation()
                     let revealed = NativePanelTabs.revealFiles(saved: panelTabs, selected: panelTab)
                     panelTabs = revealed.saved
                     panelTab = revealed.selected
@@ -358,14 +370,14 @@ struct ProjectWorkspace: View {
                 .help("文件")
                 .accessibilityLabel("文件")
                 .accessibilityIdentifier("sidebar-files")
-                Button { model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) } label: {
+                Button { publication.dismiss(); model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) } label: {
                     HStack { WispIcon(name: "research-trail", size: 16); Text("研究历程"); Spacer() }
                 }
                 .buttonStyle(WispSidebarButtonStyle())
                 .help("研究历程")
                 .accessibilityLabel("研究历程")
                 .accessibilityIdentifier("sidebar-journey")
-                Button { publication.open(projectID: project.id) } label: {
+                Button { journey.dismiss(); publication.open(projectID: project.id) } label: {
                     HStack { WispIcon(name: "book", size: 16); Text("论文证据"); Spacer() }
                 }
                 .buttonStyle(WispSidebarButtonStyle())
@@ -440,7 +452,7 @@ struct ProjectWorkspace: View {
                                 if groups.selecting {
                                     if groups.selected.contains(session.id) { groups.selected.remove(session.id) } else { groups.selected.insert(session.id) }
                                 } else {
-                                    Task { await model.openSession(session.id) }
+                                    Task { model.returnToConversation(); await model.openSession(session.id) }
                                 }
                             } label: {
                                 HStack {

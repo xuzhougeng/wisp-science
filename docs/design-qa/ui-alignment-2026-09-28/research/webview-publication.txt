@@ -1,0 +1,120 @@
+Window: "wisp science — 原生工具栏验收", App: Wisp WebView QA.
+0 standard window wisp science — 原生工具栏验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost
+			3 container
+				4 button 返回项目
+				5 button 原生工具栏验收
+				6 button 收起
+				7 button 新建会话
+				8 button 搜索会话
+				9 button 新建分组
+				10 button 文件
+				11 button 研究历程
+				12 button 论文证据
+				13 button 收藏库
+				14 text 会话
+				15 toggle button 选择, Value: off
+				16 button 排序与分组
+				17 text 今天
+				18 button 35 轮工具栏验收
+				19 button 会话操作
+				20 text 更早
+				21 button HTTP 富文本对比
+				22 button 会话操作
+				23 button ACP 富文本对比
+				24 button 会话操作
+				25 button 空会话验收
+				26 button 会话操作
+				27 text 29 技能 · 23 MCP · 0 记忆
+				28 button 能力
+				29 button 反馈
+				30 button 设置
+			31 container 论文证据
+				32 container
+					33 heading 论文证据, Value: 2
+						34 text 论文证据
+					35 text 关联图表与结论的分析来源，保留定稿时的证据。
+					36 button 刷新
+					37 button 关闭论文证据工作区
+				38 container
+					39 text 论文
+					40 pop up button 论文, Value: RNA-seq 研究证据
+				41 container
+					42 text 版本
+					43 pop up button 版本, Value: 复核 v2 · 草稿
+				44 text 草稿
+				45 button 创建新版本
+				46 button 添加证据
+				47 container 论文证据
+					48 toggle button 证据整理, Value: off
+					49 button 定稿检查
+					50 button 版本记录
+				51 heading 论文结构, Value: 3
+					52 text 论文结构
+				53 button 添加条目
+				54 button 全部证据 2
+				55 button 章节 结果 0
+				56 button 结论 处理改变基因表达 2
+				57 heading 证据, Value: 3
+					58 text 证据
+				59 text 2
+				60 container 分析来源
+					61 container
+						62 text ARTIFACT 版本 counts.csv 私有 已选
+					63 text 用途与采用理由
+					64 text 差异表达结果 1
+					65 summary 版本与校验详情, Value: off
+						66 text 版本与校验详情
+					67 heading 分析来源, Value: 4
+						68 text 分析来源
+					69 container
+						70 text 项目结果
+						71 text 尚未记录来源
+						72 text 分析运行
+						73 text 尚未记录来源
+						74 text 采用的结果
+						75 text counts.csv
+					76 summary 来源与环境详情, Value: off
+						77 text 来源与环境详情
+					78 container
+						79 text 选择状态
+						80 pop up button 选择状态, Value: 候选
+					81 container
+						82 text 可见性
+						83 pop up button 可见性, Value: 公开
+				84 container 分析来源
+					85 container
+						86 text ARTIFACT 版本 counts.csv 私有 已选
+					87 text 用途与采用理由
+					88 text 差异表达结果 2
+					89 summary 版本与校验详情, Value: off
+						90 text 版本与校验详情
+					91 heading 分析来源, Value: 4
+						92 text 分析来源
+					93 container
+						94 text 项目结果
+						95 text 尚未记录来源
+						96 text 分析运行
+						97 text 尚未记录来源
+						98 text 采用的结果
+						99 text counts.csv
+					100 summary 来源与环境详情, Value: off
+						101 text 来源与环境详情
+					102 container
+						103 text 选择状态
+						104 pop up button 选择状态, Value: 候选
+					105 container
+						106 text 可见性
+						107 pop up button 可见性, Value: 公开
+	108 close button
+	109 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	110 minimize button
+	111 text wisp science — 原生工具栏验收
+112 menu bar
+	113 Wisp WebView QA
+	114 文件
+	115 编辑
+	116 视图
+	117 窗口
+	118 帮助

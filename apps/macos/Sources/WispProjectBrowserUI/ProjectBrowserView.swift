@@ -21,6 +21,8 @@ public struct ProjectBrowserView: View {
         Group {
             if model.settingsPresented {
                 NativeSettingsView(databaseURL: model.databaseURL, projects: model.projects, projectID: model.projectSettingsID ?? model.activeProjectID, editProject: model.projectSettingsID != nil, initialSection: NativeSettingsSection(rawValue: model.settingsSectionID ?? "") ?? .general) { model.settingsPresented = false; model.projectSettingsID = nil; model.settingsSectionID = nil; Task { await model.refresh() } }
+            } else if calendar.presented {
+                NativeCalendarPage(model: model, calendar: calendar)
             } else if scratch.presented {
                 NativeScratchChat(model: model, scratch: model.scratch)
             } else if let project = model.projects.first(where: { $0.id == model.activeProjectID }) {
@@ -49,9 +51,6 @@ public struct ProjectBrowserView: View {
             }
             .sheet(isPresented: $library.presented) {
                 NativeLibrarySheet(model: model, library: library)
-            }
-            .sheet(isPresented: $calendar.presented) {
-                NativeCalendarSheet(model: model, calendar: calendar)
             }
             .sheet(isPresented: $capabilities.presented) {
                 NativeCapabilitiesSheet(model: model, capabilities: capabilities)

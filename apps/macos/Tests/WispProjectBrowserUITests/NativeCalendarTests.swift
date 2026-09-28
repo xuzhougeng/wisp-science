@@ -31,6 +31,49 @@ final class NativeCalendarTests: XCTestCase {
         XCTAssertEqual(day.1, 86400)
     }
 
+    func testMondayFirstGridPreservesWeekdaysLeapYearsAndYearBoundary() throws {
+        for (year, month, days, leading) in [(2026, 9, 30, 1), (2024, 2, 29, 3), (2025, 2, 28, 5), (2027, 1, 31, 4)] {
+            let date = try XCTUnwrap(utc.date(from: DateComponents(year: year, month: month, day: 1)))
+            let cells = NativeCalendarClock.monthCells(containing: date, calendar: utc)
+            XCTAssertEqual(cells.count % 7, 0)
+            XCTAssertEqual(cells.prefix(while: { $0 == nil }).count, leading)
+            XCTAssertEqual(cells.compactMap { $0 }.count, days)
+            for (column, cell) in cells.enumerated() {
+                if let cell { XCTAssertEqual((utc.component(.weekday, from: cell) + 5) % 7, column % 7) }
+            }
+        }
+    }
+
+    func testGridAdvancesAcrossDaylightSavingByLocalDay() throws {
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let date = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 3, day: 1)))
+        let days = NativeCalendarClock.monthCells(containing: date, calendar: local).compactMap { $0 }
+        XCTAssertEqual(days.map { local.component(.day, from: $0) }, Array(1...31))
+        XCTAssertEqual(days[8].timeIntervalSince(days[7]), 23 * 3600)
+    }
+
+    @MainActor func testTodayChangesMonthAndDismissalInvalidatesPendingPrivacyRead() async throws {
+        let host = CalendarTransport()
+        let model = NativeCalendarModel()
+        model.calendar = utc; model.clock = Date(timeIntervalSince1970: 100); model.presented = true
+        await model.openMonth(host, projectIDs: ["research-1"])
+        let today = try XCTUnwrap(utc.date(from: DateComponents(year: 2026, month: 9, day: 28)))
+        await model.showToday(host, projectIDs: ["research-1"], today: today)
+        XCTAssertEqual(model.selectedDay, Int64(today.timeIntervalSince1970))
+        XCTAssertEqual(model.monthStart, NativeCalendarClock.monthInterval(containing: today, calendar: utc).0)
+        await host.suspend()
+        let pending = Task { await model.openMonth(host, projectIDs: ["research-1"]) }
+        while !(await host.isHanging()) { await Task.yield() }
+        XCTAssertTrue(model.visibleProjects(model.monthRows).isEmpty, "Do not display cached rows while privacy is unresolved")
+        model.dismiss()
+        XCTAssertFalse(model.busy)
+        await host.resume(with: .object(["active": .bool(false), "project_ids": .array([])]))
+        await pending.value
+        XCTAssertFalse(model.presented)
+        XCTAssertFalse(model.navigationEnabled)
+    }
+
     @MainActor func testReloadOmitsPrivacyProjectsAndDoesNotRetryALostRead() async throws {
         let host = CalendarTransport()
         let calendar = NativeCalendarModel()
@@ -171,6 +214,68 @@ final class NativeCalendarTests: XCTestCase {
         XCTAssertEqual(rows, ["research-1"])
     }
 
+    @MainActor func testCalendarJourneyAndReturnKeepTheSelectedSession() async throws {
+        let host = CalendarTransport()
+        let model = ProjectBrowserModel(client: CalendarProjectList(), databaseURL: URL(fileURLWithPath: "/unused/calendar.sqlite"), projectTransport: host)
+        await model.openProject("research-1", sessionID: "session-a")
+        model.calendar.calendar = utc
+        model.calendar.clock = Date(timeIntervalSince1970: 100)
+        model.calendar.presented = true
+        await model.calendar.openMonth(host, projectIDs: ["research-1"])
+        await model.openCalendarJourney(projectID: "research-1", day: 0)
+        XCTAssertTrue(model.journey.presented)
+        XCTAssertEqual(model.activeSessionID, "session-a")
+        model.returnToConversation()
+        XCTAssertFalse(model.journey.presented)
+        XCTAssertFalse(model.publication.presented)
+        XCTAssertNil(model.journeyFocus)
+        XCTAssertEqual(model.activeSessionID, "session-a")
+        XCTAssertEqual(model.activeProjectID, "research-1")
+    }
+
+    @MainActor func testSupersededMonthReplyCannotStartAnotherDayRead() async {
+        let host = CalendarOverlappingReads()
+        let calendar = NativeCalendarModel()
+        calendar.calendar = utc
+        calendar.clock = Date(timeIntervalSince1970: 100)
+        calendar.presented = true
+        calendar.applyPrivacy(active: false, projectIDs: [])
+        let old = Task { await calendar.reloadMonth(host, projectIDs: ["p"]) }
+        while !(await host.isWaiting()) { await Task.yield() }
+        await calendar.reloadMonth(host, projectIDs: ["p"])
+        let before = await host.count()
+        XCTAssertEqual(before, 3)
+        await host.resume()
+        await old.value
+        let after = await host.count()
+        XCTAssertEqual(after, 3)
+        XCTAssertFalse(calendar.busy)
+    }
+
+    @MainActor func testPartialProjectFailureAndTruncationRemainDistinctFromAnEmptyDay() async throws {
+        let host = CalendarTransport()
+        var rows = try CalendarTransport.twoProjects().array
+        var history = rows[0]["history"]
+        history["truncated"] = .bool(true)
+        rows[0]["history"] = history
+        rows[1]["error"] = .string("Project database unavailable")
+        rows[1]["history"] = .object(["entries": .array([]), "truncated": .bool(false)])
+        await host.setRows(.array(rows))
+        let calendar = NativeCalendarModel()
+        calendar.calendar = utc
+        calendar.clock = Date(timeIntervalSince1970: 100)
+        calendar.presented = true
+        await calendar.openMonth(host, projectIDs: ["research-1", "other"])
+        XCTAssertNil(calendar.error)
+        XCTAssertTrue(calendar.dayGroups()[0].history.truncated)
+        XCTAssertEqual(calendar.dayGroups()[1].error, "Project database unavailable")
+        XCTAssertEqual(calendar.markedDays()[0], ["research-1"])
+        await host.setRows(.array([]))
+        await calendar.reloadMonth(host, projectIDs: ["research-1", "other"])
+        XCTAssertTrue(calendar.dayGroups().isEmpty)
+        XCTAssertNil(calendar.error)
+    }
+
     @MainActor func testClosedCalendarDoesNotEnterTheJourney() async {
         let list = CalendarProjectList()
         let host = CalendarTransport()
@@ -284,5 +389,18 @@ private actor CalendarProjectList: ProjectBrowserQuerying {
     }
     func transcript(databaseURL: URL, projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> TranscriptPage {
         TranscriptPage(messages: [], nextBeforeSeq: nil)
+    }
+}
+
+private actor CalendarOverlappingReads: NativeSettingsQuerying {
+    var calls = 0
+    var pending: CheckedContinuation<SettingsValue, Error>?
+    func isWaiting() -> Bool { pending != nil }
+    func count() -> Int { calls }
+    func resume() { pending?.resume(returning: .array([])); pending = nil }
+    func invoke(_ command: String, args: [String: SettingsValue], projectID: String?) async throws -> SettingsValue {
+        calls += 1
+        if calls == 1 { return try await withCheckedThrowingContinuation { pending = $0 } }
+        return .array([])
     }
 }

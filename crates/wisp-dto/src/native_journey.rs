@@ -4,13 +4,35 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-journey.v1";
 
-pub const COMMANDS: &[&str] = &["native_research_journey"];
+pub const COMMANDS: &[&str] = &[
+    "native_research_journey",
+    "native_research_journey_artifact",
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct JourneyRequest {
     pub from: i64,
     pub until: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactRequest {
+    pub version_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct JourneyArtifact {
+    pub version_id: String,
+    pub filename: String,
+    pub version_number: i64,
+    pub source: crate::ResearchJourneySource,
+    pub text: Option<String>,
+    pub mime: String,
+    pub base64: Option<String>,
+    pub truncated: bool,
+    pub content_error: Option<String>,
 }
 
 #[cfg(test)]

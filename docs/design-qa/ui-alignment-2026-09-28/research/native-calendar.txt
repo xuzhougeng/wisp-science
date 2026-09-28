@@ -1,0 +1,68 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button 返回首页
+		3 text 研究日历
+		4 button 刷新
+		5 text 项目
+		6 button (selected) 所有项目
+		7 button Workspace
+		8 button 可靠性阶段2验收
+		9 button 可靠性阶段2验收
+		10 button CUA WebView 文件夹导入
+		11 button CUA 历史恢复验收
+		12 button 跨项目验收
+		13 button 原生工具栏验收
+		14 scroll area
+			15 text Value: 2026年9月, ID: calendar-month-title
+			16 button 上个月
+			17 button 今天
+			18 button 下个月
+			19 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				20 text 周一 周二 周三 周四 周五 周六 周日
+				21 button Description: 2026年9月1日 星期二 · 0 个项目有活动, ID: calendar-day-1788192000
+				22 button Description: 2026年9月2日 星期三 · 0 个项目有活动, ID: calendar-day-1788278400
+				23 button Description: 2026年9月3日 星期四 · 0 个项目有活动, ID: calendar-day-1788364800
+				24 button Description: 2026年9月4日 星期五 · 0 个项目有活动, ID: calendar-day-1788451200
+				25 button Description: 2026年9月5日 星期六 · 0 个项目有活动, ID: calendar-day-1788537600
+				26 button Description: 2026年9月6日 星期日 · 0 个项目有活动, ID: calendar-day-1788624000
+				27 button Description: 2026年9月7日 星期一 · 0 个项目有活动, ID: calendar-day-1788710400
+				28 button Description: 2026年9月8日 星期二 · 0 个项目有活动, ID: calendar-day-1788796800
+				29 button Description: 2026年9月9日 星期三 · 0 个项目有活动, ID: calendar-day-1788883200
+				30 button Description: 2026年9月10日 星期四 · 0 个项目有活动, ID: calendar-day-1788969600
+				31 button Description: 2026年9月11日 星期五 · 0 个项目有活动, ID: calendar-day-1789056000
+				32 button Description: 2026年9月12日 星期六 · 0 个项目有活动, ID: calendar-day-1789142400
+				33 button Description: 2026年9月13日 星期日 · 0 个项目有活动, ID: calendar-day-1789228800
+				34 button Description: 2026年9月14日 星期一 · 0 个项目有活动, ID: calendar-day-1789315200
+				35 button Description: 2026年9月15日 星期二 · 0 个项目有活动, ID: calendar-day-1789401600
+				36 button Description: 2026年9月16日 星期三 · 0 个项目有活动, ID: calendar-day-1789488000
+				37 button Description: 2026年9月17日 星期四 · 0 个项目有活动, ID: calendar-day-1789574400
+				38 button Description: 2026年9月18日 星期五 · 0 个项目有活动, ID: calendar-day-1789660800
+				39 button Description: 2026年9月19日 星期六 · 0 个项目有活动, ID: calendar-day-1789747200
+				40 button Description: 2026年9月20日 星期日 · 0 个项目有活动, ID: calendar-day-1789833600
+				41 button Description: 2026年9月21日 星期一 · 1 个项目有活动, ID: calendar-day-1789920000
+				42 button Description: 2026年9月22日 星期二 · 0 个项目有活动, ID: calendar-day-1790006400
+				43 button Description: 2026年9月23日 星期三 · 0 个项目有活动, ID: calendar-day-1790092800
+				44 button Description: 2026年9月24日 星期四 · 0 个项目有活动, ID: calendar-day-1790179200
+				45 button Description: 2026年9月25日 星期五 · 3 个项目有活动, ID: calendar-day-1790265600
+				46 button Description: 2026年9月26日 星期六 · 3 个项目有活动, ID: calendar-day-1790352000
+				47 button Description: 2026年9月27日 星期日 · 0 个项目有活动, ID: calendar-day-1790438400
+				48 button (selected) Description: 2026年9月28日 星期一 · 今天 · 1 个项目有活动, ID: calendar-day-1790524800
+				49 button Description: 2026年9月29日 星期二 · 0 个项目有活动, ID: calendar-day-1790611200
+				50 button Description: 2026年9月30日 星期三 · 0 个项目有活动, ID: calendar-day-1790697600
+			51 text 2026年9月28日 星期一 原生工具栏验收
+			52 button 打开研究历程
+			53 text 1 条研究记录 35 轮工具栏验收
+	54 close button
+	55 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	56 minimize button
+	57 text Wisp Science — 原生预览
+58 menu bar
+	59 Wisp Science QA
+	60 File
+	61 Edit
+	62 View
+	63 Window
+	64 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise

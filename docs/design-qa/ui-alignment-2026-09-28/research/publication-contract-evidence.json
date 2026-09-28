@@ -1,0 +1,39 @@
+[
+  {
+    "revision_id": "qa-rev-a1",
+    "paper_id": "qa-paper-a",
+    "item_ids": [
+      "qa-rev-a1-section",
+      "qa-rev-a1-claim"
+    ],
+    "binding_ids": [
+      "qa-rev-a1-binding-0"
+    ],
+    "source_ids": [
+      "1f635b58-548d-4feb-8271-69df216b89d2"
+    ]
+  },
+  {
+    "revision_id": "qa-rev-a2",
+    "paper_id": "qa-paper-a",
+    "item_ids": [
+      "qa-rev-a2-section",
+      "qa-rev-a2-claim"
+    ],
+    "binding_ids": [
+      "qa-rev-a2-binding-0",
+      "qa-rev-a2-binding-1"
+    ],
+    "source_ids": [
+      "1f635b58-548d-4feb-8271-69df216b89d2",
+      "1f635b58-548d-4feb-8271-69df216b89d2"
+    ]
+  },
+  {
+    "revision_id": "qa-rev-b1",
+    "paper_id": "qa-paper-b",
+    "item_ids": [],
+    "binding_ids": [],
+    "source_ids": []
+  }
+]

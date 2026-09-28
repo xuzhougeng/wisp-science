@@ -1,0 +1,156 @@
+Window: "wisp science — 原生工具栏验收", App: Wisp WebView QA.
+0 standard window wisp science — 原生工具栏验收, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost
+			3 container 研究历程
+				4 container
+					5 text 原生工具栏验收  /  研究历程
+					6 heading 研究历程, Value: 1
+						7 text 研究历程
+					8 text 每天的探索、产出与关键决定，都有迹可循。
+					9 button 补充记录
+					10 button 关闭研究历程
+					11 tab group (selectable) 研究视图
+						12 tab (selected) 按日
+						13 tab (selectable) 关系图
+					14 search text field (settable) 搜索研究记录, Placeholder: 搜索本月研究记录
+						15 text 搜索本月研究记录
+					16 button 刷新研究记录, Help: 刷新
+				17 container HTTP 富文本对比
+					18 text 9 月 25 日
+					19 text 周五
+					20 heading HTTP 富文本对比, Value: 2
+						21 button HTTP 富文本对比
+					22 button (expanded) 收起记录, Secondary Actions: Collapse
+					23 text 0 次实验 · 2 份产出 · 0 条研究记录 · 3 个会话
+					24 heading 当日产出, Value: 3
+						25 text 当日产出
+					26 button report.md
+					27 button counts.csv
+					28 button HTTP 富文本对比
+					29 button ACP 富文本对比
+					30 button 35 轮工具栏验收
+				31 text 2026 年 9 月
+				32 button 上个月
+				33 button 下个月
+				34 text 一 二 三 四 五 六 日
+				35 button 2026-09-01
+				36 button 2026-09-02
+				37 button 2026-09-03
+				38 button 2026-09-04
+				39 button 2026-09-05
+				40 button 2026-09-06
+				41 button 2026-09-07
+				42 button 2026-09-08
+				43 button 2026-09-09
+				44 button 2026-09-10
+				45 button 2026-09-11
+				46 button 2026-09-12
+				47 button 2026-09-13
+				48 button 2026-09-14
+				49 button 2026-09-15
+				50 button 2026-09-16
+				51 button 2026-09-17
+				52 button 2026-09-18
+				53 button 2026-09-19
+				54 button 2026-09-20
+				55 button 2026-09-21
+				56 button 2026-09-22
+				57 button 2026-09-23
+				58 button 2026-09-24
+				59 button 2026-09-25
+				60 button 2026-09-26
+				61 button 2026-09-27
+				62 toggle button 2026-09-28, Value: off
+				63 button 2026-09-29
+				64 button 2026-09-30
+				65 button 回到今天
+				66 button 显示整月
+				67 text 日期按本机时区显示
+				68 heading 产物来源, Value: 2
+					69 text 产物来源
+				70 heading report.md, Value: 3
+					71 text report.md
+				72 text 2026-09-25 16:32 · 登记
+				73 text 版本 1
+				74 text 输入数据
+				75 text 尚未记录输入
+				76 text 实验运行
+				77 text 尚未记录生成它的运行
+				78 button 打开产物
+				79 button 打开会话
+			80 container
+				81 button 返回项目
+				82 button 原生工具栏验收
+				83 button 收起
+				84 button 新建会话
+				85 button 搜索会话
+				86 button 新建分组
+				87 button 文件
+				88 button 研究历程
+				89 button 论文证据
+				90 button 收藏库
+				91 text 会话
+				92 toggle button 选择, Value: off
+				93 button 排序与分组
+				94 text 今天
+				95 button 35 轮工具栏验收
+				96 button 会话操作
+				97 text 更早
+				98 button HTTP 富文本对比
+				99 button 会话操作
+				100 button ACP 富文本对比
+				101 button 会话操作
+				102 button 空会话验收
+				103 button 会话操作
+				104 text 29 技能 · 23 MCP · 0 记忆
+				105 button 能力
+				106 button 反馈
+				107 button 设置
+			108 container
+				109 tab group (selectable) 新建会话
+				110 button (disabled) 分享对话, Help: 暂时没有可分享的内容——对话还是空的
+				111 button 轨迹
+				112 button (disabled) 研究归档
+				113 button 0 个待处理
+				114 button 打开终端
+				115 button 切换面板
+				116 image Wisp Science
+				117 heading 科研不打烊——今天要推进什么？, Value: 1
+					118 text 科研不打烊——今天要推进什么？
+				119 text 浏览项目文件、附加数据，一个工作区搞定科研流程。 浏览器扩展更新
+				120 text Wisp Real Browser Bridge 版本过低
+				121 text 当前已连接版本为 0.2.1，本构建内置版本为 0.3.1。请先更新，再使用新版浏览器工具。
+				122 text /private/tmp/wisp-research-pages-20260928/webview/browser-extension
+				123 button 更新扩展
+				124 button 复制扩展路径
+				125 button 打开扩展管理页
+				126 button 重新检测
+				127 button 关闭
+				128 container 当前对话绑定的服务器与运行时
+					129 button 打开 Local 的交互运行时
+					130 button 打开 Local 上的 Python
+					131 button 打开 Local 上的 R
+				132 text entry area (settable) 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+					133 text 请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，Cmd+K 搜索…
+				134 button 添加到消息
+				135 button Agent 选项
+				136 toggle button Fast 已关闭 · 点击开启 来自配置默认值。, Value: off, Help: Fast 已关闭 · 点击开启
+来自配置默认值。
+				137 button QA 本地输入验收 ▾
+				138 button 发送
+				139 button 消息选项
+				140 text Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加
+	141 close button
+	142 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	143 minimize button
+	144 text wisp science — 原生工具栏验收
+145 menu bar
+	146 Wisp WebView QA
+	147 文件
+	148 编辑
+	149 视图
+	150 窗口
+	151 帮助
+
+The focused UI element is 2 HTML content Description: wisp science — 原生工具栏验收, URL: tauri://localhost

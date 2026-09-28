@@ -1,0 +1,98 @@
+Window: "Wisp Science — 原生预览", App: Wisp Science QA.
+0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
+	1 container
+		2 button Description: 返回项目, ID: back-projects
+		3 menu button 切换项目
+		4 button 收起侧边栏
+		5 text 研究历程
+		6 button 刷新
+		7 button 返回对话
+		8 button 新建会话
+		9 button 上个月
+		10 text 2026 九月
+		11 button 下个月
+		12 button 搜索, ⌘K
+		13 text field (settable) 搜索研究记录
+		14 button Description: 新建分组, ID: new-session-group
+		15 button Description: 文件, ID: sidebar-files
+		16 button Description: 研究历程, ID: sidebar-journey
+		17 button Description: 论文证据, ID: sidebar-publication
+		18 button Description: 收藏, ID: sidebar-library
+		19 text 会话
+		20 button 选择
+		21 button 排序与分组
+		22 scroll area
+			23 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				24 button (selected) Description: 35 轮工具栏验收, ID: session-toolbar-qa-session
+				25 button Description: ACP 富文本对比, ID: session-parity-acp-rich
+				26 button Description: HTTP 富文本对比, ID: session-parity-http-rich
+				27 button Description: 空会话验收, ID: session-toolbar-qa-empty
+		28 button Description: 能力, ID: sidebar-capabilities
+		29 button Description: 反馈问题, ID: sidebar-feedback
+		30 button 设置
+		31 text /private/tmp/wisp-research-pages-20260928/native/workspaces/toolbar-qa
+		32 scroll area Secondary Actions: Scroll Up, Scroll Down
+			33 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+				34 text 2026-09-28 星期一
+				35 button 查看当日
+				36 text 会话 1 · 产物版本 0
+				37 text 35 轮工具栏验收
+				38 text 10:00
+				39 text 1 次会话活动
+				40 button 打开会话
+				41 button 查看详情
+				42 text 2026-09-26 星期六
+				43 button 查看当日
+				44 text 会话 1 · 产物版本 0
+				45 text 35 轮工具栏验收
+				46 text 10:00
+				47 text 1 次会话活动
+				48 button 打开会话
+				49 button 查看详情
+				50 text 2026-09-25 星期五
+				51 button 查看当日
+				52 text 会话 3 · 产物版本 2
+				53 text HTTP 富文本对比
+				54 text 16:35
+				55 text 1 次会话活动
+				56 button 打开会话
+				57 button 查看详情
+				58 text ACP 富文本对比
+				59 text 16:35
+				60 text 1 次会话活动
+				61 button 打开会话
+				62 button 查看详情
+				63 text report.md
+				64 text 16:32
+				65 text 版本 1
+				66 button 打开会话
+				67 button 查看产物与来源
+				68 text counts.csv
+				69 text 16:32
+				70 text 版本 1
+				71 button 打开会话
+				72 button 查看产物与来源
+				73 text 35 轮工具栏验收
+				74 text 16:23
+				75 text 35 次会话活动
+				76 button 打开会话
+				77 button 查看详情
+			78 scroll bar (settable, float) 1
+				79 value indicator (settable, float) 1
+				80 increment arrow button
+				81 decrement arrow button
+				82 increment page button
+				83 decrement page button
+	84 close button
+	85 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	86 minimize button
+	87 text Wisp Science — 原生预览
+88 menu bar
+	89 Wisp Science QA
+	90 File
+	91 Edit
+	92 View
+	93 Window
+	94 Help
+
+The focused UI element is 0 standard window Wisp Science — 原生预览, ID: workspace, Secondary Actions: Raise
