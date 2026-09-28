@@ -219,7 +219,7 @@ pub fn http_error(stage: &str, status: u16, body: &str) -> String {
     let reason = if is_html_response(body) {
         "The service returned a web access or verification page. Check the network/proxy used by Wisp, then retry. Browser sign-in alone cannot resolve this response."
     } else if unsupported_region {
-        "OpenAI rejected the network location used by Wisp (unsupported_country_region_territory). Check Settings → Network → Model API proxy: Direct disables the system proxy even when your browser uses it. Use a supported network location, then start a new sign-in."
+        "OpenAI rejected the network location used by Wisp (unsupported_country_region_territory). Check Settings → Network → Subscription sign-in for authentication, or Model API for model requests: Direct disables the system proxy even when your browser uses it. Use a supported network location, then start a new sign-in."
     } else if status == 401 {
         "The authorization has expired or was rejected. Sign in to ChatGPT again from Settings → Models → Subscription accounts."
     } else if status == 403 {
@@ -233,10 +233,10 @@ pub fn http_error(stage: &str, status: u16, body: &str) -> String {
 }
 
 /// reqwest's Display omits the cause (timeout, DNS, TLS, refused proxy).
-/// Subscription auth uses the Model API route, independently of the browser.
+/// Subscription auth has its own route, independently of model APIs and the browser.
 pub(crate) fn transport_error(stage: &str, error: reqwest::Error) -> String {
     let detail = crate::provider::error_chain(&error.without_url());
-    format!("{stage} failed: {detail}. Check Settings → Network → Model API proxy. Direct disables the system proxy; browser sign-in may use a different network route.")
+    format!("{stage} failed: {detail}. Check Settings → Network → Subscription sign-in proxy. Direct disables the system proxy; browser sign-in may use a different network route.")
 }
 
 pub(crate) fn decode_b64url(input: &str) -> Option<Vec<u8>> {
@@ -765,7 +765,7 @@ mod tests {
             let body = json!({"error": error, "access_token": "secret-access"}).to_string();
             let message = http_error("sign-in", 403, &body);
             assert!(message.contains("unsupported_country_region_territory"));
-            assert!(message.contains("Model API proxy"));
+            assert!(message.contains("Subscription sign-in"));
             assert!(message.contains("Direct disables the system proxy"));
             assert!(!message.contains("account's Codex access"));
             assert!(!message.contains("secret-access"));

@@ -70,6 +70,7 @@ fn network_settings_support_partial_persisted_configuration() {
     }))
     .unwrap();
     assert!(settings.mcp_proxy_url.is_empty());
+    assert!(settings.subscription_proxy_url.is_empty());
     assert!(settings.command_proxy_url.is_empty());
     let ui: wisp_dto::NetworkSettings = roundtrip(&settings);
     assert_eq!(ui, settings);

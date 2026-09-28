@@ -6,9 +6,15 @@ private actor SettingsFake: NativeSettingsQuerying {
     var writes: [(String, [String: SettingsValue], String?)] = []
     var persisted: SettingsValue = .object(["locale": .string("zh"), "notifications_enabled": .bool(true), "future_option": .string("preserve")])
     var fail = false
+    var network: SettingsValue = .object(["model_proxy_url": .string("none"), "subscription_proxy_url": .string(""), "mcp_proxy_url": .string("none")])
     var held: CheckedContinuation<SettingsValue, Error>?
     var holdReads = false
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String?) async throws -> SettingsValue {
+        if command == "get_network_settings" { return network }
+        if command == "set_network_settings" {
+            writes.append((command, args, projectID))
+            network = args["settings"]!; return network
+        }
         if command == "get_settings" {
             if holdReads { return try await withCheckedThrowingContinuation { held = $0 } }
             return persisted
@@ -29,6 +35,20 @@ private actor SettingsFake: NativeSettingsQuerying {
 }
 
 final class NativeSettingsModelTests: XCTestCase {
+    @MainActor func testSubscriptionProxySavePreservesOtherNetworkRoutes() async {
+        let client = SettingsFake()
+        let model = NativeSettingsModel(client: client, projectID: nil)
+        await model.load()
+        model.binding("get_network_settings", "subscription_proxy_url").wrappedValue = .string("http://localhost:7897")
+        _ = await model.run("set_network_settings", ["settings": model.values["get_network_settings"]!])
+        let write = await client.lastWrite()
+        XCTAssertEqual(write?.0, "set_network_settings")
+        XCTAssertEqual(write?.1["settings"]?["subscription_proxy_url"], .string("http://localhost:7897"))
+        XCTAssertEqual(write?.1["settings"]?["model_proxy_url"], .string("none"))
+        XCTAssertEqual(write?.1["settings"]?["mcp_proxy_url"], .string("none"))
+        XCTAssertNil(write?.2)
+        XCTAssertEqual(model.values["get_network_settings"]?["subscription_proxy_url"], .string("http://localhost:7897"))
+    }
     @MainActor func testProjectStoragePreferenceSavesAndReloadsBothModes() async {
         let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: nil)
         await model.load()

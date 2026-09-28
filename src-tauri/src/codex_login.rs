@@ -43,6 +43,8 @@ fn is_xai(provider: &Option<String>) -> Result<bool, String> {
 }
 
 struct LoginSession {
+    // Keep discovery, polling, and callback exchange on the same network route.
+    client: reqwest::Client,
     cancel: Arc<AtomicBool>,
     done: AtomicBool,
     status: Mutex<String>,
@@ -95,7 +97,7 @@ async fn finish_with_code(session: &LoginSession, code: &str, verifier: &str, re
     if session.done.swap(true, Ordering::SeqCst) {
         return;
     }
-    let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+    let client = session.client.clone();
     match codex_auth::exchange_authorization_code(&client, code, verifier, redirect_uri).await {
         Ok(creds) => {
             let account = creds.account_id.clone();
@@ -150,6 +152,7 @@ pub async fn start_codex_login(
     let login_id = uuid::Uuid::new_v4().simple().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let session = Arc::new(LoginSession {
+        client: crate::network::subscription_http_client(),
         cancel: cancel.clone(),
         done: AtomicBool::new(false),
         status: Mutex::new("pending".into()),
@@ -159,7 +162,7 @@ pub async fn start_codex_login(
         state: Mutex::new(String::new()),
     });
     let challenge = if xai {
-        let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+        let client = session.client.clone();
         let token_endpoint = xai_auth::discover_token_endpoint(&client).await?;
         let device = xai_auth::start_device_login(&client).await?;
         set_status(
@@ -170,7 +173,7 @@ pub async fn start_codex_login(
         let polling = session.clone();
         let device_for_poll = device.clone();
         tokio::spawn(async move {
-            let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+            let client = polling.client.clone();
             let result = xai_auth::poll_device_until_complete(
                 &client,
                 device_for_poll,
@@ -204,7 +207,7 @@ pub async fn start_codex_login(
             message: session.message.lock().unwrap().clone(),
         }
     } else if method == "device" {
-        let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+        let client = session.client.clone();
         let device = codex_auth::start_device_login(&client).await?;
         set_status(
             &session,
@@ -214,7 +217,7 @@ pub async fn start_codex_login(
         let polling = session.clone();
         let device_for_poll = device.clone();
         tokio::spawn(async move {
-            let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+            let client = polling.client.clone();
             match codex_auth::poll_device_until_complete(&client, device_for_poll, &cancel).await {
                 Ok(creds) => {
                     if polling.done.swap(true, Ordering::SeqCst) {
@@ -354,7 +357,7 @@ pub async fn save_codex_login(
 ) -> Result<Vec<ModelProfile>, String> {
     let xai = is_xai(&provider)?;
     let creds = if use_saved.unwrap_or(false) {
-        let client = codex_auth::http_client(crate::llm_proxy().as_deref());
+        let client = crate::network::subscription_http_client();
         if xai {
             let Some(saved) = models::load_global_xai() else {
                 return Err("No SuperGrok subscription is signed in on this machine.".into());

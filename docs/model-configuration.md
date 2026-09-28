@@ -121,8 +121,11 @@ indefinite device authorization. A 401 asks you to sign in again.
 See the [official authentication guide](https://learn.chatgpt.com/docs/auth)
 for account and device-code requirements.
 
-Subscription sign-in, token refresh, and model requests all use **Settings →
-Network → Model API proxy**. **Direct** explicitly disables the system and
+Subscription sign-in and token refresh use **Settings → General → Network →
+Subscription sign-in**. Model requests continue to use **Model API**, independently.
+The new sign-in setting defaults to System, including when upgrading a configuration
+that previously set Model API to Direct. Active sign-in attempts keep the client
+route they started with; save the new setting and start a new sign-in. **Direct** explicitly disables the system and
 environment proxies, even if your browser uses a proxy. If the browser opens
 but Wisp's token exchange fails, check this route; select **System** to follow
 the environment/system proxy, or configure the intended proxy explicitly, save,

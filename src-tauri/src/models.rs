@@ -959,7 +959,7 @@ async fn fresh_xai_access_token(id: &str, access: String) -> String {
     if !access.is_empty() {
         creds.access_token = access.clone();
     }
-    let client = wisp_llm::codex_auth::http_client(crate::llm_proxy().as_deref());
+    let client = crate::network::subscription_http_client();
     match wisp_llm::xai_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await {
         Ok(next) => {
             if next.access_token != access {
@@ -995,7 +995,7 @@ async fn fresh_access_token(provider: &str, id: &str) -> String {
     if !access.is_empty() {
         creds.access_token = access.clone();
     }
-    let client = wisp_llm::codex_auth::http_client(crate::llm_proxy().as_deref());
+    let client = crate::network::subscription_http_client();
     match wisp_llm::codex_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await
     {
         Ok(next) => {

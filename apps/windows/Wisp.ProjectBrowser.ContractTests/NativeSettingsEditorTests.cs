@@ -42,6 +42,11 @@ internal static class NativeSettingsEditorTests
         model.Draft!["locale"] = "en"; await model.SaveAsync();
         Check(S(fake.Args!["settings"], "locale") == "en" && S(fake.Args["settings"], "model") == "fixture" && fake.Args["settings"]!["future_flag"]!.GetValue<bool>(),
             "editing one general preference preserves model configuration and unknown options");
+        model.Edit(new() { ["model_proxy_url"] = "none", ["subscription_proxy_url"] = "", ["mcp_proxy_url"] = "none" }, "set_network_settings", "settings");
+        model.Draft!["subscription_proxy_url"] = "http://localhost:7897"; await model.SaveAsync();
+        Check(S(fake.Args!["settings"], "subscription_proxy_url") == "http://localhost:7897"
+            && S(fake.Args["settings"], "model_proxy_url") == "none" && S(fake.Args["settings"], "mcp_proxy_url") == "none",
+            "subscription sign-in proxy saves without replacing model or MCP routing");
         model.Edit(new() { ["name"] = "analysis", ["env_var"] = "ANALYSIS_KEY", ["value"] = "synthetic-secret" }, "add_custom_credential"); await model.SaveAsync();
         Check(S(fake.Args, "envVar") == "ANALYSIS_KEY" && S(fake.Args, "value") == "synthetic-secret" && model.Draft == null,
             "credential write uses the keyring host command and clears local draft after success");

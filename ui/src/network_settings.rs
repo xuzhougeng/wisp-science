@@ -9,6 +9,7 @@ use wasm_bindgen::JsValue;
 fn proxy_value(settings: &NetworkSettings, scope: &str) -> String {
     match scope {
         "model" => settings.model_proxy_url.clone(),
+        "subscription" => settings.subscription_proxy_url.clone(),
         "mcp" => settings.mcp_proxy_url.clone(),
         _ => settings.command_proxy_url.clone(),
     }
@@ -17,6 +18,7 @@ fn proxy_value(settings: &NetworkSettings, scope: &str) -> String {
 fn set_proxy(settings: &mut NetworkSettings, scope: &str, value: String) {
     match scope {
         "model" => settings.model_proxy_url = value,
+        "subscription" => settings.subscription_proxy_url = value,
         "mcp" => settings.mcp_proxy_url = value,
         _ => settings.command_proxy_url = value,
     }
@@ -177,7 +179,7 @@ pub(crate) fn NetworkSettingsView(settings: RwSignal<Settings>) -> impl IntoView
                             <section class="network-section">
                                 <h3>{move || t(locale.get(), "network.connection")}</h3>
                                 <p class="network-description">{move || t(locale.get(), "network.connection_hint")}</p>
-                                {[ ("model", "network.model", "network.model_hint"), ("mcp", "network.mcp", "network.mcp_hint"), ("command", "network.command", "network.command_hint") ].into_iter().map(|(scope, label, hint)| {
+                                {[ ("model", "network.model", "network.model_hint"), ("subscription", "network.subscription", "network.subscription_hint"), ("mcp", "network.mcp", "network.mcp_hint"), ("command", "network.command", "network.command_hint") ].into_iter().map(|(scope, label, hint)| {
                                     let mode = move || {
                                         let value = proxy_value(&draft.get(), scope);
                                         if value == "none" { "direct" } else if !value.is_empty() || custom.get().iter().any(|s| s == scope) { "custom" } else { "system" }

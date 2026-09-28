@@ -5427,6 +5427,8 @@ mod mcp_secret_entry_tests {
 #[serde(default)]
 pub struct NetworkSettings {
     pub model_proxy_url: String,
+    /// Subscription OAuth only. Missing legacy values follow system/env proxies.
+    pub subscription_proxy_url: String,
     pub mcp_proxy_url: String,
     pub command_proxy_url: String,
     pub conda_mirror_url: String,

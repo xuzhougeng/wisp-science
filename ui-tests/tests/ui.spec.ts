@@ -14904,7 +14904,7 @@ for (const locale of ["en", "zh"]) {
     await python.fill("C:/Users/Researcher/" + "long-environment-directory/".repeat(12) + "python.exe");
     await python.scrollIntoViewIfNeeded();
     await expectInsideViewport(python, 820, 740);
-    for (const scope of ["model", "mcp", "command"]) {
+    for (const scope of ["model", "subscription", "mcp", "command"]) {
       await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
       const save = page.getByTestId(`save-proxy-${scope}`);
       await save.evaluate(el => el.scrollIntoView({ block: "center" }));
@@ -14970,6 +14970,32 @@ test("network saves each proxy independently and preserves the legacy model prox
   await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
 });
 
+test("subscription sign-in proxy saves independently from model proxy and survives reopening", async ({ page }) => {
+  await page.goto("/?mockLegacyProxy=none");
+  await openSettingsSection(page, "General");
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
+  await expect(page.getByTestId("proxy-mode-subscription")).toHaveValue("system");
+  await expect(page.getByTestId("network-proxy-subscription")).toContainText("ChatGPT / xAI");
+  await page.getByTestId("proxy-mode-model").selectOption("custom");
+  await page.getByTestId("proxy-address-model").fill("http://unsaved-model.test:8080");
+  await page.getByTestId("proxy-mode-subscription").selectOption("custom");
+  await page.getByTestId("proxy-address-subscription").fill("http://localhost:7897");
+  await page.getByTestId("save-proxy-subscription").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "none", subscription_proxy_url: "http://localhost:7897", mcp_proxy_url: "", command_proxy_url: "" },
+  });
+  await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://unsaved-model.test:8080");
+  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
+  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
+  await expect(page.getByTestId("proxy-address-subscription")).toHaveValue("http://localhost:7897");
+  await page.getByTestId("network-proxy-subscription").getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByTestId("save-proxy-subscription").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "none", subscription_proxy_url: "" },
+  });
+});
+
 test("network package mirror saves guidance and Escape closes only its subpage", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
@@ -15015,12 +15041,14 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.locator(".network-settings").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("save-proxy-model")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-zh.png") });
+  await expect(page.getByTestId("network-proxy-subscription")).toContainText("订阅账号登录");
+  await page.getByTestId("network-proxy-subscription").screenshot({ animations: "disabled", path: testInfo.outputPath("subscription-network-zh.png") });
   await page.getByTestId("configure-package-mirrors").click();
   await expect(page.getByTestId("save-package-mirrors")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("package-mirror-zh.png") });
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 820, height: 740 });
-  for (const scope of ["model", "mcp", "command"]) {
+  for (const scope of ["model", "subscription", "mcp", "command"]) {
     await page.getByTestId(`network-proxy-${scope}`).scrollIntoViewIfNeeded();
     if (scope === "model") {
       await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
@@ -15035,7 +15063,7 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
 test("network address fields appear only for custom proxies in every scope", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
-  for (const scope of ["model", "mcp", "command"]) {
+  for (const scope of ["model", "subscription", "mcp", "command"]) {
     const mode = page.getByTestId(`proxy-mode-${scope}`);
     const address = page.getByTestId(`proxy-address-${scope}`);
     await expect(mode).toHaveValue("system");

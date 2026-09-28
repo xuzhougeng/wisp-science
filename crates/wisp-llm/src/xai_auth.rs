@@ -381,7 +381,7 @@ mod tests {
             error.contains("tunnel"),
             "missing underlying cause: {error}"
         );
-        assert!(error.contains("Model API proxy"));
+        assert!(error.contains("Subscription sign-in proxy"));
         assert!(error.contains("Direct disables the system proxy"));
     }
 

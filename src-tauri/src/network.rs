@@ -9,6 +9,11 @@ const SETTINGS_KEY: &str = "network_settings";
 const PROMPT_START: &str = "\n<wisp-package-mirrors>\n";
 const PROMPT_END: &str = "</wisp-package-mirrors>\n";
 static MCP_PROXY: RwLock<String> = RwLock::new(String::new());
+static SUBSCRIPTION_PROXY: RwLock<String> = RwLock::new(String::new());
+
+pub(crate) fn subscription_http_client() -> reqwest::Client {
+    wisp_llm::codex_auth::http_client(Some(&SUBSCRIPTION_PROXY.read().unwrap()))
+}
 
 pub(crate) fn mcp_proxy() -> String {
     MCP_PROXY.read().unwrap().clone()
@@ -16,6 +21,7 @@ pub(crate) fn mcp_proxy() -> String {
 
 pub(crate) fn apply(settings: &NetworkSettings) {
     crate::set_llm_proxy(&settings.model_proxy_url);
+    *SUBSCRIPTION_PROXY.write().unwrap() = settings.subscription_proxy_url.clone();
     *MCP_PROXY.write().unwrap() = settings.mcp_proxy_url.clone();
     wisp_tools::network::set_command_proxy(&settings.command_proxy_url);
 }
@@ -41,6 +47,11 @@ pub(crate) async fn load(store: &Store) -> Result<NetworkSettings, String> {
 fn normalize(mut settings: NetworkSettings) -> Result<NetworkSettings, String> {
     for (label, value, proxy) in [
         ("Model API proxy", &mut settings.model_proxy_url, true),
+        (
+            "Subscription sign-in proxy",
+            &mut settings.subscription_proxy_url,
+            true,
+        ),
         ("MCP proxy", &mut settings.mcp_proxy_url, true),
         ("Code proxy", &mut settings.command_proxy_url, true),
         ("Conda mirror", &mut settings.conda_mirror_url, false),
@@ -147,6 +158,44 @@ pub(crate) fn sync_package_guidance(prompt: &mut String, settings: &NetworkSetti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn subscription_proxy_defaults_to_system_and_persists_independently() {
+        let store = Store::open(std::path::Path::new(":memory:")).await.unwrap();
+        store
+            .set_setting(
+                SETTINGS_KEY,
+                r#"{"model_proxy_url":"none","mcp_proxy_url":"http://localhost:7890"}"#,
+            )
+            .await
+            .unwrap();
+        let mut settings = load(&store).await.unwrap();
+        assert!(settings.subscription_proxy_url.is_empty());
+        settings.subscription_proxy_url = " socks5h://localhost:1080 ".into();
+        let saved = save(&store, settings).await.unwrap();
+        assert_eq!(saved.subscription_proxy_url, "socks5h://localhost:1080");
+        assert_eq!(saved.model_proxy_url, "none");
+        assert_eq!(saved.mcp_proxy_url, "http://localhost:7890");
+        assert_eq!(load(&store).await.unwrap(), saved);
+        for value in [
+            "bad proxy",
+            "https://user:secret@proxy.test",
+            "https://proxy.test?token=secret",
+        ] {
+            let mut invalid = saved.clone();
+            invalid.subscription_proxy_url = value.into();
+            assert!(save(&store, invalid).await.is_err());
+            assert_eq!(load(&store).await.unwrap(), saved);
+        }
+        for value in ["none", ""] {
+            let mut next = saved.clone();
+            next.subscription_proxy_url = value.into();
+            save(&store, next).await.unwrap();
+            let next = load(&store).await.unwrap();
+            assert_eq!(next.subscription_proxy_url, value);
+            assert_eq!(next.model_proxy_url, "none");
+        }
+    }
 
     #[test]
     fn validates_urls_without_persisting_secrets_or_instructions() {

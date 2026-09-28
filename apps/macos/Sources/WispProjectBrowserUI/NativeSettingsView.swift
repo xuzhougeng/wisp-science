@@ -201,6 +201,7 @@ struct NativeSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 fields("get_network_settings", [
                     .init(key: "model_proxy_url", label: "模型 API 代理", hint: "留空跟随系统；none 为直连；支持 HTTP / HTTPS / SOCKS5。"),
+                    .init(key: "subscription_proxy_url", label: "订阅账号登录代理", hint: "用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。留空跟随系统，none 为直连。"),
                     .init(key: "mcp_proxy_url", label: "MCP 代理"),
                     .init(key: "command_proxy_url", label: "代码与命令代理"),
                     .init(key: "conda_mirror_url", label: "Conda 镜像"),

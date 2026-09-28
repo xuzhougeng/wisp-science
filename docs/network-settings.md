@@ -18,6 +18,7 @@ only for **Custom proxy**; **System** and **Direct** do not show an address fiel
 | Scope | Applies to | Takes effect |
 | --- | --- | --- |
 | Model API | Wisp's HTTP model providers, image and video generation | Next turn; active requests keep their current client |
+| Subscription sign-in | ChatGPT / xAI discovery, device authorization, callback token exchange and token refresh | New sign-in attempts and subsequent token refreshes; active sign-ins keep their route |
 | MCP services | Bundled scientific connectors, HTTP MCP (including OAuth), custom and plugin stdio MCP child processes | New connections; reconnect existing services |
 | Code requests | Local shell commands, local Runs, and local Python/R interpreter processes | Newly launched processes; restart an existing interpreter |
 
@@ -30,6 +31,11 @@ Model API connection errors that mention a leftover `HTTP_PROXY`/`HTTPS_PROXY`
 or an OS system proxy (macOS/Windows) should be resolved here: set Model API to
 **Direct**, or enter a proxy that is still running. The error names the proxy in
 use. This page is under **Settings → General**, not Models.
+Subscription sign-in has its own proxy and defaults to System on upgrade, regardless
+of Model API settings. This lets authentication follow the system proxy while local
+model APIs connect directly. Browser pages keep the browser's own network settings.
+Save, then start a new sign-in. Chat/model API traffic still uses Model API.
+
 Saving one row does not save edits in other rows or in Package mirror. Network
 settings can be saved before a model/API key has been configured.
 

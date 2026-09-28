@@ -183,6 +183,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   let mockLocale = query.get("mockLocale") === "zh" ? "zh" : "en";
   let mockNetworkSettings = {
     model_proxy_url: query.get("mockLegacyProxy") ?? "",
+    subscription_proxy_url: "",
     mcp_proxy_url: "", command_proxy_url: "", conda_mirror_url: "", pip_index_url: "", ca_bundle_path: "",
   };
 
@@ -2848,7 +2849,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "get_network_settings": return { ...mockNetworkSettings };
           case "set_network_settings": {
             const next = plain(arg("settings") ?? {});
-            for (const key of ["model_proxy_url", "mcp_proxy_url", "command_proxy_url", "conda_mirror_url", "pip_index_url"]) {
+            for (const key of ["model_proxy_url", "subscription_proxy_url", "mcp_proxy_url", "command_proxy_url", "conda_mirror_url", "pip_index_url"]) {
               const value = String(next[key] ?? "").trim();
               if (value && value !== "none" && !/^https?:\/\/|^socks5h?:\/\//.test(value)) throw "Enter a complete URL.";
               next[key] = value;
