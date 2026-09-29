@@ -208,14 +208,18 @@ pub fn is_html_response(body: &str) -> bool {
 
 pub fn http_error(stage: &str, status: u16, body: &str) -> String {
     // Only recognize known error codes; never echo arbitrary token/error bodies.
-    let unsupported_region = serde_json::from_str::<Value>(body)
-        .ok()
-        .is_some_and(|value| {
-            value.pointer("/error/code").and_then(Value::as_str)
+    let value = serde_json::from_str::<Value>(body).ok();
+    if stage == "model request" && status == 400 {
+        if let Some(parameter) = value.as_ref().and_then(unsupported_model_parameter) {
+            return format!("ChatGPT model request failed (HTTP 400). Unsupported request parameter: {parameter}. This ChatGPT subscription endpoint does not accept that parameter. Update Wisp or use a compatible model configuration.");
+        }
+    }
+    let unsupported_region = value.as_ref().is_some_and(|value| {
+        value.pointer("/error/code").and_then(Value::as_str)
+            == Some("unsupported_country_region_territory")
+            || value.get("error").and_then(Value::as_str)
                 == Some("unsupported_country_region_territory")
-                || value.get("error").and_then(Value::as_str)
-                    == Some("unsupported_country_region_territory")
-        });
+    });
     let reason = if is_html_response(body) {
         "The service returned a web access or verification page. Check the network/proxy used by Wisp, then retry. Browser sign-in alone cannot resolve this response."
     } else if unsupported_region {
@@ -230,6 +234,37 @@ pub fn http_error(stage: &str, status: u16, body: &str) -> String {
         "The service could not complete the request. Retry, or check the account and network settings."
     };
     format!("ChatGPT {stage} failed (HTTP {status}). {reason}")
+}
+
+fn unsupported_model_parameter(value: &Value) -> Option<&'static str> {
+    let message = value
+        .get("detail")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/error/message").and_then(Value::as_str));
+    // Report only fixed request-field names, never a provider's arbitrary
+    // message, parameter value, HTML, account metadata or OAuth response.
+    [
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "service_tier",
+        "reasoning",
+        "reasoning.effort",
+        "reasoning.summary",
+        "prompt_cache_key",
+        "parallel_tool_calls",
+        "tools",
+        "tool_choice",
+    ]
+    .into_iter()
+    .find(|parameter| {
+        (value.pointer("/error/code").and_then(Value::as_str) == Some("unsupported_parameter")
+            && value.pointer("/error/param").and_then(Value::as_str) == Some(*parameter))
+            || message.is_some_and(|message| {
+                message == format!("Unsupported parameter: {parameter}")
+                    || message == format!("Unsupported parameter: '{parameter}'.")
+            })
+    })
 }
 
 /// reqwest's Display omits the cause (timeout, DNS, TLS, refused proxy).
@@ -773,6 +808,33 @@ mod tests {
         let unknown = http_error("sign-in", 403, r#"{"error":{"code":"secret-code"}}"#);
         assert!(!unknown.contains("secret-code"));
         assert!(unknown.contains("Access was denied"));
+    }
+
+    #[test]
+    fn model_parameter_errors_name_only_known_fields() {
+        for error in [
+            json!({"detail": "Unsupported parameter: max_output_tokens", "access_token": "secret-access"}),
+            json!({"error": {"message": "Unsupported parameter: 'max_output_tokens'."}}),
+            json!({"error": {"code": "unsupported_parameter", "param": "max_output_tokens", "message": "secret-access"}}),
+        ] {
+            let body = error.to_string();
+            let message = http_error("model request", 400, &body);
+            assert!(message.contains("Unsupported request parameter: max_output_tokens"));
+            assert!(!message.contains("secret-access"));
+            // OAuth stages retain their existing safe, generic diagnostics.
+            assert!(!http_error("sign-in", 400, &body).contains("max_output_tokens"));
+        }
+        for body in [
+            r#"{"detail":"Unsupported parameter: secret-access"}"#,
+            r#"{"error":{"code":"unsupported_parameter","param":"secret-access"}}"#,
+            r#"{"detail":"Unsupported parameter: max_output_tokens secret-access"}"#,
+            r#"{"error":{"message":"secret-access"}}"#,
+            "<html><head>secret-access</head></html>",
+        ] {
+            let message = http_error("model request", 400, body);
+            assert!(!message.contains("secret-access"));
+            assert!(!message.contains("Unsupported request parameter:"));
+        }
     }
 
     #[tokio::test]

@@ -56,6 +56,20 @@ test("two candidate apps and concurrent streams leave host controls responsive",
   await expect(page.locator(".composer-inner textarea").first()).toHaveValue("host still accepts input");
 });
 
+test("a same-tick burst of turn events does not trap the wasm renderer", async ({ page }) => {
+  // Disposed-owner effects used to panic here. Each panic is a wasm trap that
+  // leaks shadow stack until the window dies (vendor/leptos_reactive/WISP-PATCH.md).
+  const traps: string[] = [];
+  page.on("pageerror", (error) => traps.push(error.message));
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+  await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText(/I inspected/).first()).toBeVisible();
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  expect(traps).toEqual([]);
+});
+
 test("heartbeat diagnoses script failures and input blockers without exporting content", async ({ page }) => {
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();

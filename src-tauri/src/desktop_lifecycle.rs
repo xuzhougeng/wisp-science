@@ -226,7 +226,10 @@ pub(crate) fn sync_pet_window(_app: &tauri::AppHandle, _enabled: bool) -> Result
 }
 
 #[tauri::command]
-pub(crate) fn set_pet_window_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+pub(crate) async fn set_pet_window_visible(
+    app: tauri::AppHandle,
+    visible: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         if visible {

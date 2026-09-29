@@ -117,6 +117,12 @@ that subscription can call, such as `gpt-5.5`. A sign-in from
 `wisp-science login codex` is stored on the same machine and can be reused
 from this page.
 
+ChatGPT subscription requests use the service-managed output limit: Wisp does
+not send the public API's `max_output_tokens` parameter, which the subscription
+endpoint rejects with HTTP 400. API-key Responses profiles still send their
+configured output limit. Recognized unsupported-parameter errors name the
+request field without exposing the raw service response or credentials.
+
 On Windows, long ChatGPT and xAI credentials are split across protected
 Credential Manager entries to stay within its per-entry size limit. Saving
 and token refresh publish the new credential only after every fragment is

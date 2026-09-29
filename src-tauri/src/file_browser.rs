@@ -496,31 +496,39 @@ fn collect_file_search_hits(
     Ok(())
 }
 
+// Filesystem commands below must not be plain sync commands: those run on the
+// UI thread, and on Windows a slow tree, cloud placeholder or network share
+// then freezes the whole window (#1380). A full-tree walk goes to the blocking
+// pool; the bounded ones use `command(async)` (a runtime worker).
 #[tauri::command]
-pub(super) fn search_files(
+pub(super) async fn search_files(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<FileSearchHit>, String> {
-    let ap = state.require_active(window.label())?;
-    let q = query.trim();
-    if q.is_empty() {
-        return Ok(vec![]);
-    }
-    let cap = limit.unwrap_or(200).clamp(1, 500);
-    let mut hits = Vec::new();
-    collect_file_search_hits(&ap.root, ".", q, cap, &mut hits)?;
-    hits.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
-            .then(a.path.cmp(&b.path))
-    });
-    Ok(hits)
+    let root = state.require_active(window.label())?.root;
+    tauri::async_runtime::spawn_blocking(move || {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(vec![]);
+        }
+        let cap = limit.unwrap_or(200).clamp(1, 500);
+        let mut hits = Vec::new();
+        collect_file_search_hits(&root, ".", q, cap, &mut hits)?;
+        hits.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.path.cmp(&b.path))
+        });
+        Ok(hits)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn list_dir(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
@@ -1342,7 +1350,7 @@ fn file_content_from_bytes(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn read_file(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
@@ -1352,7 +1360,7 @@ pub(super) fn read_file(
     read_file_at(&state.require_active(window.label())?.root, path, max_bytes)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn read_file_bytes(
     state: State<'_, AppState>,
     window: WorkspaceSurface,

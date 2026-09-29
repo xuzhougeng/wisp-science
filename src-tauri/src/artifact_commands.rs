@@ -485,7 +485,7 @@ pub(super) async fn search_artifacts(
 /// subset that can't be previewed: resolved against the project root and
 /// missing on disk, or outside the root. The UI drops these so a stale
 /// intermediate file doesn't linger as an artifact that 404s on click (#41).
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn missing_files(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
@@ -514,7 +514,7 @@ fn workspace_path_kind(root: &std::path::Path, path: &str) -> wisp_dto::Workspac
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn classify_workspace_paths(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
