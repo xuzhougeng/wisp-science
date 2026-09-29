@@ -2208,14 +2208,10 @@ fn App() -> impl IntoView {
 
     create_effect(move |_| {
         if file_source.get() != "local" {
-            file_search_hits.set(vec![]);
+            clear_file_search(file_search_hits);
             return;
         }
-        let q = file_query.get();
-        if q.trim().is_empty() {
-            file_search_hits.set(vec![]);
-            return;
-        }
+        let _ = file_query.get();
         refresh_file_search(file_query, file_search_hits);
     });
 
@@ -10214,8 +10210,8 @@ fn App() -> impl IntoView {
                 file_source.set("local".into());
                 file_cwd.set(".".into());
                 file_query.set(String::new());
-                file_entries.set(Vec::new());
-                file_search_hits.set(Vec::new());
+                clear_dir_listing(file_entries);
+                clear_file_search(file_search_hits);
                 collapsed_folders.set(HashSet::new());
                 selecting_workspace_entries.set(false);
                 selected_workspace_paths.set(HashSet::new());
