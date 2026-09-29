@@ -441,7 +441,7 @@ pub(crate) fn apply_bounds(app: &AppHandle, child: &Child) -> Result<(), String>
     child.ensure_live()?;
     let view = app.get_webview(&child.handle.child_label).ok_or(STALE)?;
     let owner = app.workspace_surface(&child.owner).ok_or(STALE)?;
-    // Child set_bounds is parent-window-client-relative (Tauri 2.11.3 / wry
+    // Child set_bounds is parent-window-client-relative (Tauri 2.12 / wry
     // WebView2). The primary document fills that client area. Do not add
     // Webview::position() of the primary webview: for a webview-window it
     // returns the window inner position, which is desktop-relative.

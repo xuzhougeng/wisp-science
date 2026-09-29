@@ -36,4 +36,6 @@ It is independent of the Windows input-reentrancy fix in Tao 0.37.0
 
 When a published `tao` includes this `handle_redraw` guard, remove this
 directory, the root patch, and the workspace exclusion. Keep the native
-redraw regression after removing the override.
+redraw regression after removing the override. As of 2026-09-29, `tao 0.37.1`
+still has the unguarded `handle_redraw`; published `tauri-runtime-wry 2.12.0`
+requires Tao `^0.37.0`, so this 0.37.0 override applies without a runtime patch.

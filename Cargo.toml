@@ -20,23 +20,18 @@ members = [
     "src-tauri",
 ]
 default-members = ["crates/wisp-cli"]
-exclude = ["vendor/tauri-runtime-wry", "vendor/tao"]
+exclude = ["vendor/tao"]
 
-# Published runtime-wry still requires Tao ^0.35.0, which has the Windows
-# input reentrancy deadlock (#1265). Keep the rest of the runtime unchanged.
-# Provenance and removal criteria: vendor/tauri-runtime-wry/WISP-PATCH.md.
-#
-# Published Tao 0.37.0 still deadlocks on macOS when `handle_redraw` reenters
-# the callback mutex from a nested AppKit run loop (#1250).
-# Provenance and removal criteria: vendor/tao/WISP-PATCH.md.
+# Published Tao (0.37.0 and 0.37.1) still deadlocks on macOS when
+# `handle_redraw` reenters the callback mutex from a nested AppKit run loop
+# (#1250). Provenance and removal criteria: vendor/tao/WISP-PATCH.md.
 [patch.crates-io]
-tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
 tao = { path = "vendor/tao" }
 
 [workspace.package]
 version = "1.15.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 license = "AGPL-3.0-only"
 authors = ["wisp-science contributors"]
 repository = "https://github.com/xuzhougeng/wisp-science"
