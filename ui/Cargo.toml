@@ -27,8 +27,14 @@ futures-channel = "0.3"
 # separate from the native Cargo workspace at the repo root.
 [workspace]
 
-# wasm32 defaults to abort; unwind lets install_panic_hook keep the renderer
-# alive after an OwnerDisposed race in a keyed row.
+# Kept as the profile name the Tauri build scripts pass to Trunk. Do not add
+# `panic = "unwind"`: stable wasm32 cannot unwind, so every panic is still a
+# trap that leaks shadow stack. Avoid panics instead (vendor/leptos_reactive).
 [profile.release-wasm]
 inherits = "release"
-panic = "unwind"
+
+# Published leptos_reactive 0.6.15 panics when an effect's owner is disposed
+# before its first microtask run, which keyed rows hit routinely.
+# Provenance and removal criteria: vendor/leptos_reactive/WISP-PATCH.md.
+[patch.crates-io]
+leptos_reactive = { path = "../vendor/leptos_reactive" }

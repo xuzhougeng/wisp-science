@@ -17974,30 +17974,10 @@ fn App() -> impl IntoView {
     }
 }
 
-/// `console_error_panic_hook` plus one deliberate downgrade: leptos 0.6
-/// runs a `create_effect`'s first pass in a microtask bound to its owner, and
-/// an owner disposed in between makes `with_owner` panic with
-/// `OwnerDisposed`. Keyed rows (streaming turns, artifact-card rebuilds) hit
-/// that race routinely; under release `panic = "abort"` it used to take the
-/// whole renderer down — a dead window with the backend still running. A
-/// disposed-owner effect has nothing left to update, so the correct handling
-/// is to drop it with a console warning instead of aborting.
-fn install_panic_hook() {
-    std::panic::set_hook(Box::new(move |info| {
-        let message = format!("{info}");
-        if message.contains("OwnerDisposed") {
-            web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&format!(
-                "dropped reactive effect for a disposed owner: {message}"
-            )));
-            return;
-        }
-        // Everything else keeps the standard hook behavior (error + stack).
-        console_error_panic_hook::hook(info);
-    }));
-}
-
 pub fn main() {
-    install_panic_hook();
+    // A panic cannot be recovered on wasm32: it traps without running
+    // destructors or restoring the shadow stack, so log every one loudly.
+    console_error_panic_hook::set_once();
     let is_pet_window = window().location().search().ok().is_some_and(|query| {
         query
             .split('&')
