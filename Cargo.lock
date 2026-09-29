@@ -7524,8 +7524,10 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "windows-sys 0.60.2",
  "wisp-dto",
  "wisp-llm",
+ "zeroize",
 ]
 
 [[package]]

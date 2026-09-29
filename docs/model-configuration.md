@@ -114,6 +114,13 @@ that subscription can call, such as `gpt-5.5`. A sign-in from
 `wisp-science login codex` is stored on the same machine and can be reused
 from this page.
 
+On Windows, long ChatGPT and xAI credentials are split across protected
+Credential Manager entries to stay within its per-entry size limit. Saving
+and token refresh publish the new credential only after every fragment is
+written; existing short credentials remain readable. No token is stored in
+the project database. If a saved credential is incomplete or damaged, sign in
+again to replace it.
+
 Canceling or leaving the sign-in page cancels the attempt. An HTML 403 is
 reported as a web access/verification response with network and proxy guidance,
 without displaying the HTML. It is not treated as a successful login or as
