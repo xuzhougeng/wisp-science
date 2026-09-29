@@ -75,7 +75,6 @@ impl OpenAiResponsesProvider {
         if self.is_codex() {
             return codex_request_body(
                 &self.cfg.model,
-                self.cfg.max_tokens,
                 self.cfg.reasoning_effort.as_deref(),
                 self.cfg.service_tier.as_deref(),
                 &self.cfg.session_id,
@@ -493,7 +492,6 @@ fn insert_header(headers: &mut reqwest::header::HeaderMap, name: &'static str, v
 
 fn codex_request_body(
     model: &str,
-    max_tokens: u64,
     reasoning_effort: Option<&str>,
     service_tier: Option<&str>,
     session_id: &str,
@@ -518,13 +516,15 @@ fn codex_request_body(
     if instructions.is_empty() {
         instructions = "You are a helpful assistant.".into();
     }
+    // The ChatGPT subscription endpoint rejects max_output_tokens even though
+    // the public, API-key Responses endpoint accepts it. Its output limit is
+    // service-managed; keep the configured limit on ordinary Responses only.
     let mut body = json!({
         "model": model,
         "store": false,
         "stream": true,
         "instructions": instructions,
         "input": input,
-        "max_output_tokens": max_tokens,
     });
     if !session_id.is_empty() {
         body["prompt_cache_key"] = json!(session_id);
@@ -1079,7 +1079,6 @@ mod tests {
     fn codex_body_is_stateless_and_moves_the_system_prompt() {
         let body = codex_request_body(
             "gpt-5.5",
-            1024,
             Some("low"),
             None,
             "session-1",
@@ -1097,6 +1096,7 @@ mod tests {
         );
         assert_eq!(body["store"], false);
         assert_eq!(body["stream"], true);
+        assert!(body.get("max_output_tokens").is_none());
         assert_eq!(body["instructions"], "Be precise.");
         assert_eq!(body["prompt_cache_key"], "session-1");
         assert_eq!(body["tools"][0]["name"], "wisp_python");
@@ -1109,6 +1109,108 @@ mod tests {
         assert!(input
             .iter()
             .any(|item| item["type"] == "function_call_output"));
+    }
+
+    #[test]
+    fn output_limit_is_sent_only_to_api_key_responses() {
+        for max_tokens in [0, 1024, 131_072] {
+            let mut cfg = crate::ProviderConfig::openai_codex(
+                "https://chatgpt.com/backend-api",
+                "unused",
+                "gpt-6-luna",
+            );
+            cfg.max_tokens = max_tokens;
+            let codex =
+                OpenAiResponsesProvider::new(cfg.clone()).build_body(&[Message::user("hi")], &[]);
+            assert!(codex.get("max_output_tokens").is_none());
+            cfg.kind = ProviderKind::OpenAiResponses;
+            let api = OpenAiResponsesProvider::new(cfg).build_body(&[Message::user("hi")], &[]);
+            assert_eq!(api["max_output_tokens"], max_tokens);
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_complete_and_stream_send_subscription_compatible_requests() {
+        use base64::Engine;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let (head, body) = loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0 && request.len() < 32_768);
+                    request.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let head = String::from_utf8(request[..end].to_vec()).unwrap();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if request.len() >= end + 4 + length {
+                            let body: Value =
+                                serde_json::from_slice(&request[end + 4..end + 4 + length])
+                                    .unwrap();
+                            break (head, body);
+                        }
+                    }
+                };
+                assert!(head.starts_with("POST /codex/responses HTTP/1.1"));
+                assert!(head
+                    .to_ascii_lowercase()
+                    .contains("chatgpt-account-id: test-account"));
+                assert_eq!(body["model"], "gpt-6-luna");
+                assert_eq!(body["store"], false);
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["instructions"], "Reply only OK.");
+                assert!(body.get("max_output_tokens").is_none());
+                let event = json!({"type": "response.completed", "response": {
+                    "status": "completed", "output_text": "OK", "output": [],
+                    "usage": {"input_tokens": 2, "output_tokens": 1}
+                }});
+                let body = format!("data: {event}\n\n");
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"test-account"}}"#);
+        let mut cfg = crate::ProviderConfig::openai_codex(
+            &endpoint,
+            format!("e30.{claims}.synthetic"),
+            "gpt-6-luna",
+        );
+        cfg.proxy = Some("none".into());
+        cfg.max_tokens = 1024;
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let messages = [
+            Message::system("Reply only OK."),
+            Message::user("Reply OK."),
+        ];
+        tokio::time::timeout(Duration::from_secs(10), async {
+            assert_eq!(
+                provider.complete(&messages, &[]).await.unwrap().content,
+                "OK"
+            );
+            let result = provider
+                .stream(&messages, &[], &mut crate::provider::NullSink)
+                .await
+                .unwrap();
+            assert_eq!(result.content, "OK");
+            assert_eq!(result.usage.output_tokens, 1);
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     struct Collect {
