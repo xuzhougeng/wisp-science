@@ -261,7 +261,7 @@ fn attach_maximize_overlay(window: &WorkspaceSurface) -> Result<(), String> {
             if RegisterClassExW(&class) == 0 {
                 return Err(format!(
                     "could not register snap overlay class: {}",
-                    windows::core::Error::from_win32()
+                    windows::core::Error::from_thread()
                 ));
             }
         }
