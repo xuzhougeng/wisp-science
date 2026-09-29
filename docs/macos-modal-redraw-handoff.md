@@ -49,7 +49,7 @@ cargo tree --locked -p wisp-tauri -i tao
 cargo build --locked -p wisp-tauri
 ```
 
-预期依赖链为 Tao 0.37.0 → 本地 runtime-wry 2.11.4 → Tauri 2.11.3。
+预期依赖链为本地 Tao 0.37.0（`vendor/tao`）→ runtime-wry 2.12.0 → Tauri 2.12.0。
 使用 debug 构建复现，保留**同一构建**的可执行文件和调试产物、Git SHA、
 Cargo.lock、OS build、CPU 架构及操作步骤。完整 UI 可用 `cargo tauri dev`；
 该命令会自动使用 `tauri.macos.conf.json` 的前端命令。

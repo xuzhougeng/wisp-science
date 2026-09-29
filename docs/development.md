@@ -104,7 +104,7 @@ fetches past file versions on demand.
 
 Prerequisites:
 
-- **Rust** (stable, 1.88+) with `wasm32-unknown-unknown`:
+- **Rust** (stable, 1.90+) with `wasm32-unknown-unknown`:
   `rustup target add wasm32-unknown-unknown`
 - **uv**: <https://docs.astral.sh/uv/>
 - **Trunk**: `cargo install --locked trunk`

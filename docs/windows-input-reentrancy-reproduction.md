@@ -114,13 +114,13 @@ other causes of long-running hangs.
 Upstream has a targeted fix in
 [tao#1215](https://github.com/tauri-apps/tao/pull/1215), commit
 `c704261c519c58cfdd0bc2d58ba24e06a0b71c92`. It moves keyboard/IME peeks before
-input-state locks. Tao 0.37.0 contains this fix. Because published
-`tauri-runtime-wry 2.11.4` requires Tao `^0.35.0`, the root Cargo patch selects
-a copy of that exact runtime with only its Tao requirement raised to `0.37.0`.
-The root lockfile pins Tao 0.37.0 and tao-macros 0.1.4; Tauri 2.11.3 and Wry
-0.55.1 remain unchanged. See
-[`WISP-PATCH.md`](../vendor/tauri-runtime-wry/WISP-PATCH.md) for provenance,
-licenses, and the removal condition.
+input-state locks. Tao 0.37.0 contains this fix. Published
+`tauri-runtime-wry 2.12.0` (Tauri 2.12.0, Wry 0.57.0) requires Tao `^0.37.0`,
+so Wisp no longer carries a runtime-wry override. Tao itself is still selected
+from `vendor/tao` for the separate macOS redraw fix; see
+[`vendor/tao/WISP-PATCH.md`](../vendor/tao/WISP-PATCH.md). Before Tauri 2.12,
+a patched copy of `tauri-runtime-wry 2.11.4` raised its Tao requirement from
+`^0.35.0` to `0.37.0`.
 
 The `Windows native input reentrancy` CI job builds the full desktop binary
 and the regression, then runs five fresh reentrant processes and five serial
