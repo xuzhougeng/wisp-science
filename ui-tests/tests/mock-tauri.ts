@@ -2322,6 +2322,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 user_offset: 0,
               };
             }
+            if (query.get("mockHistoricalImages") === "1") {
+              return {
+                items: [{ role: "assistant", text: [
+                  "![sample stats](species_fix_out/figures/sample_statistics.png)",
+                  "![gene dotplot](species_fix_out/figures/gene_dotplot_combined.png)",
+                  "![schematic tree](species_fix_out/species_names_schematic_tree.png)",
+                  "![missing image](figures/missing-history.png)",
+                  "![saved version](figures/saved.png)",
+                ].join("\n\n"), resources: [{
+                  id: "saved-image-link", ordinal: 0, originalReference: "figures/saved.png",
+                  artifactId: "saved-image", artifactVersionId: "saved-image-v1",
+                  displayName: "saved.png", kind: "image", mimeType: "image/png", status: "ready", error: null,
+                }] }], next_before_seq: null, user_offset: 0,
+              };
+            }
             if (mockResourceSession) {
               return {
                 items: [{
@@ -4646,6 +4661,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "read_file_bytes": {
             const path = String(arg("path") ?? "").toLowerCase();
+            if (path.endsWith("missing-history.png")) throw new Error("File not found");
             if (path.includes(".pdf")) return base64Bytes(pdfBase64);
             if (path.includes(".docx")) return base64Bytes(docxBase64);
             if (path.includes(".xlsx") && xlsxBase64) return base64Bytes(xlsxBase64);
@@ -4714,6 +4730,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             }
             throw new Error("Artifact version not found");
           case "read_artifact_version_bytes":
+            if (arg("versionId") === "saved-image-v1") return base64Bytes("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=");
             if (arg("versionId") === "journey-image-v1" && fixtures?.researchImageBase64) return base64Bytes(fixtures.researchImageBase64);
             if (arg("versionId") === "resource-version-docx") {
               return base64Bytes(docxBase64);

@@ -74,6 +74,7 @@ extern "C" {
     /// `owner_id` is a unique mounted element that owns the URL until removal.
     #[wasm_bindgen(js_name = media_url)]
     pub(crate) async fn media_url(path: &str, owner_id: &str) -> JsValue;
+    pub(crate) async fn hydrate_workspace_images(owner_id: &str, unavailable: &str);
     /// Small canvas-downscaled variant of [`media_url`] for thumbnail-sized
     /// cards, so long histories do not keep full-size decoded bitmaps alive.
     #[wasm_bindgen(js_name = media_thumbnail_url)]

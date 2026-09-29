@@ -1064,12 +1064,14 @@ pub(crate) fn AssistantMessage(
         // fingerprint that used to remount every assistant row on any artifact
         // event — the remount storm behind the dead-window reports.
         artifacts.with(|arts| {
-            enrich_app_markdown(
+            let html = enrich_app_markdown(
                 md_to_html(&text_for_html),
                 arts,
                 &resources_for_html,
                 locale.get(),
-            )
+            );
+            let root = project.and_then(|project| project.get().map(|project| project.root));
+            prepare_workspace_images(html, root.as_deref())
         })
     });
     let hid = unique_dom_id("md");
@@ -1084,6 +1086,11 @@ pub(crate) fn AssistantMessage(
         let _ = html.get();
         let dom_id = hid_for_resources.clone();
         let resources = resources_for_effect.clone();
+        let fallback_dom_id = dom_id.clone();
+        let unavailable = t(locale.get(), "chat.image_preview_unavailable");
+        spawn_local(async move {
+            crate::bindings::hydrate_workspace_images(&fallback_dom_id, &unavailable).await;
+        });
         spawn_local(async move {
             for resource in resources
                 .into_iter()

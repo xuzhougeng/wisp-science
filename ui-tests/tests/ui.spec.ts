@@ -13889,6 +13889,37 @@ test("bound report links own file actions and copy file paths", async ({ page })
     .toMatchObject({ versionId: "resource-version-bib" });
 });
 
+test("historical local images survive a cold reload and session switching without resource bindings", async ({ page }) => {
+  await page.goto("/?mockHistoricalImages=1");
+  const openSession = async () => {
+    await page.getByRole("button", { name: /^Search( sessions)?$/ }).click();
+    const search = commandPalette(page);
+    await search.fill("Enumerate");
+    await search.press("Enter");
+    for (const alt of ["sample stats", "gene dotplot", "schematic tree", "saved version"]) {
+      const image = page.locator(`.msg.assistant img[alt="${alt}"]`);
+      await expect(image).toHaveAttribute("src", /^blob:/);
+      await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    }
+    await expect(page.locator(".msg.assistant .resource-unresolved")).toContainText("missing image");
+    await expect.poll(() => lastInvokeArgs(page, "read_artifact_version_bytes")).toEqual({ versionId: "saved-image-v1" });
+    const paths = await page.evaluate(() => (window as any).__skillInvokeLog
+      .filter((call: any) => call.cmd === "read_file_bytes")
+      .map((call: any) => call.args instanceof Map ? call.args.get("path") : call.args.path));
+    expect(paths).toContain("/mock/root/species_fix_out/figures/sample_statistics.png");
+    expect(paths.some((path: string) => path.endsWith("/saved.png"))).toBe(false);
+  };
+  await openSession();
+  const original = await page.locator('img[alt="sample stats"]').getAttribute("src");
+  await page.reload();
+  // A reload creates a new WebView lifetime: no in-memory image URLs survive.
+  await openSession();
+  expect(await page.locator('img[alt="sample stats"]').getAttribute("src")).not.toBe(original);
+  await newSessionButton(page).click();
+  await expect(page.locator('img[alt="sample stats"]')).toHaveCount(0);
+  await openSession();
+});
+
 test("bound Markdown resources use immutable versions and a scrollable center preview", async ({ page }) => {
   await page.goto("/?mockResourceSession=1");
   await page.getByRole("button", { name: "Search", exact: true }).click();

@@ -446,8 +446,8 @@ fn resource_reference_matches(rendered: &str, original: &str) -> bool {
 }
 
 /// Replace path-bearing Markdown tags with durable resource identities. Only
-/// bindings persisted with this exact message are considered; old unbound
-/// messages intentionally retain their original behavior.
+/// bindings persisted with this exact message are considered. Unbound local
+/// images are handled separately, without changing any persisted history.
 fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> String {
     if resources.is_empty() {
         return html;
@@ -517,6 +517,68 @@ fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> S
         out.push_str(&tag.replacen(&old, &replacement, 1));
     }
     out
+}
+
+/// Old messages can contain local images without a captured resource version.
+/// Give those images an absolute project path for the native byte reader, not
+/// a relative WebView URL. Existing bindings (including failures) always win.
+pub(crate) fn prepare_workspace_images(html: String, project_root: Option<&str>) -> String {
+    let Some(root) = project_root.filter(|root| !root.is_empty()) else {
+        return html;
+    };
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("<img ") {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find('>') else { break };
+        let tag = &rest[..=end];
+        rest = &rest[end + 1..];
+        let path = html_attr(tag, "src")
+            .filter(|_| html_attr(tag, "data-resource-id").is_none())
+            .and_then(|reference| {
+                workspace_image_path(root, &reference).map(|path| (reference, path))
+            });
+        if let Some((reference, path)) = path {
+            out.push_str(&tag.replacen(
+                &format!(r#"src="{reference}""#),
+                &format!(r#"data-workspace-image-path="{}""#, html_escape(&path)),
+                1,
+            ));
+        } else {
+            out.push_str(tag);
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn workspace_image_path(root: &str, reference: &str) -> Option<String> {
+    let decoded = decode_href(&decode_html_attribute(reference)).replace('\\', "/");
+    let mut path = decoded.as_str();
+    if path.to_ascii_lowercase().starts_with("file:///") {
+        path = &path["file://".len()..];
+        if matches!(path.as_bytes(), [b'/', drive, b':', b'/', ..] if drive.is_ascii_alphabetic()) {
+            path = &path[1..];
+        }
+    }
+    // Do not route URL schemes, network URLs or parent traversal to local IPC.
+    // The backend additionally validates the canonical path against the active
+    // project, including symlinks. Resolve before caching to isolate projects.
+    if path.starts_with("//")
+        || path.split('/').any(|part| part == "..")
+        || (path.contains(':')
+            && !matches!(path.as_bytes(), [drive, b':', b'/', ..] if drive.is_ascii_alphabetic()))
+        || file_kind(path) != Some("image")
+    {
+        return None;
+    }
+    let relative = workspace_relative_path(root, path)?;
+    Some(format!(
+        "{}/{}",
+        root.replace('\\', "/").trim_end_matches('/'),
+        relative
+    ))
 }
 
 /// Paths the UI has already asked `missing_files` about. A mention becomes a
@@ -1043,6 +1105,102 @@ mod art_ref_marker_tests {
             status: if ready { "ready" } else { "unresolved" }.into(),
             error: (!ready).then(|| "not found".into()),
         }
+    }
+
+    #[test]
+    fn historical_images_resolve_against_the_project_on_both_platforms() {
+        for (root, reference, expected) in [
+            (
+                "E:/project",
+                "species_fix_out/figures/sample_statistics.png",
+                "E:/project/species_fix_out/figures/sample_statistics.png",
+            ),
+            (
+                r"E:\project",
+                "e:%5Cproject%5Cfigures%5Cplot.png",
+                "E:/project/figures/plot.png",
+            ),
+            (
+                "E:/project",
+                "file:///E:/project/plot.png",
+                "E:/project/plot.png",
+            ),
+            (
+                "/Users/me/project",
+                "file:///Users/me/project/plot.png",
+                "/Users/me/project/plot.png",
+            ),
+            (
+                "/Users/me/project",
+                "figures/%E5%9B%BE%201%20%26%202.png",
+                "/Users/me/project/figures/图 1 & 2.png",
+            ),
+        ] {
+            assert_eq!(
+                workspace_image_path(root, reference).as_deref(),
+                Some(expected)
+            );
+            let html = md_to_html(&format!("![plot](<{reference}>)"));
+            let html = prepare_workspace_images(html, Some(root));
+            assert!(
+                html.contains(&format!(
+                    r#"data-workspace-image-path="{}""#,
+                    html_escape(expected)
+                )),
+                "{html}"
+            );
+            assert!(!html.contains(" src="), "{html}");
+        }
+    }
+
+    #[test]
+    fn historical_images_do_not_read_urls_or_paths_outside_the_project() {
+        for reference in [
+            "https://example.com/a.png",
+            "//example.com/a.png",
+            "blob:a.png",
+            "data:image/png;base64,AA",
+            "../a.png",
+            "figures/%2e%2e/a.png",
+            "D:/other/a.png",
+            "E:/project-other/a.png",
+            "file://server/a.png",
+            "/elsewhere/a.png",
+        ] {
+            assert_eq!(
+                workspace_image_path("E:/project", reference),
+                None,
+                "{reference}"
+            );
+        }
+        let html = md_to_html("![plot](figures/plot.png)");
+        assert_eq!(prepare_workspace_images(html.clone(), None), html);
+    }
+
+    #[test]
+    fn historical_image_fallback_never_overrides_existing_resource_versions() {
+        let html =
+            md_to_html("![saved](saved.png)\n\n![missing](missing.png)\n\n![legacy](legacy.png)");
+        let html = enrich_md_html(
+            html,
+            &[],
+            &[
+                message_resource("saved.png", "image", true),
+                message_resource("missing.png", "image", false),
+            ],
+            Locale::En,
+            Some("/project"),
+            None,
+        );
+        let html = prepare_workspace_images(html, Some("/project"));
+        assert_eq!(
+            html.matches("data-workspace-image-path=").count(),
+            1,
+            "{html}"
+        );
+        assert!(html.contains(r#"data-workspace-image-path="/project/legacy.png""#));
+        assert!(html.contains(r#"data-resource-status="ready""#));
+        assert!(html.contains(r#"class="resource-unresolved""#));
     }
 
     #[test]

@@ -179,3 +179,34 @@ test("late loads cannot attach to a replacement owner and failed reads remain re
   });
   expect(result).toEqual({ late: null, failed: true, recovered: true, lateReleased: true, owners: 0, errors: 0 });
 });
+
+test("historical image hydration handles missing files, decode failures and replacement rows", async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const w = window as any;
+    const bytes = w.readBytes();
+    const owner = w.owner("history");
+    owner.innerHTML = '<img alt="old plot" data-workspace-image-path="/project/old.png">';
+    let resolveRead: (bytes: Uint8Array) => void = () => {};
+    w.readBytes = () => new Promise<Uint8Array>((resolve) => { resolveRead = resolve; });
+    const pending = w.media.hydrate_workspace_images("history", "Unavailable");
+    owner.innerHTML = '<img alt="pinned" data-resource-id="pinned" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">';
+    resolveRead(bytes);
+    await pending;
+    const replacementUnchanged = owner.querySelector("img").src.startsWith("data:");
+
+    owner.innerHTML = '<img alt="missing" data-workspace-image-path="/project/missing.png">';
+    w.readBytes = () => { throw new Error("not found"); };
+    await w.media.hydrate_workspace_images("history", "Unavailable");
+    const missing = owner.textContent;
+    owner.innerHTML = '<img alt="corrupt" data-workspace-image-path="/project/corrupt.png">';
+    w.readBytes = () => new Uint8Array([1, 2, 3]);
+    await w.media.hydrate_workspace_images("history", "Unavailable");
+    const corrupt = owner.textContent;
+
+    w.readBytes = () => bytes;
+    owner.innerHTML = '<img alt="recovered" data-workspace-image-path="/project/missing.png">';
+    await w.media.hydrate_workspace_images("history", "Unavailable");
+    return { replacementUnchanged, missing, corrupt, recovered: owner.querySelector("img").naturalWidth };
+  });
+  expect(result).toEqual({ replacementUnchanged: true, missing: "missing — Unavailable", corrupt: "corrupt — Unavailable", recovered: 800 });
+});
