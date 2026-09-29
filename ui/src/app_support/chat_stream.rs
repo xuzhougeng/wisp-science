@@ -730,8 +730,15 @@ mod start_user_turn_tests {
             assistant("final answer"),
         ];
 
-        assert_eq!(completed_activity_end(&items, 1, false), Some(6));
-        assert_eq!(completed_activity_end(&items, 1, true), None);
+        let completed_runs = HashMap::new();
+        assert_eq!(
+            completed_activity_end(&items, 1, false, &completed_runs),
+            Some(6)
+        );
+        assert_eq!(
+            completed_activity_end(&items, 1, true, &completed_runs),
+            None
+        );
 
         // Persisted transcripts contain per-round usage between tool phases.
         let mut recorded = items.clone();
@@ -748,13 +755,25 @@ mod start_user_turn_tests {
             },
         );
         recorded.insert(5, ChatItem::compaction(100, 50, "auto", Some(1)));
-        assert_eq!(completed_activity_end(&recorded, 1, false), Some(8));
-        assert_eq!(completed_activity_end(&recorded, 1, true), None);
+        assert_eq!(
+            completed_activity_end(&recorded, 1, false, &completed_runs),
+            Some(8)
+        );
+        assert_eq!(
+            completed_activity_end(&recorded, 1, true, &completed_runs),
+            None
+        );
         // Final report and trailing metadata stay outside the disclosure.
         recorded.push(recorded[4].clone());
-        assert_eq!(completed_activity_end(&recorded, 1, false), Some(8));
+        assert_eq!(
+            completed_activity_end(&recorded, 1, false, &completed_runs),
+            Some(8)
+        );
         recorded.push(ChatItem::User("next question".into()));
-        assert_eq!(completed_activity_end(&recorded, 1, true), Some(8));
+        assert_eq!(
+            completed_activity_end(&recorded, 1, true, &completed_runs),
+            Some(8)
+        );
         recorded.insert(
             6,
             ChatItem::ApprovalPending {
@@ -763,7 +782,10 @@ mod start_user_turn_tests {
                 message: "Approve?".into(),
             },
         );
-        assert_eq!(completed_activity_end(&recorded, 1, false), Some(4));
+        assert_eq!(
+            completed_activity_end(&recorded, 1, false, &completed_runs),
+            Some(4)
+        );
     }
 
     #[test]
@@ -822,11 +844,12 @@ mod start_user_turn_tests {
         items.push(assistant("The heatmap is ready."));
         items.push(usage);
 
-        let groups = completed_activity_groups(&items, false);
+        let completed_runs = HashMap::new();
+        let groups = completed_activity_groups(&items, false, &completed_runs);
         assert_eq!(groups.len(), 1, "{groups:?}");
         assert_eq!(groups[0].start, 1);
         assert_eq!(
-            completed_activity_end(&items, 1, false),
+            completed_activity_end(&items, 1, false, &completed_runs),
             Some(groups[0].end)
         );
         assert!(matches!(
@@ -839,12 +862,16 @@ mod start_user_turn_tests {
 
     #[test]
     fn propose_plan_cards_stay_outside_the_processed_summary() {
+        let completed_runs = HashMap::new();
         let items = vec![
             ChatItem::User("Prepare the regression plan".into()),
             ChatItem::Plan(PlanCard::default()),
         ];
-        assert!(completed_activity_groups(&items, false).is_empty());
-        assert_eq!(completed_activity_end(&items, 1, false), None);
+        assert!(completed_activity_groups(&items, false, &completed_runs).is_empty());
+        assert_eq!(
+            completed_activity_end(&items, 1, false, &completed_runs),
+            None
+        );
 
         let items = vec![
             ChatItem::User("Inspect then plan".into()),
@@ -859,7 +886,7 @@ mod start_user_turn_tests {
             },
             ChatItem::Plan(PlanCard::default()),
         ];
-        let groups = completed_activity_groups(&items, false);
+        let groups = completed_activity_groups(&items, false, &completed_runs);
         assert_eq!(groups, vec![1..3]);
     }
 
@@ -878,8 +905,15 @@ mod start_user_turn_tests {
             ChatItem::Reasoning("current thought".into()),
         ];
 
-        assert_eq!(completed_activity_end(&items, 1, true), Some(2));
-        assert_eq!(completed_activity_end(&items, 4, true), None);
+        let completed_runs = HashMap::new();
+        assert_eq!(
+            completed_activity_end(&items, 1, true, &completed_runs),
+            Some(2)
+        );
+        assert_eq!(
+            completed_activity_end(&items, 4, true, &completed_runs),
+            None
+        );
     }
 
     #[test]
@@ -1067,6 +1101,14 @@ pub(crate) fn is_activity_glue(item: &ChatItem) -> bool {
 /// Assistant text that introduces a tool is visible commentary, while the last
 /// assistant row in a turn keeps the full answer treatment.
 pub(crate) fn is_commentary_at(items: &[ChatItem], index: usize) -> bool {
+    is_commentary_before(items, index, is_tool_activity)
+}
+
+fn is_commentary_before(
+    items: &[ChatItem],
+    index: usize,
+    is_activity: impl Fn(&ChatItem) -> bool,
+) -> bool {
     match items.get(index) {
         Some(ChatItem::Assistant { text, .. })
             if !text.trim().is_empty() && !text.starts_with("Error: ") => {}
@@ -1075,13 +1117,25 @@ pub(crate) fn is_commentary_at(items: &[ChatItem], index: usize) -> bool {
     items[index + 1..]
         .iter()
         .find(|item| !is_activity_glue(item) && !matches!(item, ChatItem::Reasoning(_)))
-        .is_some_and(is_tool_activity)
+        .is_some_and(is_activity)
 }
 
-pub(crate) fn is_turn_activity_at(items: &[ChatItem], index: usize) -> bool {
+pub(crate) fn is_turn_activity_at(
+    items: &[ChatItem],
+    index: usize,
+    completed_runs: &HashMap<String, usize>,
+) -> bool {
+    // A completed monitor whose card lives inside its exact submission is
+    // process activity too. Standalone/active Run cards remain boundaries.
+    let is_activity = |item: &ChatItem| {
+        is_tool_activity(item)
+            || (!item.is_context_tombstone()
+                && matches!(item, ChatItem::Tool { name, input, .. }
+                    if is_run_monitor_tool(name) && completed_runs.contains_key(input.trim())))
+    };
     matches!(items.get(index), Some(ChatItem::Reasoning(_)))
-        || items.get(index).is_some_and(is_tool_activity)
-        || (index < items.len() && is_commentary_at(items, index))
+        || items.get(index).is_some_and(is_activity)
+        || is_commentary_before(items, index, is_activity)
 }
 
 /// End (exclusive) of the contiguous process activity that can collapse once
@@ -1091,8 +1145,9 @@ pub(crate) fn completed_activity_end(
     items: &[ChatItem],
     start: usize,
     busy: bool,
+    completed_runs: &HashMap<String, usize>,
 ) -> Option<usize> {
-    if !is_turn_activity_at(items, start) {
+    if !is_turn_activity_at(items, start, completed_runs) {
         return None;
     }
 
@@ -1108,7 +1163,7 @@ pub(crate) fn completed_activity_end(
     let turn_end = boundary.unwrap_or(items.len());
     let mut end = start;
     for index in start..turn_end {
-        if is_turn_activity_at(items, index) {
+        if is_turn_activity_at(items, index, completed_runs) {
             end = index + 1;
         } else if is_activity_glue(&items[index]) {
             continue;
@@ -1127,11 +1182,12 @@ pub(crate) fn completed_activity_end(
 pub(crate) fn completed_activity_groups(
     items: &[ChatItem],
     busy: bool,
+    completed_runs: &HashMap<String, usize>,
 ) -> Vec<std::ops::Range<usize>> {
     let mut groups = Vec::new();
     let mut index = 0;
     while index < items.len() {
-        if let Some(end) = completed_activity_end(items, index, busy) {
+        if let Some(end) = completed_activity_end(items, index, busy, completed_runs) {
             groups.push(index..end);
             index = end;
         } else {

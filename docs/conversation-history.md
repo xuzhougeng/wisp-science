@@ -8,6 +8,17 @@ with the same turn duration. Expand it to inspect the full process. The final
 answer, trailing usage, approval/question cards, and dedicated run/media cards
 remain separate. Active turns continue to show live progress.
 
+When a completed Run is already attached to its matching submission step,
+`monitor_run` / `wisp_monitor_run` records and their progress messages join the
+same Processed disclosure, including when reopening a conversation. Expanding
+it preserves the individual tool results and their own durations; expanding
+the submission also reveals the completed Run card. Active Runs and Runs
+without a matching submission remain visible separately. If those cards or
+other standalone content split the process, the total turn duration appears
+only on the first Processed summary, never once per group.
+Monitored Runs still trigger the existing results-review prompt when eligible,
+even if their completed cards have just folded into the process.
+
 Opening or reopening a conversation shows its latest messages, including when
 entering through Recent conversations in another project. Switching back to a
 conversation starts at the end instead of restoring an older reading position.

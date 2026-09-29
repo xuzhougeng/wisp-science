@@ -8121,14 +8121,50 @@ fn App() -> impl IntoView {
     let storage_prefs_form = create_rw_signal(None::<StoragePrefsForm>);
     let run_review_modal = create_rw_signal(None::<String>);
     provide_context(RunReviewModal(run_review_modal));
-    // Deferred results-review prompting (#897): monitored run cards nominate
-    // candidates here; this root effect waits until the owning session is
+    // Deferred results-review prompting (#897) follows monitored Run state,
+    // independent of whether its card is mounted or folded into activity.
+    // The root waits until the owning session is
     // idle, asks the backend whether each candidate has an unresolved product
     // decision, and opens the modal for the newest one that does. Exploratory
     // command runs never enter the queue, and dismissed or empty workspaces
     // never prompt.
     let pending_run_reviews = create_rw_signal(Vec::<String>::new());
-    provide_context(crate::overlays::PendingRunReviews(pending_run_reviews));
+    create_effect(
+        move |previous: Option<(Option<String>, HashMap<String, String>)>| {
+            let session = active_session.get();
+            let previous = previous
+                .filter(|(previous_session, _)| *previous_session == session)
+                .map(|(_, statuses)| statuses)
+                .unwrap_or_default();
+            let monitored = monitored_run_ids.get();
+            let mut statuses = HashMap::new();
+            let candidates = run_records.with(|runs| {
+                runs.iter()
+                    .filter(|run| monitored.contains(&run.id))
+                    .filter_map(|run| {
+                        statuses.insert(run.id.clone(), run.status.clone());
+                        (matches!(
+                            previous.get(&run.id).map(String::as_str),
+                            Some("submitted" | "running" | "cancelling")
+                        ) && run.status == "succeeded"
+                            && run.kind == "ssh_direct"
+                            && run.cleaned_at.is_none())
+                        .then(|| run.id.clone())
+                    })
+                    .collect::<Vec<_>>()
+            });
+            if !candidates.is_empty() {
+                pending_run_reviews.update(|ids| {
+                    for id in candidates {
+                        if !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                });
+            }
+            (session, statuses)
+        },
+    );
     create_effect(move |_| {
         if run_review_modal.get().is_some() {
             return;
@@ -12762,24 +12798,26 @@ fn App() -> impl IntoView {
                             // context window. Never inherit the full transcript's
                             // paging offset and hide this epoch's checkpoint.
                             let model_view_on = model_view.get();
+                            let completed_runs = completed_run_owners.get();
                             let window = if model_view_on {
                                 0..list.len()
                             } else {
                                 transcript_render_window(list, requested_start, TRANSCRIPT_RENDER_TURNS).0
                             };
                             let mut i = window.start;
+                            let mut last_activity_user_index = None;
                             while i < window.end {
                                 if renders_nothing(&list[i]) { i += 1; continue; }
                                 // Processed folding is transcript narrative.
                                 // Model view keeps the raw working-set order.
                                 if let Some(end) = (!model_view_on)
-                                    .then(|| completed_activity_end(list, i, busy_now))
+                                    .then(|| completed_activity_end(list, i, busy_now, &completed_runs))
                                     .flatten()
                                 {
                                     let start = i;
                                     let mut indices: Vec<usize> = Vec::new();
                                     for j in i..end {
-                                        if is_turn_activity_at(list, j)
+                                        if is_turn_activity_at(list, j, &completed_runs)
                                             || matches!(list[j], ChatItem::Usage { .. } | ChatItem::Compaction { .. }) {
                                             indices.push(j);
                                         }
@@ -12799,8 +12837,13 @@ fn App() -> impl IntoView {
                                         .checked_sub(1)
                                         .map(|index| index + user_offset);
                                     let duration_ms = user_index
+                                        // Visible action/media/active Run cards can still
+                                        // split activity. The clock belongs to the turn,
+                                        // so only its first summary displays it.
+                                        .filter(|index| Some(*index) != last_activity_user_index)
                                         .and_then(|index| outline.iter().find(|entry| entry.user_index == index))
                                         .and_then(|entry| turn_duration_ms(entry.sent_at, entry.response_at));
+                                    last_activity_user_index = user_index;
                                     duration_ms.hash(&mut h);
                                     rows.push((thread_session_id.clone(), start, false, h.finish(), ThreadRow::Activity {
                                         indices,
