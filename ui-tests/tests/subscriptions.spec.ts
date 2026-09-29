@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { expectPrimaryButton } from "./button-style";
 
 async function setup(page: Page, locale = "en", saved = false) {
   await page.addInitScript(tauriMock);
@@ -25,6 +26,7 @@ async function setup(page: Page, locale = "en", saved = false) {
       if (cmd === "cancel_codex_login") { state.cancelled.push(a.loginId); return null; }
       if (cmd === "save_codex_login") {
         state.saves.push(a);
+        if (w.__holdSubscriptionSave) await new Promise<void>(resolve => { w.__finishSubscriptionSave = resolve; });
         if (state.saveError) throw new Error("Keyring temporarily unavailable");
         state.accounts[provider] = true;
         if (!a.accountOnly) state.profiles.push({ ...profile(provider, state.profiles.length), model: a.model, label: a.label || "My model" });
@@ -107,6 +109,7 @@ for (const provider of ["codex", "xai"]) {
     await page.getByTestId("codex-login-start").click();
     await expect(page.getByTestId("codex-user-code")).toContainText("TEST-1234");
     await expect(page.getByTestId("codex-login-message")).not.toHaveClass(/fail/);
+    await expect(page.getByTestId("codex-login-save")).toHaveCount(0);
     await page.evaluate(() => (window as any).__subscription.phase = "success");
     await page.getByTestId("codex-login-save").click();
     await expect(page.getByTestId("subscription-model")).toHaveCount(0);
@@ -174,6 +177,82 @@ test("a save failure keeps authorization available for retry", async ({ page }) 
   expect(await page.evaluate(() => (window as any).__subscription.saves.map((s: any) => s.loginId))).toEqual(["login-1", "login-1"]);
 });
 
+for (const locale of ["en", "zh"]) for (const dark of [false, true]) {
+  test(`account confirmation is styled, responsive and busy-safe (${locale}, ${dark ? "dark" : "light"})`, async ({ page }, testInfo) => {
+    const provider = dark ? "xai" : "codex";
+    await page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
+    await setup(page, locale);
+    await subscriptions(page);
+    await page.getByTestId(`add-${provider}-login`).click();
+    await expect(page.getByTestId("codex-login-save")).toHaveCount(0);
+    await page.evaluate(() => {
+      (window as any).__subscription.phase = "success";
+      (window as any).__subscription.saveError = true;
+      (window as any).__holdSubscriptionSave = true;
+    });
+    await page.getByTestId("codex-login-start").click();
+    const save = page.getByTestId("codex-login-save");
+    const footer = page.getByTestId("codex-login-form").locator(".settings-footer");
+    await expect(save).toBeEnabled();
+    await expect(footer.getByRole("button")).toHaveCount(3);
+    await expect(footer.getByRole("button").last()).toHaveText(locale === "zh" ? "保存账号" : "Save account");
+
+    for (const width of [1280, 760, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expectPrimaryButton(save);
+      const metrics = await footer.evaluate(el => {
+        const buttons = [...el.querySelectorAll("button")];
+        const last = buttons[buttons.length - 1];
+        const style = getComputedStyle(last);
+        const box = el.getBoundingClientRect();
+        return {
+          heights: buttons.map(button => button.getBoundingClientRect().height),
+          rounded: parseFloat(style.borderRadius),
+          primary: style.backgroundColor,
+          secondary: getComputedStyle(buttons[0]).backgroundColor,
+          overflow: el.scrollWidth - el.clientWidth,
+          contained: buttons.every(button => {
+            const rect = button.getBoundingClientRect();
+            return rect.left >= box.left - 1 && rect.right <= box.right + 1;
+          }),
+          clipped: buttons.some(button => button.scrollWidth > button.clientWidth + 1),
+        };
+      });
+      expect(metrics.heights.every(height => height >= 40)).toBe(true);
+      expect(Math.max(...metrics.heights) - Math.min(...metrics.heights)).toBeLessThanOrEqual(1);
+      expect(metrics.rounded).toBeGreaterThan(0);
+      expect(metrics.primary).not.toBe(metrics.secondary);
+      expect(metrics.overflow).toBeLessThanOrEqual(1);
+      expect(metrics.contained).toBe(true);
+      expect(metrics.clipped).toBe(false);
+      await page.screenshot({ path: testInfo.outputPath(`account-confirmation-${width}.png`), animations: "disabled" });
+    }
+
+    await expectPrimaryButton(save, true);
+    await save.focus();
+    await page.keyboard.press("Enter");
+    await expect(save).toHaveText(locale === "zh" ? "正在保存账号…" : "Saving account…");
+    await expect(save).toHaveAttribute("aria-busy", "true");
+    for (const button of await footer.getByRole("button").all()) await expect(button).toBeDisabled();
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => (window as any).__subscription.saves.length)).toBe(1);
+    await page.screenshot({ path: testInfo.outputPath("account-confirmation-busy.png"), animations: "disabled" });
+    await page.evaluate(() => (window as any).__finishSubscriptionSave());
+    await expect(page.getByTestId("codex-login-message")).toContainText("Keyring temporarily unavailable");
+    await expect(save).toBeEnabled();
+    await expect(save).toHaveAttribute("aria-busy", "false");
+    await expect(save).toHaveText(locale === "zh" ? "保存账号" : "Save account");
+    await page.screenshot({ path: testInfo.outputPath("account-confirmation-error.png"), animations: "disabled" });
+    await page.evaluate(() => {
+      (window as any).__holdSubscriptionSave = false;
+      (window as any).__subscription.saveError = false;
+    });
+    await save.click();
+    await expect(page.getByTestId("subscriptions-page")).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__subscription.saves.map((s: any) => s.loginId))).toEqual(["login-1", "login-1"]);
+  });
+}
+
 test("browser callback remains mounted while typing; immediate Escape closes model form", async ({ page }) => {
   await setup(page, "en", true);
   await subscriptions(page);
@@ -186,6 +265,7 @@ test("browser callback remains mounted while typing; immediate Escape closes mod
   await page.locator(".subscription-manual summary").click();
   await page.getByTestId("codex-login-redirect").fill("http://localhost:1455/auth/callback?code=fake&state=test");
   await expect(page.getByTestId("codex-submit-redirect")).toBeVisible();
+  await expectPrimaryButton(page.getByTestId("codex-submit-redirect"));
   await page.getByTestId("codex-submit-redirect").click();
   await expect(page.getByTestId("codex-login-save")).toBeEnabled();
   await expect(page.locator(".subscription-manual")).toHaveCount(0);

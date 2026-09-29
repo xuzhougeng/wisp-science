@@ -10,7 +10,8 @@
 ## Buttons
 
 - Standalone CTAs use `.btn-primary` / `.btn-ghost` from `ui/src/styles/base.css`.
-- Toolbar rows that already own chrome (modal/settings `.row`, plugin toolbar, plan/approval actions, file retry) use `button.primary` for the filled clay look; do not redefine clay fills per surface.
+- Toolbar rows that already own chrome (modal/settings `.row`, settings toolbar, plan/approval actions, file retry) use `button.primary` for the filled clay look; do not redefine clay fills per surface.
+- Keep form confirmation buttons in their action row, after secondary actions. Outside a styled row, use the complete `.btn-primary` primitive, including for plugin installation, manual sign-in submission, and method-search start/resume. `.primary` alone does not supply standalone button chrome.
 - Do not use bare `button.primary` for sidebar nav — `.side-btn.primary` is a soft affordance, not a filled CTA.
 - Toggle switches use the shared softened clay track and light thumb; keep the full accent fill for primary actions instead of making settings switches visually compete with them.
 

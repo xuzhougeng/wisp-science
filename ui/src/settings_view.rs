@@ -1126,7 +1126,7 @@ fn codex_login_pane(
                                 codex_login.update(|form| if let Some(form) = form { form.redirect = redirect; });
                             } />
                     </label>
-                    <button type="button" data-testid="codex-submit-redirect" on:click=submit_redirect>
+                    <button type="button" class="btn-primary" data-testid="codex-submit-redirect" on:click=submit_redirect>
                         {move || t(locale.get(), "codex.login.submit")}
                     </button>
                     </details>
@@ -1162,10 +1162,15 @@ fn codex_login_pane(
                     <Show when=move || codex_login.get().is_some_and(|form| form.status == "pending")>
                         <button type="button" data-testid="codex-cancel-attempt" on:click=move |_| cancel_attempt.call(())>{move || t(locale.get(), "codex.login.cancel_attempt")}</button>
                     </Show>
+                    <Show when=move || codex_login.get().is_some_and(|form| form.status == "success")>
+                        <button type="button" class="primary" data-testid="codex-login-save"
+                            disabled=move || settings_busy.get()
+                            aria-busy=move || settings_busy.get().to_string()
+                            on:click=move |_| save.call(false)>
+                            {move || t(locale.get(), if settings_busy.get() { "subscriptions.saving_account" } else { "subscriptions.save_account" })}
+                        </button>
+                    </Show>
                 </div>
-                <Show when=move || codex_login.get().is_some_and(|form| form.status == "success")>
-                    <button type="button" class="primary" data-testid="codex-login-save" disabled=move || settings_busy.get() on:click=move |_| save.call(false)>{move || t(locale.get(), "subscriptions.save_account")}</button>
-                </Show>
                 </Show>
                 <Show when=move || codex_login.get().is_some_and(|form| !form.account_only)>
                     <section class="subscription-model-step">
@@ -6321,7 +6326,7 @@ pub(super) fn SettingsView(
                                                         prop:value=move || plugin_checksum.get()
                                                         on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
                                                 </label>
-                                                <button type="button" class="primary" data-testid="install-plugin"
+                                                <button type="button" class="btn-primary" data-testid="install-plugin"
                                                     disabled=move || {
                                                         let checksum = plugin_checksum.get();
                                                         plugin_source.get().is_empty()
@@ -6355,7 +6360,7 @@ pub(super) fn SettingsView(
                                                         prop:value=move || plugin_checksum.get()
                                                         on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
                                                 </label>
-                                                <button type="button" class="primary"
+                                                <button type="button" class="btn-primary"
                                                     disabled=move || plugin_url.get().trim().is_empty() || !valid_sha256(&plugin_checksum.get())
                                                     on:click=move |_| install_plugin_url.call((
                                                         plugin_url.get().trim().to_string(),

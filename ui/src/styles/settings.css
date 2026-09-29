@@ -1770,9 +1770,7 @@ button.workflow-graph-port.output {
 .plugin-local-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .plugin-local-source button { padding: 9px 13px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .plugin-local-source button:hover { border-color: var(--text-faint); }
-.plugin-install-fields > button { justify-self: end; padding: 9px 15px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--clay); color: var(--on-clay); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.plugin-install-fields > button:hover:not(:disabled) { background: var(--clay-strong); }
-.plugin-install-fields > button:disabled { opacity: .48; cursor: not-allowed; }
+.plugin-install-fields > button { justify-self: end; }
 /* .primary fill comes from shared button primitives in base.css */
 .settings-pane-list > .settings-toolbar.plugin-toolbar:not(.settings-toolbar-end) { grid-template-rows: auto; }
 .settings-pane-list > .settings-toolbar.plugin-toolbar:not(.settings-toolbar-end) > button { grid-row: 1; grid-column: 3; justify-self: end; }
@@ -3661,6 +3659,7 @@ body { font-size: var(--ui-font-size, 14px); }
 .subscription-manual { margin-top: 16px; }
 .subscription-manual summary { cursor: pointer; color: var(--text-muted); margin-bottom: 12px; }
 .subscription-login .settings-status { overflow-wrap: anywhere; }
+.subscription-login .settings-footer button { min-height: 40px; white-space: nowrap; }
 @media (max-width: 700px) {
   .subscription-account-heading { flex-direction: column; gap: 12px; }
   .subscription-model-row { flex-wrap: wrap; }

@@ -2733,7 +2733,7 @@ fn MethodSearchRunPanel(
     let refresh_run_id = run_id.clone();
     view! {
         <div class="method-search-panel" data-testid="method-search-panel">
-            <button type="button" class="secondary method-search-inspect"
+            <button type="button" class="btn-ghost method-search-inspect"
                 data-testid="method-search-inspect"
                 aria-expanded=move || expanded.get().to_string()
                 on:click=move |_| {
@@ -2835,7 +2835,7 @@ fn MethodSearchRunPanel(
                                 })}
                                 <div class="method-search-actions">
                                     {(status == "draft").then(|| view! {
-                                        <button type="button" class="primary"
+                                        <button type="button" class="btn-primary"
                                             data-testid="method-search-start"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(
@@ -2844,7 +2844,7 @@ fn MethodSearchRunPanel(
                                             )>{move || t(locale.get(), "method_search.start")}</button>
                                     })}
                                     {matches!(status.as_str(), "submitted" | "running").then(|| view! {
-                                        <button type="button" class="secondary"
+                                        <button type="button" class="btn-ghost"
                                             data-testid="method-search-pause"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(
@@ -2853,7 +2853,7 @@ fn MethodSearchRunPanel(
                                             )>{move || t(locale.get(), "method_search.pause")}</button>
                                     })}
                                     {(status == "paused").then(|| view! {
-                                        <button type="button" class="primary"
+                                        <button type="button" class="btn-primary"
                                             data-testid="method-search-resume"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(

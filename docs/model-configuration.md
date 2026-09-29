@@ -94,7 +94,10 @@ Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
 model ID and protocol supported by your chosen service.
 
 **ChatGPT** lives in **Settings → Models → Subscription accounts**. Sign in to your account,
-save the account, then use **Add model**. Each model only asks for its model ID
+save the account, then use **Add model**. After authorization, **Save account** is the primary
+action beside **Cancel** and **Sign in again**. It shows **Saving account…**
+and disables the actions while saving; a save failure keeps authorization
+available so you can retry without signing in again. Each model asks for its ID
 and an optional alias. You can add multiple models using the same account. The account card reports saved credentials; it
 does not guarantee current entitlement or network access. Subscription models
 are listed here and in the conversation model picker, separately from API models.

@@ -434,7 +434,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 .modal .row button.primary,
 .settings-page .row button.primary,
 .acp-agents-pane .row button.primary,
-.plugin-toolbar > button.primary,
+.settings-toolbar > button.primary,
 .center-file-btn.primary,
 .plan-card-actions button.primary,
 .plan-question-freeform button.primary,
@@ -452,6 +452,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
   padding: 9px 16px;
   font: inherit;
   font-size: 13.5px;
+  font-weight: 600;
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }
@@ -459,7 +460,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 .modal .row button.primary:hover:not(:disabled),
 .settings-page .row button.primary:hover:not(:disabled),
 .acp-agents-pane .row button.primary:hover:not(:disabled),
-.plugin-toolbar > button.primary:hover:not(:disabled),
+.settings-toolbar > button.primary:hover:not(:disabled),
 .center-file-btn.primary:hover:not(:disabled),
 .plan-card-actions button.primary:hover:not(:disabled),
 .plan-question-freeform button.primary:hover:not(:disabled),
@@ -467,6 +468,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 .plan-feedback-actions button.primary:hover:not(:disabled),
 .fb-retry.primary:hover:not(:disabled) {
   background: var(--clay-strong);
+  color: var(--on-clay);
 }
 .btn-primary:disabled { opacity: .5; cursor: default; }
 
