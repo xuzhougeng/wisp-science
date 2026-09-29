@@ -1944,6 +1944,16 @@ fn App() -> impl IntoView {
     let sel_artifact = create_rw_signal(0usize);
     let show_art_preview = create_rw_signal(false);
     let modal_artifact = create_rw_signal(None::<ModalArtifact>); // (path, name, kind)
+    // Background output updates change navigation, not the mounted viewer.
+    // Reading `artifacts` in the modal's render closure remounts the image and
+    // provenance on every change, replaying the overlay animation and losing
+    // zoom, the selected provenance tab, and unsent code edits.
+    let modal_image_nav = create_memo(move |_| {
+        let Some((path, _, kind)) = modal_artifact.get() else {
+            return (None, None);
+        };
+        artifacts.with(|arts| modal_image_nav_targets(arts, &path, &kind))
+    });
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let collapsed_art_groups = create_rw_signal::<HashSet<String>>(HashSet::new());
     let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
@@ -7045,7 +7055,9 @@ fn App() -> impl IntoView {
     });
 
     let request_session_review = Callback::new(move |session_id: String| {
-        if reviewing.with_untracked(|ids| ids.contains(&session_id)) {
+        if running.with_untracked(|ids| ids.contains(&session_id))
+            || reviewing.with_untracked(|ids| ids.contains(&session_id))
+        {
             return;
         }
         reviewing.update(|ids| {
@@ -11169,11 +11181,10 @@ fn App() -> impl IntoView {
         {
             return;
         }
-        let Some((path, _, kind)) = modal_artifact.get() else {
+        if modal_artifact.get_untracked().is_none() {
             return;
-        };
-        let (prev_artifact, next_artifact) =
-            modal_image_nav_targets(&artifacts.get(), &path, &kind);
+        }
+        let (prev_artifact, next_artifact) = modal_image_nav.get_untracked();
         match ev.key().as_str() {
             "ArrowLeft" => {
                 let Some((path, name, kind)) = prev_artifact else {
@@ -11193,6 +11204,12 @@ fn App() -> impl IntoView {
         }
     });
 
+    // Share the historical/live boundary without subscribing every row to
+    // streaming text updates.
+    let latest_user_item = create_memo(move |_| {
+        let _ = transcript_projection_epoch.get();
+        items.with_untracked(|rows| rows.iter().rposition(|item| matches!(item, ChatItem::User(_))))
+    });
     // Undo eligibility changes at turn boundaries, but the assistant Markdown
     // does not. Publish the one eligible index separately so adding/removing
     // its button never remounts and reparses the whole message row.
@@ -13092,13 +13109,17 @@ fn App() -> impl IntoView {
                                             && !matches!(active_branch_state.get().as_deref(), Some("merged" | "orphaned"))
                                             && undo_assistant_index.get() == Some(i)
                                     });
-                                    let show_actions = Signal::derive(move || !busy.get() && !model_view_active());
-                                    let can_branch = Signal::derive(move || {
+                                    // Historical turns stay usable while a later turn runs.
+                                    // The live tail has no stable memory/branch checkpoint yet.
+                                    let show_actions = Signal::derive(move || {
                                         !model_view_active()
+                                            && (!busy.get() || latest_user_item.get().is_some_and(|latest| i < latest))
+                                    });
+                                    let can_branch = Signal::derive(move || {
+                                        show_actions.get()
                                             && active_branch_state.get().is_none()
                                             && active_acp_agent_id.get().is_none()
                                             && !active_is_exploration.get()
-                                            && !busy.get()
                                     });
                                     let show_explore = Signal::derive(move || {
                                         if model_view_active() {
@@ -17588,21 +17609,17 @@ fn App() -> impl IntoView {
 
         {move || modal_artifact.get().map(|(path, name, kind)| {
             let session = active_session.get();
-            let arts_for_nav = artifacts.get();
-            let (prev_artifact, next_artifact) = modal_image_nav_targets(&arts_for_nav, &path, &kind);
-            let can_prev = prev_artifact.is_some();
-            let can_next = next_artifact.is_some();
             view! {
                 <ArtifactModal path=path name=name kind=kind session=session
-                    can_prev=can_prev
-                    can_next=can_next
+                    can_prev=Signal::derive(move || modal_image_nav.with(|nav| nav.0.is_some()))
+                    can_next=Signal::derive(move || modal_image_nav.with(|nav| nav.1.is_some()))
                     on_prev=Callback::new(move |_| {
-                        if let Some((path, name, kind)) = prev_artifact.clone() {
+                        if let Some((path, name, kind)) = modal_image_nav.get_untracked().0 {
                             modal_artifact.set(Some((path, name, kind)));
                         }
                     })
                     on_next=Callback::new(move |_| {
-                        if let Some((path, name, kind)) = next_artifact.clone() {
+                        if let Some((path, name, kind)) = modal_image_nav.get_untracked().1 {
                             modal_artifact.set(Some((path, name, kind)));
                         }
                     })

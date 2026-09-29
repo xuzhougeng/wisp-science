@@ -2573,6 +2573,7 @@ pub(crate) fn render_item(
                     move |_| on_memory.call((session_id.clone(), explore_turn_index))
                 })
                 on_review=Callback::new(move |_| on_review.call(session_id.clone()))
+                busy=busy
                 on_branch=Callback::new(on_branch)
                 can_branch=can_branch
                 show_actions=show_actions

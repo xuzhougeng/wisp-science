@@ -17,6 +17,7 @@ pub(crate) enum ProposalTrigger {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TurnSnapshot {
     pub(crate) turn_index: usize,
+    pub(crate) has_later_turn: bool,
     pub(crate) user_text: String,
     pub(crate) transcript: String,
     pub(crate) tool_calls: usize,
@@ -144,6 +145,7 @@ pub(crate) fn snapshot_from_event_json(
 
     Ok(TurnSnapshot {
         turn_index,
+        has_later_turn: turn_index + 1 < turn_count,
         user_text,
         transcript: bounded_tail(blocks),
         tool_calls,
@@ -187,6 +189,7 @@ pub(crate) fn snapshot_from_messages(
         .count();
     Ok(TurnSnapshot {
         turn_index,
+        has_later_turn: turn_index + 1 < starts.len(),
         user_text,
         transcript: crate::review::serialize_transcript(turn),
         tool_calls,

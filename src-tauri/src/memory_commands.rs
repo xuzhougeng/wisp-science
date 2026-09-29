@@ -127,21 +127,28 @@ async fn memory_turn_snapshot(
     store: &Store,
     frame_id: &str,
     turn_index: Option<usize>,
+    running: bool,
 ) -> Result<turn_memory::TurnSnapshot, String> {
     let events = store
         .load_session_ui_events(frame_id)
         .await
         .map_err(|error| error.to_string())?;
-    match turn_memory::snapshot_from_event_json(&events, turn_index) {
-        Ok(snapshot) => Ok(snapshot),
+    let snapshot = match turn_memory::snapshot_from_event_json(&events, turn_index) {
+        Ok(snapshot) => snapshot,
         Err(_) => {
             let messages = store
                 .load_messages(frame_id)
                 .await
                 .map_err(|error| error.to_string())?;
-            turn_memory::snapshot_from_messages(&messages, turn_index)
+            turn_memory::snapshot_from_messages(&messages, turn_index)?
         }
+    };
+    // A later user turn bounds this snapshot even while that later turn is
+    // streaming. Never infer a live-tail snapshot from the latest-turn shortcut.
+    if running && (turn_index.is_none() || !snapshot.has_later_turn) {
+        return Err("Wait for the turn to finish before creating a memory.".into());
     }
+    Ok(snapshot)
 }
 
 async fn generate_turn_memory_candidate(
@@ -518,7 +525,8 @@ pub(super) async fn propose_turn_memory(
             Err("Memory is turned off.".into())
         };
     }
-    if state.running_turns.lock().await.contains(frame_id) {
+    let running = state.running_turns.lock().await.contains(frame_id);
+    if running && automatic.unwrap_or(false) {
         return Err("Wait for the turn to finish before creating a memory.".into());
     }
     let project_id = state
@@ -528,7 +536,7 @@ pub(super) async fn propose_turn_memory(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Session project was not found.".to_string())?;
     let _project_activity = state.begin_project_activity(&project_id)?;
-    let snapshot = memory_turn_snapshot(&state.store, frame_id, turn_index).await?;
+    let snapshot = memory_turn_snapshot(&state.store, frame_id, turn_index, running).await?;
     let trigger = if automatic.unwrap_or(false) {
         let settings = load_auto_failure_analysis_settings(&state.store).await;
         if settings.should_analyze(&snapshot) {
@@ -711,11 +719,87 @@ pub(super) async fn delete_global_memory(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn running_memory_reads_only_an_explicit_historical_turn() {
+        for use_event_history in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let store = Store::open(&root.path().join("store.sqlite"))
+                .await
+                .unwrap();
+            store
+                .create_project("p", "Project", root.path().to_str().unwrap())
+                .await
+                .unwrap();
+            store
+                .create_frame("f", "p", "Agent", "model")
+                .await
+                .unwrap();
+            if use_event_history {
+                // The visual history still contains the old turn after model
+                // compaction removed it. Eligibility must use that same history.
+                for (index, event) in [
+                    serde_json::json!({"kind":"User", "text":"old convention"}),
+                    serde_json::json!({"kind":"Text", "delta":"settled answer"}),
+                    serde_json::json!({"kind":"Done"}),
+                    serde_json::json!({"kind":"User", "text":"live request"}),
+                    serde_json::json!({"kind":"Text", "delta":"partial live answer"}),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    store
+                        .append_session_ui_event("f", index as i64 + 1, &event.to_string())
+                        .await
+                        .unwrap();
+                }
+                store
+                    .append_message("f", 1, &Message::user("live request"))
+                    .await
+                    .unwrap();
+            } else {
+                for (index, message) in [
+                    Message::user("old convention"),
+                    Message::assistant("settled answer"),
+                    Message::user("live request"),
+                    Message::assistant("partial live answer"),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    store
+                        .append_message("f", index as i64 + 1, message)
+                        .await
+                        .unwrap();
+                }
+            }
+            let snapshot = memory_turn_snapshot(&store, "f", Some(0), true)
+                .await
+                .unwrap();
+            assert_eq!(snapshot.user_text, "old convention");
+            assert!(snapshot.transcript.contains("settled answer"));
+            assert!(!snapshot.transcript.contains("live"));
+            for index in [None, Some(1), Some(99)] {
+                assert!(memory_turn_snapshot(&store, "f", index, true)
+                    .await
+                    .is_err());
+            }
+            assert_eq!(
+                memory_turn_snapshot(&store, "f", None, false)
+                    .await
+                    .unwrap()
+                    .user_text,
+                "live request"
+            );
+            drop(store);
+        }
+    }
+
     #[test]
     fn failure_analysis_defaults_off_and_requires_both_thresholds() {
         let settings = AutoFailureAnalysisSettings::default();
         let snapshot = turn_memory::TurnSnapshot {
             turn_index: 0,
+            has_later_turn: false,
             user_text: "run it".into(),
             transcript: String::new(),
             tool_calls: 4,

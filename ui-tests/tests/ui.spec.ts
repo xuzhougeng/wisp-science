@@ -4911,6 +4911,68 @@ test("branch on an earlier user message opens a new session from that point", as
   });
 });
 
+for (const branchFrom of ["assistant", "user"] as const) {
+  test(`historical message actions work during a running turn (${branchFrom} branch)`, async ({ page }) => {
+    await enterApp(page);
+    await composer(page).fill("completed convention");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const reply = page.locator(".msg.assistant").filter({ hasText: "Hello from mock wisp-science." }).first();
+    await expect(reply.getByRole("button", { name: "Memory", exact: true })).toBeVisible();
+    const sourceId = (await lastInvokeArgs(page, "send_message"))!.sessionId;
+    await composer(page).fill("MONITORRUN continue working");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })).toBeVisible();
+    const stop = page.getByRole("button", { name: "Stop", exact: true });
+    await expect(stop).toBeVisible();
+
+    for (const name of ["Memory", "Branch", "Copy message"]) {
+      await expect(reply.getByRole("button", { name, exact: true })).toBeEnabled();
+    }
+    await expect(reply.getByRole("button", { name: "Review", exact: true })).toBeDisabled();
+    await expect(reply.getByTestId("start-exploration")).toBeDisabled();
+    await expect(reply.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+    const oldUser = page.locator(".msg.user", { hasText: "completed convention" });
+    await expect(oldUser.getByRole("button", { name: "Rewind", exact: true })).toBeDisabled();
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })
+      .getByRole("button", { name: "Branch", exact: true })).toHaveCount(0);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text: string) => { (window as any).__copiedHistory = text; },
+      });
+    });
+    await reply.getByRole("button", { name: "Copy message", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedHistory)).toBe("Hello from mock wisp-science.");
+    await oldUser.hover();
+    await oldUser.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedHistory)).toBe("completed convention");
+
+    await reply.getByRole("button", { name: "Memory", exact: true }).click();
+    await expect(page.getByTestId("turn-memory-overlay")).toBeVisible();
+    await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
+      sessionId: sourceId, turnIndex: 0, automatic: false,
+    });
+    await page.getByTestId("turn-memory-scope").selectOption("global");
+    await page.getByTestId("turn-memory-confirm").click();
+    await expect.poll(() => lastInvokeArgs(page, "confirm_turn_memory")).toMatchObject({ sessionId: sourceId, turnIndex: 0 });
+    await expect(page.getByTestId("turn-memory-overlay")).toHaveCount(0);
+    await expect(stop).toBeVisible();
+    expect(await invokeCount(page, "review_session")).toBe(0);
+    await page.screenshot({ path: test.info().outputPath("historical-actions-running.png") });
+
+    await (branchFrom === "assistant" ? reply : oldUser).getByRole("button", { name: "Branch", exact: true }).click();
+    await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
+      sessionId: sourceId, userIndex: 0,
+      checkpointKind: branchFrom === "assistant" ? "after_response" : "before_user",
+    });
+    await expect(composer(page)).toHaveValue("");
+    // The original turn may finish in the background after switching to its branch.
+    expect(await invokeCount(page, "stop_agent")).toBe(0);
+    await page.evaluate(() => (window as any).__finishMonitorRun());
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })).toHaveCount(0);
+  });
+}
+
 test("assistant actions are icon-only and can branch from the preceding user turn", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("branch from this answer");
@@ -9000,6 +9062,64 @@ test("center split keeps the same conversation beside the open document", async 
   // Toggling off restores the document-only view.
   await preview.locator("[data-center-split]").click();
   await expect(chat).toBeHidden();
+});
+
+test("artifact modal stays mounted while background tools update outputs", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make plot first.png");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="first.png"] .rp-tile-main').click();
+  const modal = page.locator(".artifact-modal");
+  const image = modal.locator(".rp-img");
+  await expect(image).toBeVisible();
+  await expect(modal).toContainText("savefig");
+  await modal.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await modal.getByRole("button", { name: "Edit code and re-run", exact: true }).click();
+  const draft = "# keep my unsent edits\nprint('draft')";
+  await modal.locator(".am-edit-area").fill(draft);
+  await modal.evaluate((el) => { (el as any).__stableProbe = true; });
+  await image.evaluate((el) => { (el as any).__stableProbe = true; });
+  const provenanceReads = await invokeCount(page, "get_artifact_provenance");
+  const frameId = await page.locator(".side-item.ses.active").getAttribute("data-session-id");
+  expect(frameId).toBeTruthy();
+
+  await emitTauriEvent(page, "agent", { kind: "User", frame_id: frameId, text: "Continue analysis" });
+  for (const [index, path] of ["second.png", "summary.csv", "third.png"].entries()) {
+    await emitTauriEvent(page, "agent", { kind: "ToolCall", frame_id: frameId, name: "python", preview: `save ${path}` });
+    await emitTauriEvent(page, "agent", { kind: "FileChanged", frame_id: frameId, path: `/mock/root/${path}` });
+    await emitTauriEvent(page, "agent", { kind: "ToolResult", frame_id: frameId, name: "python", ok: true, content: `Saved ${path}` });
+    // The artifact list must really change; keeping a stale list is not a fix.
+    await expect(page.locator(`.rp-tile[data-artifact-name="${path}"]`)).toHaveCount(1);
+    expect(await modal.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+    expect(await image.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+    await expect(modal.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+    await expect(modal.locator(".am-edit-area")).toHaveValue(draft);
+    expect(await invokeCount(page, "get_artifact_provenance")).toBe(provenanceReads);
+    if (index === 0) {
+      await expect(modal.getByRole("button", { name: "Next image" })).toBeEnabled();
+      await expect(modal.getByRole("button", { name: "Previous image" })).toBeDisabled();
+    }
+  }
+  await modal.locator(".am-tab", { hasText: "Environment" }).click();
+  await emitTauriEvent(page, "agent", { kind: "FileChanged", frame_id: frameId, path: "/mock/root/environment.csv" });
+  await expect(page.locator('.rp-tile[data-artifact-name="environment.csv"]')).toHaveCount(1);
+  await expect(modal.locator(".am-tab.active")).toHaveText("Environment");
+  await expect(modal.locator(".am-env")).toContainText("matplotlib");
+  expect(await modal.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("artifact-modal-background.png") });
+  await emitTauriEvent(page, "agent", { kind: "Done", frame_id: frameId });
+  await modal.getByRole("button", { name: "Next image" }).click();
+  await expect(modal.locator(".am-name")).toHaveText("second.png");
+  await page.keyboard.press("ArrowRight");
+  await expect(modal.locator(".am-name")).toHaveText("third.png");
+  await expect(modal.getByRole("button", { name: "Next image" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await page.locator('.rp-tile[data-artifact-name="first.png"] .rp-tile-main').click();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
 });
 
 test("artifact modal switches between images with left and right arrows", async ({ page }) => {

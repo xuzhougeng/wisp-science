@@ -905,7 +905,7 @@ pub(crate) fn UserMessage(
     .collect_view();
     view! {
         <div class="user-bubble"
-            data-branch-ui-index=can_branch.get_untracked().then(|| ui_index.to_string())>
+            data-branch-ui-index=move || can_branch.get().then(|| ui_index.to_string())>
             {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
             {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
             {has_context.then(|| view! { <div class="user-context-cards">{context_cards}</div> })}
@@ -942,7 +942,6 @@ pub(crate) fn UserMessage(
                 <button
                     type="button"
                     class="msg-btn"
-                    disabled=move || busy.get()
                     title=move || t(locale.get(), "msg.copy")
                     on:click=move |_| on_copy.call(text.clone())
                 >{move || t(locale.get(), "msg.copy")}</button>
@@ -1042,6 +1041,7 @@ pub(crate) fn AssistantMessage(
     on_copy: Callback<String>,
     on_memory: Callback<()>,
     on_review: Callback<()>,
+    busy: ReadSignal<bool>,
     on_branch: Callback<usize>,
     can_branch: Signal<bool>,
     show_actions: Signal<bool>,
@@ -1222,6 +1222,7 @@ pub(crate) fn AssistantMessage(
                 <button
                     type="button"
                     class="msg-icon-btn msg-review-btn"
+                    disabled=move || busy.get()
                     title=move || t(locale.get(), "msg.review")
                     aria-label=move || t(locale.get(), "msg.review")
                     on:click=move |_| on_review.call(())

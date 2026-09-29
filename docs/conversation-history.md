@@ -8,6 +8,15 @@ with the same turn duration. Expand it to inspect the full process. The final
 answer, trailing usage, approval/question cards, and dedicated run/media cards
 remain separate. Active turns continue to show live progress.
 
+While a later turn is running, earlier messages keep **Copy**, **Memory**, and
+**Branch** available. Memory uses only the selected historical turn and still
+requires confirmation before saving. Branch opens an independent conversation
+at that checkpoint while the original turn continues in the background.
+Existing restrictions for ACP sessions, exploration sessions, and branches
+still apply. **Review**, **Rewind**, **Undo**, and **Start exploration** remain
+unavailable during a running turn; the unfinished turn cannot become a memory
+or branch checkpoint yet.
+
 When a completed Run is already attached to its matching submission step,
 `monitor_run` / `wisp_monitor_run` records and their progress messages join the
 same Processed disclosure, including when reopening a conversation. Expanding
