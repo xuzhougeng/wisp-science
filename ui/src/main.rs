@@ -1808,9 +1808,13 @@ fn App() -> impl IntoView {
     });
     let path_check_gen = Rc::new(Cell::new(0u64));
     create_effect(move |_| {
+        let _ = project_info.get();
+        let _ = active_session.get();
+        let _ = busy.get();
         let paths = workspace_path_candidates.get();
         let gen = path_check_gen.get().wrapping_add(1);
         path_check_gen.set(gen);
+        workspace_path_liveness.set(WorkspacePathLiveness::default());
         if paths.is_empty() {
             if !missing_paths.get_untracked().is_empty() {
                 missing_paths.set(HashSet::new());
@@ -1823,15 +1827,30 @@ fn App() -> impl IntoView {
         let path_check_gen = Rc::clone(&path_check_gen);
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({ "paths": paths.clone() })).unwrap();
-            let v = invoke("missing_files", arg).await;
+            let v = invoke("classify_workspace_paths", arg).await;
             if gen != path_check_gen.get() {
                 return;
             }
-            if let Ok(m) = serde_wasm_bindgen::from_value::<Vec<String>>(v) {
-                let missing = m.into_iter().collect::<HashSet<_>>();
+            if let Ok(kinds) =
+                serde_wasm_bindgen::from_value::<HashMap<String, WorkspacePathKind>>(v)
+            {
+                let missing = paths
+                    .iter()
+                    .filter(|path| kinds.get(*path) != Some(&WorkspacePathKind::File))
+                    .cloned()
+                    .collect::<HashSet<_>>();
                 let next = WorkspacePathLiveness {
-                    checked: paths.into_iter().collect(),
-                    missing: missing.clone(),
+                    checked: kinds.keys().cloned().collect(),
+                    missing: kinds
+                        .iter()
+                        .filter(|(_, kind)| **kind == WorkspacePathKind::Unavailable)
+                        .map(|(path, _)| path.clone())
+                        .collect(),
+                    directories: kinds
+                        .iter()
+                        .filter(|(_, kind)| **kind == WorkspacePathKind::Directory)
+                        .map(|(path, _)| path.clone())
+                        .collect(),
                 };
                 if missing_paths.get_untracked() != missing {
                     missing_paths.set(missing);
@@ -2037,6 +2056,14 @@ fn App() -> impl IntoView {
     ));
     let file_sort_menu_open = create_rw_signal(false);
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
+    let open_workspace_directory = Callback::new(move |path: String| {
+        file_source.set("local".into());
+        file_query.set(String::new());
+        file_cwd.set(path);
+        refresh_dir(file_cwd, file_entries);
+        ensure_right_tab(RightTab::File, show_right, open_right_tabs, right_tab);
+    });
+    provide_context(OpenWorkspaceDirectory(open_workspace_directory));
     let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
     let selecting_workspace_entries = create_rw_signal(false);
     let selected_workspace_paths = create_rw_signal::<HashSet<String>>(HashSet::new());
@@ -8930,6 +8957,10 @@ fn App() -> impl IntoView {
             }
             if action == "openWorkspacePathInSystem" {
                 open_workspace_path_in_system(payload);
+                return;
+            }
+            if action == "openWorkspaceDirectory" {
+                open_workspace_directory.call(payload);
                 return;
             }
             if action == "copyImage" {

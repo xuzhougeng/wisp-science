@@ -502,6 +502,65 @@ pub(super) fn missing_files(
         .collect())
 }
 
+fn workspace_path_kind(root: &std::path::Path, path: &str) -> wisp_dto::WorkspacePathKind {
+    use wisp_dto::WorkspacePathKind;
+    let metadata = wisp_tools::safety::resolve_under_root(root, path)
+        .ok()
+        .and_then(|path| std::fs::metadata(path).ok());
+    match metadata {
+        Some(metadata) if metadata.is_file() => WorkspacePathKind::File,
+        Some(metadata) if metadata.is_dir() => WorkspacePathKind::Directory,
+        _ => WorkspacePathKind::Unavailable,
+    }
+}
+
+#[tauri::command]
+pub(super) fn classify_workspace_paths(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    paths: Vec<String>,
+) -> Result<std::collections::HashMap<String, wisp_dto::WorkspacePathKind>, String> {
+    let ap = state.require_active(window.label())?;
+    Ok(paths
+        .into_iter()
+        .map(|path| {
+            let kind = workspace_path_kind(&ap.root, &path);
+            (path, kind)
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod workspace_path_tests {
+    use super::workspace_path_kind;
+    use wisp_dto::WorkspacePathKind::{Directory, File, Unavailable};
+
+    #[test]
+    fn classifies_existing_entries_and_rejects_missing_and_outside_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(root.join("docs/07.celltype_auto_annotation")).unwrap();
+        std::fs::write(root.join("README"), "hello").unwrap();
+        std::fs::write(temp.path().join("outside.txt"), "outside").unwrap();
+        assert_eq!(workspace_path_kind(&root, "README"), File);
+        assert_eq!(
+            workspace_path_kind(&root, "docs/07.celltype_auto_annotation"),
+            Directory
+        );
+        assert_eq!(workspace_path_kind(&root, "docs/"), Directory);
+        assert_eq!(
+            workspace_path_kind(&root, &root.join("docs").to_string_lossy()),
+            Directory
+        );
+        assert_eq!(workspace_path_kind(&root, "missing.txt"), Unavailable);
+        assert_eq!(workspace_path_kind(&root, "../outside.txt"), Unavailable);
+        assert_eq!(
+            workspace_path_kind(&root, &temp.path().to_string_lossy()),
+            Unavailable
+        );
+    }
+}
+
 #[tauri::command]
 pub(super) async fn read_artifact(
     state: State<'_, AppState>,

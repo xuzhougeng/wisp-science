@@ -677,6 +677,22 @@ pub fn build(
     // file-focused menu: ordinary path links and collected-artifact chips.
     // This must run before selection/message fallbacks.
     if let Some(path) = chat_workspace_path(&target, project_root) {
+        if closest(&target, ".md [data-workspace-kind=directory]").is_some() {
+            let mut items = vec![
+                item(
+                    "openWorkspaceDirectory",
+                    i18n::t(locale, "ctx.open_in_files"),
+                    path.clone(),
+                ),
+                item(
+                    "openWorkspacePathInSystem",
+                    i18n::t(locale, "ctx.open_directory_in_system"),
+                    path.clone(),
+                ),
+            ];
+            items.extend(workspace_path_copy_items(&path, &[], project_root, locale));
+            return Some(CtxMenu { x, y, items });
+        }
         return Some(chat_workspace_path_menu(x, y, path, project_root, locale));
     }
 

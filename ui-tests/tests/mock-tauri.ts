@@ -2322,6 +2322,27 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 user_offset: 0,
               };
             }
+            if (query.get("mockPathTypes") === "1") {
+              return {
+                items: [{ role: "assistant", text: [
+                  "[Annotation directory](docs/07.celltype_auto_annotation)",
+                  "`results/` and [spaced directory](my%20data/)",
+                  "[Missing path](gone.txt) and [Unverified path](unchecked.txt)",
+                  "[Existing file](notes/FIGURE_LEGEND.md)",
+                  "[Saved report](saved.md)",
+                ].join("\n\n"), resources: [{
+                  id: "old-directory-binding", ordinal: 0,
+                  originalReference: "docs/07.celltype_auto_annotation",
+                  artifactId: null, artifactVersionId: null,
+                  displayName: "07.celltype_auto_annotation", kind: "file", mimeType: "application/octet-stream",
+                  status: "unresolved", error: "path is a directory, not a file",
+                }, {
+                  id: "saved-report", ordinal: 1, originalReference: "saved.md",
+                  artifactId: "resource-artifact-markdown", artifactVersionId: "resource-version-markdown",
+                  displayName: "saved.md", kind: "markdown", mimeType: "text/markdown", status: "ready", error: null,
+                }] }], next_before_seq: null, user_offset: 0,
+              };
+            }
             if (query.get("mockHistoricalImages") === "1") {
               return {
                 items: [{ role: "assistant", text: [
@@ -4736,6 +4757,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               return base64Bytes(docxBase64);
             }
             throw new Error("Artifact version bytes not found");
+          case "classify_workspace_paths": {
+            const paths = Array.isArray(arg("paths")) ? arg("paths") : [];
+            if (query.get("mockPathTypes") === "1") {
+              const result = Object.fromEntries(paths.filter(path => path !== "unchecked.txt").map(path => [path,
+                ["docs/07.celltype_auto_annotation", "results", "my data"].includes(path)
+                  ? "directory" : path === "notes/FIGURE_LEGEND.md" ? "file" : "unavailable"]));
+              const w = window as any;
+              const fail = Boolean(w.__pathClassificationFailure);
+              if (w.__pathClassificationGate) await w.__pathClassificationGate;
+              w.__pathClassificationsSettled = (w.__pathClassificationsSettled ?? 0) + 1;
+              if (fail) {
+                w.__pathClassificationsFailed = (w.__pathClassificationsFailed ?? 0) + 1;
+                throw new Error("classification unavailable");
+              }
+              return result;
+            }
+            return Object.fromEntries(paths.map((value) => {
+              const path = String(value).replaceAll("\\", "/");
+              const missing = path.includes("/.pdf") || path.includes(".cache/")
+                || path === "old.csv" || path.endsWith("/old.csv");
+              const directory = path.replace(/\/$/, "") === "results";
+              return [value, missing ? "unavailable" : directory ? "directory"
+                : /\.[\w]+$/.test(path) ? "file" : "unavailable"];
+            }));
+          }
           case "missing_files": {
             const paths = Array.isArray(arg("paths")) ? arg("paths") : [];
             return paths.filter((value) => {
@@ -5981,7 +6027,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                   delta: [
                     "Saved the screenshots as local files for this turn.",
                     "",
-                    '<image name="clipboard-preview.png" path="C:\\Users\\Alice\\AppData\\Local\\Temp\\clipboard-preview.png"></image>',
+                    '<image name="clipboard-preview.png" path="/mock/root/uploads/clipboard-preview.png"></image>',
                     "",
                     '<image name="clipboard-preview-2.png" path="C:\\Users\\Alice\\AppData\\Local\\Temp\\clipboard-preview-2.png"></image>',
                   ].join("\n"),
@@ -6533,6 +6579,7 @@ export function parallelMock(): void {
           case "search_files": return [];
           case "search_artifacts": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
+          case "classify_workspace_paths": return Object.fromEntries((arg("paths") ?? []).map((path: string) => [path, "file"]));
           case "missing_files": return [];
           case "export_session": return "/mock/export.zip";
           case "export_session_trajectory":

@@ -7960,6 +7960,7 @@ pub fn run() {
             artifact_commands::read_artifact_version,
             artifact_commands::read_artifact_version_bytes,
             artifact_commands::missing_files,
+            artifact_commands::classify_workspace_paths,
             session_commands::set_viewed_session,
             upload_file,
             register_artifact,

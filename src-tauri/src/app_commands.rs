@@ -739,9 +739,9 @@ pub(super) fn open_workspace_path(
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let ap = state.require_active(window.label())?;
-    let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
-    if !real.exists() {
-        return Err(format!("file not found: {path}"));
+    let real = wisp_tools::safety::resolve_under_root(&ap.root, &path)?;
+    if !real.is_file() && !real.is_dir() {
+        return Err(format!("unsupported workspace entry: {path}"));
     }
     app.opener()
         .open_path(real.to_string_lossy().into_owned(), None::<String>)

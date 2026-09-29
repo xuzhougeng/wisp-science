@@ -9,6 +9,17 @@
 use serde_json::json;
 
 #[test]
+fn workspace_path_classification_distinguishes_directories_and_unavailable_entries() {
+    use wisp_dto::WorkspacePathKind;
+    let wire = json!({"report.md": "file", "docs/annotation": "directory", "gone": "unavailable"});
+    let kinds: std::collections::HashMap<String, WorkspacePathKind> =
+        serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(kinds["docs/annotation"], WorkspacePathKind::Directory);
+    assert_eq!(kinds["gone"], WorkspacePathKind::Unavailable);
+    assert_eq!(serde_json::to_value(kinds).unwrap(), wire);
+}
+
+#[test]
 fn workflow_conversion_progress_preserves_request_identity_and_stage() {
     use wisp_dto::{WorkflowConversionProgress, WorkflowConversionStage};
     let progress = WorkflowConversionProgress {

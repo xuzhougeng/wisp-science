@@ -29,6 +29,16 @@ pub use mcp_app_child::*;
 /// The UI must not offer native HTTP transcript recovery for these errors.
 pub const ACP_TURN_ERROR_PREFIX: &str = "ACP turn failed: ";
 
+/// Current filesystem type of a project path. Unavailable includes missing,
+/// unreadable, unsupported entries and paths outside the project boundary.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePathKind {
+    File,
+    Directory,
+    Unavailable,
+}
+
 /// Bounded numeric renderer diagnostics. Never includes user or plugin content.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
