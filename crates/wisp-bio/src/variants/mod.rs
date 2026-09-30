@@ -24,14 +24,12 @@ mod gnomad;
 #[cfg(test)]
 mod tests;
 
-use crate::http::{Source, MAX_RESPONSE, NCBI};
+use crate::http::{Source, NCBI};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
-use reqwest::{Method, StatusCode};
+use reqwest::Method;
 use serde_json::{json, Value};
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::time::Instant;
 use wisp_llm::ToolSchema;
 
 const NCBI_EUTILS: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/";
@@ -70,8 +68,6 @@ const SV_DATASETS: &[&str] = &[
     "gnomad_sv_r2_1_controls",
     "gnomad_sv_r2_1_non_neuro",
 ];
-
-static GNOMAD_PACE: Mutex<Option<Instant>> = Mutex::const_new(None);
 
 pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
     vec![
@@ -491,61 +487,9 @@ fn is_not_found_error(error: &Value) -> bool {
 }
 
 async fn json_post(bio: &NativeBio, url: &str, body: &Value) -> Result<Value> {
-    let pace = url.starts_with("https://gnomad.broadinstitute.org");
-    for attempt in 0..2 {
-        if pace {
-            let mut last = GNOMAD_PACE.lock().await;
-            if let Some(previous) = *last {
-                tokio::time::sleep_until(previous + GNOMAD.1).await;
-            }
-            *last = Some(Instant::now());
-        }
-        let mut response = bio
-            .http()
-            .0
-            .post(url)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(|_| anyhow!("gnomAD connection failed or timed out"))?;
-        let status = response.status();
-        if attempt == 0 && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-            let delay = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|header| header.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .or(Some(2));
-            if let Some(delay) = delay.filter(|seconds| *seconds <= 5) {
-                drop(response);
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                continue;
-            }
-        }
-        if !status.is_success() {
-            bail!("gnomAD returned HTTP {}", status.as_u16());
-        }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE as u64)
-        {
-            bail!("gnomAD response exceeded 4 MiB; request fewer records");
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow!("gnomAD response could not be read"))?
-        {
-            if bytes.len() + chunk.len() > MAX_RESPONSE {
-                bail!("gnomAD response exceeded 4 MiB; request fewer records");
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        return serde_json::from_slice(&bytes).context("gnomAD returned invalid JSON");
-    }
-    unreachable!("second attempt returns a response")
+    let response = bio.http().send_json(GNOMAD, url, body).await?;
+    response.check()?;
+    serde_json::from_slice(&response.body).context("gnomAD returned invalid JSON")
 }
 
 pub(super) fn require_dataset(value: &str) -> Result<String> {

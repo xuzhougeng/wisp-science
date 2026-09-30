@@ -14,7 +14,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::Method;
@@ -920,16 +920,6 @@ fn is_query_error(text: &str) -> bool {
     head.starts_with("Query ERROR")
         || head.starts_with("Problem retrieving")
         || head.contains("BioMart::Exception")
-}
-
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }
 
 fn martservice(bio: &NativeBio) -> String {

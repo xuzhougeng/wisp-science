@@ -16,11 +16,10 @@ mod open_targets;
 #[cfg(test)]
 mod tests;
 
-use crate::http::{Source, MAX_RESPONSE};
+use crate::http::Source;
 use crate::NativeBio;
-use anyhow::{anyhow, bail, Context, Result};
-use reqwest::header::RETRY_AFTER;
-use reqwest::{Method, StatusCode};
+use anyhow::{bail, Context, Result};
+use reqwest::Method;
 use serde_json::{json, Value};
 use std::time::Duration;
 use wisp_llm::ToolSchema;
@@ -213,73 +212,24 @@ async fn json_post(
     body: &Value,
     bearer: Option<&str>,
 ) -> Result<Value> {
-    let bytes = serde_json::to_vec(body).context("failed to encode GraphQL request")?;
-    for attempt in 0..2 {
-        let mut request = bio
-            .http()
-            .0
-            .post(url)
-            .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .body(bytes.clone());
-        if let Some(token) = bearer {
-            request = request.bearer_auth(token);
-        }
-        let mut response = request
-            .send()
-            .await
-            .map_err(|_| anyhow!("{} connection failed or timed out", source.0))?;
-        let status = response.status();
-        if attempt == 0 && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-            let delay = response
-                .headers()
-                .get(RETRY_AFTER)
-                .map(|header| header.to_str().ok().and_then(retry_delay))
-                .unwrap_or(Some(2));
-            if let Some(delay) = delay.filter(|seconds| *seconds <= 5) {
-                drop(response);
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                continue;
+    let response = bio
+        .http()
+        .execute(source, Method::POST, |_| {
+            let request = bio
+                .http()
+                .0
+                .post(url)
+                .header("accept", "application/json")
+                .json(body);
+            match bearer {
+                Some(token) => request.bearer_auth(token),
+                None => request,
             }
-        }
-        if !status.is_success() {
-            bail!("{} returned HTTP {}", source.0, status.as_u16());
-        }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE as u64)
-        {
-            bail!(
-                "{} response exceeded 4 MiB; request fewer records",
-                source.0
-            );
-        }
-        let mut buf = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow!("{} response could not be read", source.0))?
-        {
-            if buf.len() + chunk.len() > MAX_RESPONSE {
-                bail!(
-                    "{} response exceeded 4 MiB; request fewer records",
-                    source.0
-                );
-            }
-            buf.extend_from_slice(&chunk);
-        }
-        return serde_json::from_slice(&buf)
-            .with_context(|| format!("{} returned invalid JSON", source.0));
-    }
-    unreachable!("second attempt returns a response")
-}
-
-fn retry_delay(value: &str) -> Option<u64> {
-    value.parse().ok().or_else(|| {
-        chrono::DateTime::parse_from_rfc2822(value)
-            .ok()
-            .map(|date| (date.timestamp() - chrono::Utc::now().timestamp()).max(0) as u64)
-    })
+        })
+        .await?;
+    response.check()?;
+    serde_json::from_slice(&response.body)
+        .with_context(|| format!("{} returned invalid JSON", source.0))
 }
 
 fn transient_graphql(body: &Value) -> bool {

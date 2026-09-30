@@ -23,7 +23,7 @@ mod panglaodb;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, path_segment, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Method;
@@ -1164,16 +1164,6 @@ async fn gtex_json(bio: &NativeBio, endpoint: &str, params: &[(String, String)])
     serde_json::from_slice(&response.body).context("GTEx Portal returned invalid JSON")
 }
 
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
-}
-
 fn list_result(
     query: Value,
     dataset: Option<&str>,
@@ -1491,15 +1481,4 @@ fn gene_url(id: &str) -> String {
 
 fn tissue_url(id: &str) -> String {
     format!("{GTEX_PORTAL}/home/tissue/{}", path_segment(id))
-}
-
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }

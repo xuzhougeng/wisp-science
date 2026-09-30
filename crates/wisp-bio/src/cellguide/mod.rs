@@ -22,7 +22,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, path_segment, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -903,17 +903,6 @@ fn filesystem_id(curie: &str) -> String {
     path_segment(&curie.replace(':', "_"))
 }
 
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 fn require_text<'a>(value: &'a str, what: &str) -> Result<&'a str> {
     let text = value.trim();
     if text.is_empty() || text.len() > MAX_QUERY {
@@ -970,14 +959,4 @@ fn marker_score(row: &Value) -> f64 {
 
 fn marker_symbol(row: &Value) -> &str {
     row.get("symbol").and_then(Value::as_str).unwrap_or("")
-}
-
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }

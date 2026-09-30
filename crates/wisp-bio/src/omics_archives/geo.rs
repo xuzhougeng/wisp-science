@@ -175,7 +175,7 @@ async fn fetch_soft(bio: &NativeBio, accession: &str, targ: &str) -> Result<Stri
         ("view".into(), "brief".into()),
     ];
     let text = get_text(bio, GEO_SOFT, &url, &params).await?;
-    if looks_like_html(&text) {
+    if looks_like_html(text.as_bytes()) {
         bail!("GEO acc.cgi returned HTML instead of SOFT text for {accession}");
     }
     Ok(text)

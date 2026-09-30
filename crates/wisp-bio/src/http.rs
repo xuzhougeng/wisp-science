@@ -208,7 +208,8 @@ impl Http {
         .await
     }
 
-    async fn execute(
+    /// Paced, retried, size-capped send for request shapes the helpers above do not cover.
+    pub async fn execute(
         &self,
         source: Source,
         method: Method,
@@ -312,6 +313,31 @@ impl Http {
         }
         unreachable!("second attempt returns a response")
     }
+}
+
+/// Percent-encode one URL path segment, keeping only RFC 3986 unreserved bytes.
+pub(crate) fn path_segment(value: &str) -> String {
+    let mut out = String::new();
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Maintenance and error pages that some upstreams serve with a 2xx status.
+pub(crate) fn looks_like_html(body: &[u8]) -> bool {
+    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
+    let prefix: String = text
+        .chars()
+        .take(32)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }
 
 fn total_count_header(headers: &reqwest::header::HeaderMap) -> Option<u64> {

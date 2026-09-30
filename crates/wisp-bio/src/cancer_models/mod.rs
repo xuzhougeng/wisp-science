@@ -22,7 +22,7 @@ mod sanger;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{path_segment, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -1181,15 +1181,4 @@ fn normalize_event_type(value: &str) -> Result<String> {
 
 fn study_url(study_id: &str) -> String {
     format!("{PORTAL}/study/summary?id={}", path_segment(study_id))
-}
-
-pub(super) fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }

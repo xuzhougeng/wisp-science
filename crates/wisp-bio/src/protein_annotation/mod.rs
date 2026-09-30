@@ -19,7 +19,7 @@ mod string;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, path_segment, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -353,16 +353,6 @@ fn reject_error_payload(source: &str, value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
-}
-
 fn api_base(bio: &NativeBio, credential: &str, default: &str) -> String {
     bio.credential(credential)
         .map(|value| value.trim_end_matches('/').to_string())
@@ -465,17 +455,6 @@ fn require_ids(ids: &[String], bound: usize, what: &str) -> Result<Vec<String>> 
         );
     }
     Ok(cleaned)
-}
-
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 fn origin(url: &str) -> Option<(String, String)> {
