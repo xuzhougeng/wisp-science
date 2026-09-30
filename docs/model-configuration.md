@@ -119,6 +119,34 @@ that subscription can call, such as `gpt-5.5`. A sign-in from
 `wisp-science login codex` is stored on the same machine and can be reused
 from this page.
 
+You can save several ChatGPT accounts. Once signed in, the card's first button
+reads **Add account**: signing in with a different ChatGPT account adds it and
+makes it active, while signing in to a saved account updates its tokens. The
+**Accounts** list shows each account's email (or account id), plan and quota.
+Exactly one account is active; every ChatGPT model uses it. **Use this
+account** switches all ChatGPT models to another account; each conversation's
+next turn uses it. Remove an inactive account with the trash
+button; its tokens are deleted from the OS keyring after confirmation. Switch
+away from the active account before removing it.
+
+Quota comes from ChatGPT's read-only `https://chatgpt.com/backend-api/wham/usage`
+endpoint (the one Codex CLI and CLIProxyAPI read) and does not consume quota.
+Each account shows its short (usually 5-hour) and weekly windows as bars with
+the percentage used and the time until reset, turning amber at 80% and red at
+100%; **Limit reached** marks an exhausted account. Quota loads when the page
+opens; **Refresh usage** reloads it. An expired access token is refreshed first.
+Quota requests use the **Subscription sign-in** network route. A failed request
+is shown on that account only.
+
+**Import local sign-in** adds ChatGPT sign-ins already saved on this machine:
+Codex CLI's `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) and
+CLIProxyAPI's `~/.cli-proxy-api/codex-*.json`. API-key sign-ins are skipped.
+The first imported account becomes active only when no ChatGPT account is
+signed in; an already-saved account is updated only when the local copy is
+newer. Importing shares the refresh token with that tool: once Wisp refreshes
+it, Codex CLI or CLIProxyAPI may ask you to sign in again, and vice versa. Sign
+in from Wisp instead when both tools must stay signed in.
+
 ChatGPT subscription requests use the service-managed output limit: Wisp does
 not send the public API's `max_output_tokens` parameter, which the subscription
 endpoint rejects with HTTP 400. API-key Responses profiles still send their
