@@ -7,7 +7,9 @@ recent user turns, so completing a long, tool-heavy conversation does not load
 and duplicate its full history. The suggestion panel can be hidden per reply,
 or the setting can be turned off to skip the extra model call entirely. Wisp
 does not request suggestions for failed, cancelled, paused, or tool-only turns;
-the current turn must contain a visible final answer.
+the current turn must contain a visible final answer. Suggestions are produced
+by the app after the turn ends, so turns started from the queue, IM channels,
+or scheduled tasks get them as well.
 
 The desktop transcript also treats ordinary tool output as a preview: tool
 results are limited to 4,000 characters and streamed terminal output to 64 KiB

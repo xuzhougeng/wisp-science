@@ -184,7 +184,10 @@ impl DeviceHub {
             | AgentEvent::CompactionUndone { .. }
             | AgentEvent::ContextWarning { .. }
             | AgentEvent::Diff { .. }
-            | AgentEvent::FileChanged { .. } => return,
+            | AgentEvent::FileChanged { .. }
+            | AgentEvent::MemoryProposal { .. }
+            | AgentEvent::FollowUps { .. }
+            | AgentEvent::HookFailed { .. } => return,
         };
         self.set_base(frame_id, project_id, state);
     }

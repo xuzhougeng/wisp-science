@@ -431,7 +431,6 @@ test("completed turns propose editable memory and require confirmation", async (
   await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
     sessionId: expect.stringMatching(/^s-/),
     turnIndex: 0,
-    automatic: false,
   });
 
   // Root-owned modal participates in the window Escape stack without focus.
@@ -501,10 +500,6 @@ test("tool-only turn endings do not generate follow-up questions", async ({ page
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await page.waitForTimeout(100);
   await expect(page.getByTestId("follow-up-questions")).toHaveCount(0);
-  expect(await page.evaluate(() =>
-    ((window as any).__skillInvokeLog ?? [])
-      .filter((call: any) => call.cmd === "generate_follow_up_questions").length,
-  )).toBe(0);
 });
 
 test("manual review blocks sending and shows a playful progress animation", async ({ page }) => {
@@ -1864,7 +1859,7 @@ test("ACP cancellation is scoped to the active bound frame", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stopping-toast")).toHaveCount(0);
   await page.waitForTimeout(100);
-  expect(await invokeArgsList(page, "propose_turn_memory")).toHaveLength(0);
+  await expect(page.getByTestId("turn-memory-overlay")).toHaveCount(0);
 });
 
 test("an idle composer dismisses a leftover stopping banner", async ({ page }) => {
@@ -2418,7 +2413,6 @@ test("composer slash commands run the matching shell actions", async ({ page }) 
   await expect(memoryModal).toBeVisible();
   await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
     turnIndex: 0,
-    automatic: false,
   });
   await page.keyboard.press("Escape");
   await expect(memoryModal).toHaveCount(0);
@@ -4954,7 +4948,7 @@ for (const branchFrom of ["assistant", "user"] as const) {
     await reply.getByRole("button", { name: "Memory", exact: true }).click();
     await expect(page.getByTestId("turn-memory-overlay")).toBeVisible();
     await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
-      sessionId: sourceId, turnIndex: 0, automatic: false,
+      sessionId: sourceId, turnIndex: 0,
     });
     await page.getByTestId("turn-memory-scope").selectOption("global");
     await page.getByTestId("turn-memory-confirm").click();

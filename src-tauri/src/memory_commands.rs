@@ -37,7 +37,7 @@ impl AutoFailureAnalysisSettings {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(super) struct TurnMemoryProposal {
     session_id: String,
     turn_index: usize,
@@ -157,107 +157,18 @@ async fn generate_turn_memory_candidate(
     snapshot: &turn_memory::TurnSnapshot,
     trigger: turn_memory::ProposalTrigger,
 ) -> Result<turn_memory::ParsedCandidate, String> {
-    let reviewer = specialists::get(&state.store, "reviewer")
-        .await
-        .ok_or_else(|| "Reviewer specialist missing.".to_string())?;
-    let session_acp_profile_id = state
-        .store
-        .get_acp_session(frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .map(|binding| binding.agent_profile_id);
-    let backend = resolve_review_backend(&reviewer, session_acp_profile_id.as_deref());
     let (system_prompt, user_prompt) = turn_memory::candidate_prompts(trigger, snapshot);
-    let raw = match backend {
-        Some(review::ReviewBackendConfig::AcpAgent { profile_id }) => {
-            if profile_id.trim().is_empty() {
-                return Err("Reviewer ACP Agent is not configured.".into());
-            }
-            let project_id = state
-                .store
-                .frame_project_id(frame_id)
-                .await
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| "Session project was not found.".to_string())?;
-            let project = project_commands::load_active_project(state, &project_id)
-                .await?
-                .0;
-            let label = acp::profile_label(&state.store, &profile_id)
-                .await
-                .ok_or_else(|| "The Reviewer ACP Agent profile no longer exists.".to_string())?;
-            log_dev_llm_dispatch(
-                frame_id,
-                "memory_analyst_acp",
-                &profile_id,
-                &label,
-                &label,
-                false,
-            );
-            acp::acp_read_only_once(
-                state,
-                &project.root,
-                &profile_id,
-                &format!("{system_prompt}\n\n{user_prompt}"),
-                None,
-            )
-            .await?
-        }
-        backend => {
-            let mut analyst = reviewer;
-            if let Some(review::ReviewBackendConfig::HttpModel { profile_id }) = backend {
-                analyst.model_id = profile_id;
-            }
-            let (
-                provider,
-                api_url,
-                model,
-                api_key,
-                max_tokens,
-                reasoning_effort,
-                service_tier,
-                user_agent,
-                send_user_agent,
-                send_session_id,
-                session_header_name,
-            ) = specialists::specialist_llm(&state.store, &analyst).await;
-            let cfg = build_provider_config(
-                &provider,
-                &api_url,
-                &api_key,
-                &model,
-                max_tokens,
-                &reasoning_effort,
-                &service_tier,
-                &user_agent,
-                send_user_agent,
-                send_session_id,
-                &session_header_name,
-                Some(frame_id),
-            )?;
-            let llm = wisp_llm::build(cfg);
-            let selected_profile = if analyst.model_id.trim().is_empty() {
-                "active"
-            } else {
-                analyst.model_id.as_str()
-            };
-            log_dev_llm_dispatch(
-                frame_id,
-                "memory_analyst_http",
-                selected_profile,
-                &model,
-                llm.model(),
-                false,
-            );
-            llm.complete(
-                &[Message::system(system_prompt), Message::user(user_prompt)],
-                &[],
-            )
-            .await
-            .map_err(|error| error.to_string())?
-            .content
-        }
-    };
-    turn_memory::parse_candidate(&raw)
+    let completion = turn_hooks::side_complete(
+        state,
+        frame_id,
+        "memory_analyst",
+        turn_hooks::SideModel::reviewer(state, frame_id).await?,
+        &system_prompt,
+        &user_prompt,
+        None,
+    )
+    .await?;
+    turn_memory::parse_candidate(&completion.text)
 }
 
 fn bounded_confirmed_memory(content: &str) -> Result<String, String> {
@@ -512,23 +423,34 @@ pub(super) async fn propose_turn_memory(
     state: State<'_, AppState>,
     session_id: String,
     turn_index: Option<usize>,
-    automatic: Option<bool>,
 ) -> Result<Option<TurnMemoryProposal>, String> {
     let frame_id = session_id.trim();
     if frame_id.is_empty() {
         return Err("No session was selected for memory.".into());
     }
     if !load_memory_enabled(&state.store).await {
-        return if automatic.unwrap_or(false) {
-            Ok(None)
-        } else {
-            Err("Memory is turned off.".into())
-        };
+        return Err("Memory is turned off.".into());
     }
     let running = state.running_turns.lock().await.contains(frame_id);
-    if running && automatic.unwrap_or(false) {
-        return Err("Wait for the turn to finish before creating a memory.".into());
-    }
+    propose_memory(&state, frame_id, turn_index, running, false).await
+}
+
+/// AfterTurn hook: propose a memory for the turn that just finished when tool
+/// failures cross the configured threshold or the user asked to remember.
+pub(super) async fn automatic_turn_memory_proposal(
+    state: &AppState,
+    frame_id: &str,
+) -> Result<Option<TurnMemoryProposal>, String> {
+    propose_memory(state, frame_id, None, false, true).await
+}
+
+async fn propose_memory(
+    state: &AppState,
+    frame_id: &str,
+    turn_index: Option<usize>,
+    running: bool,
+    automatic: bool,
+) -> Result<Option<TurnMemoryProposal>, String> {
     let project_id = state
         .store
         .frame_project_id(frame_id)
@@ -537,7 +459,7 @@ pub(super) async fn propose_turn_memory(
         .ok_or_else(|| "Session project was not found.".to_string())?;
     let _project_activity = state.begin_project_activity(&project_id)?;
     let snapshot = memory_turn_snapshot(&state.store, frame_id, turn_index, running).await?;
-    let trigger = if automatic.unwrap_or(false) {
+    let trigger = if automatic {
         let settings = load_auto_failure_analysis_settings(&state.store).await;
         if settings.should_analyze(&snapshot) {
             turn_memory::ProposalTrigger::ToolFailures
@@ -549,7 +471,7 @@ pub(super) async fn propose_turn_memory(
     } else {
         turn_memory::ProposalTrigger::Manual
     };
-    let candidate = generate_turn_memory_candidate(&state, frame_id, &snapshot, trigger).await?;
+    let candidate = generate_turn_memory_candidate(state, frame_id, &snapshot, trigger).await?;
     let trigger = match trigger {
         turn_memory::ProposalTrigger::Manual => "manual",
         turn_memory::ProposalTrigger::Explicit => "explicit",

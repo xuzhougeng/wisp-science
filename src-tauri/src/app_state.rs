@@ -620,6 +620,9 @@ pub(crate) struct AppState {
     /// Session ids with an in-flight manual or automatic review. Reviews in
     /// unrelated conversations remain independent.
     pub(crate) reviewing: Arc<StdMutex<HashSet<String>>>,
+    /// Latest AfterTurn hook run per session; an older run's results are
+    /// dropped instead of emitted (`turn_hooks::spawn_after_turn`).
+    pub(crate) after_turn_generations: StdMutex<HashMap<String, u64>>,
     /// Per-window ephemeral scratch chat (restored on close).
     pub(crate) scratch: std::sync::RwLock<HashMap<String, scratch_commands::ScratchWindow>>,
 }

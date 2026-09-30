@@ -1,17 +1,13 @@
 use super::*;
 
-/// Drop suggested follow-ups for `frame_id` and invalidate any in-flight
-/// generation so a late `generate_follow_up_questions` cannot put them back.
+/// Drop suggested follow-ups for `frame_id`. A late `FollowUps` event for a
+/// session that is running again is ignored where it is received.
 pub(crate) fn dismiss_follow_up_questions(
     questions: RwSignal<HashMap<String, Vec<String>>>,
-    generations: RwSignal<HashMap<String, u64>>,
     frame_id: &str,
 ) {
     questions.update(|all| {
         all.remove(frame_id);
-    });
-    generations.update(|all| {
-        *all.entry(frame_id.to_string()).or_default() += 1;
     });
 }
 
@@ -111,25 +107,6 @@ pub(crate) fn upsert_review(items: &mut Vec<ChatItem>, report: ReviewReport) {
 
 pub(crate) fn is_error_assistant(item: &ChatItem) -> bool {
     matches!(item, ChatItem::Assistant { text, .. } if text.starts_with("Error: "))
-}
-
-/// Follow-up suggestions belong only to a turn that actually produced a final
-/// answer. In particular, assistant commentary before a tool is not a final
-/// answer: if the provider drops after that tool, a stray `Done` event must not
-/// make the interrupted task look complete by offering next questions.
-pub(crate) fn latest_turn_has_final_answer(items: &[ChatItem]) -> bool {
-    let turn_start = items
-        .iter()
-        .rposition(|item| matches!(item, ChatItem::User(_) | ChatItem::QueuedUser { .. }))
-        .map_or(0, |index| index.saturating_add(1));
-    items
-        .iter()
-        .enumerate()
-        .skip(turn_start)
-        .any(|(index, item)| {
-            matches!(item, ChatItem::Assistant { text, .. } if !text.trim().is_empty() && !text.starts_with("Error: "))
-                && !is_commentary_at(items, index)
-        })
 }
 
 pub(crate) fn strip_error_at(items: &mut Vec<ChatItem>, idx: usize) {
@@ -297,16 +274,17 @@ mod start_user_turn_tests {
     use std::collections::HashMap;
 
     #[test]
-    fn dismiss_follow_up_questions_removes_and_invalidates_generation() {
+    fn dismiss_follow_up_questions_removes_only_that_session() {
         let runtime = create_runtime();
-        let questions = create_rw_signal(HashMap::from([(
-            "s1".to_string(),
-            vec!["one?".into(), "two?".into(), "three?".into()],
-        )]));
-        let generations = create_rw_signal(HashMap::from([("s1".to_string(), 3u64)]));
-        dismiss_follow_up_questions(questions, generations, "s1");
-        assert!(questions.get_untracked().is_empty());
-        assert_eq!(generations.get_untracked().get("s1").copied(), Some(4));
+        let questions = create_rw_signal(HashMap::from([
+            ("s1".to_string(), vec!["one?".into()]),
+            ("s2".to_string(), vec!["two?".into()]),
+        ]));
+        dismiss_follow_up_questions(questions, "s1");
+        assert_eq!(
+            questions.get_untracked().keys().collect::<Vec<_>>(),
+            vec!["s2"]
+        );
         runtime.dispose();
     }
 

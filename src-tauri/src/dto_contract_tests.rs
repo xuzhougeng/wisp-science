@@ -988,3 +988,49 @@ fn project_storage_setting_roundtrips_between_backend_and_ui() {
     let ui: wisp_dto::Settings = serde_json::from_value(legacy).unwrap();
     assert!(!ui.decentralized_project_storage);
 }
+
+#[test]
+fn after_turn_hook_events_roundtrip_to_ui() {
+    let backend: super::AgentEvent = serde_json::from_value(json!({
+        "kind": "MemoryProposal",
+        "frame_id": "f",
+        "proposal": {
+            "session_id": "f", "turn_index": 2, "scope": "project",
+            "content": "Validate paths before retrying.", "trigger": "tool_failures",
+            "tool_calls": 3, "failed_tool_calls": 2, "failure_rate": 66.7,
+            "global_memories": []
+        }
+    }))
+    .expect("backend accepts its own proposal shape");
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::MemoryProposal { frame_id, proposal } => {
+            assert_eq!(frame_id, "f");
+            assert_eq!(proposal.turn_index, 2);
+            assert_eq!(proposal.trigger, "tool_failures");
+            assert_eq!(proposal.failed_tool_calls, 2);
+        }
+        _ => panic!("expected MemoryProposal"),
+    }
+
+    let backend = super::AgentEvent::FollowUps {
+        frame_id: "f".into(),
+        questions: vec!["One?".into(), "Two?".into(), "Three?".into()],
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::FollowUps { questions, .. } => assert_eq!(questions.len(), 3),
+        _ => panic!("expected FollowUps"),
+    }
+
+    let backend = super::AgentEvent::HookFailed {
+        frame_id: "f".into(),
+        hook: crate::turn_hooks::HookId::MemoryProposal.as_str().into(),
+        message: "Reviewer ACP Agent is not configured.".into(),
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::HookFailed { hook, message, .. } => {
+            assert_eq!(hook, "memory_proposal");
+            assert!(message.contains("not configured"));
+        }
+        _ => panic!("expected HookFailed"),
+    }
+}

@@ -223,7 +223,6 @@ use runtime_views::*;
 fn request_turn_memory_proposal(
     session_id: String,
     turn_index: Option<usize>,
-    automatic: bool,
     proposal: RwSignal<Option<TurnMemoryProposal>>,
     editor: RwSignal<String>,
     scope: RwSignal<String>,
@@ -239,14 +238,11 @@ fn request_turn_memory_proposal(
     loading.update(|ids| {
         ids.insert(session_id.clone());
     });
-    if !automatic {
-        status.set(t(locale.get_untracked(), "memory.proposal.generating"));
-    }
+    status.set(t(locale.get_untracked(), "memory.proposal.generating"));
     spawn_local(async move {
         let args = to_value(&serde_json::json!({
             "sessionId": session_id.clone(),
             "turnIndex": turn_index,
-            "automatic": automatic,
         }))
         .unwrap();
         match invoke_checked("propose_turn_memory", args).await {
@@ -259,11 +255,7 @@ fn request_turn_memory_proposal(
                     proposal.set(Some(next));
                     status.set(t(locale.get_untracked(), "memory.proposal.ready"));
                 }
-                Ok(_) => {
-                    if !automatic {
-                        status.set(t(locale.get_untracked(), "memory.proposal.none"));
-                    }
-                }
+                Ok(_) => status.set(t(locale.get_untracked(), "memory.proposal.none")),
                 Err(parse_error) => {
                     status.set(tf(
                         locale.get_untracked(),
@@ -470,7 +462,6 @@ fn App() -> impl IntoView {
     let conn_form_kind = create_memo(move |_| conn_form.get().map(|f| f.kind).unwrap_or_default());
     let settings = create_rw_signal(Settings::default());
     let follow_up_questions = create_rw_signal(HashMap::<String, Vec<String>>::new());
-    let follow_up_generation = create_rw_signal(HashMap::<String, u64>::new());
     // This mirrors the last persisted sync configuration. Keep it separate
     // from `settings`, which also holds unsaved edits while Settings is open.
     let sync_actions_available = create_rw_signal(false);
@@ -3117,7 +3108,7 @@ fn App() -> impl IntoView {
                 text,
                 queue_id,
             } => {
-                dismiss_follow_up_questions(follow_up_questions, follow_up_generation, &frame_id);
+                dismiss_follow_up_questions(follow_up_questions, &frame_id);
                 // The banner judges the answer on screen; a new turn has none yet.
                 set_browser_offline_notice(browser_offline_cb, &frame_id, None);
                 set_pet_activity(&frame_id, "running");
@@ -3641,64 +3632,6 @@ fn App() -> impl IntoView {
                     stopping_session.set(None);
                 }
                 refresh_session_history();
-                if stop_reason
-                    .as_deref()
-                    .is_none_or(|reason| reason == "end_turn")
-                {
-                    request_turn_memory_proposal(
-                        frame_id.clone(),
-                        None,
-                        true,
-                        turn_memory_proposal,
-                        turn_memory_editor,
-                        turn_memory_scope,
-                        turn_memory_replace_id,
-                        turn_memory_loading,
-                        turn_memory_error,
-                        status_cb,
-                        locale_cb,
-                    );
-                }
-                let has_final_answer =
-                    if active_cb.get_untracked().as_deref() == Some(frame_id.as_str()) {
-                        items_cb.with_untracked(|items| latest_turn_has_final_answer(items))
-                    } else {
-                        transcripts_cb.with_untracked(|transcripts| {
-                            transcripts
-                                .get(&frame_id)
-                                .is_some_and(|items| latest_turn_has_final_answer(items))
-                        })
-                    };
-                if settings.get_untracked().follow_up_questions && has_final_answer {
-                    let generation = follow_up_generation.try_update(|generations| {
-                        let generation = generations.entry(frame_id.clone()).or_default();
-                        *generation += 1;
-                        *generation
-                    });
-                    spawn_local(async move {
-                        let args = to_value(&serde_json::json!({
-                            "sessionId": frame_id.clone(),
-                        }))
-                        .unwrap();
-                        let Ok(value) = invoke_checked("generate_follow_up_questions", args).await
-                        else {
-                            return;
-                        };
-                        let Ok(questions) = serde_wasm_bindgen::from_value::<Vec<String>>(value)
-                        else {
-                            return;
-                        };
-                        if questions.len() == 3
-                            && follow_up_generation
-                                .with_untracked(|generations| generations.get(&frame_id).copied())
-                                == generation
-                        {
-                            follow_up_questions.update(|all| {
-                                all.insert(frame_id, questions);
-                            });
-                        }
-                    });
-                }
             }
             AgentEvent::Error { frame_id, message } => {
                 finish_compaction(&frame_id);
@@ -3878,6 +3811,41 @@ fn App() -> impl IntoView {
                 });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.correcting"));
+                }
+            }
+            AgentEvent::FollowUps {
+                frame_id,
+                questions,
+            } => {
+                // The user may have sent again before the hook finished.
+                if questions.len() == 3
+                    && !running_cb.with_untracked(|running| running.contains(&frame_id))
+                {
+                    follow_up_questions.update(|all| {
+                        all.insert(frame_id, questions);
+                    });
+                }
+            }
+            AgentEvent::MemoryProposal { proposal, .. } => {
+                if turn_memory_proposal.get_untracked().is_none() {
+                    turn_memory_editor.set(proposal.content.clone());
+                    turn_memory_scope.set(proposal.scope.clone());
+                    turn_memory_replace_id.set(String::new());
+                    turn_memory_error.set(None);
+                    turn_memory_proposal.set(Some(proposal));
+                    status_cb.set(t(locale_cb.get_untracked(), "memory.proposal.ready"));
+                }
+            }
+            // Follow-up suggestions are optional; only a failed memory draft
+            // is worth a status line.
+            AgentEvent::HookFailed { hook, message, .. } => {
+                if hook == "memory_proposal" {
+                    let locale = locale_cb.get_untracked();
+                    status_cb.set(tf(
+                        locale,
+                        "memory.proposal.failed",
+                        &[("msg", &localize_backend(locale, &message))],
+                    ));
                 }
             }
             AgentEvent::Review { frame_id, report } => {
@@ -4593,7 +4561,7 @@ fn App() -> impl IntoView {
         // session lock / prompt build for a long time while the optimistic
         // user bubble is already on screen.
         if let Some(id) = active.as_ref() {
-            dismiss_follow_up_questions(follow_up_questions, follow_up_generation, id);
+            dismiss_follow_up_questions(follow_up_questions, id);
         }
         // Queue (#433): a plain send into a busy session parks behind the
         // running turn — cancellable / restorable to the composer until the
@@ -7107,7 +7075,6 @@ fn App() -> impl IntoView {
         request_turn_memory_proposal(
             session_id,
             Some(turn_index),
-            false,
             turn_memory_proposal,
             turn_memory_editor,
             turn_memory_scope,

@@ -174,8 +174,9 @@ Composer references work in ACP sessions too:
 ## Reviewing ACP sessions
 
 The Reviewer specialist can review both built-in HTTP-agent sessions and ACP
-sessions. Automatic review now runs after a qualifying ACP turn, persists the
-report, and can send one correction turn back to the original ACP session when
+sessions. Automatic review now runs after a qualifying ACP turn that ended
+normally (`end_turn`; cancelled, refused, or cut-off turns are not reviewed,
+as in built-in sessions), persists the report, and can send one correction turn back to the original ACP session when
 findings are present. Manual **Review** uses the same backend selection.
 
 Reviewer backend choices are:

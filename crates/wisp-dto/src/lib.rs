@@ -365,6 +365,22 @@ pub enum AgentEvent {
         frame_id: String,
         model: String,
     },
+    /// AfterTurn hook: a memory worth confirming from the finished turn.
+    MemoryProposal {
+        frame_id: String,
+        proposal: TurnMemoryProposal,
+    },
+    /// AfterTurn hook: questions the user could ask next.
+    FollowUps {
+        frame_id: String,
+        questions: Vec<String>,
+    },
+    /// An AfterTurn hook failed; the finished turn is unaffected.
+    HookFailed {
+        frame_id: String,
+        hook: String,
+        message: String,
+    },
 }
 
 #[derive(Deserialize, Clone, Hash, PartialEq, Eq)]

@@ -20,8 +20,44 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   const windowListeners: Record<string, ((e: { payload: unknown }) => void) | undefined> = {};
   const hydrationApprovals = new Map<string, any>();
   const planProgressSnapshots = new Map<string, string | null>();
+  // Mirrors the backend AfterTurn hooks (src-tauri/src/turn_hooks.rs): after a
+  // completed turn, emit follow-ups when it ended on an answer and an
+  // automatic memory proposal when one applies.
+  const finalAnswerByFrame: Record<string, boolean> = {};
+  const trackFinalAnswer = (request: any) => {
+    if (request.kind === "User" || request.kind === "ToolCall") {
+      finalAnswerByFrame[request.frame_id] = false;
+    } else if (request.kind === "Text" && String(request.delta ?? "").trim()) {
+      finalAnswerByFrame[request.frame_id] = true;
+    } else if (request.kind === "ToolResult") {
+      finalAnswerByFrame[request.frame_id] =
+        request.name === "attempt_completion" && Boolean(String(request.content ?? "").trim());
+    }
+  };
+  const runAfterTurnHooks = (request: any) => {
+    const stopReason = request.stop_reason;
+    if (stopReason != null && stopReason !== "end_turn") return;
+    const frameId = String(request.frame_id);
+    const answered = finalAnswerByFrame[frameId];
+    setTimeout(() => {
+      if (answered) {
+        emit("agent", {
+          kind: "FollowUps",
+          frame_id: frameId,
+          questions: [
+            "Review the records that need manual correction",
+            "Expand the search for underrepresented species",
+            "Generate a literature landscape visualization",
+          ],
+        });
+      }
+      const proposal = mockMemoryProposal(frameId, 0, true);
+      if (proposal) emit("agent", { kind: "MemoryProposal", frame_id: frameId, proposal });
+    }, 0);
+  };
   const emit = (event: string, payload: unknown) => {
     const request = payload as any;
+    if (event === "agent") trackFinalAnswer(request);
     if (event === "agent" && planProgressSnapshots.has(request.frame_id)) {
       if (request.kind === "User") planProgressSnapshots.set(request.frame_id, null);
       if (request.kind === "ToolResult" && request.name === "update_plan" && request.ok) {
@@ -40,6 +76,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     } catch {
       /* listener may not be registered yet */
     }
+    if (event === "agent" && request.kind === "Done") runAfterTurnHooks(request);
   };
   (window as any).__tauriEmit = emit;
   (window as any).__WISP_MCP_APP_BACKEND__ = "legacy-iframe";
@@ -523,6 +560,29 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     other: [{ name: "other-2026-07-02.md", preview: "Notes for other workspace.", bytes: 64 }],
   };
   let globalMemories = [{ id: "global-memory-existing", content: "Prefer SI units across projects." }];
+  const mockMemoryProposal = (sessionId: string, turnIndex: number, automatic: boolean) => {
+    const latest = lastMessageBySession[sessionId] ?? "";
+    if (automatic && !autoFailureAnalysis.enabled && !/记住|REMEMBER/i.test(latest)) {
+      return null;
+    }
+    if (automatic && !/记住|REMEMBER|TOOLFAILMEMORY/i.test(latest)) {
+      return null;
+    }
+    const failure = /TOOLFAILMEMORY/i.test(latest);
+    return {
+      session_id: sessionId,
+      turn_index: turnIndex,
+      scope: /记住|REMEMBER/i.test(latest) ? "global" : "project",
+      content: failure
+        ? "Two shell calls failed because the input path was invalid; validate the path before retrying."
+        : "Prefer reproducible local workflows for this project.",
+      trigger: failure ? "tool_failures" : (automatic ? "explicit" : "manual"),
+      tool_calls: failure ? 3 : 1,
+      failed_tool_calls: failure ? 2 : 0,
+      failure_rate: failure ? 66.7 : 0,
+      global_memories: globalMemories,
+    };
+  };
   const memoryFilesFor = (projectId: string) => {
     const id = projectId || "default";
     if (!memoryByProject[id]) memoryByProject[id] = [];
@@ -4110,12 +4170,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return activeProjectId === "other"
               ? { ...project, id: "other", name: "Other project", root: "/mock/other" }
               : project;
-          case "generate_follow_up_questions":
-            return [
-              "Review the records that need manual correction",
-              "Expand the search for underrepresented species",
-              "Generate a literature landscape visualization",
-            ];
           case "get_project_run_retention":
             return projectRunRetention;
           case "set_project_run_retention": {
@@ -4980,31 +5034,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               ...plain(arg("settings") ?? {}),
             };
             return { ...autoFailureAnalysis };
-          case "propose_turn_memory": {
-            const sessionId = String(arg("sessionId") ?? "");
-            const automatic = Boolean(arg("automatic"));
-            const latest = lastMessageBySession[sessionId] ?? "";
-            if (automatic && !autoFailureAnalysis.enabled && !/记住|REMEMBER/i.test(latest)) {
-              return null;
-            }
-            if (automatic && !/记住|REMEMBER|TOOLFAILMEMORY/i.test(latest)) {
-              return null;
-            }
-            const failure = /TOOLFAILMEMORY/i.test(latest);
-            return {
-              session_id: sessionId,
-              turn_index: Number(arg("turnIndex") ?? 0),
-              scope: /记住|REMEMBER/i.test(latest) ? "global" : "project",
-              content: failure
-                ? "Two shell calls failed because the input path was invalid; validate the path before retrying."
-                : "Prefer reproducible local workflows for this project.",
-              trigger: failure ? "tool_failures" : (automatic ? "explicit" : "manual"),
-              tool_calls: failure ? 3 : 1,
-              failed_tool_calls: failure ? 2 : 0,
-              failure_rate: failure ? 66.7 : 0,
-              global_memories: globalMemories,
-            };
-          }
+          case "propose_turn_memory":
+            return mockMemoryProposal(
+              String(arg("sessionId") ?? ""),
+              Number(arg("turnIndex") ?? 0),
+              false,
+            );
           case "confirm_turn_memory": {
             if (String(arg("scope")) === "global") {
               const replaceId = String(arg("replaceId") ?? "");
@@ -6563,11 +6598,6 @@ export function parallelMock(): void {
             return null;
           }
           case "get_project_info": return project;
-          case "generate_follow_up_questions": return [
-            "Review the records that need manual correction",
-            "Expand the search for underrepresented species",
-            "Generate a literature landscape visualization",
-          ];
           case "get_onboarding_state": return { show: false, has_api_key: true };
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
           case "list_approval_grants": return [];

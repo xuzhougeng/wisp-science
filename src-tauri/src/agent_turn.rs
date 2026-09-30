@@ -468,17 +468,28 @@ pub(crate) async fn send_message_inner(
             .await
         };
         match result {
-            Ok(_stop_reason) => {
+            Ok(stop_reason) => {
                 if !completion_delivery_ids.is_empty() {
                     let _ = state
                         .store
                         .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
                         .await;
                 }
-                if !resume && load_auto_review_enabled(&state.store, &frame_id).await {
-                    automatic_review_acp(state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
-                        .await;
-                }
+                let end = turn_hooks::TurnEnd {
+                    frame_id: &frame_id,
+                    project_id: &ap.id,
+                    stop_reason: Some(stop_reason.as_str()),
+                    resume,
+                    reviewer_session: false,
+                    turn_start,
+                };
+                let mut driver = turn_hooks::TurnDriver::Acp {
+                    state,
+                    app: &app,
+                    project: &ap,
+                    frame_id: &frame_id,
+                };
+                turn_hooks::run_stop(state, &app, &end, &mut driver, &runtime.cancel).await;
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
                 persist_and_emit_terminal_event(
@@ -487,11 +498,12 @@ pub(crate) async fn send_message_inner(
                     &frame_id,
                     AgentEvent::Done {
                         frame_id: frame_id.clone(),
-                        stop_reason: Some(_stop_reason),
+                        stop_reason: Some(stop_reason.clone()),
                         effective_max_iter: None,
                     },
                 )
                 .await;
+                turn_hooks::spawn_after_turn(&app, &end);
                 return Ok(frame_id);
             }
             Err(error) => {
@@ -1468,31 +1480,37 @@ pub(crate) async fn send_message_inner(
     // can roll the context back to it; any other outcome clears the marker.
     *rt.interrupted_turn_start.lock().unwrap() =
         (result.is_err() && rt.cancel.load(Ordering::SeqCst)).then_some(turn_start);
-    if result.is_ok() {
+    let reviewer_session = specialist
+        .as_ref()
+        .is_some_and(|specialist| specialist.id == "reviewer");
+    let turn_end = |stop_reason| turn_hooks::TurnEnd {
+        frame_id: &frame_id,
+        project_id: &ap.id,
+        stop_reason,
+        resume,
+        reviewer_session,
+        turn_start,
+    };
+    if let Ok(outcome) = &result {
         if !completion_delivery_ids.is_empty() {
             let _ = state
                 .store
                 .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
                 .await;
         }
-        if matches!(result, Ok(wisp_core::AgentLoopOutcome::Completed)) {
-            let is_reviewer = specialist
-                .as_ref()
-                .is_some_and(|specialist| specialist.id == "reviewer");
-            if !resume && !is_reviewer && load_auto_review_enabled(&state.store, &frame_id).await {
-                automatic_review(
-                    state,
-                    &app,
-                    &frame_id,
-                    &model_label,
-                    agent,
-                    &output,
-                    &rt.cancel,
-                    turn_start,
-                )
-                .await;
-            }
-        }
+        let mut driver = turn_hooks::TurnDriver::Native {
+            agent: &mut *agent,
+            output: &output,
+            model_label: &model_label,
+        };
+        turn_hooks::run_stop(
+            state,
+            &app,
+            &turn_end(outcome.stop_reason()),
+            &mut driver,
+            &rt.cancel,
+        )
+        .await;
     }
     // Keep the turn-start snapshot through a possible automatic correction;
     // clear it only after the whole visual turn reaches a terminal outcome.
@@ -1583,6 +1601,7 @@ pub(crate) async fn send_message_inner(
             )
             .await;
             emit_browser_tab_cleanup(state, &app, &browser_turn_id, &ap.id).await;
+            turn_hooks::spawn_after_turn(&app, &turn_end(outcome.stop_reason()));
             Ok(frame_id)
         }
         Err(e) => {

@@ -1291,11 +1291,25 @@ fn persisted_ui_events_ignore_ephemeral_reviewer_handoffs() {
             frame_id: frame_id.clone(),
         },
         AgentEvent::CorrectionStarted {
-            frame_id,
+            frame_id: frame_id.clone(),
             model: "main-model".into(),
+        },
+        AgentEvent::FollowUps {
+            frame_id: frame_id.clone(),
+            questions: vec!["One?".into()],
+        },
+        AgentEvent::HookFailed {
+            frame_id,
+            hook: "memory_proposal".into(),
+            message: "failed".into(),
         },
     ];
 
+    // AfterTurn hook results are live-only, like the invoke results they replaced.
+    assert!(events
+        .iter()
+        .skip(2)
+        .all(|event| !should_persist_ui_event(event)));
     let (items, _) = events_to_items(&events);
     assert!(items.is_empty());
 }
