@@ -44,7 +44,7 @@ def exports():
         for section, aliases in re.findall(r'\(\s*"([^"]+)",\s*"([^"]+)",?\s*\)', entries):
             key = "settings.nav." + section.replace("-", "_")
             navigation[section] = {"zh": by_locale["Zh"][key], "en": by_locale["En"][key], "group": by_locale["Zh"][group], "group_en": by_locale["En"][group], "aliases": aliases}
-    if len(navigation) != 19:
+    if len(navigation) != 20:
         raise ValueError("Review settings navigation export after WebView changes")
     yield "settings-navigation.json", (json.dumps(navigation, ensure_ascii=False, indent=2) + "\n").encode()
     labels = {value: by_locale["En"][key] for key, value in by_locale["Zh"].items() if key in by_locale["En"]}

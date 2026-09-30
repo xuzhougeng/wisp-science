@@ -256,7 +256,7 @@
   "通过 SuperGrok / X Premium+ 订阅登录。登录凭据保存在系统钥匙串中。": "Sign in with your SuperGrok / X Premium+ subscription. Credentials are stored in the system keychain.",
   "打开 xAI 验证页面并批准登录，需要时输入一次性代码。": "Open the xAI verification page and approve sign-in. Enter the one-time code if requested.",
   "这些设置对所有项目生效；运行限制从下一轮开始应用。保存会提交通用、对话、桌宠和同步的全部设置草稿。": "These settings apply across projects; run limits apply from the next turn. Save submits all drafts for general, conversation, pet and sync settings.",
-  "全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好；网络设置单独保存。": "Global settings. Save submits all general, conversation, pet and sync drafts, plus send shortcuts and text selection preferences. Network settings are saved separately.",
+  "全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好。": "Global settings. Save submits all general, conversation, pet and sync drafts, plus send shortcuts and text selection preferences.",
   "以下更新开关立即保存；取消不会撤销。": "The update toggle below saves immediately; Cancel does not undo it.",
   "以下开关立即保存，只影响新会话的默认值；取消不会撤销。": "The toggle below saves immediately and only sets the default for new conversations; Cancel does not undo it.",
   "网络配置单独保存，对后续请求和新启动的命令生效。": "Network configuration saves separately and applies to subsequent requests and newly launched commands.",

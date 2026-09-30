@@ -2,7 +2,7 @@
 
 The accepted scope is the complete settings surface rendered in SwiftUI, with
 existing desktop command behavior, and an equivalent transport seam for WinUI3.
-The existing WebView client remains supported. Settings include all 19 top-level
+The existing WebView client remains supported. Settings include all 20 top-level
 sections from `SETTINGS_NAV_GROUPS`, their editors, and their real actions.
 
 ## Architecture
@@ -63,7 +63,8 @@ save replies; automated tests do not use real accounts or keys.
 
 ## Settings coverage
 
-- General: locale, workspace, notifications, resume behavior, local paths, network, update preferences.
+- General: locale, workspace, notifications, resume behavior, local paths, update preferences.
+- Network: model, subscription, MCP, and command proxies, package mirrors, and the CA bundle. These save separately from General.
 - Session: iteration limits, compaction, continuation, follow-ups, review.
 - Appearance: theme, palettes, fonts, selection popup, send shortcut, WebView stylesheet preferences.
 - Pet: enablement, directory, runtime status.
@@ -127,13 +128,13 @@ var memory = await client.InvokeAsync("get_memory_view", new JsonObject(), proje
 Windows must package the full desktop host and runtime resources with WebView2.
 The invisible document is an adapter for existing Tauri command extractors, not
 an embedded settings UI. The WinUI preview now hosts categorized settings in the
-main window, with all 19 categories connected to native editors. The C# transport and fixture tests run
+main window, with all 20 categories connected to native editors. The C# transport and fixture tests run
 without WinUI or a real backend process.
 
 ## Manual smoke procedure
 
 1. Build with `bash scripts/build_native_macos.sh`; open the resulting preview.
-2. Open Settings / Cmd+, and visit all 19 sections. Check backend errors, project
+2. Open Settings / Cmd+, and visit all 20 sections. Check backend errors, project
    selection and consistency with the existing WebView values.
 3. In Models, open Add API access, press Escape immediately, and confirm only
    the editor closes. Open an editor's protocol menu; Escape closes the menu,
@@ -175,7 +176,7 @@ without WinUI or a real backend process.
 
 ## Windows incremental implementation
 
-The WinUI preview connects all 19 settings categories through the shared
+The WinUI preview connects all 20 settings categories through the shared
 transport and packages the full settings host. It retains unknown preference
 fields, preserves dirty drafts on refresh and errors, and never retries writes
 automatically. Saved themes, palettes and independent UI/code typography apply

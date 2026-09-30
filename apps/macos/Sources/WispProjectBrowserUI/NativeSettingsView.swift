@@ -130,6 +130,7 @@ struct NativeSettingsView: View {
     @ViewBuilder private var pane: some View {
         switch state.section {
         case .general: general
+        case .network: network
         case .session: session
         case .appearance: appearancePane
         case .pet: pet
@@ -150,7 +151,7 @@ struct NativeSettingsView: View {
     private var general: some View {
         VStack(spacing: 24) {
             NativeSettingsGroup(title: "工作区与交互") {
-                Text(localized("全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好；网络设置单独保存。"))
+                Text(localized("全局设置。保存会提交通用、对话、桌宠和同步的全部设置草稿，以及发送快捷键和选中文本偏好。"))
                     .font(.caption).foregroundStyle(.secondary)
                 NativePreferenceRow(title: "语言") {
                     NativeSettingsChoice(label: localized("语言"), selection: Binding(
@@ -196,20 +197,23 @@ struct NativeSettingsView: View {
                 }
             }
             NativeLocalEnvironmentSettings(model: state)
-            NativeSettingsGroup(title: "网络与软件源") {
-                Text(localized("网络配置单独保存，对后续请求和新启动的命令生效。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                fields("get_network_settings", [
-                    .init(key: "model_proxy_url", label: "模型 API 代理", hint: "留空跟随系统；none 为直连；支持 HTTP / HTTPS / SOCKS5。"),
-                    .init(key: "subscription_proxy_url", label: "订阅账号登录代理", hint: "用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。留空跟随系统，none 为直连。"),
-                    .init(key: "mcp_proxy_url", label: "MCP 代理"),
-                    .init(key: "command_proxy_url", label: "代码与命令代理"),
-                    .init(key: "conda_mirror_url", label: "Conda 镜像"),
-                    .init(key: "pip_index_url", label: "Python 软件源"),
-                    .init(key: "ca_bundle_path", label: "CA 证书路径")
-                ])
-                save("保存网络设置") { _ = await state.run("set_network_settings", ["settings": state.values["get_network_settings"] ?? .null]) }
-            }
+        }
+    }
+
+    private var network: some View {
+        NativeSettingsGroup(title: "网络与软件源") {
+            Text(localized("网络配置单独保存，对后续请求和新启动的命令生效。"))
+                .font(.caption).foregroundStyle(.secondary)
+            fields("get_network_settings", [
+                .init(key: "model_proxy_url", label: "模型 API 代理", hint: "留空跟随系统；none 为直连；支持 HTTP / HTTPS / SOCKS5。"),
+                .init(key: "subscription_proxy_url", label: "订阅账号登录代理", hint: "用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。留空跟随系统，none 为直连。"),
+                .init(key: "mcp_proxy_url", label: "MCP 代理"),
+                .init(key: "command_proxy_url", label: "代码与命令代理"),
+                .init(key: "conda_mirror_url", label: "Conda 镜像"),
+                .init(key: "pip_index_url", label: "Python 软件源"),
+                .init(key: "ca_bundle_path", label: "CA 证书路径")
+            ])
+            save("保存网络设置") { _ = await state.run("set_network_settings", ["settings": state.values["get_network_settings"] ?? .null]) }
         }
     }
 

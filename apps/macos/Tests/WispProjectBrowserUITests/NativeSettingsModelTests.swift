@@ -161,9 +161,11 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.modelCategory, "subscriptions")
     }
 
-    func testNineteenSectionsMatchSharedNavigation() {
-        XCTAssertEqual(NativeSettingsSection.allCases.count, 19)
-        XCTAssertEqual(NativeSettingsSection.allCases.map(\.rawValue), ["general", "session", "appearance", "pet", "models", "quick-actions", "workflows", "specialists", "memory", "skills", "plugins", "browser", "connections", "channels", "credentials", "permissions", "environments", "storage", "usage"])
+    func testTwentySectionsMatchSharedNavigation() {
+        XCTAssertEqual(NativeSettingsSection.allCases.count, 20)
+        XCTAssertEqual(NativeSettingsSection.allCases.map(\.rawValue), ["general", "network", "session", "appearance", "pet", "models", "quick-actions", "workflows", "specialists", "memory", "skills", "plugins", "browser", "connections", "channels", "credentials", "permissions", "environments", "storage", "usage"])
+        XCTAssertEqual(NativeSettingsSection.general.reads, ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"])
+        XCTAssertEqual(NativeSettingsSection.network.reads, ["get_network_settings"])
     }
     func testSubscriptionSearchAndClassificationKeepApiProfilesSeparate() {
         XCTAssertTrue(NativeSettingsSection.models.matches("ChatGPT 登录"))
@@ -186,6 +188,10 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertTrue(NativeSettingsSection.models.matches("API key"))
         XCTAssertTrue(NativeSettingsSection.environments.matches(" SSH  runtime "))
         XCTAssertFalse(NativeSettingsSection.appearance.matches("theme ssh"))
+        XCTAssertTrue(NativeSettingsSection.network.matches("网络"))
+        XCTAssertTrue(NativeSettingsSection.network.matches("proxy"))
+        XCTAssertFalse(NativeSettingsSection.general.matches("proxy"))
+        XCTAssertFalse(NativeSettingsSection.models.matches("proxy"))
         XCTAssertEqual(Set(NativeSettingsSection.allCases.map(\.group)), ["基础偏好", "AI 配置", "工具与连接", "系统与资源"])
     }
 

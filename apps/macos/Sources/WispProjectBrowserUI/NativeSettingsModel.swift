@@ -3,7 +3,7 @@ import SwiftUI
 import WispProjectBrowser
 
 enum NativeSettingsSection: String, CaseIterable, Identifiable {
-    case general, session, appearance, pet, models
+    case general, network, session, appearance, pet, models
     case quickActions = "quick-actions"
     case workflows, specialists, memory, skills, plugins, browser, connections, channels, credentials, permissions, environments, storage, usage
     var id: String { rawValue }
@@ -17,7 +17,8 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
     }
     var reads: [String] {
         switch self {
-        case .general: return ["get_settings", "get_appearance_prefs", "get_network_settings", "get_bootstrap_status", "get_update_check_enabled"]
+        case .general: return ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"]
+        case .network: return ["get_network_settings"]
         case .session: return ["get_settings", "get_auto_review_enabled"]
         case .appearance: return ["get_appearance_prefs"]
         case .pet: return ["get_settings", "get_pet_runtime_status", "get_pet"]

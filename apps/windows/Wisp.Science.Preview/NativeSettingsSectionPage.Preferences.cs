@@ -8,7 +8,7 @@ internal sealed partial class NativeSettingsSectionPage
 {
     internal static IReadOnlyDictionary<string, string> Titles { get; } = new Dictionary<string, string>
     {
-        ["general"] = "常规", ["session"] = "对话", ["pet"] = "宠物",
+        ["general"] = "常规", ["network"] = "网络", ["session"] = "对话", ["pet"] = "宠物",
         ["skills"] = "技能", ["connections"] = "连接", ["memory"] = "记忆",
         ["plugins"] = "插件", ["browser"] = "浏览器", ["credentials"] = "凭据", ["permissions"] = "权限",
         ["environments"] = "环境", ["storage"] = "存储", ["usage"] = "用量",
@@ -58,16 +58,6 @@ internal sealed partial class NativeSettingsSectionPage
         });
         Preference("输入与选择", "get_appearance_prefs", "set_appearance_prefs", "prefs", d =>
         { Boolean(d, "send_with_modifier", "使用 Ctrl+Enter 发送"); Boolean(d, "selection_popup_enabled", "选中文本快捷菜单"); });
-        Preference("网络与软件源", "get_network_settings", "set_network_settings", "settings", d =>
-        {
-            Form.Children.Add(Mute("代理留空跟随系统，none 为直连。支持 HTTP、HTTPS 和 SOCKS5。"));
-            foreach (var (key, title) in new[] { ("model_proxy_url", "模型 API 代理"), ("subscription_proxy_url", "订阅账号登录代理"), ("mcp_proxy_url", "MCP 代理"),
-                ("command_proxy_url", "代码与命令代理"), ("conda_mirror_url", "Conda 镜像"), ("pip_index_url", "Python 软件源"), ("ca_bundle_path", "CA 证书路径") })
-            {
-                Text(d, key, title);
-                if (key == "subscription_proxy_url") Form.Children.Add(Mute("订阅代理用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。"));
-            }
-        });
         var local = Card("本地运行环境");
         if (model.Values["get_bootstrap_status"]?["local_environment"] is JsonObject environment)
         {
@@ -106,6 +96,19 @@ internal sealed partial class NativeSettingsSectionPage
             JsonNode? next = null;
             if (await model.InvokeAsync("check_for_updates", new(), v => next = v)) { target.Children.Clear(); ShowUpdate(target, next); }
         }));
+    }
+    private void Network()
+    {
+        Preference("网络与软件源", "get_network_settings", "set_network_settings", "settings", d =>
+        {
+            Form.Children.Add(Mute("代理留空跟随系统，none 为直连。支持 HTTP、HTTPS 和 SOCKS5。"));
+            foreach (var (key, title) in new[] { ("model_proxy_url", "模型 API 代理"), ("subscription_proxy_url", "订阅账号登录代理"), ("mcp_proxy_url", "MCP 代理"),
+                ("command_proxy_url", "代码与命令代理"), ("conda_mirror_url", "Conda 镜像"), ("pip_index_url", "Python 软件源"), ("ca_bundle_path", "CA 证书路径") })
+            {
+                Text(d, key, title);
+                if (key == "subscription_proxy_url") Form.Children.Add(Mute("订阅代理用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。"));
+            }
+        });
     }
     private void Session()
     {

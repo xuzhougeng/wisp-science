@@ -39,8 +39,8 @@ instead of leaving an empty window.
 
 ## Settings and typography (#1357)
 
-All 19 settings categories open in the existing WinUI window. Native editors
-cover general/session/appearance/pet preferences, skills and SkillStore,
+All 20 settings categories open in the existing WinUI window. Native editors
+cover general/network/session/appearance/pet preferences, skills and SkillStore,
 connections/MCP, memory, plugins/browser, credentials, permissions,
 environments, storage/usage, API/ACP models, workflows/actions/specialists,
 channels and project settings.
