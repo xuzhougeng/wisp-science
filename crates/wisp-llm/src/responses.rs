@@ -474,6 +474,11 @@ impl OpenAiResponsesProvider {
         if completion.reasoning.is_none() && !acc.reasoning.is_empty() {
             completion.reasoning = Some(acc.reasoning);
         }
+        // The subscription endpoint always sends `"output": []` in
+        // `response.completed`, so tool-only turns exist only in the stream.
+        if completion.tool_calls.is_empty() {
+            completion.tool_calls = acc.calls;
+        }
         sink.on_usage(completion.usage.clone());
         if !streamed_calls {
             for (index, call) in completion.tool_calls.iter().enumerate() {
@@ -1272,5 +1277,49 @@ mod tests {
         assert_eq!(completion.content, "Hi");
         assert_eq!(completion.tool_calls[0].function.name, "python");
         assert_eq!(completion.usage.output_tokens, 3);
+    }
+
+    /// Real captured subscription-endpoint stream: one `shell` call, no text,
+    /// and `response.completed` carrying `"output": []`.
+    #[tokio::test]
+    async fn codex_round_keeps_streamed_tool_calls_when_completed_output_is_empty() {
+        use base64::Engine;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let sse = include_str!("../tests/fixtures/codex_tool_only.sse");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 65_536];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}", sse.len());
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"test-account"}}"#);
+        let mut cfg = crate::ProviderConfig::openai_codex(
+            &endpoint,
+            format!("e30.{claims}.synthetic"),
+            "gpt-6-luna",
+        );
+        cfg.proxy = Some("none".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let completion = provider
+            .stream(
+                &[Message::user("list the files")],
+                &[],
+                &mut crate::provider::NullSink,
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert!(completion.content.is_empty());
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(completion.tool_calls[0].function.name, "shell");
+        assert!(completion.tool_calls[0]
+            .function
+            .arguments
+            .contains("command"));
     }
 }
