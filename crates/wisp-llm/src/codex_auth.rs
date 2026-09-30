@@ -24,8 +24,11 @@ pub const DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callba
 pub const SCOPE: &str =
     "openid profile email offline_access api.connectors.read api.connectors.invoke";
 pub const JWT_AUTH_CLAIM: &str = "https://api.openai.com/auth";
+pub const JWT_PROFILE_CLAIM: &str = "https://api.openai.com/profile";
 pub const ORIGINATOR: &str = "wisp";
 pub const DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api";
+/// Read-only quota lookup behind Codex CLI `/status`; it does not consume quota.
+pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 pub const DEFAULT_MODEL: &str = "gpt-5.5";
 pub const SUBSCRIPTION_SECRET: &str = "codex_subscription";
 const REFRESH_SKEW_MS: i64 = 5 * 60 * 1000;
@@ -189,10 +192,160 @@ pub fn account_id_from_access_token(token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub fn account_email_from_access_token(token: &str) -> Option<String> {
+    let claims = token_claims(token)?;
+    claims
+        .get(JWT_PROFILE_CLAIM)
+        .and_then(|profile| profile.get("email"))
+        .or_else(|| claims.get("email"))
+        .and_then(Value::as_str)
+        .filter(|email| !email.is_empty())
+        .map(str::to_string)
+}
+
+pub fn plan_type_from_access_token(token: &str) -> Option<String> {
+    token_claims(token)?
+        .get(JWT_AUTH_CLAIM)
+        .and_then(|auth| auth.get("chatgpt_plan_type"))
+        .and_then(Value::as_str)
+        .filter(|plan| !plan.is_empty())
+        .map(str::to_string)
+}
+
 // Claims are used only as metadata for an OAuth-issued token, not to verify identity.
 fn token_claims(token: &str) -> Option<Value> {
     let payload = token.split('.').nth(1)?;
     serde_json::from_slice(&decode_b64url(payload)?).ok()
+}
+
+/// Credentials from a sign-in another tool saved on this machine: Codex CLI
+/// `auth.json` (`{"tokens": {...}}`) or a CLIProxyAPI `codex-*.json` (flat).
+/// Missing expiry reads as due, so the first use refreshes.
+pub fn credentials_from_local_auth(raw: &str) -> Result<CodexCredentials, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|_| "Local ChatGPT sign-in file is not JSON".to_string())?;
+    let tokens = value
+        .get("tokens")
+        .filter(|tokens| tokens.is_object())
+        .unwrap_or(&value);
+    let field = |key: &str| {
+        tokens
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let access_token = field("access_token").ok_or_else(|| {
+        "Local sign-in has no ChatGPT tokens (API-key sign-ins cannot be imported)".to_string()
+    })?;
+    let refresh_token = field("refresh_token")
+        .ok_or_else(|| "Local ChatGPT sign-in has no refresh token".to_string())?;
+    let account_id = account_id_from_access_token(&access_token)
+        .or_else(|| field("account_id"))
+        .ok_or_else(|| "Local ChatGPT sign-in has no account id".to_string())?;
+    let expires_at_ms = token_claims(&access_token)
+        .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+        .filter(|secs| *secs > 0)
+        .map_or(0, |secs| secs.saturating_mul(1000));
+    Ok(CodexCredentials {
+        access_token,
+        refresh_token,
+        expires_at_ms,
+        account_id,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageWindow {
+    /// 0–100.
+    pub used_percent: f64,
+    pub window_seconds: i64,
+    /// Unix seconds; 0 when the service did not say.
+    pub reset_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CodexUsage {
+    pub plan_type: String,
+    pub limit_reached: bool,
+    /// Short (5-hour) window.
+    pub primary: Option<UsageWindow>,
+    /// Weekly window.
+    pub secondary: Option<UsageWindow>,
+}
+
+pub fn parse_usage(body: &str, now_secs: i64) -> Result<CodexUsage, String> {
+    if is_html_response(body) {
+        return Err(http_error("usage request", 200, body));
+    }
+    let value: Value = serde_json::from_str(body)
+        .map_err(|_| "ChatGPT usage response was not JSON".to_string())?;
+    let rate = value.get("rate_limit").filter(|rate| rate.is_object());
+    let window = |key: &str| {
+        let window = rate?.get(key)?;
+        let reset_at = window
+            .get("reset_at")
+            .and_then(Value::as_i64)
+            .filter(|secs| *secs > 0)
+            .or_else(|| {
+                window
+                    .get("reset_after_seconds")
+                    .and_then(Value::as_i64)
+                    .map(|secs| now_secs.saturating_add(secs))
+            })
+            .unwrap_or(0);
+        Some(UsageWindow {
+            used_percent: window.get("used_percent")?.as_f64()?.clamp(0.0, 100.0),
+            window_seconds: window
+                .get("limit_window_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            reset_at,
+        })
+    };
+    let flag = |key: &str| rate.and_then(|rate| rate.get(key)).and_then(Value::as_bool);
+    Ok(CodexUsage {
+        plan_type: value
+            .get("plan_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        limit_reached: flag("limit_reached") == Some(true) || flag("allowed") == Some(false),
+        primary: window("primary_window"),
+        secondary: window("secondary_window"),
+    })
+}
+
+pub async fn fetch_usage(
+    client: &reqwest::Client,
+    creds: &CodexCredentials,
+) -> Result<CodexUsage, String> {
+    fetch_usage_at(client, USAGE_URL, creds).await
+}
+
+async fn fetch_usage_at(
+    client: &reqwest::Client,
+    url: &str,
+    creds: &CodexCredentials,
+) -> Result<CodexUsage, String> {
+    // A non-browser User-Agent avoids ChatGPT's web challenge page.
+    let response = client
+        .get(url)
+        .bearer_auth(&creds.access_token)
+        .header("chatgpt-account-id", &creds.account_id)
+        .header("originator", ORIGINATOR)
+        .header(reqwest::header::USER_AGENT, "wisp-science")
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| transport_error("ChatGPT usage request", error))?;
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+    if status >= 400 {
+        return Err(http_error("usage request", status, &body));
+    }
+    parse_usage(&body, now_ms() / 1000)
 }
 
 /// Do not render an upstream HTML challenge (or token response) in the chat.
@@ -977,6 +1130,166 @@ mod tests {
         assert!(!needs_refresh(10_000_000, 0));
         assert!(needs_refresh(REFRESH_SKEW_MS, 0));
         assert!(needs_refresh(0, 0));
+    }
+
+    fn claims_jwt(claims: Value) -> String {
+        let encode = |value: String| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+        format!(
+            "{}.{}.sig",
+            encode(r#"{"alg":"none"}"#.into()),
+            encode(claims.to_string())
+        )
+    }
+
+    #[test]
+    fn account_metadata_comes_from_profile_and_auth_claims() {
+        let token = claims_jwt(json!({
+            "https://api.openai.com/profile": {"email": "fixture@example.test"},
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-1", "chatgpt_plan_type": "pro"},
+        }));
+        assert_eq!(
+            account_email_from_access_token(&token).as_deref(),
+            Some("fixture@example.test")
+        );
+        assert_eq!(plan_type_from_access_token(&token).as_deref(), Some("pro"));
+        assert!(account_email_from_access_token(&sample_jwt("acct-1")).is_none());
+        assert!(plan_type_from_access_token("not-a-jwt").is_none());
+    }
+
+    #[test]
+    fn local_auth_accepts_codex_cli_and_cliproxy_files() {
+        let access = claims_jwt(json!({
+            "exp": 7200,
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-jwt"},
+        }));
+        let codex_cli = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {"id_token": "id", "access_token": access, "refresh_token": "fixture-refresh", "account_id": "acct-file"},
+            "last_refresh": "2026-09-01T00:00:00Z",
+        });
+        let creds = credentials_from_local_auth(&codex_cli.to_string()).unwrap();
+        assert_eq!(creds.account_id, "acct-jwt");
+        assert_eq!(creds.refresh_token, "fixture-refresh");
+        assert_eq!(creds.expires_at_ms, 7_200_000);
+
+        let cliproxy = json!({
+            "type": "codex",
+            "email": "fixture@example.test",
+            "access_token": "opaque-access",
+            "refresh_token": "fixture-refresh",
+            "account_id": "acct-file",
+            "expired": "2026-10-01T00:00:00Z",
+        });
+        let creds = credentials_from_local_auth(&cliproxy.to_string()).unwrap();
+        assert_eq!(creds.account_id, "acct-file");
+        assert_eq!(creds.access_token, "opaque-access");
+        assert!(needs_refresh(creds.expires_at_ms, now_ms()));
+    }
+
+    #[test]
+    fn local_auth_rejects_api_keys_and_incomplete_files_without_echoing_them() {
+        for raw in [
+            r#"{"auth_mode":"api-key","OPENAI_API_KEY":"sk-secret"}"#,
+            r#"{"tokens":{"access_token":"secret-access"}}"#,
+            r#"{"tokens":{"access_token":"secret-access","refresh_token":"secret-refresh"}}"#,
+            "not json sk-secret",
+        ] {
+            let error = credentials_from_local_auth(raw).unwrap_err();
+            assert!(!error.contains("secret"), "{error}");
+        }
+    }
+
+    const USAGE_BODY: &str = r#"{
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": true,
+            "limit_reached": false,
+            "primary_window": {"used_percent": 23, "limit_window_seconds": 18000, "reset_after_seconds": 12266, "reset_at": 1781276043},
+            "secondary_window": {"used_percent": 6.5, "limit_window_seconds": 604800, "reset_after_seconds": 359170}
+        },
+        "credits": {"has_credits": false, "unlimited": false, "balance": "0"}
+    }"#;
+
+    #[test]
+    fn usage_parses_both_windows_and_derives_missing_reset_times() {
+        let usage = parse_usage(USAGE_BODY, 1_000).unwrap();
+        assert_eq!(usage.plan_type, "plus");
+        assert!(!usage.limit_reached);
+        assert_eq!(
+            usage.primary,
+            Some(UsageWindow {
+                used_percent: 23.0,
+                window_seconds: 18000,
+                reset_at: 1781276043
+            })
+        );
+        assert_eq!(
+            usage.secondary,
+            Some(UsageWindow {
+                used_percent: 6.5,
+                window_seconds: 604800,
+                reset_at: 1_000 + 359170
+            })
+        );
+    }
+
+    #[test]
+    fn usage_flags_exhaustion_and_tolerates_missing_windows() {
+        let blocked = parse_usage(
+            r#"{"rate_limit":{"allowed":false,"primary_window":{"used_percent":140}}}"#,
+            0,
+        )
+        .unwrap();
+        assert!(blocked.limit_reached);
+        assert_eq!(blocked.primary.unwrap().used_percent, 100.0);
+        assert_eq!(blocked.secondary, None);
+        assert_eq!(parse_usage("{}", 0).unwrap(), CodexUsage::default());
+        let html = parse_usage("<html><head>challenge</head></html>", 0).unwrap_err();
+        assert!(!html.contains("challenge"));
+    }
+
+    #[tokio::test]
+    async fn usage_request_sends_the_account_bearer_and_maps_http_errors() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn serve(
+            status: &'static str,
+            body: &'static str,
+        ) -> (String, tokio::task::JoinHandle<String>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/wham/usage", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 8192];
+                let n = stream.read(&mut request).await.unwrap();
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                String::from_utf8_lossy(&request[..n]).to_ascii_lowercase()
+            });
+            (url, task)
+        }
+        let creds = CodexCredentials {
+            access_token: "fixture-access".into(),
+            refresh_token: "fixture-refresh".into(),
+            expires_at_ms: i64::MAX,
+            account_id: "acct-1".into(),
+        };
+        let client = http_client(Some("none"));
+        let (url, task) = serve("200 OK", USAGE_BODY).await;
+        let usage = fetch_usage_at(&client, &url, &creds).await.unwrap();
+        assert_eq!(usage.plan_type, "plus");
+        let request = task.await.unwrap();
+        assert!(request.starts_with("get /wham/usage "));
+        assert!(request.contains("authorization: bearer fixture-access"));
+        assert!(request.contains("chatgpt-account-id: acct-1"));
+
+        let (url, _task) = serve("401 Unauthorized", r#"{"detail":"fixture-access"}"#).await;
+        let error = fetch_usage_at(&client, &url, &creds).await.unwrap_err();
+        assert!(error.contains("HTTP 401"));
+        assert!(!error.contains("fixture-access"));
     }
 
     #[test]
