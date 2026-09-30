@@ -910,19 +910,85 @@ pub(crate) fn store_codex_credentials(
     let json = creds.to_json();
     secret_set(&codex_oauth_secret(profile_id), &json)?;
     secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &json)?;
-    Ok(())
+    store_codex_account(creds)
 }
 
 pub(crate) fn store_global_codex(
     creds: &wisp_llm::codex_auth::CodexCredentials,
 ) -> Result<(), String> {
-    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &creds.to_json())
+    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &creds.to_json())?;
+    store_codex_account(creds)
 }
 
 pub(crate) fn load_global_codex() -> Option<wisp_llm::codex_auth::CodexCredentials> {
     wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(
         wisp_llm::codex_auth::SUBSCRIPTION_SECRET,
     ))
+}
+
+/// Ordered account ids of the ChatGPT account pool (no credentials).
+const CODEX_ACCOUNTS_SECRET: &str = "codex_accounts";
+
+fn codex_account_secret(account_id: &str) -> String {
+    format!("codex_account:{account_id}")
+}
+
+pub(crate) fn codex_account_ids() -> Vec<String> {
+    serde_json::from_str(&secret_get(CODEX_ACCOUNTS_SECRET)).unwrap_or_default()
+}
+
+pub(crate) fn load_codex_account(
+    account_id: &str,
+) -> Option<wisp_llm::codex_auth::CodexCredentials> {
+    wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(&codex_account_secret(
+        account_id,
+    )))
+}
+
+/// Every write of an account's tokens lands here too, so switching back to it
+/// never restores a refresh token that rotation already invalidated.
+pub(crate) fn store_codex_account(
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(&codex_account_secret(&creds.account_id), &creds.to_json())?;
+    let ids = codex_account_ids();
+    let next = with_account_id(&ids, &creds.account_id);
+    if next == ids {
+        return Ok(());
+    }
+    secret_set(
+        CODEX_ACCOUNTS_SECRET,
+        &serde_json::to_string(&next).unwrap_or_default(),
+    )
+}
+
+pub(crate) fn forget_codex_account(account_id: &str) -> Result<(), String> {
+    let next: Vec<String> = codex_account_ids()
+        .into_iter()
+        .filter(|id| id != account_id)
+        .collect();
+    secret_set(
+        CODEX_ACCOUNTS_SECRET,
+        &serde_json::to_string(&next).unwrap_or_default(),
+    )?;
+    secret_del(&codex_account_secret(account_id))
+}
+
+fn with_account_id(ids: &[String], account_id: &str) -> Vec<String> {
+    ids.iter()
+        .cloned()
+        .chain((!ids.iter().any(|id| id == account_id)).then(|| account_id.to_string()))
+        .collect()
+}
+
+/// Of two copies of one account, the later expiry was refreshed last and holds
+/// the live refresh token.
+pub(crate) fn fresher_codex(
+    a: wisp_llm::codex_auth::CodexCredentials,
+    b: Option<wisp_llm::codex_auth::CodexCredentials>,
+) -> wisp_llm::codex_auth::CodexCredentials {
+    b.filter(|b| b.account_id == a.account_id && b.expires_at_ms > a.expires_at_ms)
+        .unwrap_or(a)
 }
 
 pub(crate) fn xai_oauth_secret(id: &str) -> String {
@@ -995,6 +1061,9 @@ async fn fresh_access_token(provider: &str, id: &str) -> String {
     if !access.is_empty() {
         creds.access_token = access.clone();
     }
+    // Another model may have refreshed this account since this copy was written.
+    let account = load_codex_account(&creds.account_id);
+    let creds = fresher_codex(creds, account);
     let client = crate::network::subscription_http_client();
     match wisp_llm::codex_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await
     {
@@ -3117,6 +3186,39 @@ mod tests {
         assert!(key_for(&new_id).is_empty());
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn codex_account_pool_keeps_order_and_the_most_recently_refreshed_copy() {
+        let ids = vec!["acct-a".to_string(), "acct-b".to_string()];
+        assert_eq!(with_account_id(&ids, "acct-b"), ids);
+        assert_eq!(
+            with_account_id(&ids, "acct-c"),
+            vec!["acct-a", "acct-b", "acct-c"]
+        );
+        assert_eq!(with_account_id(&[], "acct-a"), vec!["acct-a"]);
+        let creds = |account: &str, expires_at_ms: i64, refresh: &str| {
+            wisp_llm::codex_auth::CodexCredentials {
+                access_token: format!("access-{refresh}"),
+                refresh_token: refresh.into(),
+                expires_at_ms,
+                account_id: account.into(),
+            }
+        };
+        let profile = creds("acct-a", 1_000, "profile-copy");
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-a", 2_000, "pool-copy"))).refresh_token,
+            "pool-copy"
+        );
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-a", 500, "pool-copy"))).refresh_token,
+            "profile-copy"
+        );
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-b", 9_000, "other"))).refresh_token,
+            "profile-copy"
+        );
+        assert_eq!(fresher_codex(profile, None).refresh_token, "profile-copy");
     }
 
     #[test]

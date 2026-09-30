@@ -29,6 +29,7 @@ mod artifact_commands;
 mod browser_bridge;
 mod browser_url_filters;
 mod channels;
+mod codex_accounts;
 mod codex_import;
 mod codex_login;
 mod configure;
@@ -7567,6 +7568,11 @@ pub fn run() {
             codex_login::cancel_codex_login,
             codex_login::save_codex_login,
             codex_login::codex_subscription_status,
+            codex_accounts::list_codex_accounts,
+            codex_accounts::switch_codex_account,
+            codex_accounts::remove_codex_account,
+            codex_accounts::codex_account_usage,
+            codex_accounts::import_local_codex_accounts,
             models::remove_model,
             models::reorder_models,
             models::set_active_model,

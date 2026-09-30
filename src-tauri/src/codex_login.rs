@@ -517,6 +517,14 @@ pub async fn save_codex_login(
     Ok(models::decorated_models(&state.store).await)
 }
 
+/// Make a ChatGPT account the active one for every ChatGPT model.
+pub(crate) async fn activate_codex_account(
+    store: &wisp_store::Store,
+    creds: &CodexCredentials,
+) -> Result<(), String> {
+    save_account_credentials(store, &Credentials::Codex(creds.clone())).await
+}
+
 /// Saving an account also reconnects its existing models, without changing their settings.
 async fn save_account_credentials(
     store: &wisp_store::Store,

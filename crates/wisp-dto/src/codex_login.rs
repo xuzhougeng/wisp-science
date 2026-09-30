@@ -25,6 +25,42 @@ pub struct CodexSubscriptionStatus {
     pub account_id: String,
 }
 
+/// One saved ChatGPT account. Exactly one is `active`: its credentials back
+/// every ChatGPT model.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct CodexAccount {
+    pub account_id: String,
+    pub email: String,
+    pub plan_type: String,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct CodexUsageWindow {
+    /// 0–100.
+    pub used_percent: f64,
+    pub window_seconds: i64,
+    /// Unix seconds; 0 when unknown.
+    pub reset_at: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct CodexAccountUsage {
+    pub account_id: String,
+    pub plan_type: String,
+    pub limit_reached: bool,
+    /// Short (5-hour) window.
+    pub primary: Option<CodexUsageWindow>,
+    /// Weekly window.
+    pub secondary: Option<CodexUsageWindow>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct CodexImportResult {
+    pub imported: usize,
+    pub accounts: Vec<CodexAccount>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,6 +98,30 @@ mod tests {
         }
         for forbidden in ["access_token", "refresh_token", "id_token", "verifier"] {
             assert!(!fixture.to_string().contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn account_pool_payloads_round_trip_without_credentials() {
+        let wire = serde_json::json!({
+            "imported": 1,
+            "accounts": [{"account_id": "acct-1", "email": "fixture@example.test", "plan_type": "plus", "active": true}],
+        });
+        let result: CodexImportResult = serde_json::from_value(wire.clone()).unwrap();
+        assert!(result.accounts[0].active);
+        assert_eq!(serde_json::to_value(&result).unwrap(), wire);
+        let usage = serde_json::json!({
+            "account_id": "acct-1",
+            "plan_type": "plus",
+            "limit_reached": false,
+            "primary": {"used_percent": 23.5, "window_seconds": 18000, "reset_at": 1781276043},
+            "secondary": null,
+        });
+        let parsed: CodexAccountUsage = serde_json::from_value(usage.clone()).unwrap();
+        assert_eq!(parsed.primary.as_ref().unwrap().used_percent, 23.5);
+        assert_eq!(serde_json::to_value(parsed).unwrap(), usage);
+        for text in [wire.to_string(), usage.to_string()] {
+            assert!(!text.contains("token"));
         }
     }
 }
