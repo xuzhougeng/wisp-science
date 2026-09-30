@@ -1,7 +1,7 @@
 //! Disposable native renderer isolation probe. No Store, MCP connection,
 //! single-instance plugin, normal Wisp profile, or remote run is constructed.
 //! Run: cargo run -p wisp-tauri --example mcp_app_isolation_smoke --offline
-//! Optional: WISP_ISOLATION_CYCLES=100. Results remain in target/.
+//! Optional: WISP_ISOLATION_CYCLES=100. Profiles remain in the printed temporary directory.
 use serde_json::{json, Value};
 use std::{
     borrow::Cow,
@@ -371,10 +371,13 @@ fn main() {
         eprintln!("Windows-only native probe");
         return;
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/mcp-isolation-smoke")
-        .join(uuid::Uuid::new_v4().to_string());
-    std::fs::create_dir_all(&root).unwrap();
+    // WebView2 adds several cache directories below each child profile. Keep
+    // their paths short even when the checkout lives in a deep worktree.
+    let root = tempfile::Builder::new()
+        .prefix("wisp-mcp-")
+        .tempdir()
+        .expect("disposable WebView profile root")
+        .keep();
     println!("disposable profiles: {}", root.display());
     let mut children = McpAppChildren::default();
     children.profile_root = Some(root.join("children"));
