@@ -8,11 +8,12 @@ async function setup(page: Page, locale = "en", saved = false) {
   await page.evaluate(({ saved }) => {
     const w = window as any;
     const base = w.__TAURI__.core.invoke;
-    const profile = (provider: string, index = 0) => ({ id: `${provider}-${index}`, label: provider === "xai" ? "My Grok" : "My ChatGPT", provider: provider === "xai" ? "xai_oauth" : "openai_codex", api_url: provider === "xai" ? "https://api.x.ai/v1" : "https://chatgpt.com/backend-api", model: provider === "xai" ? "grok-4.6" : "gpt-5.5", has_api_key: false, active: false, max_tokens: 4096, context_window: 128000, reasoning_effort: "", supports_vision: true, use_for_vision: false, use_for_image_generation: false, use_for_video_generation: false });
+    const wire: any = { xai: ["xai_oauth", "https://api.x.ai/v1"], chatgpt: ["openai_chatgpt", "https://api.openai.com/v1"], codex: ["openai_codex", "https://chatgpt.com/backend-api"] };
+    const profile = (provider: string, index = 0) => ({ id: `${provider}-${index}`, label: provider === "xai" ? "My Grok" : "My ChatGPT", provider: wire[provider][0], api_url: wire[provider][1], model: provider === "xai" ? "grok-4.6" : "gpt-5.5", has_api_key: false, active: false, max_tokens: 4096, context_window: 128000, reasoning_effort: "", supports_vision: true, use_for_vision: false, use_for_image_generation: false, use_for_video_generation: false });
     const account = (account_id: string, active = true) => ({ account_id, email: `${account_id}@example.com`, plan_type: "plus", active });
     const now = Math.floor(Date.now() / 1000);
     const usage = (account_id: string) => ({ account_id, plan_type: "plus", limit_reached: false, primary: { used_percent: 12, window_seconds: 18000, reset_at: now + 9000 }, secondary: { used_percent: 30, window_seconds: 604800, reset_at: now + 273600 } });
-    const state = w.__subscription = { accounts: { codex: saved, xai: saved } as any, phase: "pending", starts: 0, cancelled: [] as string[], startDelay: 0, saveError: false, saves: [] as any[], edits: [] as any[], profiles: saved ? [profile("codex"), profile("xai")] : [] as any[],
+    const state = w.__subscription = { accounts: { chatgpt: false, codex: saved, xai: saved } as any, phase: "pending", starts: 0, startArgs: [] as any[], redirects: [] as any[], cancelled: [] as string[], startDelay: 0, saveError: false, saves: [] as any[], edits: [] as any[], profiles: saved ? [profile("codex"), profile("xai")] : [] as any[],
       pool: saved ? [account("codex-account")] : [] as any[], usage: {} as any, usageErrors: {} as any, usageCalls: [] as string[], switches: [] as string[], removals: [] as string[], local: [] as any[], importError: "" };
     const plain = (v: any): any => v instanceof Map ? Object.fromEntries([...v].map(([k, v]) => [k, plain(v)])) : v;
     w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
@@ -45,10 +46,11 @@ async function setup(page: Page, locale = "en", saved = false) {
       }
       if (cmd === "start_codex_login") {
         const id = `login-${++state.starts}`;
+        state.startArgs.push(a);
         await new Promise(r => setTimeout(r, state.startDelay));
         return { login_id: id, method: a.method, url: provider === "xai" ? "https://accounts.x.ai/device?code=TEST-1234" : "https://auth.openai.com/codex/device", verification_uri: "https://auth.openai.com/codex/device", user_code: a.method === "device" ? "TEST-1234" : "", message: "" };
       }
-      if (cmd === "submit_codex_login_redirect") { state.phase = "success"; return { status: "success", message: "", account_id: "account-test" }; }
+      if (cmd === "submit_codex_login_redirect") { state.redirects.push(a); state.phase = "success"; return { status: "success", message: "", account_id: "account-test" }; }
       if (cmd === "codex_login_status") return { status: state.phase, message: state.phase === "error" ? "ChatGPT device authorization failed (HTTP 403). Check Wisp network/proxy settings." : "", account_id: state.phase === "success" ? "account-test" : "" };
       if (cmd === "cancel_codex_login") { state.cancelled.push(a.loginId); return null; }
       if (cmd === "save_codex_login") {
@@ -156,6 +158,39 @@ for (const provider of ["codex", "xai"]) {
     expect(saves.slice(1)).toEqual(expect.arrayContaining([expect.objectContaining({ accountOnly: false, useSaved: true, provider })]));
   });
 }
+
+test("Sign in with ChatGPT is the first card, browser-only, and saves managed models", async ({ page }) => {
+  await setup(page);
+  await subscriptions(page);
+  await expect(page.locator(".subscription-account-card").first()).toHaveAttribute("data-testid", "subscription-account-chatgpt");
+  await expect(page.getByTestId("subscription-account-codex")).toContainText("legacy");
+  await page.getByTestId("add-chatgpt-login").click();
+  await expect(page.getByTestId("codex-login-method")).toBeHidden();
+  await expect(page.getByTestId("codex-add-account-hint")).toHaveCount(0);
+  await page.getByTestId("codex-login-start").click();
+  await page.locator(".subscription-manual summary").click();
+  await expect(page.getByTestId("codex-login-redirect")).toHaveAttribute("placeholder", /client_id/);
+  const redirect = "http://127.0.0.1:1455/auth/callback?code=fake&state=test&client_id=oaiapp_test";
+  await page.getByTestId("codex-login-redirect").fill(redirect);
+  await page.getByTestId("codex-submit-redirect").click();
+  await page.getByTestId("codex-login-save").click();
+  await page.getByTestId("add-chatgpt-model").click();
+  await expect(page.getByTestId("codex-login-model")).toHaveValue("gpt-5.5");
+  await page.getByTestId("codex-login-label").fill("Plan GPT");
+  await page.getByTestId("codex-login-save").click();
+  const card = page.getByTestId("subscription-account-chatgpt");
+  await expect(card).toContainText("Plan GPT");
+  await expect(page.getByTestId("subscription-account-codex").getByTestId("subscription-model")).toHaveCount(0);
+  const state = await page.evaluate(() => (window as any).__subscription);
+  expect(state.startArgs[0]).toMatchObject({ provider: "chatgpt", method: "browser" });
+  expect(state.redirects[0]).toMatchObject({ loginId: "login-1", redirect });
+  expect(state.saves[0]).toMatchObject({ provider: "chatgpt", accountOnly: true, loginId: "login-1" });
+  expect(state.saves[1]).toMatchObject({ provider: "chatgpt", accountOnly: false, useSaved: true, label: "Plan GPT" });
+  await card.locator(".subscription-model-edit").click();
+  await expect(page.getByTestId("subscription-model-form").locator("input")).toHaveCount(2);
+  await expect(page.getByTestId("settings-provider")).toHaveCount(0);
+  await expect(page.locator("#model-form-api-key")).toHaveCount(0);
+});
 
 test("leaving before the challenge arrives cancels it without reopening sign-in", async ({ page }) => {
   await setup(page);

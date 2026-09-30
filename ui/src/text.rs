@@ -69,6 +69,7 @@ pub(crate) fn provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
         "openai_codex" | "openai-codex" | "codex" => "openai_codex",
+        "openai_chatgpt" | "openai-chatgpt" | "chatgpt" => "openai_chatgpt",
         "xai" | "xai_oauth" | "xai-oauth" => "xai_oauth",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
         _ => "openai",

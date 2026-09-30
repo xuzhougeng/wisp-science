@@ -4109,16 +4109,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "codex_login_status":
             return { status: "success", message: "Signed in to grok@example.com", account_id: "grok@example.com" };
           case "save_codex_login": {
-            const xai = arg("provider") === "xai";
+            const provider = arg("provider") || "codex";
+            const xai = provider === "xai";
+            const [wireProvider, apiUrl] = ({
+              xai: ["xai_oauth", "https://api.x.ai/v1"],
+              chatgpt: ["openai_chatgpt", "https://api.openai.com/v1"],
+            } as Record<string, string[]>)[provider] ?? ["openai_codex", "https://chatgpt.com/backend-api"];
             (window as any).__savedSubscriptions ??= {};
-            (window as any).__savedSubscriptions[xai ? "xai" : "codex"] = true;
+            (window as any).__savedSubscriptions[provider] = true;
             if (arg("accountOnly")) return mockModels;
             mockModels = [...mockModels, {
               ...mockModels[0],
               id: `sub-${mockModels.length + 1}`,
               label: arg("label") || `${xai ? "Grok" : "ChatGPT"} ${arg("model")}`,
-              provider: xai ? "xai_oauth" : "openai_codex",
-              api_url: xai ? "https://api.x.ai/v1" : "https://chatgpt.com/backend-api",
+              provider: wireProvider,
+              api_url: apiUrl,
               model: arg("model"),
               has_api_key: true,
             }];

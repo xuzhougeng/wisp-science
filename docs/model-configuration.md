@@ -95,7 +95,26 @@ Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
 [Zen](https://opencode.ai/docs/zen/#endpoints) endpoint documentation for the
 model ID and protocol supported by your chosen service.
 
-**ChatGPT** lives in **Settings → Models → Subscription accounts**. Sign in to your account,
+**ChatGPT** (official Sign in with ChatGPT) is the first card in **Settings →
+Models → Subscription accounts**. **Sign in** opens ChatGPT's consent page: pick
+the account, name the agent (prefilled **Wisp Science**), and allow it to use
+your ChatGPT plan's usage. OpenAI registers each Wisp installation as one
+connected agent, identified by a stable id kept in the OS keyring, and returns
+the client id it issued in the redirect to `http://127.0.0.1:1455/auth/callback`.
+If that redirect cannot reach this machine, paste the **full** redirect URL
+from the address bar (it must include `client_id`). There is no device-code
+option for this sign-in. Wisp stores the access token, refresh token, expiry
+and issued client id in the OS keyring and refreshes the token automatically.
+One sign-in serves every ChatGPT model on the card. Chat requests go to the
+ordinary `https://api.openai.com/v1/responses` endpoint with that token (no API
+key), streamed and without `max_output_tokens`. When the plan's limit for
+connected apps is reached, the error points to
+`https://chatgpt.com/settings/usage`. Quota bars and multiple accounts are
+available only on the legacy card below. `wisp-science login chatgpt` stores
+the same sign-in for the CLI and this page.
+
+**ChatGPT Codex (legacy)** borrows the Codex CLI's public client instead. Keep it
+for existing models or when only device-code sign-in works. Sign in to your account,
 save the account, then use **Add model**. After authorization, **Save account** is the primary
 action beside **Cancel** and **Sign in again**. It shows **Saving account…**
 and disables the actions while saving; a save failure keeps authorization
@@ -529,15 +548,17 @@ The desktop app stores model profile metadata in `.wisp/wisp.sqlite`. Existing s
 ## Headless CLI
 
 The `wisp-science` headless CLI uses environment variables and supports the
-same API protocols. `wisp-science login codex` signs in with a ChatGPT
-Plus/Pro subscription (`--method device` for a one-time code). After that,
-`WISP_PROVIDER=openai_codex` uses the stored subscription and does not need
-`WISP_API_KEY`. `wisp-science login xai` does the same for a SuperGrok or
+same API protocols. `wisp-science login chatgpt` uses the official Sign in with
+ChatGPT (browser, or paste the full redirect URL); after that,
+`WISP_PROVIDER=openai_chatgpt` uses the stored sign-in and does not need
+`WISP_API_KEY`. The legacy `wisp-science login codex` signs in through the Codex
+CLI client (`--method device` for a one-time code) for
+`WISP_PROVIDER=openai_codex`. `wisp-science login xai` does the same for a SuperGrok or
 X Premium+ subscription with an xAI device code; then use
 `WISP_PROVIDER=xai_oauth`.
 
 ```powershell
-$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_codex, xai_oauth, or anthropic
+$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_chatgpt, openai_codex, xai_oauth, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your provider key>"

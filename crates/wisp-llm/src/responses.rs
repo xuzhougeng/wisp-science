@@ -26,6 +26,15 @@ impl OpenAiResponsesProvider {
         matches!(self.cfg.kind, ProviderKind::OpenAiCodex)
     }
 
+    /// Subscription tokens get the Codex-shaped streaming request: Sign in with
+    /// ChatGPT, like the Codex endpoint, rejects `max_output_tokens`.
+    fn is_subscription(&self) -> bool {
+        matches!(
+            self.cfg.kind,
+            ProviderKind::OpenAiCodex | ProviderKind::OpenAiChatGpt
+        )
+    }
+
     fn endpoint(&self) -> String {
         let base = self.cfg.base_url.trim_end_matches('/');
         if self.is_codex() {
@@ -72,7 +81,7 @@ impl OpenAiResponsesProvider {
     }
 
     fn build_body(&self, messages: &[Message], tools: &[ToolSchema]) -> Value {
-        if self.is_codex() {
+        if self.is_subscription() {
             return codex_request_body(
                 &self.cfg.model,
                 self.cfg.reasoning_effort.as_deref(),
@@ -342,10 +351,10 @@ fn parse_usage(u: &Value) -> Usage {
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
     fn name(&self) -> &str {
-        if self.is_codex() {
-            "openai-codex"
-        } else {
-            "openai-responses"
+        match self.cfg.kind {
+            ProviderKind::OpenAiCodex => "openai-codex",
+            ProviderKind::OpenAiChatGpt => "openai-chatgpt",
+            _ => "openai-responses",
         }
     }
     fn model(&self) -> &str {
@@ -353,7 +362,7 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
-        if self.is_codex() {
+        if self.is_subscription() {
             return self
                 .codex_round(messages, tools, &mut crate::provider::NullSink)
                 .await;
@@ -369,7 +378,7 @@ impl Provider for OpenAiResponsesProvider {
         tools: &[ToolSchema],
         sink: &mut dyn StreamSink,
     ) -> Result<Completion> {
-        if self.is_codex() {
+        if self.is_subscription() {
             return self.codex_round(messages, tools, sink).await;
         }
         let comp = self.complete(messages, tools).await?;
@@ -391,7 +400,7 @@ impl OpenAiResponsesProvider {
         tools: &[ToolSchema],
         sink: &mut dyn StreamSink,
     ) -> Result<Completion> {
-        if account_id_from_access_token(&self.cfg.api_key).is_none() {
+        if self.is_codex() && account_id_from_access_token(&self.cfg.api_key).is_none() {
             return Err(LlmError::Config(
                 "Codex subscription token has no ChatGPT account id. Sign in again.".into(),
             ));
@@ -400,9 +409,9 @@ impl OpenAiResponsesProvider {
         let endpoint = self.endpoint();
         tracing::info!(
             target: "wisp",
-            provider = "openai_codex",
+            provider = self.name(),
             model = %self.cfg.model,
-            endpoint_kind = "codex_responses",
+            endpoint_kind = if self.is_codex() { "codex_responses" } else { "responses" },
             endpoint_host = %endpoint_host(&endpoint),
             stream = true,
             "llm_request_dispatch"
@@ -1078,6 +1087,31 @@ mod tests {
         let body = provider.build_body(&[Message::user("hi")], &[]);
         assert!(body.get("service_tier").is_none());
         assert_eq!(body["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn chatgpt_sign_in_uses_public_responses_with_the_subscription_body() {
+        let mut cfg = crate::ProviderConfig::openai_chatgpt(
+            "https://api.openai.com/v1",
+            "sign-in-access-token",
+            "gpt-5.5",
+        );
+        cfg.max_tokens = 4096;
+        let provider = OpenAiResponsesProvider::new(cfg);
+        assert_eq!(provider.name(), "openai-chatgpt");
+        assert_eq!(provider.endpoint(), "https://api.openai.com/v1/responses");
+        let headers = provider.headers();
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            "Bearer sign-in-access-token"
+        );
+        assert!(headers.get("chatgpt-account-id").is_none());
+        assert!(headers.get("originator").is_none());
+        let body = provider.build_body(&[Message::system("Be precise."), Message::user("Hi")], &[]);
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["instructions"], "Be precise.");
+        assert!(body.get("max_output_tokens").is_none());
     }
 
     #[test]

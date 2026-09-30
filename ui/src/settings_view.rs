@@ -674,15 +674,17 @@ fn settings_provider_value(provider: &str) -> &'static str {
         "anthropic" => "anthropic",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
         "openai_codex" | "openai-codex" | "codex" => "openai_codex",
+        "openai_chatgpt" | "openai-chatgpt" | "chatgpt" => "openai_chatgpt",
         "xai_oauth" | "xai-oauth" | "grok_oauth" => "xai_oauth",
         _ => "openai",
     }
 }
 
-/// Subscription sign-in form for ChatGPT (Codex) and SuperGrok (xAI).
+/// Subscription sign-in form for Sign in with ChatGPT, legacy ChatGPT (Codex)
+/// and SuperGrok (xAI).
 #[derive(Clone)]
 struct CodexLoginForm {
-    /// `codex` or `xai`; sent to the login commands as `provider`.
+    /// `chatgpt`, `codex` or `xai`; sent to the login commands as `provider`.
     provider: String,
     method: String,
     login_id: String,
@@ -704,7 +706,15 @@ struct CodexLoginForm {
 fn is_subscription_provider(provider: &str) -> bool {
     matches!(
         settings_provider_value(provider),
-        "openai_codex" | "xai_oauth"
+        "openai_codex" | "openai_chatgpt" | "xai_oauth"
+    )
+}
+
+/// Wisp owns the endpoint and request options of these subscriptions.
+fn is_managed_subscription(provider: &str) -> bool {
+    matches!(
+        settings_provider_value(provider),
+        "openai_codex" | "openai_chatgpt"
     )
 }
 
@@ -736,8 +746,19 @@ fn blank_codex_login(provider: &str, profile_id: &str, model: &str, label: &str)
     }
 }
 
-/// xAI replaces the vendor-specific Codex strings; the rest are shared.
+/// Sign in with ChatGPT and xAI replace the flow-specific Codex strings; the
+/// rest are shared.
 fn login_key(provider: &str, codex_key: &'static str) -> &'static str {
+    if provider == "chatgpt" {
+        return match codex_key {
+            "codex.login.desc" => "chatgpt.login.desc",
+            "codex.login.label_ph" => "chatgpt.login.label_ph",
+            "codex.login.browser_hint" => "chatgpt.login.browser_hint",
+            "codex.login.paste" => "chatgpt.login.paste",
+            "codex.login.paste_ph" => "chatgpt.login.paste_ph",
+            other => other,
+        };
+    }
     if provider != "xai" {
         return codex_key;
     }
@@ -1069,7 +1090,7 @@ fn codex_login_pane(
                 <h3>{move || t(locale.get(), "subscriptions.sign_in")}</h3>
                 <p class="hint">{move || t(locale.get(), login_key(&provider(), "codex.login.desc"))}</p>
                 <div class="settings-form-grid">
-                    <label style:display=move || if provider() == "xai" { "none" } else { "" }>{move || t(locale.get(), "codex.login.method")}
+                    <label style:display=move || if provider() == "codex" { "" } else { "none" }>{move || t(locale.get(), "codex.login.method")}
                         <select data-testid="codex-login-method" disabled=move || settings_busy.get() || codex_login.get().is_some_and(|f| f.status == "pending")
                             on:change=move |ev| {
                                 let method = dom_value(&ev);
@@ -1091,7 +1112,7 @@ fn codex_login_pane(
                 <p class="hint">{move || t(locale.get(), if codex_login.get().is_some_and(|form| form.method == "device") {
                     login_key(&provider(), "codex.login.device_hint")
                 } else {
-                    "codex.login.browser_hint"
+                    login_key(&provider(), "codex.login.browser_hint")
                 })}</p>
                 {move || codex_login.get().filter(|form| !form.saved_account.is_empty()).map(|form| view! {
                     <p class="subscription-status" data-testid="codex-saved-account">{t(locale.get(), if form.provider == "codex" { "subscriptions.active_account" } else { "subscriptions.signed_in" })}" · "{form.saved_account}</p>
@@ -1125,10 +1146,10 @@ fn codex_login_pane(
                 }}
                 <Show when=move || codex_login.get().is_some_and(|form| form.method == "browser" && !form.login_id.is_empty() && form.status != "success")>
                     <details class="subscription-manual"><summary>{move || t(locale.get(), "codex.login.manual")}</summary>
-                    <label class="span-2">{move || t(locale.get(), "codex.login.paste")}
+                    <label class="span-2">{move || t(locale.get(), login_key(&provider(), "codex.login.paste"))}
                         <input data-testid="codex-login-redirect"
                             prop:value=move || codex_login.get().map(|form| form.redirect).unwrap_or_default()
-                            placeholder=move || t(locale.get(), "codex.login.paste_ph")
+                            placeholder=move || t(locale.get(), login_key(&provider(), "codex.login.paste_ph"))
                             on:input=move |ev| {
                                 let redirect = event_target_value(&ev);
                                 codex_login.update(|form| if let Some(form) = form { form.redirect = redirect; });
@@ -2545,7 +2566,7 @@ pub(super) fn SettingsView(
                 codex_accounts.set(list);
                 load_codex_usage.call(ids);
             });
-            for provider in ["codex", "xai"] {
+            for provider in ["chatgpt", "codex", "xai"] {
                 spawn_local(async move {
                     let status = invoke_checked(
                         "codex_subscription_status",
@@ -4192,7 +4213,7 @@ pub(super) fn SettingsView(
                             <div class="settings-pane settings-pane-subpage">
                                 <div class="conn-form model-form">
                                     <div class="settings-form-grid">
-                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
+                                        <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
                                             <input aria-describedby="model-api-url-hint"
                                                 prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
@@ -4203,6 +4224,7 @@ pub(super) fn SettingsView(
                                         </Show>
                                         {move || {
                                             let subscription = model_form.get().and_then(|form| match settings_provider_value(&form.provider) {
+                                                "openai_chatgpt" => Some("chatgpt"),
                                                 "openai_codex" => Some("codex"),
                                                 "xai_oauth" => Some("xai"),
                                                 _ => None,
@@ -4236,7 +4258,7 @@ pub(super) fn SettingsView(
                                                 }.into_view()
                                             }
                                         }}
-                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
+                                        <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>
                                         <label>{move || t(locale.get(), "settings.provider")}
                                             <select data-testid="settings-provider"
                                                 on:change=move|ev| {
@@ -4285,7 +4307,7 @@ pub(super) fn SettingsView(
                                                     });
                                                     apply_catalog_limits(model_form, model_catalog_limits);
                                                 } /></label>
-                                        <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")><label>{move || t(locale.get(), "settings.endpoint_suffix")}
+                                        <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))><label>{move || t(locale.get(), "settings.endpoint_suffix")}
                                             <input data-testid="model-endpoint-suffix"
                                                 prop:value=move || model_form.get().map(|f| f.endpoint_suffix.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.endpoint_suffix_ph")
@@ -4610,7 +4632,7 @@ pub(super) fn SettingsView(
                                             </div>
                                             <span id="model-vision-hint" class="hint">{move || t(locale.get(), "settings.vision_hint")}</span>
                                             </div>
-                                            <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>
+                                            <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>
                                             <div class="model-capability">
                                             <label class="settings-check span-2">
                                                 <input type="checkbox" data-testid="use-for-image-generation" aria-describedby="model-image-generation-hint"
@@ -4649,7 +4671,7 @@ pub(super) fn SettingsView(
                                             }
                                         }}
                                     </div>
-                                    <Show when=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) != "openai_codex")>{model_advanced_options(locale, model_form)}</Show>
+                                    <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>{model_advanced_options(locale, model_form)}</Show>
                                     <Show when=move || model_form.get().is_some_and(|f| f.restore_chat_model)>
                                         <p class="hint" data-testid="restore-chat-hint">{move || t(locale.get(), "settings.restore_chat_hint")}</p>
                                     </Show>
@@ -5050,7 +5072,7 @@ pub(super) fn SettingsView(
                                 view! {
                                     <div class="subscription-settings" data-testid="subscriptions-page">
                                         <p class="hint">{move || t(locale.get(), "subscriptions.desc")}</p>
-                                        {[ ("codex", "ChatGPT", "subscriptions.chatgpt", "openai_codex"), ("xai", "SuperGrok", "subscriptions.xai", "xai_oauth") ].into_iter().map(|(provider, title, description, profile_provider)| {
+                                        {[ ("chatgpt", "ChatGPT", "subscriptions.chatgpt_signin", "openai_chatgpt"), ("codex", "ChatGPT Codex (legacy)", "subscriptions.chatgpt", "openai_codex"), ("xai", "SuperGrok", "subscriptions.xai", "xai_oauth") ].into_iter().map(|(provider, title, description, profile_provider)| {
                                             view! {
                                                 <section class="subscription-account-card" data-testid=format!("subscription-account-{provider}")>
                                                     <div class="subscription-account-heading">

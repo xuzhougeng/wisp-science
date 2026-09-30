@@ -1,19 +1,22 @@
-//! Subscription sign-in: ChatGPT Plus/Pro (Codex) and SuperGrok (xAI).
+//! Subscription sign-in: Sign in with ChatGPT, legacy ChatGPT (Codex), and
+//! SuperGrok (xAI).
 //!
-//! Codex browser login listens on the Codex client's fixed localhost callback.
-//! Device-code login works when that callback cannot reach this machine
-//! (SSH, WSL, a remote browser); xAI only offers device code. The commands keep
-//! their Codex names for native hosts; `provider: "xai"` selects xAI.
-//! Tokens are stored in the OS keyring.
+//! Sign in with ChatGPT and Codex browser login listen on the fixed localhost
+//! callback. Codex device-code login works when that callback cannot reach this
+//! machine (SSH, WSL, a remote browser); xAI only offers device code. The
+//! commands keep their Codex names for native hosts; `provider: "chatgpt"`
+//! selects Sign in with ChatGPT and `provider: "xai"` selects xAI. A missing
+//! provider keeps the Codex flow. Tokens are stored in the OS keyring.
 
 use crate::models::{self, ModelProfile, DEFAULT_CONTEXT_WINDOW};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::State;
+use wisp_llm::chatgpt_auth::{self, ChatGptCredentials};
 use wisp_llm::codex_auth::{
-    self, authorize_url, generate_pkce, parse_authorization_input, random_state, BrowserCallback,
-    CodexCredentials, REDIRECT_URI,
+    self, authorize_url, generate_pkce, parse_authorization_input, random_state,
+    AuthorizationCallback, BrowserCallback, CodexCredentials, REDIRECT_URI,
 };
 use wisp_llm::xai_auth::{self, XaiCredentials};
 
@@ -21,6 +24,7 @@ pub use wisp_dto::codex_login::{CodexLoginChallenge, CodexLoginSnapshot, CodexSu
 
 #[derive(Clone)]
 enum Credentials {
+    ChatGpt(ChatGptCredentials),
     Codex(CodexCredentials),
     Xai(XaiCredentials),
 }
@@ -28,21 +32,39 @@ enum Credentials {
 impl Credentials {
     fn account(&self) -> String {
         match self {
+            Self::ChatGpt(creds) => creds.display_account(),
             Self::Codex(creds) => creds.account_id.clone(),
             Self::Xai(creds) => creds.display_account(),
         }
     }
+
+    fn kind(&self) -> Kind {
+        match self {
+            Self::ChatGpt(_) => Kind::ChatGpt,
+            Self::Codex(_) => Kind::Codex,
+            Self::Xai(_) => Kind::Xai,
+        }
+    }
 }
 
-fn is_xai(provider: &Option<String>) -> Result<bool, String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    ChatGpt,
+    Codex,
+    Xai,
+}
+
+fn kind(provider: &Option<String>) -> Result<Kind, String> {
     match provider.as_deref().map(str::trim) {
-        None | Some("") | Some("codex") | Some("openai_codex") => Ok(false),
-        Some("xai") | Some("xai_oauth") => Ok(true),
+        Some("chatgpt") | Some("openai_chatgpt") => Ok(Kind::ChatGpt),
+        None | Some("") | Some("codex") | Some("openai_codex") => Ok(Kind::Codex),
+        Some("xai") | Some("xai_oauth") => Ok(Kind::Xai),
         Some(other) => Err(format!("Unknown subscription provider: {other}")),
     }
 }
 
 struct LoginSession {
+    kind: Kind,
     // Keep discovery, polling, and callback exchange on the same network route.
     client: reqwest::Client,
     cancel: Arc<AtomicBool>,
@@ -93,15 +115,25 @@ fn set_status(session: &LoginSession, status: &str, message: impl Into<String>) 
     *session.message.lock().unwrap() = message.into();
 }
 
-async fn finish_with_code(session: &LoginSession, code: &str, verifier: &str, redirect_uri: &str) {
+async fn finish_with_code(session: &LoginSession, callback: AuthorizationCallback) {
     if session.done.swap(true, Ordering::SeqCst) {
         return;
     }
     let client = session.client.clone();
-    match codex_auth::exchange_authorization_code(&client, code, verifier, redirect_uri).await {
+    let verifier = session.verifier.lock().unwrap().clone();
+    let result = if session.kind == Kind::ChatGpt {
+        chatgpt_auth::exchange_authorization_code(&client, &callback, &verifier)
+            .await
+            .map(Credentials::ChatGpt)
+    } else {
+        codex_auth::exchange_authorization_code(&client, &callback.code, &verifier, REDIRECT_URI)
+            .await
+            .map(Credentials::Codex)
+    };
+    match result {
         Ok(creds) => {
-            let account = creds.account_id.clone();
-            *session.creds.lock().unwrap() = Some(Credentials::Codex(creds));
+            let account = creds.account();
+            *session.creds.lock().unwrap() = Some(creds);
             set_status(
                 session,
                 "success",
@@ -120,10 +152,10 @@ async fn finish_with_code(session: &LoginSession, code: &str, verifier: &str, re
 pub async fn codex_subscription_status(
     provider: Option<String>,
 ) -> Result<CodexSubscriptionStatus, String> {
-    let saved = if is_xai(&provider)? {
-        models::load_global_xai().map(Credentials::Xai)
-    } else {
-        models::load_global_codex().map(Credentials::Codex)
+    let saved = match kind(&provider)? {
+        Kind::ChatGpt => models::load_global_chatgpt().map(Credentials::ChatGpt),
+        Kind::Codex => models::load_global_codex().map(Credentials::Codex),
+        Kind::Xai => models::load_global_xai().map(Credentials::Xai),
     };
     Ok(match saved {
         Some(creds) => CodexSubscriptionStatus {
@@ -142,9 +174,12 @@ pub async fn start_codex_login(
     method: String,
     provider: Option<String>,
 ) -> Result<CodexLoginChallenge, String> {
-    let xai = is_xai(&provider)?;
+    let kind = kind(&provider)?;
+    let xai = kind == Kind::Xai;
     let method = match method.trim() {
         _ if xai => "device",
+        // Sign in with ChatGPT has no device-code flow.
+        _ if kind == Kind::ChatGpt => "browser",
         "device" | "device_code" => "device",
         "browser" | "" => "browser",
         other => return Err(format!("Unknown Codex sign-in method: {other}")),
@@ -152,6 +187,7 @@ pub async fn start_codex_login(
     let login_id = uuid::Uuid::new_v4().simple().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let session = Arc::new(LoginSession {
+        kind,
         client: crate::network::subscription_http_client(),
         cancel: cancel.clone(),
         done: AtomicBool::new(false),
@@ -250,7 +286,11 @@ pub async fn start_codex_login(
     } else {
         let pkce = generate_pkce();
         let state = random_state();
-        let url = authorize_url(&pkce, &state);
+        let url = if kind == Kind::ChatGpt {
+            chatgpt_auth::authorize_url(&pkce, &state, &random_state(), models::chatgpt_host_id()?)
+        } else {
+            authorize_url(&pkce, &state)
+        };
         *session.verifier.lock().unwrap() = pkce.verifier;
         *session.state.lock().unwrap() = state.clone();
         set_status(
@@ -266,9 +306,8 @@ pub async fn start_codex_login(
             })
             .await;
             match callback {
-                Ok(BrowserCallback::Code(code)) => {
-                    let verifier = waiting.verifier.lock().unwrap().clone();
-                    finish_with_code(&waiting, &code, &verifier, REDIRECT_URI).await;
+                Ok(BrowserCallback::Code(callback)) => {
+                    finish_with_code(&waiting, callback).await;
                 }
                 Ok(BrowserCallback::BindFailed(message)) => {
                     if is_status(&waiting, "pending") {
@@ -315,21 +354,28 @@ pub async fn submit_codex_login_redirect(
     redirect: String,
 ) -> Result<CodexLoginSnapshot, String> {
     let session = session(&login_id)?;
-    let (code, pasted_state) = parse_authorization_input(&redirect);
-    let Some(code) = code else {
-        return Err("Paste the redirect URL or the authorization code.".into());
-    };
-    let expected = session.state.lock().unwrap().clone();
-    if let Some(state) = pasted_state {
-        if !expected.is_empty() && state != expected {
-            return Err("That redirect belongs to a different sign-in attempt.".into());
-        }
-    }
-    let verifier = session.verifier.lock().unwrap().clone();
-    if verifier.is_empty() {
+    if session.verifier.lock().unwrap().is_empty() {
         return Err("Paste the redirect URL only for browser sign-in.".into());
     }
-    finish_with_code(&session, &code, &verifier, REDIRECT_URI).await;
+    let expected = session.state.lock().unwrap().clone();
+    let callback = if session.kind == Kind::ChatGpt {
+        chatgpt_auth::callback_from_redirect(&redirect, &expected)?
+    } else {
+        let (code, pasted_state) = parse_authorization_input(&redirect);
+        let Some(code) = code else {
+            return Err("Paste the redirect URL or the authorization code.".into());
+        };
+        if let Some(state) = pasted_state {
+            if !expected.is_empty() && state != expected {
+                return Err("That redirect belongs to a different sign-in attempt.".into());
+            }
+        }
+        AuthorizationCallback {
+            code,
+            client_id: None,
+        }
+    };
+    finish_with_code(&session, callback).await;
     Ok(snapshot(session.as_ref()))
 }
 
@@ -355,21 +401,33 @@ pub async fn save_codex_login(
     provider: Option<String>,
     account_only: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
-    let xai = is_xai(&provider)?;
+    let kind = kind(&provider)?;
+    let xai = kind == Kind::Xai;
     let creds = if use_saved.unwrap_or(false) {
         let client = crate::network::subscription_http_client();
-        if xai {
-            let Some(saved) = models::load_global_xai() else {
-                return Err("No SuperGrok subscription is signed in on this machine.".into());
-            };
-            Credentials::Xai(xai_auth::refresh_if_due(&client, saved, codex_auth::now_ms()).await?)
-        } else {
-            let Some(saved) = models::load_global_codex() else {
-                return Err("No ChatGPT subscription is signed in on this machine.".into());
-            };
-            Credentials::Codex(
-                codex_auth::refresh_if_due(&client, saved, codex_auth::now_ms()).await?,
-            )
+        let now = codex_auth::now_ms();
+        match kind {
+            Kind::ChatGpt => {
+                let Some(saved) = models::load_global_chatgpt() else {
+                    return Err("No ChatGPT sign-in is saved on this machine.".into());
+                };
+                let fresh = chatgpt_auth::refresh_if_due(&client, saved, now).await?;
+                // The refresh rotated the token pair; keep the only copy current.
+                models::store_chatgpt_credentials(None, &fresh)?;
+                Credentials::ChatGpt(fresh)
+            }
+            Kind::Xai => {
+                let Some(saved) = models::load_global_xai() else {
+                    return Err("No SuperGrok subscription is signed in on this machine.".into());
+                };
+                Credentials::Xai(xai_auth::refresh_if_due(&client, saved, now).await?)
+            }
+            Kind::Codex => {
+                let Some(saved) = models::load_global_codex() else {
+                    return Err("No ChatGPT subscription is signed in on this machine.".into());
+                };
+                Credentials::Codex(codex_auth::refresh_if_due(&client, saved, now).await?)
+            }
         }
     } else {
         let session = session(&login_id)?;
@@ -379,7 +437,7 @@ pub async fn save_codex_login(
             .unwrap()
             .clone()
             .ok_or_else(|| "Finish sign-in before saving the model.".to_string())?;
-        if matches!(creds, Credentials::Xai(_)) != xai {
+        if creds.kind() != kind {
             return Err("That sign-in belongs to a different subscription.".into());
         }
         creds
@@ -392,20 +450,25 @@ pub async fn save_codex_login(
         crate::clear_idle_agents(&state).await;
         return Ok(models::decorated_models(&state.store).await);
     }
-    let (provider, default_model, vendor, default_url) = if xai {
-        (
+    let (provider, default_model, vendor, default_url) = match kind {
+        Kind::ChatGpt => (
+            "openai_chatgpt",
+            chatgpt_auth::DEFAULT_MODEL,
+            "ChatGPT",
+            chatgpt_auth::DEFAULT_BASE_URL,
+        ),
+        Kind::Xai => (
             "xai_oauth",
             xai_auth::DEFAULT_MODEL,
             "Grok",
             xai_auth::DEFAULT_BASE_URL,
-        )
-    } else {
-        (
+        ),
+        Kind::Codex => (
             "openai_codex",
             codex_auth::DEFAULT_MODEL,
             "ChatGPT",
             codex_auth::DEFAULT_BASE_URL,
-        )
+        ),
     };
     let model = {
         let trimmed = model.trim();
@@ -495,6 +558,7 @@ pub async fn save_codex_login(
     let use_for_video = profile.use_for_video_generation;
     // A failed keyring write must not publish a model without credentials.
     match &creds {
+        Credentials::ChatGpt(creds) => models::store_chatgpt_credentials(Some(&id), creds)?,
         Credentials::Codex(creds) => models::store_codex_credentials(&id, creds)?,
         Credentials::Xai(creds) => models::store_xai_credentials(&id, creds)?,
     }
@@ -532,6 +596,7 @@ async fn save_account_credentials(
 ) -> Result<(), String> {
     let profiles = models::decorated_models(store).await;
     write_account_credentials(&profiles, creds, |id, creds| match (id, creds) {
+        (id, Credentials::ChatGpt(creds)) => models::store_chatgpt_credentials(id, creds),
         (None, Credentials::Codex(creds)) => models::store_global_codex(creds),
         (None, Credentials::Xai(creds)) => models::store_global_xai(creds),
         (Some(id), Credentials::Codex(creds)) => models::store_codex_credentials(id, creds),
@@ -547,6 +612,7 @@ fn write_account_credentials(
     write(None, creds)?;
     for profile in profiles {
         let matches = match creds {
+            Credentials::ChatGpt(_) => profile.provider == "openai_chatgpt",
             Credentials::Codex(_) => matches!(
                 profile.provider.as_str(),
                 "openai_codex" | "openai-codex" | "codex"
@@ -601,5 +667,30 @@ mod tests {
             Err("fixture keyring failure".into())
         });
         assert_eq!(failure.unwrap_err(), "fixture keyring failure");
+    }
+
+    #[test]
+    fn chatgpt_sign_in_reconnects_only_its_own_models() {
+        let profiles: Vec<ModelProfile> = serde_json::from_value(serde_json::json!([
+            {"id": "signin", "provider": "openai_chatgpt", "model": "gpt-5.5", "label": "ChatGPT", "api_url": "https://api.openai.com/v1"},
+            {"id": "legacy", "provider": "openai_codex", "model": "gpt-5.5", "label": "Codex", "api_url": "https://chatgpt.com/backend-api"},
+            {"id": "api", "provider": "openai_responses", "model": "gpt-5.5", "label": "API", "api_url": "https://api.openai.com/v1"}
+        ])).unwrap();
+        let creds = Credentials::ChatGpt(ChatGptCredentials {
+            access_token: "fixture-access".into(),
+            refresh_token: "fixture-refresh".into(),
+            expires_at_ms: i64::MAX,
+            client_id: "oaiapp_fixture".into(),
+            account: String::new(),
+        });
+        let mut writes = Vec::new();
+        write_account_credentials(&profiles, &creds, |id, _| {
+            writes.push(id.map(str::to_string));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(writes, vec![None, Some("signin".into())]);
+        assert!(kind(&Some("chatgpt".into())).unwrap() == Kind::ChatGpt);
+        assert!(kind(&None).unwrap() == Kind::Codex);
     }
 }

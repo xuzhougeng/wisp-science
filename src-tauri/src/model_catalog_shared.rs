@@ -166,7 +166,7 @@ pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> 
     out.extend_from_slice(by_host);
     let by_provider = match provider.trim() {
         "anthropic" => Some("anthropic"),
-        "openai" | "openai_responses" | "openai_codex" => Some("openai"),
+        "openai" | "openai_responses" | "openai_codex" | "openai_chatgpt" => Some("openai"),
         _ => None,
     };
     if let Some(ns) = by_provider {

@@ -17,7 +17,8 @@ const HELP: &str = "Built-in commands:\n  /q, /quit       Quit\n  /n, /new      
 const EVENT_SCHEMA: &str = "wisp.agent-event.v1";
 const USAGE: &str = "Usage:
   wisp-science
-  wisp-science login codex [--method browser|device]
+  wisp-science login chatgpt
+  wisp-science login codex [--method browser|device]   (legacy ChatGPT sign-in)
   wisp-science login xai
   wisp-science run [--output console|jsonl] <prompt>
   wisp-science rpc
@@ -51,6 +52,7 @@ enum CliCommand {
     Rpc,
     Dev,
     Help,
+    LoginChatGpt,
     LoginCodex {
         method: String,
     },
@@ -81,8 +83,14 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<CliCommand> {
     match command.as_str() {
         "login" => {
             let provider = args.next().ok_or_else(|| {
-                anyhow::anyhow!("login requires a provider; supported: codex, xai")
+                anyhow::anyhow!("login requires a provider; supported: chatgpt, codex, xai")
             })?;
+            if provider == "chatgpt" {
+                if let Some(arg) = args.next() {
+                    bail!("unknown login option '{arg}'; chatgpt always uses browser sign-in");
+                }
+                return Ok(CliCommand::LoginChatGpt);
+            }
             if provider == "xai" {
                 if let Some(arg) = args.next() {
                     bail!("unknown login option '{arg}'; xai always uses a device code");
@@ -90,7 +98,7 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<CliCommand> {
                 return Ok(CliCommand::LoginXai);
             }
             if provider != "codex" {
-                bail!("login supports: codex, xai");
+                bail!("login supports: chatgpt, codex, xai");
             }
             let mut method = "browser".to_string();
             while let Some(arg) = args.next() {
@@ -714,6 +722,7 @@ fn parse_provider_kind(raw: &str) -> String {
         "anthropic" => "anthropic".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
         "openai_codex" | "openai-codex" | "codex" => "openai_codex".into(),
+        "openai_chatgpt" | "openai-chatgpt" | "chatgpt" => "openai_chatgpt".into(),
         "xai_oauth" | "xai-oauth" | "grok_oauth" => "xai_oauth".into(),
         _ => "openai".into(),
     }
@@ -724,6 +733,7 @@ fn default_provider_url(kind: &str) -> &'static str {
         "anthropic" => "https://api.anthropic.com",
         "openai_responses" => "https://api.openai.com/v1",
         "openai_codex" => "https://chatgpt.com/backend-api",
+        "openai_chatgpt" => wisp_llm::chatgpt_auth::DEFAULT_BASE_URL,
         "xai_oauth" => wisp_llm::xai_auth::DEFAULT_BASE_URL,
         _ => "https://api.deepseek.com",
     }
@@ -733,6 +743,7 @@ fn default_provider_model(kind: &str) -> &'static str {
     match kind {
         "anthropic" => "claude-sonnet-5",
         "openai_responses" | "openai_codex" => "gpt-5.5",
+        "openai_chatgpt" => wisp_llm::chatgpt_auth::DEFAULT_MODEL,
         "xai_oauth" => wisp_llm::xai_auth::DEFAULT_MODEL,
         _ => "deepseek-v4-flash",
     }
@@ -755,6 +766,7 @@ fn build_named_provider_config(
         "anthropic" => ProviderConfig::anthropic(base_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(base_url, api_key, model),
         "openai_codex" => ProviderConfig::openai_codex(base_url, api_key, model),
+        "openai_chatgpt" => ProviderConfig::openai_chatgpt(base_url, api_key, model),
         // xai_oauth: the subscription token is a Bearer key for Chat Completions.
         _ => ProviderConfig::openai(base_url, api_key, model),
     }
@@ -796,6 +808,24 @@ async fn load_codex_access_token() -> Result<String> {
     Ok(fresh.access_token)
 }
 
+async fn load_chatgpt_access_token() -> Result<String> {
+    use wisp_llm::chatgpt_auth::{ChatGptCredentials, SUBSCRIPTION_SECRET};
+    let raw = wisp_store::secrets::Secret::get(SUBSCRIPTION_SECRET)
+        .context("ChatGPT is not signed in. Run `wisp-science login chatgpt`.")?;
+    let creds = ChatGptCredentials::from_json(&raw)
+        .context("Stored ChatGPT sign-in is unreadable. Run `wisp-science login chatgpt` again.")?;
+    let client = wisp_llm::codex_auth::http_client(None);
+    let fresh =
+        wisp_llm::chatgpt_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms())
+            .await
+            .map_err(anyhow::Error::msg)?;
+    let json = fresh.to_json();
+    if json != raw {
+        wisp_store::secrets::Secret::set(SUBSCRIPTION_SECRET, &json)?;
+    }
+    Ok(fresh.access_token)
+}
+
 async fn load_xai_access_token() -> Result<String> {
     let raw = wisp_store::secrets::Secret::get(wisp_llm::xai_auth::SUBSCRIPTION_SECRET)
         .context("SuperGrok subscription is not signed in. Run `wisp-science login xai`.")?;
@@ -817,6 +847,7 @@ async fn load_xai_access_token() -> Result<String> {
 async fn subscription_access_token(kind: &str) -> Result<Option<String>> {
     Ok(match kind {
         "openai_codex" => Some(load_codex_access_token().await?),
+        "openai_chatgpt" => Some(load_chatgpt_access_token().await?),
         "xai_oauth" => Some(load_xai_access_token().await?),
         _ => None,
     })
@@ -1057,7 +1088,7 @@ async fn login_codex(method: &str) -> Result<()> {
         let code = if std::io::stdin().is_terminal() {
             tokio::select! {
                 callback = waiter => match callback? {
-                    wisp_llm::codex_auth::BrowserCallback::Code(code) => code,
+                    wisp_llm::codex_auth::BrowserCallback::Code(callback) => callback.code,
                     wisp_llm::codex_auth::BrowserCallback::BindFailed(message) => {
                         eprintln!("{message}");
                         let pasted = read_pasted_redirect().await.context(
@@ -1076,7 +1107,7 @@ async fn login_codex(method: &str) -> Result<()> {
             }
         } else {
             match waiter.await? {
-                wisp_llm::codex_auth::BrowserCallback::Code(code) => code,
+                wisp_llm::codex_auth::BrowserCallback::Code(callback) => callback.code,
                 wisp_llm::codex_auth::BrowserCallback::BindFailed(message) => bail!("{message}"),
                 wisp_llm::codex_auth::BrowserCallback::Cancelled => {
                     bail!("Codex sign-in cancelled")
@@ -1099,6 +1130,66 @@ async fn login_codex(method: &str) -> Result<()> {
     println!("Signed in to ChatGPT account {}.", creds.account_id);
     println!(
         "Start a session with WISP_PROVIDER=openai_codex. Settings → Models can use this same sign-in."
+    );
+    Ok(())
+}
+
+/// Sign in with ChatGPT. The redirect carries the client id OpenAI issued for
+/// this installation, so a pasted redirect must be the full URL.
+async fn login_chatgpt() -> Result<()> {
+    use wisp_llm::chatgpt_auth::{self, HOST_ID_SECRET};
+    use wisp_llm::codex_auth::{self, BrowserCallback};
+    use wisp_store::secrets::Secret;
+    let host_id = match Secret::get(HOST_ID_SECRET)
+        .ok()
+        .and_then(|saved| uuid::Uuid::parse_str(saved.trim()).ok())
+    {
+        Some(id) => id,
+        None => {
+            let id = uuid::Uuid::new_v4();
+            Secret::set(HOST_ID_SECRET, &id.to_string())?;
+            id
+        }
+    };
+    let client = codex_auth::http_client(None);
+    let pkce = codex_auth::generate_pkce();
+    let state = codex_auth::random_state();
+    let url = chatgpt_auth::authorize_url(&pkce, &state, &codex_auth::random_state(), host_id);
+    println!("Open this URL if the browser does not:\n{url}\n");
+    println!("If the browser cannot return to this machine, paste the full redirect URL and press Enter.");
+    let _ = open_browser(&url);
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_wait = cancel.clone();
+    let expected = state.clone();
+    let waiter = tokio::task::spawn_blocking(move || {
+        codex_auth::wait_for_browser_callback(&expected, &cancel_wait)
+    });
+    let pasted_callback = |pasted: Option<String>| {
+        let pasted = pasted.context("Paste the full redirect URL.")?;
+        chatgpt_auth::callback_from_redirect(&pasted, &state).map_err(anyhow::Error::msg)
+    };
+    let callback = tokio::select! {
+        callback = waiter => match callback? {
+            BrowserCallback::Code(callback) => callback,
+            BrowserCallback::BindFailed(message) => {
+                eprintln!("{message}");
+                pasted_callback(read_pasted_redirect().await)?
+            }
+            BrowserCallback::Cancelled => bail!("ChatGPT sign-in cancelled"),
+            BrowserCallback::TimedOut => bail!("ChatGPT sign-in timed out"),
+        },
+        Some(pasted) = read_pasted_redirect() => {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            pasted_callback(Some(pasted))?
+        }
+    };
+    let creds = chatgpt_auth::exchange_authorization_code(&client, &callback, &pkce.verifier)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    Secret::set(chatgpt_auth::SUBSCRIPTION_SECRET, &creds.to_json())?;
+    println!("Signed in with ChatGPT as {}.", creds.display_account());
+    println!(
+        "Start a session with WISP_PROVIDER=openai_chatgpt. Settings → Models can use this same sign-in."
     );
     Ok(())
 }
@@ -1171,6 +1262,9 @@ async fn main() -> Result<()> {
             None
         };
         return eval::run(live_config, live_vision, options).await;
+    }
+    if command == CliCommand::LoginChatGpt {
+        return login_chatgpt().await;
     }
     if let CliCommand::LoginCodex { method } = &command {
         return login_codex(method).await;
@@ -1513,6 +1607,11 @@ mod tests {
             }
         );
         assert_eq!(command(&["login", "xai"]).unwrap(), CliCommand::LoginXai);
+        assert_eq!(
+            command(&["login", "chatgpt"]).unwrap(),
+            CliCommand::LoginChatGpt
+        );
+        assert!(command(&["login", "chatgpt", "--method", "device"]).is_err());
         assert!(command(&["login", "xai", "--method", "browser"]).is_err());
         assert!(command(&["login", "openai"]).is_err());
     }

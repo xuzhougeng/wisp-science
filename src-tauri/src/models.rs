@@ -255,7 +255,7 @@ fn same_endpoint(left: &str, right: &str) -> bool {
 /// Subscription profiles hold an OAuth access token that rotates with its
 /// refresh token. It is not an API key and must not be shared with siblings.
 pub(crate) fn is_subscription_provider(provider: &str) -> bool {
-    matches!(provider, "openai_codex" | "xai_oauth")
+    matches!(provider, "openai_codex" | "openai_chatgpt" | "xai_oauth")
 }
 
 fn sibling_key(profiles: &[ModelProfile], api_url: &str, exclude_id: &str) -> String {
@@ -991,6 +991,63 @@ pub(crate) fn fresher_codex(
         .unwrap_or(a)
 }
 
+/// One Sign in with ChatGPT serves every `openai_chatgpt` model. Its refresh
+/// token rotates, so the token pair lives only in the account secret; a
+/// profile keeps just the latest access token (for `has_api_key`).
+pub(crate) fn store_chatgpt_credentials(
+    profile_id: Option<&str>,
+    creds: &wisp_llm::chatgpt_auth::ChatGptCredentials,
+) -> Result<(), String> {
+    secret_set(
+        wisp_llm::chatgpt_auth::SUBSCRIPTION_SECRET,
+        &creds.to_json(),
+    )?;
+    match profile_id {
+        Some(id) => secret_set(&secret_name(id), &creds.access_token),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn load_global_chatgpt() -> Option<wisp_llm::chatgpt_auth::ChatGptCredentials> {
+    wisp_llm::chatgpt_auth::ChatGptCredentials::from_json(&secret_get(
+        wisp_llm::chatgpt_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+/// This installation's agent id for Sign in with ChatGPT, created once.
+pub(crate) fn chatgpt_host_id() -> Result<uuid::Uuid, String> {
+    let saved = secret_get(wisp_llm::chatgpt_auth::HOST_ID_SECRET);
+    if let Ok(id) = uuid::Uuid::parse_str(saved.trim()) {
+        return Ok(id);
+    }
+    let id = uuid::Uuid::new_v4();
+    secret_set(wisp_llm::chatgpt_auth::HOST_ID_SECRET, &id.to_string())?;
+    Ok(id)
+}
+
+async fn fresh_chatgpt_access_token(id: &str, access: String) -> String {
+    let Some(creds) = load_global_chatgpt() else {
+        return access;
+    };
+    let client = crate::network::subscription_http_client();
+    match wisp_llm::chatgpt_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms())
+        .await
+    {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_chatgpt_credentials(Some(id), &next) {
+                    tracing::warn!(target: "wisp", %error, "chatgpt token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "chatgpt token refresh failed");
+            access
+        }
+    }
+}
+
 pub(crate) fn xai_oauth_secret(id: &str) -> String {
     format!("xai_oauth:{id}")
 }
@@ -1048,6 +1105,9 @@ async fn fresh_access_token(provider: &str, id: &str) -> String {
     let access = key_for(id);
     if provider == "xai_oauth" {
         return fresh_xai_access_token(id, access).await;
+    }
+    if provider == "openai_chatgpt" {
+        return fresh_chatgpt_access_token(id, access).await;
     }
     if provider != "openai_codex" {
         return access;
@@ -3186,6 +3246,31 @@ mod tests {
         assert!(key_for(&new_id).is_empty());
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn chatgpt_sign_in_and_an_openai_api_key_on_the_same_url_stay_separate() {
+        let prefix = uuid::Uuid::new_v4();
+        let api_id = format!("{prefix}-api");
+        let chatgpt_id = format!("{prefix}-chatgpt");
+        let url = "https://api.openai.com/v1";
+        let mut api = test_profile(&api_id, "api", "gpt-5.5");
+        api.provider = "openai_responses".into();
+        api.api_url = url.into();
+        let mut chatgpt = test_profile(&chatgpt_id, "chatgpt", "gpt-5.5");
+        chatgpt.provider = "openai_chatgpt".into();
+        chatgpt.api_url = url.into();
+        let profiles = [api, chatgpt];
+        secret_set(&secret_name(&api_id), "sk-old").unwrap();
+        // A new sign-in profile does not pick up the API key...
+        store_profile_key(&chatgpt_id, None, url, &profiles).unwrap();
+        assert!(key_for(&chatgpt_id).is_empty());
+        // ...and rotating the API key leaves the sign-in token alone.
+        secret_set(&secret_name(&chatgpt_id), "sk-old").unwrap();
+        store_profile_key(&api_id, Some("sk-new"), url, &profiles).unwrap();
+        assert_eq!(key_for(&chatgpt_id), "sk-old");
+        let _ = secret_del(&secret_name(&api_id));
+        let _ = secret_del(&secret_name(&chatgpt_id));
     }
 
     #[test]

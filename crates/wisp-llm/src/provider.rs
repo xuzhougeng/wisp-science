@@ -289,8 +289,10 @@ pub enum ProviderKind {
     OpenAiCompatible,
     /// OpenAI's first-party `/v1/responses` endpoint.
     OpenAiResponses,
-    /// ChatGPT Plus/Pro subscription via the Codex responses endpoint.
+    /// ChatGPT Plus/Pro subscription via the Codex responses endpoint (legacy).
     OpenAiCodex,
+    /// Sign in with ChatGPT: `/v1/responses` with a plan-backed access token.
+    OpenAiChatGpt,
     /// Anthropic Messages API (`/v1/messages`).
     Anthropic,
 }
@@ -500,6 +502,16 @@ impl ProviderConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
+    pub fn openai_chatgpt(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::OpenAiChatGpt,
+            ..Self::openai_responses(base_url, api_key, model)
+        }
+    }
     pub fn openai_codex(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -639,7 +651,7 @@ pub trait Provider: Send + Sync {
 pub fn build(cfg: ProviderConfig) -> Box<dyn Provider> {
     match cfg.kind {
         ProviderKind::OpenAiCompatible => Box::new(crate::openai::OpenAiProvider::new(cfg)),
-        ProviderKind::OpenAiResponses | ProviderKind::OpenAiCodex => {
+        ProviderKind::OpenAiResponses | ProviderKind::OpenAiCodex | ProviderKind::OpenAiChatGpt => {
             Box::new(crate::responses::OpenAiResponsesProvider::new(cfg))
         }
         ProviderKind::Anthropic => Box::new(crate::anthropic::AnthropicProvider::new(cfg)),

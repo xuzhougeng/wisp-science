@@ -181,6 +181,12 @@ mod provider_form_tests {
         let mut grok = profile("https://api.x.ai/v1", true);
         grok.provider = "xai_oauth".into();
         assert!(!endpoint_has_stored_key(&[grok], "https://api.x.ai"));
+        let mut chatgpt = profile("https://api.openai.com/v1", true);
+        chatgpt.provider = "openai_chatgpt".into();
+        assert!(!endpoint_has_stored_key(
+            &[chatgpt],
+            "https://api.openai.com/v1"
+        ));
     }
 }
 
@@ -953,11 +959,14 @@ pub(crate) fn apply_base_url_suggestions(form: &mut ModelForm, api_url: &str) {
     form.entries = suggested_base_url_models(&form.api_url);
 }
 
-/// A reusable API key on this endpoint. Subscription tokens (Codex, SuperGrok)
-/// are never shared, so they do not count.
+/// A reusable API key on this endpoint. Subscription tokens (ChatGPT, Codex,
+/// SuperGrok) are never shared, so they do not count.
 fn shares_endpoint_key(profile: &ModelProfile, api_url: &str) -> bool {
     profile.has_api_key
-        && !matches!(profile.provider.as_str(), "openai_codex" | "xai_oauth")
+        && !matches!(
+            profile.provider.as_str(),
+            "openai_codex" | "openai_chatgpt" | "xai_oauth"
+        )
         && same_endpoint(&profile.api_url, api_url)
 }
 

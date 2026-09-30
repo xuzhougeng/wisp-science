@@ -1,6 +1,7 @@
-//! ChatGPT Plus/Pro (Codex) subscription login.
+//! ChatGPT Plus/Pro (Codex) subscription login — the legacy path.
 //!
-//! The flow matches the public Codex CLI client used by pi and OpenCode:
+//! Official Sign in with ChatGPT lives in `chatgpt_auth`. This flow borrows
+//! the public Codex CLI client, as older pi and OpenCode releases did:
 //! PKCE against `auth.openai.com`, either a localhost callback or a device
 //! code, then Bearer calls to `chatgpt.com/backend-api/codex/responses`.
 //! Tokens stay with the caller (the OS keyring). This module never writes them.
@@ -83,9 +84,17 @@ pub enum DevicePoll {
     Failed(String),
 }
 
+/// What the localhost redirect carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationCallback {
+    pub code: String,
+    /// Sign in with ChatGPT returns the client id it issued for this installation.
+    pub client_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserCallback {
-    Code(String),
+    Code(AuthorizationCallback),
     Cancelled,
     BindFailed(String),
     TimedOut,
@@ -373,7 +382,10 @@ pub fn http_error(stage: &str, status: u16, body: &str) -> String {
             || value.get("error").and_then(Value::as_str)
                 == Some("unsupported_country_region_territory")
     });
-    let reason = if is_html_response(body) {
+    // Sign in with ChatGPT shares the plan's limit with other connected apps.
+    let reason = if body.contains("subscription_sharing_usage_limit_exceeded") {
+        "The ChatGPT plan's usage limit for connected apps was reached. Check usage at https://chatgpt.com/settings/usage, then retry later."
+    } else if is_html_response(body) {
         "The service returned a web access or verification page. Check the network/proxy used by Wisp, then retry. Browser sign-in alone cannot resolve this response."
     } else if unsupported_region {
         "OpenAI rejected the network location used by Wisp (unsupported_country_region_territory). Check Settings → Network → Subscription sign-in for authentication, or Model API for model requests: Direct disables the system proxy even when your browser uses it. Use a supported network location, then start a new sign-in."
@@ -767,7 +779,7 @@ pub fn wait_for_browser_callback(expected_state: &str, cancel: &AtomicBool) -> B
                 let mut buf = [0u8; 8192];
                 let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]);
-                let outcome = authorization_code_from_request(&request, expected_state);
+                let outcome = authorization_callback_from_request(&request, expected_state);
                 let (status, page) = match &outcome {
                     Ok(_) => (200, "ChatGPT sign-in completed. You can close this window."),
                     Err("state") => (
@@ -784,8 +796,8 @@ pub fn wait_for_browser_callback(expected_state: &str, cancel: &AtomicBool) -> B
                     body.len()
                 );
                 let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-                if let Ok(code) = outcome {
-                    return BrowserCallback::Code(code);
+                if let Ok(callback) = outcome {
+                    return BrowserCallback::Code(callback);
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -797,10 +809,10 @@ pub fn wait_for_browser_callback(expected_state: &str, cancel: &AtomicBool) -> B
     BrowserCallback::TimedOut
 }
 
-pub fn authorization_code_from_request(
+pub fn authorization_callback_from_request(
     request: &str,
     expected_state: &str,
-) -> Result<String, &'static str> {
+) -> Result<AuthorizationCallback, &'static str> {
     let target = request
         .lines()
         .next()
@@ -824,7 +836,12 @@ pub fn authorization_code_from_request(
     if state != expected_state {
         return Err("state");
     }
-    Ok(code)
+    let client_id = url
+        .query_pairs()
+        .find(|(key, _)| key == "client_id")
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|id| !id.is_empty());
+    Ok(AuthorizationCallback { code, client_id })
 }
 
 #[cfg(test)]
@@ -1112,15 +1129,31 @@ mod tests {
     fn callback_request_checks_path_and_state() {
         let request = "GET /auth/callback?code=abc&state=ok HTTP/1.1\r\nHost: localhost\r\n\r\n";
         assert_eq!(
-            authorization_code_from_request(request, "ok").unwrap(),
-            "abc"
+            authorization_callback_from_request(request, "ok").unwrap(),
+            AuthorizationCallback {
+                code: "abc".into(),
+                client_id: None
+            }
         );
         assert_eq!(
-            authorization_code_from_request(request, "other"),
+            authorization_callback_from_request(
+                "GET /auth/callback?code=abc&state=ok&client_id=oaiapp_1 HTTP/1.1\r\n\r\n",
+                "ok"
+            )
+            .unwrap()
+            .client_id
+            .as_deref(),
+            Some("oaiapp_1")
+        );
+        assert_eq!(
+            authorization_callback_from_request(request, "other"),
             Err("state")
         );
         assert_eq!(
-            authorization_code_from_request("GET /other?code=abc&state=ok HTTP/1.1\r\n\r\n", "ok"),
+            authorization_callback_from_request(
+                "GET /other?code=abc&state=ok HTTP/1.1\r\n\r\n",
+                "ok"
+            ),
             Err("path")
         );
     }
