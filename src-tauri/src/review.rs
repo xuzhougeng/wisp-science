@@ -349,18 +349,17 @@ fn push_block(blocks: &mut Vec<String>, index: &mut usize, label: &str, body: &s
     *index += 1;
 }
 
-/// Parse the reviewer's JSON, tolerating a single Markdown fence while keeping
-/// the accepted finding vocabulary small and predictable for the UI.
+/// Parse the reviewer's JSON, tolerating fences and surrounding prose (whose
+/// stray braces must not be glued onto the report, #1084) while keeping the
+/// accepted finding vocabulary small and predictable for the UI.
 pub fn parse_report(raw: &str, reviewer_model: &str) -> Result<ReviewReport, String> {
-    let start = raw
-        .find('{')
-        .ok_or_else(|| "Reviewer returned no JSON object.".to_string())?;
-    let end = raw
-        .rfind('}')
-        .filter(|end| *end >= start)
-        .ok_or_else(|| "Reviewer returned incomplete JSON.".to_string())?;
-    let mut report: ReviewReport = serde_json::from_str(&raw[start..=end])
-        .map_err(|e| format!("Invalid reviewer JSON: {e}"))?;
+    let value = crate::delegation_runtime::extract_json_candidates(raw)
+        .into_iter()
+        .rev()
+        .find(|value| value.get("findings").is_some() || value.get("summary").is_some())
+        .ok_or_else(|| "Reviewer returned no JSON report object.".to_string())?;
+    let mut report: ReviewReport =
+        serde_json::from_value(value).map_err(|e| format!("Invalid reviewer JSON: {e}"))?;
     report.id = Uuid::new_v4().to_string();
     report.reviewer_model = reviewer_model.to_string();
     report.findings.truncate(8);
@@ -563,6 +562,15 @@ mod tests {
         assert_eq!(report.findings[0].severity, "medium");
         assert_eq!(report.findings[0].status, "open");
         assert!(!report.id.is_empty());
+    }
+
+    #[test]
+    fn parse_report_ignores_braces_in_surrounding_prose() {
+        let raw = r#"The code used `d = {k: v}` so I checked it.
+{"summary":"checked","findings":[]}
+Trailing note with a stray }."#;
+        let report = parse_report(raw, "reviewer").unwrap();
+        assert_eq!(report.summary, "checked");
     }
 
     #[test]

@@ -247,14 +247,12 @@ pub(crate) fn candidate_prompts(
 }
 
 pub(crate) fn parse_candidate(raw: &str) -> Result<ParsedCandidate, String> {
-    let start = raw
-        .find('{')
-        .ok_or_else(|| "Memory analyst returned no JSON object.".to_string())?;
-    let end = raw
-        .rfind('}')
-        .filter(|end| *end >= start)
-        .ok_or_else(|| "Memory analyst returned incomplete JSON.".to_string())?;
-    let candidate: RawCandidate = serde_json::from_str(&raw[start..=end])
+    let value = crate::delegation_runtime::extract_json_candidates(raw)
+        .into_iter()
+        .rev()
+        .find(|value| value.get("content").is_some())
+        .ok_or_else(|| "Memory analyst returned no JSON object with content.".to_string())?;
+    let candidate: RawCandidate = serde_json::from_value(value)
         .map_err(|error| format!("Invalid memory analyst JSON: {error}"))?;
     let content = candidate.content.trim();
     if content.is_empty() {
@@ -350,5 +348,14 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed.scope, "global");
         assert_eq!(parsed.content, "默认使用中文");
+    }
+
+    #[test]
+    fn parse_candidate_ignores_braces_in_surrounding_prose() {
+        let parsed = parse_candidate(
+            "User wrote `{a}` earlier.\n{\"scope\":\"project\",\"content\":\"Use SI units\"}\nDone }",
+        )
+        .unwrap();
+        assert_eq!(parsed.content, "Use SI units");
     }
 }

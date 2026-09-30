@@ -1,6 +1,6 @@
 //! Workflow Studio editor and persisted Agent workflow activity surface.
 
-use crate::app_support::{compose_icon, show_toast};
+use crate::app_support::{compose_icon, js_error_text, show_toast};
 use crate::bindings::invoke_checked;
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
@@ -910,16 +910,6 @@ pub(super) fn refresh_agent_workflows(state: AgentPanelState) {
     });
 }
 
-fn js_error_text(error: JsValue) -> String {
-    error
-        .as_string()
-        .or_else(|| {
-            js_sys::Reflect::get(&error, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|value| value.as_string())
-        })
-        .unwrap_or_else(|| "Unknown Agent workflow error".into())
-}
 
 #[derive(Clone)]
 struct AgentWorkflowGroup {

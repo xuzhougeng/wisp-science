@@ -1038,33 +1038,13 @@ pub(crate) fn model_id_tail(model: &str) -> &str {
     model.rsplit('/').next().unwrap_or(model)
 }
 
-/// Known IDs used only for backwards-compatible automatic classification.
-/// This is a hint, not an allowlist: explicit image profiles accept custom IDs.
-pub(crate) fn is_image_generation_model(model: &str) -> bool {
-    let tail = model_id_tail(model);
-    tail.eq_ignore_ascii_case("gpt-image-2") || tail.eq_ignore_ascii_case("grok-imagine-image-2.0")
-}
-
-pub(crate) fn is_grok_imagine_model(model: &str) -> bool {
-    model_id_tail(model).eq_ignore_ascii_case("grok-imagine-image-2.0")
-}
+// Shared with the UI so both sides classify model IDs identically.
+pub(crate) use wisp_dto::{
+    is_grok_imagine_model, is_image_generation_model, is_video_generation_model,
+    VIDEO_ASPECT_RATIOS, VIDEO_DURATION_MAX_SECS, VIDEO_DURATION_MIN_SECS, VIDEO_RESOLUTIONS,
+};
 
 pub(crate) const VIDEO_GENERATION_UNSUPPORTED: &str = "Video generation currently supports xAI grok-imagine-video, grok-imagine-video-1.5, and grok-imagine-video-1.5-preview.";
-
-pub(crate) const VIDEO_ASPECT_RATIOS: &[&str] = &["16:9", "9:16", "1:1", "4:3", "3:4"];
-pub(crate) const VIDEO_RESOLUTIONS: &[&str] = &["480p", "720p", "1080p"];
-pub(crate) const VIDEO_DURATION_MIN_SECS: u32 = 1;
-pub(crate) const VIDEO_DURATION_MAX_SECS: u32 = 15;
-
-/// Video-generation model IDs. Gateway `vendor/model` ids match on the last
-/// path segment. Exact IDs only — `grok-imagine-video` must not absorb
-/// `grok-imagine-video-1.5-preview` or a future sibling.
-pub(crate) fn is_video_generation_model(model: &str) -> bool {
-    let tail = model_id_tail(model);
-    tail.eq_ignore_ascii_case("grok-imagine-video")
-        || tail.eq_ignore_ascii_case("grok-imagine-video-1.5")
-        || tail.eq_ignore_ascii_case("grok-imagine-video-1.5-preview")
-}
 
 fn profile_is_image_model(profile: &ModelProfile) -> bool {
     profile.image_generation_capable

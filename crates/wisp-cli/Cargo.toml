@@ -21,6 +21,7 @@ serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 uuid = { workspace = true }
 async-trait = "0.1"
+base64 = { workspace = true }
 wisp-runtime = { workspace = true }
 wisp-mcp = { workspace = true }
 wisp-bio = { workspace = true }
