@@ -1014,15 +1014,19 @@ pub(crate) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
     cfg
 }
 
-/// Sidebar groups and search aliases. Network / proxy settings live under
-/// General (not Models), so those keywords must match that section.
+/// Sidebar groups and search aliases. Network / proxy settings are their own
+/// item under Preferences, directly below General, and must not match Models.
 pub(crate) const SETTINGS_NAV_GROUPS: &[(&str, &[(&str, &str)])] = &[
     (
         "settings.nav.preferences",
         &[
             (
                 "general",
-                "notifications updates language network proxy 通知 更新 语言 网络 代理",
+                "notifications updates language 通知 更新 语言",
+            ),
+            (
+                "network",
+                "network proxy mirror 网络 代理 镜像",
             ),
             (
                 "session",
@@ -1088,6 +1092,7 @@ pub(crate) fn settings_nav_entry_matches(
 pub(crate) fn settings_section_label(loc: Locale, section: &str) -> String {
     match section {
         "general" => t(loc, "settings.nav.general"),
+        "network" => t(loc, "settings.nav.network"),
         "session" => t(loc, "settings.nav.session"),
         "appearance" => t(loc, "settings.nav.appearance"),
         "pet" => t(loc, "settings.nav.pet"),
@@ -1133,27 +1138,43 @@ mod settings_section_label_tests {
     }
 
     #[test]
-    fn general_search_aliases_include_proxy_and_network() {
+    fn network_nav_has_its_own_label() {
+        assert_eq!(settings_section_label(Locale::En, "network"), "Network");
+        assert_eq!(settings_section_label(Locale::Zh, "network"), "网络");
+    }
+
+    #[test]
+    fn network_search_aliases_match_network_not_general_or_models() {
         for query in ["proxy", "网络", "代理", "network"] {
             assert!(
                 settings_nav_entry_matches(
+                    query,
+                    "settings.nav.preferences",
+                    "network",
+                    aliases("network"),
+                    Locale::Zh
+                ),
+                "{query} should match Network in zh"
+            );
+            assert!(
+                settings_nav_entry_matches(
+                    query,
+                    "settings.nav.preferences",
+                    "network",
+                    aliases("network"),
+                    Locale::En
+                ),
+                "{query} should match Network in en"
+            );
+            assert!(
+                !settings_nav_entry_matches(
                     query,
                     "settings.nav.preferences",
                     "general",
                     aliases("general"),
                     Locale::Zh
                 ),
-                "{query} should match General in zh"
-            );
-            assert!(
-                settings_nav_entry_matches(
-                    query,
-                    "settings.nav.preferences",
-                    "general",
-                    aliases("general"),
-                    Locale::En
-                ),
-                "{query} should match General in en"
+                "{query} must not match General"
             );
             assert!(
                 !settings_nav_entry_matches(

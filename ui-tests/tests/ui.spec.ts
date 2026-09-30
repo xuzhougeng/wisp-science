@@ -15061,19 +15061,12 @@ for (const locale of ["en", "zh"]) {
     await python.fill("C:/Users/Researcher/" + "long-environment-directory/".repeat(12) + "python.exe");
     await python.scrollIntoViewIfNeeded();
     await expectInsideViewport(python, 820, 740);
-    for (const scope of ["model", "subscription", "mcp", "command"]) {
-      await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
-      const save = page.getByTestId(`save-proxy-${scope}`);
-      await save.evaluate(el => el.scrollIntoView({ block: "center" }));
-      await expectInsideViewport(save, 820, 740);
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    }
     expect(await pane.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`general-${locale}-narrow.png`) });
   });
 }
 
-test("general settings group workspace prefs, local environment, and network", async ({ page }) => {
+test("general keeps workspace prefs and local environment, and network is the next preferences item", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
   await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("General");
@@ -15082,10 +15075,14 @@ test("general settings group workspace prefs, local environment, and network", a
   await expect(page.getByTestId("max-iter")).toHaveCount(0);
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
   await expect(page.getByTestId("local-environment")).toBeVisible();
+  await expect(page.locator(".network-settings")).toHaveCount(0);
+  const preferences = page.locator(".settings-nav").getByRole("group").first();
+  await expect(preferences.locator("button")).toHaveText(["General", "Network", "Session", "Appearance", "Pet"]);
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("Network");
   await expect(page.getByTestId("network-proxy-model")).toBeVisible();
-  await expect(page.locator(".settings-nav").getByRole("button", { name: "Network", exact: true })).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.getByTestId("local-environment")).toHaveCount(0);
+  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.locator(".network-settings")).toHaveCount(0);
   await expect(page.getByTestId("models-category-http")).toBeVisible();
 });
@@ -15094,7 +15091,7 @@ test("network saves each proxy independently and preserves the legacy model prox
   await page.goto("/?mockLegacyProxy=http://127.0.0.1:7890");
   await openSettingsSection(page, "Models");
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
   await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://127.0.0.1:7890");
   await page.getByTestId("proxy-address-model").fill("");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("custom");
@@ -15118,10 +15115,10 @@ test("network saves each proxy independently and preserves the legacy model prox
   await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
     settings: { model_proxy_url: "", mcp_proxy_url: "none", command_proxy_url: "http://127.0.0.1:8080" },
   });
-  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-general").click();
   await page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".settings-page")).toHaveCount(0);
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("system");
   await expect(page.getByTestId("proxy-mode-mcp")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
@@ -15129,7 +15126,7 @@ test("network saves each proxy independently and preserves the legacy model prox
 
 test("subscription sign-in proxy saves independently from model proxy and survives reopening", async ({ page }) => {
   await page.goto("/?mockLegacyProxy=none");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-mode-subscription")).toHaveValue("system");
   await expect(page.getByTestId("network-proxy-subscription")).toContainText("ChatGPT / xAI");
@@ -15143,7 +15140,7 @@ test("subscription sign-in proxy saves independently from model proxy and surviv
   });
   await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://unsaved-model.test:8080");
   await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-address-subscription")).toHaveValue("http://localhost:7897");
   await page.getByTestId("network-proxy-subscription").getByRole("button", { name: "Clear", exact: true }).click();
@@ -15155,7 +15152,7 @@ test("subscription sign-in proxy saves independently from model proxy and surviv
 
 test("network package mirror saves guidance and Escape closes only its subpage", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("configure-package-mirrors").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("package-mirrors")).toHaveCount(0);
@@ -15192,9 +15189,9 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?mockLocale=zh&mockLegacyProxy=http://127.0.0.1:7890");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "常规", exact: true }).click();
-  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("常规");
-  await expect(page.locator(".network-heading h3")).toHaveText("网络");
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("网络");
+  await expect(page.locator(".network-heading h3")).toHaveCount(0);
   await page.locator(".network-settings").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("save-proxy-model")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-zh.png") });
@@ -15206,20 +15203,19 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 820, height: 740 });
   for (const scope of ["model", "subscription", "mcp", "command"]) {
-    await page.getByTestId(`network-proxy-${scope}`).scrollIntoViewIfNeeded();
-    if (scope === "model") {
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    } else {
-      await expect(page.getByTestId(`proxy-address-${scope}`)).toHaveCount(0);
-    }
-    await expectInsideViewport(page.getByTestId(`save-proxy-${scope}`), 820, 740);
+    await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
+    const save = page.getByTestId(`save-proxy-${scope}`);
+    await save.evaluate(el => el.scrollIntoView({ block: "center" }));
+    await expectInsideViewport(save, 820, 740);
+    await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
   }
+  expect(await page.getByTestId("network-settings-pane").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-narrow.png") });
 });
 
 test("network address fields appear only for custom proxies in every scope", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   for (const scope of ["model", "subscription", "mcp", "command"]) {
     const mode = page.getByTestId(`proxy-mode-${scope}`);
     const address = page.getByTestId(`proxy-address-${scope}`);
@@ -15251,7 +15247,7 @@ test("network address fields appear only for custom proxies in every scope", asy
 
 test("network shows validation errors without discarding the draft", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("proxy-mode-mcp").selectOption("custom");
   await page.getByTestId("save-proxy-mcp").click();
   await expect(page.getByRole("alert")).toContainText("Enter a proxy address");
@@ -15450,7 +15446,8 @@ test("a leftover proxy connect error points at General Network settings", async 
   const card = page.locator(".finding.err");
   await expect(card).toBeVisible();
   await expect(card.locator(".finding-title")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
-  await expect(card.locator(".finding-body")).toContainText("Settings → General → Network");
+  await expect(card.locator(".finding-body")).toContainText("Settings → Network");
+  await expect(card.locator(".finding-body")).not.toContainText("Settings → General → Network");
   await expect(card.locator(".finding-body")).toContainText("Direct");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → Models");
 });

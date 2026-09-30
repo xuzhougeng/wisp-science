@@ -139,7 +139,7 @@ indefinite device authorization. A 401 asks you to sign in again.
 See the [official authentication guide](https://learn.chatgpt.com/docs/auth)
 for account and device-code requirements.
 
-Subscription sign-in and token refresh use **Settings → General → Network →
+Subscription sign-in and token refresh use **Settings → Network →
 Subscription sign-in**. Model requests continue to use **Model API**, independently.
 The new sign-in setting defaults to System, including when upgrading a configuration
 that previously set Model API to Direct. Active sign-in attempts keep the client

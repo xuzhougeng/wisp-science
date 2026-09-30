@@ -119,23 +119,19 @@ pub(crate) fn NetworkSettingsView(settings: RwSignal<Settings>) -> impl IntoView
     });
     view! {
         <div class="network-settings">
-            <div class="network-heading">
-                <div class="settings-head-main">
-                    {move || if mirror_open.get() {
-                        view! {
-                            <button class="settings-head-back" type="button" aria-label=move || t(locale.get(), "settings.back")
-                                on:click=move |_| mirror_open.set(false)>{compose_icon("chevron-left")}</button>
-                            <div class="settings-breadcrumb">
-                                <button class="settings-crumb-link" type="button" on:click=move |_| mirror_open.set(false)>{move || t(locale.get(), "settings.nav.network")}</button>
-                                <span class="network-crumb-separator">{compose_icon("chevron-right")}</span>
-                                <span class="settings-crumb-current">{move || t(locale.get(), "network.mirrors")}</span>
-                            </div>
-                        }.into_view()
-                    } else {
-                        view! { <h3>{move || t(locale.get(), "settings.nav.network")}</h3> }.into_view()
-                    }}
+            {move || mirror_open.get().then(|| view! {
+                <div class="network-heading">
+                    <div class="settings-head-main">
+                        <button class="settings-head-back" type="button" aria-label=move || t(locale.get(), "settings.back")
+                            on:click=move |_| mirror_open.set(false)>{compose_icon("chevron-left")}</button>
+                        <div class="settings-breadcrumb">
+                            <button class="settings-crumb-link" type="button" on:click=move |_| mirror_open.set(false)>{move || t(locale.get(), "settings.nav.network")}</button>
+                            <span class="network-crumb-separator">{compose_icon("chevron-right")}</span>
+                            <span class="settings-crumb-current">{move || t(locale.get(), "network.mirrors")}</span>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            })}
             <div class="network-pane">
                 {move || error.get().map(|message| view! { <div class="settings-status fail" role="alert">{message}</div> })}
                 {move || status.get().then(|| view! { <div class="settings-status ok" role="status">{move || t(locale.get(), "network.saved")}</div> })}

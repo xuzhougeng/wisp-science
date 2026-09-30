@@ -2224,7 +2224,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "channels.messages_devices") => Some("Messages and devices"),
         (Locale::En, "settings.general.workspace") => Some("Workspace & interaction"),
         (Locale::En, "settings.general.notifications") => Some("Notifications & updates"),
-        (Locale::En, "settings.general.save_hint") => Some("Save the preferences above. Environment and network settings are saved separately."),
+        (Locale::En, "settings.general.save_hint") => Some("Save the preferences above. Local environment settings are saved separately."),
         (Locale::En, "settings.language") => Some("Language"),
         (Locale::En, "settings.language.en") => Some("English"),
         (Locale::En, "settings.language.zh") => Some("中文"),
@@ -2798,7 +2798,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.hint.model_name") => Some("The provider does not recognize the configured model name. Check the model name in Settings → Models."),
         (Locale::En, "err.hint.rate") => Some("Rate limited by the provider. Wait a moment and retry."),
         (Locale::En, "err.hint.server") => Some("The provider is temporarily overloaded or down. Retry in a bit."),
-        (Locale::En, "err.hint.network") => Some("Could not reach the model API. A closed proxy app often leaves the OS system proxy or HTTP_PROXY/HTTPS_PROXY pointing at a port that is not listening. Open Settings → General → Network, set Model API to Direct to connect without a proxy, or enter a proxy that is still running."),
+        (Locale::En, "err.hint.network") => Some("Could not reach the model API. A closed proxy app often leaves the OS system proxy or HTTP_PROXY/HTTPS_PROXY pointing at a port that is not listening. Open Settings → Network, set Model API to Direct to connect without a proxy, or enter a proxy that is still running."),
         (Locale::En, "err.hint.opencode_session") => Some("OpenCode requires x-opencode-session. In Request headers (advanced), enable Send conversation identifier and use this header name. Check that any forwarding proxy preserves the header."),
         (Locale::En, "err.hint.bad_request") => Some("The provider rejected the request. Common causes: the conversation is too long, or a message contains content this model does not support (e.g. images). Try /compact or another model."),
         (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Resume again after updating, or send /compact to repair the history."),
@@ -5162,7 +5162,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "channels.messages_devices") => Some("消息与设备"),
         (Locale::Zh, "settings.general.workspace") => Some("工作区与交互"),
         (Locale::Zh, "settings.general.notifications") => Some("通知与更新"),
-        (Locale::Zh, "settings.general.save_hint") => Some("保存以上偏好；本地环境和网络设置分别保存。"),
+        (Locale::Zh, "settings.general.save_hint") => Some("保存以上偏好；本地环境设置分别保存。"),
         (Locale::Zh, "settings.language") => Some("语言"),
         (Locale::Zh, "settings.language.en") => Some("English"),
         (Locale::Zh, "settings.language.zh") => Some("中文"),
@@ -5627,7 +5627,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.hint.model_name") => Some("服务商不识别所配置的模型名。请在 设置 → 模型 中核对模型名。"),
         (Locale::Zh, "err.hint.rate") => Some("请求过于频繁，被服务商限流。稍等片刻再重试。"),
         (Locale::Zh, "err.hint.server") => Some("服务商暂时过载或故障。请稍后重试。"),
-        (Locale::Zh, "err.hint.network") => Some("无法连接到模型 API。常见原因是本机代理软件已关闭，但操作系统仍保留系统代理，或残留 HTTP_PROXY/HTTPS_PROXY。请打开 设置 → 常规 → 网络，将「模型 API」设为「直连」，或填入仍在运行的代理地址。"),
+        (Locale::Zh, "err.hint.network") => Some("无法连接到模型 API。常见原因是本机代理软件已关闭，但操作系统仍保留系统代理，或残留 HTTP_PROXY/HTTPS_PROXY。请打开 设置 → 网络，将「模型 API」设为「直连」，或填入仍在运行的代理地址。"),
         (Locale::Zh, "err.hint.opencode_session") => Some("OpenCode 要求 x-opencode-session 会话头。请在“请求附加信息（高级）”中开启“附加会话标识”并使用此请求头名称，同时检查转发代理是否保留该请求头。"),
         (Locale::Zh, "err.hint.bad_request") => Some("请求被服务商拒绝。常见原因：对话过长，或消息包含该模型不支持的内容（如图片）。可尝试 /compact 或更换模型。"),
         (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「继续执行」，或发送 /compact 修复历史。"),
@@ -6856,14 +6856,16 @@ mod api_error_hint_tests {
         let msg = "http: error sending request: tcp connect error: Connection refused (os error 111) (via leftover HTTPS_PROXY=http://127.0.0.1:7890)";
         assert_eq!(hint_key(msg), Some(t(Locale::En, "err.hint.network")));
         let zh = localize_backend(Locale::Zh, msg);
-        assert!(zh.contains("设置 → 常规 → 网络"), "{zh}");
+        assert!(zh.contains("设置 → 网络"), "{zh}");
+        assert!(!zh.contains("设置 → 常规 → 网络"), "{zh}");
         assert!(zh.contains("直连"), "{zh}");
         assert!(
             !zh.contains("设置 → 模型 → 模型 API 代理"),
             "old Models path must not remain in the hint: {zh}"
         );
         let en = localize_backend(Locale::En, msg);
-        assert!(en.contains("Settings → General → Network"), "{en}");
+        assert!(en.contains("Settings → Network"), "{en}");
+        assert!(!en.contains("Settings → General → Network"), "{en}");
         assert!(en.contains("Direct"), "{en}");
         let system = "http: error sending request: tunnel error: Connection refused (os error 61) (via system proxy http://127.0.0.1:10080)";
         assert_eq!(hint_key(system), Some(t(Locale::En, "err.hint.network")));
@@ -6872,7 +6874,8 @@ mod api_error_hint_tests {
             zh_system.contains("via system proxy http://127.0.0.1:10080"),
             "{zh_system}"
         );
-        assert!(zh_system.contains("设置 → 常规 → 网络"), "{zh_system}");
+        assert!(zh_system.contains("设置 → 网络"), "{zh_system}");
+        assert!(!zh_system.contains("设置 → 常规 → 网络"), "{zh_system}");
     }
 
     #[test]

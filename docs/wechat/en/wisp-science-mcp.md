@@ -133,7 +133,7 @@ After changing connections, validate in a new session to avoid an older agent's 
 | Test succeeds but no tool is called | Saved and enabled connection; new session with its name and a specific task |
 | Tools are listed but a query fails | Actual call error, parameters, permissions, quota, or upstream status |
 
-For proxies, check **Settings → General → Network** for MCP settings. Existing connections need to reconnect; whether a local MCP process honors proxy variables also depends on that service.
+For proxies, check **Settings → Network** for MCP settings. Existing connections need to reconnect; whether a local MCP process honors proxy variables also depends on that service.
 
 Start with a familiar small task: five papers, a public webpage, or a note search. Inspect the called tool and returned results, then continue from those results to build a useful research workflow.
 
