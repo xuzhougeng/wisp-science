@@ -431,6 +431,20 @@ wisp-science/
 ## Testing
 
 - **Rust unit tests** — `cargo test --workspace`
+- **Windows desktop dependency upgrades** — run
+  `cargo check --locked -p wisp-tauri --all-targets --target x86_64-pc-windows-msvc`
+  to cover the desktop, tests, and every native smoke example with isolated target
+  features. Tauri 2.12, opener 2.7, and `tauri-winrt-notification` 0.8.1 use
+  `windows` 0.62; `notify-rust` 4.18.1 also routes the notification plugin through
+  the same WinRT dependency. Keep the existing `vendor/tao` redraw fix when updating plugins.
+  For opener/notification changes, manually check opening a URL/file, revealing
+  a file in Explorer, and clicking a notification while its owning project
+  window is hidden or minimized. The click must restore that window and open
+  the notification's session without navigating other project windows. Include
+  Chinese text and XML-sensitive characters (`&`, `<`, `>`) in the notification.
+  Run `webview_recovery_smoke` and `mcp_app_isolation_smoke` on Windows to cover
+  real WebView IPC and renderer isolation; mocked Playwright tests do not cover
+  native shell integration or toast activation.
 - **MCP client smoke** — `cargo run -p wisp-mcp --example smoke` launches the
   bundled mock MCP server via `uv` and round-trips `tools/list` + `tools/call`.
 - **UI E2E (Playwright + Tauri mock)** — `ui-tests/` runs the Leptos UI in a

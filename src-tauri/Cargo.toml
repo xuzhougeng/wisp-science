@@ -24,7 +24,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 tauri = { version = "2", features = ["devtools", "tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-opener = "2"
+tauri-plugin-opener = "2.7"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 serde = { workspace = true }
@@ -81,7 +81,7 @@ futures-util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
-tauri-winrt-notification = "0.7.3"
+tauri-winrt-notification = "0.8.1"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_DataExchange",
