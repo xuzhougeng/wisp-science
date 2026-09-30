@@ -126,3 +126,11 @@ For the research-workbench roadmap, use this ordering:
 3. Workspace Manifest v1: typed project layout, save/register APIs for scripts/data/results/literature/figures.
 4. Research Graph v0: link questions, decisions, data assets, runs, artifacts, and papers.
 5. UI integration: contexts panel, runs timeline, artifact/data/literature side panels.
+
+## Cursor Cloud specific instructions
+
+Linux compiles of `src-tauri` need `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, and `libdbus-1-dev` (keyring). Reinstall those packages with `Dpkg::Options::=--force-confdef` and `--force-confold`; otherwise `fuse3` stops on the existing `/etc/fuse.conf`.
+
+`rust-toolchain.toml` selects stable Rust plus `wasm32-unknown-unknown`, rustfmt, and clippy. UI builds need `trunk` (`cargo install trunk --locked`). `cargo tauri` needs Tauri CLI v2. `uv` must be on `PATH` for `cargo run -p wisp-mcp --example smoke`.
+
+`cargo run -p wisp-cli -- eval` is the offline agent check and needs no API key. UI behavior is `cd ui-tests && npx playwright test` (it starts Trunk). `cargo tauri dev` opens a native window and needs a graphical session. If the `src-tauri` build cannot reach `https://models.dev/api.json`, set `WISP_CATALOG_OFFLINE=1`.
