@@ -3673,3 +3673,39 @@ body { font-size: var(--ui-font-size, 14px); }
 .subscription-model-row > button:hover, .subscription-model-edit:hover { background: var(--bg-hover); }
 .subscription-model-edit { padding: 8px 6px; border-radius: 8px; font: inherit; color: var(--text); cursor: pointer; }
 .subscription-login { max-width: 920px; margin-inline: auto; }
+.subscription-account-actions { flex-wrap: wrap; }
+
+/* ChatGPT account pool: one active account, per-account quota windows. */
+.codex-accounts { margin-top: 16px; }
+.codex-accounts-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.codex-accounts-heading h4 { margin: 0; font-size: 13px; }
+.codex-usage-refresh, .codex-account-actions button {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 12px; padding: 6px 12px;
+  color: var(--text); background: var(--bg-input);
+  border: 1px solid var(--border-strong); border-radius: 8px; cursor: pointer;
+}
+.codex-usage-refresh:hover, .codex-account-actions button:hover:not(:disabled) { background: var(--bg-hover); }
+.codex-usage-refresh svg, .codex-account-actions svg { width: 14px; height: 14px; }
+.codex-account-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border); }
+.codex-account-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.codex-account-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.codex-account-title strong { overflow-wrap: anywhere; }
+.codex-account-plan { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-muted); }
+.codex-account-id { font-size: 12px; overflow-wrap: anywhere; }
+.codex-account-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.codex-account-remove { padding: 6px 8px; }
+.codex-usage { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.codex-usage p { margin: 0; }
+.codex-usage-meter { display: grid; grid-template-columns: minmax(96px, max-content) minmax(80px, 220px) 1fr; align-items: center; gap: 10px; font-size: 12px; }
+.codex-usage-label { color: var(--text-muted); }
+.codex-usage-bar { height: 6px; border-radius: 999px; background: var(--bg-input); border: 1px solid var(--border); overflow: hidden; }
+.codex-usage-bar > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.codex-usage-meter.warn .codex-usage-bar > span { background: #d97706; }
+.codex-usage-meter.full .codex-usage-bar > span { background: #dc2626; }
+.codex-usage-value { color: var(--text-muted); overflow-wrap: anywhere; }
+.codex-limit-badge { align-self: flex-start; font-size: 11px; padding: 2px 8px; border-radius: 999px; color: #b91c1c; background: color-mix(in srgb, #dc2626 12%, transparent); }
+@media (max-width: 700px) {
+  .codex-account-row { flex-wrap: wrap; }
+  .codex-usage-meter { grid-template-columns: 1fr; gap: 4px; }
+}

@@ -277,6 +277,10 @@ pub(super) enum DeleteConfirm {
         label: String,
         detail: String,
     },
+    CodexAccount {
+        id: String,
+        label: String,
+    },
 }
 
 impl DeleteConfirm {
@@ -286,7 +290,8 @@ impl DeleteConfirm {
             | DeleteConfirm::Acp { label, .. }
             | DeleteConfirm::Plugin { label, .. }
             | DeleteConfirm::Skill { label, .. }
-            | DeleteConfirm::Host { label, .. } => label,
+            | DeleteConfirm::Host { label, .. }
+            | DeleteConfirm::CodexAccount { label, .. } => label,
         }
     }
 }
@@ -1089,8 +1094,11 @@ fn codex_login_pane(
                     "codex.login.browser_hint"
                 })}</p>
                 {move || codex_login.get().filter(|form| !form.saved_account.is_empty()).map(|form| view! {
-                    <p class="subscription-status" data-testid="codex-saved-account">{t(locale.get(), "subscriptions.signed_in")}" · "{form.saved_account}</p>
+                    <p class="subscription-status" data-testid="codex-saved-account">{t(locale.get(), if form.provider == "codex" { "subscriptions.active_account" } else { "subscriptions.signed_in" })}" · "{form.saved_account}</p>
                 })}
+                <Show when=move || provider() == "codex">
+                    <p class="hint" data-testid="codex-add-account-hint">{move || t(locale.get(), "subscriptions.add_account_hint")}</p>
+                </Show>
                 {move || {
                     let form = codex_login.get();
                     let code = form.as_ref().map(|form| form.user_code.clone()).unwrap_or_default();
@@ -1153,7 +1161,7 @@ fn codex_login_pane(
                     } on:click=start>
                         {move || t(locale.get(), if codex_login.get().is_some_and(|form| form.status == "pending") {
                             login_key(&provider(), "codex.login.waiting")
-                        } else if codex_login.get().is_some_and(|form| form.status == "success" || !form.saved_account.is_empty()) {
+                        } else if codex_login.get().is_some_and(|form| form.status == "success" || (form.provider != "codex" && !form.saved_account.is_empty())) {
                             "codex.login.again"
                         } else {
                             "codex.login.start"
@@ -1206,6 +1214,183 @@ fn codex_login_pane(
                 </Show>
             </div>
         </div>
+    }
+}
+
+/// Compact time until a quota window resets.
+fn reset_in(seconds: i64, locale: Locale) -> String {
+    let minutes = (seconds.max(0) + 59) / 60;
+    let (days, hours, mins) = (minutes / 1440, minutes % 1440 / 60, minutes % 60);
+    let (d, h, m, sep) = match locale {
+        Locale::Zh => ("天", "小时", "分钟", ""),
+        Locale::En => ("d", "h", "m", " "),
+    };
+    match (days, hours) {
+        (0, 0) => format!("{mins}{m}"),
+        (0, _) => format!("{hours}{h}{sep}{mins}{m}"),
+        _ => format!("{days}{d}{sep}{hours}{h}"),
+    }
+}
+
+fn usage_window_label(window_seconds: i64, locale: Locale) -> String {
+    match window_seconds {
+        s if s > 0 && s % 86_400 == 0 => tf(
+            locale,
+            "subscriptions.usage_days",
+            &[("n", &(s / 86_400).to_string())],
+        ),
+        s if s > 0 => tf(
+            locale,
+            "subscriptions.usage_hours",
+            &[("n", &((s + 1_799) / 3_600).max(1).to_string())],
+        ),
+        _ => t(locale, "subscriptions.usage_limit"),
+    }
+}
+
+fn plan_label(plan: &str) -> String {
+    let mut chars = plan.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+fn codex_usage_meter(locale: Locale, window: codex_login::CodexUsageWindow) -> impl IntoView {
+    let used = window.used_percent.round().clamp(0.0, 100.0) as u32;
+    let label = usage_window_label(window.window_seconds, locale);
+    let now = (js_sys::Date::now() / 1000.0) as i64;
+    let reset = (window.reset_at > 0).then(|| {
+        tf(
+            locale,
+            "subscriptions.usage_resets",
+            &[("time", &reset_in(window.reset_at - now, locale))],
+        )
+    });
+    view! {
+        <div class="codex-usage-meter" class:warn={used >= 80} class:full={used >= 100} data-testid="codex-usage-meter">
+            <span class="codex-usage-label">{label.clone()}</span>
+            <div class="codex-usage-bar" role="progressbar" aria-label=label
+                aria-valuemin="0" aria-valuemax="100" aria-valuenow=used.to_string()>
+                <span style:width=format!("{used}%")></span>
+            </div>
+            <span class="codex-usage-value">
+                {tf(locale, "subscriptions.usage_used", &[("n", &used.to_string())])}
+                {reset.map(|reset| format!(" · {reset}"))}
+            </span>
+        </div>
+    }
+}
+
+/// Saved ChatGPT accounts with their quota; one is active for every ChatGPT model.
+#[allow(clippy::too_many_arguments)]
+fn codex_accounts_panel(
+    locale: RwSignal<Locale>,
+    accounts: RwSignal<Vec<codex_login::CodexAccount>>,
+    usage: RwSignal<HashMap<String, Result<codex_login::CodexAccountUsage, String>>>,
+    message: RwSignal<Option<(bool, String)>>,
+    settings_busy: RwSignal<bool>,
+    delete_confirm: RwSignal<Option<DeleteConfirm>>,
+    load_usage: Callback<Vec<String>>,
+) -> impl IntoView {
+    let switch = move |account_id: String| {
+        if settings_busy.get_untracked() {
+            return;
+        }
+        settings_busy.set(true);
+        message.set(None);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "accountId": account_id })).unwrap();
+            match invoke_checked("switch_codex_account", arg)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<Vec<codex_login::CodexAccount>>(value)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(list) => accounts.set(list),
+                Err(error) => message.set(Some((false, error))),
+            }
+            settings_busy.set(false);
+        });
+    };
+    let all_ids = move || {
+        accounts
+            .get_untracked()
+            .into_iter()
+            .map(|account| account.account_id)
+            .collect::<Vec<_>>()
+    };
+    view! {
+        <section class="codex-accounts" data-testid="codex-accounts">
+            <Show when=move || !accounts.get().is_empty()>
+                <div class="codex-accounts-heading">
+                    <h4>{move || tf(locale.get(), "subscriptions.accounts", &[("n", &accounts.get().len().to_string())])}</h4>
+                    <button type="button" class="codex-usage-refresh" data-testid="codex-usage-refresh"
+                        on:click=move |_| load_usage.call(all_ids())>
+                        {compose_icon("refresh")}
+                        <span>{move || t(locale.get(), "subscriptions.usage_refresh")}</span>
+                    </button>
+                </div>
+            </Show>
+            {move || message.get().map(|(ok, text)| view! {
+                <div class="settings-status" class:ok=ok class:fail=!ok role="status" data-testid="codex-accounts-message">{text}</div>
+            })}
+            <For each=move || accounts.get() key=|account| (account.account_id.clone(), account.active, account.email.clone(), account.plan_type.clone()) let:account>
+                {
+                    let id = account.account_id.clone();
+                    let title = if account.email.is_empty() { account.account_id.clone() } else { account.email.clone() };
+                    let subtitle = (!account.email.is_empty()).then(|| account.account_id.clone());
+                    let plan = plan_label(&account.plan_type);
+                    let pick = id.clone();
+                    let remove = (id.clone(), title.clone());
+                    let usage_id = id.clone();
+                    view! {
+                        <div class="codex-account-row" class:active=account.active data-testid="codex-account" data-account-id=id.clone()>
+                            <div class="codex-account-main">
+                                <div class="codex-account-title">
+                                    <strong>{title}</strong>
+                                    {(!plan.is_empty()).then(|| view! { <span class="codex-account-plan">{plan}</span> })}
+                                    {account.active.then(|| view! {
+                                        <span class="settings-model-default" data-testid="codex-account-active">{move || t(locale.get(), "subscriptions.active_account")}</span>
+                                    })}
+                                </div>
+                                {subtitle.map(|subtitle| view! { <span class="hint codex-account-id">{subtitle}</span> })}
+                                {move || match usage.get().get(&usage_id).cloned() {
+                                    None => view! { <p class="hint" data-testid="codex-usage-loading">{t(locale.get(), "subscriptions.usage_loading")}</p> }.into_view(),
+                                    Some(Err(error)) => view! { <p class="settings-status fail" data-testid="codex-usage-error">{error}</p> }.into_view(),
+                                    Some(Ok(report)) => {
+                                        let loc = locale.get();
+                                        let windows: Vec<_> = [report.primary, report.secondary].into_iter().flatten().collect();
+                                        view! {
+                                            <div class="codex-usage" data-testid="codex-usage">
+                                                {report.limit_reached.then(|| view! { <span class="codex-limit-badge" data-testid="codex-limit-reached">{t(loc, "subscriptions.limit_reached")}</span> })}
+                                                {windows.is_empty().then(|| view! { <p class="hint">{t(loc, "subscriptions.usage_none")}</p> })}
+                                                {windows.into_iter().map(|window| codex_usage_meter(loc, window)).collect_view()}
+                                            </div>
+                                        }.into_view()
+                                    }
+                                }}
+                            </div>
+                            {(!account.active).then(|| view! {
+                                <div class="codex-account-actions">
+                                    <button type="button" data-testid="codex-account-use" disabled=move || settings_busy.get()
+                                        on:click=move |_| switch(pick.clone())>
+                                        {move || t(locale.get(), "subscriptions.switch_account")}
+                                    </button>
+                                    <button type="button" class="codex-account-remove" data-testid="codex-account-remove"
+                                        title=move || t(locale.get(), "subscriptions.remove_account")
+                                        aria-label=move || t(locale.get(), "subscriptions.remove_account")
+                                        on:click=move |_| delete_confirm.set(Some(DeleteConfirm::CodexAccount { id: remove.0.clone(), label: remove.1.clone() }))>
+                                        {compose_icon("trash")}
+                                    </button>
+                                </div>
+                            })}
+                        </div>
+                    }
+                }
+            </For>
+        </section>
     }
 }
 
@@ -2267,6 +2452,72 @@ pub(super) fn SettingsView(
     let subscription_status =
         create_rw_signal(std::collections::HashMap::<String, Result<bool, String>>::new());
     let subscription_status_gen = create_rw_signal(0u64);
+    let codex_accounts = create_rw_signal(Vec::<codex_login::CodexAccount>::new());
+    let codex_usage = create_rw_signal(HashMap::<
+        String,
+        Result<codex_login::CodexAccountUsage, String>,
+    >::new());
+    let codex_account_msg = create_rw_signal(None::<(bool, String)>);
+    let load_codex_usage = Callback::new(move |ids: Vec<String>| {
+        let generation = subscription_status_gen.get_untracked();
+        codex_usage.update(|usage| usage.retain(|id, _| !ids.contains(id)));
+        ids.into_iter().for_each(|id| {
+            spawn_local(async move {
+                let arg = to_value(&serde_json::json!({ "accountId": id })).unwrap();
+                let report = invoke_checked("codex_account_usage", arg)
+                    .await
+                    .map_err(js_error_text)
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<codex_login::CodexAccountUsage>(value)
+                            .map_err(|error| error.to_string())
+                    });
+                if subscription_status_gen.get_untracked() == generation {
+                    codex_usage.update(|usage| {
+                        usage.insert(id, report);
+                    });
+                }
+            });
+        });
+    });
+    let import_codex_local = move |_| {
+        if settings_busy.get_untracked() {
+            return;
+        }
+        settings_busy.set(true);
+        codex_account_msg.set(None);
+        spawn_local(async move {
+            match invoke_checked("import_local_codex_accounts", JsValue::UNDEFINED)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<codex_login::CodexImportResult>(value)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(result) => {
+                    let ids = result
+                        .accounts
+                        .iter()
+                        .map(|account| account.account_id.clone())
+                        .collect();
+                    codex_accounts.set(result.accounts);
+                    subscription_status.update(|statuses| {
+                        statuses.insert("codex".into(), Ok(true));
+                    });
+                    codex_account_msg.set(Some((
+                        true,
+                        tf(
+                            locale.get_untracked(),
+                            "subscriptions.imported",
+                            &[("n", &result.imported.to_string())],
+                        ),
+                    )));
+                    load_codex_usage.call(ids);
+                }
+                Err(error) => codex_account_msg.set(Some((false, error))),
+            }
+            settings_busy.set(false);
+        });
+    };
     create_effect(move |_| {
         let visible = show_settings.get()
             && settings_section.get() == "models"
@@ -2276,6 +2527,24 @@ pub(super) fn SettingsView(
         if visible {
             let generation = subscription_status_gen.get_untracked();
             subscription_status.set(Default::default());
+            codex_account_msg.set(None);
+            spawn_local(async move {
+                let Ok(Ok(list)) = invoke_checked("list_codex_accounts", JsValue::UNDEFINED)
+                    .await
+                    .map(serde_wasm_bindgen::from_value::<Vec<codex_login::CodexAccount>>)
+                else {
+                    return;
+                };
+                if subscription_status_gen.get_untracked() != generation {
+                    return;
+                }
+                let ids = list
+                    .iter()
+                    .map(|account| account.account_id.clone())
+                    .collect();
+                codex_accounts.set(list);
+                load_codex_usage.call(ids);
+            });
             for provider in ["codex", "xai"] {
                 spawn_local(async move {
                     let status = invoke_checked(
@@ -4786,14 +5055,26 @@ pub(super) fn SettingsView(
                                                             None => "subscriptions.loading", Some(Ok(true)) => "subscriptions.signed_in", Some(Ok(false)) => "subscriptions.signed_out", Some(Err(_)) => "subscriptions.status_error",
                                                         })}</span>
                                                     </div>
-                                                    <div class="row">
+                                                    <div class="row subscription-account-actions">
                                                         <button type="button" data-testid=format!("add-{provider}-login") on:click=move |_| {
                                                             open_codex_login.call((provider.into(), String::new(), String::new(), String::new(), true));
-                                                        }>{move || t(locale.get(), if subscription_status.get().get(provider) == Some(&Ok(true)) { "subscriptions.manage" } else { "codex.login.start" })}</button>
+                                                        }>{move || t(locale.get(), match (provider, subscription_status.get().get(provider) == Some(&Ok(true))) {
+                                                            (_, false) => "codex.login.start",
+                                                            ("codex", true) => "subscriptions.add_account",
+                                                            _ => "subscriptions.manage",
+                                                        })}</button>
+                                                        {(provider == "codex").then(|| view! {
+                                                            <button type="button" data-testid="import-codex-local" disabled=move || settings_busy.get()
+                                                                title=move || t(locale.get(), "subscriptions.import_local_hint")
+                                                                on:click=import_codex_local>
+                                                                {move || t(locale.get(), "subscriptions.import_local")}
+                                                            </button>
+                                                        })}
                                                         <button type="button" class="primary" data-testid=format!("add-{provider}-model") disabled=move || subscription_status.get().get(provider) != Some(&Ok(true)) on:click=move |_| {
                                                             open_codex_login.call((provider.into(), String::new(), String::new(), String::new(), false));
                                                         }>{move || t(locale.get(), "subscriptions.add_model")}</button>
                                                     </div>
+                                                    {(provider == "codex").then(|| codex_accounts_panel(locale, codex_accounts, codex_usage, codex_account_msg, settings_busy, delete_confirm, load_codex_usage))}
                                                     <div class="subscription-models">
                                                         <Show when=move || !models.get().iter().any(|m| settings_provider_value(&m.provider) == profile_provider)>
                                                             <p class="hint">{move || t(locale.get(), "subscriptions.empty")}</p>
@@ -7861,6 +8142,7 @@ pub(super) fn SettingsView(
                 let is_plugin = matches!(target, DeleteConfirm::Plugin { .. });
                 let is_skill = matches!(target, DeleteConfirm::Skill { .. });
                 let is_host = matches!(target, DeleteConfirm::Host { .. });
+                let is_codex_account = matches!(target, DeleteConfirm::CodexAccount { .. });
                 let host_detail = match &target {
                     DeleteConfirm::Host { detail, .. } => Some(detail.clone()),
                     _ => None,
@@ -7871,6 +8153,8 @@ pub(super) fn SettingsView(
                     ("skills.remove_confirm", "skill", "skills.remove", "skill-remove-confirm")
                 } else if is_host {
                     ("hosts.remove_confirm", "host", "environments.remove", "host-remove-confirm")
+                } else if is_codex_account {
+                    ("subscriptions.remove_account_confirm", "account", "subscriptions.remove_account", "codex-account-remove-confirm")
                 } else {
                     ("models.remove_confirm", "model", "models.remove", "model-delete-confirm")
                 };
@@ -7927,6 +8211,20 @@ pub(super) fn SettingsView(
                                             }
                                             DeleteConfirm::Host { alias, .. } => {
                                                 remove_ssh_host.call(alias);
+                                            }
+                                            DeleteConfirm::CodexAccount { id, .. } => {
+                                                let arg = to_value(&serde_json::json!({ "accountId": id })).unwrap();
+                                                match invoke_checked("remove_codex_account", arg)
+                                                    .await
+                                                    .map_err(js_error_text)
+                                                    .and_then(|value| serde_wasm_bindgen::from_value::<Vec<codex_login::CodexAccount>>(value).map_err(|error| error.to_string()))
+                                                {
+                                                    Ok(list) => {
+                                                        codex_usage.update(|usage| { usage.remove(&id); });
+                                                        codex_accounts.set(list);
+                                                    }
+                                                    Err(error) => codex_account_msg.set(Some((false, error))),
+                                                }
                                             }
                                             DeleteConfirm::Skill { name, .. } => {
                                                 let arg = to_value(&serde_json::json!({ "name": name })).unwrap();
