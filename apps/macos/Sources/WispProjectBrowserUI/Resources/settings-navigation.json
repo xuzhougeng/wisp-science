@@ -4,7 +4,14 @@
     "en": "General",
     "group": "基础偏好",
     "group_en": "Preferences",
-    "aliases": "notifications updates language network proxy 通知 更新 语言 网络 代理"
+    "aliases": "notifications updates language 通知 更新 语言"
+  },
+  "network": {
+    "zh": "网络",
+    "en": "Network",
+    "group": "基础偏好",
+    "group_en": "Preferences",
+    "aliases": "network proxy mirror 网络 代理 镜像"
   },
   "session": {
     "zh": "对话",

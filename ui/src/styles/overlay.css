@@ -15,7 +15,7 @@
 .ctx-item {
   display: block; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: var(--radius-xs);
-  padding: 8px 10px; font: inherit; font-size: 13px; color: var(--text);
+  padding: 8px 10px; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text);
   cursor: pointer;
 }
 .ctx-item:hover { background: var(--bg-input); }
@@ -23,7 +23,7 @@
 .ctx-item.danger:hover { background: color-mix(in srgb, var(--err) 10%, var(--bg-input)); }
 .ctx-submenu-trigger { display: flex; align-items: center; gap: 12px; }
 .ctx-item-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctx-submenu-chevron { flex: none; color: var(--text-faint); font-size: 17px; line-height: 1; }
+.ctx-submenu-chevron { flex: none; color: var(--text-faint); font-size: calc(17px * var(--ui-font-scale, 1)); line-height: 1; }
 .ctx-submenu-menu { z-index: 122; }
 .onboard-overlay .onboard { max-width: 520px; max-height: calc(100dvh - 40px); overflow: hidden; text-align: center; }
 /* The dialog receives programmatic focus for Enter; controls keep their focus rings. */
@@ -33,14 +33,14 @@
 .onboard-content > * { flex-shrink: 0; }
 .onboard-dots, .onboard > .row { flex-shrink: 0; }
 .onboard h2 { text-align: center; }
-.onboard .hint { text-align: center; font-size: 13.5px; line-height: 1.55; }
+.onboard .hint { text-align: center; font-size: calc(13.5px * var(--ui-font-scale, 1)); line-height: 1.55; }
 .onboard-dots { display: flex; justify-content: center; gap: 8px; }
 .onboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .onboard-dot.active { background: var(--clay); }
-.onboard-getkey { align-self: flex-start; font-size: 12.5px; }
+.onboard-getkey { align-self: flex-start; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 /* Two numbered sub-steps on the model page: get a key, then paste it. */
 .onboard-steps { text-align: left; margin: 6px 0 2px; padding-left: 22px; display: flex; flex-direction: column; gap: 14px; }
-.onboard-steps li::marker { color: var(--text-faint); font-size: 13px; }
+.onboard-steps li::marker { color: var(--text-faint); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .onboard-steps .hint { text-align: left; margin: 0 0 6px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -50,7 +50,7 @@
 /* Optional path discovery is shared by onboarding and model settings. */
 .local-environment { padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; margin: 12px 0; min-width: 0; }
 .local-environment h3 { margin: 0 0 8px; }
-.environment-paths { margin: 10px 0; font-size: 12px; }
+.environment-paths { margin: 10px 0; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .environment-paths > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
 .environment-paths dt { font-weight: 600; }
 .environment-paths dd { margin: 0; overflow-wrap: anywhere; }
@@ -58,7 +58,7 @@
 .local-environment button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; }
 .local-environment button:disabled { opacity: .6; cursor: default; }
 .onboard .local-environment { text-align: left; }
-.onboard .local-environment .hint { text-align: left; font-size: 12px; }
+.onboard .local-environment .hint { text-align: left; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .onboard .local-environment { border: 0; padding: 0; margin: 0; }
 .environment-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .environment-paths input { width: 100%; min-width: 0; padding: 6px 8px; background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; }

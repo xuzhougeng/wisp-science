@@ -112,7 +112,7 @@ This only tests basic conversation. It does not test file access, Python/R, web 
 | The model picker has no usable model | Was the configuration saved, and has the current session selected it? |
 | 401 / 403 | API key, model permissions, and account status |
 | 404 or an HTML page in the response | Whether the API address, protocol, and model ID match |
-| Connection failure or timeout | Connectivity to the provider and the model API proxy under Settings → General → Network |
+| Connection failure or timeout | Connectivity to the provider and the model API proxy under Settings → Network |
 | Python/R is missing | Complete the text-only test first; configure an interpreter when you need code execution |
 
 After the first conversation, follow the tutorials that match your task: [Models](wisp-science-models.md) for API access, [Browser](wisp-science-browser.md) for webpages, and [MCP](wisp-science-mcp.md) and [Skills](wisp-science-skills.md) for research tools and reusable methods. Read [Server Environment Setup](wisp-science-servers-cli.md) when you need another machine.

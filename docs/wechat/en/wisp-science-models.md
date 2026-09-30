@@ -103,7 +103,7 @@ Verify visible information before moving to scientific interpretation. If the pr
 | --- | --- |
 | 401 / 403 | Key validity, enabled API access, and permission for this model |
 | 404 or webpage content | Base URL, protocol, model ID, and whether a website homepage was entered by mistake |
-| Timeout or connection failure | Connectivity and the model API proxy in Settings → General → Network |
+| Timeout or connection failure | Connectivity and the model API proxy in Settings → Network |
 | Validation succeeds but a task fails | Support for the task's tool calls, image input, or response length |
 | Context limit exceeded | Try `/compact`, or start a new session explaining what should be continued |
 | Reply is cut off | Check maximum output, use Resume if appropriate, or reduce the scope of this request |

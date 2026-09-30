@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { tauriMock } from "./mock-tauri";
+import { openSidebarEntry } from "./sidebar-nav";
 
 const image = readFileSync(resolve(__dirname, "../fixtures/research-comparison.png")).toString("base64");
 test.use({ timezoneId: "Asia/Shanghai" });
@@ -13,7 +14,7 @@ test.beforeEach(async ({ page }) => {
 async function open(page: Page, query = "") {
   await page.goto(`/${query}`);
   await page.locator(".proj-card-main").first().click();
-  await page.locator(".sidebar").getByRole("button", { name: /Research journey|研究历程/, exact: true }).click();
+  await openSidebarEntry(page, /Research journey|研究历程/);
   await expect(page.getByTestId("research-journey")).toBeVisible();
 }
 
@@ -42,7 +43,7 @@ for (const route of ["sidebar", "command palette"]) {
     await page.getByRole("button", { name: "Back to projects", exact: true }).click();
     await page.locator(".proj-card-main").first().click();
     await expect(journey).toHaveCount(0);
-    await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+    await openSidebarEntry(page, "Research journey");
     await expect(journey).toBeVisible();
     await expect(journey.locator(".journey-day")).toHaveCount(3);
     await page.keyboard.press("Escape");
@@ -90,7 +91,7 @@ for (const platform of ["Windows NT 10.0; Win64; x64", "Macintosh; Intel Mac OS 
 test("Chinese research journey naming is consistent across navigation and page controls", async ({ page }) => {
   await open(page, "?mockLocale=zh&mockJourney=design");
   const journey = page.getByTestId("research-journey");
-  await expect(page.locator(".sidebar").getByRole("button", {name:"研究历程",exact:true})).toBeVisible();
+  await expect(page.locator('.sidebar .nav .side-btn[title="研究历程"]')).toHaveCount(1);
   await expect(journey).toHaveAttribute("aria-label", "研究历程");
   await expect(journey.getByRole("heading", {name:"研究历程",exact:true})).toBeVisible();
   await expect(journey.locator(".journey-breadcrumb")).toContainText("研究历程");
@@ -227,7 +228,7 @@ test("manual backdated notes persist across reopening and show recording dates",
   await expect(journey.getByTestId("journey-source")).toContainText("Added on 2026-09-09");
   await expect(journey.getByTestId("journey-source")).not.toContainText("12:00");
   await page.keyboard.press("Escape");
-  await page.locator(".sidebar").getByRole("button", {name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await page.getByRole("button", {name:"Previous month"}).click();
   await expect(page.getByTestId("journey-feed")).toContainText("Baseline sensitivity observed");
 });
@@ -237,7 +238,7 @@ test("read and save errors stay recoverable without losing entry text", async ({
   await expect(page.getByRole("alert")).toContainText("Research store unavailable");
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await page.locator(".sidebar").getByRole("button",{name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await page.getByRole("button",{name:"Add entry",exact:true}).click();
   await page.getByLabel("Title",{exact:true}).fill("Do not lose this note");
   await page.evaluate(()=>{(window as any).__journeySaveError=true;});
@@ -313,7 +314,7 @@ test("closing during a history request does not resurrect the page", async ({ pa
   await page.getByRole("button",{name:"Previous month"}).click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("research-journey")).toHaveCount(0);
-  await page.getByRole("button",{name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await expect(page.getByTestId("journey-calendar")).toContainText("2026 / 09");
   await expect(page.locator(".journey-day")).toHaveCount(3);
   expect(errors).toEqual([]);

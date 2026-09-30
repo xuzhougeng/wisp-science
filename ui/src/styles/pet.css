@@ -68,7 +68,7 @@ html.pet-window-shell body {
   background: rgba(252, 250, 246, .9);
   box-shadow: 0 3px 10px rgba(20, 23, 28, .13);
   color: #34383e;
-  font: 600 10px/1.35 "Segoe UI Variable", "Segoe UI", sans-serif;
+  font: 600 calc(10px * var(--ui-font-scale, 1))/1.35 "Segoe UI Variable", "Segoe UI", sans-serif;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-align: center;

@@ -1,7 +1,8 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { tauriMock, parallelMock, parallelReplyTailText } from "./mock-tauri";
+import { openSidebarEntry } from "./sidebar-nav";
 import { expectPrimaryButton } from "./button-style";
 
 const officeFixtures = {
@@ -3046,9 +3047,12 @@ test("command palette arrows move inside the window and scroll only at the edge"
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
   await enterApp(page);
   const bell = page.locator(".inbox-wrap .icon-btn");
-  await expect(bell.locator(".inbox-badge")).toHaveText("1");
+  // Another project's session is listed but must not badge this window.
+  await expect(bell).toHaveAttribute("title", "0 need you");
+  await expect(bell.locator(".inbox-badge")).toHaveCount(0);
   await bell.click();
   const item = page.locator(".inbox-item");
+  await expect(page.locator(".inbox-drop .inbox-title").nth(1)).toHaveText("Other projects");
   await expect(item).toContainText("Other project");
   await expect(item).toContainText("Cross-project counts");
   await page.keyboard.press("Escape");
@@ -6964,12 +6968,12 @@ test("auto-review stays with the session that enabled it", async ({ page }) => {
 
 test("research relationships remain available inside the daily journey", async ({ page }) => {
   await enterApp(page);
-  await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+  await openSidebarEntry(page, "Research journey");
   const journey = page.getByTestId("research-journey");
   await expect(journey).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(journey).toHaveCount(0);
-  await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+  await openSidebarEntry(page, "Research journey");
   await journey.getByRole("tab", { name: "Relationships", exact: true }).click();
   await expect(journey).toContainText("5 nodes · 3 relationships");
   await journey.getByRole("button", { name: "cites: Love et al. 2014" }).click();
@@ -7222,7 +7226,7 @@ test("method-search Run reviews the frozen contract before start and exposes con
 
 test("publication is an independent project page and source selection binds an exact version", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   const workspace = page.getByTestId("publication-workspace");
   await expect(workspace).toHaveAttribute("role", "region");
   await expect(page.locator(".sidebar")).toBeVisible();
@@ -7244,7 +7248,7 @@ test("publication is an independent project page and source selection binds an e
 
 test("publication conversation picker translates selected Chinese and emoji to UTF-8 bytes", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   await page.getByTestId("add-publication-evidence").click();
   await page.getByRole("button", { name: "Research conversations", exact: true }).click();
   await page.locator(".publication-source-choice").click();
@@ -7264,7 +7268,7 @@ test("publication conversation picker translates selected Chinese and emoji to U
 
 test("publication checks before locking and policy changes invalidate the check", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   await page.getByRole("button", { name: "Finalization check", exact: true }).click();
   const confirm=page.getByTestId("freeze-publication");
   await expect(confirm).toBeDisabled();
@@ -7287,7 +7291,7 @@ test("publication checks before locking and policy changes invalidate the check"
 
 test("publication page keeps its evidence and actions within the available width", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   for (const width of [1280, 900, 600]) {
     await page.setViewportSize({width,height:900});
     await expect(page.getByTestId("publication-workspace")).toBeVisible();
@@ -7306,7 +7310,7 @@ test("publication page keeps its evidence and actions within the available width
 
 test("precise message evidence uses a stable locator and Escape closes only the top layer", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("add-publication-evidence").click();
@@ -7345,7 +7349,7 @@ test("precise message evidence uses a stable locator and Escape closes only the 
 
 test("Frozen Publication is read-only and exposes exact source plus late-capture readiness", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await expect(workspace).toBeVisible();
@@ -7364,7 +7368,7 @@ test("Frozen Publication is read-only and exposes exact source plus late-capture
 
 test("Frozen Publication verifies a Run and surfaces environment plus comparator results", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("verify-publication-run").click();
@@ -7384,7 +7388,7 @@ test("Frozen Publication verifies a Run and surfaces environment plus comparator
 
 test("Frozen Publication builds a selective Capsule and shows its immutable hashes", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("build-publication-capsule").click();
@@ -12563,6 +12567,87 @@ test("sidebar search opens the Ctrl+K palette and finds sessions beyond loaded h
   await expect(sidebar.getByRole("button", { name: "Paged session 101", exact: true })).toHaveCount(0);
 });
 
+test("short windows fold the sidebar nav tail into a More flyout instead of scrolling", async ({ page }) => {
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  const nav = page.locator(".sidebar .nav");
+  const more = nav.getByRole("button", { name: "More", exact: true });
+  const menu = page.getByTestId("sidebar-more-menu");
+  // A long session list must not squeeze the nav into its own scroller.
+  await expect.poll(() => nav.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+
+  // 720px tall: the last three entries fold; New group / Files stay inline.
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeHidden();
+  await more.click();
+  await expect(menu.getByRole("button")).toHaveText(["Research journey", "Publication", "Library"]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator(".sidebar")).toBeVisible();
+
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await more.click();
+  await expect(menu.getByRole("button")).toHaveText(["New group", "Files", "Research journey", "Publication", "Library"]);
+  await menu.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("library-screen")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(more).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
+});
+
+test("the UI font size scales every font size proportionally instead of flattening controls", async ({ page }) => {
+  // A raw px font size would ignore the UI font size setting (settings.css).
+  const stylesDir = resolve(__dirname, "../../ui/src/styles");
+  const raw = readdirSync(stylesDir).filter((name) => name.endsWith(".css")).flatMap((name) =>
+    readFileSync(resolve(stylesDir, name), "utf8").split("\n")
+      .map((line, index) => ({ at: `${name}:${index + 1}`, line }))
+      .filter(({ line }) => /(?<![\w-])font(-size)?:\s*(?:(?:italic|oblique|normal|bold|small-caps|\d{3})\s+)*\d*\.?\d+px/.test(line))
+      .map(({ at }) => at));
+  expect(raw).toEqual([]);
+
+  await page.addInitScript(() => localStorage.setItem("wisp-ui-font-size", "21"));
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  // 11px title and 11px button both grow by 21/14 — the button is no longer forced to 21px.
+  await expect(page.locator(".side-sessions-title")).toHaveCSS("font-size", "16.5px");
+  await expect(page.locator(".side-select-btn")).toHaveCSS("font-size", "16.5px");
+});
+
+test("the compact rail shows session initials and swaps in live status", async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 900 });
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  const row = page.locator('.sidebar .side-item.ses[data-session-title="Paged session 1"]');
+  await expect(row.locator(".ses-initial")).toBeVisible();
+  await expect(row.locator(".ses-initial")).toHaveText("P");
+  // Lined up with the rail's icon column, not pushed left by the row-menu or scrollbar gutter.
+  const center = async (locator: Locator) => { const box = (await locator.boundingBox())!; return box.x + box.width / 2; };
+  await expect.poll(async () => Math.abs(
+    await center(row.locator(".ses-initial")) - await center(page.locator(".sidebar .nav .side-btn.primary svg")),
+  )).toBeLessThan(1.5);
+  await expect(row.locator(".ses-title")).toBeHidden();
+  await expect(row.locator(".ses-status")).toBeHidden();
+  await row.evaluate((el) => el.classList.add("running"));
+  await expect(row.locator(".ses-initial")).toBeHidden();
+  await expect(row.locator(".ses-live")).toBeVisible();
+});
+
+test("a runtime strip with nothing started collapses to one line", async ({ page }) => {
+  await enterApp(page, "/?mockRuntimes=none");
+  const strip = page.getByTestId("session-runtime-strip");
+  await expect(strip).toHaveClass(/all-idle/);
+  await expect(strip.getByTestId("session-runtime-chip").first()).toBeHidden();
+  await expect(strip.getByTestId("session-runtime-idle")).toHaveText("Python Not started · R Unavailable");
+  await strip.locator('[data-runtime-context="local"] .session-runtime-host').click();
+  const dialog = page.getByRole("dialog", { name: "Runtimes" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("home search opens artifacts, sessions, and settings", async ({ page }) => {
   await page.goto("/");
 
@@ -15061,19 +15146,12 @@ for (const locale of ["en", "zh"]) {
     await python.fill("C:/Users/Researcher/" + "long-environment-directory/".repeat(12) + "python.exe");
     await python.scrollIntoViewIfNeeded();
     await expectInsideViewport(python, 820, 740);
-    for (const scope of ["model", "subscription", "mcp", "command"]) {
-      await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
-      const save = page.getByTestId(`save-proxy-${scope}`);
-      await save.evaluate(el => el.scrollIntoView({ block: "center" }));
-      await expectInsideViewport(save, 820, 740);
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    }
     expect(await pane.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`general-${locale}-narrow.png`) });
   });
 }
 
-test("general settings group workspace prefs, local environment, and network", async ({ page }) => {
+test("general keeps workspace prefs and local environment, and network is the next preferences item", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
   await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("General");
@@ -15082,10 +15160,14 @@ test("general settings group workspace prefs, local environment, and network", a
   await expect(page.getByTestId("max-iter")).toHaveCount(0);
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
   await expect(page.getByTestId("local-environment")).toBeVisible();
+  await expect(page.locator(".network-settings")).toHaveCount(0);
+  const preferences = page.locator(".settings-nav").getByRole("group").first();
+  await expect(preferences.locator("button")).toHaveText(["General", "Network", "Session", "Appearance", "Pet"]);
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("Network");
   await expect(page.getByTestId("network-proxy-model")).toBeVisible();
-  await expect(page.locator(".settings-nav").getByRole("button", { name: "Network", exact: true })).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.getByTestId("local-environment")).toHaveCount(0);
+  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.locator(".network-settings")).toHaveCount(0);
   await expect(page.getByTestId("models-category-http")).toBeVisible();
 });
@@ -15094,7 +15176,7 @@ test("network saves each proxy independently and preserves the legacy model prox
   await page.goto("/?mockLegacyProxy=http://127.0.0.1:7890");
   await openSettingsSection(page, "Models");
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
   await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://127.0.0.1:7890");
   await page.getByTestId("proxy-address-model").fill("");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("custom");
@@ -15118,10 +15200,10 @@ test("network saves each proxy independently and preserves the legacy model prox
   await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
     settings: { model_proxy_url: "", mcp_proxy_url: "none", command_proxy_url: "http://127.0.0.1:8080" },
   });
-  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-general").click();
   await page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".settings-page")).toHaveCount(0);
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("system");
   await expect(page.getByTestId("proxy-mode-mcp")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
@@ -15129,7 +15211,7 @@ test("network saves each proxy independently and preserves the legacy model prox
 
 test("subscription sign-in proxy saves independently from model proxy and survives reopening", async ({ page }) => {
   await page.goto("/?mockLegacyProxy=none");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-mode-subscription")).toHaveValue("system");
   await expect(page.getByTestId("network-proxy-subscription")).toContainText("ChatGPT / xAI");
@@ -15143,7 +15225,7 @@ test("subscription sign-in proxy saves independently from model proxy and surviv
   });
   await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://unsaved-model.test:8080");
   await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-address-subscription")).toHaveValue("http://localhost:7897");
   await page.getByTestId("network-proxy-subscription").getByRole("button", { name: "Clear", exact: true }).click();
@@ -15155,7 +15237,7 @@ test("subscription sign-in proxy saves independently from model proxy and surviv
 
 test("network package mirror saves guidance and Escape closes only its subpage", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("configure-package-mirrors").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("package-mirrors")).toHaveCount(0);
@@ -15192,9 +15274,9 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?mockLocale=zh&mockLegacyProxy=http://127.0.0.1:7890");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "常规", exact: true }).click();
-  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("常规");
-  await expect(page.locator(".network-heading h3")).toHaveText("网络");
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("网络");
+  await expect(page.locator(".network-heading h3")).toHaveCount(0);
   await page.locator(".network-settings").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("save-proxy-model")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-zh.png") });
@@ -15206,20 +15288,19 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 820, height: 740 });
   for (const scope of ["model", "subscription", "mcp", "command"]) {
-    await page.getByTestId(`network-proxy-${scope}`).scrollIntoViewIfNeeded();
-    if (scope === "model") {
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    } else {
-      await expect(page.getByTestId(`proxy-address-${scope}`)).toHaveCount(0);
-    }
-    await expectInsideViewport(page.getByTestId(`save-proxy-${scope}`), 820, 740);
+    await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
+    const save = page.getByTestId(`save-proxy-${scope}`);
+    await save.evaluate(el => el.scrollIntoView({ block: "center" }));
+    await expectInsideViewport(save, 820, 740);
+    await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
   }
+  expect(await page.getByTestId("network-settings-pane").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-narrow.png") });
 });
 
 test("network address fields appear only for custom proxies in every scope", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   for (const scope of ["model", "subscription", "mcp", "command"]) {
     const mode = page.getByTestId(`proxy-mode-${scope}`);
     const address = page.getByTestId(`proxy-address-${scope}`);
@@ -15251,7 +15332,7 @@ test("network address fields appear only for custom proxies in every scope", asy
 
 test("network shows validation errors without discarding the draft", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("proxy-mode-mcp").selectOption("custom");
   await page.getByTestId("save-proxy-mcp").click();
   await expect(page.getByRole("alert")).toContainText("Enter a proxy address");
@@ -15450,7 +15531,8 @@ test("a leftover proxy connect error points at General Network settings", async 
   const card = page.locator(".finding.err");
   await expect(card).toBeVisible();
   await expect(card.locator(".finding-title")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
-  await expect(card.locator(".finding-body")).toContainText("Settings → General → Network");
+  await expect(card.locator(".finding-body")).toContainText("Settings → Network");
+  await expect(card.locator(".finding-body")).not.toContainText("Settings → General → Network");
   await expect(card.locator(".finding-body")).toContainText("Direct");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → Models");
 });
@@ -16387,7 +16469,7 @@ test("an SVG star saves a Notebook cell in the global library", async ({ page })
   await star.click();
   await expect(cell.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await expect(page.getByTestId("library-screen")).toBeVisible();
   await expect(page.locator('.library-card[data-library-kind="code"]')).toContainText("zcat counts.txt.gz");
   await expect(page.locator('.library-card[data-library-kind="code"]')).toContainText("wisp-science / Current analysis");
@@ -16432,7 +16514,7 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await expect(modal.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
   await modal.getByRole("button", { name: "Close panel" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   const figure = page.locator('.library-card[data-library-kind="figure"]');
   await expect(figure).toContainText("volcano.png");
   await figure.locator(".library-card-main").click();
@@ -16461,7 +16543,7 @@ test("a starred code item edits into a new version and re-runs from the composer
   await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
   await page.locator(".notebook-cell").first().getByRole("button", { name: "Add to library" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await page.locator('.library-card[data-library-kind="code"] .library-card-main').click();
   const detail = page.locator(".library-detail");
   await expect(detail.locator(".library-code-head h3")).toHaveText("v1");
@@ -16498,7 +16580,7 @@ test("a starred figure's generating code is editable as a new version (#474)", a
   await modal.getByRole("button", { name: "Add to library" }).click();
   await modal.getByRole("button", { name: "Close panel" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await page.locator('.library-card[data-library-kind="figure"] .library-card-main').click();
   const code = page.locator(".library-generating-code");
   await code.getByRole("button", { name: "Edit code" }).click();
@@ -16597,7 +16679,7 @@ test("the selection popup saves a highlight into the right pane and library", as
   await expect(page.getByText("stream line 23", { exact: false })).toBeVisible({ timeout: 10_000 });
 
   // The global library lists it under the Highlights filter.
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await expect(page.getByTestId("library-screen")).toBeVisible();
   await page.locator(".library-filters button", { hasText: "Highlights" }).click();
   await expect(page.locator('.library-card[data-library-kind="text"]')).toContainText(selected.trim().slice(0, 30));

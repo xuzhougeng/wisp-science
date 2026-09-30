@@ -8770,6 +8770,14 @@ fn App() -> impl IntoView {
         });
     };
     refresh_inbox();
+    // Other projects stay listed in the dropdown, but only this project's
+    // sessions light the badge — a fresh window must not flag unrelated work.
+    let inbox_in_this_project = move |s: &SessionSearchInfo| {
+        project_info.with(|p| p.as_ref().is_none_or(|p| p.id == s.project_id))
+    };
+    let inbox_here_count = create_memo(move |_| {
+        inbox_sessions.with(|rows| rows.iter().filter(|s| inbox_in_this_project(s)).count())
+    });
     // Close on any click that bubbles to the window; the bell and the dropdown
     // stop propagation (same pattern as the titlebar menus — a fixed backdrop
     // would be clipped to the topbar, whose backdrop-filter contains it).
@@ -11868,7 +11876,7 @@ fn App() -> impl IntoView {
                     <button class="icon-btn"
                         class:active=move || inbox_open.get()
                         title=move || {
-                            let n = inbox_sessions.get().len().to_string();
+                            let n = inbox_here_count.get().to_string();
                             tf(locale.get(), "sess_status.needs_you_n", &[("n", &n)])
                         }
                         on:click=move |ev| {
@@ -11879,7 +11887,7 @@ fn App() -> impl IntoView {
                         }>
                         {compose_icon("bell")}
                         {move || {
-                            let n = inbox_sessions.get().len();
+                            let n = inbox_here_count.get();
                             (n > 0).then(|| view! { <span class="inbox-badge">{n}</span> })
                         }}
                     </button>
@@ -11887,25 +11895,34 @@ fn App() -> impl IntoView {
                         <div class="inbox-drop" on:click=|ev| ev.stop_propagation()>
                             <div class="inbox-title">{move || t(locale.get(), "sess_status.needs_you")}</div>
                             {move || {
-                                let rows = inbox_sessions.get();
-                                if rows.is_empty() {
-                                    view! { <div class="inbox-empty">{move || t(locale.get(), "inbox.empty")}</div> }.into_view()
-                                } else {
-                                    rows.into_iter().map(|s| {
-                                        let project_id = s.project_id.clone();
-                                        let session_id = s.id.clone();
-                                        let title = user_message_presentation(&s.title).body;
-                                        view! {
-                                            <button type="button" class="inbox-item"
-                                                on:click=move |_| {
-                                                    inbox_open.set(false);
-                                                    palette_open_session.call((project_id.clone(), session_id.clone()));
-                                                }>
-                                                <span class="inbox-item-project">{s.project_name.clone()}</span>
-                                                <span class="inbox-item-title">{title}</span>
-                                            </button>
-                                        }
-                                    }).collect_view()
+                                let (here, other): (Vec<_>, Vec<_>) = inbox_sessions
+                                    .get()
+                                    .into_iter()
+                                    .partition(|s| inbox_in_this_project(s));
+                                let row = |s: SessionSearchInfo| {
+                                    let project_id = s.project_id.clone();
+                                    let session_id = s.id.clone();
+                                    let title = user_message_presentation(&s.title).body;
+                                    view! {
+                                        <button type="button" class="inbox-item"
+                                            on:click=move |_| {
+                                                inbox_open.set(false);
+                                                palette_open_session.call((project_id.clone(), session_id.clone()));
+                                            }>
+                                            <span class="inbox-item-project">{s.project_name.clone()}</span>
+                                            <span class="inbox-item-title">{title}</span>
+                                        </button>
+                                    }
+                                };
+                                view! {
+                                    {(here.is_empty() && other.is_empty()).then(|| view! {
+                                        <div class="inbox-empty">{move || t(locale.get(), "inbox.empty")}</div>
+                                    })}
+                                    {here.into_iter().map(row).collect_view()}
+                                    {(!other.is_empty()).then(|| view! {
+                                        <div class="inbox-title">{move || t(locale.get(), "inbox.other_projects")}</div>
+                                    })}
+                                    {other.into_iter().map(row).collect_view()}
                                 }
                             }}
                         </div>

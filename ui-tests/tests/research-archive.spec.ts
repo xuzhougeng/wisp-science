@@ -1,5 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
 import {tauriMock} from './mock-tauri';
+import { openSidebarEntry } from './sidebar-nav';
 
 async function open(page:Page,locale='en') {
   await page.addInitScript(tauriMock);
@@ -34,7 +35,7 @@ test('archive review edits survive typing, confirmation locks the notebook, jour
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('archive-readonly')).toBeVisible();
   await expect(page.locator('#composer-input')).toBeDisabled();
-  await page.locator('.sidebar').getByRole('button',{name:'Research journey',exact:true}).click();
+  await openSidebarEntry(page,'Research journey');
   await page.getByTestId('research-journey').getByRole('button',{name:/Reviewed research milestone/}).first().click();
   await page.getByTestId('journey-open-archive').click();
   await expect(dialog).toBeVisible();

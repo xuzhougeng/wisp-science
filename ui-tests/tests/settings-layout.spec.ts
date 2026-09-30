@@ -24,7 +24,7 @@ for (const locale of ["en", "zh"]) {
       ? ["基础偏好", "AI 配置", "工具与连接", "系统与资源"]
       : ["Preferences", "AI configuration", "Tools & connections", "System & resources"]);
     const routes = [
-      ["general", "session", "appearance", "pet"],
+      ["general", "network", "session", "appearance", "pet"],
       ["models", "quick-actions", "workflows", "specialists", "memory"],
       ["skills", "plugins", "browser", "connections", "channels"],
       ["credentials", "permissions", "environments", "storage", "usage"],
@@ -37,11 +37,12 @@ for (const locale of ["en", "zh"]) {
     const search = nav.getByRole("searchbox");
     await search.fill("  API KEY  ");
     await expect(nav.getByRole("group").locator("button")).toHaveText(zh ? ["模型", "凭据"] : ["Models", "Credentials"]);
-    // Network / proxy settings live under General, not Models (#1252).
+    // Network / proxy settings are their own Preferences item, below General.
     await search.fill(zh ? "proxy" : "代理");
-    await expect(nav.getByRole("group").locator("button")).toHaveText(zh ? ["常规"] : ["General"]);
+    await expect(nav.getByRole("group").locator("button")).toHaveText(zh ? ["网络"] : ["Network"]);
     await search.fill(zh ? "网络" : "network");
-    await expect(nav.getByTestId("settings-nav-general")).toBeVisible();
+    await expect(nav.getByTestId("settings-nav-network")).toBeVisible();
+    await expect(nav.getByTestId("settings-nav-general")).toHaveCount(0);
     await expect(page.locator(".model-settings-pane")).toBeVisible();
     await search.fill("no-such-setting");
     await expect(nav.getByRole("status")).toBeVisible();
@@ -53,7 +54,7 @@ for (const locale of ["en", "zh"]) {
     await expect(page.getByTestId("appearance-live-preview")).toBeVisible();
     await expect(nav.getByTestId("settings-nav-appearance")).toHaveAttribute("aria-current", "page");
     await search.fill("");
-    await expect(nav.getByRole("group").locator("button")).toHaveCount(19);
+    await expect(nav.getByRole("group").locator("button")).toHaveCount(20);
     await nav.getByTestId("settings-nav-models").click();
     await page.locator(".model-settings-pane .settings-list-row", { hasText: "opus-4.8" }).click();
     const name = page.getByLabel(zh ? "显示名称（别名）" : "Display name", { exact: true });

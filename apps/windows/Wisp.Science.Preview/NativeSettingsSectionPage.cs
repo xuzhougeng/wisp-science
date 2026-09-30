@@ -43,7 +43,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     {
         "skills" => ["list_skills"], "connections" => ["list_connectors", "list_mcp_connections"],
         "memory" => ["get_memory_view", "get_auto_failure_analysis_settings"],
-        "general" => ["get_settings", "get_appearance_prefs", "get_network_settings", "get_bootstrap_status", "get_update_check_enabled"],
+        "general" => ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"],
+        "network" => ["get_network_settings"],
         "session" => ["get_settings", "get_auto_review_enabled"],
         "pet" => ["get_settings", "get_pet_runtime_status", "get_pet"],
         "plugins" => ["list_plugins"],
@@ -128,6 +129,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "connections": Connections(); break;
             case "memory": Memory(); break;
             case "general": General(); break;
+            case "network": Network(); break;
             case "session": Session(); break;
             case "pet": Pet(); break;
             case "plugins": Plugins(); break;

@@ -3022,6 +3022,10 @@ pub(super) fn SettingsView(
                         </div>
                         </section>
                         <crate::overlays::LocalEnvironmentPanel locale=locale bootstrap=bootstrap />
+                    </div>
+                }.into_view())}
+                {move || (settings_section.get() == "network").then(|| view! {
+                    <div class="settings-pane network-settings-pane" data-testid="network-settings-pane">
                         <crate::network_settings::NetworkSettingsView settings=settings />
                     </div>
                 }.into_view())}

@@ -455,7 +455,11 @@ pub(crate) fn apply_font_prefs(ui_size: u16, code_size: u16, ui_family: &str, co
         return;
     };
     if let Some(root) = window.document().and_then(|d| d.document_element()) {
-        let mut style = format!("--ui-font-size:{ui_size}px;--code-font-size:{code_size}px");
+        // The slider reaches 0px; floor the scale so every label cannot vanish.
+        let ui_scale = f64::from(ui_size.max(8)) / 14.0;
+        let mut style = format!(
+            "--ui-font-size:{ui_size}px;--ui-font-scale:{ui_scale:.4};--code-font-size:{code_size}px"
+        );
         if !ui_family.is_empty() {
             style.push_str(&format!(";--font-user-ui:{ui_family}"));
         }
