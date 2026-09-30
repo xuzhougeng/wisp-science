@@ -38,6 +38,7 @@ final class NativeSettingsModelTests: XCTestCase {
     @MainActor func testSubscriptionProxySavePreservesOtherNetworkRoutes() async {
         let client = SettingsFake()
         let model = NativeSettingsModel(client: client, projectID: nil)
+        model.section = .network
         await model.load()
         model.binding("get_network_settings", "subscription_proxy_url").wrappedValue = .string("http://localhost:7897")
         _ = await model.run("set_network_settings", ["settings": model.values["get_network_settings"]!])
