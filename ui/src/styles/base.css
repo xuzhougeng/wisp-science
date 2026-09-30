@@ -376,11 +376,11 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
   color: var(--text-muted); background: var(--bg-app);
   border-bottom: 1px solid var(--border); user-select: none;
 }
-.window-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; font-size: 12px; color: var(--text); min-width: 0; flex-shrink: 1; }
+.window-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); min-width: 0; flex-shrink: 1; }
 .window-brand-icon { width: 16px; height: 16px; flex: 0 0 auto; border-radius: 4px; background: center / contain no-repeat url("logo.svg"); }
 .window-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 36ch; }
-.window-brand-version { color: var(--text-faint); font-size: 11px; flex: 0 0 auto; }
-.window-menu { display: flex; align-items: stretch; height: 100%; font-size: 13px; flex-shrink: 0; }
+.window-brand-version { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); flex: 0 0 auto; }
+.window-menu { display: flex; align-items: stretch; height: 100%; font-size: calc(13px * var(--ui-font-scale, 1)); flex-shrink: 0; }
 .window-menu-group { position: relative; display: flex; align-items: stretch; }
 .window-menu-btn {
   display: flex; align-items: center; padding: 0 10px;
@@ -400,18 +400,18 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 .window-menu-drop button {
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 24px;
   background: transparent; border: 0; border-radius: var(--radius-xs); padding: 6px 10px;
-  font: inherit; font-size: 13px; color: var(--text); cursor: default; text-align: left;
+  font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text); cursor: default; text-align: left;
 }
 .window-menu-drop button:hover { background: var(--bg-sunken); }
 .window-menu-drop button:disabled { color: var(--text-faint); background: transparent; }
-.window-menu-drop kbd { color: var(--text-faint); font-size: 11px; font-family: inherit; }
+.window-menu-drop kbd { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); font-family: inherit; }
 .window-menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .window-drag { flex: 1; align-self: stretch; }
 .window-controls { display: flex; align-self: stretch; flex-shrink: 0; }
 .window-controls button {
   /* Keep 46px in sync with windows_snap::CONTROL_BUTTON_WIDTH. */
   width: 46px; border: 0; border-radius: 0; background: transparent; color: var(--text);
-  font: 18px/1 var(--font-ui); cursor: default;
+  font: calc(18px * var(--ui-font-scale, 1))/1 var(--font-ui); cursor: default;
 }
 .window-controls button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .window-controls .window-close:hover { color: #fff; background: #c42b1c; }
@@ -451,7 +451,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
   border-radius: var(--radius-sm);
   padding: 9px 16px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   font-weight: 600;
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
@@ -479,7 +479,7 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }

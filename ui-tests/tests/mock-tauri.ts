@@ -1382,7 +1382,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   };
   const runReviewDismissed = new Set<string>();
   let defaultExecutionContext: string | null = null;
-  let runtimeInfos: any[] = [
+  let runtimeInfos: any[] = new URL(location.href).searchParams.get("mockRuntimes") === "none" ? [] : [
     {
       runtimeId: "runtime-python-local",
       generation: 1,
