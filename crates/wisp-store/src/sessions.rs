@@ -25,6 +25,50 @@ EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user')
 OR TRIM(COALESCE(f.title, '')) <> '')";
 
 impl Store {
+    /// Older read-only project databases have no visibility preference yet.
+    async fn session_shelved_sql(&self, shelved: Option<bool>) -> Result<String> {
+        Ok(match shelved {
+            None => "1".into(),
+            Some(value) if Self::has_column(&self.pool, "frames", "shelved").await? => {
+                format!("COALESCE(f.shelved, 0) = {}", i32::from(value))
+            }
+            Some(true) => "0".into(),
+            Some(false) => "1".into(),
+        })
+    }
+
+    pub async fn session_is_shelved(&self, frame_id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.session_is_shelved(frame_id)).await;
+        }
+        let filter = self.session_shelved_sql(Some(true)).await?;
+        Ok(sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM frames f WHERE f.id=? AND {filter})"
+        ))
+        .bind(frame_id)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    /// A display preference, independent of notebook sealing. Preserve activity,
+    /// folder, pin, messages and research archive state when shelving/restoring.
+    pub async fn set_session_shelved(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+        shelved: bool,
+    ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.set_session_shelved(frame_id, project_id, shelved)).await;
+        }
+        let result = sqlx::query("UPDATE frames SET shelved=? WHERE id=? AND project_id=? AND parent_frame_id=id AND exploration_id IS NULL")
+            .bind(shelved).bind(frame_id).bind(project_id).execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            anyhow::bail!("Session not found");
+        }
+        Ok(())
+    }
+
     /// Pending ACP choices are durable drafts. Older read-only databases keep
     /// the original visibility rule without creating or migrating anything.
     pub(crate) async fn session_listable_sql(&self) -> Result<String> {
@@ -615,19 +659,20 @@ impl Store {
         if let Some(stores) = self.available_projects().await? {
             let mut latest: Option<(i64, String, String)> = None;
             for store in stores {
-                let row: Option<(i64,String,String)> = sqlx::query_as("SELECT m.ts,m.frame_id,f.project_id FROM messages m JOIN frames f ON f.id=m.frame_id WHERE m.role='user' AND f.parent_frame_id=f.id AND f.exploration_id IS NULL ORDER BY m.ts DESC,m.rowid DESC LIMIT 1").fetch_optional(&store.pool).await?;
+                let row: Option<(i64,String,String)> = sqlx::query_as(&format!("SELECT m.ts,m.frame_id,f.project_id FROM messages m JOIN frames f ON f.id=m.frame_id WHERE m.role='user' AND f.parent_frame_id=f.id AND f.exploration_id IS NULL AND {} ORDER BY m.ts DESC,m.rowid DESC LIMIT 1", store.session_shelved_sql(Some(false)).await?)).fetch_optional(&store.pool).await?;
                 if row > latest {
                     latest = row;
                 }
             }
             return Ok(latest.map(|(_, frame, project)| (frame, project)));
         }
-        let row: Option<(String, String)> = sqlx::query_as(
+        let row: Option<(String, String)> = sqlx::query_as(&format!(
             "SELECT m.frame_id, f.project_id \
              FROM messages m JOIN frames f ON f.id=m.frame_id \
              WHERE m.role='user' AND f.parent_frame_id=f.id AND f.exploration_id IS NULL \
-             ORDER BY m.ts DESC, m.rowid DESC LIMIT 1",
-        )
+             AND {} ORDER BY m.ts DESC, m.rowid DESC LIMIT 1",
+            self.session_shelved_sql(Some(false)).await?,
+        ))
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -676,7 +721,7 @@ impl Store {
                AND f.exploration_id IS NULL \
                AND f.project_id NOT LIKE 'scratch:%' \
                AND {used} ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
-            used = SESSION_HAS_USER_TURN_SQL,
+            used = format!("({SESSION_HAS_USER_TURN_SQL}) AND ({})", self.session_shelved_sql(Some(false)).await?),
         );
         let rows = sqlx::query(&sql).bind(limit).fetch_all(&self.pool).await?;
         let mut out = vec![];
@@ -723,7 +768,7 @@ impl Store {
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id \
                AND {used}",
-            used = SESSION_HAS_USER_TURN_SQL,
+            used = format!("({SESSION_HAS_USER_TURN_SQL}) AND ({})", self.session_shelved_sql(Some(false)).await?),
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)
@@ -2107,9 +2152,9 @@ impl Store {
         Ok(row.0)
     }
 
-    /// Root frames the sidebar should show, most recently active first, each
-    /// with a title from the custom name or the first user message. Untitled
-    /// empty drafts stay hidden; a named unused draft is included (#888).
+    /// All saved root conversations, including shelved ones, for ownership and
+    /// project operations. Display surfaces should use `list_sessions_page`.
+    /// Untitled unused drafts are included only while explicitly shelved.
     /// Returns `(frame_id, title, activity_at, folder_id, branched_from)`.
     pub async fn list_sessions(
         &self,
@@ -2118,7 +2163,8 @@ impl Store {
         if let Some(store) = self.route_project(project_id).await? {
             return Box::pin(store.list_sessions(project_id)).await;
         }
-        self.list_sessions_page(project_id, None, usize::MAX).await
+        self.list_sessions_page_with_visibility(project_id, None, usize::MAX, None, "")
+            .await
     }
 
     /// One stable, most-recently-active-first page for the session-history
@@ -2130,8 +2176,25 @@ impl Store {
         cursor: Option<(i64, &str)>,
         limit: usize,
     ) -> Result<Vec<(String, String, i64, Option<String>, Option<String>)>> {
+        self.list_sessions_page_with_visibility(project_id, cursor, limit, Some(false), "")
+            .await
+    }
+
+    /// Filter before keyset pagination; None includes shelved records for export
+    /// and ownership checks. Search within the shelved collection is project scoped.
+    pub async fn list_sessions_page_with_visibility(
+        &self,
+        project_id: &str,
+        cursor: Option<(i64, &str)>,
+        limit: usize,
+        shelved: Option<bool>,
+        query: &str,
+    ) -> Result<Vec<(String, String, i64, Option<String>, Option<String>)>> {
         if let Some(store) = self.route_project(project_id).await? {
-            return Box::pin(store.list_sessions_page(project_id, cursor, limit)).await;
+            return Box::pin(
+                store.list_sessions_page_with_visibility(project_id, cursor, limit, shelved, query),
+            )
+            .await;
         }
         let cursor_ts = cursor.map(|value| value.0);
         let cursor_id = cursor.map(|value| value.1);
@@ -2144,14 +2207,24 @@ impl Store {
                 FROM frames f \
                 WHERE f.project_id = ? AND f.parent_frame_id = f.id \
                   AND f.exploration_id IS NULL \
-                  AND {listable} \
+                  AND {listable} AND {visibility} \
+                  AND (? = '' OR lower(COALESCE(f.title, '')) LIKE ? \
+                    OR EXISTS(SELECT 1 FROM messages sm WHERE sm.frame_id=f.id AND lower(COALESCE(sm.content,'')) LIKE ?)) \
              ) sessions \
              WHERE (? IS NULL OR activity_at < ? OR (activity_at = ? AND id < ?)) \
              ORDER BY activity_at DESC, id DESC LIMIT ?",
-            listable = self.session_listable_sql().await?,
+            listable = match shelved {
+                Some(true) => "1".into(),
+                Some(false) => self.session_listable_sql().await?,
+                None => format!("({} OR ({}))", self.session_listable_sql().await?, self.session_shelved_sql(Some(true)).await?),
+            },
+            visibility = self.session_shelved_sql(shelved).await?,
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)
+            .bind(query.trim())
+            .bind(format!("%{}%", query.trim().to_lowercase()))
+            .bind(format!("%{}%", query.trim().to_lowercase()))
             .bind(cursor_ts)
             .bind(cursor_ts)
             .bind(cursor_ts)
@@ -2187,7 +2260,10 @@ impl Store {
                AND {used} ORDER BY COALESCE(\
                 (SELECT MAX(NULLIF(m.ts, 0)) FROM messages m WHERE m.frame_id = f.id), \
                 f.updated_at) DESC, f.id DESC LIMIT 1",
-            used = SESSION_HAS_USER_TURN_SQL,
+            used = format!(
+                "({SESSION_HAS_USER_TURN_SQL}) AND ({})",
+                self.session_shelved_sql(Some(false)).await?
+            ),
         );
         Ok(sqlx::query_scalar(&sql)
             .bind(project_id)
@@ -2215,7 +2291,7 @@ impl Store {
              WHERE f.project_id = ? AND f.parent_frame_id = f.id AND COALESCE(f.pinned, 0) = 1 \
                AND f.exploration_id IS NULL \
                AND {listable} ORDER BY activity_at DESC, f.id DESC",
-            listable = self.session_listable_sql().await?,
+            listable = format!("({}) AND ({})", self.session_listable_sql().await?, self.session_shelved_sql(Some(false)).await?),
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)
@@ -3222,7 +3298,8 @@ impl Store {
              ORDER BY CASE WHEN ? IS NOT NULL AND s.project_id=? THEN 0 ELSE 1 END, \
                 CASE WHEN ?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? THEN 0 ELSE 1 END, \
                 s.activity_at DESC, s.frame_rowid DESC LIMIT ?",
-            listable = self.session_listable_sql().await?,
+            listable = format!("({}) AND ({})", self.session_listable_sql().await?,
+                self.session_shelved_sql(session_id.is_none().then_some(false)).await?),
         );
         let rows = sqlx::query(&sql)
             .bind(project_id)

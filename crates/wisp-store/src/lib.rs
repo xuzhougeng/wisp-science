@@ -188,6 +188,7 @@ const PROJECT_STARS_MIGRATION: &str = "0056_project_stars";
 const RESEARCH_ARCHIVES_MIGRATION: &str = "0057_research_archives";
 const CONTEXT_EPOCHS_MIGRATION: &str = "0058_context_epochs";
 const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
+const SESSION_SHELVED_MIGRATION: &str = "0061_session_shelved";
 const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
 
 #[derive(Clone)]
@@ -458,6 +459,15 @@ impl Store {
             .execute(pool)
             .await;
             Self::record_migration(pool, FRAME_SEEN_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_SHELVED_MIGRATION).await? {
+            Self::add_columns_if_missing(
+                pool,
+                "frames",
+                &[("shelved", "INTEGER NOT NULL DEFAULT 0")],
+            )
+            .await?;
+            Self::record_migration(pool, SESSION_SHELVED_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, SESSION_PINNED_MIGRATION).await? {
             Self::add_columns_if_missing(
@@ -870,6 +880,7 @@ impl Store {
                 ("folder_id", "TEXT"),
                 ("seen_at", "INTEGER NOT NULL DEFAULT 0"),
                 ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+                ("shelved", "INTEGER NOT NULL DEFAULT 0"),
                 ("branched_from", "TEXT"),
                 ("reasoning_effort", "TEXT"),
                 ("service_tier", "TEXT"),

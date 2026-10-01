@@ -1418,3 +1418,119 @@ pub(crate) fn ExplorationOverlayView(
         })}
     }
 }
+
+/// Project-scoped recovery collection. Escape belongs to the app stack so a
+/// context menu opened over this dialog closes before the dialog itself.
+#[component]
+pub(crate) fn ShelvedSessionsOverlay(
+    locale: RwSignal<Locale>,
+    revision: ReadSignal<u64>,
+    on_close: Callback<()>,
+    on_open: Callback<SessionInfo>,
+    on_restore: Callback<String>,
+    on_context: Callback<(web_sys::MouseEvent, SessionInfo)>,
+) -> impl IntoView {
+    let query = create_rw_signal(String::new());
+    let items = create_rw_signal(Vec::<SessionInfo>::new());
+    let cursor = create_rw_signal::<Option<SessionCursor>>(None);
+    let loading = create_rw_signal(false);
+    let error = create_rw_signal::<Option<String>>(None);
+    let generation = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+    let cleanup_alive = alive.clone();
+    on_cleanup(move || cleanup_alive.set(false));
+    let fetch = Callback::new(move |next: Option<SessionCursor>| {
+        generation.set(generation.get() + 1);
+        let ticket = generation.get();
+        let generation = generation.clone();
+        let alive = alive.clone();
+        let append = next.is_some();
+        let args = to_value(&serde_json::json!({
+            "shelved": true, "query": query.get_untracked(), "cursor": next,
+        }))
+        .unwrap();
+        loading.set(true);
+        error.set(None);
+        if !append {
+            items.set(Vec::new());
+            cursor.set(None);
+        }
+        spawn_local(async move {
+            let result = invoke_checked("list_sessions_page", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<SessionPage>(value).map_err(|e| e.to_string())
+                });
+            if !alive.get() || ticket != generation.get() {
+                return;
+            }
+            match result {
+                Ok(page) => {
+                    if append {
+                        items.update(|rows| rows.extend(page.items));
+                    } else {
+                        items.set(page.items);
+                    }
+                    cursor.set(page.next_cursor);
+                }
+                Err(message) => error.set(Some(localize_backend(locale.get_untracked(), &message))),
+            }
+            loading.set(false);
+        });
+    });
+    create_effect(move |_| {
+        query.get();
+        revision.get();
+        fetch.call(None);
+    });
+    view! {
+        <div class="overlay" on:click=move |_| on_close.call(())>
+            <section class="modal shelved-sessions-modal" role="dialog" aria-modal="true"
+                aria-label=move || t(locale.get(), "session.shelved")
+                on:click=|ev| ev.stop_propagation()>
+                <header>
+                    <h2>{move || t(locale.get(), "session.shelved")}</h2>
+                    <button type="button" class="icon-btn" aria-label=move || t(locale.get(), "trajectory.close")
+                        on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
+                </header>
+                <p class="hint">{move || t(locale.get(), "session.shelved_hint")}</p>
+                <input type="search" aria-label=move || t(locale.get(), "session.shelved_search")
+                    placeholder=move || t(locale.get(), "session.shelved_search")
+                    prop:value=move || query.get()
+                    on:input=move |ev| query.set(event_target_value(&ev)) />
+                {move || error.get().map(|message| view! { <p role="alert">{message}</p> })}
+                <div class="shelved-sessions-list" aria-busy=move || loading.get().to_string()>
+                    {move || items.get().into_iter().map(|session| {
+                        let open_session = session.clone();
+                        let restore_id = session.id.clone();
+                        let menu_session = session.clone();
+                        view! {
+                            <div class="shelved-session-row" data-session-id=session.id
+                                on:contextmenu=move |ev: web_sys::MouseEvent| {
+                                    ev.prevent_default(); ev.stop_propagation();
+                                    on_context.call((ev, menu_session.clone()));
+                                }>
+                                <button type="button" class="shelved-session-open"
+                                    on:click=move |_| on_open.call(open_session.clone())>
+                                    {compose_icon("chat")}<span>{session.title}</span>
+                                </button>
+                                <button type="button" class="btn" on:click=move |_| on_restore.call(restore_id.clone())>
+                                    {compose_icon("undo")}<span>{move || t(locale.get(), "session.restore")}</span>
+                                </button>
+                            </div>
+                        }
+                    }).collect_view()}
+                    {move || (!loading.get() && error.get().is_none() && items.get().is_empty()).then(|| view! {
+                        <p class="hint">{move || t(locale.get(), "session.shelved_empty")}</p>
+                    })}
+                </div>
+                {move || loading.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
+                {move || cursor.get().is_some().then(|| view! {
+                    <button type="button" class="btn" disabled=move || loading.get()
+                        on:click=move |_| fetch.call(cursor.get_untracked())>{move || t(locale.get(), "sidebar.load_older")}</button>
+                })}
+            </section>
+        </div>
+    }
+}

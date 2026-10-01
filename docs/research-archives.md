@@ -5,6 +5,15 @@ does not remove generated files from the project workspace. Use the archive
 review below to preserve a completed research stage and explicitly clean up its
 recorded local intermediate files.
 
+To keep a temporary conversation out of everyday navigation, right-click its
+sidebar row and choose **Shelve conversation**. Shelved conversations leave the
+main list, recent sessions, default search and `#` suggestions. Use **Shelved
+conversations** beside the sidebar's conversation heading to search, open or
+**Restore to main list**. Existing references remain usable; messages, files,
+pins and folders are retained. This display preference persists across restarts
+and is independent of research archiving: restoring a sealed notebook keeps it
+read-only.
+
 Use **Archive research** in the conversation toolbar, or `/archive`, after a
 research stage is complete. Wisp prepares an editable draft using the saved
 notebook and recorded operations. This does not run analysis code or remove files.

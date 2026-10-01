@@ -116,7 +116,7 @@ pub async fn list_browser_sessions(
             .ok()
             .map(|rows| rows.into_iter().map(|row| row.0).collect());
         Ok(store
-            .list_sessions(project_id)
+            .list_sessions_page(project_id, None, usize::MAX)
             .await?
             .into_iter()
             .map(|(id, title, ts, folder_id, _)| {

@@ -80,7 +80,8 @@ use session_modals::{
     FileEntryOverlay, FileEntryOverlayState, FolderModalOverlay, FolderModalOverlayState,
     ModelSwitchConfirmOverlay, ModelSwitchConfirmOverlayState, ProjSettingsOverlay,
     ProjSettingsOverlayState, RenameSessionOverlay, RenameSessionOverlayState,
-    SessionTransferOverlay, SessionTransferOverlayState, TurnUndoOverlay, TurnUndoOverlayState,
+    SessionTransferOverlay, SessionTransferOverlayState, ShelvedSessionsOverlay, TurnUndoOverlay,
+    TurnUndoOverlayState,
 };
 use settings_view::{known_effort_values, ALL_EFFORT_VALUES};
 use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
@@ -593,16 +594,35 @@ fn App() -> impl IntoView {
             });
         }
     });
+    // The displayed conversation can be shelved while remaining open. Its
+    // title and branch controls must not depend on membership in the sidebar.
+    let opened_shelved_metadata =
+        create_rw_signal::<Option<(String, String, Option<String>)>>(None);
+    let active_session_metadata = create_memo(
+        move |previous: Option<&(Option<String>, String, Option<String>)>| {
+            let active = active_session.get();
+            let row = sessions
+                .with(|rows| {
+                    rows.iter()
+                        .find(|row| Some(&row.id) == active.as_ref())
+                        .map(|row| (row.id.clone(), row.title.clone(), row.branch_state.clone()))
+                })
+                .or_else(|| {
+                    opened_shelved_metadata
+                        .get()
+                        .filter(|(id, ..)| Some(id) == active.as_ref())
+                });
+            if let Some((_, title, branch_state)) = row {
+                (active, title, branch_state)
+            } else if let Some(previous) = previous.filter(|previous| previous.0 == active) {
+                previous.clone()
+            } else {
+                (active, String::new(), None)
+            }
+        },
+    );
     create_effect(move |_| {
-        let active = active_session.get();
-        let state = active.and_then(|id| {
-            sessions.with(|rows| {
-                rows.iter()
-                    .find(|session| session.id == id)
-                    .and_then(|session| session.branch_state.clone())
-            })
-        });
-        active_branch_state.set(state);
+        active_branch_state.set(active_session_metadata.get().2);
     });
     let conversation_branches =
         create_rw_signal::<HashMap<String, Vec<SessionBranchLink>>>(HashMap::new());
@@ -669,18 +689,9 @@ fn App() -> impl IntoView {
     let center_conversation_title = create_memo(move |_| {
         let loc = locale.get();
         let _ = transcript_projection_epoch.get();
-        if let Some(id) = active_session.get() {
-            if let Some(title) = sessions.with(|sessions| {
-                sessions
-                    .iter()
-                    .find(|session| session.id == id)
-                    .and_then(|session| {
-                        let clean = user_message_presentation(&session.title).body;
-                        (!clean.trim().is_empty()).then_some(clean)
-                    })
-            }) {
-                return title;
-            }
+        let title = user_message_presentation(&active_session_metadata.get().1).body;
+        if !title.trim().is_empty() {
+            return title;
         }
         items.with_untracked(|items| {
             items
@@ -6484,11 +6495,7 @@ fn App() -> impl IntoView {
             running,
         );
         active_session.set(Some(id.clone()));
-        active_branch_state.set(sessions.with_untracked(|rows| {
-            rows.iter()
-                .find(|session| session.id == id)
-                .and_then(|session| session.branch_state.clone())
-        }));
+        active_branch_state.set(active_session_metadata.get_untracked().2);
         let epoch = transcript_load_epoch.get_untracked().wrapping_add(1);
         transcript_load_epoch.set(epoch);
         transcript_loading.set(Some(id.clone()));
@@ -7820,6 +7827,17 @@ fn App() -> impl IntoView {
     });
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
+    let show_shelved_sessions = create_rw_signal(false);
+    let shelved_sessions_revision = create_rw_signal(0u64);
+    let shelved_project_id = create_memo(move |_| {
+        project_info.with(|project| project.as_ref().map(|project| project.id.clone()))
+    });
+    create_effect(move |_| {
+        shelved_project_id.get();
+        show_shelved_sessions.set(false);
+        opened_shelved_metadata.set(None);
+    });
+
     let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
     let rename_session_input = create_rw_signal(String::new());
     let session_transfer = create_rw_signal::<Option<SessionTransfer>>(None);
@@ -8876,6 +8894,30 @@ fn App() -> impl IntoView {
         set_saved_marks(&serde_json::to_string(&texts).unwrap_or_default());
     });
     let open_session = load_session.clone();
+    let set_session_shelved = Callback::new(move |(id, shelved): (String, bool)| {
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "id": id, "shelved": shelved })).unwrap();
+            match invoke_checked("set_session_shelved", args).await {
+                Ok(_) => {
+                    refresh_session_history();
+                    shelved_sessions_revision.update(|revision| *revision += 1);
+                    show_toast(&t(
+                        locale.get_untracked(),
+                        if shelved {
+                            "session.shelved_done"
+                        } else {
+                            "session.restored_done"
+                        },
+                    ));
+                }
+                Err(error) => show_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            }
+        });
+    });
+
     let on_ctx_pick = {
         let open_session = open_session.clone();
         let sessions = sessions;
@@ -9274,7 +9316,10 @@ fn App() -> impl IntoView {
             }
             if let Some(act) = context_menu::session_action(&action, &payload) {
                 match act {
-                    context_menu::SessionAction::Open(id) => open_session.call(id),
+                    context_menu::SessionAction::Open(id) => {
+                        show_shelved_sessions.set(false);
+                        open_session.call(id);
+                    }
                     context_menu::SessionAction::AbandonExploration(id) => {
                         ui_confirm.set(Some(UiConfirm::AbandonExploration(id)));
                     }
@@ -9374,6 +9419,9 @@ fn App() -> impl IntoView {
                                 });
                             }
                         });
+                    }
+                    context_menu::SessionAction::SetShelved { id, shelved } => {
+                        set_session_shelved.call((id, shelved));
                     }
                     context_menu::SessionAction::SetPinned { id, pinned } => {
                         spawn_local(async move {
@@ -9595,6 +9643,11 @@ fn App() -> impl IntoView {
         if command_palette_open.get() {
             ev.prevent_default();
             command_palette_open.set(false);
+            return;
+        }
+        if show_shelved_sessions.get() {
+            ev.prevent_default();
+            show_shelved_sessions.set(false);
             return;
         }
         if show_onboarding.get() {
@@ -11657,6 +11710,7 @@ fn App() -> impl IntoView {
                 action_palette_open.set(false);
                 command_palette_open.set(true);
             })
+            open_shelved=Callback::new(move |_| show_shelved_sessions.set(true))
             new_folder=Callback::new(new_folder)
             open_files=Callback::new(move |ev| { show_publication_workspace.set(false); show_research_graph.set(false); open_files(ev); })
             research_journey_open=show_research_graph.read_only()
@@ -17411,9 +17465,13 @@ fn App() -> impl IntoView {
                 // immediate paint.
                 sessions.update(|rows| {
                     if let Some(row) = rows.iter_mut().find(|row| row.id == id) {
-                        row.title = title;
+                        row.title = title.clone();
                     }
                 });
+                if active_session.get_untracked().as_deref() == Some(id.as_str()) {
+                    let branch_state = active_session_metadata.get_untracked().2;
+                    opened_shelved_metadata.set(Some((id, title, branch_state)));
+                }
                 refresh_session_history();
             })
         />
@@ -17985,6 +18043,25 @@ fn App() -> impl IntoView {
                 compact_idle_prompt.set(None);
             })
         />
+        {move || show_shelved_sessions.get().then(|| view! {
+            <ShelvedSessionsOverlay
+                locale=locale
+                revision=shelved_sessions_revision.read_only()
+                on_close=Callback::new(move |_| show_shelved_sessions.set(false))
+                on_open=Callback::new(move |session: SessionInfo| {
+                    let id = session.id.clone();
+                    opened_shelved_metadata.set(Some((session.id, session.title, session.branch_state)));
+                    show_shelved_sessions.set(false);
+                    load_session.call(id);
+                })
+                on_restore=Callback::new(move |id| set_session_shelved.call((id, false)))
+                on_context=Callback::new(move |(ev, session): (web_sys::MouseEvent, SessionInfo)| {
+                    let id = session.id.clone();
+                    opened_shelved_metadata.set(Some((session.id, session.title, session.branch_state)));
+                    ctx_menu.set(Some(context_menu::shelved_session_menu(ev.client_x() as f64, ev.client_y() as f64, &id, locale.get_untracked())));
+                })
+            />
+        })}
         <ContextMenuPortal menu=ctx_menu.read_only() set_menu=ctx_menu.write_only() on_pick=on_ctx_pick />
         {move ||archive_frame.get().map(|id|view!{
             <research_archive::ArchiveReview locale=locale frame_id=id busy=archive_busy

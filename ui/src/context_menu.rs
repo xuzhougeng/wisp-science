@@ -373,6 +373,10 @@ pub enum SessionAction {
         id: String,
         pinned: bool,
     },
+    SetShelved {
+        id: String,
+        shelved: bool,
+    },
     ReloadProjectRules(String),
     Transfer {
         id: String,
@@ -494,6 +498,11 @@ pub fn session_menu(
             session_id.to_string(),
         ));
         items.push(item(
+            "shelveSession",
+            i18n::t(locale, "session.shelve"),
+            session_id.to_string(),
+        ));
+        items.push(item(
             "renameSession",
             i18n::t(locale, "ctx.rename_session"),
             format!("{session_id}\u{1e}{title}"),
@@ -542,6 +551,25 @@ pub fn session_menu(
         }
     }
     CtxMenu { x, y, items }
+}
+
+pub fn shelved_session_menu(x: f64, y: f64, id: &str, locale: Locale) -> CtxMenu {
+    CtxMenu {
+        x,
+        y,
+        items: vec![
+            item(
+                "openSession",
+                i18n::t(locale, "ctx.open_session"),
+                id.into(),
+            ),
+            item(
+                "restoreSession",
+                i18n::t(locale, "session.restore"),
+                id.into(),
+            ),
+        ],
+    }
 }
 
 pub fn demo_menu(x: f64, y: f64, demo_id: &str, title: &str, locale: Locale) -> CtxMenu {
@@ -1275,6 +1303,12 @@ pub fn session_action(action: &str, payload: &str) -> Option<SessionAction> {
             Some(SessionAction::Move {
                 id: id.to_string(),
                 folder_id: (!folder_id.is_empty()).then(|| folder_id.to_string()),
+            })
+        }
+        "shelveSession" | "restoreSession" if !payload.is_empty() => {
+            Some(SessionAction::SetShelved {
+                id: payload.to_string(),
+                shelved: action == "shelveSession",
             })
         }
         "pinSession" if !payload.is_empty() => Some(SessionAction::SetPinned {

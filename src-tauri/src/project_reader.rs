@@ -324,7 +324,7 @@ async fn resolve_reference_sessions(
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Project '{project_id}' no longer exists."))?;
         for (id, title, ..) in store
-            .list_sessions(project_id)
+            .list_sessions_page(project_id, None, usize::MAX)
             .await
             .map_err(|error| error.to_string())?
         {
@@ -1226,6 +1226,21 @@ mod tests {
             .collect::<HashSet<_>>();
         assert_eq!(ids, HashSet::from(["source".into(), "reference".into()]));
         assert!(!ids.contains("exploration"));
+        store
+            .set_session_shelved("reference", "project", true)
+            .await
+            .unwrap();
+        let visible = resolve_reference_sessions(&store, &["project".into()], &[], "exploration")
+            .await
+            .unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, "source");
+        let explicit =
+            resolve_reference_sessions(&store, &[], &["reference".into()], "exploration")
+                .await
+                .unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(explicit[0].id, "reference");
 
         drop(store);
         let _ = std::fs::remove_file(database);

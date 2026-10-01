@@ -280,6 +280,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       has_user_turn: false,
     });
   }
+  const shelvedSessionIds = new Set<string>(JSON.parse(localStorage.getItem("mock-shelved-sessions") ?? "[]"));
+  if (query.get("mockShelvedPages") === "1") {
+    mockSessions.forEach((session) => shelvedSessionIds.add(session.id));
+  }
   let activeMockFrame = mockExplorationFlow ? "exploration-mainline" : "";
   let mockBranchMergedSummary = "";
   let mockMainlineAdvanced = query.get("mockMainlineAdvanced") === "1";
@@ -2218,7 +2222,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               },
             };
           }
+          case "set_viewed_session":
+            activeMockFrame = String(arg("id") ?? "");
+            return null;
           case "load_session":
+            activeMockFrame = String(arg("id") ?? "");
             if (mockExplorationFlow && String(arg("id") ?? "").startsWith("exploration-")) {
               activeMockFrame = String(arg("id"));
               return explorationTranscript(activeMockFrame);
@@ -2569,21 +2577,36 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               };
             }
             return { items: [], next_before_seq: null, user_offset: 0 };
+          case "set_session_shelved": {
+            if ((window as any).__failShelve) throw new Error("Could not save conversation visibility");
+            const id = String(arg("id"));
+            if (!mockSessions.some((session) => session.id === id)) throw new Error("Session not found");
+            if (arg("shelved")) shelvedSessionIds.add(id);
+            else shelvedSessionIds.delete(id);
+            localStorage.setItem("mock-shelved-sessions", JSON.stringify([...shelvedSessionIds]));
+            ((window as any).__shelveCalls ??= []).push({ id, shelved: arg("shelved") });
+            return null;
+          }
           case "list_sessions_page": {
             ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
             const cursor = plain(arg("cursor"));
-            const start = cursor ? mockSessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
-            const items = mockSessions.slice(start, start + 100);
-            const hasMore = start + items.length < mockSessions.length;
+            const shelved = Boolean(arg("shelved"));
+            const q = String(arg("query") ?? "").toLowerCase();
+            const matching = mockSessions.filter((session) => shelvedSessionIds.has(session.id) === shelved
+              && [session.title, session.body].some((value) => String(value ?? "").toLowerCase().includes(q)));
+            const start = cursor ? matching.findIndex((item) => item.id === cursor.id) + 1 : 0;
+            const items = matching.slice(start, start + 100);
+            const hasMore = start + items.length < matching.length;
             const last = items.at(-1);
             return {
               items,
               next_cursor: hasMore && last ? { id: last.id, ts: last.ts } : null,
               running_ids: mockSessions.filter((item) => item.running).map((item) => item.id),
+              shelved_active_id: shelvedSessionIds.has(activeMockFrame) ? activeMockFrame : null,
             };
           }
           case "latest_used_session":
-            return mockSessions.find((session) => session.has_user_turn !== false)?.id ?? null;
+            return mockSessions.find((session) => session.has_user_turn !== false && !shelvedSessionIds.has(session.id))?.id ?? null;
           case "list_project_explorations":
             return mockExplorations.filter((item) =>
               !mockExplorationRoundResolved || item.exploration.status !== "discarded").map((item) => ({
@@ -4608,6 +4631,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const limit = Math.max(1, Math.min(100, Number(arg("limit") ?? 12)));
             if (requestedProject != null) {
               return mockSessions
+                .filter((session) => !shelvedSessionIds.has(session.id))
                 .filter((session) => [session.title, session.body]
                   .some((value) => String(value ?? "").toLowerCase().includes(q)))
                 .slice(0, limit)
@@ -4622,7 +4646,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 }));
             }
             const rows = query.get("mockManySessions") === "1"
-              ? mockSessions.map((session) => ({
+              ? mockSessions.filter((session) => !shelvedSessionIds.has(session.id)).map((session) => ({
                   id: session.id,
                   project_id: "default",
                   project_name: project.name,

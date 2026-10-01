@@ -4849,6 +4849,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             CONTEXT_EPOCHS_MIGRATION.to_string(),
             CONTEXT_EPOCH_IDENTITY_MIGRATION.to_string(),
             ACP_AGENT_SELECTION_MIGRATION.to_string(),
+            SESSION_SHELVED_MIGRATION.to_string(),
         ]
     );
     let first_open_migrations = store.schema_migrations().await.unwrap();

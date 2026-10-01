@@ -414,16 +414,21 @@ pub(super) async fn list_sessions_page(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     cursor: Option<SessionCursor>,
+    shelved: Option<bool>,
+    query: Option<String>,
 ) -> Result<SessionPage, String> {
     let ap = state.require_active(window.label())?;
+    let shelved = shelved.unwrap_or(false);
     let mut rows = state
         .store
-        .list_sessions_page(
+        .list_sessions_page_with_visibility(
             &ap.id,
             cursor
                 .as_ref()
                 .map(|cursor| (cursor.ts, cursor.id.as_str())),
             SESSION_HISTORY_PAGE_SIZE + 1,
+            Some(shelved),
+            query.as_deref().unwrap_or(""),
         )
         .await
         .map_err(|e| format!("{e}"))?;
@@ -440,12 +445,12 @@ pub(super) async fn list_sessions_page(
     // the newest keyset page, so fetch them once (first page only) and prepend any
     // that aren't already in this page. The keyset cursor is left untouched.
     let pinned_rows = match cursor {
-        None => state
+        None if !shelved => state
             .store
             .list_pinned_sessions(&ap.id)
             .await
             .map_err(|e| format!("{e}"))?,
-        Some(_) => Vec::new(),
+        _ => Vec::new(),
     };
     let pinned_ids: HashSet<String> = pinned_rows.iter().map(|row| row.0.clone()).collect();
     let page_ids: HashSet<String> = rows.iter().map(|row| row.0.clone()).collect();
@@ -497,7 +502,20 @@ pub(super) async fn list_sessions_page(
     for item in &mut items {
         item.stale_prompt = stale.contains(&item.id);
     }
+    let shelved_active_id = match state.active_frame(window.label()) {
+        Some(id)
+            if state
+                .store
+                .session_is_shelved(&id)
+                .await
+                .map_err(|e| e.to_string())? =>
+        {
+            Some(id)
+        }
+        _ => None,
+    };
     Ok(SessionPage {
+        shelved_active_id,
         items,
         next_cursor,
         running_ids: running.into_iter().collect(),
@@ -914,6 +932,22 @@ pub(super) async fn set_session_pinned(
         .await
         .map_err(|e| format!("{e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub(super) async fn set_session_shelved(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    id: String,
+    shelved: bool,
+) -> Result<(), String> {
+    let ap = state.require_active(window.label())?;
+    let _project_activity = state.begin_project_activity(&ap.id)?;
+    state
+        .store
+        .set_session_shelved(&id, &ap.id, shelved)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// How many sessions appear on the Projects landing "Recent sessions" column.

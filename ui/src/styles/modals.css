@@ -1755,3 +1755,19 @@ button.run-review-dir:hover .run-review-filename {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
+
+.shelved-sessions-modal { max-width: 680px; }
+.shelved-sessions-modal header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.shelved-sessions-modal header h2 { margin: 0; }
+.shelved-sessions-modal svg { width: 16px; height: 16px; flex-shrink: 0; }
+.shelved-sessions-list { overflow-y: auto; min-height: 60px; }
+.shelved-session-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.shelved-session-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px; color: inherit; border: 0; background: transparent; cursor: pointer; }
+.shelved-session-open span { overflow-wrap: anywhere; }
+.shelved-session-row .btn { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+@media (max-width: 520px) {
+  .shelved-session-row { flex-wrap: wrap; }
+  .shelved-session-open { flex-basis: 100%; }
+}
+/* Keyboard search can open above this collection; mirror the Escape order. */
+body:has(.shelved-sessions-modal) .conversation-search-overlay { z-index: 105; }

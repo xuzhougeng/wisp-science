@@ -2400,8 +2400,10 @@ pub struct AskUserResolved {
     pub expired: bool,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct SessionInfo {
+    #[serde(default)]
+    pub running: bool,
     pub id: String,
     pub title: String,
     pub ts: i64,
@@ -2622,11 +2624,35 @@ pub struct SessionCursor {
     pub id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct SessionPage {
+    /// Prevent the active shelved conversation from being reinserted as a draft.
+    #[serde(default)]
+    pub shelved_active_id: Option<String>,
     pub items: Vec<SessionInfo>,
     pub next_cursor: Option<SessionCursor>,
     pub running_ids: Vec<String>,
+}
+
+#[cfg(test)]
+mod session_page_contract_tests {
+    use super::*;
+
+    #[test]
+    fn session_pages_accept_legacy_payloads_and_round_trip_shelved_active_id() {
+        let mut page: SessionPage = serde_json::from_value(serde_json::json!({
+            "items": [{"id":"f","title":"Draft","ts":1}],
+            "next_cursor": null,
+            "running_ids": []
+        }))
+        .unwrap();
+        assert!(page.shelved_active_id.is_none());
+        assert!(!page.items[0].running);
+        page.shelved_active_id = Some("hidden".into());
+        let decoded: SessionPage =
+            serde_json::from_value(serde_json::to_value(page).unwrap()).unwrap();
+        assert_eq!(decoded.shelved_active_id.as_deref(), Some("hidden"));
+    }
 }
 
 #[derive(Deserialize, Clone)]

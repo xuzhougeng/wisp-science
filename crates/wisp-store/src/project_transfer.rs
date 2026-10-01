@@ -208,6 +208,14 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
         .execute(&mut **tx)
         .await?;
     }
+    // Display preferences are optional in older project bundles.
+    if attached_table_columns(tx, "frames")
+        .await?
+        .contains("shelved")
+    {
+        sqlx::query("UPDATE frames SET shelved=(SELECT source.shelved FROM transfer.frames source WHERE source.id=frames.id) WHERE project_id=?")
+            .bind(project_id).execute(&mut **tx).await?;
+    }
     if attached_table_columns(tx, "frames")
         .await?
         .contains("acp_agent_selection")

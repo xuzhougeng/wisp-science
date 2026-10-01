@@ -399,3 +399,5 @@ button.side-item.ses.selecting { padding-right: 10px; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .nav { gap: 4px; }
 }
+
+.side-shelved-btn svg { width: 15px; height: 15px; }

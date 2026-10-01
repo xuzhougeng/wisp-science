@@ -126,6 +126,7 @@ pub(super) fn Sidebar(
     switch_project: Callback<String>,
     new_session: Callback<web_sys::MouseEvent>,
     open_search: Callback<web_sys::MouseEvent>,
+    open_shelved: Callback<web_sys::MouseEvent>,
     new_folder: Callback<web_sys::MouseEvent>,
     open_files: Callback<web_sys::MouseEvent>,
     open_research_graph: Callback<web_sys::MouseEvent>,
@@ -365,6 +366,12 @@ pub(super) fn Sidebar(
                                     sort_menu_open.set(false);
                                 }>
                                 {move || t(locale.get(), if selecting_sessions.get() { "settings.cancel" } else { "sidebar.select_sessions" })}
+                            </button>
+                            <button type="button" class="icon-btn side-shelved-btn"
+                                title=move || t(locale.get(), "session.shelved")
+                                aria-label=move || t(locale.get(), "session.shelved")
+                                on:click=move |ev| { sort_menu_open.set(false); open_shelved.call(ev); }>
+                                {compose_icon("eye-off")}
                             </button>
                             <button type="button" class="icon-btn side-sort-btn"
                                 class:active=move || sort_menu_open.get()

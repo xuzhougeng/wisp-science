@@ -1032,27 +1032,7 @@ struct OnboardingState {
     has_api_key: bool,
 }
 
-/// One saved conversation for the history sidebar.
-#[derive(Serialize, Clone)]
-struct SessionInfo {
-    id: String,
-    title: String,
-    ts: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    folder_id: Option<String>,
-    /// Source session this one was branched from; the sidebar nests on it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    branched_from: Option<String>,
-    running: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pinned: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    branch_state: Option<String>,
-    /// The session's persisted system prompt was built from older
-    /// AGENTS.md / WISP.md contents; the sidebar offers a rules reload.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    stale_prompt: bool,
-}
+use wisp_dto::{SessionCursor, SessionInfo, SessionPage};
 
 const SESSION_HISTORY_PAGE_SIZE: usize = 100;
 const SESSION_TRANSCRIPT_PAGE_TURNS: usize = 20;
@@ -1060,19 +1040,6 @@ const SESSION_TRANSCRIPT_PAGE_TURNS: usize = 20;
 /// history here used to duplicate every saved tool dump immediately after a
 /// turn completed, exactly when the WebView was settling its projections.
 const FOLLOW_UP_TRANSCRIPT_TURNS: usize = 4;
-
-#[derive(Serialize, Deserialize, Clone)]
-struct SessionCursor {
-    ts: i64,
-    id: String,
-}
-
-#[derive(Serialize)]
-struct SessionPage {
-    items: Vec<SessionInfo>,
-    next_cursor: Option<SessionCursor>,
-    running_ids: Vec<String>,
-}
 
 #[derive(Serialize)]
 struct SessionTranscriptPage {
@@ -7487,6 +7454,7 @@ pub fn run() {
             session_commands::delete_session,
             session_commands::rename_session,
             session_commands::set_session_pinned,
+            session_commands::set_session_shelved,
             session_commands::transfer_session_to_project,
             session_commands::list_folders,
             session_commands::create_folder,
