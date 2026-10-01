@@ -30,6 +30,7 @@ pub(crate) fn start_scheduler(app: &AppHandle) {
         loop {
             tick.tick().await;
             fire_due_schedules(&app).await;
+            crate::research_recap::daily_recap_tick(&app).await;
         }
     });
 }
@@ -209,6 +210,7 @@ pub(crate) async fn create_schedule(
     session_id: Option<String>,
     skill: Option<String>,
     start_at: Option<i64>,
+    project_id: Option<String>,
 ) -> Result<ScheduleRecord, String> {
     let now = chrono::Utc::now().timestamp();
     let args = normalize_schedule_args(
@@ -220,7 +222,19 @@ pub(crate) async fn create_schedule(
         start_at,
         now,
     )?;
-    let project_id = state.require_active(window.label())?.id;
+    // The home Automation page names a project; a project window uses its own.
+    let project_id = match project_id.map(|id| id.trim().to_string()) {
+        Some(id) if !id.is_empty() => {
+            state
+                .store
+                .get_project(&id)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "The project no longer exists.".to_string())?;
+            id
+        }
+        _ => state.require_active(window.label())?.id,
+    };
     if let Some(frame_id) = args.frame_id.as_deref() {
         let owner = state
             .store
@@ -265,6 +279,30 @@ pub(crate) async fn list_schedules(
         .list_schedules(&project_id)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Every project's schedules, for the home Automation page. A project whose
+/// storage is unavailable is skipped rather than hiding all the others.
+#[tauri::command]
+pub(crate) async fn list_all_schedules(
+    state: State<'_, AppState>,
+) -> Result<Vec<ScheduleRecord>, String> {
+    let projects = state
+        .store
+        .list_projects()
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut all = Vec::new();
+    for project in projects {
+        match state.store.list_schedules(&project.0).await {
+            Ok(schedules) => all.extend(schedules),
+            Err(error) => {
+                tracing::warn!(target: "wisp", %error, project_id = %project.0, "failed to list schedules")
+            }
+        }
+    }
+    all.sort_by(|a, b| a.next_run_at.cmp(&b.next_run_at).then(a.id.cmp(&b.id)));
+    Ok(all)
 }
 
 #[tauri::command]

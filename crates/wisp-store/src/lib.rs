@@ -836,6 +836,10 @@ impl Store {
                 .await?;
             Self::record_migration(pool, RESEARCH_ARCHIVES_MIGRATION).await?;
         }
+        // Mainline daily recaps, one per project and local day.
+        sqlx::raw_sql(include_str!("../migrations/0060_research_recaps.sql"))
+            .execute(pool)
+            .await?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS folders (\
              id TEXT PRIMARY KEY, \

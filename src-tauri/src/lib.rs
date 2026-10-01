@@ -94,6 +94,7 @@ mod publication_reproduction;
 mod quick_actions;
 mod research_archive;
 mod research_graph;
+mod research_recap;
 mod resource_leases;
 mod resource_refs;
 mod review;
@@ -7393,6 +7394,10 @@ pub fn run() {
             scheduler::set_schedule_enabled,
             scheduler::delete_schedule,
             scheduler::run_schedule_now,
+            scheduler::list_all_schedules,
+            research_recap::get_daily_recap_automation,
+            research_recap::set_daily_recap_automation,
+            research_recap::run_daily_recap_now,
             delegation_runtime::get_dynamic_agent_options,
             delegation_runtime::get_agent_workflow_result,
             delegation_runtime::approve_agent_workflow,
@@ -7484,6 +7489,8 @@ pub fn run() {
             project_commands::get_research_calendar,
             project_commands::add_research_journal_entry,
             project_commands::get_research_journey_source,
+            research_recap::generate_research_recap,
+            research_recap::update_research_recap,
             session_commands::delete_session,
             session_commands::rename_session,
             session_commands::set_session_pinned,

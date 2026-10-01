@@ -629,9 +629,26 @@ fn research_journey_contract_preserves_version_and_occurrence_time() {
             source_id: "v1".into(),
             version_number: Some(1),
             source_discarded: true,
+            run_id: Some("run".into()),
             ..Default::default()
         }],
         truncated: true,
+        recaps: vec![wisp_dto::ResearchRecap {
+            id: "recap".into(),
+            day_start: 0,
+            status: "draft".into(),
+            headline: "Compared methods".into(),
+            done: vec![wisp_dto::ResearchRecapItem {
+                text: "Ran comparison".into(),
+                refs: vec![0],
+            }],
+            sources: vec![wisp_dto::ResearchRecapSource {
+                kind: "run".into(),
+                id: "run".into(),
+                title: "Compare".into(),
+            }],
+            ..Default::default()
+        }],
     };
     let ui: wisp_dto::ResearchJourney = roundtrip(&backend);
     assert_eq!(ui, backend);
@@ -658,8 +675,8 @@ fn research_calendar_contract_preserves_project_errors_and_truncation() {
         wisp_dto::ResearchCalendarProject {
             project_id: "p".into(),
             history: wisp_dto::ResearchJourney {
-                entries: vec![],
                 truncated: true,
+                ..Default::default()
             },
             error: None,
         },

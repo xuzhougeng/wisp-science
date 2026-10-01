@@ -870,6 +870,9 @@ async fn copy_publication_children(
             sqlx::query("INSERT INTO research_archive_continuations SELECT c.* FROM transfer.research_archive_continuations c JOIN research_archives a ON a.id=c.archive_id WHERE a.project_id=?").bind(project_id).execute(&mut **tx).await?;
         }
     }
+    if attached_table_exists(tx, "research_recaps").await? {
+        sqlx::query("INSERT INTO research_recaps(id,project_id,day_start,status,recap_json,created_at,updated_at) SELECT id,project_id,day_start,status,recap_json,created_at,updated_at FROM transfer.research_recaps WHERE project_id=?").bind(project_id).execute(&mut **tx).await?;
+    }
     Ok(())
 }
 
@@ -950,6 +953,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM research_edges WHERE project_id=?",
         "DELETE FROM research_nodes WHERE project_id=?",
         "DELETE FROM research_journal_entries WHERE project_id=?",
+        "DELETE FROM research_recaps WHERE project_id=?",
         "DELETE FROM artifacts WHERE project_id=?",
         "DELETE FROM external_resources WHERE project_id=?",
         "DELETE FROM runs WHERE project_id=?",
@@ -1411,6 +1415,7 @@ impl Store {
             ("research_journal_entries", "*", "id"),
             ("research_archives", "*", "id"),
             ("research_archive_continuations", "*", "frame_id"),
+            ("research_recaps", "*", "id"),
         ];
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", database.display()))?
             .read_only(true);
@@ -1426,7 +1431,17 @@ impl Store {
             .bind(table)
             .fetch_one(&pool)
             .await?;
-            if !exists {
+            // Tables added after this format shipped count only once they hold
+            // rows, so an upgrade alone never changes a published fingerprint.
+            let late = *table == "research_recaps";
+            if !exists
+                || (late
+                    && !sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {table})"
+                    ))
+                    .fetch_one(&pool)
+                    .await?)
+            {
                 continue;
             }
             digest.update((table.len() as u64).to_le_bytes());

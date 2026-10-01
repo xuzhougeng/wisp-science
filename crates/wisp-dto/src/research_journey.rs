@@ -6,6 +6,57 @@ use serde::{Deserialize, Serialize};
 pub struct ResearchJourney {
     pub entries: Vec<ResearchJourneyEntry>,
     pub truncated: bool,
+    /// Mainline daily recaps in range; never part of `entries`.
+    #[serde(default)]
+    pub recaps: Vec<ResearchRecap>,
+}
+
+/// An AI-drafted summary of one local day. It stays a draft until the
+/// researcher confirms it, and each item cites the recorded sources it
+/// summarizes, so a recap never stands in for the records themselves.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResearchRecap {
+    pub id: String,
+    /// Local midnight of the summarized day.
+    pub day_start: i64,
+    /// `draft`, `confirmed` or `dismissed`.
+    pub status: String,
+    pub headline: String,
+    pub done: Vec<ResearchRecapItem>,
+    pub findings: Vec<ResearchRecapItem>,
+    pub issues: Vec<ResearchRecapItem>,
+    pub next: Vec<ResearchRecapItem>,
+    pub sources: Vec<ResearchRecapSource>,
+    pub model: String,
+    pub generated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResearchRecapItem {
+    pub text: String,
+    /// Indexes into `ResearchRecap::sources`.
+    #[serde(default)]
+    pub refs: Vec<usize>,
+}
+
+/// `kind` is `run`, `artifact` (an immutable version id), `session` or `record`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResearchRecapSource {
+    pub kind: String,
+    pub id: String,
+    pub title: String,
+}
+
+/// The researcher's review of a recap draft; sources stay as generated.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResearchRecapEdit {
+    pub id: String,
+    pub status: String,
+    pub headline: String,
+    pub done: Vec<ResearchRecapItem>,
+    pub findings: Vec<ResearchRecapItem>,
+    pub issues: Vec<ResearchRecapItem>,
+    pub next: Vec<ResearchRecapItem>,
 }
 
 /// One project's mainline history in the home calendar. A failed project stays

@@ -3,10 +3,57 @@ use anyhow::{bail, Result};
 use sqlx::Row;
 use wisp_dto::{
     ResearchJournalInput, ResearchJourney, ResearchJourneyEntry, ResearchJourneyInput,
-    ResearchJourneySource,
+    ResearchJourneySource, ResearchRecap, ResearchRecapEdit, ResearchRecapItem,
 };
 
 const ENTRY_LIMIT: usize = 2000;
+const RECAP_STATUSES: [&str; 3] = ["draft", "confirmed", "dismissed"];
+const RECAP_ITEMS: usize = 12;
+
+fn validate_recap(recap: &ResearchRecap) -> Result<()> {
+    if !RECAP_STATUSES.contains(&recap.status.as_str()) {
+        bail!("Unknown recap status");
+    }
+    if recap.headline.trim().is_empty() || recap.headline.chars().count() > 200 {
+        bail!("A recap needs a headline of 1–200 characters");
+    }
+    for items in [&recap.done, &recap.findings, &recap.issues, &recap.next] {
+        if items.len() > RECAP_ITEMS
+            || items.iter().any(|item| {
+                item.text.trim().is_empty()
+                    || item.text.chars().count() > 1000
+                    || item.refs.iter().any(|r| *r >= recap.sources.len())
+            })
+        {
+            bail!("Each recap section holds at most 12 non-empty items that cite known sources");
+        }
+    }
+    Ok(())
+}
+
+fn recap_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ResearchRecap> {
+    let mut recap: ResearchRecap = serde_json::from_str(row.try_get("recap_json")?)?;
+    recap.id = row.try_get("id")?;
+    recap.day_start = row.try_get("day_start")?;
+    recap.status = row.try_get("status")?;
+    Ok(recap)
+}
+
+/// Lines the researcher left unchanged keep their sources; rewritten text
+/// no longer claims the generated citations.
+fn keep_refs(edited: &[ResearchRecapItem], before: &[ResearchRecapItem]) -> Vec<ResearchRecapItem> {
+    edited
+        .iter()
+        .map(|item| ResearchRecapItem {
+            text: item.text.trim().to_string(),
+            refs: before
+                .iter()
+                .find(|old| old.text == item.text.trim())
+                .map(|old| old.refs.clone())
+                .unwrap_or_default(),
+        })
+        .collect()
+}
 
 /// Read visibility is intentionally the same as the graph: branch-owned objects
 /// and frozen baseline objects, never sibling exploration state.
@@ -129,6 +176,14 @@ impl Store {
             .fetch_all(&self.pool)
             .await?;
         let truncated = rows.len() > ENTRY_LIMIT;
+        // Recaps summarize the mainline only.
+        let recaps = match exploration {
+            None => {
+                self.research_recaps(scope.project_id(), from, until)
+                    .await?
+            }
+            Some(_) => Vec::new(),
+        };
         let entries = rows
             .into_iter()
             .take(ENTRY_LIMIT)
@@ -151,7 +206,148 @@ impl Store {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(ResearchJourney { entries, truncated })
+        Ok(ResearchJourney {
+            entries,
+            truncated,
+            recaps,
+        })
+    }
+
+    /// The researcher's own mainline requests in `[from, until)` as
+    /// `(frame_id, first 300 characters)`, oldest first. Replayed epoch
+    /// copies are skipped like in the history query.
+    pub async fn research_recap_requests(
+        &self,
+        project_id: &str,
+        from: i64,
+        until: i64,
+    ) -> Result<Vec<(String, String)>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.research_recap_requests(project_id, from, until)).await;
+        }
+        Ok(sqlx::query_as(
+            "SELECT m.frame_id, substr(trim(m.content),1,300) FROM messages m JOIN frames f ON f.id=m.frame_id \
+             WHERE f.project_id=? AND f.exploration_id IS NULL AND m.role='user' \
+               AND trim(COALESCE(m.content,''))<>'' AND m.ts>=? AND m.ts<? \
+               AND NOT EXISTS (SELECT 1 FROM context_epochs ce WHERE ce.frame_id=m.frame_id \
+                 AND m.seq BETWEEN ce.first_seq AND ce.initial_head_seq) \
+             ORDER BY m.ts, m.id LIMIT 200",
+        )
+        .bind(project_id)
+        .bind(from)
+        .bind(until)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// Mainline recaps whose day starts in `[from, until)`, newest first.
+    pub async fn research_recaps(
+        &self,
+        project_id: &str,
+        from: i64,
+        until: i64,
+    ) -> Result<Vec<ResearchRecap>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.research_recaps(project_id, from, until)).await;
+        }
+        sqlx::query("SELECT id,day_start,status,recap_json FROM research_recaps WHERE project_id=? AND day_start>=? AND day_start<? ORDER BY day_start DESC")
+            .bind(project_id)
+            .bind(from)
+            .bind(until)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(recap_from_row)
+            .collect()
+    }
+
+    /// Store a generated recap for its day. Without `replace`, any existing
+    /// recap for that day wins, including a dismissed one, and `None` is
+    /// returned, so scheduled drafting never overwrites the researcher.
+    pub async fn save_research_recap(
+        &self,
+        project_id: &str,
+        recap: &ResearchRecap,
+        replace: bool,
+    ) -> Result<Option<ResearchRecap>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.save_research_recap(project_id, recap, replace)).await;
+        }
+        validate_recap(recap)?;
+        let mut tx = self.begin_write().await?;
+        let existing: Option<String> =
+            sqlx::query_scalar("SELECT id FROM research_recaps WHERE project_id=? AND day_start=?")
+                .bind(project_id)
+                .bind(recap.day_start)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if existing.is_some() && !replace {
+            return Ok(None);
+        }
+        let mut saved = recap.clone();
+        saved.id = existing
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let now = chrono::Utc::now().timestamp();
+        let json = serde_json::to_string(&saved)?;
+        if existing.is_some() {
+            sqlx::query("UPDATE research_recaps SET status=?,recap_json=?,updated_at=? WHERE id=?")
+                .bind(&saved.status)
+                .bind(&json)
+                .bind(now)
+                .bind(&saved.id)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query("INSERT INTO research_recaps(id,project_id,day_start,status,recap_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
+                .bind(&saved.id).bind(project_id).bind(saved.day_start).bind(&saved.status).bind(&json).bind(now).bind(now)
+                .execute(&mut *tx).await?;
+        }
+        self.bump_state_generation_in_tx(&mut tx, &StateScope::mainline(project_id))
+            .await?;
+        tx.commit().await?;
+        Ok(Some(saved))
+    }
+
+    /// Apply the researcher's review. Sources stay as generated.
+    pub async fn update_research_recap(
+        &self,
+        project_id: &str,
+        edit: &ResearchRecapEdit,
+    ) -> Result<ResearchRecap> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.update_research_recap(project_id, edit)).await;
+        }
+        let mut tx = self.begin_write().await?;
+        let row = sqlx::query(
+            "SELECT id,day_start,status,recap_json FROM research_recaps WHERE id=? AND project_id=?",
+        )
+        .bind(&edit.id)
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            bail!("This recap no longer exists");
+        };
+        let mut recap = recap_from_row(row)?;
+        recap.status = edit.status.clone();
+        recap.headline = edit.headline.trim().to_string();
+        recap.done = keep_refs(&edit.done, &recap.done);
+        recap.findings = keep_refs(&edit.findings, &recap.findings);
+        recap.issues = keep_refs(&edit.issues, &recap.issues);
+        recap.next = keep_refs(&edit.next, &recap.next);
+        validate_recap(&recap)?;
+        sqlx::query("UPDATE research_recaps SET status=?,recap_json=?,updated_at=? WHERE id=?")
+            .bind(&recap.status)
+            .bind(serde_json::to_string(&recap)?)
+            .bind(chrono::Utc::now().timestamp())
+            .bind(&recap.id)
+            .execute(&mut *tx)
+            .await?;
+        self.bump_state_generation_in_tx(&mut tx, &StateScope::mainline(project_id))
+            .await?;
+        tx.commit().await?;
+        Ok(recap)
     }
 
     pub async fn add_research_journal_entry(
@@ -303,6 +499,165 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    fn recap(day_start: i64, headline: &str) -> ResearchRecap {
+        ResearchRecap {
+            day_start,
+            status: "draft".into(),
+            headline: headline.into(),
+            done: vec![ResearchRecapItem {
+                text: "Compared normalization methods".into(),
+                refs: vec![0],
+            }],
+            sources: vec![wisp_dto::ResearchRecapSource {
+                kind: "run".into(),
+                id: "r".into(),
+                title: "Compare methods".into(),
+            }],
+            model: "m".into(),
+            generated_at: 5,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn recaps_keep_one_per_day_respect_the_researcher_and_travel_with_exports() {
+        let token = uuid::Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("recaps-{token}.db"));
+        let store = Store::open(&path).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store.create_project("other", "Other", "").await.unwrap();
+        let empty_export = std::env::temp_dir().join(format!("recaps-empty-{token}.db"));
+        store
+            .export_project_database("p", &empty_export)
+            .await
+            .unwrap();
+        let empty_hash = Store::portable_project_database_hash(&empty_export)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE research_recaps")
+            .execute(&Store::open_snapshot(&empty_export).await.unwrap().pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            Store::portable_project_database_hash(&empty_export)
+                .await
+                .unwrap(),
+            empty_hash,
+            "an empty recap table must not change published fingerprints"
+        );
+
+        let first = store
+            .save_research_recap("p", &recap(86400, "First"), false)
+            .await
+            .unwrap()
+            .unwrap();
+        // Scheduled drafting never replaces an existing day.
+        assert!(store
+            .save_research_recap("p", &recap(86400, "Second"), false)
+            .await
+            .unwrap()
+            .is_none());
+        let journey = store
+            .research_journey(&StateScope::mainline("p"), 86400, 172800)
+            .await
+            .unwrap();
+        assert_eq!(journey.recaps, vec![first.clone()]);
+        assert!(journey.entries.is_empty(), "recaps are not history entries");
+        assert!(store
+            .research_journey(&StateScope::mainline("other"), 86400, 172800)
+            .await
+            .unwrap()
+            .recaps
+            .is_empty());
+
+        let edited = store
+            .update_research_recap(
+                "p",
+                &ResearchRecapEdit {
+                    id: first.id.clone(),
+                    status: "confirmed".into(),
+                    headline: " Normalization settled ".into(),
+                    done: vec![
+                        ResearchRecapItem {
+                            text: "Compared normalization methods".into(),
+                            refs: vec![],
+                        },
+                        ResearchRecapItem {
+                            text: "Chose method B".into(),
+                            refs: vec![0],
+                        },
+                    ],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.headline, "Normalization settled");
+        assert_eq!(edited.done[0].refs, vec![0], "unchanged line keeps sources");
+        assert!(
+            edited.done[1].refs.is_empty(),
+            "rewritten line drops sources"
+        );
+        assert!(store
+            .update_research_recap(
+                "other",
+                &ResearchRecapEdit {
+                    id: first.id.clone(),
+                    status: "confirmed".into(),
+                    headline: "x".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .is_err());
+        assert!(store
+            .update_research_recap(
+                "p",
+                &ResearchRecapEdit {
+                    id: first.id.clone(),
+                    status: "published".into(),
+                    headline: "x".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .is_err());
+
+        // A manual regeneration replaces the day in place.
+        let regenerated = store
+            .save_research_recap("p", &recap(86400, "Regenerated"), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(regenerated.id, first.id);
+        let mut bad = recap(0, "Bad");
+        bad.done[0].refs = vec![3];
+        assert!(store.save_research_recap("p", &bad, true).await.is_err());
+
+        let export = std::env::temp_dir().join(format!("recaps-export-{token}.db"));
+        store.export_project_database("p", &export).await.unwrap();
+        assert_ne!(
+            Store::portable_project_database_hash(&export)
+                .await
+                .unwrap(),
+            empty_hash
+        );
+        let copy = Store::open_snapshot(&export).await.unwrap();
+        assert_eq!(
+            copy.research_recaps("p", 0, i64::MAX).await.unwrap(),
+            vec![regenerated]
+        );
+        store.delete_project("p").await.unwrap();
+        assert!(store
+            .research_recaps("p", 0, i64::MAX)
+            .await
+            .unwrap()
+            .is_empty());
+        for file in [path, empty_export, export] {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+
     #[tokio::test]
     async fn journey_records_message_days_and_preserves_stated_decision_rationale() {
         let path =
@@ -354,6 +709,15 @@ mod tests {
         assert_eq!(entries[1].source_id, "f");
         assert!(entries[1].summary.is_empty());
         assert!(!entries.iter().any(|e| e.title.contains("Unconfirmed")));
+        assert_eq!(
+            store.research_recap_requests("p", 0, 86400).await.unwrap(),
+            vec![("f".to_string(), "Compare normalization methods".to_string())]
+        );
+        assert!(store
+            .research_recap_requests("p", 1001, 86400)
+            .await
+            .unwrap()
+            .is_empty());
         store.pool.close().await;
         let _ = std::fs::remove_file(path);
     }

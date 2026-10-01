@@ -8,36 +8,9 @@
 
 use super::Store;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScheduleRecord {
-    pub id: String,
-    pub project_id: String,
-    /// Target session. `None` creates a fresh session for every fire.
-    pub frame_id: Option<String>,
-    pub name: String,
-    pub prompt: String,
-    pub skill: Option<String>,
-    pub interval_secs: i64,
-    pub enabled: bool,
-    pub next_run_at: i64,
-    pub last_run_at: Option<i64>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScheduleRunRecord {
-    pub id: String,
-    pub schedule_id: String,
-    pub frame_id: Option<String>,
-    /// `fired` or `failed`.
-    pub status: String,
-    pub error: Option<String>,
-    pub fired_at: i64,
-}
+pub use wisp_dto::{ScheduleRecord, ScheduleRunRecord};
 
 /// Smallest `anchor + k*interval` strictly greater than `now`. Advancing from
 /// the previous slot (not `now`) keeps the schedule on its original cadence.
