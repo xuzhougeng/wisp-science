@@ -2823,6 +2823,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
             return mockFolders.map((folder) => ({ ...folder }));
+          case "preview_session_artifacts": {
+            const behavior = new URL(location.href).searchParams.get("mockSessionArtifacts");
+            if (behavior === "slow") await new Promise(resolve => setTimeout(resolve, 700));
+            if (behavior === "error") throw new Error("Target file already exists: results/plot.svg");
+            return {
+              fingerprint: `${String(arg("id"))}:${String(arg("targetProjectId") ?? "delete")}`,
+              artifacts: ["plot.svg"], files: behavior === "many"
+                ? Array.from({ length: 120 }, (_, i) => `results/figures/analysis-${i}/plot.svg`)
+                : ["results/plot.svg", ".wisp/artifacts/sha256/plot.svg"],
+              retained: [{ name: "uploads/input.csv", reason: "upload" }, { name: "shared.csv", reason: "shared" }],
+            };
+          }
           case "create_folder":
           case "rename_folder":
           case "delete_folder":
@@ -6782,6 +6794,18 @@ export function parallelMock(): void {
               });
             }
             return null;
+          }
+          case "preview_session_artifacts": {
+            const behavior = new URL(location.href).searchParams.get("mockSessionArtifacts");
+            if (behavior === "slow") await new Promise(resolve => setTimeout(resolve, 700));
+            if (behavior === "error") throw new Error("Target file already exists: results/plot.svg");
+            return {
+              fingerprint: `${String(arg("id"))}:${String(arg("targetProjectId") ?? "delete")}`,
+              artifacts: ["plot.svg"], files: behavior === "many"
+                ? Array.from({ length: 120 }, (_, i) => `results/figures/analysis-${i}/plot.svg`)
+                : ["results/plot.svg", ".wisp/artifacts/sha256/plot.svg"],
+              retained: [{ name: "uploads/input.csv", reason: "upload" }, { name: "shared.csv", reason: "shared" }],
+            };
           }
           case "delete_session": {
             const index = sessions.findIndex((entry) => entry.id === arg("id"));

@@ -317,6 +317,23 @@ pub(super) async fn set_active_project(
     label: &str,
     id: &str,
 ) -> Result<(String, String), String> {
+    let recovery_projects = state
+        .store
+        .session_artifact_recovery_projects(id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !recovery_projects.is_empty() {
+        let _guards = recovery_projects
+            .iter()
+            .map(|project| state.begin_project_exclusive_activity(project))
+            .collect::<Result<Vec<_>, _>>()?;
+        state
+            .store
+            .recover_session_artifact_operations(id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let _project_activity = state.begin_project_activity(id)?;
     let (ap, name, ws) = load_active_project(state, id).await?;
     let root = ap.root.clone();
     state.set_active(label, ap);
@@ -407,7 +424,6 @@ pub(super) async fn open_project(
     id: String,
 ) -> Result<ProjectSummary, String> {
     super::project_sync::adopt_newer_folder_version(&state, &id).await;
-    let _project_activity = state.begin_project_activity(&id)?;
     let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
     apply_app_window_title(&window, Some(&name));
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top

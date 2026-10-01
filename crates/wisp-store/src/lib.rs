@@ -40,6 +40,7 @@ mod resources;
 mod runs;
 mod schedules;
 pub mod secrets;
+mod session_artifacts;
 mod session_imports;
 mod sessions;
 mod storage_prefs;
@@ -190,6 +191,7 @@ const CONTEXT_EPOCHS_MIGRATION: &str = "0058_context_epochs";
 const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
 const SESSION_SHELVED_MIGRATION: &str = "0061_session_shelved";
 const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
+const SESSION_FILE_OPERATIONS_MIGRATION: &str = "0062_session_file_operations";
 
 #[derive(Clone)]
 pub struct Store {
@@ -832,6 +834,12 @@ impl Store {
     /// Idempotent repair for schema objects that numbered migrations can miss
     /// after a large version skip. Only CREATE IF NOT EXISTS / ADD COLUMN.
     async fn ensure_schema_compat(pool: &SqlitePool) -> Result<()> {
+        sqlx::raw_sql(include_str!(
+            "../migrations/0062_session_file_operations.sql"
+        ))
+        .execute(pool)
+        .await?;
+        Self::record_migration(pool, SESSION_FILE_OPERATIONS_MIGRATION).await?;
         // Partial legacy stores may contain only run tables. Install the
         // notebook triggers only when their target tables exist; retry this
         // additive migration on every open until the notebook schema exists.

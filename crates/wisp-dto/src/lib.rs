@@ -21,6 +21,8 @@ pub mod native_publication;
 pub mod native_scratch;
 pub mod native_settings;
 pub mod project_browser;
+mod session_artifacts;
+pub use session_artifacts::*;
 
 mod mcp_app_child;
 pub use mcp_app_child::*;

@@ -7349,9 +7349,11 @@ version = "1.16.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dunce",
  "futures-util",
  "hex",
  "keyring",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

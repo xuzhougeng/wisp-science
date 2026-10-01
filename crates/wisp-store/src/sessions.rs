@@ -403,7 +403,25 @@ pub(crate) const RECENT_TURN_TOOL_PREVIEW_MAX_CHARS: usize = 4_000;
 /// consistently enable SQLite foreign keys, so the cascade must be explicit.
 /// Runs are project-level records and survive, but their stale frame reference
 /// is cleared. Artifact files are also left untouched in the workspace.
-async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -> Result<()> {
+async fn delete_session_rows(
+    tx: &mut Transaction<'_, Sqlite>,
+    frame_id: &str,
+    artifacts: Option<&super::session_artifacts::ArtifactPlan>,
+) -> Result<()> {
+    if let Some(plan) = artifacts {
+        // Other processes can write the project database despite the desktop's
+        // activity guard. Check versions again under SQLite's writer lock.
+        plan.validate_records(tx, frame_id).await?;
+    }
+    let mut ids = super::session_artifacts::disposable_ids(tx, frame_id).await?;
+    if let Some(plan) = artifacts {
+        let planned = plan.ids();
+        if planned.iter().any(|id| !ids.contains(id)) {
+            anyhow::bail!("Session artifacts changed. Review a fresh preview before continuing.");
+        }
+        ids.retain(|id| planned.contains(id));
+    }
+    let artifact_ids = serde_json::to_string(&ids)?;
     sqlx::query("DELETE FROM research_archive_continuations WHERE frame_id=?")
         .bind(frame_id)
         .execute(&mut **tx)
@@ -435,105 +453,16 @@ async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query(
-        "DELETE FROM research_edges WHERE source_id IN (\
-            SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
-                SELECT artifact.id FROM artifacts artifact WHERE artifact.root_frame_id=? \
-                AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                    ON input.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                    ON output.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                    ON binding.artifact_version_id=version.id WHERE version.artifact_id=artifact.id)\
-            )\
-         ) OR target_id IN (\
-            SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
-                SELECT artifact.id FROM artifacts artifact WHERE artifact.root_frame_id=? \
-                AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                    ON input.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                    ON output.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-                AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                    ON binding.artifact_version_id=version.id WHERE version.artifact_id=artifact.id)\
-            )\
-         )",
-    )
-    .bind(frame_id)
-    .bind(frame_id)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
-            SELECT artifact.id FROM artifacts artifact WHERE artifact.root_frame_id=? \
-            AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                ON input.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                ON output.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                ON binding.artifact_version_id=version.id WHERE version.artifact_id=artifact.id)\
-         )",
-    )
-    .bind(frame_id)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM artifact_dependencies WHERE artifact_version_id IN (\
-            SELECT av.id FROM artifact_versions av \
-            JOIN artifacts a ON a.id=av.artifact_id WHERE a.root_frame_id=? \
-            AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                ON input.artifact_version_id=version.id WHERE version.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                ON output.artifact_version_id=version.id WHERE version.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                ON binding.artifact_version_id=version.id WHERE version.artifact_id=a.id)\
-         ) OR depends_on_version_id IN (\
-            SELECT av.id FROM artifact_versions av \
-            JOIN artifacts a ON a.id=av.artifact_id WHERE a.root_frame_id=? \
-            AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                ON input.artifact_version_id=version.id WHERE version.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                ON output.artifact_version_id=version.id WHERE version.artifact_id=a.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                ON binding.artifact_version_id=version.id WHERE version.artifact_id=a.id)\
-         )",
-    )
-    .bind(frame_id)
-    .bind(frame_id)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM artifact_versions WHERE artifact_id IN (\
-            SELECT artifact.id FROM artifacts artifact WHERE artifact.root_frame_id=? \
-            AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-                ON input.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-                ON output.artifact_version_id=version.id WHERE version.artifact_id=artifact.id) \
-            AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-                ON binding.artifact_version_id=version.id WHERE version.artifact_id=artifact.id)\
-         )",
-    )
-    .bind(frame_id)
-    .execute(&mut **tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM artifacts WHERE root_frame_id=? \
-         AND NOT EXISTS (SELECT 1 FROM run_artifacts link WHERE link.artifact_id=artifacts.id) \
-         AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_inputs input \
-             ON input.artifact_version_id=version.id WHERE version.artifact_id=artifacts.id) \
-         AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN run_outputs output \
-             ON output.artifact_version_id=version.id WHERE version.artifact_id=artifacts.id) \
-         AND NOT EXISTS (SELECT 1 FROM artifact_versions version JOIN evidence_bindings binding \
-             ON binding.artifact_version_id=version.id WHERE version.artifact_id=artifacts.id)",
-    )
-    .bind(frame_id)
-    .execute(&mut **tx)
-    .await?;
+    for statement in [
+        "DELETE FROM research_edges WHERE source_id IN (SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (SELECT value FROM json_each(?1))) OR target_id IN (SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (SELECT value FROM json_each(?1)))",
+        "DELETE FROM research_nodes WHERE kind='artifact' AND ref_id IN (SELECT value FROM json_each(?1))",
+        "DELETE FROM artifact_dependencies WHERE artifact_version_id IN (SELECT id FROM artifact_versions WHERE artifact_id IN (SELECT value FROM json_each(?1))) OR depends_on_version_id IN (SELECT id FROM artifact_versions WHERE artifact_id IN (SELECT value FROM json_each(?1)))",
+        "DELETE FROM artifact_heads WHERE artifact_id IN (SELECT value FROM json_each(?1))",
+        "DELETE FROM artifact_versions WHERE artifact_id IN (SELECT value FROM json_each(?1))",
+        "DELETE FROM artifacts WHERE id IN (SELECT value FROM json_each(?1))",
+    ] {
+        sqlx::query(statement).bind(&artifact_ids).execute(&mut **tx).await?;
+    }
 
     sqlx::query(
         "UPDATE global_memories SET source_frame_id=NULL \
@@ -605,6 +534,9 @@ async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -
             .bind(frame_id)
             .execute(&mut **tx)
             .await?;
+    }
+    if let Some(plan) = artifacts {
+        plan.source_commit_receipt(tx, frame_id).await?;
     }
     Ok(())
 }
@@ -2344,8 +2276,17 @@ impl Store {
 
     /// Delete a saved conversation (root frame) and all of its messages/artifacts.
     pub async fn delete_session(&self, frame_id: &str, project_id: &str) -> Result<()> {
+        self.delete_session_impl(frame_id, project_id, None).await
+    }
+
+    pub(super) async fn delete_session_impl(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+        artifacts: Option<&super::session_artifacts::ArtifactPlan>,
+    ) -> Result<()> {
         if let Some(store) = self.route_project(project_id).await? {
-            return Box::pin(store.delete_session(frame_id, project_id)).await;
+            return Box::pin(store.delete_session_impl(frame_id, project_id, artifacts)).await;
         }
         self.require_unarchived_session(frame_id).await?;
         let exists: Option<(String,)> = sqlx::query_as(
@@ -2382,7 +2323,11 @@ impl Store {
             );
         }
         let mut tx = self.begin_write().await?;
-        delete_session_rows(&mut tx, frame_id).await?;
+        delete_session_rows(&mut tx, frame_id, artifacts).await?;
+        if artifacts.is_some() {
+            self.bump_state_generation_in_tx(&mut tx, &crate::StateScope::mainline(project_id))
+                .await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -2404,6 +2349,7 @@ impl Store {
             target_project_id,
             new_frame_id,
             false,
+            None,
         )
         .await
     }
@@ -2424,36 +2370,44 @@ impl Store {
             target_project_id,
             new_frame_id,
             true,
+            None,
         )
         .await
     }
 
-    async fn transfer_session_to_project(
+    pub(super) async fn transfer_session_to_project(
         &self,
         frame_id: &str,
         source_project_id: &str,
         target_project_id: &str,
         new_frame_id: &str,
         remove_source: bool,
+        artifacts: Option<&super::session_artifacts::ArtifactTransfer>,
     ) -> Result<()> {
         if self.registry.is_some() && self.project_scope.is_none() {
-            let source = self
-                .route_project(source_project_id)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Source project storage unavailable"))?;
-            let target = self
-                .route_project(target_project_id)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Target project storage unavailable"))?;
-            return Box::pin(source.transfer_session_between_stores(
-                &target,
-                frame_id,
-                source_project_id,
-                target_project_id,
-                new_frame_id,
-                remove_source,
-            ))
-            .await;
+            let source = self.route_project(source_project_id).await?;
+            let target = self.route_project(target_project_id).await?;
+            if source.is_some() || target.is_some() {
+                let legacy = || Store {
+                    pool: self.pool.clone(),
+                    registry: None,
+                    project_scope: None,
+                };
+                return Box::pin(
+                    source
+                        .unwrap_or_else(legacy)
+                        .transfer_session_between_stores(
+                            &target.unwrap_or_else(legacy),
+                            frame_id,
+                            source_project_id,
+                            target_project_id,
+                            new_frame_id,
+                            remove_source,
+                            artifacts,
+                        ),
+                )
+                .await;
+            }
         }
         if source_project_id == target_project_id {
             anyhow::bail!("Source and target projects must be different");
@@ -2594,8 +2548,23 @@ impl Store {
         .execute(&mut *tx)
         .await?;
 
+        if let Some(artifacts) = artifacts {
+            artifacts
+                .insert(&mut tx, target_project_id, new_frame_id)
+                .await?;
+            self.bump_state_generation_in_tx(
+                &mut tx,
+                &crate::StateScope::mainline(target_project_id),
+            )
+            .await?;
+            self.bump_state_generation_in_tx(
+                &mut tx,
+                &crate::StateScope::mainline(source_project_id),
+            )
+            .await?;
+        }
         if remove_source {
-            delete_session_rows(&mut tx, frame_id).await?;
+            delete_session_rows(&mut tx, frame_id, artifacts.map(|a| &a.plan)).await?;
         }
         sqlx::query("UPDATE projects SET updated_at=? WHERE id IN (?,?)")
             .bind(now)
@@ -2615,6 +2584,7 @@ impl Store {
         target_project_id: &str,
         new_frame_id: &str,
         remove_source: bool,
+        artifacts: Option<&super::session_artifacts::ArtifactTransfer>,
     ) -> Result<()> {
         if source_project_id == target_project_id {
             anyhow::bail!("Source and target projects must be different");
@@ -2759,11 +2729,49 @@ impl Store {
             .bind(target_project_id)
             .execute(&mut *tx)
             .await?;
-        tx.commit().await?;
-        if remove_source {
-            delete_session_rows(&mut source_tx, frame_id).await?;
+        if let Some(artifacts) = artifacts {
+            artifacts
+                .insert(&mut tx, target_project_id, new_frame_id)
+                .await?;
+            target
+                .bump_state_generation_in_tx(
+                    &mut tx,
+                    &crate::StateScope::mainline(target_project_id),
+                )
+                .await?;
+            self.bump_state_generation_in_tx(
+                &mut source_tx,
+                &crate::StateScope::mainline(source_project_id),
+            )
+            .await?;
         }
-        source_tx.commit().await?;
+        tx.commit().await?;
+        let source_result: Result<()> = async {
+            if remove_source {
+                delete_session_rows(&mut source_tx, frame_id, artifacts.map(|a| &a.plan)).await?;
+            }
+            source_tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = source_result {
+            // With files included, compensate a committed target when the
+            // source transaction fails. Its journal then restores source bytes.
+            if artifacts.is_some() {
+                let source_committed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM session_file_operations WHERE operation_id=? AND role='source')")
+                    .bind(artifacts.and_then(|a|a.plan.operation_id.as_deref())).fetch_one(&self.pool).await?;
+                if source_committed {
+                    return Ok(());
+                }
+                target
+                    .delete_session(new_frame_id, target_project_id)
+                    .await
+                    .map_err(|cleanup| {
+                        anyhow::anyhow!("{error}; target copy {new_frame_id} retained: {cleanup}")
+                    })?;
+            }
+            return Err(error);
+        }
         Ok(())
     }
 

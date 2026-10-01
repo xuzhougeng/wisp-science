@@ -371,6 +371,12 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 }
 /* .primary fill comes from shared button primitives in base.css */
 .session-transfer-modal { max-width: 520px; }
+.session-artifact-choice { margin-top: 1rem; min-height: 0; overflow-y: auto; }
+.modal .session-artifact-toggle { display: flex; flex-direction: row; align-items: flex-start; gap: .5rem; cursor: pointer; }
+.modal .session-artifact-toggle input[type="checkbox"] { accent-color: var(--clay); width: 15px; height: 15px; padding: 0; margin: .15rem 0 0; flex: 0 0 auto; }
+.session-artifact-files { max-height: 10rem; overflow: auto; padding-left: 1.25rem; overflow-wrap: anywhere; font-size: .85rem; }
+.session-artifact-choice p { margin: .6rem 0; }
+
 .session-transfer-modal .hint { color: var(--text-muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
 .session-transfer-modal .session-transfer-error { color: var(--err); }
 .context-recovery-overlay { z-index: 130; }

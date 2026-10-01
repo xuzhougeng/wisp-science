@@ -1051,3 +1051,18 @@ fn after_turn_hook_events_roundtrip_to_ui() {
         _ => panic!("expected HookFailed"),
     }
 }
+
+#[test]
+fn session_artifact_preview_includes_review_token_and_retention_reasons() {
+    let preview = wisp_dto::SessionArtifactPreview {
+        fingerprint: "content-and-ownership-hash".into(),
+        artifacts: vec!["plot.svg".into()],
+        files: vec!["results/plot.svg".into()],
+        retained: vec![wisp_dto::RetainedSessionArtifact {
+            name: "uploads/input.csv".into(),
+            reason: "upload".into(),
+        }],
+    };
+    let decoded: wisp_dto::SessionArtifactPreview = roundtrip(&preview);
+    assert_eq!(decoded, preview);
+}

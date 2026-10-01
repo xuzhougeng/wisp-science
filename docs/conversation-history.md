@@ -152,3 +152,67 @@ legacy or ambiguous copy has no reliable origin, the marker remains unknown.
 
 Browser tests use mocked commands and synthetic history. Native macOS WebView
 behavior and a user's private database still require a local smoke check.
+
+## Moving or deleting a conversation with its artifacts
+
+The **Move conversation** and **Delete** dialogs offer an unchecked **Also move /
+Also delete associated artifacts and files** option. Without it, the existing
+transcript-only behavior remains: workspace files stay on disk. Copying a
+conversation remains transcript-only.
+
+Checking the option loads a preview with artifact and file counts, paths to be
+processed (including immutable version snapshots), and items that will remain in
+the source project. Confirm is disabled while the preview loads or fails. Changing
+the destination, dismissing the dialog, or reopening it resets this choice.
+
+Only registered local artifacts owned by the conversation are eligible. Untracked
+files are never discovered by scanning and deleted. Uploaded inputs, files changed
+since their recorded checksum, missing/unverifiable paths, symlinks, external files,
+and artifacts referenced by other conversations, Runs, publications, explorations,
+or research graph relationships remain in the source project. A content-addressed
+snapshot used by another artifact also remains there. Protected records survive
+on an invisible deleted-session ownership frame so their existing references work.
+There is no recursive deletion of output directories or remote/GPU/SSH data.
+
+Moving eligible artifacts transfers their complete recorded version histories,
+internal version dependencies, environment snapshots, and structured message
+attachment bindings. Current workspace files retain their relative paths in the
+destination; immutable snapshots receive a fresh private storage namespace.
+Existing destination files or artifact identities cause the operation to stop,
+without overwriting them. File staging requires rename support within the source
+project volume and hard-link support within the target volume (for example NTFS,
+APFS or ext4); unsupported filesystems fail safely. Historical transcript text
+and tool arguments are not rewritten; arbitrary textual paths to unrelated source files are not portable.
+Runs and protected artifacts remain in the source project.
+
+The backend rechecks the preview before execution and requires exclusive activity
+in the affected projects. Stop active work before moving/deleting files. A durable
+journal under `.wisp/session-file-operations/` records staged file changes before
+the database updates; commit receipts are written inside those same transactions.
+Failed updates restore the source files; a failed source commit after a
+cross-database target commit compensates the target copy. On project
+open, interrupted operations restore uncommitted files or finish committed cleanup.
+Recovery never overwrites newly created files; conflicts leave the originals in
+the journal directory and report its location. Successful deletion is permanent;
+this journal is for failure recovery, not a user-facing recycle bin. If the app
+exits between the two project database commits, recovery restores the source and
+keeps the already committed target copy so neither project loses data.
+
+For multiple selected conversations, each is processed independently. If one fails,
+its error is shown and only successfully deleted conversations leave the sidebar.
+Shared artifacts are conservatively retained even if another selected conversation
+is scheduled for deletion later.
+
+Manual smoke: generate a figure with two versions, upload an input, and reference
+another figure from a second conversation. Check both dialogs' previews; move to
+an empty project and open the moved figure and its earlier version from the
+transcript. Try a destination with a same-name file and verify neither copy changes.
+Delete with and without the option and verify that inputs/shared/edited files remain.
+Open either dialog and press Escape immediately. Open the action palette above
+a confirmation and verify that one Escape closes only the palette, keeping the
+confirmation open.
+
+中文：移动或删除会话时，可勾选“一并移动／删除关联产物及文件”，先查看处理清单和
+保留原因。默认不勾选。未登记文件、上传输入、共享证据、后来修改的文件、项目外路径
+和符号链接均受保护；不会递归清空目录或处理远程文件。移动保留产物版本及消息附件关联，
+目标同名文件不会被覆盖。删除成功后不可撤销；操作日志仅用于故障恢复。

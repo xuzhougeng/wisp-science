@@ -15,6 +15,8 @@ futures-util = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
+same-file = { workspace = true }
+dunce = { workspace = true }
 uuid = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-dto = { workspace = true }

@@ -15,6 +15,124 @@ use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsCast;
 
 #[derive(Clone, Copy)]
+pub(crate) struct SessionArtifactChoiceState {
+    pub selected: RwSignal<bool>,
+    pub previews: RwSignal<std::collections::HashMap<String, SessionArtifactPreview>>,
+    pub busy: RwSignal<bool>,
+    pub error: RwSignal<Option<String>>,
+}
+impl SessionArtifactChoiceState {
+    pub(crate) fn new() -> Self {
+        Self {
+            selected: create_rw_signal(false),
+            previews: create_rw_signal(Default::default()),
+            busy: create_rw_signal(false),
+            error: create_rw_signal(None),
+        }
+    }
+    pub(crate) fn blocked(self) -> bool {
+        self.selected.get()
+            && (self.busy.get() || self.error.get().is_some() || self.previews.get().is_empty())
+    }
+}
+
+#[component]
+pub(crate) fn SessionArtifactChoice(
+    locale: RwSignal<Locale>,
+    ids: Vec<String>,
+    target: Option<String>,
+    state: SessionArtifactChoiceState,
+) -> impl IntoView {
+    state.selected.set(false);
+    state.previews.set(Default::default());
+    state.error.set(None);
+    state.busy.set(false);
+    let moving = target.is_some();
+    let generation = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+    let cleanup = alive.clone();
+    on_cleanup(move || cleanup.set(false));
+    let reload = Callback::new(move |_: ()| {
+        generation.set(generation.get() + 1);
+        let ticket = generation.get();
+        state.busy.set(true);
+        state.error.set(None);
+        state.previews.set(Default::default());
+        let ids = ids.clone();
+        let target = target.clone();
+        let alive = alive.clone();
+        let generation = generation.clone();
+        spawn_local(async move {
+            let mut previews = std::collections::HashMap::new();
+            let mut error = None;
+            for id in ids {
+                let args =
+                    to_value(&serde_json::json!({"id":id,"targetProjectId":target})).unwrap();
+                match invoke_checked("preview_session_artifacts", args).await {
+                    Ok(value) => {
+                        match serde_wasm_bindgen::from_value::<SessionArtifactPreview>(value) {
+                            Ok(preview) => {
+                                previews.insert(id, preview);
+                            }
+                            Err(e) => {
+                                error = Some(e.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error = Some(localize_backend(locale.get_untracked(), &js_error_text(e)));
+                        break;
+                    }
+                }
+            }
+            if !alive.get() || generation.get() != ticket {
+                return;
+            }
+            state.previews.set(previews);
+            state.error.set(error);
+            state.busy.set(false);
+        });
+    });
+    view! {
+        <div class="session-artifact-choice">
+            <label class="session-artifact-toggle">
+                <input type="checkbox" prop:checked=move || state.selected.get()
+                    on:change=move |ev| {
+                        let checked=event_target_checked(&ev); state.selected.set(checked);
+                        if checked { reload.call(()); }
+                    } />
+                <span>{move || t(locale.get(), if moving { "session.artifacts.move" } else { "session.artifacts.delete" })}</span>
+            </label>
+            {move || state.selected.get().then(|| view! {
+                <div class="hint">{move || t(locale.get(), "session.artifacts.scope")}</div>
+                {move || state.busy.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
+                {move || state.error.get().map(|error| view! {
+                    <p class="session-transfer-error" role="alert">{error}</p>
+                    <button type="button" on:click=move |_| reload.call(())>{move || t(locale.get(), "session.artifacts.refresh")}</button>
+                })}
+                {move || {
+                    let previews=state.previews.get();
+                    let count:usize=previews.values().map(|p|p.artifacts.len()).sum();
+                    let mut files=previews.values().flat_map(|p|p.files.clone()).collect::<Vec<_>>(); files.sort(); files.dedup();
+                    let retained=previews.values().flat_map(|p|p.retained.clone()).collect::<Vec<_>>();
+                    (!previews.is_empty()).then(|| view! {
+                        <p>{tf(locale.get(), "session.artifacts.count", &[("artifacts", &count.to_string()), ("files", &files.len().to_string())])}</p>
+                        <ul class="session-artifact-files">{files.into_iter().map(|path|view! { <li>{path}</li> }).collect_view()}</ul>
+                        {(!retained.is_empty()).then(||view! {
+                            <p>{move || t(locale.get(), "session.artifacts.retained")}</p>
+                            <ul class="session-artifact-files">{retained.into_iter().map(|item|view! {
+                                <li>{item.name}{" — "}{t(locale.get(), &format!("session.artifacts.{}",item.reason)).to_string()}</li>
+                            }).collect_view()}</ul>
+                        })}
+                    })
+                }}
+            })}
+        </div>
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct SessionTransferOverlayState {
     pub(crate) locale: RwSignal<Locale>,
     pub(crate) session_transfer: RwSignal<Option<SessionTransfer>>,
@@ -22,6 +140,7 @@ pub(crate) struct SessionTransferOverlayState {
     pub(crate) session_transfer_error: RwSignal<Option<String>>,
     pub(crate) project_info: RwSignal<Option<ProjectInfo>>,
     pub(crate) proj_list: RwSignal<Vec<ProjectSummary>>,
+    pub(crate) artifacts: SessionArtifactChoiceState,
 }
 
 #[component]
@@ -36,6 +155,7 @@ pub(crate) fn SessionTransferOverlay(
         session_transfer_error,
         project_info,
         proj_list,
+        artifacts,
     } = state;
     view! {
         {move || session_transfer.get().map(|transfer| {
@@ -65,6 +185,8 @@ pub(crate) fn SessionTransferOverlay(
             };
             let hint_key = if transfer.from_demo {
                 "session.copy_demo_hint"
+            } else if transfer.mode == SessionTransferMode::Move {
+                "session.move_hint"
             } else {
                 "session.transfer_hint"
             };
@@ -98,6 +220,10 @@ pub(crate) fn SessionTransferOverlay(
                             }).collect_view()}
                         </select>
                     </label>
+                    {(transfer.mode == SessionTransferMode::Move && !transfer.from_demo).then(|| view! {
+                        <SessionArtifactChoice locale=locale ids=vec![transfer.id.clone()]
+                            target=Some(transfer.target_project_id.clone()) state=artifacts />
+                    })}
                     {(!has_target).then(|| view! {
                         <div class="hint session-transfer-error">{move || t(locale.get(), empty_key)}</div>
                     })}
@@ -112,7 +238,7 @@ pub(crate) fn SessionTransferOverlay(
                                 session_transfer_error.set(None);
                             }>{move || t(locale.get(), "settings.cancel")}</button>
                         <button type="button" class="primary"
-                            disabled=move || !has_target || session_transfer_busy.get()
+                            disabled=move || !has_target || session_transfer_busy.get() || (transfer.mode == SessionTransferMode::Move && artifacts.blocked())
                             on:click=move |ev| on_save.call(ev)>{move || t(locale.get(), action_key)}</button>
                     </div>
                 </div>
