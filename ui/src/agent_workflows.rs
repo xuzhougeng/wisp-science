@@ -1169,7 +1169,7 @@ fn dynamic_task_editor(
                     <option value="" prop:selected=move || task_value(state.dynamic_form, key, |task| task.specialist_id.clone()).is_empty()>
                         {move || t(locale.get(), "agents.task.temporary")}
                     </option>
-                    <For each=move || specialists.get() key=|specialist| specialist.id.clone()
+                    <For each=move || task_specialists(specialists) key=|specialist| specialist.id.clone()
                         children=move |specialist| {
                             let id = specialist.id.clone();
                             let selected_id = id.clone();
@@ -4863,4 +4863,13 @@ mod tests {
         assert_eq!(parse_budget_u32("42", "token budget").unwrap(), Some(42));
         assert!(parse_budget_u32("nope", "token budget").is_err());
     }
+}
+
+/// Archivist and Recap draft documents; they cannot run a workflow task.
+fn task_specialists(specialists: RwSignal<Vec<Specialist>>) -> Vec<Specialist> {
+    specialists
+        .get()
+        .into_iter()
+        .filter(|specialist| !["archivist", "recap"].contains(&specialist.id.as_str()))
+        .collect()
 }

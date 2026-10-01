@@ -384,3 +384,64 @@ test("relationship list scrolls under the wheel over a middle column", async ({ 
   await page.mouse.wheel(0, 600);
   await expect.poll(() => canvas.evaluate((el) => el.scrollTop)).toBeGreaterThan(canvasBefore + 40);
 });
+
+test("daily recap drafts with citations, confirms, edits inline and can be dismissed", async ({ page }) => {
+  await open(page);
+  const journey = page.getByTestId("research-journey");
+  const today = journey.locator('[data-day="2026-09-09"]');
+  await page.evaluate(() => { (window as any).__recapError = "Recap model is not configured"; });
+  await today.getByTestId("journey-recap-generate").click();
+  await expect(today.getByRole("alert")).toContainText("Recap model is not configured");
+  await page.evaluate(() => { delete (window as any).__recapError; });
+  await today.getByTestId("journey-recap-generate").click();
+  const recap = today.getByTestId("journey-recap");
+  await expect(recap).toHaveAttribute("data-status", "draft");
+  await expect(recap).toContainText("AI draft · review before keeping");
+  await expect(today.getByTestId("journey-recap-headline")).toHaveText("Normalization compared; method B chosen");
+  await expect(today.locator(".journey-day-summary")).toHaveCount(0);
+  await expect(recap.locator('[data-section="done"] li')).toHaveCount(1);
+  await expect(recap.locator('[data-section="issues"]')).toHaveCount(0);
+  await expect(recap).toContainText("Drafted by mock-recap-model. Change the model in Settings → Specialists → Recap.");
+  // Citations open the exact output version and the cited record.
+  await recap.getByRole("button", { name: "normalization_comparison.png", exact: true }).click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(journey).toBeVisible();
+  await recap.locator('[data-section="findings"] .journey-recap-ref').click();
+  await expect(journey.getByTestId("journey-source")).toContainText("Method B is more stable");
+  await recap.getByTestId("journey-recap-confirm").click();
+  await expect(recap).toHaveAttribute("data-status", "confirmed");
+  await expect(recap).toContainText("AI-drafted · confirmed");
+  // Inline editing is the topmost Escape layer inside the page.
+  await recap.getByRole("button", { name: "Edit recap", exact: true }).click();
+  const editor = today.getByTestId("journey-recap-editor");
+  await expect(editor).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await expect(journey).toBeVisible();
+  await today.getByTestId("journey-recap").getByRole("button", { name: "Edit recap", exact: true }).click();
+  await editor.getByRole("textbox", { name: "Headline" }).fill("Method B selected");
+  await editor.getByRole("textbox", { name: "Next" }).fill("Validate on the full dataset\nShare with the lab");
+  await editor.getByRole("button", { name: "Save and confirm", exact: true }).click();
+  await expect(today.getByTestId("journey-recap-headline")).toHaveText("Method B selected");
+  const next = today.getByTestId("journey-recap").locator('[data-section="next"] li');
+  await expect(next).toHaveCount(2);
+  await expect(next.nth(0).locator(".journey-recap-ref")).toHaveCount(1);
+  await expect(next.nth(1).locator(".journey-recap-ref")).toHaveCount(0);
+  await today.getByRole("button", { name: "Dismiss recap", exact: true }).click();
+  await expect(today.getByTestId("journey-recap")).toHaveCount(0);
+  await expect(today.getByTestId("journey-recap-generate")).toBeVisible();
+  await expect(today.locator(".journey-day-summary")).toBeVisible();
+});
+
+test("Chinese recap labels follow the locale", async ({ page }) => {
+  await open(page, "?mockLocale=zh&mockJourney=design");
+  const today = page.getByTestId("research-journey").locator('[data-day="2026-09-09"]');
+  await today.getByTestId("journey-recap-generate").click();
+  const recap = today.getByTestId("journey-recap");
+  await expect(recap).toContainText("每日回顾");
+  await expect(recap).toContainText("AI 草稿 · 待确认");
+  await expect(recap.locator('[data-section="done"] h4')).toHaveText("今日完成");
+  await expect(recap).toContainText("可在 设置 → 专家 → Recap 中更换模型");
+});

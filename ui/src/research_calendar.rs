@@ -2,6 +2,7 @@
 use crate::app_support::compose_icon;
 use crate::dto::{
     ProjectSummary, ProjectTransferProgress, ResearchCalendarProject, ResearchJourneyEntry,
+    ResearchRecap,
 };
 use crate::i18n::Locale;
 use crate::research_journey::{
@@ -191,7 +192,8 @@ pub(crate) fn ResearchCalendar(
                                     let name=projects.get().into_iter().find(|p|p.id==r.project_id)?.name;
                                     let (entries,made)=fold_outputs(days(&r.history.entries,"").into_iter().flat_map(|(_,entries)|entries).collect());
                                     if entries.is_empty()&&r.error.is_none(){return None;}
-                                    Some((r.project_id,name,entries,r.error,r.history.truncated,made))
+                                    let recap=r.history.recaps.into_iter().find(|x|x.status!="dismissed");
+                                    Some((r.project_id,name,entries,r.error,r.history.truncated,made,recap))
                                 }).collect();
                                 if groups.is_empty(){return view!{<p class="calendar-empty">{if projects.get().is_empty(){j(loc,"Create a project to begin recording research activity.","创建项目后，已记录的研究活动会出现在这里。")}else{j(loc,"No recorded activity on this date.","当天没有已记录的研究活动。")}}</p>}.into_view();}
                                 let count=groups.iter().map(|g|g.2.len()).sum::<usize>();
@@ -199,8 +201,8 @@ pub(crate) fn ResearchCalendar(
                                 let partial=has_errors||groups.iter().any(|g|g.4);
                                 view!{<p class="calendar-detail-meta">{format!("{}{} · {} {}",if partial{j(loc,"Loaded: ","已读取：")}else{""},if loc==Locale::Zh{format!("{active} 个项目")}else{format!("{active} projects")},count,j(loc,"records","条记录"))}</p>
                                     <div class="calendar-record-groups" aria-label=j(loc,"Project records","各项目记录")>
-                                        {groups.into_iter().map(|(id,name,entries,error,truncated,made)|view!{
-                                            <CalendarProjectRecords locale=locale id=id name=name entries=entries made=made error=error truncated=truncated day=selected.get() on_open_journey=on_open_journey project_transfer=project_transfer/>
+                                        {groups.into_iter().map(|(id,name,entries,error,truncated,made,recap)|view!{
+                                            <CalendarProjectRecords locale=locale id=id name=name entries=entries made=made recap=recap error=error truncated=truncated day=selected.get() on_open_journey=on_open_journey project_transfer=project_transfer/>
                                         }).collect_view()}
                                     </div>
                                 }.into_view()
@@ -233,6 +235,7 @@ fn CalendarProjectRecords(
     name: String,
     mut entries: Vec<ResearchJourneyEntry>,
     made: HashMap<String, usize>,
+    recap: Option<ResearchRecap>,
     error: Option<String>,
     truncated: bool,
     day: i64,
@@ -263,6 +266,10 @@ fn CalendarProjectRecords(
             {error.map(|e|view!{<p class="calendar-error" role="alert">{e}</p>})}
             {truncated.then(||view!{<p class="calendar-notice">{j(loc,"Latest 2,000 events shown; more records exist on this day.","当前展示当天最近 2,000 条活动，还有更多记录。")}</p>})}
             <div id=controls hidden=move ||collapsed.get()>
+                {recap.map(|r|view!{<div class="calendar-recap" data-testid="calendar-recap" data-status=r.status.clone()>
+                    <p><strong>{r.headline}</strong><small>{if r.status=="confirmed"{j(loc,"Recap · confirmed","回顾 · 已确认")}else{j(loc,"Recap · AI draft","回顾 · AI 草稿")}}</small></p>
+                    <ul>{r.done.into_iter().map(|item|view!{<li>{item.text}</li>}).collect_view()}</ul>
+                </div>})}
                 {move ||entries.with_value(|rows|rows.iter().take(limit.get()).cloned().map(|e|{
                     let outputs=made.get(&e.source_id).filter(|_|e.kind=="run").map(|n|format!(" · {n} {}",j(loc,"outputs","份产出"))).unwrap_or_default();
                     let label=format!("{}{}{outputs}{}",category(loc,&e.kind),if e.kind=="run"{format!(" · {}",status(loc,&e.status))}else{String::new()},if e.manual{j(loc," · Manual"," · 手动")}else{""});

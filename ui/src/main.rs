@@ -14894,7 +14894,7 @@ fn App() -> impl IntoView {
                                                 <span>{move || t(locale.get(), "composer.specialist.none")}</span>
                                                 {move || session_specialist.get().is_none().then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
                                             </button>
-                                            {move || specialists.get().into_iter().filter(|specialist| specialist.id != "reviewer" && specialist.id != "reader").map(|specialist| {
+                                            {move || specialists.get().into_iter().filter(|specialist| !["reviewer", "reader", "archivist", "recap"].contains(&specialist.id.as_str())).map(|specialist| {
                                                 let id = specialist.id.clone();
                                                 let selected_id = id.clone();
                                                 view! {

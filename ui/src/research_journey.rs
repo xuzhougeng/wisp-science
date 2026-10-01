@@ -4,13 +4,13 @@ use crate::app_support::{compose_icon, load_file_content};
 use crate::bindings::{invoke_checked, media_thumbnail_url};
 use crate::dto::{
     ResearchEdge, ResearchGraph, ResearchJournalInput, ResearchJourney, ResearchJourneyEntry,
-    ResearchJourneySource, RunRecord,
+    ResearchJourneySource, ResearchRecap, ResearchRecapEdit, ResearchRecapItem, RunRecord,
 };
 use crate::i18n::{t, Locale};
 use crate::text::{file_kind, parse_csv_line, unique_dom_id};
 use crate::window_capture_escape;
 use leptos::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
 pub(super) fn j(loc: Locale, en: &'static str, zh: &'static str) -> &'static str {
@@ -163,6 +163,8 @@ pub(super) fn ResearchJourneyView(
     let selected_date = create_rw_signal(day_key(initial_day.unwrap_or_else(now)));
     let note_open = create_rw_signal(false);
     let run_open = create_rw_signal::<Option<String>>(None);
+    // The day whose recap is being edited inline; Escape cancels the edit.
+    let recap_editing = create_rw_signal::<Option<String>>(None);
     let history = create_local_resource(
         move || (month.get(), refresh.get(), focus_day.get()),
         move |(m, _, day)| async move {
@@ -236,6 +238,10 @@ pub(super) fn ResearchJourneyView(
             run_open.set(None);
             return true;
         }
+        if recap_editing.get_untracked().is_some() {
+            recap_editing.set(None);
+            return true;
+        }
         if selected_edge.get_untracked().is_some() {
             selected_edge.set(None);
             return true;
@@ -290,9 +296,10 @@ pub(super) fn ResearchJourneyView(
                                 let groups=days(&data.entries,&query.get());
                                 if groups.is_empty() { return view!{<div class="journey-empty"><h2>{j(locale.get(),"No records in this view","当前范围没有研究记录")}</h2><p>{j(locale.get(),"Choose another month, clear the search, or add a research note. Conversations, runs and registered outputs appear here automatically.","可以切换月份、清空搜索或补充记录。会话、实验和已登记的产出会自动出现在这里。")}</p></div>}.into_view(); }
                                 let first=groups[0].0.clone();
+                                let recaps=data.recaps.into_iter().map(|r|(day_key(r.day_start),r)).collect::<HashMap<_,_>>();
                                 view!{
                                     {data.truncated.then(||view!{<p class="journey-notice" role="status">{j(locale.get(),"Showing the latest 2,000 events. Use the date picker to load one day.","当前展示最近 2,000 条活动，请按日查看以缩小范围。")}</p>})}
-                                    {groups.into_iter().map(|(day,entries)|view!{<JourneyDay locale=locale day=day.clone() entries=entries initially_open={day==first} selected_date=selected_date selected=selected on_select=choose on_session=on_session run_open=run_open/>}).collect_view()}
+                                    {groups.into_iter().map(|(day,entries)|view!{<JourneyDay locale=locale day=day.clone() recap=recaps.get(&day).cloned() recap_editing=recap_editing entries=entries initially_open={day==first} selected_date=selected_date selected=selected on_select=choose on_session=on_session on_artifact=on_artifact run_open=run_open/>}).collect_view()}
                                 }.into_view()
                             }
                         }}
@@ -352,15 +359,20 @@ pub(super) fn ResearchJourneyView(
 fn JourneyDay(
     locale: RwSignal<Locale>,
     day: String,
+    recap: Option<ResearchRecap>,
+    recap_editing: RwSignal<Option<String>>,
     entries: Vec<ResearchJourneyEntry>,
     initially_open: bool,
     selected_date: RwSignal<String>,
     selected: RwSignal<Option<ResearchJourneyEntry>>,
     on_select: Callback<ResearchJourneyEntry>,
     on_session: Callback<String>,
+    on_artifact: Callback<(String, String, String)>,
     run_open: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let expanded = create_rw_signal(initially_open);
+    let recap = create_rw_signal(recap);
+    let all_entries = store_value(entries.clone());
     let output_limit = create_rw_signal(3usize);
     let this_day = day.clone();
     create_effect(move |_| {
@@ -410,6 +422,11 @@ fn JourneyDay(
     let month = d.get_month() + 1;
     let day_number = d.get_date();
     let weekday = d.get_day() as usize;
+    let bounds = (
+        (js_sys::Date::new_with_year_month_day(d.get_full_year(), d.get_month() as i32, d.get_date() as i32).get_time() / 1000.0) as i64,
+        (js_sys::Date::new_with_year_month_day(d.get_full_year(), d.get_month() as i32, d.get_date() as i32 + 1).get_time() / 1000.0) as i64,
+    );
+    let recap_day = day.clone();
     let today = day == day_key(now());
     let summary = headline.summary.clone();
     let headline_entry = headline.clone();
@@ -425,9 +442,14 @@ fn JourneyDay(
         <article class="journey-day" class:today=today id=format!("journey-day-{day}") data-day=day>
             <div class="journey-day-date"><strong>{move ||if locale.get()==Locale::Zh{format!("{month} 月 {day_number} 日")}else{format!("{month:02}/{day_number:02}")}}</strong>
                 <span>{move ||{let w=if locale.get()==Locale::Zh{["周日","周一","周二","周三","周四","周五","周六"][weekday]}else{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][weekday]};format!("{w}{}",if today{j(locale.get()," · Today"," · 今天")}else{""})}}</span></div>
-            <div class="journey-day-main"><div class="journey-day-heading"><h2><button class="journey-headline" on:click=move |_|on_select.call(headline_entry.clone())>{headline.title}</button></h2>
+            <div class="journey-day-main"><div class="journey-day-heading"><h2>{move ||match recap.get().filter(|r|r.status!="dismissed"){
+                    // A kept recap names the day better than its latest record.
+                    Some(r)=>view!{<span class="journey-headline" data-testid="journey-recap-headline">{r.headline}</span>}.into_view(),
+                    None=>{let entry=headline_entry.clone();view!{<button class="journey-headline" on:click=move |_|on_select.call(entry.clone())>{headline.title.clone()}</button>}.into_view()},
+                }}</h2>
                 <button class="journey-icon" aria-expanded=move ||expanded.get().to_string() aria-label=move || if expanded.get(){j(locale.get(),"Collapse day","收起记录")}else{j(locale.get(),"Expand day","展开记录")} on:click=move |_|expanded.update(|v|*v=!*v)>{move ||compose_icon(if expanded.get(){"chevron-down"}else{"chevron-right"})}</button></div>
-                {(!summary.is_empty()).then(||view!{<p class="journey-day-summary">{summary}</p>})}
+                {move ||(!summary.is_empty()&&recap.with(|r|r.as_ref().is_none_or(|r|r.status=="dismissed"))).then(||view!{<p class="journey-day-summary">{summary.clone()}</p>})}
+                <JourneyRecap locale=locale day=recap_day bounds=bounds recap=recap editing=recap_editing entries=all_entries run_open=run_open on_session=on_session on_select=on_select on_artifact=on_artifact/>
                 <p class="journey-day-counts">{move ||format!("{run_count} {} · {output_count} {} · {note_count} {} · {session_count} {}",j(locale.get(),"experiments","次实验"),j(locale.get(),"outputs","份产出"),j(locale.get(),"notes","条研究记录"),j(locale.get(),"conversations","个会话"))}</p>
                 {move ||if expanded.get(){view!{
                     <div class="journey-activities">{activities.get_value().into_iter().map(|entry|{
@@ -445,6 +467,167 @@ fn JourneyDay(
                 }.into_view()}else{view!{<div class="journey-collapsed-outputs">{outputs.get_value().into_iter().take(3).map(|e|{let entry=e.clone();view!{<button class="journey-link" on:click=move |_|{expanded.set(true);on_select.call(entry.clone());}>{compose_icon("doc")}{e.title}</button>}}).collect_view()}</div>}.into_view()}}
             </div>
         </article>
+    }
+}
+
+const RECAP_SECTIONS: [(&str, &str, &str); 4] = [
+    ("done", "Done", "今日完成"),
+    ("findings", "Findings & decisions", "发现与决定"),
+    ("issues", "Issues", "问题与失败"),
+    ("next", "Next", "待继续"),
+];
+
+fn recap_section<'a>(recap: &'a ResearchRecap, key: &str) -> &'a [ResearchRecapItem] {
+    match key {
+        "done" => &recap.done,
+        "findings" => &recap.findings,
+        "issues" => &recap.issues,
+        _ => &recap.next,
+    }
+}
+
+/// One item per non-empty line. The backend keeps the sources of lines the
+/// researcher left unchanged.
+fn recap_items(text: &str) -> Vec<ResearchRecapItem> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| ResearchRecapItem {
+            text: line.into(),
+            refs: vec![],
+        })
+        .collect()
+}
+
+/// The day's AI-drafted recap: generate, confirm, edit, regenerate or
+/// dismiss. Each item links back to the records it cites.
+#[component]
+fn JourneyRecap(
+    locale: RwSignal<Locale>,
+    day: String,
+    bounds: (i64, i64),
+    recap: RwSignal<Option<ResearchRecap>>,
+    editing: RwSignal<Option<String>>,
+    entries: StoredValue<Vec<ResearchJourneyEntry>>,
+    run_open: RwSignal<Option<String>>,
+    on_session: Callback<String>,
+    on_select: Callback<ResearchJourneyEntry>,
+    on_artifact: Callback<(String, String, String)>,
+) -> impl IntoView {
+    let busy = create_rw_signal(false);
+    let error = create_rw_signal(None::<String>);
+    let quiet = create_rw_signal(false);
+    let draft = create_rw_signal((String::new(), vec![String::new(); 4]));
+    let day = store_value(day);
+    let generate = move |_| {
+        busy.set(true);
+        error.set(None);
+        quiet.set(false);
+        spawn_local(async move {
+            match call::<Option<ResearchRecap>>("generate_research_recap", serde_json::json!({"from":bounds.0,"until":bounds.1})).await {
+                Ok(Some(r)) => recap.set(Some(r)),
+                Ok(None) => quiet.set(true),
+                Err(e) => error.set(Some(e)),
+            }
+            busy.set(false);
+        });
+    };
+    let save = move |status: &'static str, edited: bool| {
+        let Some(current) = recap.get_untracked() else { return };
+        let (headline, mut sections) = if edited {
+            let (headline, texts) = draft.get_untracked();
+            (headline, texts.iter().map(|t| recap_items(t)).collect::<Vec<_>>())
+        } else {
+            (current.headline.clone(), RECAP_SECTIONS.iter().map(|(key, _, _)| recap_section(&current, key).to_vec()).collect())
+        };
+        let edit = ResearchRecapEdit {
+            id: current.id,
+            status: status.into(),
+            headline,
+            next: sections.pop().unwrap_or_default(),
+            issues: sections.pop().unwrap_or_default(),
+            findings: sections.pop().unwrap_or_default(),
+            done: sections.pop().unwrap_or_default(),
+        };
+        busy.set(true);
+        error.set(None);
+        spawn_local(async move {
+            match call::<ResearchRecap>("update_research_recap", serde_json::json!({"edit":edit})).await {
+                Ok(r) => {
+                    recap.set(Some(r));
+                    editing.set(None);
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            busy.set(false);
+        });
+    };
+    let open_source = move |kind: String, id: String, title: String| match kind.as_str() {
+        "run" => run_open.set(Some(id)),
+        "session" => on_session.call(id),
+        "artifact" => on_artifact.call((format!("artifact-version:{id}"), title.clone(), file_kind(&title).unwrap_or("text").into())),
+        _ => {
+            if let Some(entry) = entries.with_value(|rows| rows.iter().find(|e| e.source_id == id).cloned()) {
+                on_select.call(entry);
+            }
+        }
+    };
+    view! {
+        {move || {
+            let loc = locale.get();
+            let alert = move || error.get().map(|e| view! {<p class="journey-recap-error" role="alert">{e}</p>});
+            let Some(r) = recap.get().filter(|r| r.status != "dismissed") else {
+                return view! {<div class="journey-recap-empty">
+                    <button type="button" class="journey-link" data-testid="journey-recap-generate" prop:disabled=move || busy.get() on:click=generate>{compose_icon("sparkles")}{move || if busy.get() {j(locale.get(),"Drafting recap…","正在起草回顾…")} else {j(locale.get(),"Generate recap","生成回顾")}}</button>
+                    {move || quiet.get().then(|| view! {<small class="journey-muted">{j(locale.get(),"Nothing recorded to recap.","当天没有可总结的记录。")}</small>})}
+                    {alert}
+                </div>}.into_view();
+            };
+            if day.with_value(|d| editing.get().as_ref() == Some(d)) {
+                return view! {<section class="journey-recap editing" data-testid="journey-recap-editor" aria-label=j(loc,"Edit recap","编辑回顾")>
+                    <label>{j(loc,"Headline","标题")}<input type="text" prop:value=move || draft.with(|d| d.0.clone()) on:input=move |ev| draft.update(|d| d.0 = event_target_value(&ev))/></label>
+                    {RECAP_SECTIONS.iter().enumerate().map(|(index, (_, en, zh))| view! {
+                        <label>{j(loc,en,zh)}<textarea rows="3" prop:value=move || draft.with(|d| d.1[index].clone()) on:input=move |ev| draft.update(|d| d.1[index] = event_target_value(&ev))></textarea></label>
+                    }).collect_view()}
+                    <p class="journey-muted">{j(loc,"One item per line. A line you change no longer cites its sources.","每行一条；改动过的行不再关联原来源。")}</p>
+                    {alert}
+                    <div class="journey-recap-edit-actions">
+                        <button type="button" class="btn-ghost" on:click=move |_| editing.set(None)>{j(loc,"Cancel","取消")}</button>
+                        <button type="button" class="btn-primary" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", true)>{compose_icon("save")}{j(loc,"Save and confirm","保存并确认")}</button>
+                    </div>
+                </section>}.into_view();
+            }
+            let confirmed = r.status == "confirmed";
+            let sources = r.sources.clone();
+            let start = r.clone();
+            view! {<section class="journey-recap" data-testid="journey-recap" data-status=r.status.clone() aria-label=j(loc,"Daily recap","每日回顾")>
+                <header class="journey-recap-head">
+                    {compose_icon("sparkles")}<strong>{j(loc,"Daily recap","每日回顾")}</strong>
+                    <span class="journey-recap-badge" class:confirmed=confirmed>{if confirmed {j(loc,"AI-drafted · confirmed","AI 起草 · 已确认")} else {j(loc,"AI draft · review before keeping","AI 草稿 · 待确认")}}</span>
+                    <div class="journey-recap-actions">
+                        {(!confirmed).then(|| view! {<button type="button" class="journey-link" data-testid="journey-recap-confirm" prop:disabled=move || busy.get() on:click=move |_| save("confirmed", false)>{compose_icon("check")}{j(loc,"Confirm","确认")}</button>})}
+                        <button type="button" class="journey-icon" title=j(loc,"Edit recap","编辑回顾") aria-label=j(loc,"Edit recap","编辑回顾") on:click=move |_| {
+                            draft.set((start.headline.clone(), RECAP_SECTIONS.iter().map(|(key, _, _)| recap_section(&start, key).iter().map(|i| i.text.clone()).collect::<Vec<_>>().join("\n")).collect()));
+                            editing.set(Some(day.get_value()));
+                        }>{compose_icon("edit")}</button>
+                        <button type="button" class="journey-icon" title=j(loc,"Regenerate recap","重新生成回顾") aria-label=j(loc,"Regenerate recap","重新生成回顾") prop:disabled=move || busy.get() on:click=generate>{compose_icon("refresh")}</button>
+                        <button type="button" class="journey-icon" title=j(loc,"Dismiss recap","忽略回顾") aria-label=j(loc,"Dismiss recap","忽略回顾") prop:disabled=move || busy.get() on:click=move |_| save("dismissed", false)>{compose_icon("eye-off")}</button>
+                    </div>
+                </header>
+                {RECAP_SECTIONS.iter().filter(|(key, _, _)| !recap_section(&r, key).is_empty()).map(|(key, en, zh)| view! {
+                    <div class="journey-recap-section" data-section=*key><h4>{j(loc,en,zh)}</h4><ul>
+                        {recap_section(&r, key).iter().map(|item| view! {<li><span>{item.text.clone()}</span>
+                            {item.refs.iter().filter_map(|i| sources.get(*i).cloned()).map(|source| {
+                                let title = source.title.clone();
+                                view! {<button type="button" class="journey-recap-ref" title=title.clone() on:click=move |_| open_source(source.kind.clone(), source.id.clone(), source.title.clone())>{title.chars().take(28).collect::<String>()}</button>}
+                            }).collect_view()}
+                        </li>}).collect_view()}
+                    </ul></div>
+                }).collect_view()}
+                <p class="journey-recap-foot">{if loc == Locale::Zh {format!("由 {} 起草，可在 设置 → 专家 → Recap 中更换模型。", r.model)} else {format!("Drafted by {}. Change the model in Settings → Specialists → Recap.", r.model)}}</p>
+                {alert}
+            </section>}.into_view()
+        }}
     }
 }
 

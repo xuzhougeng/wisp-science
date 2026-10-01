@@ -321,3 +321,21 @@ test("dense desktop panels fit the viewport and scroll independently", async ({ 
   }
   await page.screenshot({path:testInfo.outputPath("dense-mobile.png")});
 });
+
+test("a project's recap leads its records for the selected day", async ({ page }) => {
+  await page.goto("/");
+  const from = await page.evaluate(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); });
+  await page.evaluate(({ from }) => (window as any).__TAURI__.core.invoke("generate_research_recap", { from, until: from + 86400 }), { from });
+  // Open without reloading: the mocked recap lives in this page.
+  await page.getByTestId("open-research-calendar").click();
+  const calendar = page.getByTestId("home-research-calendar");
+  const group = calendar.locator('.calendar-record-group[data-project-id="default"]');
+  const recap = group.getByTestId("calendar-recap");
+  await expect(recap).toHaveAttribute("data-status", "draft");
+  await expect(recap).toContainText("Normalization compared; method B chosen");
+  await expect(recap).toContainText("Recap · AI draft");
+  await expect(recap.locator("li")).toHaveText(["Compared two normalization methods"]);
+  await expect(calendar.locator('.calendar-record-group[data-project-id="other"]').getByTestId("calendar-recap")).toHaveCount(0);
+  await calendar.getByRole("button", { name: "2026-09-08", exact: true }).click();
+  await expect(calendar.getByTestId("calendar-recap")).toHaveCount(0);
+});

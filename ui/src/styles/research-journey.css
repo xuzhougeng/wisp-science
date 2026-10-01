@@ -204,3 +204,26 @@ body:has(.window-titlebar) .research-journey { top: 38px; }
   .sidebar .side-btn.active { color: transparent; }
   .sidebar .side-btn.active > svg { color: var(--clay-strong); }
 }
+/* Daily recap: an AI draft sits above the day's records until confirmed. */
+.journey-recap { margin: 10px 0 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); }
+.journey-recap[data-status="draft"] { border-style: dashed; }
+.journey-recap-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.journey-recap-head > svg { width: 16px; height: 16px; color: var(--clay); }
+.journey-recap-head strong { font-size: calc(13px * var(--ui-font-scale, 1)); }
+.journey-recap-badge { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }
+.journey-recap-badge.confirmed { color: var(--clay-strong); }
+.journey-recap-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.journey-recap-actions .journey-icon { width: 28px; height: 28px; }
+.journey-recap-actions .journey-link { margin-right: 6px; }
+.journey-recap-section h4 { margin: 12px 0 4px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); font-weight: 600; }
+.journey-recap-section ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.journey-recap-section li { color: var(--text); overflow-wrap: anywhere; }
+.journey-recap-ref { margin-left: 6px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-muted); padding: 0 8px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 18px; max-width: 100%; }
+.journey-recap-ref:hover { border-color: var(--clay); color: var(--clay-strong); }
+.journey-recap-foot { margin: 12px 0 0; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.journey-recap-error { margin: 8px 0 0; color: var(--err); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.journey-recap-empty { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+.journey-recap.editing { display: grid; gap: 10px; }
+.journey-recap.editing label { display: grid; gap: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.journey-recap.editing input, .journey-recap.editing textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 6px 8px; }
+.journey-recap-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }

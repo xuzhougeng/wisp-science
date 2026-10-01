@@ -115,3 +115,8 @@ body:has(.window-titlebar) .home-calendar-page { top: 38px; }
 @media (pointer: coarse) {
   .calendar-icon, .calendar-today, .calendar-projects button, .calendar-project-link, .calendar-group-toggle, .calendar-show-more, .calendar-expand-title { min-height: 44px; }
 }
+.calendar-recap { margin: 8px 0 4px 22px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.calendar-recap[data-status="draft"] { border-style: dashed; }
+.calendar-recap p { margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.calendar-recap small { color: var(--text-faint); }
+.calendar-recap ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; color: var(--text-muted); }
