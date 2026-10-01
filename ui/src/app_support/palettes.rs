@@ -860,7 +860,11 @@ pub(crate) fn ActionPalette(
         if open.get() {
             actions.track();
             let overflows = list_overflows;
-            request_animation_frame(move || overflows.set(palette_list_overflows(".action-palette .project-search-results")));
+            request_animation_frame(move || {
+                overflows.set(palette_list_overflows(
+                    ".action-palette .project-search-results",
+                ))
+            });
         }
     });
     let run = Callback::new(move |index: usize| {
