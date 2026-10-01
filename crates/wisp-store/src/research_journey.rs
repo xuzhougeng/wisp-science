@@ -80,24 +80,24 @@ impl Store {
               SELECT 'run-start:'||r.id AS id, 'run' AS kind, r.title, '' AS summary,
                 COALESCE(r.started_at,r.created_at) AS occurred_at, r.created_at AS recorded_at,
                 r.id AS source_id, r.frame_id, CASE WHEN r.started_at IS NULL THEN 'submitted' ELSE 'started' END AS status, '' AS content_type,
-                NULL AS version_number, 0 AS source_discarded, 0 AS manual
-              FROM runs r WHERE {runs}
+                NULL AS version_number, 0 AS source_discarded, 0 AS manual, r.id AS run_id
+              FROM runs r WHERE {runs} AND r.kind<>'file_transfer'
               UNION ALL
               SELECT 'run-end:'||r.id, 'run', r.title, '', r.ended_at, r.ended_at,
-                r.id, r.frame_id, r.status, '', NULL, 0, 0 FROM runs r WHERE {runs} AND r.ended_at IS NOT NULL
+                r.id, r.frame_id, r.status, '', NULL, 0, 0, r.id FROM runs r WHERE {runs} AND r.kind<>'file_transfer' AND r.ended_at IS NOT NULL
               UNION ALL
               SELECT 'version:'||v.id, 'artifact', a.filename, '', v.created_at, v.created_at,
                 v.id, a.root_frame_id, 'registered', v.content_type, v.version_number,
-                v.source_discarded_at IS NOT NULL, 0
+                v.source_discarded_at IS NOT NULL, 0, v.producing_run_id
               FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE {artifacts}
               UNION ALL
               SELECT 'node:'||n.id, n.kind, n.title,
                 CAST(COALESCE(json_extract(n.metadata_json,'$.body'),json_extract(n.metadata_json,'$.reason'),json_extract(n.metadata_json,'$.rationale'),json_extract(n.metadata_json,'$.summary'),'') AS TEXT),
-                n.created_at, n.created_at, n.id, NULL, 'recorded', '', NULL, 0, 0
+                n.created_at, n.created_at, n.id, NULL, 'recorded', '', NULL, 0, 0, NULL
               FROM research_nodes n WHERE {nodes} AND n.kind IN ('decision','paper','data_asset')
               UNION ALL
               SELECT 'message:'||m.id, 'session', COALESCE(NULLIF(f.title,''),substr(m.content,1,120),'Conversation'),
-                '', m.ts, m.ts, f.id, f.id, 'discussed', '', NULL, 0, 0
+                '', m.ts, m.ts, f.id, f.id, 'discussed', '', NULL, 0, 0, NULL
               FROM messages m JOIN frames f ON f.id=m.frame_id
               WHERE f.project_id=?1 AND ((?2 IS NULL AND f.exploration_id IS NULL) OR f.exploration_id=?2)
                 AND m.role='user' AND trim(COALESCE(m.content,''))<>''
@@ -105,17 +105,17 @@ impl Store {
                     AND m.seq BETWEEN ce.first_seq AND ce.initial_head_seq)
               UNION ALL
               SELECT 'journal:'||j.id, j.category, j.title, j.body, j.occurred_at, j.created_at,
-                j.id, NULL, 'recorded', '', NULL, 0, 1 FROM research_journal_entries j
+                j.id, NULL, 'recorded', '', NULL, 0, 1, NULL FROM research_journal_entries j
               WHERE j.project_id=?1 AND ((?2 IS NULL AND j.exploration_id IS NULL) OR j.exploration_id=?2
                 OR (j.exploration_id IS NULL AND EXISTS(SELECT 1 FROM explorations x
                     JOIN exploration_baseline_entities b ON b.checkpoint_id=x.checkpoint_id WHERE x.id=?2 AND b.entity_kind='research_journal_entry' AND b.entity_id=j.id)))
               UNION ALL
               SELECT 'archive:'||a.id, 'archive', a.title, json_extract(a.record_json,'$.report'), a.frozen_at, a.created_at,
-                a.id, a.frame_id, 'archived', '', NULL, 0, 0 FROM research_archives a
+                a.id, a.frame_id, 'archived', '', NULL, 0, 0, NULL FROM research_archives a
               WHERE a.project_id=?1 AND ?2 IS NULL AND a.frozen_at IS NOT NULL
               UNION ALL
               SELECT 'archive-continuation:'||c.frame_id, 'progress', 'Continue research / 继续研究', a.title,
-                f.created_at,f.created_at,a.id,c.frame_id,'continued','',NULL,0,0
+                f.created_at,f.created_at,a.id,c.frame_id,'continued','',NULL,0,0,NULL
               FROM research_archive_continuations c JOIN research_archives a ON a.id=c.archive_id JOIN frames f ON f.id=c.frame_id
               WHERE a.project_id=?1 AND ?2 IS NULL
             ) WHERE occurred_at>=?3 AND occurred_at<?4 ORDER BY occurred_at DESC, id DESC LIMIT 2001
@@ -147,6 +147,7 @@ impl Store {
                     version_number: row.try_get("version_number")?,
                     source_discarded: row.try_get("source_discarded")?,
                     manual: row.try_get("manual")?,
+                    run_id: row.try_get("run_id")?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -415,9 +416,15 @@ mod tests {
             .add_research_journal_entry(&StateScope::mainline("other"), &input)
             .await
             .unwrap();
+        // Output transfers are plumbing, not research activity.
+        let mut harvest = RunRecord::new("h", "p", "ssh:x", "Harvest run outputs", "file_transfer");
+        harvest.started_at = Some(1001);
+        harvest.ended_at = Some(1002);
+        store.create_run(&harvest).await.unwrap();
         let first = store.research_journey(&scope, 0, 86400).await.unwrap();
         assert_eq!(first.entries.len(), 1);
         assert_eq!(first.entries[0].status, "started");
+        assert_eq!(first.entries[0].run_id.as_deref(), Some("r"));
         let second = store.research_journey(&scope, 86400, 172800).await.unwrap();
         assert_eq!(second.entries.len(), 3);
         assert!(second.entries.iter().any(|e| e.status == "failed"));
@@ -427,6 +434,7 @@ mod tests {
             .find(|e| e.kind == "artifact")
             .unwrap();
         assert_eq!(artifact.source_id, version);
+        assert_eq!(artifact.run_id.as_deref(), Some("r"));
         assert_eq!(artifact.version_number, Some(2));
         assert_eq!(artifact.occurred_at, 90001);
         let note = second.entries.iter().find(|e| e.manual).unwrap();

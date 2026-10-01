@@ -1664,9 +1664,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   });
   const journeyEntries: any[] = [
     journeyEntry("progress-today", "progress", journeyText("Compared normalization methods and selected a baseline", "完成归一化对比，确定后续分析方案"), 0, {manual: true, summary: journeyText("Compare low-sample performance; take method B into full-data validation.", "比较两种方法的低样本表现，选择方案 B 进入完整数据验证。")}),
-    journeyEntry("run-compare", "run", journeyText("Completed normalization comparison", "完成两种归一化方法对比"), 0, {source_id: "run-local-002", status: "succeeded", occurred_at: journeyTime(0,14,35)}),
+    journeyEntry("run-end:run-local-002", "run", journeyText("Completed normalization comparison", "完成两种归一化方法对比"), 0, {source_id: "run-local-002", run_id: "run-local-002", status: "succeeded", occurred_at: journeyTime(0,14,35)}),
+    journeyEntry("run-start:run-local-002", "run", journeyText("Completed normalization comparison", "完成两种归一化方法对比"), 0, {source_id: "run-local-002", run_id: "run-local-002", status: "started", occurred_at: journeyTime(0,14,30)}),
     journeyEntry("run-clean", "run", journeyText("Completed data cleaning and quality checks", "完成数据清洗与质量检查"), 0, {source_id: "run-kinase-001", status: "succeeded", occurred_at: journeyTime(0,10,20)}),
-    journeyEntry("output-image", "artifact", "normalization_comparison.png", 0, {source_id: "journey-image-v1", content_type: "image/png", version_number: 1, occurred_at: journeyTime(0,14,35)}),
+    journeyEntry("output-image", "artifact", "normalization_comparison.png", 0, {source_id: "journey-image-v1", run_id: "run-local-002", content_type: "image/png", version_number: 1, occurred_at: journeyTime(0,14,35)}),
     journeyEntry("output-data", "artifact", "normalized_counts.csv", 0, {source_id: "journey-data-v2", content_type: "text/csv", version_number: 2}),
     journeyEntry("output-report", "artifact", "comparison_report.md", 0, {source_id: "journey-report-v1", content_type: "text/markdown", version_number: 1}),
     journeyEntry("finding-today", "finding", journeyText("Method B is more stable at low sample sizes.", "方案 B 在低样本量下更稳定。"), 0, {manual: true}),

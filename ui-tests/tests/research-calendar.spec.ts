@@ -36,9 +36,14 @@ test("aggregates project marks, deduplicates sessions, filters and navigates mon
   const details=page.getByTestId("home-calendar-details");
   await expect(calendar.getByRole("button",{name:"All projects",exact:true})).toHaveAttribute("aria-pressed","true");
   await expect(details.locator(".calendar-record-group")).toHaveCount(2);
-  await expect(details).toContainText("2 projects · 11 records");
+  await expect(details).toContainText("2 projects · 10 records");
   await expect(calendar.locator('[data-date="2026-09-09"] .calendar-dot')).toHaveCount(2);
   await expect(details).toContainText("normalized_counts.csv · v2");
+  // The run's start/end pair is one record and its output folds into it.
+  const compare = details.locator(".calendar-record").filter({hasText:"Completed normalization comparison"});
+  await expect(compare).toHaveCount(1);
+  await expect(compare).toContainText("Experiment · Completed · 1 outputs");
+  await expect(details).not.toContainText("normalization_comparison.png");
   await expect(details.locator(".calendar-record").filter({hasText:"Normalization method comparison"})).toHaveCount(1);
   await calendar.locator('.calendar-projects [data-project-id="other"]').click();
   await expect(details).toContainText("Other project finding");

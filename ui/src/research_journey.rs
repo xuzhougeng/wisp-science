@@ -128,6 +128,13 @@ pub(super) fn days(
         // A session appears once per local day, even when many turns were sent.
         let mut sessions = HashSet::new();
         group.retain(|e| e.kind != "session" || sessions.insert(e.source_id.clone()));
+        // A run that finished the same day shows once, as its outcome.
+        let ended = group
+            .iter()
+            .filter(|e| e.id.starts_with("run-end:"))
+            .map(|e| e.source_id.clone())
+            .collect::<HashSet<_>>();
+        group.retain(|e| !(e.id.starts_with("run-start:") && ended.contains(&e.source_id)));
     }
     groups.into_iter().rev().collect()
 }
@@ -425,7 +432,8 @@ fn JourneyDay(
                 {move ||if expanded.get(){view!{
                     <div class="journey-activities">{activities.get_value().into_iter().map(|entry|{
                         let failed=matches!(entry.status.as_str(),"failed"|"lost"|"cancelled"); let id=entry.source_id.clone();let st=entry.status.clone();
-                        view!{<button class="journey-activity" class:failed=failed on:click=move |_|run_open.set(Some(id.clone()))>{compose_icon(if failed{"circle-alert"}else if entry.status=="succeeded"{"check"}else{"clock"})}<time>{clock(entry.occurred_at)}</time><span>{entry.title}</span><small>{move ||status(locale.get(),&st)}</small></button>}
+                        let made=outputs.with_value(|o|o.iter().filter(|e|e.run_id.as_ref()==Some(&entry.source_id)).count());
+                        view!{<button class="journey-activity" class:failed=failed on:click=move |_|run_open.set(Some(id.clone()))>{compose_icon(if failed{"circle-alert"}else if entry.status=="succeeded"{"check"}else{"clock"})}<time>{clock(entry.occurred_at)}</time><span>{entry.title}</span><small>{move ||if made>0{format!("{made} {} · {}",j(locale.get(),"outputs","份产出"),status(locale.get(),&st))}else{status(locale.get(),&st)}}</small></button>}
                     }).collect_view()}</div>
                     {(!outputs.get_value().is_empty()).then(||view!{<h3 class="journey-output-heading">{j(locale.get(),"Today's outputs","当日产出")}</h3><div class="journey-outputs">{outputs.get_value().into_iter().take(output_limit.get()).map(|e|view!{<JourneyOutput locale=locale entry=e selected=selected on_select=on_select/>}).collect_view()}</div>})}
                     {(output_count>output_limit.get()).then(||view!{<button class="journey-link journey-more-outputs" on:click=move |_|output_limit.update(|n|*n+=6)>{j(locale.get(),"Show more outputs","显示更多产出")}</button>})}

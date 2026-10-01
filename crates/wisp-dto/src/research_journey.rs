@@ -32,6 +32,9 @@ pub struct ResearchJourneyEntry {
     pub version_number: Option<i64>,
     pub source_discarded: bool,
     pub manual: bool,
+    /// The run itself for run rows, the producing run for outputs.
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

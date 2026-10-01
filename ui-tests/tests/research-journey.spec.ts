@@ -168,6 +168,10 @@ test("daily history groups sessions, opens exact versions and preserves Escape l
   const today = journey.locator('[data-day="2026-09-09"]');
   await expect(today).toContainText("2 experiments · 3 outputs · 4 notes · 1 conversations");
   await expect(today.locator(".journey-session-links button")).toHaveCount(1);
+  // A run that started and finished today is one row, carrying its outputs.
+  const compare = today.locator(".journey-activity").filter({ hasText: "Completed normalization comparison" });
+  await expect(compare).toHaveCount(1);
+  await expect(compare).toContainText("1 outputs · Completed");
   await today.getByRole("button", { name: "normalized_counts.csv", exact: true }).click();
   const source = journey.getByTestId("journey-source");
   await expect(source).toContainText("Version 2");
