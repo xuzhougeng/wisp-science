@@ -94,7 +94,8 @@ use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
     group_artifact_indices, ime_composing, is_runtime_code_selection, join_path, md_to_html,
     note_composition_end, opens_in_system_browser, parent_path, provider_defaults,
-    runtime_language, user_message_presentation, DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL,
+    runtime_language, sanitize_composer_text, user_message_presentation, DEEPSEEK_FLASH_MODEL,
+    DEEPSEEK_PRO_MODEL,
 };
 use trajectory::TrajectoryOverlay;
 use wasm_bindgen::prelude::*;
@@ -4519,16 +4520,17 @@ fn App() -> impl IntoView {
         if demo_mode.get_untracked() {
             return;
         }
+        // Also cover restored/programmatic drafts that bypass DOM input events.
+        let message = sanitize_composer_text(&input.get()).into_owned();
         // Shell-owned slash commands never reach the model; the picker inserts
         // the same text, so typed and picked commands behave identically.
         if action == ComposerSendAction::Normal {
             if let Some(runner) = slash_command_runner.get_untracked() {
-                if runner.call(input.get()) {
+                if runner.call(message.clone()) {
                     return;
                 }
             }
         }
-        let message = input.get();
         let saved_attachments = attachments.get();
         let saved_mcp_app_context = mcp_app_context.get();
         let refs = composer_references.get();
@@ -14326,17 +14328,22 @@ fn App() -> impl IntoView {
                                 }
                             }
                             prop:value={move || input.get()}
+                            on:beforeinput:undelegated=composer_before_input
                             on:input=move |ev: web_sys::Event| {
-                                let Some(input_event) = ev.dyn_ref::<web_sys::InputEvent>() else {
-                                    return;
-                                };
+                                let input_event = ev.dyn_ref::<web_sys::InputEvent>();
                                 let Some(textarea) = ev.target()
                                     .and_then(|target| target.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
                                 else {
                                     return;
                                 };
-                                let v = textarea.value();
-                                let input_type = input_event.input_type();
+                                // Do not rewrite the DOM while an IME owns marked
+                                // text; compositionend repairs it after commit.
+                                let v = if input_event.is_some_and(|ev| ev.is_composing()) {
+                                    textarea.value()
+                                } else {
+                                    composer_input_value(&textarea)
+                                };
+                                let input_type = input_event.map(|ev| ev.input_type()).unwrap_or_default();
                                 let prior_mode = picker_mode.get_untracked();
                                 let prior_range = picker_token_range.get_untracked();
                                 let manual_edit = matches!(
@@ -14372,6 +14379,13 @@ fn App() -> impl IntoView {
                                     _ => picker_mode.set(None),
                                 }
                                 input.set(v);
+                            }
+                            on:compositionend=move |ev: web_sys::CompositionEvent| {
+                                if let Some(textarea) = ev.target()
+                                    .and_then(|target| target.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+                                {
+                                    input.set(composer_input_value(&textarea));
+                                }
                             }
                             on:keydown:undelegated=on_send
                             on:paste=on_paste

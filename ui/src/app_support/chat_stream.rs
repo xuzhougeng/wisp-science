@@ -301,6 +301,21 @@ mod start_user_turn_tests {
     }
 
     #[test]
+    fn message_with_attachments_removes_leaked_arrow_controls() {
+        let body = "\u{1c}  描述\u{1d}图片\u{1e}\t细节\u{1f} \n";
+        assert_eq!(message_with_attachments(body, &[]), "描述图片\t细节");
+        assert_eq!(
+            message_with_attachments(body, &["uploads/a.png".into()]),
+            "描述图片\t细节\n\nUploaded files: uploads/a.png"
+        );
+        assert_eq!(message_with_attachments("\u{1c}\u{1d}", &[]), "");
+        assert_eq!(
+            message_with_attachments("\u{1c}\u{1d}", &["uploads/a.png".into()]),
+            "Uploaded files: uploads/a.png"
+        );
+    }
+
+    #[test]
     fn message_with_context_keeps_reference_labels_for_transcript_ui() {
         let refs = vec![
             ComposerReferenceChip::Artifact {

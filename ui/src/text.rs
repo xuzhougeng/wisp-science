@@ -65,6 +65,65 @@ pub(crate) fn dom_value(ev: &web_sys::Event) -> String {
         .unwrap_or_default()
 }
 
+/// macOS can leak the legacy arrow-key codes through WebView text input
+/// (#1413). Limit filtering to these four codes; retain tabs, newlines, and
+/// ordinary Unicode (including IME text and emoji joiners).
+pub(crate) fn is_composer_arrow_control(c: char) -> bool {
+    matches!(c, '\u{1c}'..='\u{1f}')
+}
+
+pub(crate) fn sanitize_composer_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains(is_composer_arrow_control) {
+        text.chars()
+            .filter(|&c| !is_composer_arrow_control(c))
+            .collect::<String>()
+            .into()
+    } else {
+        text.into()
+    }
+}
+
+/// Textarea selection offsets count UTF-16 code units, not Rust bytes/chars.
+pub(crate) fn sanitized_composer_offset(text: &str, offset: u32) -> u32 {
+    text.encode_utf16()
+        .take(offset as usize)
+        .filter(|unit| !(0x1c..=0x1f).contains(unit))
+        .count() as u32
+}
+
+#[cfg(test)]
+mod composer_input_tests {
+    use super::{sanitize_composer_text, sanitized_composer_offset};
+
+    #[test]
+    fn removes_arrow_controls_at_every_position() {
+        assert_eq!(
+            sanitize_composer_text("\u{1c}\u{1c}现在\u{1d}比较\u{1e}结果\u{1f}\u{1d}"),
+            "现在比较结果"
+        );
+        assert_eq!(sanitize_composer_text("\u{1c}\u{1d}\u{1e}\u{1f}"), "");
+    }
+
+    #[test]
+    fn preserves_other_text_and_controls() {
+        let text = "中文\tα = 1\r\n👩‍🔬 e\u{301}\u{1b}\u{200e}";
+        assert!(matches!(
+            sanitize_composer_text(text),
+            std::borrow::Cow::Borrowed(value) if value == text
+        ));
+        assert_eq!(sanitize_composer_text(&format!("\u{1c}{text}\u{1d}")), text);
+    }
+
+    #[test]
+    fn selection_offsets_preserve_utf16_positions() {
+        let text = "\u{1c}中🧬\u{1d}文\u{1e}\u{1f}";
+        let expected = [0, 0, 1, 2, 3, 3, 4, 4, 4];
+        for (offset, clean_offset) in expected.into_iter().enumerate() {
+            assert_eq!(sanitized_composer_offset(text, offset as u32), clean_offset);
+        }
+    }
+}
+
 pub(crate) fn provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",

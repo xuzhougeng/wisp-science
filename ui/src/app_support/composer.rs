@@ -424,7 +424,49 @@ pub(crate) fn attachment_paths(items: &[ComposerAttachment]) -> Vec<String> {
         .collect()
 }
 
+/// Reject a leaked arrow-key insertion before WebView changes the draft. Mixed
+/// text (e.g. paste) is left to the input fallback so valid content is retained.
+pub(crate) fn composer_before_input(ev: web_sys::InputEvent) {
+    if !ev.is_composing()
+        && ev
+            .data()
+            .is_some_and(|data| !data.is_empty() && data.chars().all(is_composer_arrow_control))
+    {
+        ev.prevent_default();
+    }
+}
+
+/// Repair non-cancelable / missing-beforeinput edits, including pasted text.
+/// Only write the DOM when contaminated, retaining the caret/selection and
+/// scroll position even when removing controls leaves the signal unchanged.
+pub(crate) fn composer_input_value(textarea: &web_sys::HtmlTextAreaElement) -> String {
+    let value = textarea.value();
+    let clean = sanitize_composer_text(&value);
+    if clean != value {
+        let selection = textarea
+            .selection_start()
+            .ok()
+            .flatten()
+            .zip(textarea.selection_end().ok().flatten());
+        let direction = textarea.selection_direction().ok().flatten();
+        let scroll_top = textarea.scroll_top();
+        let scroll_left = textarea.scroll_left();
+        textarea.set_value(&clean);
+        if let Some((start, end)) = selection {
+            let _ = textarea.set_selection_range_with_direction(
+                sanitized_composer_offset(&value, start),
+                sanitized_composer_offset(&value, end),
+                direction.as_deref().unwrap_or("none"),
+            );
+        }
+        textarea.set_scroll_top(scroll_top);
+        textarea.set_scroll_left(scroll_left);
+    }
+    clean.into_owned()
+}
+
 pub(crate) fn message_with_attachments(text: &str, paths: &[String]) -> String {
+    let text = sanitize_composer_text(text);
     let body = text.trim();
     if paths.is_empty() {
         return body.to_string();

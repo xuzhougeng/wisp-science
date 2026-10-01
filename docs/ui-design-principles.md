@@ -72,6 +72,11 @@
 
 ## Composer attachments and references
 
+- The WebView composer rejects leaked macOS arrow-key control characters
+  (U+001C–U+001F) before insertion and removes them from pasted/restored drafts
+  before sending. Fallback cleanup preserves UTF-16 caret/selection positions
+  and waits for IME composition to finish; normal arrow navigation, selection,
+  tabs, newlines, and Unicode text keep their native behavior.
 - The composer keeps its top-edge resize affordance invisible at rest while preserving the full-width drag target and persisted custom height.
 - Context usage sits immediately left of the model picker as a number-free gauge; its needle sweeps from upper-left to upper-right as the active conversation fills its context window.
 - The context-usage panel opens docked in the composer column, pushing the transcript up instead of covering it. Dragging the header undocks it into a floating window that stays open while typing; a dock button or double-click returns it. There is no full-screen click-swallowing backdrop.

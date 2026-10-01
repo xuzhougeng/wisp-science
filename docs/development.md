@@ -4,6 +4,21 @@ Build, architecture, CLI environment, and tests. For first-run desktop setup see
 [basic configuration](basic-configuration.md). For HTTP model profiles see
 [model configuration](model-configuration.md).
 
+## WebView composer input smoke test
+
+For #1413, run `cd ui-tests && npx playwright test tests/composer-input.spec.ts`.
+The mocked tests inject the macOS arrow-key codes through `beforeinput`, input
+fallbacks, and programmatic drafts; they do not reproduce the native WKWebView
+timing bug itself.
+
+On macOS, use both ABC and a Chinese input method. Hold Left at the start and
+Right at the end of an empty or populated composer for several seconds, then
+repeat after moving the caret into the text. No boxes should appear. Check
+Shift/Option/Command arrow selection/navigation, multiline text, emoji, and IME
+candidate confirmation. Send with and without an attachment and confirm the
+saved message contains no U+001C–U+001F. Also check ordinary typing, selection,
+paste, and Enter/Shift+Enter on Windows and Linux.
+
 ## GitHub Pages tutorials
 
 The website's [tutorial directory](tutorials.html) links to one independent page
