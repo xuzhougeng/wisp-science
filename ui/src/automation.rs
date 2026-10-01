@@ -224,7 +224,12 @@ pub(crate) fn AutomationPage(
         let loc = locale.get_untracked();
         if d.project_id.is_empty() || d.prompt.trim().is_empty() {
             form_error.set(Some(
-                j(loc, "Choose a project and write a prompt.", "请选择项目并填写提示词。").into(),
+                j(
+                    loc,
+                    "Choose a project and write a prompt.",
+                    "请选择项目并填写提示词。",
+                )
+                .into(),
             ));
             return;
         }
@@ -234,7 +239,14 @@ pub(crate) fn AutomationPage(
             Cadence::Hourly => (d.hours.clamp(1, 168) * 3600, None),
         };
         if d.cadence != Cadence::Hourly && start_at.is_none() {
-            form_error.set(Some(j(loc, "Use a 24-hour HH:MM time.", "请输入 24 小时制时间 HH:MM。").into()));
+            form_error.set(Some(
+                j(
+                    loc,
+                    "Use a 24-hour HH:MM time.",
+                    "请输入 24 小时制时间 HH:MM。",
+                )
+                .into(),
+            ));
             return;
         }
         spawn_local(async move {
@@ -255,9 +267,8 @@ pub(crate) fn AutomationPage(
             }
         });
     };
-    let project_name = move |id: &str| {
-        projects.with(|ps| ps.iter().find(|p| p.id == id).map(|p| p.name.clone()))
-    };
+    let project_name =
+        move |id: &str| projects.with(|ps| ps.iter().find(|p| p.id == id).map(|p| p.name.clone()));
     view! {
         <section class="home-calendar home-automation" data-testid="home-automation" aria-label=move || j(locale.get(),"Automation","自动化")>
             <button type="button" class="calendar-back" on:click=move |_| on_close.call(())>{compose_icon("arrow-left")}{move || j(locale.get(),"Back to home","返回首页")}</button>

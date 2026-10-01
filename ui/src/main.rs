@@ -1,7 +1,7 @@
 mod acp;
 mod agent_workflows;
-mod automation;
 mod app_overlays;
+mod automation;
 mod bindings;
 mod channels_view;
 mod chat_find;

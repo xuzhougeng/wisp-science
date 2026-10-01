@@ -423,8 +423,20 @@ fn JourneyDay(
     let day_number = d.get_date();
     let weekday = d.get_day() as usize;
     let bounds = (
-        (js_sys::Date::new_with_year_month_day(d.get_full_year(), d.get_month() as i32, d.get_date() as i32).get_time() / 1000.0) as i64,
-        (js_sys::Date::new_with_year_month_day(d.get_full_year(), d.get_month() as i32, d.get_date() as i32 + 1).get_time() / 1000.0) as i64,
+        (js_sys::Date::new_with_year_month_day(
+            d.get_full_year(),
+            d.get_month() as i32,
+            d.get_date() as i32,
+        )
+        .get_time()
+            / 1000.0) as i64,
+        (js_sys::Date::new_with_year_month_day(
+            d.get_full_year(),
+            d.get_month() as i32,
+            d.get_date() as i32 + 1,
+        )
+        .get_time()
+            / 1000.0) as i64,
     );
     let recap_day = day.clone();
     let today = day == day_key(now());
@@ -524,7 +536,12 @@ fn JourneyRecap(
         error.set(None);
         quiet.set(false);
         spawn_local(async move {
-            match call::<Option<ResearchRecap>>("generate_research_recap", serde_json::json!({"from":bounds.0,"until":bounds.1})).await {
+            match call::<Option<ResearchRecap>>(
+                "generate_research_recap",
+                serde_json::json!({"from":bounds.0,"until":bounds.1}),
+            )
+            .await
+            {
                 Ok(Some(r)) => recap.set(Some(r)),
                 Ok(None) => quiet.set(true),
                 Err(e) => error.set(Some(e)),
@@ -533,12 +550,23 @@ fn JourneyRecap(
         });
     };
     let save = move |status: &'static str, edited: bool| {
-        let Some(current) = recap.get_untracked() else { return };
+        let Some(current) = recap.get_untracked() else {
+            return;
+        };
         let (headline, mut sections) = if edited {
             let (headline, texts) = draft.get_untracked();
-            (headline, texts.iter().map(|t| recap_items(t)).collect::<Vec<_>>())
+            (
+                headline,
+                texts.iter().map(|t| recap_items(t)).collect::<Vec<_>>(),
+            )
         } else {
-            (current.headline.clone(), RECAP_SECTIONS.iter().map(|(key, _, _)| recap_section(&current, key).to_vec()).collect())
+            (
+                current.headline.clone(),
+                RECAP_SECTIONS
+                    .iter()
+                    .map(|(key, _, _)| recap_section(&current, key).to_vec())
+                    .collect(),
+            )
         };
         let edit = ResearchRecapEdit {
             id: current.id,
@@ -552,7 +580,9 @@ fn JourneyRecap(
         busy.set(true);
         error.set(None);
         spawn_local(async move {
-            match call::<ResearchRecap>("update_research_recap", serde_json::json!({"edit":edit})).await {
+            match call::<ResearchRecap>("update_research_recap", serde_json::json!({"edit":edit}))
+                .await
+            {
                 Ok(r) => {
                     recap.set(Some(r));
                     editing.set(None);
@@ -565,9 +595,15 @@ fn JourneyRecap(
     let open_source = move |kind: String, id: String, title: String| match kind.as_str() {
         "run" => run_open.set(Some(id)),
         "session" => on_session.call(id),
-        "artifact" => on_artifact.call((format!("artifact-version:{id}"), title.clone(), file_kind(&title).unwrap_or("text").into())),
+        "artifact" => on_artifact.call((
+            format!("artifact-version:{id}"),
+            title.clone(),
+            file_kind(&title).unwrap_or("text").into(),
+        )),
         _ => {
-            if let Some(entry) = entries.with_value(|rows| rows.iter().find(|e| e.source_id == id).cloned()) {
+            if let Some(entry) =
+                entries.with_value(|rows| rows.iter().find(|e| e.source_id == id).cloned())
+            {
                 on_select.call(entry);
             }
         }
