@@ -2188,6 +2188,37 @@ fn App() -> impl IntoView {
         side_chat_busy.set(false);
         *previous_session = current_session;
     });
+    // Unsent composer text belongs to its session (#1406): carrying it into the
+    // next session invited sending it to the wrong conversation. In-memory only,
+    // like the stashes above.
+    let composer_drafts_by_session = create_rw_signal::<HashMap<String, String>>(HashMap::new());
+    let previous_draft_session = Rc::new(RefCell::new(None::<String>));
+    create_effect(move |_| {
+        let current_session = active_session.get();
+        let mut previous_session = previous_draft_session.borrow_mut();
+        if *previous_session == current_session {
+            return;
+        }
+        let outgoing = input.get_untracked();
+        composer_drafts_by_session.update(|drafts| {
+            if let Some(session_id) = previous_session.as_ref() {
+                if outgoing.trim().is_empty() {
+                    drafts.remove(session_id);
+                } else {
+                    drafts.insert(session_id.clone(), outgoing);
+                }
+            }
+        });
+        let restored = current_session.as_ref().and_then(|session_id| {
+            composer_drafts_by_session.with_untracked(|drafts| drafts.get(session_id).cloned())
+        });
+        // Text typed with no session open belongs to the session that gets
+        // lazily created from it (plan-mode / context toggles), so keep it.
+        if previous_session.is_some() || restored.is_some() {
+            input.set(restored.unwrap_or_default());
+        }
+        *previous_session = current_session;
+    });
     // Dedicated project windows use the same guarded transition as every
     // interactive project-open path. The callback is built after `load_session`.
     let dedicated_project_id = url_project_param();
@@ -15297,7 +15328,12 @@ fn App() -> impl IntoView {
                                                                         );
                                                                         provisional_acp_selection.set(Some((frame_id.clone(), agent_id.clone())));
                                                                         active_acp_agent_id.set(Some(agent_id));
+                                                                        // Move the draft into the new session instead
+                                                                        // of leaving a copy stashed on the old one.
+                                                                        let draft = input.get_untracked();
+                                                                        input.set(String::new());
                                                                         active_session.set(Some(frame_id));
+                                                                        input.set(draft);
                                                                         refresh_session_history();
                                                                         focus_composer();
                                                                         show_toast(&t(locale.get(), "composer.acp_new_session_toast"));

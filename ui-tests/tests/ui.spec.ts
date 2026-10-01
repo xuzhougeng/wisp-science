@@ -15758,6 +15758,23 @@ test("open-session for the project already on screen switches conversations with
   await expect(page.locator(".app-entering")).toHaveCount(0);
 });
 
+test("an unsent composer draft stays with its own session (#1406)", async ({ page }) => {
+  await page.goto("/");
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame" });
+  await composer(page).fill("only for the first session");
+
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame-2" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame-2" });
+  await expect(composer(page)).toHaveValue("");
+  await composer(page).fill("second session draft");
+
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect(composer(page)).toHaveValue("only for the first session");
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame-2" });
+  await expect(composer(page)).toHaveValue("second session draft");
+});
+
 test("a sync conflict requires an explicit authoritative device choice", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => { (window as any).__failSyncConflict = true; });
