@@ -218,8 +218,8 @@ body:has(.window-titlebar) .research-journey { top: 38px; }
 .journey-recap-section h4 { margin: 12px 0 4px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); font-weight: 600; }
 .journey-recap-section ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .journey-recap-section li { color: var(--text); overflow-wrap: anywhere; }
-.journey-recap-ref { margin-left: 6px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-muted); padding: 0 8px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 18px; max-width: 100%; }
-.journey-recap-ref:hover { border-color: var(--clay); color: var(--clay-strong); }
+.journey-recap .journey-recap-ref { display: inline-block; vertical-align: 1px; margin-left: 6px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-muted); padding: 0 8px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 18px; max-width: min(100%, 220px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.journey-recap .journey-recap-ref:hover { border-color: var(--clay); color: var(--clay-strong); }
 .journey-recap-foot { margin: 12px 0 0; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .journey-recap-error { margin: 8px 0 0; color: var(--err); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .journey-recap-empty { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }

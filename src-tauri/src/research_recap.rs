@@ -361,6 +361,22 @@ pub(crate) async fn draft_recap(
         .map_err(err)
 }
 
+/// Recaps summarize the mainline; an exploration branch shows none, so a
+/// recap drafted from one would silently vanish from its view.
+async fn mainline_project(
+    state: &AppState,
+    window: &crate::workspace_surface::WorkspaceSurface,
+) -> Result<String, String> {
+    match crate::exploration_commands::working_project_for_active_frame(state, window.label())
+        .await?
+    {
+        (project, StateScope::Mainline { .. }) => Ok(project.id),
+        _ => Err(
+            "Daily recaps cover the mainline. Return to the mainline to draft or edit one.".into(),
+        ),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn generate_research_recap(
     state: State<'_, AppState>,
@@ -372,10 +388,8 @@ pub(crate) async fn generate_research_recap(
     if from >= until || until - from > 25 * 3600 {
         return Err("A recap covers exactly one local day.".into());
     }
-    let (project, _) =
-        crate::exploration_commands::working_project_for_active_frame(&state, window.label())
-            .await?;
-    draft_recap(&state.store, &project.id, from, until, true).await
+    let project = mainline_project(&state, &window).await?;
+    draft_recap(&state.store, &project, from, until, true).await
 }
 
 #[tauri::command]
@@ -384,12 +398,10 @@ pub(crate) async fn update_research_recap(
     window: crate::workspace_surface::WorkspaceSurface,
     edit: ResearchRecapEdit,
 ) -> Result<ResearchRecap, String> {
-    let (project, _) =
-        crate::exploration_commands::working_project_for_active_frame(&state, window.label())
-            .await?;
+    let project = mainline_project(&state, &window).await?;
     state
         .store
-        .update_research_recap(&project.id, &edit)
+        .update_research_recap(&project, &edit)
         .await
         .map_err(|error| error.to_string())
 }

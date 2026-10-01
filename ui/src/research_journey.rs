@@ -655,7 +655,7 @@ fn JourneyRecap(
                         {recap_section(&r, key).iter().map(|item| view! {<li><span>{item.text.clone()}</span>
                             {item.refs.iter().filter_map(|i| sources.get(*i).cloned()).map(|source| {
                                 let title = source.title.clone();
-                                view! {<button type="button" class="journey-recap-ref" title=title.clone() on:click=move |_| open_source(source.kind.clone(), source.id.clone(), source.title.clone())>{title.chars().take(28).collect::<String>()}</button>}
+                                view! {<button type="button" class="journey-recap-ref" title=title.clone() on:click=move |_| open_source(source.kind.clone(), source.id.clone(), source.title.clone())>{title}</button>}
                             }).collect_view()}
                         </li>}).collect_view()}
                     </ul></div>

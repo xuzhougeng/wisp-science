@@ -214,8 +214,8 @@ impl Store {
     }
 
     /// The researcher's own mainline requests in `[from, until)` as
-    /// `(frame_id, first 300 characters)`, oldest first. Replayed epoch
-    /// copies are skipped like in the history query.
+    /// `(frame_id, first 300 characters of text)`, oldest first. Replayed
+    /// epoch copies are skipped like in the history query.
     pub async fn research_recap_requests(
         &self,
         project_id: &str,
@@ -225,8 +225,8 @@ impl Store {
         if let Some(store) = self.route_project(project_id).await? {
             return Box::pin(store.research_recap_requests(project_id, from, until)).await;
         }
-        Ok(sqlx::query_as(
-            "SELECT m.frame_id, substr(trim(m.content),1,300) FROM messages m JOIN frames f ON f.id=m.frame_id \
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT m.frame_id, m.content FROM messages m JOIN frames f ON f.id=m.frame_id \
              WHERE f.project_id=? AND f.exploration_id IS NULL AND m.role='user' \
                AND trim(COALESCE(m.content,''))<>'' AND m.ts>=? AND m.ts<? \
                AND NOT EXISTS (SELECT 1 FROM context_epochs ce WHERE ce.frame_id=m.frame_id \
@@ -237,7 +237,18 @@ impl Store {
         .bind(from)
         .bind(until)
         .fetch_all(&self.pool)
-        .await?)
+        .await?;
+        // Content is stored as JSON (plain text or multimodal parts).
+        Ok(rows
+            .into_iter()
+            .filter_map(|(frame, json)| {
+                let text = serde_json::from_str::<wisp_llm::Content>(&json)
+                    .map(|content| content.as_text())
+                    .unwrap_or(json);
+                let text = text.trim();
+                (!text.is_empty()).then(|| (frame, text.chars().take(300).collect()))
+            })
+            .collect())
     }
 
     /// Mainline recaps whose day starts in `[from, until)`, newest first.
