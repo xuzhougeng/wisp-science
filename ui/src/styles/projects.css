@@ -237,7 +237,7 @@ body:has(.window-titlebar) .library-screen { top: 38px; }
   :root[data-theme="system"] .project-search-overlay { background: hsl(30 6% 6% / .55); }
 }
 body:has(.window-titlebar) .project-search-overlay { padding-top: max(12px, min(10vh, 72px)); }
-.conversation-search-overlay { background: hsl(30 6% 6% / .52); }
+.conversation-search-overlay { background: hsl(30 6% 6% / .5); }
 :root[data-theme="dark"] .conversation-search-overlay { background: hsl(30 6% 6% / .68); }
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] .conversation-search-overlay { background: hsl(30 6% 6% / .68); }
@@ -258,8 +258,12 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
 .action-shortcut { flex: 0 0 auto; margin-left: 12px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg-elev); box-shadow: 0 1px 0 var(--shadow-color); white-space: nowrap;
   font-size: calc(11px * var(--ui-font-scale, 1)); font-family: inherit; color: var(--text-muted); }
-.action-palette .project-search-row.active .project-search-title { font-weight: 600; }
-.action-palette .project-search-row.active .action-shortcut { border-color: var(--border-strong); color: var(--text); }
+/* Both palettes mark the keyboard cursor the same way: bold title, deepened
+   shortcut keycap, clay icon. */
+.action-palette .project-search-row.active .project-search-title,
+.conversation-search-dialog .project-search-row.active .project-search-title { font-weight: 600; }
+.action-palette .project-search-row.active .action-shortcut,
+.conversation-search-dialog .project-search-row.active .action-shortcut { border-color: var(--border-strong); color: var(--text); }
 .privacy-mode-modal { width: min(560px, calc(100vw - 32px)); max-width: 560px; }
 .privacy-mode-head { display: flex; align-items: flex-start; gap: 12px; }
 .privacy-mode-head h2 { margin: 0 0 5px; }
@@ -361,20 +365,14 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
 .action-palette .project-search-row.active > svg {
   color: var(--clay-strong);
 }
+/* Section labels follow the action palette's group rhythm: no hairline
+   separators, just padding so the list scans as one column. */
 .conversation-search-dialog .project-search-label {
-  padding: 8px 8px 4px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-faint);
+  padding: 10px 8px 4px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-faint);
 }
-.conversation-search-dialog .project-search-section:first-child .project-search-label { padding-top: 4px; }
-.conversation-search-dialog .project-search-section + .project-search-section { margin-top: 2px; }
-.conversation-search-dialog .project-search-section + .project-search-section .project-search-label {
-  margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border);
-}
-.conversation-search-dialog .project-search-title { font-size: calc(13.5px * var(--ui-font-scale, 1)); }
+.conversation-search-dialog .project-search-section:first-child .project-search-label { padding-top: 6px; }
+.conversation-search-dialog .project-search-section + .project-search-section { margin-top: 0; }
 .conversation-search-dialog .project-search-sub { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
-.conversation-search-dialog .project-window-shortcut {
-  padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-elev) 84%, transparent); color: var(--text-muted); line-height: 1.4;
-}
 .conversation-search-dialog .project-search-foot,
 .action-palette .project-search-foot {
   position: relative;
@@ -382,8 +380,9 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
   padding: 8px 12px;
 }
 /* Fade the row clipped by the scroll edge into the footer instead of slicing
-   it. Only painted while the list actually overflows (see ActionPalette). */
-.action-palette.palette-overflow .project-search-foot::before {
+   it. Only painted while the list actually overflows (the palette-overflow
+   class is measured after paint and refreshed on scroll in palettes.rs). */
+.project-search-dialog.palette-overflow .project-search-foot::before {
   content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 18px;
   background: linear-gradient(to top, color-mix(in srgb, var(--bg-sunken) 72%, var(--bg-elev)), transparent);
   pointer-events: none;

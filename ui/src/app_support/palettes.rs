@@ -363,10 +363,25 @@ pub(crate) fn CommandPalette(
         open.set(false);
         focus_composer();
     });
+    let list_overflows = create_rw_signal(false);
+    // Re-measure after the filtered rows have painted: opening the palette and
+    // every keystroke can move the list between fitting and scrolling.
+    create_effect(move |_| {
+        if open.get() {
+            items.track();
+            let overflows = list_overflows;
+            request_animation_frame(move || {
+                overflows.set(palette_list_overflows(
+                    ".conversation-search-dialog .project-search-results",
+                ))
+            });
+        }
+    });
     view! {
         {move || open.get().then(|| view! {
             <div class="project-search-overlay conversation-search-overlay" on:click=move |_| open.set(false)>
                 <div class="project-search-dialog conversation-search-dialog" role="dialog" aria-label="Search"
+                    class:palette-overflow=move || list_overflows.get()
                     on:click=|ev| ev.stop_propagation()>
                     <div class="project-search-input">
                         {compose_icon("search")}
@@ -389,7 +404,8 @@ pub(crate) fn CommandPalette(
                                 }
                             } />
                     </div>
-                    <div class="project-search-results">
+                    <div class="project-search-results"
+                        on:scroll=move |_| list_overflows.set(palette_list_overflows(".conversation-search-dialog .project-search-results"))>
                         {move || {
                             let mut grouped: Vec<(&'static str, Vec<(usize, CommandPaletteItem)>)> = Vec::new();
                             for (index, item) in items.get().into_iter().enumerate() {
@@ -450,17 +466,12 @@ pub(crate) fn CommandPalette(
     }
 }
 
-/// True when the action palette row list overflows its scroll area. Drives the
-/// footer fade, which must not tint the last row of a short list.
-fn action_palette_list_overflows() -> bool {
+/// True when a palette row list overflows its scroll area. Drives the footer
+/// fade, which must not tint the last row of a short list.
+fn palette_list_overflows(list_selector: &str) -> bool {
     web_sys::window()
         .and_then(|window| window.document())
-        .and_then(|document| {
-            document
-                .query_selector(".action-palette .project-search-results")
-                .ok()
-                .flatten()
-        })
+        .and_then(|document| document.query_selector(list_selector).ok().flatten())
         .is_some_and(|list| list.scroll_height() > list.client_height() + 1)
 }
 
@@ -849,7 +860,7 @@ pub(crate) fn ActionPalette(
         if open.get() {
             actions.track();
             let overflows = list_overflows;
-            request_animation_frame(move || overflows.set(action_palette_list_overflows()));
+            request_animation_frame(move || overflows.set(palette_list_overflows(".action-palette .project-search-results")));
         }
     });
     let run = Callback::new(move |index: usize| {
@@ -903,7 +914,7 @@ pub(crate) fn ActionPalette(
                             } />
                     </div>
                     <div class="project-search-results action-palette-results"
-                        on:scroll=move |_| list_overflows.set(action_palette_list_overflows())>
+                        on:scroll=move |_| list_overflows.set(palette_list_overflows(".action-palette .project-search-results"))>
                         {move || {
                             let rows = actions.get();
                             if rows.is_empty() {
@@ -929,7 +940,7 @@ pub(crate) fn ActionPalette(
                             }).collect_view().into_view()
                         }}
                     </div>
-                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>{t(locale.get(), "command.hint.navigate")}</span><span><kbd>"↵"</kbd>{t(locale.get(), "command.hint.run")}</span><span><kbd>"esc"</kbd>{t(locale.get(), "command.hint.close")}</span></div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>{t(locale.get(), "command.hint.navigate")}</span><span><kbd>"↵"</kbd>{t(locale.get(), "command.hint.run")}</span><span><kbd>"esc"</kbd>{t(locale.get(), "command.hint.close")}</span><span class="palette-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span></div>
                 </div>
             </div>
         })}

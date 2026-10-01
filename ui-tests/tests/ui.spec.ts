@@ -3058,29 +3058,45 @@ test("command palette arrows move inside the window and scroll only at the edge"
   expect(actionMid?.activeTop ?? 0).toBeGreaterThan(20);
 });
 
-test("the action palette footer fade only paints while the list overflows", async ({ page }) => {
+test("the palette footer fade only paints while the list overflows", async ({ page }) => {
   await enterApp(page);
-  await page.keyboard.press("Control+p");
-  const palette = page.locator(".action-palette");
-  await expect(palette).toBeVisible();
-  await palette.evaluate((el) =>
-    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
-  );
-  const fade = () => palette.locator(".project-search-foot").evaluate(
+  const fadeOf = (palette: ReturnType<typeof page.locator>) => palette.locator(".project-search-foot").evaluate(
     (foot) => {
       const style = getComputedStyle(foot, "::before");
       // Without overflow the fade pseudo-element is not generated at all.
       return style.content === "none" ? "hidden" : style.opacity;
     },
   );
+  const settle = (palette: ReturnType<typeof page.locator>) => palette.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+
+  await page.keyboard.press("Control+p");
+  const palette = page.locator(".action-palette");
+  await expect(palette).toBeVisible();
+  await settle(palette);
   // The full command list scrolls: the row clipped by the footer fades out.
   await expect(palette).toHaveClass(/palette-overflow/);
-  await expect.poll(fade).toBe("1");
+  await expect.poll(() => fadeOf(palette)).toBe("1");
   // A filtered list that fits must not carry the fade tint.
   await page.locator("#action-palette-input").fill("privacy");
   await expect(palette.locator(".project-search-row")).toHaveCount(1);
   await expect(palette).not.toHaveClass(/palette-overflow/);
-  await expect.poll(fade).toBe("hidden");
+  await expect.poll(() => fadeOf(palette)).toBe("hidden");
+
+  // Ctrl+K shares the same chrome: the project/session/command list overflows
+  // on open, and a filtered empty list drops the fade.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+k");
+  const search = page.locator(".conversation-search-dialog");
+  const searchInput = page.locator("#command-palette-input");
+  await expect(search).toBeVisible();
+  await settle(search);
+  await expect(search).toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(search)).toBe("1");
+  await searchInput.fill("zzz-no-match");
+  await expect(search).not.toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(search)).toBe("hidden");
 });
 
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
