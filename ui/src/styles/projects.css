@@ -29,15 +29,16 @@ body:has(.window-titlebar) .app.scratch-mode { top: 38px; height: calc(100% - 38
   animation: motion-fade-in var(--motion-duration-slow) var(--motion-ease-standard) both;
 }
 body:has(.window-titlebar) .projects-screen { top: 38px; }
-.projects-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); width: min(100%, 1200px);
+.projects-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); width: min(100%, 1200px);
   animation: motion-surface-in var(--motion-duration-medium) var(--motion-ease-decelerate) 20ms both; }
-.projects-brand { display: flex; align-items: center; gap: var(--space-5); flex: 1 1 auto; min-width: 0; }
+/* Wrap the actions under the brand before the tagline is squeezed word by word. */
+.projects-brand { display: flex; align-items: center; gap: var(--space-5); flex: 1 1 auto; min-width: min(100%, 400px); }
 .projects-brand-mark { width: 180px; }
 .projects-title { margin: 0; flex: none; }
 .projects-tagline { margin: 0; min-width: 0; color: var(--text-muted); font-size: clamp(15px, 1.35vw, 18px); font-weight: 500; line-height: 1.65; text-wrap: balance; }
 .projects-tagline span { display: block; }
 .projects-tagline span + span { color: var(--clay-strong); }
-.projects-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.projects-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; margin-left: auto; }
 .project-open-error { width: min(100%, 1200px); margin: -16px 0 20px; padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--err) 32%, var(--border)); border-radius: var(--radius-sm);
   color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--bg-elev)); font-size: calc(13px * var(--ui-font-scale, 1)); }
