@@ -24,3 +24,10 @@
 .archive-review .archive-consent input { width: 16px; height: 16px; flex: 0 0 16px; margin: 2px 0 0; }
 .archive-readonly { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 16px; color: var(--text-muted); background: var(--bg-sunken); border-top: 1px solid var(--border); }
 @media(max-width:760px) { .archive-layout { grid-template-columns: minmax(0,1fr); } .archive-review header,.archive-body,.archive-review footer { padding: 16px; } .archive-review { height: 94vh; } .archive-readonly { flex-wrap: wrap; } }
+.archive-pill { position: fixed; right: 20px; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 92; display: flex; align-items: center; gap: 2px; padding: 5px 6px 5px 8px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border-strong); border-radius: 999px; box-shadow: 0 10px 28px hsl(215 25% 14% / 0.18); }
+.archive-pill-restore { display: flex; align-items: center; gap: 8px; border: none; background: none; color: inherit; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; padding: 4px 8px; border-radius: 999px; max-width: 300px; }
+.archive-pill-restore:hover { background: var(--bg-sunken); }
+.archive-pill-restore span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-pill svg { width: 15px; height: 15px; flex: 0 0 15px; }
+.archive-pill .icon-btn { width: 26px; height: 26px; flex: 0 0 26px; }
+.archive-pill.archive-pill-error .archive-pill-restore { color: var(--danger,#b64038); }

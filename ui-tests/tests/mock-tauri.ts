@@ -1869,6 +1869,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "get_research_archive": return researchArchives[String(arg("frameId"))] ?? null;
           case "prepare_research_archive": {
             if ((window as any).__archivePrepareError) throw new Error((window as any).__archivePrepareError);
+            const prepareDelay = Number((window as any).__archivePrepareDelay ?? 0);
+            if (prepareDelay > 0) await new Promise((resolve) => setTimeout(resolve, prepareDelay));
             const frame = String(arg("frameId"));
             return researchArchives[frame] = {
               id: "archive-" + frame, project_id: "default", frame_id: frame, source_hash: "source",
@@ -1881,6 +1883,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             };
           }
           case "confirm_research_archive": {
+            const confirmDelay = Number((window as any).__archiveConfirmDelay ?? 0);
+            if (confirmDelay > 0) await new Promise((resolve) => setTimeout(resolve, confirmDelay));
             if ((window as any).__archiveFailure) throw new Error("File changed since review: scratch/trial.rds");
             const frame=String(arg("frameId")), input=plain(arg("input")), old=researchArchives[frame];
             const saved=researchArchives[frame]={...old,...input,frozen_at:Math.floor(Date.now()/1000),files:old.files.map((f:any)=>({...f,...input.files.find((v:any)=>v.path===f.path),cleanup_status:input.files.find((v:any)=>v.path===f.path)?.action==="delete"?"deleted":"",snapshot_path:f.path==="results/final.csv"?".wisp/research-archives/a/final.csv":null}))};

@@ -537,6 +537,9 @@ fn App() -> impl IntoView {
     let active_branch_state = create_rw_signal::<Option<String>>(None);
     let archive_frame = create_rw_signal::<Option<String>>(None);
     let archive_busy = create_rw_signal(false);
+    // The archive review collapses to a background pill while minimized; the
+    // flow keeps running and any other conversation stays usable.
+    let archive_minimized = create_rw_signal(false);
     let archived_sessions = create_rw_signal(HashSet::<String>::new());
     {
         let closed = store_value(false);
@@ -7132,6 +7135,7 @@ fn App() -> impl IntoView {
             "archive" => {
                 input.set(String::new());
                 archive_frame.set(active_session.get_untracked());
+                archive_minimized.set(false);
                 return true;
             }
             "compact" => {
@@ -9563,7 +9567,10 @@ fn App() -> impl IntoView {
             trajectory_open.set(false);
             return;
         }
-        if archive_frame.get().is_some() && modal_artifact.get().is_none() {
+        if archive_frame.get().is_some()
+            && !archive_minimized.get()
+            && modal_artifact.get().is_none()
+        {
             ev.prevent_default();
             if !archive_busy.get() {
                 archive_frame.set(None);
@@ -11609,13 +11616,13 @@ fn App() -> impl IntoView {
                 left=Signal::derive(move || if show_sidebar.get() { sidebar_w.get() } else { 0.0 })
                 graph=research_graph.read_only()
                 artifact_open=Signal::derive(move || modal_artifact.get().is_some()
-                    || archive_frame.get().is_some()
+                    || (archive_frame.get().is_some() && !archive_minimized.get())
                     || show_settings.get() || show_library.get() || show_publication_workspace.get()
                     || show_proj_settings.get() || show_capabilities.get())
                 on_close=Callback::new(move |_| show_research_graph.set(false))
                 on_artifact=Callback::new(move |target| modal_artifact.set(Some(target)))
                 on_session=Callback::new(move |id| { show_research_graph.set(false); load_session.call(id); })
-                on_archive=Callback::new(move |id|archive_frame.set(Some(id)))
+                on_archive=Callback::new(move |id|{archive_frame.set(Some(id));archive_minimized.set(false);})
             />
         })}
         <SshConnectivityOverlay
@@ -11905,7 +11912,7 @@ fn App() -> impl IntoView {
                     title=move ||research_journey::j(locale.get(),"Archive research","研究归档")
                     aria-label=move ||research_journey::j(locale.get(),"Archive research","研究归档")
                     disabled=move ||demo_mode.get() || busy.get() || active_session.get().is_none() || active_is_exploration.get()
-                    on:click=move |_|archive_frame.set(active_session.get_untracked())>{compose_icon("archive")}</button>
+                    on:click=move |_|{archive_frame.set(active_session.get_untracked());archive_minimized.set(false);}>{compose_icon("archive")}</button>
                 <div class="inbox-wrap">
                     <button class="icon-btn"
                         class:active=move || inbox_open.get()
@@ -17987,7 +17994,7 @@ fn App() -> impl IntoView {
         />
         <ContextMenuPortal menu=ctx_menu.read_only() set_menu=ctx_menu.write_only() on_pick=on_ctx_pick />
         {move ||archive_frame.get().map(|id|view!{
-            <research_archive::ArchiveReview locale=locale frame_id=id busy=archive_busy
+            <research_archive::ArchiveReview locale=locale frame_id=id busy=archive_busy minimized=archive_minimized
                 on_close=Callback::new(move |_|archive_frame.set(None))
                 on_frozen=Callback::new(move |id:String|{archived_sessions.update(|s|{s.insert(id);});refresh_session_history();})
                 on_continue=Callback::new(move |id|{archive_frame.set(None);show_research_graph.set(false);refresh_session_history();load_session.call(id);})

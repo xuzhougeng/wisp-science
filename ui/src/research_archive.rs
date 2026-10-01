@@ -9,6 +9,7 @@ pub(crate) fn ArchiveReview(
     locale: RwSignal<Locale>,
     frame_id: String,
     busy: RwSignal<bool>,
+    minimized: RwSignal<bool>,
     on_close: Callback<()>,
     on_frozen: Callback<String>,
     on_continue: Callback<String>,
@@ -159,10 +160,33 @@ pub(crate) fn ArchiveReview(
             }
         });
     };
+    let pill_label = create_memo(move |_| {
+        if busy.get() {
+            j(locale.get(), "Archiving in progress…", "归档处理中…")
+        } else if !error.get().is_empty() {
+            j(locale.get(), "Archive needs attention", "归档需要处理")
+        } else if frozen.get() {
+            j(locale.get(), "Archived milestone", "已归档研究节点")
+        } else {
+            j(locale.get(), "Archive ready for review", "归档材料已就绪")
+        }
+    });
     view! {
+        {move || if minimized.get() { view! {
+            <div class="archive-pill" data-testid="archive-pill" role="status" aria-live="polite" class:archive-pill-error=move ||!busy.get()&&!error.get().is_empty()>
+                <button class="archive-pill-restore" data-testid="archive-pill-restore" title=move ||pill_label.get() aria-label=move ||pill_label.get() on:click=move |_|minimized.set(false)>
+                    {compose_icon("archive")}
+                    <span>{move ||pill_label.get()}</span>
+                </button>
+                {move || (!busy.get()).then(|| view!{
+                    <button class="icon-btn" aria-label=j(locale.get(),"Close archive","关闭归档") on:click=move |_|on_close.call(())>{compose_icon("close")}</button>
+                })}
+            </div>
+        }.into_view()} else { view! {
         <div class="overlay archive-overlay" on:click=move |_|{if !busy.get_untracked(){on_close.call(());}}>
         <section class="modal archive-review" role="dialog" aria-modal="true" aria-label=move ||j(locale.get(),"Research archive","研究归档") data-testid="archive-review" on:click=|ev|ev.stop_propagation()>
             <header><div><small>{j(locale.get(),"RESEARCH NOTEBOOK","研究实验记录本")}</small><h2>{move ||if frozen.get(){j(locale.get(),"Archived milestone","已归档研究节点")}else{j(locale.get(),"Review this research archive","确认研究归档")}}</h2></div>
+                <button class="icon-btn" data-testid="archive-minimize" title=move ||j(locale.get(),"Minimize archive","最小化归档") aria-label=move ||j(locale.get(),"Minimize archive","最小化归档") on:click=move |_|minimized.set(true)>{compose_icon("minus")}</button>
                 <button class="icon-btn" aria-label=move ||j(locale.get(),"Close archive","关闭归档") disabled=move ||busy.get() on:click=move |_|on_close.call(())>{compose_icon("close")}</button></header>
             <div class="archive-body">
                 {move ||busy.get().then(||view!{<p role="status">{j(locale.get(),"Preparing and saving research materials…","正在整理或保存研究材料…")}</p>})}
@@ -210,5 +234,6 @@ pub(crate) fn ArchiveReview(
                 }.into_view()}}
             </footer>
         </section></div>
+        }.into_view()}}
     }
 }

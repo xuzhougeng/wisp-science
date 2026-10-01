@@ -30,6 +30,14 @@ editable and original files untouched. A cleanup failure leaves the archive and 
 shows per-file receipts and allows retry of the already-approved cleanup.
 Changed or newly protected files are skipped, including on retry.
 
+While the review is preparing or confirming, it can be minimized with the
+header button. The review collapses into a small status pill in the corner and
+the flow keeps running in the background, so other conversations stay usable.
+The pill shows the archive state (running, ready for review, needs attention,
+or archived); click it to bring the review back, or use its close button to
+dismiss a finished review. Escape does not restore or dismiss a minimized
+review.
+
 The original conversation remains readable. Sending, compaction, undo, deletion,
 and moving that notebook to another project cannot rewrite the archived record.
 The milestone appears in **Research journey**, with links to retained materials,

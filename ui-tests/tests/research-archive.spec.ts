@@ -110,3 +110,52 @@ test('archival from another window locks the active notebook without locking a d
   await page.locator('.sidebar [data-session-id="conversation-main"]').click();
   await expect(page.locator('#composer-input')).toBeDisabled();
 });
+
+test('archive review minimizes while preparing and restores the finished draft',async({page})=>{
+  await open(page);
+  await page.evaluate(()=>{(window as any).__archivePrepareDelay=2500;});
+  await page.getByTestId('archive-topbar').click();
+  const dialog=page.getByTestId('archive-review');
+  await expect(dialog.getByRole('status')).toContainText('Preparing and saving research materials');
+  await page.getByTestId('archive-minimize').click();
+  await expect(dialog).toHaveCount(0);
+  const pill=page.getByTestId('archive-pill');
+  await expect(pill).toBeVisible();
+  await expect(page.locator('#composer-input')).toBeEnabled();
+  await page.locator('.sidebar [data-session-id="conversation-branch"]').click();
+  await expect(page.locator('#composer-input')).toBeEnabled();
+  await expect(pill).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(pill).toBeVisible();
+  await expect(pill).toContainText('Archive ready for review');
+  await page.getByTestId('archive-pill-restore').click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId('archive-title')).toHaveValue('Root cell annotation');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(pill).toHaveCount(0);
+});
+
+test('minimized archive finishes confirmation in the background and locks the archived notebook',async({page})=>{
+  await open(page);
+  await page.evaluate(()=>{(window as any).__archiveConfirmDelay=2500;});
+  await page.getByTestId('archive-topbar').click();
+  const dialog=page.getByTestId('archive-review');
+  await expect(dialog.getByTestId('archive-title')).toHaveValue('Root cell annotation');
+  await dialog.getByTestId('archive-consent').check();
+  await dialog.getByTestId('archive-confirm').click();
+  await page.getByTestId('archive-minimize').click();
+  const pill=page.getByTestId('archive-pill');
+  await expect(dialog).toHaveCount(0);
+  await expect(pill).toBeVisible();
+  await page.locator('.sidebar [data-session-id="conversation-branch"]').click();
+  await expect(page.locator('#composer-input')).toBeEnabled();
+  await expect(pill).toContainText('Archived milestone');
+  await page.locator('.sidebar [data-session-id="conversation-main"]').click();
+  await expect(page.locator('#composer-input')).toBeDisabled();
+  await expect(page.getByTestId('archive-readonly')).toBeVisible();
+  await page.getByTestId('archive-pill-restore').click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading',{name:'Archived milestone',exact:true})).toBeVisible();
+});
