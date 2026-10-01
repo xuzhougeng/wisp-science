@@ -1,7 +1,13 @@
 /* ---------- Onboarding ---------- */
 .onboard-overlay { z-index: 100; }
-/* Commands remain reachable above Settings and Quick setup. */
-.project-search-overlay.action-palette-overlay { z-index: 105; }
+/* Commands remain reachable above Settings and Quick setup. The overlay dims
+   with the same dark veil as the Ctrl+K palette so the dialog floats instead
+   of washing out against a light backdrop. */
+.project-search-overlay.action-palette-overlay { z-index: 105; background: hsl(30 6% 6% / .5); }
+:root[data-theme="dark"] .project-search-overlay.action-palette-overlay { background: hsl(30 6% 6% / .68); }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .project-search-overlay.action-palette-overlay { background: hsl(30 6% 6% / .68); }
+}
 
 .ctx-backdrop { position: fixed; inset: 0; z-index: 120; }
 .ctx-menu {

@@ -414,7 +414,7 @@ pub(crate) fn CommandPalette(
                                                 CommandPaletteItem::Session(s) => ("bubble", s.title, s.project_name),
                                                 CommandPaletteItem::Command("scratch") => ("bubble", t(locale.get(), "command.scratch").to_string(), String::new()),
                                                 CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), String::new()),
-                                                CommandPaletteItem::Command("check-updates") => ("gear", t(locale.get(), "command.check_updates").to_string(), String::new()),
+                                                CommandPaletteItem::Command("check-updates") => ("refresh", t(locale.get(), "command.check_updates").to_string(), String::new()),
                                                 CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), String::new()),
                                                 CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), String::new()),
                                                 CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "settings.nav.skills").to_string(), String::new()),
@@ -450,6 +450,20 @@ pub(crate) fn CommandPalette(
     }
 }
 
+/// True when the action palette row list overflows its scroll area. Drives the
+/// footer fade, which must not tint the last row of a short list.
+fn action_palette_list_overflows() -> bool {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(".action-palette .project-search-results")
+                .ok()
+                .flatten()
+        })
+        .is_some_and(|list| list.scroll_height() > list.client_height() + 1)
+}
+
 #[component]
 pub(crate) fn ActionPalette(
     open: RwSignal<bool>,
@@ -459,6 +473,7 @@ pub(crate) fn ActionPalette(
     let locale = use_locale();
     let query = create_rw_signal(String::new());
     let active = create_rw_signal(0usize);
+    let list_overflows = create_rw_signal(false);
     let mac = is_mac();
     create_effect(move |_| {
         if !open.get() {
@@ -557,7 +572,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "import-codex",
-                "download",
+                "terminal",
                 "command.import_codex",
                 transfer.clone(),
                 "",
@@ -566,7 +581,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "import-claude",
-                "download",
+                "sparkles",
                 "command.import_claude",
                 transfer.clone(),
                 "",
@@ -575,7 +590,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "import-session",
-                "download",
+                "archive",
                 "command.import_session",
                 transfer.clone(),
                 "",
@@ -584,7 +599,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "export-current-project",
-                "download",
+                "share",
                 "command.export_current_project",
                 transfer,
                 "",
@@ -593,7 +608,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "check-updates",
-                "gear",
+                "refresh",
                 "command.check_updates",
                 general.clone(),
                 "",
@@ -602,7 +617,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "project-settings",
-                "gear",
+                "adjustments",
                 "command.project_settings",
                 general.clone(),
                 "",
@@ -710,7 +725,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "theme-light",
-                "gear",
+                "sun",
                 "command.theme_light",
                 appearance.clone(),
                 "",
@@ -719,7 +734,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "theme-dark",
-                "gear",
+                "moon",
                 "command.theme_dark",
                 appearance.clone(),
                 "",
@@ -728,7 +743,7 @@ pub(crate) fn ActionPalette(
             ),
             (
                 "theme-system",
-                "gear",
+                "monitor",
                 "command.theme_system",
                 appearance.clone(),
                 "",
@@ -828,6 +843,15 @@ pub(crate) fn ActionPalette(
             })
             .collect::<Vec<_>>()
     });
+    // Re-measure after the filtered rows have painted: opening the palette and
+    // every keystroke can move the list between fitting and scrolling.
+    create_effect(move |_| {
+        if open.get() {
+            actions.track();
+            let overflows = list_overflows;
+            request_animation_frame(move || overflows.set(action_palette_list_overflows()));
+        }
+    });
     let run = Callback::new(move |index: usize| {
         let Some(action) = actions.get().get(index).cloned() else {
             return;
@@ -839,6 +863,7 @@ pub(crate) fn ActionPalette(
         {move || open.get().then(|| view! {
             <div class="project-search-overlay action-palette-overlay" on:click=move |_| open.set(false)>
                 <div class="project-search-dialog action-palette" role="dialog" aria-label="Command Palette"
+                    class:palette-overflow=move || list_overflows.get()
                     on:click=|ev| ev.stop_propagation()>
                     <div class="project-search-input">
                         {compose_icon("search")}
@@ -877,7 +902,8 @@ pub(crate) fn ActionPalette(
                                 }
                             } />
                     </div>
-                    <div class="project-search-results action-palette-results">
+                    <div class="project-search-results action-palette-results"
+                        on:scroll=move |_| list_overflows.set(action_palette_list_overflows())>
                         {move || {
                             let rows = actions.get();
                             if rows.is_empty() {

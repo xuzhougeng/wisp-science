@@ -3058,6 +3058,31 @@ test("command palette arrows move inside the window and scroll only at the edge"
   expect(actionMid?.activeTop ?? 0).toBeGreaterThan(20);
 });
 
+test("the action palette footer fade only paints while the list overflows", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+p");
+  const palette = page.locator(".action-palette");
+  await expect(palette).toBeVisible();
+  await palette.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+  const fade = () => palette.locator(".project-search-foot").evaluate(
+    (foot) => {
+      const style = getComputedStyle(foot, "::before");
+      // Without overflow the fade pseudo-element is not generated at all.
+      return style.content === "none" ? "hidden" : style.opacity;
+    },
+  );
+  // The full command list scrolls: the row clipped by the footer fades out.
+  await expect(palette).toHaveClass(/palette-overflow/);
+  await expect.poll(fade).toBe("1");
+  // A filtered list that fits must not carry the fade tint.
+  await page.locator("#action-palette-input").fill("privacy");
+  await expect(palette.locator(".project-search-row")).toHaveCount(1);
+  await expect(palette).not.toHaveClass(/palette-overflow/);
+  await expect.poll(fade).toBe("hidden");
+});
+
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
   await enterApp(page);
   const bell = page.locator(".inbox-wrap .icon-btn");
