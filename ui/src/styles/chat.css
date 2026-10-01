@@ -1686,7 +1686,8 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
   font: inherit; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1));
 }
 .model-menu-config-toggle { flex: 0 0 auto; }
-.composer-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 20px; margin-top: 5px; }
+/* Hint row sits above the toolbar so the toolbar is the composer's bottom edge. */
+.composer-footer { display: grid; min-height: 20px; margin-top: 2px; }
 /* Shortcut hint stays hidden until the composer is focused (or hovered), so the
    idle composer reads as a clean input rather than a help panel. */
 .composer-hint { min-width: 0; padding: 0 2px 0 54px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.35; color: var(--text-faint); user-select: none; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .15s ease; }
@@ -2277,7 +2278,7 @@ button.stop:disabled { opacity: .6; cursor: default; }
   .composer-actions { gap: 8px; }
   .model-picker-btn { max-width: 126px; }
   .composer-hint { display: none; }
-  .composer-footer { display: flex; justify-content: flex-end; }
+  .composer-footer { display: none; }
   .context-usage-panel { padding: 14px 14px 16px; border-radius: var(--radius); }
 }
 

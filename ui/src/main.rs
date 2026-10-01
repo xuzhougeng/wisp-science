@@ -14345,6 +14345,19 @@ fn App() -> impl IntoView {
                             }
                         })}
                     </div>
+                    <div class="composer-footer">
+                        <div class="composer-hint">{move || {
+                            if send_with_modifier.get() {
+                                tf(
+                                    locale.get(),
+                                    "composer.hint_modifier",
+                                    &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],
+                                )
+                            } else {
+                                t(locale.get(), "composer.hint").into()
+                            }
+                        }}</div>
+                    </div>
                     <div class="composer-actions">
                         <div class="composer-tools">
                             <button type="button" class="composer-plus"
@@ -15634,19 +15647,6 @@ fn App() -> impl IntoView {
                                 })}
                             </div>
                         </div>
-                    </div>
-                    <div class="composer-footer">
-                        <div class="composer-hint">{move || {
-                            if send_with_modifier.get() {
-                                tf(
-                                    locale.get(),
-                                    "composer.hint_modifier",
-                                    &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],
-                                )
-                            } else {
-                                t(locale.get(), "composer.hint").into()
-                            }
-                        }}</div>
                     </div>
                 </div>
             </div>
