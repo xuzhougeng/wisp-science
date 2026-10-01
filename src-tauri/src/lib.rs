@@ -3507,9 +3507,9 @@ impl Output for TauriOutput {
         &'a self,
         tool: &'a str,
         args: &'a serde_json::Value,
-    ) -> OutputFuture<'a, Option<String>> {
+    ) -> OutputFuture<'a, wisp_core::PreToolDecision> {
         Box::pin(async move {
-            command_hooks::fire(
+            let outcome = command_hooks::fire(
                 &self.app,
                 &self.frame_id,
                 &self.project_id,
@@ -3518,8 +3518,12 @@ impl Output for TauriOutput {
                 Some(tool),
                 serde_json::json!({ "tool_name": tool, "tool_input": args }),
             )
-            .await
-            .block
+            .await;
+            match outcome.block {
+                Some(reason) => wisp_core::PreToolDecision::Block(reason),
+                None if outcome.ask => wisp_core::PreToolDecision::Ask,
+                None => wisp_core::PreToolDecision::Continue,
+            }
         })
     }
 
@@ -3549,7 +3553,7 @@ impl Output for TauriOutput {
                 }),
             )
             .await
-            .block
+            .feedback()
         })
     }
 
@@ -7684,6 +7688,8 @@ pub fn run() {
             memory_commands::set_auto_failure_analysis_settings,
             command_hooks::get_command_hooks,
             command_hooks::set_command_hooks,
+            command_hooks::get_project_hooks,
+            command_hooks::set_project_hooks_trust,
             memory_commands::propose_turn_memory,
             memory_commands::confirm_turn_memory,
             memory_commands::create_global_memory,

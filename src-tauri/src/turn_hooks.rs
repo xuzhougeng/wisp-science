@@ -162,31 +162,42 @@ pub(crate) async fn run_stop(
     if cancel.load(Ordering::SeqCst) {
         return;
     }
-    let stop = command_hooks::fire(
+    let Some(reason) = fire_stop(app, end, false).await else {
+        return;
+    };
+    // ponytail: one continuation per turn, like the Reviewer's one correction; raise the cap if hooks need more rounds.
+    let prompt = format!("A Stop hook asked you to keep working before finishing:\n{reason}");
+    let message = match driver.continue_turn(&prompt, cancel).await {
+        Err(message) => message,
+        Ok(()) if cancel.load(Ordering::SeqCst) => return,
+        // Re-check so a gate that still fails is shown, not silently passed.
+        Ok(()) => match fire_stop(app, end, true).await {
+            Some(reason) => format!("still blocking after one continuation: {reason}"),
+            None => return,
+        },
+    };
+    tracing::warn!("Stop hook for {}: {message}", end.frame_id);
+    driver.emit(AgentEvent::HookFailed {
+        frame_id: end.frame_id.to_string(),
+        hook: wisp_dto::HookEvent::Stop.as_str().into(),
+        message,
+    });
+}
+
+/// Stop command hooks; `Some(reason)` when one blocks. `stop_hook_active` is
+/// true on the re-check after a continuation, as in Claude Code.
+async fn fire_stop(app: &AppHandle, end: &TurnEnd<'_>, stop_hook_active: bool) -> Option<String> {
+    command_hooks::fire(
         app,
         end.frame_id,
         end.project_id,
         end.project_root,
         wisp_dto::HookEvent::Stop,
         None,
-        serde_json::json!({}),
+        serde_json::json!({ "stop_hook_active": stop_hook_active }),
     )
-    .await;
-    // ponytail: one continuation per turn; Claude Code's `stop_hook_active` re-entry if a hook needs more rounds.
-    if let Some(reason) = stop.block {
-        let prompt = format!("A Stop hook asked you to keep working before finishing:\n{reason}");
-        if let Err(message) = driver.continue_turn(&prompt, cancel).await {
-            tracing::warn!(
-                "Stop hook continuation failed for {}: {message}",
-                end.frame_id
-            );
-            driver.emit(AgentEvent::HookFailed {
-                frame_id: end.frame_id.to_string(),
-                hook: wisp_dto::HookEvent::Stop.as_str().into(),
-                message,
-            });
-        }
-    }
+    .await
+    .block
 }
 
 /// Review one completed analysis turn, request at most one correction, then

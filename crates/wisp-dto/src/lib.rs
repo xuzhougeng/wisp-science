@@ -3963,6 +3963,23 @@ pub struct CommandHook {
     pub matcher: String,
     pub command: String,
     pub enabled: bool,
+    /// Seconds before the command is stopped; `None` is the 60 s default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+/// The active project's `.wisp/hooks.json`, as the Hooks page reviews it.
+/// Its hooks run only while the file still has the content the user trusted.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ProjectHooks {
+    pub path: String,
+    pub hooks: Vec<CommandHook>,
+    /// SHA-256 of the file; trusting records it.
+    pub sha256: String,
+    pub trusted: bool,
+    /// The file could not be read as hooks; nothing in it runs.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]

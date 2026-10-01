@@ -67,10 +67,12 @@ test("command hooks can be created, edited, toggled and removed", async ({ page 
   await page.getByTestId("hook-event").selectOption("Stop");
   await expect(page.getByTestId("hook-matcher")).toHaveCount(0);
   await expect(command).toHaveValue("./lint.sh");
+  await page.getByTestId("hook-timeout").fill("10");
   await page.getByTestId("hook-save").click();
   await expect(row).toContainText("Stop");
+  await expect(row).toContainText("10s");
   expect(await invoke(page, "get_command_hooks")).toEqual([
-    { event: "Stop", matcher: "", command: "./lint.sh", enabled: true },
+    { event: "Stop", matcher: "", command: "./lint.sh", enabled: true, timeout: 10 },
   ]);
 
   await row.getByTestId("hook-enabled").locator("xpath=..").click();
@@ -80,6 +82,47 @@ test("command hooks can be created, edited, toggled and removed", async ({ page 
   await row.getByTestId("hook-remove").click();
   await expect(page.getByTestId("hook-row")).toHaveCount(0);
   expect(await invoke(page, "get_command_hooks")).toEqual([]);
+});
+
+test("project hooks are reviewed in full and run only once trusted", async ({ page }) => {
+  const command = "python3 .wisp/hooks/deny_destructive_shell.py --refuse rm -rf --refuse 'git push --force'";
+  const file = (sha256: string) => ({
+    path: "/work/demo/.wisp/hooks.json",
+    hooks: [{ event: "PreToolUse", matcher: "shell", command, enabled: true, timeout: 10 }],
+    sha256,
+    trusted: false,
+    error: null,
+  });
+  await page.goto("/?mockLocale=en");
+  await page.evaluate((value) => (window as any).__setMockProjectHooks(value), file("abc"));
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("settings-nav-hooks").click();
+
+  const project = page.getByTestId("project-hooks");
+  const status = page.getByTestId("project-hooks-status");
+  await expect(project).toContainText("/work/demo/.wisp/hooks.json");
+  await expect(status).toHaveText("Not trusted: these hooks do not run.");
+  const row = project.getByTestId("project-hook-row");
+  await expect(row).toContainText("PreToolUse");
+  await expect(row).toContainText("shell");
+  await expect(row).toContainText("10s");
+  // Shown in full, not ellipsized: this is what the user is trusting.
+  await expect(row.locator(".hooks-command")).toHaveText(command);
+  await expect(row.locator(".hooks-command")).toHaveCSS("white-space", "pre-wrap");
+  await expect(page.getByTestId("project-hooks-revoke")).toHaveCount(0);
+
+  await page.getByTestId("project-hooks-trust").click();
+  await expect(status).toHaveText("Trusted: these hooks run.");
+  expect(await invoke(page, "get_project_hooks")).toMatchObject({ sha256: "abc", trusted: true });
+
+  await page.getByTestId("project-hooks-revoke").click();
+  await expect(status).toHaveText("Not trusted: these hooks do not run.");
+
+  // The file changed after it was shown: trusting the stale view is refused.
+  await page.evaluate((value) => (window as any).__setMockProjectHooks(value), file("def"));
+  await page.getByTestId("project-hooks-trust").click();
+  await expect(project.getByRole("alert")).toContainText("changed since it was shown");
+  expect(await invoke(page, "get_project_hooks")).toMatchObject({ trusted: false });
 });
 
 test("hooks page is localized", async ({ page }) => {

@@ -3844,6 +3844,8 @@ fn App() -> impl IntoView {
                 let message = localize_backend(locale, &message);
                 if hook == "memory_proposal" {
                     status_cb.set(tf(locale, "memory.proposal.failed", &[("msg", &message)]));
+                } else if hook == "project_hooks" {
+                    status_cb.set(t(locale, "hooks.project_notice"));
                 } else if HookEvent::ALL.iter().any(|event| event.as_str() == hook) {
                     // User command hooks; built-in follow-ups stay silent.
                     status_cb.set(tf(locale, "hooks.failed", &[("hook", &hook), ("msg", &message)]));

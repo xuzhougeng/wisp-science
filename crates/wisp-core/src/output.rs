@@ -86,13 +86,12 @@ pub trait Output: Send + Sync {
         Box::pin(async { Ok(None) })
     }
     /// User hooks before a model-requested tool call, ahead of approvals.
-    /// `Some(reason)` blocks the call and the reason is the model's result.
     fn pre_tool_use<'a>(
         &'a self,
         _tool: &'a str,
         _args: &'a Value,
-    ) -> OutputFuture<'a, Option<String>> {
-        Box::pin(async { None })
+    ) -> OutputFuture<'a, PreToolDecision> {
+        Box::pin(async { PreToolDecision::Continue })
     }
     /// User hooks after a tool call. `Some(feedback)` is appended to the
     /// result the model sees.
@@ -176,6 +175,18 @@ pub trait Output: Send + Sync {
     fn note_shell_outcome(&self, _cmd: &str, _success: bool, _detail: &str) {}
 }
 
+/// What user hooks decided before a tool call. Hooks can only tighten the
+/// approval policy: no decision skips a prompt or lifts a `Deny`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreToolDecision {
+    Continue,
+    /// Treat this call as if its approval were `Ask` (Full Permission and
+    /// `Deny` still win, as for a per-tool `Ask`).
+    Ask,
+    /// Skip the call; the reason is the model's result.
+    Block(String),
+}
+
 /// A silent output for tests / non-interactive runs that auto-approves.
 pub struct NullOutput;
 impl Output for NullOutput {}
@@ -196,6 +207,8 @@ pub struct ToolEnvAdapter<'a> {
     /// drained unconditionally after every tool call so a stale report can
     /// never leak into the next call's record.
     reported_writes: std::sync::Mutex<Vec<String>>,
+    /// A PreToolUse hook asked for approval of the in-flight call.
+    hook_ask: std::sync::atomic::AtomicBool,
 }
 
 impl<'a> ToolEnvAdapter<'a> {
@@ -206,6 +219,7 @@ impl<'a> ToolEnvAdapter<'a> {
             cancel: None,
             guidance: None,
             reported_writes: std::sync::Mutex::new(Vec::new()),
+            hook_ask: Default::default(),
         }
     }
     /// Like `new`, but tools can poll `is_cancelled()` to stop mid-execution.
@@ -220,7 +234,14 @@ impl<'a> ToolEnvAdapter<'a> {
             cancel: Some(cancel),
             guidance: None,
             reported_writes: std::sync::Mutex::new(Vec::new()),
+            hook_ask: Default::default(),
         }
+    }
+    /// A PreToolUse hook answered `ask` for the next call; the agent loop
+    /// clears it after the call.
+    pub(crate) fn set_hook_ask(&self, ask: bool) {
+        self.hook_ask
+            .store(ask, std::sync::atomic::Ordering::Relaxed);
     }
     /// Drain kernel-reported writes accumulated during the current tool call.
     pub(crate) fn take_reported_writes(&self) -> Vec<String> {
@@ -258,7 +279,16 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
         self.out.confirm_decision_async(message).await
     }
     async fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
-        self.out.approval_mode(tool)
+        let mode = self.out.approval_mode(tool);
+        // Taken once, so a dispatcher and the tool it routes to ask only once.
+        if mode == wisp_tools::Approval::Allow
+            && self
+                .hook_ask
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return wisp_tools::Approval::Ask;
+        }
+        mode
     }
     async fn acquire_tool_resources(
         &self,

@@ -508,7 +508,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     failure_rate_threshold: 30,
     minimum_failures: 2,
   };
-  let commandHooks: Array<{ event: string; matcher: string; command: string; enabled: boolean }> = [];
+  let commandHooks: Array<{ event: string; matcher: string; command: string; enabled: boolean; timeout?: number }> = [];
+  // The active project's `.wisp/hooks.json`; null = no file.
+  let projectHooks: { path: string; hooks: typeof commandHooks; sha256: string; trusted: boolean; error: string | null } | null = null;
+  (window as any).__setMockProjectHooks = (value: typeof projectHooks) => { projectHooks = value; };
   const lastMessageBySession: Record<string, string> = {};
   const sessionDelegationEnabled: Record<string, boolean> = {};
   const sessionPlanMode: Record<string, boolean> = {};
@@ -5105,6 +5108,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             }
             commandHooks = hooks;
             return commandHooks.map((hook) => ({ ...hook }));
+          }
+          case "get_project_hooks":
+            return projectHooks && { ...projectHooks };
+          case "set_project_hooks_trust": {
+            const sha256 = arg("sha256") as string | null;
+            if (!projectHooks) return null;
+            // Like the backend: only the content that was shown can be trusted.
+            if (sha256 && sha256 !== projectHooks.sha256) {
+              throw new Error(".wisp/hooks.json changed since it was shown. Review it again.");
+            }
+            projectHooks = { ...projectHooks, trusted: Boolean(sha256) };
+            return { ...projectHooks };
           }
           case "get_auto_review_enabled":
             return sessionAutoReviewEnabled[String(arg("sessionId") ?? "")] ?? false;

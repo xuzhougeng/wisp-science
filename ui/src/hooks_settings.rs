@@ -3,8 +3,8 @@
 
 use crate::app_support::{compose_icon, js_error_text};
 use crate::bindings::invoke_checked;
-use crate::dto::{AutoFailureAnalysisSettings, CommandHook, HookEvent};
-use crate::i18n::{t, use_locale};
+use crate::dto::{AutoFailureAnalysisSettings, CommandHook, HookEvent, ProjectHooks};
+use crate::i18n::{t, tf, use_locale};
 use crate::text::{dom_value, event_target_checked, event_target_value};
 use leptos::*;
 use serde_wasm_bindgen::{from_value, to_value};
@@ -25,6 +25,18 @@ fn new_hook() -> CommandHook {
         matcher: String::new(),
         command: String::new(),
         enabled: true,
+        timeout: None,
+    }
+}
+
+/// Event, matcher and timeout of one hook row.
+fn hook_title(hook: &CommandHook) -> impl IntoView {
+    view! {
+        <span class="settings-list-title">
+            {hook.event.as_str()}
+            {(!hook.matcher.is_empty()).then(|| view! { <span class="badge">{hook.matcher.clone()}</span> })}
+            {hook.timeout.map(|secs| view! { <span class="badge">{format!("{secs}s")}</span> })}
+        </span>
     }
 }
 
@@ -41,10 +53,13 @@ pub(crate) fn HooksSettingsView(
     // (index being edited, None for a new hook; draft)
     let editing = create_rw_signal(None::<(Option<usize>, CommandHook)>);
     let error = create_rw_signal(None::<String>);
+    let project = create_rw_signal(None::<ProjectHooks>);
+    let project_error = create_rw_signal(None::<String>);
     spawn_local(async move {
         // No session id: the default new conversations inherit.
         let default = invoke_checked("get_auto_review_enabled", to_value(&serde_json::json!({})).unwrap()).await;
         let saved = invoke_checked("get_command_hooks", wasm_bindgen::JsValue::UNDEFINED).await;
+        let project_file = invoke_checked("get_project_hooks", wasm_bindgen::JsValue::UNDEFINED).await;
         if hooks.try_get_untracked().is_none() {
             return;
         }
@@ -53,7 +68,21 @@ pub(crate) fn HooksSettingsView(
             Ok(value) => hooks.set(from_value(value).unwrap_or_default()),
             Err(e) => error.set(Some(js_error_text(e))),
         }
+        project.set(project_file.ok().and_then(|value| from_value(value).ok()).flatten());
     });
+    // Trust exactly the content shown (its hash), or revoke with None.
+    let set_project_trust = move |sha256: Option<String>| {
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "sha256": sha256 })).unwrap();
+            match invoke_checked("set_project_hooks_trust", args).await {
+                Ok(value) => {
+                    project.set(from_value(value).ok().flatten());
+                    project_error.set(None);
+                }
+                Err(e) => project_error.set(Some(js_error_text(e))),
+            }
+        });
+    };
     let save_hooks = Callback::new(move |next: Vec<CommandHook>| {
         spawn_local(async move {
             let args = to_value(&serde_json::json!({ "hooks": next })).unwrap();
@@ -196,6 +225,14 @@ pub(crate) fn HooksSettingsView(
                                     <span class="settings-field-hint">{move || t(locale.get(), "hooks.matcher_hint")}</span>
                                 </label>
                             })}
+                            <label>{move || t(locale.get(), "hooks.timeout")}
+                                <input type="number" min="1" step="1" placeholder="60" data-testid="hook-timeout"
+                                    prop:value=draft.timeout.map(|secs| secs.to_string()).unwrap_or_default()
+                                    on:input=move |ev| {
+                                        let value = event_target_value(&ev).trim().parse::<u64>().ok();
+                                        update_draft(&|draft| draft.timeout = value);
+                                    } />
+                            </label>
                             <span class="hint span-2">{move || t(locale.get(), event_hint_key(event))}</span>
                             <label class="span-2">{move || t(locale.get(), "hooks.command")}
                                 <textarea rows="3" class="hooks-command-input" data-testid="hook-command"
@@ -241,10 +278,7 @@ pub(crate) fn HooksSettingsView(
                         <div class="settings-list-row settings-list-row-link" data-testid="hook-row"
                             on:click=move |_| open_editor(Some(index), edit.clone())>
                             <div class="settings-list-main">
-                                <span class="settings-list-title">
-                                    {hook.event.as_str()}
-                                    {(!hook.matcher.is_empty()).then(|| view! { <span class="badge">{hook.matcher.clone()}</span> })}
-                                </span>
+                                {hook_title(&hook)}
                                 <code class="settings-list-sub hooks-command">{hook.command.clone()}</code>
                             </div>
                             <div class="settings-list-actions" on:click=|ev| ev.stop_propagation()>
@@ -276,6 +310,52 @@ pub(crate) fn HooksSettingsView(
                     }
                 }).collect_view()}
             </div>
+            // `.wisp/hooks.json`: read-only here, shown in full for review.
+            {move || project.get().map(|file| {
+                let trusted = file.trusted;
+                let can_trust = !trusted && file.error.is_none() && !file.hooks.is_empty();
+                let sha256 = file.sha256.clone();
+                let path = file.path.clone();
+                view! {
+                    <div class="hooks-project" data-testid="project-hooks">
+                        <div class="settings-toolbar settings-toolbar-end hooks-toolbar">
+                            <span class="conn-group-label">{move || t(locale.get(), "hooks.project")}</span>
+                            {trusted.then(|| view! {
+                                <button type="button" data-testid="project-hooks-revoke"
+                                    on:click=move |_| set_project_trust(None)>
+                                    {move || t(locale.get(), "hooks.project_revoke")}
+                                </button>
+                            })}
+                            {can_trust.then(|| view! {
+                                <button type="button" class="primary" data-testid="project-hooks-trust"
+                                    on:click=move |_| set_project_trust(Some(sha256.clone()))>
+                                    {move || t(locale.get(), "hooks.project_trust")}
+                                </button>
+                            })}
+                        </div>
+                        <p class="settings-note">{move || tf(locale.get(), "hooks.project_desc", &[("path", &path)])}</p>
+                        <div class=if trusted { "settings-status ok" } else { "settings-status" } data-testid="project-hooks-status">
+                            {move || t(locale.get(), if trusted { "hooks.project_trusted" } else { "hooks.project_untrusted" })}
+                        </div>
+                        {file.error.clone().map(|message| view! {
+                            <div class="settings-status fail" role="alert">{message}</div>
+                        })}
+                        {move || project_error.get().map(|message| view! {
+                            <div class="settings-status fail" role="alert">{message}</div>
+                        })}
+                        <div class="settings-list hooks-list">
+                            {file.hooks.iter().map(|hook| view! {
+                                <div class="settings-list-row" data-testid="project-hook-row">
+                                    <div class="settings-list-main">
+                                        {hook_title(hook)}
+                                        <code class="settings-list-sub hooks-command">{hook.command.clone()}</code>
+                                    </div>
+                                </div>
+                            }).collect_view()}
+                        </div>
+                    </div>
+                }
+            })}
             <p class="settings-note">{move || t(locale.get(), "hooks.acp_note")}</p>
         </div>
     }

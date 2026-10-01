@@ -550,7 +550,14 @@ async fn agent_loop_inner(
             let name = tc.function.name.clone();
             let args = tc.args_value();
             let event_name = tools.event_name(&name, &args);
-            let blocked = output.pre_tool_use(&event_name, &args).await;
+            let blocked = match output.pre_tool_use(&event_name, &args).await {
+                crate::PreToolDecision::Block(reason) => Some(reason),
+                crate::PreToolDecision::Ask => {
+                    env.set_hook_ask(true);
+                    None
+                }
+                crate::PreToolDecision::Continue => None,
+            };
             let producing = blocked.is_none() && provenance::is_producing(&name);
             let root = producing.then(|| env.project_root().to_path_buf());
             let source = provenance::source_of(&name, &args);
@@ -586,6 +593,7 @@ async fn agent_loop_inner(
                 }
                 None => tools.run(&name, &args, &env).await,
             };
+            env.set_hook_ask(false);
             // Drain even for non-producing calls so a stale kernel report
             // cannot leak into the next call's provenance record.
             let reported = env.take_reported_writes();
@@ -2088,8 +2096,14 @@ mod tests {
             &'a self,
             tool: &'a str,
             _args: &'a serde_json::Value,
-        ) -> crate::OutputFuture<'a, Option<String>> {
-            Box::pin(async move { (tool == "guarded").then(|| "not here".to_string()) })
+        ) -> crate::OutputFuture<'a, crate::PreToolDecision> {
+            Box::pin(async move {
+                match tool {
+                    "guarded" => crate::PreToolDecision::Block("not here".into()),
+                    "asked" => crate::PreToolDecision::Ask,
+                    _ => crate::PreToolDecision::Continue,
+                }
+            })
         }
 
         fn post_tool_use<'a>(
@@ -2098,8 +2112,13 @@ mod tests {
             _args: &'a serde_json::Value,
             result: &'a ToolResult,
         ) -> crate::OutputFuture<'a, Option<String>> {
-            assert_eq!(tool, "work", "blocked calls never reach PostToolUse");
-            Box::pin(async move { Some(format!("saw {}", result.content)) })
+            assert_ne!(tool, "guarded", "blocked calls never reach PostToolUse");
+            Box::pin(async move { (tool == "work").then(|| format!("saw {}", result.content)) })
+        }
+
+        // `asked` is Allow by policy; only the hook's `ask` reaches this.
+        fn confirm(&self, _message: &str) -> bool {
+            false
         }
     }
 
@@ -2112,6 +2131,7 @@ mod tests {
                 tool_calls: vec![
                     call("guarded-1", "guarded", serde_json::json!({})),
                     call("work-1", "work", serde_json::json!({})),
+                    call("asked-1", "asked", serde_json::json!({})),
                 ],
                 finish_reason: Some("tool_calls".into()),
                 ..Completion::default()
@@ -2122,6 +2142,7 @@ mod tests {
                 ..Completion::default()
             },
         ]);
+        let asked_runs = Arc::new(AtomicUsize::new(0));
         let mut tools = Registry::builtins();
         tools.add(Box::new(CountingTool {
             name: "guarded",
@@ -2130,6 +2151,10 @@ mod tests {
         tools.add(Box::new(CountingTool {
             name: "work",
             runs: work_runs.clone(),
+        }));
+        tools.add(Box::new(CountingTool {
+            name: "asked",
+            runs: asked_runs.clone(),
         }));
         let mut ctx = ContextManager::new(100_000);
 
@@ -2149,15 +2174,17 @@ mod tests {
 
         assert_eq!(guarded_runs.load(Ordering::SeqCst), 0);
         assert_eq!(work_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(asked_runs.load(Ordering::SeqCst), 0);
         let results: Vec<String> = ctx
             .messages
             .iter()
             .filter(|message| message.role == Role::Tool)
             .map(|message| message.content.as_text())
             .collect();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         assert!(results[0].contains("Blocked by a PreToolUse hook: not here"));
         assert!(results[1].contains("ran\n\n[Hook feedback]\nsaw ran"));
+        assert!(results[2].contains("denied by the user"), "{}", results[2]);
     }
 
     #[tokio::test]

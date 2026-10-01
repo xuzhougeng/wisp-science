@@ -3724,4 +3724,7 @@ body { font-size: var(--ui-font-size, 14px); }
 .hooks-toolbar .conn-group-label { margin: 0 2px; }
 .hooks-command { overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .hooks-command-input { font-family: var(--font-mono); }
+/* Project hooks are reviewed before trust: show every command in full. */
+.hooks-project .hooks-command { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hooks-project { display: flex; flex-direction: column; gap: 8px; }
 .hooks-list .settings-list-actions { display: flex; align-items: center; gap: 8px; }
