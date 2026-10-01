@@ -377,6 +377,20 @@ test("Example project demos can be copied into a workspace", async ({ page }) =>
   });
 });
 
+test("send button is a circular icon that greys out without a draft", async ({ page }) => {
+  await enterApp(page);
+  const send = page.locator("button.send");
+  // Icon-only button keeps its accessible name via aria-label.
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  await expect(send.locator("svg")).toBeVisible();
+  // Empty composer: neutral grey circle.
+  await expect(send).toHaveClass(/is-empty/);
+  await composer(page).fill("hello there");
+  await expect(send).not.toHaveClass(/is-empty/);
+  await composer(page).fill("");
+  await expect(send).toHaveClass(/is-empty/);
+});
+
 test("send streams a mocked assistant reply", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await enterApp(page);

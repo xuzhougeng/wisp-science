@@ -15557,15 +15557,20 @@ fn App() -> impl IntoView {
                             })}
                             <div class="send-split"
                                 style:display=move || if busy.get() && !composer_has_draft() { "none" } else { "inline-flex" }>
-                                <button class="send" disabled=composer_blocked on:click=move |_| send.call(ComposerSendAction::Normal)>
-                                    {move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })}
-                                </button>
                                 <button type="button" class="send-menu-toggle"
                                     disabled=composer_blocked
                                     aria-label=move || t(locale.get(), "composer.send_options")
                                     title=move || t(locale.get(), "composer.send_options")
                                     on:click=move |_| send_mode_menu_open.update(|o| *o = !*o)>
                                     {compose_icon("chevron-down")}
+                                </button>
+                                <button type="button" class="send"
+                                    class:is-empty=move || !composer_has_draft()
+                                    disabled=composer_blocked
+                                    aria-label=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
+                                    title=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
+                                    on:click=move |_| send.call(ComposerSendAction::Normal)>
+                                    {compose_icon("arrow-up")}
                                 </button>
                                 {move || send_mode_menu_open.get().then(|| view! {
                                     <div class="send-menu-backdrop" on:click=move |_| send_mode_menu_open.set(false)></div>
