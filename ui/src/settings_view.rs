@@ -1757,6 +1757,7 @@ pub(super) struct SettingsViewState {
     pub(super) runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
     pub(super) probing_context_id: RwSignal<Option<String>>,
     pub(super) delete_confirm: RwSignal<Option<DeleteConfirm>>,
+    pub(super) auto_failure_analysis: RwSignal<AutoFailureAnalysisSettings>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2079,6 +2080,7 @@ pub(super) fn SettingsView(
     probe_compute_resource: Callback<String>,
     set_default_compute_resource: Callback<Option<String>>,
     open_terminal_session: Callback<TerminalSessionSummary>,
+    save_auto_failure_analysis: Callback<AutoFailureAnalysisSettings>,
 ) -> impl IntoView {
     let expanded_connector_tools = create_rw_signal(HashSet::<(String, String)>::new());
     let SettingsViewState {
@@ -2153,6 +2155,7 @@ pub(super) fn SettingsView(
         runtime_interpreter_form,
         probing_context_id,
         delete_confirm,
+        auto_failure_analysis,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
     // Keep the edit/add branch stable while fields update. Reading the whole
@@ -6572,6 +6575,29 @@ pub(super) fn SettingsView(
                         }.into_view()
                     }
                 })}
+                {move || (settings_section.get() == "hooks").then(|| view! {
+                    <crate::hooks_settings::HooksSettingsView
+                        auto_failure_analysis=auto_failure_analysis
+                        save_auto_failure_analysis=save_auto_failure_analysis
+                        reviewer_label=Signal::derive(move || {
+                            specialists.get().into_iter()
+                                .find(|specialist| specialist.id == "reviewer")
+                                .and_then(|reviewer| reviewer_backend_label(
+                                    &reviewer,
+                                    &models.get(),
+                                    &acp_agents.get(),
+                                    &t(locale.get(), "composer.reviewer.follow_session"),
+                                    &t(locale.get(), "composer.reviewer.missing_acp"),
+                                ))
+                                .unwrap_or_else(|| t(locale.get(), "composer.reviewer.default_http"))
+                        })
+                        open_reviewer=Callback::new(move |_: ()| {
+                            go_settings_section.call("specialists".into());
+                            if let Some(reviewer) = specialists.get_untracked().into_iter().find(|specialist| specialist.id == "reviewer") {
+                                specialist_form.set(Some(reviewer));
+                            }
+                        }) />
+                }.into_view())}
                 {move || (settings_section.get() == "plugins").then(|| view! {
                     <div class="settings-pane settings-pane-list">
                         {move || plugin_install_open.get().then(|| view! {

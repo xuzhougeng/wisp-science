@@ -7,6 +7,7 @@ mod chat_find;
 mod chat_render;
 mod context_menu;
 mod dto;
+mod hooks_settings;
 mod i18n;
 mod library;
 mod mcp_app;
@@ -3839,13 +3840,13 @@ fn App() -> impl IntoView {
             // Follow-up suggestions are optional; only a failed memory draft
             // is worth a status line.
             AgentEvent::HookFailed { hook, message, .. } => {
+                let locale = locale_cb.get_untracked();
+                let message = localize_backend(locale, &message);
                 if hook == "memory_proposal" {
-                    let locale = locale_cb.get_untracked();
-                    status_cb.set(tf(
-                        locale,
-                        "memory.proposal.failed",
-                        &[("msg", &localize_backend(locale, &message))],
-                    ));
+                    status_cb.set(tf(locale, "memory.proposal.failed", &[("msg", &message)]));
+                } else if HookEvent::ALL.iter().any(|event| event.as_str() == hook) {
+                    // User command hooks; built-in follow-ups stay silent.
+                    status_cb.set(tf(locale, "hooks.failed", &[("hook", &hook), ("msg", &message)]));
                 }
             }
             AgentEvent::Review { frame_id, report } => {
@@ -17684,7 +17685,7 @@ fn App() -> impl IntoView {
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
                 default_execution_context, runtime_interpreter_form, probing_context_id,
-                delete_confirm,
+                delete_confirm, auto_failure_analysis,
             }
             open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))
@@ -17832,6 +17833,7 @@ fn App() -> impl IntoView {
                 });
             })
             open_terminal_session=activate_terminal_session
+            save_auto_failure_analysis=save_auto_failure_analysis
         />
 
         {(!is_windows()).then(|| view! {

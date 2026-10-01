@@ -32,6 +32,7 @@ mod channels;
 mod codex_accounts;
 mod codex_import;
 mod codex_login;
+mod command_hooks;
 mod configure;
 mod connector_commands;
 mod context_probe;
@@ -329,7 +330,7 @@ enum AgentEvent {
         frame_id: String,
         questions: Vec<String>,
     },
-    /// An AfterTurn hook failed; the finished turn is unaffected.
+    /// A hook failed; the turn it ran for is unaffected.
     HookFailed {
         frame_id: String,
         hook: String,
@@ -3502,6 +3503,56 @@ impl Output for TauriOutput {
     fn restrict_read_paths_to_project(&self) -> bool {
         self.restrict_read_paths_to_project
     }
+    fn pre_tool_use<'a>(
+        &'a self,
+        tool: &'a str,
+        args: &'a serde_json::Value,
+    ) -> OutputFuture<'a, Option<String>> {
+        Box::pin(async move {
+            command_hooks::fire(
+                &self.app,
+                &self.frame_id,
+                &self.project_id,
+                &self.project_root,
+                wisp_dto::HookEvent::PreToolUse,
+                Some(tool),
+                serde_json::json!({ "tool_name": tool, "tool_input": args }),
+            )
+            .await
+            .block
+        })
+    }
+
+    fn post_tool_use<'a>(
+        &'a self,
+        tool: &'a str,
+        args: &'a serde_json::Value,
+        result: &'a wisp_tools::ToolResult,
+    ) -> OutputFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let event = if result.success {
+                wisp_dto::HookEvent::PostToolUse
+            } else {
+                wisp_dto::HookEvent::PostToolUseFailure
+            };
+            command_hooks::fire(
+                &self.app,
+                &self.frame_id,
+                &self.project_id,
+                &self.project_root,
+                event,
+                Some(tool),
+                serde_json::json!({
+                    "tool_name": tool,
+                    "tool_input": args,
+                    "tool_response": { "success": result.success, "content": result.content },
+                }),
+            )
+            .await
+            .block
+        })
+    }
+
     fn acquire_tool_resources<'a>(
         &'a self,
         tool: &'a str,
@@ -7631,6 +7682,8 @@ pub fn run() {
             memory_commands::set_memory_enabled,
             memory_commands::get_auto_failure_analysis_settings,
             memory_commands::set_auto_failure_analysis_settings,
+            command_hooks::get_command_hooks,
+            command_hooks::set_command_hooks,
             memory_commands::propose_turn_memory,
             memory_commands::confirm_turn_memory,
             memory_commands::create_global_memory,

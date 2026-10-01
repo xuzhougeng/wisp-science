@@ -508,6 +508,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     failure_rate_threshold: 30,
     minimum_failures: 2,
   };
+  let commandHooks: Array<{ event: string; matcher: string; command: string; enabled: boolean }> = [];
   const lastMessageBySession: Record<string, string> = {};
   const sessionDelegationEnabled: Record<string, boolean> = {};
   const sessionPlanMode: Record<string, boolean> = {};
@@ -5083,6 +5084,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "delete_global_memory":
             globalMemories = globalMemories.filter((memory) => memory.id !== String(arg("id") ?? ""));
             return null;
+          case "get_command_hooks":
+            return commandHooks.map((hook) => ({ ...hook }));
+          case "set_command_hooks": {
+            const hooks = (plain(arg("hooks") ?? []) as typeof commandHooks)
+              .map((hook) => ({
+                ...hook,
+                command: String(hook.command).trim(),
+                // Like the backend: only tool events keep a matcher.
+                matcher: hook.event.includes("ToolUse") ? String(hook.matcher).trim() : "",
+              }))
+              .filter((hook) => hook.command);
+            if (hooks.some((hook) => hook.matcher === "(")) {
+              throw new Error("Invalid tool matcher '(': regex parse error");
+            }
+            commandHooks = hooks;
+            return commandHooks.map((hook) => ({ ...hook }));
+          }
           case "get_auto_review_enabled":
             return sessionAutoReviewEnabled[String(arg("sessionId") ?? "")] ?? false;
           case "set_auto_review_enabled": {

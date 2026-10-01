@@ -25,7 +25,7 @@ for (const locale of ["en", "zh"]) {
       : ["Preferences", "AI configuration", "Tools & connections", "System & resources"]);
     const routes = [
       ["general", "network", "session", "appearance", "pet"],
-      ["models", "quick-actions", "workflows", "specialists", "memory"],
+      ["models", "quick-actions", "workflows", "specialists", "memory", "hooks"],
       ["skills", "plugins", "browser", "connections", "channels"],
       ["credentials", "permissions", "environments", "storage", "usage"],
     ];
@@ -54,7 +54,7 @@ for (const locale of ["en", "zh"]) {
     await expect(page.getByTestId("appearance-live-preview")).toBeVisible();
     await expect(nav.getByTestId("settings-nav-appearance")).toHaveAttribute("aria-current", "page");
     await search.fill("");
-    await expect(nav.getByRole("group").locator("button")).toHaveCount(20);
+    await expect(nav.getByRole("group").locator("button")).toHaveCount(21);
     await nav.getByTestId("settings-nav-models").click();
     await page.locator(".model-settings-pane .settings-list-row", { hasText: "opus-4.8" }).click();
     const name = page.getByLabel(zh ? "显示名称（别名）" : "Display name", { exact: true });

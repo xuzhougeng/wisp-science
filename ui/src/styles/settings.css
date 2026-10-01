@@ -3715,3 +3715,13 @@ body { font-size: var(--ui-font-size, 14px); }
   .codex-account-row { flex-wrap: wrap; }
   .codex-usage-meter { grid-template-columns: 1fr; gap: 4px; }
 }
+/* Settings → Hooks */
+.hooks-pane .badge { margin-left: 8px; font-weight: 500; }
+.hooks-pane .settings-add-btn { display: inline-flex; align-items: center; gap: 6px; }
+.hooks-pane .settings-add-btn svg, .hooks-link svg { width: 14px; height: 14px; }
+.hooks-link { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; padding: 0; border: none; background: none; color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
+.hooks-link:hover { color: var(--text); }
+.hooks-toolbar .conn-group-label { margin: 0 2px; }
+.hooks-command { overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.hooks-command-input { font-family: var(--font-mono); }
+.hooks-list .settings-list-actions { display: flex; align-items: center; gap: 8px; }

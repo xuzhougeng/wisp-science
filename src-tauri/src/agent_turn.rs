@@ -150,6 +150,30 @@ struct ManualCompactCommand {
     instruction: Option<String>,
 }
 
+/// UserPromptSubmit command hooks: exit 2 refuses the prompt before the turn
+/// starts; stdout becomes context for this turn.
+async fn user_prompt_hooks(
+    app: &AppHandle,
+    frame_id: &str,
+    project: &ActiveProject,
+    prompt: &str,
+) -> Result<Option<String>, String> {
+    let outcome = command_hooks::fire(
+        app,
+        frame_id,
+        &project.id,
+        &project.root,
+        wisp_dto::HookEvent::UserPromptSubmit,
+        None,
+        serde_json::json!({ "prompt": prompt }),
+    )
+    .await;
+    match outcome.block {
+        Some(reason) => Err(format!("Blocked by a UserPromptSubmit hook: {reason}")),
+        None => Ok((!outcome.context.is_empty()).then_some(outcome.context)),
+    }
+}
+
 fn parse_manual_compact_command(message: &str) -> Option<ManualCompactCommand> {
     let command = message.trim();
     let Some(rest) = command.strip_prefix("/compact") else {
@@ -413,6 +437,11 @@ pub(crate) async fn send_message_inner(
         if let Some(compute) = ssh_hosts::stored_compute_section(&state.store, &frame_id).await {
             injected_context.push(compute);
         }
+        if !resume {
+            if let Some(context) = user_prompt_hooks(&app, &frame_id, &ap, &message).await? {
+                injected_context.push(context);
+            }
+        }
         let completion_deliveries = if resume {
             Vec::new()
         } else {
@@ -478,6 +507,7 @@ pub(crate) async fn send_message_inner(
                 let end = turn_hooks::TurnEnd {
                     frame_id: &frame_id,
                     project_id: &ap.id,
+                    project_root: &ap.root,
                     stop_reason: Some(stop_reason.as_str()),
                     resume,
                     reviewer_session: false,
@@ -1213,6 +1243,9 @@ pub(crate) async fn send_message_inner(
         {
             agent.ctx.inject_user(injection);
         }
+        if let Some(context) = user_prompt_hooks(&app, &frame_id, &ap, &message).await? {
+            agent.ctx.inject_user(context);
+        }
         // Context resolved before the turn belongs before the user's actual
         // request. Observations and review corrections injected later remain
         // at the tail.
@@ -1486,6 +1519,7 @@ pub(crate) async fn send_message_inner(
     let turn_end = |stop_reason| turn_hooks::TurnEnd {
         frame_id: &frame_id,
         project_id: &ap.id,
+        project_root: &ap.root,
         stop_reason,
         resume,
         reviewer_session,

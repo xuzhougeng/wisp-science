@@ -85,6 +85,25 @@ pub trait Output: Send + Sync {
     ) -> OutputFuture<'a, Result<Option<wisp_tools::ToolResourceLease>, String>> {
         Box::pin(async { Ok(None) })
     }
+    /// User hooks before a model-requested tool call, ahead of approvals.
+    /// `Some(reason)` blocks the call and the reason is the model's result.
+    fn pre_tool_use<'a>(
+        &'a self,
+        _tool: &'a str,
+        _args: &'a Value,
+    ) -> OutputFuture<'a, Option<String>> {
+        Box::pin(async { None })
+    }
+    /// User hooks after a tool call. `Some(feedback)` is appended to the
+    /// result the model sees.
+    fn post_tool_use<'a>(
+        &'a self,
+        _tool: &'a str,
+        _args: &'a Value,
+        _result: &'a wisp_tools::ToolResult,
+    ) -> OutputFuture<'a, Option<String>> {
+        Box::pin(async { None })
+    }
     /// Whether this conversation bypasses approval prompts. Explicit blocks
     /// and the tool registry's plan-mode gate remain authoritative.
     fn approval_bypass(&self) -> bool {

@@ -3915,6 +3915,56 @@ impl Default for AutoFailureAnalysisSettings {
     }
 }
 
+/// Lifecycle point a user command hook runs at. Names match Claude Code /
+/// Codex hooks so existing scripts read the same `hook_event_name`.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookEvent {
+    UserPromptSubmit,
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
+    Stop,
+}
+
+impl HookEvent {
+    pub const ALL: [Self; 5] = [
+        Self::UserPromptSubmit,
+        Self::PreToolUse,
+        Self::PostToolUse,
+        Self::PostToolUseFailure,
+        Self::Stop,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UserPromptSubmit => "UserPromptSubmit",
+            Self::PreToolUse => "PreToolUse",
+            Self::PostToolUse => "PostToolUse",
+            Self::PostToolUseFailure => "PostToolUseFailure",
+            Self::Stop => "Stop",
+        }
+    }
+
+    /// Only tool events filter by `CommandHook::matcher`.
+    pub fn matches_tools(self) -> bool {
+        matches!(
+            self,
+            Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
+        )
+    }
+}
+
+/// A user-defined shell command run at a lifecycle event (Settings → Hooks).
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct CommandHook {
+    pub event: HookEvent,
+    /// Tool-name regex for tool events; empty or `*` matches every tool.
+    #[serde(default)]
+    pub matcher: String,
+    pub command: String,
+    pub enabled: bool,
+}
+
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 pub struct TurnMemoryProposal {
     pub session_id: String,

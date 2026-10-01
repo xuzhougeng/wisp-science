@@ -1,8 +1,9 @@
 //! Turn hooks: the one place that decides what runs when a user-visible turn
 //! ends, for native and ACP sessions alike.
 //!
-//! - Stop (`run_stop`): before `Done`; may continue the turn once. Automatic
-//!   review → one correction → one follow-up review.
+//! - Stop (`run_stop`): before `Done`; may continue the turn. Automatic
+//!   review → one correction → one follow-up review, then the user's Stop
+//!   command hooks (`command_hooks`), which may continue it once more.
 //! - AfterTurn (`spawn_after_turn`): detached after `Done`; results arrive as
 //!   events. Memory proposal and follow-up questions. Running here instead of
 //!   in the webview's `Done` handler gives every origin (desktop, queue, IM,
@@ -48,6 +49,8 @@ impl HookId {
 pub(crate) struct TurnEnd<'a> {
     pub(crate) frame_id: &'a str,
     pub(crate) project_id: &'a str,
+    /// Working directory for command hooks.
+    pub(crate) project_root: &'a Path,
     /// Native `Completed` reports `None`; ACP reports its own reason.
     pub(crate) stop_reason: Option<&'a str>,
     pub(crate) resume: bool,
@@ -141,9 +144,8 @@ impl TurnDriver<'_> {
     }
 }
 
-/// Stop hooks. Review one completed analysis turn, request at most one
-/// correction, then verify the corrected transcript once. Review failures
-/// never fail the user's original turn.
+/// Stop hooks: automatic review, then the user's Stop command hooks. Hook
+/// failures never fail the user's original turn.
 pub(crate) async fn run_stop(
     state: &AppState,
     app: &AppHandle,
@@ -151,9 +153,51 @@ pub(crate) async fn run_stop(
     driver: &mut TurnDriver<'_>,
     cancel: &AtomicBool,
 ) {
-    if !end.runs_stop_hooks() || !HookId::AutoReview.enabled(&state.store, end.frame_id).await {
+    if !end.runs_stop_hooks() {
         return;
     }
+    if HookId::AutoReview.enabled(&state.store, end.frame_id).await {
+        auto_review(state, app, end, driver, cancel).await;
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return;
+    }
+    let stop = command_hooks::fire(
+        app,
+        end.frame_id,
+        end.project_id,
+        end.project_root,
+        wisp_dto::HookEvent::Stop,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    // ponytail: one continuation per turn; Claude Code's `stop_hook_active` re-entry if a hook needs more rounds.
+    if let Some(reason) = stop.block {
+        let prompt = format!("A Stop hook asked you to keep working before finishing:\n{reason}");
+        if let Err(message) = driver.continue_turn(&prompt, cancel).await {
+            tracing::warn!(
+                "Stop hook continuation failed for {}: {message}",
+                end.frame_id
+            );
+            driver.emit(AgentEvent::HookFailed {
+                frame_id: end.frame_id.to_string(),
+                hook: wisp_dto::HookEvent::Stop.as_str().into(),
+                message,
+            });
+        }
+    }
+}
+
+/// Review one completed analysis turn, request at most one correction, then
+/// verify the corrected transcript once.
+async fn auto_review(
+    state: &AppState,
+    app: &AppHandle,
+    end: &TurnEnd<'_>,
+    driver: &mut TurnDriver<'_>,
+    cancel: &AtomicBool,
+) {
     let frame_id = end.frame_id;
     let msgs = match driver.transcript().await {
         Ok(msgs) => msgs,
@@ -541,6 +585,7 @@ mod tests {
         TurnEnd {
             frame_id: "f",
             project_id: "p",
+            project_root: Path::new("."),
             stop_reason,
             resume,
             reviewer_session,

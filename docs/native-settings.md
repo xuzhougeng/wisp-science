@@ -2,8 +2,10 @@
 
 The accepted scope is the complete settings surface rendered in SwiftUI, with
 existing desktop command behavior, and an equivalent transport seam for WinUI3.
-The existing WebView client remains supported. Settings include all 20 top-level
+The existing WebView client remains supported. Settings include the 20 top-level
 sections from `SETTINGS_NAV_GROUPS`, their editors, and their real actions.
+Hooks (`docs/hooks.md`) is WebView-only for now; `scripts/sync_native_design.py`
+leaves it out of the native navigation export.
 
 ## Architecture
 
