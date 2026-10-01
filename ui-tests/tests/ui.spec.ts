@@ -5148,6 +5148,10 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
     buffer: Buffer.from("a,b\n1,2"),
   });
   await expect(page.locator(".composer-attachment.ready")).toHaveText("counts.csv");
+  await page.locator(".composer-attachment-open").click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => page.evaluate(() => {

@@ -1560,7 +1560,8 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .composer-attachment-row.image { width: 238px; }
 .composer-attachment-row.error { border-color: color-mix(in srgb, var(--err) 35%, var(--border-strong)); background: color-mix(in srgb, var(--err) 5%, var(--bg-elev)); }
 .composer-attachment-row .attachment-thumbnail { flex: 0 0 auto; width: 42px; height: 42px; border-radius: var(--radius-xs); }
-.composer-attachment-open { position: absolute; inset: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: zoom-in; }
+.composer-attachment-open { position: absolute; inset: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.composer-attachment-row.image .composer-attachment-open { cursor: zoom-in; }
 .composer-attachment-open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .composer-attachment { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.25; font-weight: 600; }
 .composer-attachment.uploading { color: var(--text-muted); }

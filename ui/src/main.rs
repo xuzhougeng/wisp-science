@@ -14197,12 +14197,14 @@ fn App() -> impl IntoView {
                                 };
                                 // Full-card overlay rather than a wrapping button, so the remove
                                 // button stays a sibling and needs no propagation guard.
-                                let open = path.filter(|_| is_image).map(|path| {
+                                let open = path.map(|path| {
                                     let name = name.clone();
+                                    // Same kind fallback as sent-message file cards.
+                                    let modal_kind = file_kind(&path).unwrap_or("text").to_string();
                                     view! {
                                         <button type="button" class="composer-attachment-open"
                                             aria-label=name.clone()
-                                            on:click=move |_| modal_artifact.set(Some((path.clone(), name.clone(), "image".into())))></button>
+                                            on:click=move |_| modal_artifact.set(Some((path.clone(), name.clone(), modal_kind.clone())))></button>
                                     }
                                 });
                                 view! {
