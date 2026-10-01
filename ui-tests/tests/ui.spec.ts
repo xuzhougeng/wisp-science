@@ -14008,6 +14008,14 @@ test("historical local images survive a cold reload and session switching withou
     }
     await expect(page.locator(".msg.assistant .resource-unresolved")).toContainText("missing image");
     await expect.poll(() => lastInvokeArgs(page, "read_artifact_version_bytes")).toEqual({ versionId: "saved-image-v1" });
+    // A bound image *link* in a table cell stays inline, not a block image box.
+    const linked = page.locator('.msg.assistant td a[data-resource-id="linked-image-link"]');
+    await expect(linked).not.toHaveClass(/resource-inline-image/);
+    await expect(linked).toHaveCSS("display", "inline");
+    const versionReads = await page.evaluate(() => (window as any).__skillInvokeLog
+      .filter((call: any) => call.cmd === "read_artifact_version_bytes")
+      .map((call: any) => call.args instanceof Map ? call.args.get("versionId") : call.args.versionId));
+    expect(versionReads).not.toContain("linked-image-v1");
     const paths = await page.evaluate(() => (window as any).__skillInvokeLog
       .filter((call: any) => call.cmd === "read_file_bytes")
       .map((call: any) => call.args instanceof Map ? call.args.get("path") : call.args.path));

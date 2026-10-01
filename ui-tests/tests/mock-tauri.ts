@@ -2412,8 +2412,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                   "![schematic tree](species_fix_out/species_names_schematic_tree.png)",
                   "![missing image](figures/missing-history.png)",
                   "![saved version](figures/saved.png)",
+                  "| file |\n|-|\n| [linked plot](figures/linked.png)（pdf） |",
                 ].join("\n\n"), resources: [{
-                  id: "saved-image-link", ordinal: 0, originalReference: "figures/saved.png",
+                  id: "linked-image-link", ordinal: 0, originalReference: "figures/linked.png",
+                  artifactId: "linked-image", artifactVersionId: "linked-image-v1",
+                  displayName: "linked.png", kind: "image", mimeType: "image/png", status: "ready", error: null,
+                }, {
+                  id: "saved-image-link", ordinal: 1, originalReference: "figures/saved.png",
                   artifactId: "saved-image", artifactVersionId: "saved-image-v1",
                   displayName: "saved.png", kind: "image", mimeType: "image/png", status: "ready", error: null,
                 }] }], next_before_seq: null, user_offset: 0,

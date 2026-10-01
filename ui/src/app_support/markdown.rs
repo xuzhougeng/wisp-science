@@ -530,6 +530,16 @@ fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> S
     out
 }
 
+/// True when `replace_bound_resource_tags` left this resource as an `<img>`
+/// embed. A link to an image carries the same id but stays a link, so its
+/// version bytes are never needed.
+pub(crate) fn html_embeds_resource_image(html: &str, resource_id: &str) -> bool {
+    html.contains(&format!(
+        r#"src="" data-resource-id="{}""#,
+        html_escape(resource_id)
+    ))
+}
+
 /// Old messages can contain local images without a captured resource version.
 /// Give those images an absolute project path for the native byte reader, not
 /// a relative WebView URL. Existing bindings (including failures) always win.
@@ -1207,6 +1217,19 @@ mod art_ref_marker_tests {
         assert!(out.contains(r##"href="#" data-resource-id="resource-link""##));
         assert!(out.contains(r#"src="" data-resource-id="resource-link""#));
         assert!(!out.contains("D:/work/report.md"));
+    }
+
+    #[test]
+    fn only_image_embeds_count_as_embedded_resources() {
+        let render = |markdown: &str| {
+            let resource = message_resource("figures/plot.png", "image", true);
+            enrich_md_html(md_to_html(markdown), &[], &[resource], Locale::En, None, None)
+        };
+        let linked = render("| file |\n|-|\n| [plot](figures/plot.png)（pdf） |");
+        assert!(linked.contains(r#"data-resource-id="resource-link""#));
+        assert!(!html_embeds_resource_image(&linked, "resource-link"));
+        let embedded = render("![plot](figures/plot.png)");
+        assert!(html_embeds_resource_image(&embedded, "resource-link"));
     }
 
     #[test]

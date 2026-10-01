@@ -1084,19 +1084,24 @@ pub(crate) fn AssistantMessage(
     let hid_for_resources = hid.clone();
     let resources_for_effect = resources.clone();
     create_effect(move |_| {
-        let _ = html.get();
+        // Only embeds get pixels: a bound `[plot](x.png)` link stays an inline
+        // link, so skip its byte read and never restyle it as a block image.
+        let embedded: Vec<_> = html.with(|html| {
+            resources_for_effect
+                .iter()
+                .filter(|resource| resource.status == "ready" && resource.kind == "image")
+                .filter(|resource| html_embeds_resource_image(html, &resource.id))
+                .cloned()
+                .collect()
+        });
         let dom_id = hid_for_resources.clone();
-        let resources = resources_for_effect.clone();
         let fallback_dom_id = dom_id.clone();
         let unavailable = t(locale.get(), "chat.image_preview_unavailable");
         spawn_local(async move {
             crate::bindings::hydrate_workspace_images(&fallback_dom_id, &unavailable).await;
         });
         spawn_local(async move {
-            for resource in resources
-                .into_iter()
-                .filter(|resource| resource.status == "ready" && resource.kind == "image")
-            {
+            for resource in embedded {
                 let Some(version_id) = resource.artifact_version_id else {
                     continue;
                 };
@@ -1107,7 +1112,7 @@ pub(crate) fn AssistantMessage(
                 let Some(url) = crate::bindings::media_url(&path, &dom_id).await.as_string() else {
                     continue;
                 };
-                let selector = format!(r#"#{dom_id} [data-resource-id="{}"]"#, resource.id);
+                let selector = format!(r#"#{dom_id} img[data-resource-id="{}"]"#, resource.id);
                 if let Some(element) = web_sys::window()
                     .and_then(|window| window.document())
                     .and_then(|document| document.query_selector(&selector).ok().flatten())
