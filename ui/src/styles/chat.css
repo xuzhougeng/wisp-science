@@ -2000,6 +2000,10 @@ button.send:hover:not(:disabled) { background: var(--clay-strong); }
 button.send.is-empty { background: color-mix(in srgb, var(--text) 14%, var(--bg-app)); color: var(--text-faint); }
 button.send.is-empty:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 14%, var(--bg-app)); }
 button.send:disabled { opacity: .45; cursor: default; }
+button.stop { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; background: color-mix(in srgb, var(--text) 78%, var(--bg-app)); color: var(--bg-app); border: none; border-radius: 999px; cursor: pointer; transition: background .12s ease, opacity .12s ease; flex: 0 0 auto; }
+button.stop svg { width: 18px; height: 18px; }
+button.stop:hover:not(:disabled) { background: var(--text); }
+button.stop:disabled { opacity: .45; cursor: default; }
 .send-split { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .send-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease; }
 .send-menu-toggle svg { width: 16px; height: 16px; stroke-width: 2.25; }
@@ -2022,12 +2026,11 @@ button.send:disabled { opacity: .45; cursor: default; }
   .context-usage-pct { font-size: calc(10px * var(--ui-font-scale, 1)); }
   button.send { width: 28px; height: 28px; }
   button.send svg { width: 16px; height: 16px; }
+  button.stop { width: 28px; height: 28px; }
+  button.stop svg { width: 16px; height: 16px; }
   .send-menu-toggle { width: 28px; height: 28px; }
   .send-menu-toggle svg { width: 14px; height: 14px; }
 }
-button.stop { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px; background: transparent; color: var(--err); border: 1px solid hsl(0 70% 50% / 0.35); border-radius: 999px; font: inherit; font-weight: 600; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; flex: 0 0 auto; }
-button.stop:hover:not(:disabled) { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 50% / 0.55); }
-button.stop:disabled { opacity: .6; cursor: default; }
 
 .sidechat-in-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--bg-elev); }
 .sidechat-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 8px 6px 20px; border-bottom: 1px solid var(--border); }

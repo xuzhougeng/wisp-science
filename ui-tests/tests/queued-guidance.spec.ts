@@ -39,7 +39,10 @@ async function queueWithDelayedAcceptance(page: Page) {
     };
   });
   await page.locator("#composer-input").fill("Use the revised question");
+  // A draft swaps the Stop icon for the send arrow in the same slot.
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Queue…", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   return page.locator(".msg.user.queued", { hasText: "Use the revised question" });
 }
 

@@ -15696,11 +15696,15 @@ fn App() -> impl IntoView {
                                     })}
                                 </div>
                             })}
-                            {move || busy.get().then(|| view! {
+                            // Stop and Send share one slot: typing a draft mid-turn swaps Stop for Send
+                            // (its menu still offers interrupt-and-replace).
+                            {move || (busy.get() && !composer_has_draft()).then(|| view! {
                                 <button type="button" class="stop"
                                     disabled=move || active_session.get() == stopping_session.get()
+                                    aria-label=move || t(locale.get(), if active_session.get() == stopping_session.get() { "composer.stopping" } else { "composer.stop" })
+                                    title=move || t(locale.get(), if active_session.get() == stopping_session.get() { "composer.stopping" } else { "composer.stop" })
                                     on:click=move |_| stop.call(())>
-                                    {move || t(locale.get(), if active_session.get() == stopping_session.get() { "composer.stopping" } else { "composer.stop" })}
+                                    {compose_icon("stop")}
                                 </button>
                             })}
                             <div class="send-split"

@@ -223,6 +223,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "arrow-right" => view! { <path d="M5 12h14m-6-6 6 6-6 6"/> }.into_view(),
         "arrow-up" => view! { <path d="m5 12 7-7 7 7"/><path d="M12 19V5"/> }.into_view(),
         "minus" => view! { <path d="M5 12h14"/> }.into_view(),
+        "stop" => view! { <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/> }.into_view(),
         "database" => view! { <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/> }.into_view(),
         "trash" => view! { <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/> }.into_view(),
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
