@@ -16753,6 +16753,7 @@ test("specialists page configures the builtin Reader and saves a custom speciali
   await expect(page.getByText("Reviewer")).toBeVisible();
   await expect(page.getByText("Reader")).toBeVisible();
   await expect(page.getByText("Scientific Illustrator")).toBeVisible();
+  await expect(page.locator(".settings-list-title").filter({ hasText: /^(Archivist|Recap)$/ })).toHaveCount(2);
   // Builtin rows have no remove button.
   await expect(page.locator(".settings-list-remove")).toHaveCount(0);
 
@@ -16910,6 +16911,10 @@ test("new session can pick a specialist and it locks after the first message", a
   await agentMenu.getByRole("button", { name: /^Specialist/ }).click();
   const specialistMenu = page.getByRole("menu", { name: "Specialist" });
   await expect(specialistMenu.getByRole("button", { name: "Scientific Illustrator" })).toBeVisible();
+  // Document-drafting built-ins are configured in Settings, never chat personas.
+  for (const name of ["Reader", "Archivist", "Recap"]) {
+    await expect(specialistMenu.getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
   await specialistMenu.getByRole("button", { name: "Paper hunter" }).click();
   await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
 

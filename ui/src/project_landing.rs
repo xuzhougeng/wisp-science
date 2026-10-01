@@ -10,6 +10,8 @@ use wasm_bindgen::JsValue;
 pub(super) struct ProjectLandingState {
     pub(super) home_dialog_open: RwSignal<bool>,
     pub(super) home_calendar_open: RwSignal<bool>,
+    pub(super) home_automation_open: RwSignal<bool>,
+    pub(super) home_automation_form: RwSignal<bool>,
     pub(super) show_projects: RwSignal<bool>,
     pub(super) demo_mode: RwSignal<bool>,
     pub(super) items: RwSignal<Vec<ChatItem>>,
@@ -45,6 +47,8 @@ pub(super) fn ProjectLanding(
     let ProjectLandingState {
         home_calendar_open,
         home_dialog_open,
+        home_automation_open,
+        home_automation_form,
         show_projects,
         demo_mode,
         items,
@@ -88,6 +92,9 @@ pub(super) fn ProjectLanding(
                 <ProjectsScreen
                     locale=locale
                     calendar_open=home_calendar_open
+                    automation_open=home_automation_open
+                    automation_form=home_automation_form
+                    on_open_specialists=Callback::new(move |_| open_settings.call(Some("specialists".into())))
                     dialog_open=home_dialog_open
                     running=running
                     approval_pending=approval_pending.read_only()

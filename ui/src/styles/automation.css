@@ -1,0 +1,42 @@
+/* Home Automation page; shares the calendar page shell and its .home-calendar base. */
+.home-automation { max-width: 1120px; display: flex; flex-direction: column; gap: 20px; }
+.home-automation .home-calendar-heading { margin-bottom: 0; }
+.automation-heading-actions { display: flex; align-items: center; gap: 8px; }
+.automation-heading-actions .btn-primary { display: inline-flex; align-items: center; gap: 6px; }
+.automation-card { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); padding: 16px 18px; }
+.automation-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.automation-card-head h3, .automation-form h3, .automation-section h3 { margin: 0; font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; }
+.automation-card-head > svg { color: var(--clay); }
+.automation-tag { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--clay-strong); background: var(--clay-soft); border-radius: 999px; padding: 1px 8px; }
+.automation-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); cursor: pointer; }
+.automation-toggle input { accent-color: var(--clay); width: 16px; height: 16px; margin: 0; }
+.automation-desc { margin: 10px 0 6px; color: var(--text-muted); line-height: 1.7; }
+.automation-time { font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 1px 6px; }
+.automation-meta { margin: 6px 0 0; color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.automation-error, .automation-notice { margin: 6px 0 0; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--err); overflow-wrap: anywhere; }
+.automation-notice { color: var(--text-muted); }
+.automation-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.automation-actions .btn-ghost { display: inline-flex; align-items: center; gap: 6px; }
+.automation-section { display: grid; gap: 10px; }
+.automation-empty { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 28px 16px; text-align: center; color: var(--text-muted); }
+.automation-row { display: flex; gap: 16px; align-items: flex-start; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; background: var(--bg-elev); }
+.automation-row.paused { opacity: .7; }
+.automation-row-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.automation-row-main small { color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.automation-prompt { margin: 4px 0 0; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.automation-row-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.automation-row-actions .automation-toggle { margin: 0 6px 0 0; }
+.automation-delete.confirming { color: var(--err); }
+.automation-templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.automation-template { display: grid; gap: 8px; text-align: left; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); padding: 14px 16px; }
+.automation-template:hover { border-color: var(--clay); }
+.automation-template-head { display: flex; align-items: center; gap: 8px; }
+.automation-template-desc { color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.automation-template small { color: var(--text-faint); }
+.automation-form { display: grid; gap: 12px; }
+.automation-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.automation-form label { display: grid; gap: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.automation-form input, .automation-form select, .automation-form textarea { font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 6px 8px; width: 100%; box-sizing: border-box; }
+.automation-span { grid-column: 1 / -1; }
+.automation-form-actions { justify-content: flex-end; margin-top: 0; }
+@media (max-width: 640px) { .automation-row { flex-direction: column; } .automation-heading-actions .btn-primary { padding: 8px; } }

@@ -616,6 +616,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
     { id: "reader", name: "Reader", icon: "search", color: "clay", description: "Searches project sessions", instructions: "reader rubric", model_id: "", skills: [], connectors: [], builtin: true },
     { id: "scientific_illustrator", name: "Scientific Illustrator", icon: "image", color: "clay", description: "Creates scientific figures", instructions: "illustrator rubric", model_id: "", skills: ["figure-composer", "figure-style"], connectors: [], builtin: true },
+    { id: "archivist", name: "Archivist", icon: "archive", color: "clay", description: "Drafts research archives", instructions: "archive rubric", model_id: "", skills: [], connectors: [], builtin: true },
+    { id: "recap", name: "Recap", icon: "calendar", color: "clay", description: "Drafts daily research recaps", instructions: "recap rubric", model_id: "", skills: [], connectors: [], builtin: true },
   ];
   let sessionSpecialists: Record<string, string> = {};
   let mockBrowserUrlFilters = { block: [] as { host: string; reason?: string }[], prefer: [] as { host: string; reason?: string }[] };
@@ -1680,6 +1682,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     journeyEntry("progress-earlier", "progress", journeyText("Imported raw data and established an analysis baseline", "导入原始数据，建立分析基线"), 2, {manual: true}),
   ];
   const journeyRecaps: any[] = [];
+  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: []};
   const recapsIn = (from: number, until: number) => journeyRecaps.filter(r => r.day_start >= from && r.day_start < until);
   let publicationRevisionId = "publication-revision-1";
   let publicationRevisionState = mockPublication === "frozen" ? "frozen" : "draft";
@@ -1903,6 +1906,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if (delay) await new Promise(resolve => setTimeout(resolve, delay));
             return {entries, truncated: false, recaps: recapsIn(Number(arg("from")), Number(arg("until")))};
           }
+          case "get_daily_recap_automation": return {...automation.daily};
+          case "set_daily_recap_automation":
+            automation.daily = {...automation.daily, enabled: Boolean(arg("enabled")), time: String(arg("time"))};
+            return {...automation.daily};
+          case "run_daily_recap_now":
+            automation.daily = {...automation.daily, last_run_at: Math.floor(Date.now() / 1000), drafted: 2, running: false};
+            return {...automation.daily, running: true};
+          case "list_all_schedules": return automation.schedules.map((s: any) => ({...s}));
+          case "create_schedule": {
+            const interval = Math.max(60, Number(arg("intervalSecs"))), now = Math.floor(Date.now() / 1000);
+            const prompt = String(arg("prompt") ?? "").trim();
+            const s = {id: `schedule-${automation.schedules.length + 1}`, project_id: arg("projectId") ?? "default", frame_id: arg("sessionId") ?? null,
+              name: String(arg("name") ?? "").trim() || prompt.split("\n")[0].slice(0, 80), prompt, skill: arg("skill") ?? null,
+              interval_secs: interval, enabled: true, next_run_at: arg("startAt") ?? now + interval, last_run_at: null, created_at: now, updated_at: now};
+            automation.schedules.push(s);
+            return {...s};
+          }
+          case "set_schedule_enabled": {
+            const s = automation.schedules.find((s: any) => s.id === arg("id"));
+            if (!s) throw new Error("The schedule no longer exists.");
+            s.enabled = Boolean(arg("enabled"));
+            return null;
+          }
+          case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
+          case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
           case "generate_research_recap": {
             if ((window as any).__recapError) throw new Error((window as any).__recapError);
             const from = Number(arg("from")), until = Number(arg("until"));

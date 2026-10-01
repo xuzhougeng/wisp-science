@@ -1,5 +1,6 @@
 mod acp;
 mod agent_workflows;
+mod automation;
 mod app_overlays;
 mod bindings;
 mod channels_view;
@@ -1978,6 +1979,8 @@ fn App() -> impl IntoView {
     let research_graph = create_rw_signal(ResearchGraph::default());
     let show_research_graph = create_rw_signal(false);
     let home_calendar_open = create_rw_signal(false);
+    let home_automation_open = create_rw_signal(false);
+    let home_automation_form = create_rw_signal(false);
     let home_dialog_open = create_rw_signal(false);
     let calendar_journey_request = create_rw_signal(None::<(String, i64)>);
     let journey_initial_day = create_rw_signal(None::<i64>);
@@ -9716,6 +9719,17 @@ fn App() -> impl IntoView {
                 home_calendar_open.set(false);
                 return;
             }
+            // The inline task form closes before its page.
+            if home_automation_form.get() && !home_dialog_open.get() {
+                ev.prevent_default();
+                home_automation_form.set(false);
+                return;
+            }
+            if home_automation_open.get() && !home_dialog_open.get() {
+                ev.prevent_default();
+                home_automation_open.set(false);
+                return;
+            }
             if project_transfer
                 .get()
                 .is_some_and(|transfer| transfer.is_complete() || transfer.is_failed())
@@ -10187,6 +10201,8 @@ fn App() -> impl IntoView {
                     .map(|(_, day)| day);
                 calendar_journey_request.set(None);
                 home_calendar_open.set(false);
+                home_automation_open.set(false);
+                home_automation_form.set(false);
                 journey_initial_day.set(None);
                 let request_epoch = transition_epoch.get().wrapping_add(1);
                 transition_epoch.set(request_epoch);
@@ -11558,6 +11574,7 @@ fn App() -> impl IntoView {
                 sync_actions_available, command_palette_open, project_transfer,
                 privacy_mode_active, privacy_hidden_project_ids,
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
+                home_automation_open, home_automation_form,
             }
             open_project=switch_project
             open_project_folder=Callback::new(move |id| open_project_with_files.call((id, None, true)))
