@@ -5,9 +5,11 @@ import SwiftUI
 /// The pinned WebView grammar runs without DOM or network access. Only token
 /// ranges cross back into AppKit; the original code remains the copy source.
 enum NativeCodeHighlight {
-    private static let context: JSContext? = {
+    private static let context = makeContext(resources: WispDesign.resources)
+
+    static func makeContext(resources: Bundle) -> JSContext? {
         guard let context = JSContext(),
-              let url = Bundle.module.url(forResource: "highlight.min", withExtension: "js"),
+              let url = resources.url(forResource: "highlight.min", withExtension: "js"),
               let script = try? String(contentsOf: url) else { return nil }
         context.evaluateScript(script)
         context.evaluateScript("""
@@ -25,7 +27,7 @@ enum NativeCodeHighlight {
         }
         """)
         return context
-    }()
+    }
 
     static func apply(to value: NSMutableAttributedString, language: String?, scheme: ColorScheme) {
         guard value.length <= 200_000, let language = language?.split(separator: " ").first,

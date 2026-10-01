@@ -23,6 +23,21 @@ copy its original content or a table to copy TSV. Quote and highlight actions
 work across blocks. Task state is shown as readable completion labels. Formula
 rendering and inline images remain separate follow-ups; tool output stays literal.
 
+Fenced-code syntax highlighting loads the bundled grammar through the same
+resource lookup as the native UI: installed apps use `Contents/Resources`, while
+SwiftPM command-line builds use their module bundle. Opening code blocks does
+not depend on the original build directory. To smoke-test a packaged build,
+copy the complete app outside the build tree, make the original Swift build
+directory unavailable, then open a saved conversation containing a Python code
+block; verify highlighting and copy text in both themes.
+
+Per-turn token usage appears as a compact, wrapping summary below the reply,
+including input, output, reasoning, cached tokens and context window occupancy.
+Usage records do not become assistant messages or expose their internal JSON.
+Older records with unknown context capacity show the token count without an
+invented percentage; malformed usage records are omitted. History and excerpt
+navigation keep their original transcript indexes and skip usage metadata.
+
 The edit action next to the macOS conversation title opens a rename editor.
 Saving uses the selected project and session IDs, trims surrounding whitespace,
 and refreshes the sidebar after confirmed success. Empty names are rejected.

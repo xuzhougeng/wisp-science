@@ -6,11 +6,14 @@ import WispProjectBrowser
 enum WispDesign {
     // SwiftPM's generated lookup differs across Swift releases. Packaged apps
     // always put resources in Contents/Resources; `swift test/run` uses module.
-    private static let resources: Bundle = {
-        if let url = Bundle.main.url(forResource: "WispSciencePreview_WispProjectBrowserUI", withExtension: "bundle"),
+    static let resources = resourceBundle(in: .main, module: { Bundle.module })
+
+    static func resourceBundle(in main: Bundle, module: () -> Bundle) -> Bundle {
+        if let url = main.url(forResource: "WispSciencePreview_WispProjectBrowserUI", withExtension: "bundle"),
            let bundle = Bundle(url: url) { return bundle }
-        return Bundle.module
-    }()
+        // Keep this lazy: SwiftPM's accessor can trap in a relocated .app.
+        return module()
+    }
     static let english: [String: String] = {
         let url = resources.url(forResource: "native-english", withExtension: "json")!
         return (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))) ?? [:]

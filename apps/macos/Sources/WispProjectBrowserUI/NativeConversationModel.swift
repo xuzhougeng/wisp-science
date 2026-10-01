@@ -432,6 +432,7 @@ final class NativeConversationModel: ObservableObject {
         operationError = nil; revealedExcerpt = text; scrollTarget = index; scrollRevision += 1
     }
     static func renderedText(_ item: ConversationItem) -> String {
+        if item.role == "usage" { return "" }
         if item.role == "tool" { return item.text }
         let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
         return NativeMathContent.plainText(NativeMarkdownContent.render(source, saved: [], scheme: .light))

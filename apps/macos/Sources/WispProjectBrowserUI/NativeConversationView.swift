@@ -115,54 +115,58 @@ struct NativeConversationView: View {
         }
         return text
     }
-    private func message(_ item: ConversationItem, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(item.role == "user" ? "你" : item.role == "tool" ? (item.tool_name ?? "工具") : item.role == "reasoning" ? "思考" : "Wisp Science")
-                    .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
-                if let ok = item.ok { Text(ok ? "已完成" : "失败").font(WispDesign.font(size: 11)).foregroundStyle(ok ? color("clay") : .orange) }
-                if let status = item.status { Text(status).font(.caption).foregroundStyle(.secondary) }
-                if let duration = item.duration_ms { Text(String(format: "%.1f s", Double(duration) / 1000)).font(.caption).foregroundStyle(.secondary).help(localized("工具耗时")) }
-                if let name = item.model_name, !name.isEmpty { Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(name) }
-                if let timestamp = item.timestamp, timestamp > 0 {
-                    Text(Date(timeIntervalSince1970: Double(timestamp)), style: .time).font(.caption).foregroundStyle(.secondary)
-                        .help(Date(timeIntervalSince1970: Double(timestamp)).formatted(date: .abbreviated, time: .standard))
-                }
-            }
-            if item.role == "tool" {
-                DisclosureGroup(isExpanded: Binding(get: {
-                    expandedTools.contains(index)
-                }, set: { expanded in
-                    if expanded { expandedTools.insert(index) } else { expandedTools.remove(index) }
-                })) {
-                    if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
-                    selectableMessage(item, index: index)
-                } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
-            } else if item.role == "question", let question = NativeQuestion(item.text) {
-                NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
-                    .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
-            } else {
-                selectableMessage(item, index: index)
-                if item.role == "user" {
-                    let files = SavedAttachments.files(in: item.text)
-                    ForEach(Array(files.enumerated()), id: \.offset) { _, file in
-                        Text((file as NSString).lastPathComponent)
-                            .font(WispDesign.font(size: 12))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
-                            .accessibilityLabel("附件 \((file as NSString).lastPathComponent)")
+    @ViewBuilder private func message(_ item: ConversationItem, index: Int) -> some View {
+        if item.role == "usage" {
+            if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(item.role == "user" ? "你" : item.role == "tool" ? (item.tool_name ?? "工具") : item.role == "reasoning" ? "思考" : "Wisp Science")
+                        .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
+                    if let ok = item.ok { Text(ok ? "已完成" : "失败").font(WispDesign.font(size: 11)).foregroundStyle(ok ? color("clay") : .orange) }
+                    if let status = item.status { Text(status).font(.caption).foregroundStyle(.secondary) }
+                    if let duration = item.duration_ms { Text(String(format: "%.1f s", Double(duration) / 1000)).font(.caption).foregroundStyle(.secondary).help(localized("工具耗时")) }
+                    if let name = item.model_name, !name.isEmpty { Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(name) }
+                    if let timestamp = item.timestamp, timestamp > 0 {
+                        Text(Date(timeIntervalSince1970: Double(timestamp)), style: .time).font(.caption).foregroundStyle(.secondary)
+                            .help(Date(timeIntervalSince1970: Double(timestamp)).formatted(date: .abbreviated, time: .standard))
                     }
                 }
-            }
-            if ["user", "assistant", "reasoning"].contains(item.role), !item.text.isEmpty {
-                NativeMessageActions(source: item.role == "user" ? SavedAttachments.body(in: item.text) : item.text, quote: quoteSelection, save: { _ in
-                    guard let projectID, let sessionID else { return }
-                    let selection = NativeConversationModel.renderedText(item)
-                    Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
-                })
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
-            .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
+                if item.role == "tool" {
+                    DisclosureGroup(isExpanded: Binding(get: {
+                        expandedTools.contains(index)
+                    }, set: { expanded in
+                        if expanded { expandedTools.insert(index) } else { expandedTools.remove(index) }
+                    })) {
+                        if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
+                        selectableMessage(item, index: index)
+                    } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
+                } else if item.role == "question", let question = NativeQuestion(item.text) {
+                    NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
+                        .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
+                } else {
+                    selectableMessage(item, index: index)
+                    if item.role == "user" {
+                        let files = SavedAttachments.files(in: item.text)
+                        ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                            Text((file as NSString).lastPathComponent)
+                                .font(WispDesign.font(size: 12))
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
+                                .accessibilityLabel("附件 \((file as NSString).lastPathComponent)")
+                        }
+                    }
+                }
+                if ["user", "assistant", "reasoning"].contains(item.role), !item.text.isEmpty {
+                    NativeMessageActions(source: item.role == "user" ? SavedAttachments.body(in: item.text) : item.text, quote: quoteSelection, save: { _ in
+                        guard let projectID, let sessionID else { return }
+                        let selection = NativeConversationModel.renderedText(item)
+                        Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
+                    })
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
+        }
     }
     private func selectableMessage(_ item: ConversationItem, index: Int, input: Bool = false) -> some View {
         NativeSelectableMessage(text: markedText(item, index: index, input: input), saved: conversation.savedHighlights.map(\.code), quote: quoteSelection, save: { selection in
