@@ -5,6 +5,44 @@ range to the existing Rust desktop host. No second database writer or WebView
 project activation was added. Build with `scripts/build_native_windows.ps1`.
 An alternate browser database still requires a matching running host descriptor.
 
+## Reading, panels and session actions (2026-10-01)
+
+Gap audit and batches W1–W5 from
+[the WinUI parity plan](superpowers/plans/2026-10-01-winui-webview-parity-gap-plan.md)
+landed in the WinUI preview against the shared host, with no new host commands:
+
+- Reading: pipe tables render as real grids, code fences get token
+  highlighting from `NativeCodeHighlight` (unknown languages stay plain), a
+  language label and a copy action; per-turn usage rows render as the compact
+  `输入 x · 输出 y tokens · 缓存 z · 思考 w` line; local markdown images and
+  `view_image` tool results render inline from existing file paths. Formulas
+  still render as source; remote images are never fetched.
+- Panels: artifacts group by type with counts, image artifacts/files preview
+  from host base64, notebook cells show collapsible output, the agents tab
+  gains the explanation and delegation-state cards (delegation toggle with
+  no-retry semantics), and the tab strip scrolls horizontally.
+- Session actions: per-session menus wire `native_conversation_rename/pin/delete`
+  (confirmation for delete, failures never retried), message rows gain 复制,
+  and `BrowserSession` decodes the optional `pinned` field so a leading
+  已置顶 section appears in every grouping mode.
+- Runtime console: the hosts tab lists live runtimes (stop/restart/dismiss),
+  run records (detail, cancel, harvest) and an execute panel (context +
+  python/R + code) over `NativeContextActivityClient`; reads never start a
+  runtime and all mutations are guarded, ambiguous ones reported without retry.
+- Composer: an 环境 entry opens the hosts panel and a client-side slash
+  subset (`/upload /files /outline /share /trajectory /archive /library
+  /calendar /journey /publication /settings /scratch`) routes to existing
+  native surfaces; unknown commands keep the draft and list the set.
+
+Automated validation: the complete C# contract harness passed, including new
+`NativeTranscriptTests` (usage formatting, tokenizer, image paths) and
+`NativeWorkspaceActionsTests` (artifact grouping, pinned sections,
+rename/pin/delete semantics). Release publish and a live preview walkthrough
+(same project/session on both surfaces) verified tables, usage lines, message
+actions, the slash hint, session menus and the agents/delegation cards. W6
+decisions (WebView2-based VT terminal and rich viewers; deferred items) are
+recorded in the plan.
+
 | Reference | Windows behavior |
 | --- | --- |
 | #1332–#1333 | Native search already scrolls its selected result into view. Home now opens the same tutorials URL. The WebView command palette and Help menu fixes remain shared. |

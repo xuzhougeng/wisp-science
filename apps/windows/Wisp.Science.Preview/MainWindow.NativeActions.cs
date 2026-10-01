@@ -99,6 +99,47 @@ internal sealed partial class MainWindow
         finally { openingAction = false; }
     }
     private void CloseProjectPage() { projectPage?.Dispose(); projectPage = null; Render(); }
+
+    /// <summary>Run a session mutation on the groups model, then refresh the sidebar.
+    /// Failed or ambiguous mutations stay on the session list without retry.</summary>
+    private async Task SessionMutationAsync(Task<bool> mutation, string? refreshSession = null)
+    {
+        var ok = await mutation;
+        if (!ok || model.ActiveProjectId is not { } current) return;
+        await model.OpenProjectAsync(current, refreshSession ?? model.ActiveSessionId);
+    }
+
+    private async Task PromptSessionRenameAsync(BrowserSession session)
+    {
+        if (sessionGroups == null || sessionGroups.Busy) return;
+        var name = new TextBox { Text = session.Title, PlaceholderText = "会话名称" };
+        var dialog = new ContentDialog
+        {
+            Title = "重命名会话",
+            Content = name,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            XamlRoot = root.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        await SessionMutationAsync(sessionGroups.RenameAsync(session.Id, name.Text), session.Id == model.ActiveSessionId ? session.Id : null);
+    }
+
+    private async Task PromptSessionDeleteAsync(BrowserSession session)
+    {
+        if (sessionGroups == null || sessionGroups.Busy) return;
+        var dialog = new ContentDialog
+        {
+            Title = "删除会话",
+            Content = $"永久删除“{session.Title}”？这个会话的运行会先被停止，删除无法撤销。",
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            XamlRoot = root.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        await SessionMutationAsync(sessionGroups.DeleteAsync(session.Id), session.Id == model.ActiveSessionId ? null : model.ActiveSessionId);
+    }
+
     private async Task EditGroup(string? id = null)
     {
         if (workspaceSheet != null || settingsPage != null || sessionGroups == null || sessionGroups.Busy) return;
@@ -168,24 +209,72 @@ internal sealed partial class MainWindow
                 }
                 else
                 {
+                    var row = new Grid();
+                    row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+                    row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                     var button = ContentButton(SingleLine(session.Title, 12), () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id, session.Title);
                     if (session.Id == model.ActiveSessionId) button.Background = design.Brush("surface-hover");
-                    list.Children.Add(button);
+                    row.Children.Add(button);
+                    if (sessionGroups is { } mutationGroups)
+                    {
+                        var more = ActionButton("会话操作", "more", () => { }, quiet: true);
+                        var menu = new MenuFlyout();
+                        var rename = new MenuFlyoutItem { Text = "重命名会话" };
+                        rename.Click += (_, _) => _ = PromptSessionRenameAsync(session);
+                        menu.Items.Add(rename);
+                        var pin = new MenuFlyoutItem { Text = session.Pinned == true ? "取消置顶" : "置顶" };
+                        pin.IsEnabled = session.Pinned != null;
+                        pin.Click += (_, _) => _ = SessionMutationAsync(mutationGroups.PinAsync(session.Id, session.Pinned != true),
+                            refreshSession: session.Id == model.ActiveSessionId ? session.Id : null);
+                        menu.Items.Add(pin);
+                        var delete = new MenuFlyoutItem { Text = "删除会话…" };
+                        delete.Click += (_, _) => _ = PromptSessionDeleteAsync(session);
+                        menu.Items.Add(delete);
+                        Register(menu); more.Flyout = menu;
+                        Grid.SetColumn(more, 1); row.Children.Add(more);
+                    }
+                    list.Children.Add(row);
                 }
             }
         }
         var scroll = new ScrollViewer { Content = list, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); section.Children.Add(scroll); return section;
     }
-    private void ShowFiles()
+    private void ShowFiles() => ShowPanelTab("files");
+
+    /// <summary>Open the side panel on one tab; shared by the files shortcut
+    /// and the composer slash/环境 entries.</summary>
+    private void ShowPanelTab(string tab)
     {
         var tabs = new NativePanelTabs(settings.PanelTabs, settings.PanelTab, NativePanelTabs.All);
-        tabs.Show("files");
+        tabs.Show(tab);
         settings.PanelTabs = tabs.Saved; settings.PanelTab = tabs.Selected;
         panelVisible = true; settings.PanelVisible = true; SaveSettings();
         if (panelPage == null) _ = EnsurePanelAndTerminalAsync();
-        else _ = panelPage.ShowFilesAsync();
+        else _ = panelPage.ShowTabAsync(tab);
         Render();
+    }
+
+    /// <summary>Composer slash mapping. Only commands with a working native
+    /// surface are routed; anything else falls back to the hint text.</summary>
+    private bool RouteSlashCommand(string draft)
+    {
+        var command = draft.Split([' ', '\n'], 2)[0].ToLowerInvariant();
+        switch (command)
+        {
+            case "/files": ShowPanelTab("files"); return true;
+            case "/outline": _ = OpenSheet("outline"); return true;
+            case "/share": _ = OpenSheet("share"); return true;
+            case "/trajectory": _ = OpenSheet("trajectory"); return true;
+            case "/archive": _ = OpenSheet("archive"); return true;
+            case "/library": _ = OpenNativeAction("library"); return true;
+            case "/calendar": _ = OpenNativeAction("calendar"); return true;
+            case "/journey": _ = OpenNativeAction("journey"); return true;
+            case "/publication": _ = OpenNativeAction("publication"); return true;
+            case "/settings": OpenSettings(); return true;
+            case "/scratch": _ = OpenNativeAction("scratch"); return true;
+            default: return false;
+        }
     }
     private async Task<string?> PickFile(string extension)
     {

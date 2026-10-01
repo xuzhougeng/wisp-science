@@ -17,6 +17,85 @@ public sealed class WorkspacePanelModel
     public NativeNotebookStar[] NotebookStars { get; private set; } = [];
     public NativeAgentSnapshot[] Agents { get; private set; } = [];
     public NativeAgentResult? AgentResult { get; private set; }
+    public bool? DelegationEnabled { get; private set; }
+    public bool DelegationBusy { get; private set; }
+    public NativeContextActivity? Activity { get; private set; }
+    public NativeRuntimeExecution? Execution { get; private set; }
+    public NativeRun? RunDetail { get; private set; }
+    public bool ActivityBusy { get; private set; }
+
+    /// <summary>Run one guarded runtime mutation, then refresh the hosts tab.
+    /// Failures keep the previous state and are never retried automatically;
+    /// an ambiguous stop/dismiss reports an explicit "check manually" error.</summary>
+    private async Task PerformActivityAsync(Func<CancellationToken, Task> request, CancellationToken cancellationToken, bool ambiguousAllowed = false)
+    {
+        if (activity is null || ActivityBusy) return;
+        var epoch = generation; ActivityBusy = true; Error = null;
+        try
+        {
+            await request(cancellationToken);
+            if (epoch == generation && Tabs.Selected == "hosts") await RefreshAsync("hosts", cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (epoch == generation) Error = (ambiguousAllowed ? "结果未确认，请刷新核对；不会自动重试。" : "操作未确认成功；不会自动重试。") + "\n" + ex.Message;
+        }
+        finally { if (epoch == generation) ActivityBusy = false; }
+    }
+
+    public Task StartRuntimeAsync(string contextId, string language, CancellationToken cancellationToken = default) =>
+        PerformActivityAsync(token => activity!.StartRuntimeAsync(projectId, sessionId, contextId, language, token), cancellationToken);
+    public Task StopRuntimeAsync(string runtimeId, ulong generation, CancellationToken cancellationToken = default) =>
+        PerformActivityAsync(async token =>
+        {
+            if (await activity!.StopRuntimeAsync(projectId, sessionId, runtimeId, generation, token) is null)
+                throw new InvalidOperationException("停止结果未知。");
+        }, cancellationToken, ambiguousAllowed: true);
+    public Task RestartRuntimeAsync(string runtimeId, ulong generation, CancellationToken cancellationToken = default) =>
+        PerformActivityAsync(token => activity!.RestartRuntimeAsync(projectId, sessionId, runtimeId, generation, token), cancellationToken);
+    public Task DismissRuntimeAsync(string runtimeId, ulong generation, CancellationToken cancellationToken = default) =>
+        PerformActivityAsync(async token =>
+        {
+            await activity!.DismissRuntimeAsync(projectId, sessionId, runtimeId, generation, token);
+        }, cancellationToken, ambiguousAllowed: true);
+    public Task ExecuteAsync(string contextId, string language, string code, CancellationToken cancellationToken = default)
+    {
+        var epochValue = generation;
+        return PerformActivityAsync(async token =>
+        {
+            var result = await activity!.ExecuteAsync(projectId, sessionId, contextId, language, code, token);
+            if (epochValue == generation) Execution = result;
+        }, cancellationToken);
+    }
+    public Task CancelRunAsync(string runId, CancellationToken cancellationToken = default) =>
+        PerformActivityAsync(async token =>
+        {
+            var run = await activity!.CancelRunAsync(projectId, sessionId, runId, token);
+            if (run is null) throw new InvalidOperationException("取消结果未知。");
+        }, cancellationToken);
+    public Task HarvestRunAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        var epochValue = generation;
+        return PerformActivityAsync(async token =>
+        {
+            var run = await activity!.HarvestRunAsync(projectId, sessionId, runId, token);
+            if (run is null) throw new InvalidOperationException("收取结果未知。");
+            if (epochValue == generation) RunDetail = run;
+        }, cancellationToken);
+    }
+    public async Task ReadRunAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        if (activity is null) return;
+        var current = generation;
+        try
+        {
+            var run = await activity.ReadRunAsync(projectId, sessionId, runId, cancellationToken);
+            if (current == generation) { RunDetail = run; Error = null; }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { if (current == generation) Error = ex.Message; }
+    }
+
     public bool PreviewEditable { get; private set; }
     public string Path { get; private set; } = ".";
     public bool Loading { get; private set; }
@@ -35,12 +114,14 @@ public sealed class WorkspacePanelModel
     private readonly INativeHighlightClient? highlights;
     private readonly INativeNotebookClient? notebook;
     private readonly INativeAgentPanelClient? agents;
+    private readonly INativeContextActivityClient? activity;
 
     public WorkspacePanelModel(INativePanelClient client, string projectId, string sessionId, NativePanelTabs tabs,
-        INativeHighlightClient? highlights = null, INativeNotebookClient? notebook = null, INativeAgentPanelClient? agents = null)
+        INativeHighlightClient? highlights = null, INativeNotebookClient? notebook = null, INativeAgentPanelClient? agents = null,
+        INativeContextActivityClient? activity = null)
     {
         this.client = client; this.projectId = projectId; this.sessionId = sessionId; Tabs = tabs;
-        this.highlights = highlights; this.notebook = notebook; this.agents = agents;
+        this.highlights = highlights; this.notebook = notebook; this.agents = agents; this.activity = activity;
     }
 
     public async Task RefreshAsync(string tab, string? directory = null, CancellationToken cancellationToken = default)
@@ -53,10 +134,18 @@ public sealed class WorkspacePanelModel
         {
             if (tab is "provenance" or "sidechat") return;
             if (tab == "artifacts") Artifacts = await client.ArtifactsAsync(projectId, sessionId, cancellationToken);
-            else if (tab == "hosts") Contexts = await client.ContextsAsync(projectId, sessionId, cancellationToken);
+            else if (tab == "hosts")
+            {
+                Contexts = await client.ContextsAsync(projectId, sessionId, cancellationToken);
+                if (activity is not null) Activity = await activity.ReadAsync(projectId, sessionId, cancellationToken);
+            }
             else if (tab == "highlights" && highlights is not null) Highlights = await highlights.ListAsync(projectId, sessionId, cancellationToken);
             else if (tab == "notebook" && notebook is not null) NotebookStars = await notebook.ListStarsAsync(projectId, sessionId, cancellationToken);
-            else if (tab == "agents" && agents is not null) Agents = await agents.ListAsync(projectId, sessionId, cancellationToken);
+            else if (tab == "agents" && agents is not null)
+            {
+                Agents = await agents.ListAsync(projectId, sessionId, cancellationToken);
+                DelegationEnabled = await agents.GetDelegationAsync(projectId, sessionId, cancellationToken);
+            }
             else if (tab == "files")
             {
                 Files = await client.FilesAsync(projectId, sessionId, requested, cancellationToken);
@@ -160,6 +249,23 @@ public sealed class WorkspacePanelModel
         catch (Exception ex) when (ex is not OperationCanceledException)
         { if (generation == current) Error = ex.Message; }
         finally { if (generation == current) ContextBusy = false; }
+    }
+
+    public async Task SetDelegationAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (agents is null || DelegationBusy) return;
+        var epoch = generation; DelegationBusy = true;
+        try
+        {
+            if (!await agents.SetDelegationAsync(projectId, sessionId, enabled, cancellationToken))
+                throw new InvalidOperationException("委派设置未确认。");
+            if (epoch == generation) DelegationEnabled = enabled;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (epoch == generation) Error = "委派设置未确认，未自动重试。请刷新后重试。" + ex.Message;
+        }
+        finally { if (epoch == generation) DelegationBusy = false; }
     }
 
     public async Task ActAgentAsync(NativeAgentSnapshot snapshot, NativeAgentAction action, CancellationToken cancellationToken = default)

@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Wisp.ProjectBrowser;
 using Wisp.ProjectBrowser.Contracts;
 
@@ -15,11 +17,14 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
     private readonly Action close;
     private readonly TextBox filter = new() { PlaceholderText = "筛选名称" };
     private readonly StackPanel body = new() { Spacing = 8 };
+    private readonly Dictionary<string, FrameworkElement> previewImages = [];
+    private readonly HashSet<string> previewLoading = [];
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed;
-    public async Task ShowFilesAsync()
+    public async Task ShowFilesAsync() => await ShowTabAsync("files");
+    public async Task ShowTabAsync(string tab)
     {
-        try { await model.RefreshAsync("files", cancellationToken: lifetime.Token); Render(); }
+        try { await model.RefreshAsync(tab, cancellationToken: lifetime.Token); Render(); }
         catch (OperationCanceledException) { }
     }
 
@@ -36,13 +41,20 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
         var header = new Grid();
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var tabStrip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var tabs = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollMode = ScrollMode.Disabled,
+            Content = tabStrip
+        };
         foreach (var id in model.Tabs.Available)
         {
             var captured = id;
             var tab = new Button { Content = Label(id), Padding = new Thickness(8, 4, 8, 4) };
             tab.Click += async (_, _) => { await model.RefreshAsync(captured, cancellationToken: lifetime.Token); Render(); };
-            tabs.Children.Add(tab);
+            tabStrip.Children.Add(tab);
         }
         header.Children.Add(tabs);
         var dismiss = new Button { Content = design.Icon("close", 14), Padding = new Thickness(6) };
@@ -96,14 +108,23 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderArtifacts(string query)
     {
-        foreach (var artifact in model.Artifacts.Where(item => query.Length == 0 || item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        var groups = NativeArtifactGroups.Collect(model.Artifacts, query);
+        foreach (var group in groups)
         {
-            var captured = artifact;
-            var button = Row(captured.Name, captured.Kind + " · " + (captured.LogicalPath ?? captured.Path), "doc");
-            button.Click += async (_, _) => { await model.ReadArtifactAsync(captured.Id, lifetime.Token); Render(); };
-            body.Children.Add(button);
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 6, 0, 0) };
+            header.Children.Add(new TextBlock { Text = group.Label, FontSize = 12, Foreground = design.Brush("text-muted"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            header.Children.Add(new TextBlock { Text = group.Items.Count.ToString(), FontSize = 11, Foreground = design.Brush("text-faint"), VerticalAlignment = VerticalAlignment.Bottom });
+            body.Children.Add(header);
+            foreach (var artifact in group.Items)
+            {
+                var captured = artifact;
+                var button = Row(captured.Name, (captured.LogicalPath ?? captured.Path), "doc");
+                button.Click += async (_, _) => { await model.ReadArtifactAsync(captured.Id, lifetime.Token); Render(); };
+                body.Children.Add(button);
+            }
         }
         if (model.Artifacts.Length == 0 && !model.Loading) body.Children.Add(Mute("这个会话暂无产物"));
+        else if (groups.Count == 0 && !model.Loading) body.Children.Add(Mute("没有匹配的产物"));
     }
 
     private void RenderFiles(string query)
@@ -198,15 +219,173 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
             body.Children.Add(row);
         }
         if ((model.Contexts?.Contexts.Length ?? 0) == 0) body.Children.Add(Mute("没有已连接的运行环境"));
+        RenderRuntimes();
+        RenderExecutePanel();
+        RenderRuns();
     }
+
+    private void RenderRuntimes()
+    {
+        var activity = model.Activity;
+        if (activity is null) return;
+        body.Children.Add(TextHeading("运行时"));
+        if (activity.Runtimes.Length == 0) body.Children.Add(Mute("没有已启动的解释器；执行代码会自动按环境启动。"));
+        foreach (var runtime in activity.Runtimes)
+        {
+            var captured = runtime;
+            var card = new StackPanel { Spacing = 4 };
+            var detail = $"{runtime.Status}" +
+                (string.IsNullOrEmpty(runtime.Interpreter) ? "" : " · " + runtime.Interpreter) +
+                (runtime.ResidentMemoryBytes is { } memory ? $" · {memory / 1024 / 1024} MB" : "");
+            if (!string.IsNullOrEmpty(runtime.LastError)) detail += "\n" + runtime.LastError;
+            card.Children.Add(Row($"{runtime.Key.Language} · {runtime.Key.ContextId}", detail, "gauge"));
+            if (!activity.ReadOnly)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+                var stop = new Button { Content = "停止", IsEnabled = !model.ActivityBusy };
+                stop.Click += async (_, _) => { await model.StopRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
+                var restart = new Button { Content = "重启", IsEnabled = !model.ActivityBusy };
+                restart.Click += async (_, _) => { await model.RestartRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
+                var dismiss = new Button { Content = "丢弃", IsEnabled = !model.ActivityBusy };
+                dismiss.Click += async (_, _) => { await model.DismissRuntimeAsync(captured.RuntimeId, captured.Generation, lifetime.Token); Render(); };
+                row.Children.Add(stop); row.Children.Add(restart); row.Children.Add(dismiss);
+                card.Children.Add(row);
+            }
+            body.Children.Add(card);
+        }
+    }
+
+    private void RenderExecutePanel()
+    {
+        var activity = model.Activity;
+        if (activity is null) return;
+        body.Children.Add(TextHeading("执行代码"));
+        var attached = (model.Contexts?.Attached ?? []).Where(c => activity.Runtimes.Any(r => r.Key.ContextId == c.Id) || c.Kind == "local").ToArray();
+        if (model.Contexts is { ReadOnly: true } || attached.Length == 0)
+        {
+            body.Children.Add(Mute("当前环境只读或未连接，执行面板不可用。"));
+            return;
+        }
+        var contextPicker = new ComboBox { MaxWidth = 280, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var context in attached) contextPicker.Items.Add(new ComboBoxItem { Content = context.Label, Tag = context.Id });
+        contextPicker.SelectedIndex = 0;
+        var languagePicker = new ComboBox { MaxWidth = 120 };
+        foreach (var language in new[] { "python", "r" }) languagePicker.Items.Add(new ComboBoxItem { Content = language, Tag = language });
+        languagePicker.SelectedIndex = 0;
+        var code = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80,
+            PlaceholderText = "输入要执行的代码…", FontFamily = design.Font(true), FontSize = design.FontSize(12, true) };
+        var run = new Button { Content = "执行", IsEnabled = !model.ActivityBusy };
+        run.Click += async (_, _) =>
+        {
+            if (contextPicker.SelectedItem is ComboBoxItem contextItem && languagePicker.SelectedItem is ComboBoxItem languageItem
+                && code.Text.Trim().Length > 0)
+                await model.ExecuteAsync((string)contextItem.Tag, (string)languageItem.Tag, code.Text, lifetime.Token);
+            Render();
+        };
+        body.Children.Add(contextPicker); body.Children.Add(languagePicker); body.Children.Add(code); body.Children.Add(run);
+        if (model.Execution is { } execution)
+        {
+            if (execution.Text.Length > 0)
+                body.Children.Add(new TextBox { Text = execution.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                    FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 220 });
+            foreach (var plot in execution.Plots.Where(File.Exists))
+            {
+                try
+                {
+                    body.Children.Add(new Border
+                    {
+                        Child = new Image { Source = new BitmapImage(new Uri(Path.GetFullPath(plot))), MaxHeight = 260, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left },
+                        CornerRadius = new CornerRadius(8), Padding = new Thickness(4), Background = design.Brush("bg-app")
+                    });
+                }
+                catch { }
+            }
+        }
+    }
+
+    private void RenderRuns()
+    {
+        var activity = model.Activity;
+        if (activity is null) return;
+        body.Children.Add(TextHeading("运行记录"));
+        if (activity.Runs.Length == 0) { body.Children.Add(Mute("暂无运行记录。")); return; }
+        foreach (var run in activity.Runs)
+        {
+            var captured = run;
+            var card = new StackPanel { Spacing = 4 };
+            var detail = $"{run.Status} · {run.Kind}" + (run.ExitCode is { } exit ? $" · 退出码 {exit}" : "");
+            var rowButton = Row(run.Title, detail, "list");
+            rowButton.Click += async (_, _) => { await model.ReadRunAsync(captured.Id, lifetime.Token); Render(); };
+            card.Children.Add(rowButton);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            if (run.Status is "running" or "pending" or "submitted")
+            {
+                var cancel = new Button { Content = "取消", IsEnabled = !model.ActivityBusy };
+                cancel.Click += async (_, _) => { await model.CancelRunAsync(captured.Id, lifetime.Token); Render(); };
+                row.Children.Add(cancel);
+            }
+            if (run.HarvestedAt is null && run.Status is not ("running" or "pending" or "submitted"))
+            {
+                var harvest = new Button { Content = "收取", IsEnabled = !model.ActivityBusy };
+                harvest.Click += async (_, _) => { await model.HarvestRunAsync(captured.Id, lifetime.Token); Render(); };
+                row.Children.Add(harvest);
+            }
+            if (row.Children.Count > 0) card.Children.Add(row);
+            body.Children.Add(card);
+        }
+        if (model.RunDetail is { } runDetail)
+        {
+            var card = new StackPanel { Spacing = 4 };
+            card.Children.Add(TextHeading(runDetail.Title));
+            card.Children.Add(Mute($"{runDetail.Status} · {runDetail.Kind} · {runDetail.Id}"));
+            if (!string.IsNullOrEmpty(runDetail.Command)) card.Children.Add(new TextBox { Text = runDetail.Command, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true) });
+            if (!string.IsNullOrEmpty(runDetail.StdoutTail)) card.Children.Add(new TextBox { Text = runDetail.StdoutTail, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 180 });
+            if (!string.IsNullOrEmpty(runDetail.StderrTail)) card.Children.Add(new TextBox { Text = runDetail.StderrTail, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 120 });
+            if (runDetail.CleanupError is { } cleanupError) card.Children.Add(Mute(cleanupError));
+            body.Children.Add(card);
+        }
+    }
+
+    private TextBlock TextHeading(string value) => new()
+    {
+        Text = value, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        Foreground = design.Brush("text-muted"), Margin = new Thickness(0, 10, 0, 0)
+    };
 
     private void RenderAgents(string query)
     {
+        // Explanation card mirrors the macOS alignment: delegation is opt-in and
+        // never implies auto-approval; approval actions below stay version-checked.
+        var intro = new StackPanel { Spacing = 4, Padding = new Thickness(10), Background = design.Brush("bg-elev"), CornerRadius = new CornerRadius(8) };
+        intro.Children.Add(new TextBlock { Text = "Agent 工作流", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        intro.Children.Add(new TextBlock
+        {
+            Text = "工作流由会话中的 Agent 创建。需要确认的工作流必须先批准；开启委派不会自动批准任何操作。",
+            FontSize = 11, Foreground = design.Brush("text-muted"), TextWrapping = TextWrapping.Wrap
+        });
+        body.Children.Add(intro);
+        if (model.DelegationEnabled is { } delegation)
+        {
+            var delegationCard = new StackPanel { Spacing = 4, Padding = new Thickness(10), Background = design.Brush(delegation ? "bg-elev" : "bg-sunken"), CornerRadius = new CornerRadius(8) };
+            delegationCard.Children.Add(new TextBlock
+            {
+                Text = delegation ? "委派已开启：会话可把子任务委派给工作流。" : "委派已关闭：会话不会创建新的委派任务。",
+                FontSize = 12, TextWrapping = TextWrapping.Wrap
+            });
+            var toggle = new Button
+            {
+                Content = delegation ? "关闭委派" : "开启委派",
+                IsEnabled = !model.DelegationBusy && model.Tabs.Selected == "agents"
+            };
+            toggle.Click += async (_, _) => { await model.SetDelegationAsync(!delegation, lifetime.Token); Render(); };
+            delegationCard.Children.Add(toggle);
+            body.Children.Add(delegationCard);
+        }
         foreach (var agent in model.Agents.Where(item => query.Length == 0 || item.Workflow.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
         {
             var captured = agent;
             var card = new StackPanel { Spacing = 4 };
-            card.Children.Add(Row(captured.Workflow.Name, captured.Workflow.Status, "sparkles"));
+            card.Children.Add(Row(captured.Workflow.Name, captured.Workflow.Status + (captured.Workflow.Depth > 0 ? " · 子工作流" : ""), "sparkles"));
             if (captured.Workflow.Depth == 0)
             {
                 var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
@@ -228,13 +407,35 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
         foreach (var cell in NativeNotebookCell.Collect(transcript()).Where(cell => query.Length == 0 || cell.Source.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
         {
             var captured = cell;
-            var row = new StackPanel { Spacing = 4 };
-            row.Children.Add(Row(captured.Language, captured.Source, "book"));
+            var card = new StackPanel { Spacing = 4 };
+            card.Children.Add(Row(captured.Language, StatusLabel(cell), "book"));
+            card.Children.Add(new TextBox
+            {
+                Text = captured.Source, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 160
+            });
+            if (captured.Output.Length > 0)
+                card.Children.Add(new Expander
+                {
+                    Header = new TextBlock { Text = "输出", FontSize = 11, Foreground = design.Brush("text-muted") },
+                    Content = new TextBox
+                    {
+                        Text = captured.Output, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                        FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 220
+                    },
+                    IsExpanded = cell.OutputInitiallyExpanded
+                });
             var star = new Button { Content = model.NotebookStars.Any(item => item.Matches(captured)) ? "取消收藏" : "收藏代码" };
             star.Click += async (_, _) => { await model.ToggleNotebookStarAsync(captured, lifetime.Token); Render(); };
-            row.Children.Add(star); body.Children.Add(row);
+            card.Children.Add(star); body.Children.Add(card);
         }
+        if (!NativeNotebookCell.Collect(transcript()).Any()) body.Children.Add(Mute("暂无代码单元"));
     }
+
+    private static string StatusLabel(NativeNotebookCell cell) => cell.Status switch
+    {
+        "ok" => "执行完成", "error" => "执行出错", "source" => "草稿", _ => "运行中"
+    };
 
     private void RenderHighlights(string query)
     {
@@ -281,28 +482,71 @@ internal sealed class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderPreview()
     {
-        if (model.Preview?.Text is not { } text) return;
-        body.Children.Add(new TextBlock { Text = model.Preview.Path, FontSize = 12, Foreground = design.Brush("text-muted") });
-        var editor = new TextBox { Text = text, IsReadOnly = !model.PreviewEditable, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
-        body.Children.Add(editor);
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        if (!model.PreviewEditable)
+        if (model.Preview?.Text is { } text)
         {
-            var edit = new Button { Content = "编辑" }; edit.Click += (_, _) => { model.EditPreview(); Render(); };
-            row.Children.Add(edit);
-        }
-        else
-        {
-            var save = new Button { Content = "保存" };
-            save.Click += async (_, _) =>
+            body.Children.Add(new TextBlock { Text = model.Preview.Path, FontSize = 12, Foreground = design.Brush("text-muted") });
+            var editor = new TextBox { Text = text, IsReadOnly = !model.PreviewEditable, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
+            body.Children.Add(editor);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (!model.PreviewEditable)
             {
-                try { await model.SaveFileAsync(text, editor.Text, lifetime.Token); Render(); }
-                catch (Exception ex) { await ShowErrorAsync("保存未确认成功，不会自动重试。\n" + ex.Message); }
-            };
-            row.Children.Add(save);
+                var edit = new Button { Content = "编辑" }; edit.Click += (_, _) => { model.EditPreview(); Render(); };
+                row.Children.Add(edit);
+            }
+            else
+            {
+                var save = new Button { Content = "保存" };
+                save.Click += async (_, _) =>
+                {
+                    try { await model.SaveFileAsync(text, editor.Text, lifetime.Token); Render(); }
+                    catch (Exception ex) { await ShowErrorAsync("保存未确认成功，不会自动重试。\n" + ex.Message); }
+                };
+                row.Children.Add(save);
+            }
+            var dismiss = new Button { Content = "关闭预览" }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
+            row.Children.Add(dismiss); body.Children.Add(row);
+            return;
         }
-        var dismiss = new Button { Content = "关闭预览" }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
-        row.Children.Add(dismiss); body.Children.Add(row);
+        // Read-only image preview for artifacts/files the host returned as base64 bytes.
+        var content = model.Preview;
+        if (content?.Base64 is not { Length: > 0 } || content.Mime?.StartsWith("image/", StringComparison.Ordinal) != true) return;
+        var key = content.Path + "#" + content.TotalBytes;
+        if (previewImages.TryGetValue(key, out var loaded)) body.Children.Add(loaded);
+        else if (previewLoading.Add(key)) _ = LoadPreviewImageAsync(key, content);
+    }
+
+    private async Task LoadPreviewImageAsync(string key, NativePanelFileContent content)
+    {
+        try
+        {
+            var bytes = Convert.FromBase64String(content.Base64 ?? "");
+            if (bytes.Length > 0)
+            {
+                var source = new BitmapImage();
+                using (var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream())
+                using (var writer = new Windows.Storage.Streams.DataWriter(stream.GetOutputStreamAt(0)))
+                {
+                    writer.WriteBytes(bytes);
+                    await writer.StoreAsync();
+                    await writer.FlushAsync();
+                    stream.Seek(0);
+                    await source.SetSourceAsync(stream);
+                }
+                var stack = new StackPanel { Spacing = 4 };
+                stack.Children.Add(new TextBlock { Text = content.Path, FontSize = 12, Foreground = design.Brush("text-muted"), TextWrapping = TextWrapping.Wrap });
+                stack.Children.Add(new Border
+                {
+                    Child = new Image { Source = source, MaxHeight = 300, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left },
+                    CornerRadius = new CornerRadius(8), Padding = new Thickness(4), Background = design.Brush("bg-app")
+                });
+                if (content.Truncated) stack.Children.Add(Mute("内容被截断；预览可能不完整。"));
+                var dismiss = new Button { Content = "关闭预览" }; dismiss.Click += (_, _) => { model.DismissPreview(); Render(); };
+                stack.Children.Add(dismiss);
+                previewImages[key] = stack;
+            }
+        }
+        catch { } // Broken or non-image bytes fall back to no preview; rows stay selectable.
+        finally { previewLoading.Remove(key); if (!disposed) Render(); }
     }
 
     private Button Row(string title, string detail, string icon)

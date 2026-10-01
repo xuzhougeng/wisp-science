@@ -516,7 +516,8 @@ internal sealed partial class MainWindow : Window
         var host = await ConnectHostAsync();
         if (host == null || windowClosed || navigation != conversationNavigation || selectedProject != model.ActiveProjectId || selectedSession != model.ActiveSessionId) return;
         conversation ??= new WorkspaceConversationModel(new NativeConversationClient(host), host);
-        conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync, () => PickFile("*"));
+        conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync, () => PickFile("*"),
+            RouteSlashCommand, () => ShowPanelTab("hosts"));
         if (model.ActiveProjectId is { } project && model.ActiveSessionId is { } session)
         {
             sideChat = new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
@@ -558,7 +559,8 @@ internal sealed partial class MainWindow : Window
             var tabs = new NativePanelTabs(settings.PanelTabs, settings.PanelTab, NativePanelTabs.All);
             sideChat ??= new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
             panelPage = new NativeWorkspacePanel(new WorkspacePanelModel(panelClient, project, session, tabs,
-                new NativeHighlightClient(host), new NativeNotebookClient(host), new NativeAgentPanelClient(host)),
+                new NativeHighlightClient(host), new NativeNotebookClient(host), new NativeAgentPanelClient(host),
+                new NativeContextActivityClient(host)),
                 () => conversation?.VisibleItems ?? [],
                 design, TogglePanel, sideChat, context =>
                 {

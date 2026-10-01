@@ -57,6 +57,8 @@ await NativeScratchContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirect
 await NativeConversationContractTests.Run(args[0]);
 
 NativePanelTabsTests.Run();
+NativeTranscriptTests.Run();
+await NativeWorkspaceActionsTests.RunAsync();
 await AppearanceSettingsTests.RunAsync();
 await WorkspaceActionTests.RunAsync();
 await WorkspaceConversationTests.RunAsync(args[0]);

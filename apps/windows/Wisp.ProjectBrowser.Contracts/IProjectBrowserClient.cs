@@ -65,7 +65,8 @@ public sealed record BrowserSession(
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("ts")] long Timestamp,
     [property: JsonPropertyName("status")] string Status,
-    [property: JsonPropertyName("folder_id")] string? FolderId = null);
+    [property: JsonPropertyName("folder_id")] string? FolderId = null,
+    [property: JsonPropertyName("pinned")] bool? Pinned = null);
 
 public sealed record BrowserMessage(
     [property: JsonPropertyName("seq")] long Sequence,

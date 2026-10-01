@@ -73,15 +73,52 @@ public sealed class WorkspaceSessionGroups(INativeSettingsClient client, string 
         return true;
     }, _ => Selecting = false);
 
+    /// <summary>Rename the owned, unarchived conversation. The caller refreshes the session list;
+    /// an ambiguous response is never retried automatically.</summary>
+    public Task<bool> RenameAsync(string sessionId, string title) => RunAsync(async () =>
+    {
+        var trimmed = title.Trim();
+        if (trimmed.Length == 0) throw new InvalidOperationException("请填写会话名称。");
+        await client.InvokeAsync("native_conversation_rename", new() { ["session_id"] = sessionId, ["title"] = trimmed }, projectId);
+        return true;
+    }, _ => { });
+
+    public Task<bool> PinAsync(string sessionId, bool pinned) => RunAsync(async () =>
+    {
+        await client.InvokeAsync("native_conversation_pin", new() { ["session_id"] = sessionId, ["pinned"] = pinned }, projectId);
+        return true;
+    }, _ => { });
+
+    public Task<bool> DeleteAsync(string sessionId) => RunAsync(async () =>
+    {
+        await client.InvokeAsync("native_conversation_delete", new() { ["session_id"] = sessionId }, projectId);
+        return true;
+    }, _ => { });
+
     public SessionSection[] Sections(IEnumerable<BrowserSession> sessions)
     {
         var ordered = Sort == "name" ? sessions.OrderBy(s => s.Title, StringComparer.CurrentCultureIgnoreCase).ThenBy(s => s.Id).ToArray()
             : sessions.OrderByDescending(s => s.Timestamp).ThenBy(s => s.Id).ToArray();
-        if (Group == "date") return ordered.GroupBy(s => DateTimeOffset.FromUnixTimeSeconds(s.Timestamp).LocalDateTime.ToString("yyyy-MM-dd"))
+        SessionSection[] result;
+        if (Group == "date") result = ordered.GroupBy(s => DateTimeOffset.FromUnixTimeSeconds(s.Timestamp).LocalDateTime.ToString("yyyy-MM-dd"))
             .Select(g => new SessionSection(g.Key, null, g.ToArray())).ToArray();
-        if (Group != "folder") return [new("会话", null, ordered)];
-        return Folders.Select(f => new SessionSection(f.Name, f.Id, ordered.Where(s => s.FolderId == f.Id).ToArray()))
+        else if (Group != "folder") result = [new("会话", null, ordered)];
+        else result = Folders.Select(f => new SessionSection(f.Name, f.Id, ordered.Where(s => s.FolderId == f.Id).ToArray()))
             .Append(new("未分组", null, ordered.Where(s => !Folders.Any(f => f.Id == s.FolderId)).ToArray())).ToArray();
+        // Pinned conversations float in a leading section inside every grouping mode,
+        // like the macOS sidebar; unknown pin state keeps the row in place.
+        var pinned = ordered.Where(s => s.Pinned == true).ToArray();
+        if (pinned.Length > 0)
+        {
+            var pinnedIds = pinned.Select(s => s.Id).ToHashSet();
+            var sections = result.Select(section => new SessionSection(section.Title, section.FolderId,
+                    section.Sessions.Where(s => !pinnedIds.Contains(s.Id)).ToArray()))
+                .Where(section => section.FolderId != null || section.Sessions.Length > 0)
+                .ToList();
+            sections.Insert(0, new SessionSection("已置顶", null, pinned));
+            result = sections.ToArray();
+        }
+        return result;
     }
 }
 
