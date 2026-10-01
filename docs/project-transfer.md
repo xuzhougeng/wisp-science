@@ -2,6 +2,10 @@
 
 Wisp supports three deliberately different ways to bring a project onto a device:
 
+If a project reports that its SQLite database is unavailable, follow the
+[safe project-database recovery steps](project-database-recovery.zh-CN.md)
+before attempting to move or restore the workspace.
+
 - **Open a folder in place** registers an existing local folder as a project. The
   folder remains where it is and Wisp does not copy its files. Use this after
   copying a workspace yourself, checking out a repository, or placing it in a
