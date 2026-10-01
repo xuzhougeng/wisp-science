@@ -64,6 +64,14 @@ Choosing a level saves it as the profile's default — it applies to every
 conversation using that model and is not scoped to the current conversation.
 Choosing "default" clears the value so the provider decides.
 
+The composer footer surfaces the same value as a thinking-effort pill next to
+the model picker (brain icon, current level, dropdown). The footer reads
+context usage, model, thinking effort, Fast, send. The pill edits the same
+per-profile default through the same curated list — models whose provider
+rejects the effort parameter offer only "default" — and ACP agents hide the
+pill because their model and effort come from the agent configuration. Fast
+remains a separate lightning toggle between the pill and the send button.
+
 The add/edit model page includes collapsed **Request headers (advanced)**
 (请求附加信息（高级）). It explains that these settings add HTTP request headers
 to requests sent to the model service, including connection validation. Keep the

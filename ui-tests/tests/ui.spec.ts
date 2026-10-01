@@ -2450,8 +2450,7 @@ test("composer slash commands run the matching shell actions", async ({ page }) 
     message: "/notacommand",
   });
 
-  // /fork fills via the picker; Enter then sends the payload as a branch,
-  // exactly like the "Branch in new session" send-mode item.
+  // /fork fills via the picker; Enter then sends the payload as a branch.
   await composerInput.pressSequentially("/fork");
   await menu.locator(".mention-item").filter({ hasText: "/fork" }).click();
   await expect(composerInput).toHaveValue("/fork ");
@@ -4283,9 +4282,8 @@ test("long unbroken user text wraps inside the chat column", async ({ page }) =>
 
 test("side chat answers in a temporary side panel and can switch model", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("what did the main thread miss?");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw what did the main thread miss?");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   await expect(panel).toBeVisible();
@@ -4325,9 +4323,8 @@ test("side chat answers in a temporary side panel and can switch model", async (
 
 test("side chat composer matches the main input and keeps long drafts contained", async ({ page }, testInfo) => {
   await enterApp(page);
-  await composer(page).fill("Check analysis progress");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw Check analysis progress");
+  await composer(page).press("Enter");
   const panel = page.locator(".rightpane");
   const input = panel.getByPlaceholder("Follow up…");
   const frame = panel.locator(".sidechat-composer-inner");
@@ -4363,9 +4360,8 @@ test("side chat composer matches the main input and keeps long drafts contained"
 
 test("side chat reports when the frozen conversation has no evidence", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("NO_EVIDENCE_TEST");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw NO_EVIDENCE_TEST");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   await expect(panel.getByText(
@@ -4380,9 +4376,8 @@ test("side chat reports when the frozen conversation has no evidence", async ({ 
 
 test("side chat stays at the latest message after sending and switching tabs", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("SIDESCROLLTEST");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw SIDESCROLLTEST");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   const log = panel.locator(".sidechat-log");
@@ -4926,9 +4921,8 @@ test("branch in new session starts a new frame from the current session", async 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 
-  await composer(page).fill("try another route");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Branch in new session" }).click();
+  await composer(page).fill("/fork try another route");
+  await composer(page).press("Enter");
 
   await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
     title: "try another route",

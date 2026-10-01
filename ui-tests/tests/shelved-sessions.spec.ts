@@ -132,14 +132,20 @@ test("shelving the active branch preserves its title and branch controls", async
   await page.locator(".ctx-menu").getByRole("button", { name: "Shelve conversation", exact: true }).click();
   await expect(branch).toHaveCount(0);
   await expect(page.locator(".center-tabs > .center-tab")).toContainText("Branch: alternate analysis");
-  await page.locator(".send-menu-toggle").click();
-  await expect(page.locator(".send-mode-menu")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Branch in new session", exact: true })).toHaveCount(0);
+  // The composer send dropdown is gone; the branch guard lives in the slash
+  // menu now (a branch cannot be branched again, so /fork is filtered out).
+  await expect(page.locator(".send-menu-toggle")).toHaveCount(0);
+  await page.locator("#composer-input").pressSequentially("/");
+  const slashMenu = page.locator(".mention-menu");
+  await expect(slashMenu).toBeVisible();
+  await expect(slashMenu).not.toContainText("/fork");
   await page.keyboard.press("Escape");
   await sidebarRow(page, "conversation-main").click();
   await openShelved(page);
   await shelvedDialog(page).getByRole("button", { name: "Branch: alternate analysis", exact: true }).click();
   await expect(page.locator(".center-tabs > .center-tab")).toContainText("Branch: alternate analysis");
-  await page.locator(".send-menu-toggle").click();
-  await expect(page.getByRole("button", { name: "Branch in new session", exact: true })).toHaveCount(0);
+  await page.locator("#composer-input").pressSequentially("/");
+  await expect(page.locator(".mention-menu")).toBeVisible();
+  await expect(page.locator(".mention-menu")).not.toContainText("/fork");
+  await page.keyboard.press("Escape");
 });

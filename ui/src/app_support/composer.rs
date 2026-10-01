@@ -4,12 +4,6 @@ use super::*;
 pub(crate) enum ComposerSendAction {
     Normal,
     BranchNew,
-    /// Guide choice: hand the message to the running task, which folds it in
-    /// at its next loop iteration (ACP sessions fall back to plain queueing).
-    GuideAppend,
-    /// Guide choice: stop the running task, roll its unfinished work out of
-    /// the model context, and send this message as the replacement.
-    InterruptReplace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

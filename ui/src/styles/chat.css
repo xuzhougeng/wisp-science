@@ -1638,7 +1638,26 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .model-picker-btn { min-width: 0; display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; cursor: pointer; max-width: min(220px, 38vw); transition: color .12s ease, border-color .12s ease, background .12s ease; }
 .model-picker-btn:hover, .model-picker-btn.active { color: var(--text); background: var(--bg-sunken); border-color: color-mix(in srgb, var(--clay-strong) 30%, var(--border-strong)); }
 .model-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale, 1)); letter-spacing: -.01em; }
-.model-picker-chev { flex: 0 0 auto; font-size: calc(9px * var(--ui-font-scale, 1)); color: var(--text-faint); margin-top: 1px; }
+.model-picker-chev { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); }
+.model-picker-chev svg { width: 11px; height: 11px; }
+/* Thinking-effort pill beside the model picker: brain glyph + current value +
+   caret, opening a dropdown over the selected model's effort values. */
+.composer-effort { position: relative; display: flex; flex: 0 1 auto; min-width: 0; }
+.composer-effort-btn { min-width: 0; display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; cursor: pointer; max-width: min(180px, 30vw); transition: color .12s ease, border-color .12s ease, background .12s ease; }
+.composer-effort-btn:hover, .composer-effort-btn.active { color: var(--text); background: var(--bg-sunken); border-color: color-mix(in srgb, var(--clay-strong) 30%, var(--border-strong)); }
+.composer-effort-glyph { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); }
+.composer-effort-glyph svg { width: 14px; height: 14px; }
+.composer-effort-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-effort-chev { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); }
+.composer-effort-chev svg { width: 11px; height: 11px; }
+.composer-effort-backdrop { position: fixed; inset: 0; z-index: 40; }
+.composer-effort-menu { position: absolute; z-index: 41; bottom: calc(100% + 8px); right: 0; min-width: 180px; max-height: 300px; overflow-y: auto; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 6px; transform-origin: bottom right; animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both; }
+.composer-effort-menu-label { padding: 4px 10px 6px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+.composer-effort-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--text); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); cursor: pointer; text-align: left; }
+.composer-effort-option:hover { background: var(--bg-sunken); }
+.composer-effort-option-label { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-effort-check { flex: 0 0 auto; display: inline-flex; color: var(--clay-strong); }
+.composer-effort-check svg { width: 14px; height: 14px; }
 .model-menu-backdrop { position: fixed; inset: 0; z-index: 40; }
 .model-menu { position: absolute; z-index: 41; bottom: calc(100% + 8px); right: 0; min-width: 240px; max-height: 320px; overflow-y: auto; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 6px; }
 .model-menu-row { display: flex; align-items: center; gap: 2px; border-radius: var(--radius-xs); }
@@ -1995,7 +2014,9 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .review-foot { padding: 9px 14px; color: var(--text-muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); background: color-mix(in srgb, var(--clay) 5%, transparent); }
 .review-foot.resolved { color: var(--ok); }
 .review-foot.unaddressed { color: var(--warn); }
-button.send { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; background: var(--clay); color: var(--on-clay); border: none; border-radius: 999px; cursor: pointer; transition: background .12s ease, color .12s ease, opacity .12s ease; flex: 0 0 auto; }
+/* Positioned so the button stays in the paint layer above the (positioned)
+   composer tools when extreme narrowness makes the two rows overlap (#650). */
+button.send { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; background: var(--clay); color: var(--on-clay); border: none; border-radius: 999px; cursor: pointer; transition: background .12s ease, color .12s ease, opacity .12s ease; flex: 0 0 auto; }
 button.send svg { width: 18px; height: 18px; }
 button.send:hover:not(:disabled) { background: var(--clay-strong); }
 button.send.is-empty { background: color-mix(in srgb, var(--text) 14%, var(--bg-app)); color: var(--text-faint); }
@@ -2005,11 +2026,6 @@ button.stop { display: inline-flex; align-items: center; justify-content: center
 button.stop svg { width: 18px; height: 18px; }
 button.stop:hover:not(:disabled) { background: var(--text); }
 button.stop:disabled { opacity: .45; cursor: default; }
-.send-split { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.send-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease; }
-.send-menu-toggle svg { width: 16px; height: 16px; stroke-width: 2.25; }
-.send-menu-toggle:hover:not(:disabled) { background: var(--bg-sunken); color: var(--text); }
-.send-menu-toggle:disabled { opacity: .45; cursor: default; }
 .send-menu-backdrop { position: fixed; inset: 0; z-index: 60; }
 .send-mode-menu { position: absolute; z-index: 61; right: 0; bottom: calc(100% + 10px); width: 260px; padding: 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); transform-origin: bottom right; animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both; }
 .send-mode-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 6px 10px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--text); font: inherit; font-size: calc(14px * var(--ui-font-scale, 1)); text-align: left; cursor: pointer; }
@@ -2022,15 +2038,13 @@ button.stop:disabled { opacity: .45; cursor: default; }
   .composer-tools, .composer-buttons { gap: 4px; }
   .composer-plus, .composer-compute, .composer-fast { width: 28px; height: 28px; }
   .composer-plus svg, .composer-compute svg, .composer-fast svg { width: 15px; height: 15px; }
-  .model-picker-btn { max-width: 104px; height: 28px; padding-inline: 8px; }
+  .model-picker-btn, .composer-effort-btn { max-width: 104px; height: 28px; padding-inline: 8px; }
   .context-usage-trigger { height: 28px; padding: 0 5px 0 3px; gap: 3px; }
   .context-usage-pct { font-size: calc(10px * var(--ui-font-scale, 1)); }
   button.send { width: 28px; height: 28px; }
   button.send svg { width: 16px; height: 16px; }
   button.stop { width: 28px; height: 28px; }
   button.stop svg { width: 16px; height: 16px; }
-  .send-menu-toggle { width: 28px; height: 28px; }
-  .send-menu-toggle svg { width: 14px; height: 14px; }
 }
 
 .sidechat-in-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--bg-elev); }

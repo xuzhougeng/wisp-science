@@ -126,6 +126,23 @@ fn service_tier_enabled(value: &str) -> bool {
     matches!(value.trim(), "priority" | "fast")
 }
 
+/// Short localized label for a reasoning-effort value in the composer pill;
+/// free-form values fall back to the raw string.
+fn effort_display_label(loc: Locale, value: &str) -> String {
+    let key = match value.trim() {
+        "none" => Some("composer.effort.none"),
+        "minimal" => Some("composer.effort.minimal"),
+        "low" => Some("composer.effort.low"),
+        "medium" => Some("composer.effort.medium"),
+        "high" => Some("composer.effort.high"),
+        "xhigh" => Some("composer.effort.xhigh"),
+        "max" => Some("composer.effort.max"),
+        "ultra" => Some("composer.effort.ultra"),
+        _ => None,
+    };
+    key.map_or_else(|| value.to_string(), |k| t(loc, k).to_string())
+}
+
 fn supports_fast_service_tier(profile: &ModelProfile) -> bool {
     profile.is_chat_model()
         && matches!(
@@ -1060,6 +1077,9 @@ fn App() -> impl IntoView {
     let project_transition_target = Rc::new(RefCell::new(None::<String>));
     let project_open_gate = Rc::new(RefCell::new(ProjectOpenGate::default()));
     let model_menu_open = create_rw_signal(false);
+    // Thinking-effort pill beside the model picker: a dropdown over the
+    // selected model's effort values (ZCode-style, per-model persisted).
+    let composer_effort_open = create_rw_signal(false);
     // Per-model effort flyout inside the model menu: (model id, left, top) in
     // viewport coordinates. Rendered `position: fixed` so the menu's scroll
     // box doesn't clip it.
@@ -1079,6 +1099,7 @@ fn App() -> impl IntoView {
     // inherit the new default on their next turn.
     let apply_model_effort = Callback::new(move |(id, effort): (String, String)| {
         effort_menu_for.set(None);
+        composer_effort_open.set(false);
         model_settings.apply_model_effort(id, effort);
     });
     let model_switch_confirm = create_rw_signal::<Option<(String, String, bool)>>(None);
@@ -1166,7 +1187,6 @@ fn App() -> impl IntoView {
             }
         });
     });
-    let send_mode_menu_open = create_rw_signal(false);
     // Queue (#433): monotonic key for optimistic queued follow-ups, shared with the
     // backend queue item so edit/cancel/cut-in target the same row.
     // A window-scoped seed prevents queue ID collisions across session windows.
@@ -4621,10 +4641,10 @@ fn App() -> impl IntoView {
         if let Some(id) = active.as_ref() {
             dismiss_follow_up_questions(follow_up_questions, id);
         }
-        // Queue (#433): a plain send into a busy session parks behind the
-        // running turn — cancellable / restorable to the composer until the
-        // driver runs it — instead of a dialog. Cut-in / interrupt-replace are
-        // explicit dropdown choices.
+        // Queue (#433): a send into a busy session parks behind the running
+        // turn — cancellable / restorable to the composer until the driver
+        // runs it — instead of a dialog. Cut-in / interrupt-replace live on
+        // the parked row itself.
         if queued && action == ComposerSendAction::Normal {
             let Some(session) = active.clone() else {
                 return;
@@ -4781,22 +4801,12 @@ fn App() -> impl IntoView {
                 pages.entry(id.clone()).or_default().window_user_start = usize::MAX;
             });
             route_items(active_session, items, transcripts, &id, |rows| {
-                if queued {
-                    // Cut-in (#433): a direct guide-append from the dropdown folds
-                    // into the running turn immediately, so it carries no queue id
-                    // (id 0 = transient, no edit/cancel controls).
-                    rows.push(ChatItem::QueuedUser {
-                        id: 0,
-                        text: display_message.clone(),
-                    });
-                } else {
-                    rows.push(ChatItem::User(display_message.clone()));
-                    rows.push(ChatItem::Assistant {
-                        text: String::new(),
-                        model: turn_model.clone(),
-                        resources: Vec::new(),
-                    });
-                }
+                rows.push(ChatItem::User(display_message.clone()));
+                rows.push(ChatItem::Assistant {
+                    text: String::new(),
+                    model: turn_model.clone(),
+                    resources: Vec::new(),
+                });
             });
             if !activates_session {
                 begin_pending_turn(pending_turns, running, &id);
@@ -4817,8 +4827,8 @@ fn App() -> impl IntoView {
                 references: reference_args,
                 resume: false,
                 acp_agent_id: agent_id.clone(),
-                guide: (action == ComposerSendAction::GuideAppend).then_some(true),
-                replace: (action == ComposerSendAction::InterruptReplace).then_some(true),
+                guide: None,
+                replace: None,
             })
             .unwrap();
             match invoke_checked("send_message", args).await {
@@ -9919,6 +9929,11 @@ fn App() -> impl IntoView {
             specialist_menu_open.set(false);
             return;
         }
+        if composer_effort_open.get() {
+            ev.prevent_default();
+            composer_effort_open.set(false);
+            return;
+        }
         if effort_menu_for.get().is_some() {
             ev.prevent_default();
             effort_menu_for.set(None);
@@ -9927,11 +9942,6 @@ fn App() -> impl IntoView {
         if model_menu_open.get() {
             ev.prevent_default();
             model_menu_open.set(false);
-            return;
-        }
-        if send_mode_menu_open.get() {
-            ev.prevent_default();
-            send_mode_menu_open.set(false);
             return;
         }
         if right_tab_add_menu_open.get() {
@@ -15253,43 +15263,13 @@ fn App() -> impl IntoView {
                                     </button>
                                 }
                             })}
-                            {move || fast_profile.get().map(|_| {
-                                let enabled = fast_enabled.get();
-                                let session_override = fast_is_session_override.get();
-                                let saving = service_tier_busy.get();
-                                let running_now = busy.get();
-                                let loaded = fast_loaded.get();
-                                let key = if running_now {
-                                    "composer.fast.running"
-                                } else if saving || !loaded {
-                                    "composer.fast.saving"
-                                } else {
-                                    match (enabled, session_override) {
-                                        (true, true) => "composer.fast.on_session",
-                                        (true, false) => "composer.fast.on_profile",
-                                        (false, true) => "composer.fast.off_session",
-                                        (false, false) => "composer.fast.off_profile",
-                                    }
-                                };
-                                let title = t(locale.get(), key).to_string();
-                                view! {
-                                    <button type="button" class="composer-fast"
-                                        class:enabled=enabled
-                                        class:pending=saving || !loaded
-                                        data-testid="composer-fast-toggle"
-                                        aria-pressed=enabled.to_string()
-                                        aria-label=title.clone()
-                                        title=title
-                                        disabled=running_now || saving || !loaded
-                                        on:click=move |_| toggle_fast.call(())>
-                                        {compose_icon("bolt")}
-                                    </button>
-                                }
-                            })}
                             {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
                                 <div class="model-picker">
                                     <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
-                                        on:click=move |_| model_menu_open.update(|o| *o = !*o)>
+                                        on:click=move |_| {
+                                            composer_effort_open.set(false);
+                                            model_menu_open.update(|o| *o = !*o);
+                                        }>
                                         <span class="model-picker-label">{move || {
                                             if let Some(id) = active_acp_agent_id.get() {
                                                 acp_agents.get().into_iter().find(|agent| agent.id == id).map(|agent| agent.label).unwrap_or_else(|| "ACP Agent".into())
@@ -15301,7 +15281,7 @@ fn App() -> impl IntoView {
                                                 model_label(&l, selected.as_deref()).unwrap_or_default()
                                             }
                                         }}</span>
-                                        <span class="model-picker-chev">"▾"</span>
+                                        <span class="model-picker-chev">{compose_icon("chevron-down")}</span>
                                     </button>
                                     {move || model_menu_open.get().then(|| view! {
                                         <div class="model-menu-backdrop" on:click=move |_| model_menu_open.set(false)></div>
@@ -15726,8 +15706,131 @@ fn App() -> impl IntoView {
                                     })}
                                 </div>
                             })}
-                            // Stop and Send share one slot: typing a draft mid-turn swaps Stop for Send
-                            // (its menu still offers interrupt-and-replace).
+                            {move || {
+                                // ACP agents own their model and effort configuration;
+                                // the pill only makes sense for HTTP profiles.
+                                if active_acp_agent_id.get().is_some() {
+                                    return None;
+                                }
+                                let profile = session_profile(
+                                    &models.get(),
+                                    &session_model_ids.get(),
+                                    active_session.get().as_deref(),
+                                )
+                                .cloned()?;
+                                let current = profile.reasoning_effort.clone();
+                                let mut values: Vec<String> = known_effort_values(&profile.provider, &profile.model)
+                                    .unwrap_or(ALL_EFFORT_VALUES)
+                                    .iter()
+                                    .map(|v| v.to_string())
+                                    .collect();
+                                // Keep a stored value visible even when the curated
+                                // list for this model doesn't include it.
+                                if !current.is_empty() && !values.iter().any(|v| v == &current) {
+                                    values.push(current.clone());
+                                }
+                                let profile_id = profile.id.clone();
+                                // The pill label closure owns its copy so the
+                                // dropdown closure below can still capture `current`.
+                                let pill_current = current.clone();
+                                Some(view! {
+                                    <div class="composer-effort">
+                                        <button type="button" class="composer-effort-btn"
+                                            class:active=move || composer_effort_open.get()
+                                            data-testid="composer-effort-trigger"
+                                            aria-expanded=move || composer_effort_open.get().to_string()
+                                            aria-controls="composer-effort-menu"
+                                            aria-label=move || t(locale.get(), "composer.effort")
+                                            title=move || t(locale.get(), "composer.effort")
+                                            on:click=move |_| {
+                                                model_menu_open.set(false);
+                                                composer_effort_open.update(|o| *o = !*o);
+                                            }>
+                                            <span class="composer-effort-glyph">{compose_icon("brain")}</span>
+                                            <span class="composer-effort-value" data-testid="composer-effort-value">{move || {
+                                                if pill_current.is_empty() {
+                                                    t(locale.get(), "composer.effort.default")
+                                                } else {
+                                                    effort_display_label(locale.get(), &pill_current)
+                                                }
+                                            }}</span>
+                                            <span class="composer-effort-chev">{compose_icon("chevron-down")}</span>
+                                        </button>
+                                        {move || composer_effort_open.get().then(|| {
+                                            // Own everything this body consumes: moving a
+                                            // captured variable out would make it FnOnce,
+                                            // which dynamic views can't take.
+                                            let default_id = profile_id.clone();
+                                            let list_id = profile_id.clone();
+                                            let values = values.clone();
+                                            view! {
+                                            <div class="composer-effort-backdrop"
+                                                on:click=move |_| composer_effort_open.set(false)></div>
+                                            <div class="composer-effort-menu" id="composer-effort-menu"
+                                                data-testid="composer-effort-menu">
+                                                <div class="composer-effort-menu-label">{move || t(locale.get(), "settings.reasoning_effort")}</div>
+                                                <button type="button" class="composer-effort-option" data-effort="default"
+                                                    on:click=move |_| apply_model_effort.call((default_id.clone(), String::new()))>
+                                                    <span class="composer-effort-option-label">{move || t(locale.get(), "composer.effort.default")}</span>
+                                                    {current.is_empty().then(|| view! {
+                                                        <span class="composer-effort-check">{compose_icon("check")}</span>
+                                                    })}
+                                                </button>
+                                                {values.into_iter().map(|lvl| {
+                                                    let selected = !current.is_empty() && lvl == current;
+                                                    let pick = lvl.clone();
+                                                    let option_id = list_id.clone();
+                                                    view! {
+                                                        <button type="button" class="composer-effort-option" data-effort=lvl.clone()
+                                                            on:click=move |_| apply_model_effort.call((option_id.clone(), pick.clone()))>
+                                                            <span class="composer-effort-option-label">{effort_display_label(locale.get(), &lvl)}</span>
+                                                            {selected.then(|| view! {
+                                                                <span class="composer-effort-check">{compose_icon("check")}</span>
+                                                            })}
+                                                        </button>
+                                                    }
+                                                }).collect_view()}
+                                            </div>
+                                            }
+                                        })}
+                                    </div>
+                                })
+                            }}
+                            {move || fast_profile.get().map(|_| {
+                                let enabled = fast_enabled.get();
+                                let session_override = fast_is_session_override.get();
+                                let saving = service_tier_busy.get();
+                                let running_now = busy.get();
+                                let loaded = fast_loaded.get();
+                                let key = if running_now {
+                                    "composer.fast.running"
+                                } else if saving || !loaded {
+                                    "composer.fast.saving"
+                                } else {
+                                    match (enabled, session_override) {
+                                        (true, true) => "composer.fast.on_session",
+                                        (true, false) => "composer.fast.on_profile",
+                                        (false, true) => "composer.fast.off_session",
+                                        (false, false) => "composer.fast.off_profile",
+                                    }
+                                };
+                                let title = t(locale.get(), key).to_string();
+                                view! {
+                                    <button type="button" class="composer-fast"
+                                        class:enabled=enabled
+                                        class:pending=saving || !loaded
+                                        data-testid="composer-fast-toggle"
+                                        aria-pressed=enabled.to_string()
+                                        aria-label=title.clone()
+                                        title=title
+                                        disabled=running_now || saving || !loaded
+                                        on:click=move |_| toggle_fast.call(())>
+                                        {compose_icon("bolt")}
+                                    </button>
+                                }
+                            })}
+                            // Stop and Send share one slot: typing a draft mid-turn
+                            // swaps Stop for Send.
                             {move || (busy.get() && !composer_has_draft()).then(|| view! {
                                 <button type="button" class="stop"
                                     disabled=move || active_session.get() == stopping_session.get()
@@ -15737,83 +15840,15 @@ fn App() -> impl IntoView {
                                     {compose_icon("stop")}
                                 </button>
                             })}
-                            <div class="send-split"
-                                style:display=move || if busy.get() && !composer_has_draft() { "none" } else { "inline-flex" }>
-                                <button type="button" class="send-menu-toggle"
-                                    disabled=composer_blocked
-                                    aria-label=move || t(locale.get(), "composer.send_options")
-                                    title=move || t(locale.get(), "composer.send_options")
-                                    on:click=move |_| send_mode_menu_open.update(|o| *o = !*o)>
-                                    {compose_icon("chevron-down")}
-                                </button>
-                                <button type="button" class="send"
-                                    class:is-empty=move || !composer_has_draft()
-                                    disabled=composer_blocked
-                                    aria-label=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
-                                    title=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
-                                    on:click=move |_| send.call(ComposerSendAction::Normal)>
-                                    {compose_icon("arrow-up")}
-                                </button>
-                                {move || send_mode_menu_open.get().then(|| view! {
-                                    <div class="send-menu-backdrop" on:click=move |_| send_mode_menu_open.set(false)></div>
-                                    <div class="send-mode-menu">
-                                        {move || (busy.get() && active_acp_agent_id.get().is_none()).then(|| view! {
-                                            <button type="button" class="send-mode-item"
-                                                disabled=composer_blocked
-                                                on:click=move |_| {
-                                                    send_mode_menu_open.set(false);
-                                                    send.call(ComposerSendAction::GuideAppend);
-                                                }>
-                                                <span class="compose-item-icon">{compose_icon("up")}</span>
-                                                <span>{move || t(locale.get(), "composer.cut_in_now")}</span>
-                                            </button>
-                                        })}
-                                        {move || busy.get().then(|| view! {
-                                            <button type="button" class="send-mode-item"
-                                                disabled=composer_blocked
-                                                on:click=move |_| {
-                                                    send_mode_menu_open.set(false);
-                                                    send.call(ComposerSendAction::InterruptReplace);
-                                                }>
-                                                <span class="compose-item-icon">{compose_icon("sync")}</span>
-                                                <span>{move || t(locale.get(), "composer.interrupt_replace")}</span>
-                                            </button>
-                                        })}
-                                        <button type="button" class="send-mode-item"
-                                            disabled=move || side_chat_busy.get()
-                                            on:click=move |_| {
-                                                send_mode_menu_open.set(false);
-                                                let q = message_with_attachments(&input.get(), &attachment_paths(&attachments.get()));
-                                                if q.trim().is_empty() {
-                                                    ensure_right_tab(
-                                                        RightTab::SideChat,
-                                                        show_right,
-                                                        open_right_tabs,
-                                                        right_tab,
-                                                    );
-                                                } else {
-                                                    input.set(String::new());
-                                                    attachments.set(vec![]);
-                                                    send_side_chat((q, vec![], false));
-                                                }
-                                            }>
-                                            <span class="compose-item-icon">{compose_icon("chat")}</span>
-                                            <span>{move || t(locale.get(), "composer.side_chat")}</span>
-                                        </button>
-                                        {move || (active_branch_state.get().is_none()
-                                            && !active_is_exploration.get()).then(|| view! {
-                                            <button type="button" class="send-mode-item"
-                                                on:click=move |_| {
-                                                    send_mode_menu_open.set(false);
-                                                    send.call(ComposerSendAction::BranchNew);
-                                                }>
-                                                <span class="compose-item-icon">{compose_icon("branch")}</span>
-                                                <span>{move || t(locale.get(), "composer.branch_session")}</span>
-                                            </button>
-                                        })}
-                                    </div>
-                                })}
-                            </div>
+                            <button type="button" class="send"
+                                style:display=move || if busy.get() && !composer_has_draft() { "none" } else { "inline-flex" }
+                                class:is-empty=move || !composer_has_draft()
+                                disabled=composer_blocked
+                                aria-label=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
+                                title=move || t(locale.get(), if busy.get() { "composer.queue_button" } else { "composer.send" })
+                                on:click=move |_| send.call(ComposerSendAction::Normal)>
+                                {compose_icon("arrow-up")}
+                            </button>
                         </div>
                     </div>
                 </div>
