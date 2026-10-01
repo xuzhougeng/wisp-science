@@ -118,6 +118,14 @@ body:has(.window-titlebar) .research-journey { top: 38px; }
 .research-journey .journey-aside::-webkit-scrollbar-thumb,
 .research-journey .research-graph-list::-webkit-scrollbar-thumb,
 .research-journey .research-graph-canvas::-webkit-scrollbar-thumb { background: transparent; }
+.research-journey .journey-feed.is-scrolling::-webkit-scrollbar-thumb,
+.research-journey .journey-aside.is-scrolling::-webkit-scrollbar-thumb,
+.research-journey .research-graph-list.is-scrolling::-webkit-scrollbar-thumb,
+.research-journey .research-graph-canvas.is-scrolling::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: var(--scrollbar-thumb-inset) solid transparent;
+  background-clip: padding-box;
+}
 .research-journey .journey-feed:hover::-webkit-scrollbar-thumb,
 .research-journey .journey-feed:focus-within::-webkit-scrollbar-thumb,
 .research-journey .journey-aside:hover::-webkit-scrollbar-thumb,

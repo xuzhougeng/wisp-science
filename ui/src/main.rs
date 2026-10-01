@@ -52,7 +52,7 @@ use bindings::{
     native_drop_in_composer, open_browser_extension_page, open_external_url, open_tutorials,
     pasted_image_count, preserve_chat_prepend_position, preview_selection,
     restore_chat_session_scroll, schedule_chat_follow, set_saved_marks, set_window_title,
-    CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    setup_scrollbar_reveal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -17958,6 +17958,7 @@ pub fn main() {
     // A panic cannot be recovered on wasm32: it traps without running
     // destructors or restoring the shadow stack, so log every one loudly.
     console_error_panic_hook::set_once();
+    setup_scrollbar_reveal();
     let is_pet_window = window().location().search().ok().is_some_and(|query| {
         query
             .split('&')

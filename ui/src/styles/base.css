@@ -487,7 +487,13 @@ body { position: fixed; inset: 0; display: flex; flex-direction: column; overflo
 .btn-ghost:disabled { opacity: .5; cursor: default; }
 
 /* ---------- Scrollbars ---------- */
+/* Thumbs stay invisible until their container scrolls (`.is-scrolling`, set by
+   scrollbars.js) or the pointer reaches the scrollbar strip itself. The track
+   and any reserved gutter keep their layout, so only the thumb's paint
+   toggles — an idle view carries no scrollbar visual weight. */
 ::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--scrollbar-radius); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--scrollbar-radius); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; transition: background-color .18s ease; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
+.is-scrolling::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
+.is-scrolling::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }

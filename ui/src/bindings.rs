@@ -133,6 +133,13 @@ extern "C" {
     fn follow_run_outputs();
 }
 
+#[wasm_bindgen(module = "/src/scrollbars.js")]
+extern "C" {
+    /// One document-level scroll listener that toggles `.is-scrolling` on
+    /// whatever container is scrolling (see base.css scrollbar reveal).
+    fn install_scrollbar_reveal();
+}
+
 #[wasm_bindgen(module = "/src/marks.js")]
 extern "C" {
     /// Underline the given saved excerpts (JSON string array) in the transcript.
@@ -156,6 +163,11 @@ extern "C" {
 /// Bind the chat scroller so it keeps pinned to the bottom as content grows.
 pub(crate) fn attach_chat_autoscroll() {
     attach_chat_scroll(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
+}
+
+/// Hide scrollbar thumbs until their container scrolls (then fade out on idle).
+pub(crate) fn setup_scrollbar_reveal() {
+    install_scrollbar_reveal();
 }
 
 /// Nudge the chat view after a non-transcript layout change (respects scroll-up).
