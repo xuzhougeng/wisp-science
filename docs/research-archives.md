@@ -43,6 +43,12 @@ archive metadata and workspace snapshots; unconfirmed drafts are not exported.
 必要数据和最终结果整理成一个研究历程节点。集中确认后，会话只读，确认过的本地
 中间文件立即永久删除。后续研究从节点创建关联的新会话，保留旧结论及其材料。
 
+The draft is written by the model bound to the built-in **Archivist** specialist
+(Settings → Specialists → Archivist). While it is unbound, or its profile was
+deleted, the archive uses the archived session's own model, as before.
+归档草稿使用 **设置 → 专家 → Archivist** 绑定的模型；未绑定或绑定的模型已删除时，
+沿用被归档会话自己的模型。
+
 Current limits: preparation accepts up to 4 MiB of saved source records, split
 into bounded model requests when necessary. Draft synthesis turns off extra
 reasoning and uses at least a 32k output budget, clamped to the model's catalog

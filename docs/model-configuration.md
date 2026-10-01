@@ -268,6 +268,12 @@ turning it back to the profile default clears that override. The button is
 disabled during a running turn and hidden for unsupported providers and ACP
 Agents. ACP Fast Mode remains a separate Agent session configuration.
 
+Two more built-in specialists draft documents rather than chat, so only their
+model binding is configurable and they never appear in the session or workflow
+specialist pickers: **Archivist** writes research archive drafts (unbound: the
+archived session's model) and **Recap** writes daily research recaps (unbound:
+the active model). Both turn off extra reasoning for their JSON output.
+
 The built-in Reader used by `#` session references inherits that profile's
 model, not its reasoning effort. Retrieval turns disable DeepSeek thinking
 (the V4 default is thinking-on at `high`) and cap each transcript chunk well
