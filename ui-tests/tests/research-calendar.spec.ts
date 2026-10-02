@@ -17,7 +17,7 @@ async function open(page: Page, query = "") {
 
 test("calendar icon precedes Library; immediate Escape closes only the calendar", async ({ page }) => {
   await page.goto("/?mockLocale=zh");
-  const buttons=page.locator(".projects-actions > button");
+  const buttons=page.locator(".projects-actions").getByRole("button");
   await expect(buttons.nth(0)).toHaveAttribute("aria-label","研究日历");
   await expect(buttons.nth(0).locator("svg rect")).toHaveCount(1);
   await expect(buttons.nth(1).locator("svg")).toBeVisible();

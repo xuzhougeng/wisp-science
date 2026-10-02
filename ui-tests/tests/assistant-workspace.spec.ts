@@ -38,6 +38,11 @@ test("sidebars collapse independently without losing draft, date, scroll or conv
   const left = page.getByTestId("assistant-projects");
   const right = page.getByTestId("assistant-calendar");
   await expect(left).toBeVisible(); await expect(right).toBeVisible();
+  await expect(left.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+  await expect(right.getByRole("heading", { name: "Research calendar", exact: true }).first()).toBeVisible();
+  await expect(page.locator(".assistant-side-heading").getByRole("button")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Toggle projects", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Toggle research calendar", exact: true })).toHaveCount(1);
   await right.getByRole("button", { name: "2026-09-08", exact: true }).click();
   await expect(right).toContainText("Other project run failed");
   await composer(page).fill("Keep my unfinished question");

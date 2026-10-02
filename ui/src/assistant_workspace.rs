@@ -225,7 +225,6 @@ pub(crate) fn AssistantProjects(
             class:drawer-top=move || state.last_left.get()
             aria-label=move || j(locale.get(), "Projects", "项目列表")>
             <header class="assistant-side-heading"><h2>{move || j(locale.get(), "Projects", "项目")}</h2>
-                <button type="button" aria-label=move || j(locale.get(), "Hide projects", "隐藏项目列表") on:click=move |_| state.toggle(true)>{compose_icon("panel-left")}</button>
             </header>
             <button type="button" class="assistant-project" aria-pressed=move || state.selected.get().is_none().to_string()
                 on:click=move |_| { state.selected.set(None); if state.narrow.get_untracked() { state.left.set(false); focus_toggle(true); } }>
@@ -262,7 +261,6 @@ pub(crate) fn AssistantCalendar(
             hidden=move || !state.right.get() class:drawer-top=move || !state.last_left.get()
             aria-label=move || j(locale.get(), "Research calendar", "研究日历")>
             <header class="assistant-side-heading"><h2>{move || j(locale.get(), "Research calendar", "研究日历")}</h2>
-                <button type="button" aria-label=move || j(locale.get(), "Hide research calendar", "隐藏研究日历") on:click=move |_| state.toggle(false)>{compose_icon("panel")}</button>
             </header>
             {move || state.loading.get().then(|| view! {<p class="assistant-side-notice" role="status">{j(locale.get(), "Loading visible projects…", "正在确认可见项目…")}</p>})}
             {move || state.error.get().map(|_| view! {<p class="assistant-side-notice" role="alert">{j(locale.get(), "Project visibility could not be verified. Reload to view the calendar.", "暂时无法确认可见项目，请重新读取后查看日历。")}

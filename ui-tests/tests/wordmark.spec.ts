@@ -53,7 +53,7 @@ for (const surface of ["projects", "chat"] as const) {
 }
 
 for (const locale of ["en", "zh"]) {
-for (const width of [390, 800, 1000, 1600]) {
+for (const width of [390, 800, 900, 1000, 1100, 1600]) {
   test(`projects wordmark, tagline and actions fit a ${width}px window (${locale})`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`/?mockLocale=${locale}`);
@@ -75,6 +75,24 @@ for (const width of [390, 800, 1000, 1600]) {
     expect(actionsBox.x).toBeGreaterThanOrEqual(0);
     expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(width);
     expect(actionsBox.x >= brandBox.x + brandBox.width || actionsBox.y >= brandBox.y + brandBox.height).toBe(true);
+    const quickBox = (await actions.locator(".projects-quick-actions").boundingBox())!;
+    const mainBox = (await actions.locator(".projects-main-actions").boundingBox())!;
+    if (width === 1600 || width === 800) {
+      expect(Math.abs(quickBox.y + quickBox.height / 2 - mainBox.y - mainBox.height / 2)).toBeLessThan(2);
+    } else {
+      expect(mainBox.y).toBeGreaterThanOrEqual(quickBox.y + quickBox.height);
+      expect(Math.abs(quickBox.x + quickBox.width - mainBox.x - mainBox.width)).toBeLessThan(2);
+    }
+    if (width > 820) {
+      // Narrow desktop windows keep both action rows beside the brand.
+      expect(actionsBox.x).toBeGreaterThanOrEqual(brandBox.x + brandBox.width);
+    }
+    const buttons = actions.getByRole("button");
+    await expect(buttons).toHaveCount(9);
+    for (const button of await buttons.all()) {
+      await expect(button).toBeInViewport();
+      expect(await button.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
     const screen = page.locator(".projects-screen");
     expect(await screen.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`projects-${locale}-${width}.png`), animations: "disabled" });

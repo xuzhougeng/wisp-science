@@ -13,8 +13,8 @@
 .assistant-calendar { width: clamp(264px, 24vw, 350px); border-left: 1px solid var(--border); }
 .assistant-side-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: 18px 8px 14px; }
 .assistant-side-heading h2 { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; margin: 0; }
-.assistant-side-heading button, .assistant-context button { display: inline-flex; justify-content: center; align-items: center; padding: 5px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; }
-.assistant-side-heading button:hover, .assistant-context button:hover { background: var(--bg-sunken); color: var(--text); }
+.assistant-context button { display: inline-flex; justify-content: center; align-items: center; padding: 5px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.assistant-context button:hover { background: var(--bg-sunken); color: var(--text); }
 .assistant-side svg, .assistant-context svg { width: 16px; height: 16px; flex-shrink: 0; }
 .assistant-side button:focus-visible, .assistant-context button:focus-visible { outline: 2px solid var(--clay); outline-offset: -2px; }
 .assistant-project { display: flex; align-items: center; gap: 10px; padding: 11px 10px; border: 0; background: transparent; border-radius: 7px; color: var(--text); text-align: left; font: inherit; cursor: pointer; width: 100%; }

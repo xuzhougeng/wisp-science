@@ -34,6 +34,8 @@
 
 The assistant page has independently collapsible project and calendar sidebars around its existing conversation. Selecting a project attaches context to future messages without navigating away. The calendar separates saved plans from recorded activity, retains its date when hidden, and refreshes after an assistant turn. Planning and activity buttons append questions to the draft for review before sending. Desktop sidebar preferences persist; narrow windows use drawers, with Escape dismissing the topmost surface first.
 
+The top toolbar provides the project and calendar visibility toggles. Sidebar headings show only their titles, without duplicate collapse buttons.
+
 ## 实现说明
 
 - 对话存放在隐藏项目 `assistant:research` 的固定会话 `research-assistant` 中，不出现在项目列表、最近会话、搜索或用量统计里，也不会被清理。
