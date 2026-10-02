@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Wisp.ProjectBrowser;
 using Wisp.ProjectBrowser.Contracts;
@@ -36,6 +37,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private bool confirmClose;
     private NativeSettingsSectionPage? capabilityPage;
     private readonly Dictionary<string, Button> navigationButtons = [];
+    private readonly TextBox navigationSearch = new() { PlaceholderText = "搜索设置", Margin = new Thickness(0, 12, 0, 4) };
     private FrameworkElement? appearanceContent;
     private string section = "appearance";
     private string? pendingSection;
@@ -79,7 +81,10 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             if (capabilityPage != null) capabilityPage.RequestLeave(Change); else Change();
         };
         nav.Children.Add(projectChoice);
+        AutomationProperties.SetName(navigationSearch, "搜索设置分类与选项");
+        nav.Children.Add(navigationSearch);
         var navigation = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "settings-navigation.json")))!.AsObject();
+        var groupHeadings = new Dictionary<string, TextBlock>();
         string? group = null;
         foreach (var entry in navigation)
         {
@@ -88,6 +93,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             {
                 group = nextGroup;
                 var groupHeading = design.Text(group, 11); groupHeading.Opacity = 0.65; groupHeading.Margin = new Thickness(12, 16, 0, 6); nav.Children.Add(groupHeading);
+                groupHeadings[group] = groupHeading;
             }
             var item = new Button { Content = entry.Value["zh"]!.GetValue<string>(),
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
@@ -99,13 +105,30 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             navigationButtons[key] = item;
             nav.Children.Add(item);
         }
+        var noMatches = design.Text("没有匹配的设置", 12); noMatches.Visibility = Visibility.Collapsed;
+        nav.Children.Add(noMatches);
+        navigationSearch.TextChanged += (_, _) =>
+        {
+            var visibleGroups = new HashSet<string>();
+            foreach (var entry in navigation)
+            {
+                var matches = NativeSettingsSearch.Matches(entry.Key, entry.Value!.AsObject(), navigationSearch.Text);
+                navigationButtons[entry.Key].Visibility = matches ? Visibility.Visible : Visibility.Collapsed;
+                if (matches) visibleGroups.Add(entry.Value["group"]!.GetValue<string>());
+            }
+            foreach (var (name, label) in groupHeadings) label.Visibility = visibleGroups.Contains(name) ? Visibility.Visible : Visibility.Collapsed;
+            noMatches.Visibility = visibleGroups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        };
         shell.Children.Add(new ScrollViewer { Content = nav, Background = design.Brush("bg-sunken"), HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        var heading = new Grid();
+        var heading = new Grid { ColumnSpacing = 12 };
+        heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         heading.Children.Add(design.Text("外观", 24));
         reload.Content = "重新载入"; reload.HorizontalAlignment = HorizontalAlignment.Right;
+        Grid.SetColumn(reload, 1);
         heading.Children.Add(reload); body.Children.Add(heading);
         body.Children.Add(new TextBlock { Text = "选择主题、配色和字体大小。保存后与桌面客户端共享。", TextWrapping = TextWrapping.Wrap, Opacity = 0.65 });
-        body.Children.Add(progress); body.Children.Add(status);
+        body.Children.Add(progress);
         columns.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         columns.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         columns.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -114,10 +137,19 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         previewCard.Child = preview; Grid.SetColumn(previewCard, 1); columns.Children.Add(previewCard);
         body.Children.Add(columns);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, HorizontalAlignment = HorizontalAlignment.Right };
-        actions.Children.Add(discard); actions.Children.Add(save); body.Children.Add(actions);
+        actions.Children.Add(discard); actions.Children.Add(save);
+        var footer = new StackPanel { Spacing = 8, MaxWidth = 1000, Padding = new Thickness(28, 12, 28, 20), HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetLiveSetting(status, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        footer.Children.Add(new ScrollViewer { Content = status, MaxHeight = 110, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        footer.Children.Add(actions);
+        footer.SizeChanged += (_, e) => actions.Orientation = e.NewSize.Width < 340 ? Orientation.Vertical : Orientation.Horizontal;
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetColumn(scroll, 1); shell.Children.Add(scroll); shell.Background = design.Brush("bg-app");
-        appearanceContent = scroll;
+        var appearance = new Grid();
+        appearance.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        appearance.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        appearance.Children.Add(scroll); Grid.SetRow(footer, 1); appearance.Children.Add(footer);
+        Grid.SetColumn(appearance, 1); shell.Children.Add(appearance); shell.Background = design.Brush("bg-app");
+        appearanceContent = appearance;
         pendingSection = initialSection;
         Content = shell;
         shell.SizeChanged += (_, e) =>

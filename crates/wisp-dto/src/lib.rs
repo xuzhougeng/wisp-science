@@ -4758,13 +4758,13 @@ pub struct ExecutionContext {
     pub last_probe_error: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct WorkspaceListing {
     pub entries: Vec<WorkspaceEntry>,
     pub truncated: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct WorkspaceEntry {
     pub path: String,
     pub kind: String,

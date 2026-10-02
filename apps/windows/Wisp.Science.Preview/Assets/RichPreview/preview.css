@@ -1,0 +1,10 @@
+html, body { margin: 0; padding: 0; font: 14px system-ui; }
+body { padding: 6px; box-sizing: border-box; }
+nav { position: sticky; top: 0; background: inherit; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; }
+nav[hidden] { display: none; }
+button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 4px; padding: 5px; cursor: pointer; }
+button:disabled { opacity: .4; cursor: default; }
+#content { overflow: auto; }
+#status { white-space: pre-wrap; overflow-wrap: anywhere; }
+canvas { display: block; background: white; }
+.katex-display { margin: .4em 0; }

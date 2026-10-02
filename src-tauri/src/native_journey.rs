@@ -14,6 +14,23 @@ pub(crate) async fn execute(
     else {
         return Err("A project id is required".into());
     };
+    if request.command == "native_research_journey_run" {
+        let input: wisp_dto::native_journey::RunRequest =
+            serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+        if !store
+            .run_visible_in_scope(&input.run_id, &wisp_store::StateScope::mainline(project_id))
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Run is unavailable in this project scope".into());
+        }
+        let run = store
+            .get_run(&input.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("Run is unavailable")?;
+        return serde_json::to_value(run).map_err(|error| error.to_string());
+    }
     if request.command == "native_research_journey_artifact" {
         let input: wisp_dto::native_journey::ArtifactRequest =
             serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
@@ -114,6 +131,34 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn journey_run_read_is_project_scoped_and_strictly_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("store.sqlite"))
+            .await
+            .unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store.create_project("other", "Other", "").await.unwrap();
+        store
+            .create_run(&wisp_store::RunRecord::new(
+                "r", "p", "local", "Run", "command",
+            ))
+            .await
+            .unwrap();
+        let mut read = request(Some("p"), json!({"run_id": "r"}));
+        read.command = "native_research_journey_run".into();
+        assert_eq!(execute(&store, &read).await.unwrap()["id"], "r");
+        read.project_id = Some("other".into());
+        assert!(execute(&store, &read).await.is_err());
+        read.project_id = None;
+        assert!(execute(&store, &read).await.is_err());
+        read.project_id = Some("p".into());
+        read.args = json!({"run_id": "missing"});
+        assert!(execute(&store, &read).await.is_err());
+        read.args = json!({"run_id": "r", "action": "cancel"});
+        assert!(execute(&store, &read).await.is_err());
     }
 
     #[tokio::test]

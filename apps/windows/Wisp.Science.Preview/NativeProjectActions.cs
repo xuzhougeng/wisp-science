@@ -186,44 +186,26 @@ internal sealed class NativePublicationPage : NativeActionPage
         if (model.Workspace is not { } value) return;
         if (value.Publication is { } publication)
         {
-            Results.Children.Add(new TextBlock { Text = publication.Title + "\n" + publication.Description, TextWrapping = TextWrapping.Wrap });
-            if (value.Revision is { } version) Results.Children.Add(Mute(version.Label + " · " + version.State));
-            foreach (var item in value.Items.OrderBy(i => i.Ordinal)) Results.Children.Add(Mute(item.Kind + " · " + item.Title));
-        }
-        if (value.Publications.Count == 0) Results.Children.Add(Mute("尚无论文证据"));
-    }
-}
-
-internal sealed class NativeJourneyPage : NativeActionPage
-{
-    public NativeJourneyPage(INativeJourneyClient client, string projectId, WispDesign design, DateTime? day, Action close)
-        : base(design, "研究历程", new WorkspaceActionModel(), close)
-    {
-        var first = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
-        var from = new CalendarDatePicker { Header = "开始日期", Date = new DateTimeOffset(day ?? first) };
-        var until = new CalendarDatePicker { Header = "结束日期（含）", Date = new DateTimeOffset(day ?? first.AddMonths(1).AddDays(-1)) };
-        Form.Children.Add(from); Form.Children.Add(until);
-        JourneyPage? loaded = null;
-        var query = "";
-        void RenderEntries()
-        {
-            Results.Children.Clear();
-            if (loaded == null) return;
-            if (loaded.Truncated) Results.Children.Add(Warn("结果已截断，请缩小日期范围。"));
-            foreach (var item in loaded.Entries.Where(e => e.Title.Contains(query.Trim(), StringComparison.CurrentCultureIgnoreCase)).OrderByDescending(e => e.OccurredAt))
-                Results.Children.Add(Mute($"{DateTimeOffset.FromUnixTimeSeconds(item.OccurredAt).LocalDateTime:g} · {item.Title}"));
-            if (Results.Children.Count == 0) Results.Children.Add(Mute("暂无匹配的研究记录。"));
-        }
-        Field("搜索已载入的记录", "", text => { query = text; RenderEntries(); });
-        async Task Load()
-        {
-            if (from.Date == null || until.Date == null || from.Date > until.Date) { State.Fail("请选择有效日期范围。"); return; }
-            await State.RunAsync(() => client.ReadAsync(projectId, WorkspaceCalendarModel.Unix(from.Date.Value.Date), WorkspaceCalendarModel.Unix(until.Date.Value.Date.AddDays(1))), rows =>
+            Results.Children.Add(Design.Text(publication.Title, 24));
+            if (!string.IsNullOrWhiteSpace(publication.Description)) Results.Children.Add(new TextBlock { Text = publication.Description, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
+            if (value.Revision is { } version)
             {
-                loaded = rows; RenderEntries();
-            });
+                Results.Children.Add(Design.Text("版本 · " + version.Label, 18));
+                Results.Children.Add(Mute("状态 · " + version.State + "   /   " + value.Items.Count + " 项证据"));
+            }
+            else Results.Children.Add(Mute("尚未选择论文版本。"));
+            Results.Children.Add(Mute("当前展示已登记证据。条目编辑、证据绑定与复现操作尚未接入此页面。"));
+            foreach (var group in value.Items.OrderBy(i => i.Ordinal).GroupBy(i => i.Kind))
+            {
+                var rows = new StackPanel { Spacing = 8 };
+                foreach (var item in group) rows.Children.Add(new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(8),
+                    Background = Design.Brush("bg-sunken"), Child = new TextBlock { Text = item.Title, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true } });
+                Results.Children.Add(Disclosure(WorkspaceJourneyModel.KindLabel(group.Key) + $" · {group.Count()}", rows, true));
+            }
+            if (value.Items.Count == 0) Results.Children.Add(Mute("当前版本尚未登记证据条目。"));
         }
-        Form.Children.Add(Button("读取历程", Load)); _ = Load();
+        if (value.Publications.Count == 0) Results.Children.Add(Mute("尚无论文证据。填写论文标题和版本标签，创建第一份记录。"));
+        else if (value.Publication == null) Results.Children.Add(Mute("论文记录存在，但当前未返回可展示的版本。请刷新。"));
     }
 }
 

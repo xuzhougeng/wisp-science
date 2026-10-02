@@ -10,6 +10,7 @@ internal sealed class PreviewSettings
     public string DarkPalette { get; set; } = "charcoal";
     public Wisp.ProjectBrowser.NativeTypography Typography { get; set; } = new();
     public bool PanelVisible { get; set; }
+    public double PanelWidth { get; set; } = 360;
     public string PanelTab { get; set; } = "artifacts";
     public string PanelTabs { get; set; } = "";
     private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

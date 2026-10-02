@@ -21,21 +21,29 @@ internal static class NativeSettingsEditorTests
             "failed write preserves draft without automatic replay");
         fake.Fail = false; fake.Pending = new();
         var save = model.SaveAsync(); count = fake.Calls;
+        Check(model.Saving && !model.SaveConfirmed, "pending write is not presented as saved");
         Check(!await model.SaveAsync() && fake.Calls == count, "duplicate save is rejected while response is pending");
         fake.Pending.SetResult(null); await save; fake.Pending = null;
+        Check(model.SaveConfirmed && !model.Saving, "only an authoritative write response confirms saving");
         Check(model.Draft == null && !model.HasChanges && fake.Project == "project-a", "void success closes the editor under its explicit project scope");
         Check(fake.Args!["conn"]?["future"]?.GetValue<int>() == 7 && S(fake.Args["conn"]?["transport"]?["headers"]?[0], "secret_ref") == "existing-key",
             "nested unknown fields and existing credential references survive edits");
+        fake.Fail = true;
+        Check(!await model.LoadAsync("list_mcp_connections") && model.SaveConfirmed && model.Error != null,
+            "a refresh failure after confirmed save must not suggest replaying the write");
+        fake.Fail = false;
         source["transport"]!["auth"] = "oauth";
         model.Edit(source, "update_mcp_connection", "conn"); await model.SaveAsync();
         Check(fake.Command == "authorize_http_connection", "OAuth saves use the authorizing host command");
         model.Edit(source, "update_mcp_connection", "conn"); fake.Pending = new();
+        Check(!model.SaveConfirmed, "new edit clears previous saved feedback");
         var authorize = model.SaveAsync();
         Check(model.OAuthPending && model.Busy, "OAuth authorization exposes a cancellable pending operation");
         await model.CancelOAuthAsync();
         Check(fake.Command == "cancel_oauth_authorization" && fake.Project == "project-a", "OAuth cancellation can reach host while save is pending");
         fake.Pending.SetException(new IOException("authorization cancelled")); await authorize; fake.Pending = null;
         Check(!model.OAuthPending && !model.Busy && model.Draft != null, "cancelled OAuth retains the connection draft without resubmitting");
+        Check(!model.Saving && !model.SaveConfirmed, "failed authorization never confirms saving");
         model.Edit(new() { ["src_path"] = "C:/fixtures/plugin", ["expected_sha256"] = "" }, "install_plugin"); await model.SaveAsync();
         Check(fake.Args!["expectedSha256"] == null && S(fake.Args, "srcPath") == "C:/fixtures/plugin", "optional local plugin checksum becomes null without changing the selected source");
         model.Edit(JsonNode.Parse("{\"locale\":\"zh\",\"api_url\":\"http://localhost\",\"model\":\"fixture\",\"future_flag\":true}")!.AsObject(), "set_settings", "settings");

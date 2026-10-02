@@ -27,6 +27,7 @@ internal sealed partial class MainWindow : Window
     private NativeSettingsClient? workspaceHost;
     private Task<NativeSettingsClient?>? connectingHost;
     private int conversationNavigation;
+    private int runNavigation;
     private WorkspaceInboxModel? inbox;
     private NativeWorkspacePanel? panelPage;
     private NativeWorkspaceTerminal? terminalPage;
@@ -38,6 +39,7 @@ internal sealed partial class MainWindow : Window
     private string? workspaceKey;
     private bool windowClosed;
     private bool sidebarVisible = true;
+    private bool sidebarDrawerVisible;
     private PreviewLayout layout = PreviewLayout.ForSize(800, 540);
     private bool nativePickerOpen;
     private ScrollViewer? transcriptScroll;
@@ -49,6 +51,8 @@ internal sealed partial class MainWindow : Window
     private bool renderQueued;
     private Grid? workspaceMain;
     private Grid? workspaceShell;
+    private Grid? workspacePanelHost;
+    private bool workspacePanelOverlay;
 
     public MainWindow()
     {
@@ -81,7 +85,12 @@ internal sealed partial class MainWindow : Window
             else if (searchOverlay != null) { CloseSearch(); e.Handled = true; }
             else if (workspaceSheet != null) { workspaceSheet.HandleEscape(); e.Handled = true; }
             else if (settingsPage != null) { settingsPage.HandleEscape(); e.Handled = true; }
+            else if (panelVisible && panelPage?.HandleEscape() == true) e.Handled = true;
+            else if (panelVisible && workspacePanelOverlay) { TogglePanel(); e.Handled = true; }
+            else if (sidebarDrawerVisible) { sidebarDrawerVisible = false; Render(); e.Handled = true; }
             else if (projectPage != null) { projectPage.HandleEscape(); e.Handled = true; }
+            else if (terminalVisible && terminalPage?.HandleEscape() == true) e.Handled = true;
+            else if (conversationPage?.HandleEscape() == true) e.Handled = true;
         };
         root.KeyboardAccelerators.Add(escape);
         Closed += (_, _) =>
@@ -141,10 +150,13 @@ internal sealed partial class MainWindow : Window
         // WinUI can report Parent=null while an unloaded subtree still owns a
         // reusable UserControl. Detach through the retained owner before remounting.
         workspaceMain?.Children.Clear(); workspaceMain = null;
+        workspacePanelHost?.Children.Clear(); workspacePanelHost = null;
+        workspacePanelOverlay = false;
         workspaceShell?.Children.Clear(); workspaceShell = null;
         root.Children.Clear();
         transcriptScroll = null;
         var project = model.Projects.FirstOrDefault(p => p.Id == model.ActiveProjectId);
+        if (model.ActiveSessionId != renderedSession || projectPage != null) sidebarDrawerVisible = false;
         pageContent = project == null ? Home() : Workspace(project);
         pageContent.IsHitTestVisible = searchOverlay == null && workspaceSheet == null;
         pageContent.Visibility = workspaceSheet == null ? Visibility.Visible : Visibility.Collapsed;
@@ -229,7 +241,10 @@ internal sealed partial class MainWindow : Window
             content.Children.Add(SingleLine(project.Name, 14));
             content.Children.Add(SingleLine(project.WorkspaceDirectory, 11, "text-faint"));
             content.Children.Add(Text($"{project.SessionCount} 会话 · {project.ArtifactCount} 产物" +
-                (project.NeedsYouCount > 0 ? $" · {project.NeedsYouCount} 待查看" : ""), 12, "text-muted"));
+                (project.RunningCount > 0 ? $" · {project.RunningCount} 运行中" : "") +
+                (project.NeedsYouCount > 0 ? $" · {project.NeedsYouCount} 待查看" : ""), 12, project.NeedsYouCount > 0 ? "clay-strong" : "text-muted"));
+            var updated = SingleLine("更新于 " + NativeBrowserPresentation.RelativeTime(project.UpdatedAt, DateTimeOffset.Now), 11, "text-faint");
+            ToolTipService.SetToolTip(updated, NativeBrowserPresentation.ExactTime(project.UpdatedAt)); content.Children.Add(updated);
             var cardRow = new Grid();
             cardRow.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
             cardRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -239,25 +254,29 @@ internal sealed partial class MainWindow : Window
             var options = Row(2); options.VerticalAlignment = VerticalAlignment.Center;
             var star = ActionButton(project.Starred ? "取消收藏" : "收藏项目", project.Starred ? "star-filled" : "star", () => _ = model.SetStarredAsync(project.Id, !project.Starred), quiet: true);
             star.IsEnabled = !model.Loading; options.Children.Add(star);
-            options.Children.Add(ActionButton("项目设置", "gear", () => OpenSettingsSection("project", project.Id), quiet: true));
+            var more = ActionButton("项目操作", "more", () => { }, quiet: true); options.Children.Add(more);
             Grid.SetColumn(options, 1); cardRow.Children.Add(options);
             var card = Card(cardRow, 4);
             var menu = new MenuFlyout();
+            var projectSettings = new MenuFlyoutItem { Text = "项目设置" };
+            projectSettings.Click += (_, _) => OpenSettingsSection("project", project.Id);
+            menu.Items.Add(projectSettings);
             var reveal = new MenuFlyoutItem { Text = "在资源管理器中显示", IsEnabled = Directory.Exists(project.WorkspaceDirectory) };
             reveal.Click += (_, _) => Reveal(project);
-            menu.Items.Add(reveal); Register(menu); card.ContextFlyout = menu;
+            menu.Items.Add(reveal); Register(menu); more.Flyout = menu; card.ContextFlyout = menu;
             projects.Children.Add(card);
         }
-        if (model.Projects.Count == 0) projects.Children.Add(Card(Text(model.Loading ? "正在读取本地项目…" : "还没有项目记录。选择已有的 Wisp 数据库。", 14, "text-muted")));
+        if (model.Projects.Count == 0) projects.Children.Add(Card(Text(model.Loading ? "正在读取本地项目…" : model.Error != null ? "项目尚未读取成功，请刷新重试。" : "还没有项目。新建或导入项目开始研究，也可以选择已有的 Wisp 数据库。", 14, "text-muted")));
         columns.Children.Add(ListSection($"项目   {model.Projects.Count}", projects));
         var recent = Stack(8);
         foreach (var session in model.RecentSessions)
         {
             var label = Stack(6); label.Children.Add(SingleLine(session.Title, 14));
-            label.Children.Add(SingleLine((model.Projects.FirstOrDefault(p => p.Id == session.ProjectId)?.Name ?? "项目") + " · " + (session.Status == "needs_you" ? "待查看" : "已完成"), 11, "text-faint"));
+            label.Children.Add(SingleLine(model.Projects.FirstOrDefault(p => p.Id == session.ProjectId)?.Name ?? "项目", 11, "text-faint"));
+            label.Children.Add(SessionMetadata(session));
             recent.Children.Add(Card(ContentButton(label, () => _ = model.OpenProjectAsync(session.ProjectId, session.Id), $"recent-{session.Id}", session.Title), 4));
         }
-        if (model.RecentSessions.Count == 0) recent.Children.Add(Card(Text("暂无最近会话", 14, "text-muted")));
+        if (model.RecentSessions.Count == 0) recent.Children.Add(Card(Text(model.Loading ? "正在读取最近会话…" : model.LastLoaded == null && model.Error != null ? "最近会话尚未读取成功，请刷新重试。" : "暂无最近会话", 14, "text-muted")));
         var recentSection = ListSection("最近会话", recent);
         if (layout.StackHomeColumns) Grid.SetRow(recentSection, 1); else Grid.SetColumn(recentSection, 1);
         columns.Children.Add(recentSection); Grid.SetRow(columns, 2); page.Children.Add(columns);
@@ -272,7 +291,8 @@ internal sealed partial class MainWindow : Window
         shell.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         shell.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        if (sidebarVisible) shell.Children.Add(Sidebar(project));
+        var sidebar = new ContentControl { Content = Sidebar(project), IsTabStop = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
         var main = new Grid();
         workspaceMain = main;
         main.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -284,11 +304,13 @@ internal sealed partial class MainWindow : Window
         toolbar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var navigation = Row(4);
-        if (!sidebarVisible)
+        navigation.Children.Add(ActionButton("返回项目", "arrow-left", model.GoHome));
+        navigation.Children.Add(ActionButton("展开侧边栏", "chevron-right", () =>
         {
-            navigation.Children.Add(ActionButton("返回项目", "arrow-left", model.GoHome));
-            navigation.Children.Add(ActionButton("展开侧边栏", "chevron-right", () => { sidebarVisible = true; Render(); }));
-        }
+            sidebarVisible = true;
+            sidebarDrawerVisible = PreviewLayout.Workspace(root.ActualWidth, true, false, settings.PanelWidth).SidebarWidth == 0;
+            Render();
+        }));
         toolbar.Children.Add(navigation);
         var title = Text(model.Sessions.FirstOrDefault(s => s.Id == model.ActiveSessionId)?.Title ?? project.Name, 14);
         title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap;
@@ -315,7 +337,7 @@ internal sealed partial class MainWindow : Window
         else Grid.SetColumn(tools, 2);
         tools.HorizontalAlignment = HorizontalAlignment.Right;
         toolbar.Children.Add(tools); main.Children.Add(toolbar);
-        var messages = Stack(18); messages.MaxWidth = 850; messages.Margin = new Thickness(24);
+        var messages = Stack(18); messages.MaxWidth = PreviewLayout.ConversationMaxWidth; messages.Margin = new Thickness(16);
         if ((localError ?? model.SessionError ?? model.Error) is { } error)
         {
             messages.Children.Add(Text(error, 13, "clay-strong"));
@@ -359,13 +381,73 @@ internal sealed partial class MainWindow : Window
             if (terminalPage.Parent is Panel previous) previous.Children.Remove(terminalPage);
             Grid.SetRow(terminalPage, 2); main.Children.Add(terminalPage);
         }
-        Grid.SetColumn(main, 1); shell.Children.Add(main);
+        var mainSurface = new ContentControl { Content = main, IsTabStop = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
+        Grid.SetColumn(mainSurface, 1); shell.Children.Add(mainSurface);
+        var sidebarBackdrop = new Button { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(48, 0, 0, 0)),
+            BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch, IsTabStop = false };
+        AutomationProperties.SetName(sidebarBackdrop, "关闭侧边栏");
+        sidebarBackdrop.Click += (_, _) => { sidebarDrawerVisible = false; Render(); };
+        Grid.SetColumnSpan(sidebarBackdrop, 3); shell.Children.Add(sidebarBackdrop);
+        shell.Children.Add(sidebar);
+        Grid? panelHost = null;
+        Button? backdrop = null;
+        Thumb? resize = null;
         if (panelVisible && model.ActiveSessionId != null && panelPage != null)
         {
             if (panelPage.Parent is Panel previous) previous.Children.Remove(panelPage);
-            Grid.SetColumn(panelPage, 2); shell.Children.Add(panelPage);
+            backdrop = new Button { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(48, 0, 0, 0)),
+                BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch, IsTabStop = false };
+            AutomationProperties.SetName(backdrop, "关闭侧面板");
+            backdrop.Click += (_, _) => TogglePanel();
+            Grid.SetColumnSpan(backdrop, 3); shell.Children.Add(backdrop);
+            panelHost = new Grid { HorizontalAlignment = HorizontalAlignment.Right, Background = design.Brush("bg-sunken") };
+            workspacePanelHost = panelHost;
+            panelHost.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            panelHost.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            resize = new Thumb { Width = 8, Background = design.Brush("border"), IsTabStop = true };
+            AutomationProperties.SetName(resize, "调整侧面板宽度，左右方向键调整");
+            resize.DragDelta += (_, e) => { settings.PanelWidth = PreviewLayout.ClampPanelWidth(settings.PanelWidth - e.HorizontalChange); SizeWorkspace(); };
+            resize.DragCompleted += (_, _) => SaveSettings();
+            resize.KeyDown += (_, e) =>
+            {
+                if (e.Key is not (VirtualKey.Left or VirtualKey.Right)) return;
+                settings.PanelWidth = PreviewLayout.ClampPanelWidth(settings.PanelWidth + (e.Key == VirtualKey.Left ? 24 : -24));
+                SizeWorkspace(); SaveSettings(); e.Handled = true;
+            };
+            panelHost.Children.Add(resize);
+            Grid.SetColumn(panelPage, 1); panelHost.Children.Add(panelPage);
+            shell.Children.Add(panelHost);
         }
+        shell.SizeChanged += (_, _) => SizeWorkspace();
+        SizeWorkspace();
         return shell;
+
+        void SizeWorkspace()
+        {
+            if (!ReferenceEquals(workspaceShell, shell)) return;
+            var width = shell.ActualWidth > 0 ? shell.ActualWidth : root.ActualWidth > 0 ? root.ActualWidth : 1220;
+            var columns = PreviewLayout.Workspace(width, sidebarVisible, panelHost != null, settings.PanelWidth);
+            var sidebarOverlay = columns.SidebarWidth == 0 && sidebarDrawerVisible;
+            if (columns.SidebarWidth > 0) sidebarDrawerVisible = false;
+            sidebar.Width = sidebarOverlay ? Math.Min(244, width) : columns.SidebarWidth;
+            sidebar.HorizontalAlignment = HorizontalAlignment.Left;
+            Grid.SetColumnSpan(sidebar, sidebarOverlay ? 3 : 1);
+            sidebar.Visibility = columns.SidebarWidth > 0 || sidebarOverlay ? Visibility.Visible : Visibility.Collapsed;
+            sidebarBackdrop.Visibility = sidebarOverlay ? Visibility.Visible : Visibility.Collapsed;
+            mainSurface.IsEnabled = !columns.PanelOverlay && !sidebarOverlay;
+            sidebar.IsEnabled = !columns.PanelOverlay;
+            navigation.Visibility = columns.SidebarWidth > 0 ? Visibility.Collapsed : Visibility.Visible;
+            workspacePanelOverlay = columns.PanelOverlay;
+            if (panelHost == null) return;
+            panelHost.Width = columns.PanelWidth;
+            Grid.SetColumn(panelHost, columns.PanelOverlay ? 0 : 2);
+            Grid.SetColumnSpan(panelHost, columns.PanelOverlay ? 3 : 1);
+            backdrop!.Visibility = columns.PanelOverlay ? Visibility.Visible : Visibility.Collapsed;
+            resize!.Visibility = columns.PanelOverlay ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
 
     private FrameworkElement Sidebar(ProjectSummary project)
@@ -392,7 +474,7 @@ internal sealed partial class MainWindow : Window
             menu.Items.Add(option);
         }
         Register(menu); switcher.Flyout = menu; heading.Children.Add(switcher);
-        heading.Children.Add(ActionButton("收起侧边栏", "chevron-left", () => { sidebarVisible = false; Render(); }, quiet: true));
+        heading.Children.Add(ActionButton("收起侧边栏", "chevron-left", () => { sidebarVisible = false; sidebarDrawerVisible = false; Render(); }, quiet: true));
         top.Children.Add(heading);
         top.Children.Add(ActionButton("新建会话", "plus", () => _ = CreateSessionAsync(), showLabel: true, primary: true, quiet: true));
         top.Children.Add(ActionButton("搜索", "search", OpenSearch, true, quiet: true));
@@ -499,6 +581,7 @@ internal sealed partial class MainWindow : Window
         SyncProjectActions();
         var key = model.ActiveProjectId is { } project ? project + ":" + model.ActiveSessionId : null;
         if (key == workspaceKey) return;
+        runNavigation++;
         workspaceKey = key;
         ClearSheets();
         panelPage?.Dispose(); panelPage = null;
@@ -517,7 +600,7 @@ internal sealed partial class MainWindow : Window
         if (host == null || windowClosed || navigation != conversationNavigation || selectedProject != model.ActiveProjectId || selectedSession != model.ActiveSessionId) return;
         conversation ??= new WorkspaceConversationModel(new NativeConversationClient(host), host);
         conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync, () => PickFile("*"),
-            RouteSlashCommand, () => ShowPanelTab("hosts"));
+            RouteSlashCommand, () => ShowPanelTab("hosts"), id => _ = OpenRunAsync(id));
         if (model.ActiveProjectId is { } project && model.ActiveSessionId is { } session)
         {
             sideChat = new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
@@ -530,6 +613,7 @@ internal sealed partial class MainWindow : Window
     private void QuoteSelection(string text)
     {
         if (sideChat is null) return;
+        runNavigation++;
         sideChat.Quotes.Add(new NativeSideChatQuote(text, "会话摘录"));
         panelVisible = true; settings.PanelVisible = true; settings.PanelTab = "sidechat"; SaveSettings();
         if (panelPage == null) _ = EnsurePanelAndTerminalAsync();
@@ -562,12 +646,9 @@ internal sealed partial class MainWindow : Window
                 new NativeHighlightClient(host), new NativeNotebookClient(host), new NativeAgentPanelClient(host),
                 new NativeContextActivityClient(host)),
                 () => conversation?.VisibleItems ?? [],
-                design, TogglePanel, sideChat, context =>
-                {
-                    terminalVisible = true;
-                    if (terminalPage == null) _ = EnsurePanelAndTerminalAsync();
-                    else _ = terminalPage.OpenContextAsync(context);
-                });
+                design, TogglePanel, sideChat, context => _ = OpenTerminalContextAsync(context),
+                (selected, saved) => { runNavigation++; settings.PanelTab = selected; settings.PanelTabs = saved; SaveSettings(); },
+                new WorkspaceRunReviewModel(new NativeRunReviewClient(host), project, session));
         }
         if (terminalVisible && terminalPage == null)
         {
@@ -581,6 +662,7 @@ internal sealed partial class MainWindow : Window
 
     private void TogglePanel()
     {
+        runNavigation++;
         panelVisible = !panelVisible;
         settings.PanelVisible = panelVisible; SaveSettings();
         if (panelVisible && panelPage == null) _ = EnsurePanelAndTerminalAsync();
@@ -592,6 +674,16 @@ internal sealed partial class MainWindow : Window
         terminalVisible = !terminalVisible;
         if (terminalVisible && terminalPage == null) _ = EnsurePanelAndTerminalAsync();
         else Render();
+    }
+
+    private async Task OpenTerminalContextAsync(string context)
+    {
+        var project = model.ActiveProjectId; var session = model.ActiveSessionId;
+        terminalVisible = true;
+        if (terminalPage == null) await EnsurePanelAndTerminalAsync();
+        if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != session || terminalPage == null) return;
+        await terminalPage.OpenContextAsync(context);
+        if (!windowClosed) Render();
     }
 
     private async Task OpenSheet(string kind)
@@ -690,6 +782,7 @@ internal sealed partial class MainWindow : Window
 
     private void DisposeWorkspace()
     {
+        runNavigation++;
         sessionGroups?.Dispose(); sessionGroups = null;
         projectPage?.Dispose(); projectPage = null;
         ClearSheets();
@@ -706,6 +799,7 @@ internal sealed partial class MainWindow : Window
     private void OpenSettingsSection(string initialSection, string? projectId = null)
     {
         if (settingsPage != null) return;
+        runNavigation++;
         CloseSheet();
         settingsPage = new NativeSettingsPage(model.DatabasePath, projectId ?? model.ActiveProjectId, prefs =>
         {
@@ -755,6 +849,14 @@ internal sealed partial class MainWindow : Window
         var text = Text(value, size, color);
         text.TextWrapping = TextWrapping.NoWrap; text.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTipService.SetToolTip(text, value); return text;
+    }
+    private TextBlock SessionMetadata(BrowserSession session)
+    {
+        var status = NativeBrowserPresentation.Status(session.Status);
+        var text = SingleLine(status + " · " + NativeBrowserPresentation.RelativeTime(session.Timestamp, DateTimeOffset.Now), 11,
+            session.Status is "needs_you" or "running" ? "clay-strong" : "text-faint");
+        ToolTipService.SetToolTip(text, status + " · " + NativeBrowserPresentation.ExactTime(session.Timestamp));
+        return text;
     }
     private FrameworkElement ListSection(string title, UIElement items)
     {

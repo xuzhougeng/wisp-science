@@ -1,0 +1,6 @@
+{
+  "activity": {"runtimes":[],"runs":[],"read_only":false,"run_review_supported":true},
+  "request": {"session_id":"session-a","run_id":"run-a","operation":{"action":"list","path":"results","name_filter":"","offset":0}},
+  "reply": {"run_id":"run-a","read_only":false,"cleaned":false,"acknowledged":true,"downloaded":null,
+    "listing":{"entries":[{"path":"results/table.tsv","kind":"file","size_bytes":128,"file_count":null},{"path":"results/figures","kind":"dir","size_bytes":0,"file_count":3}],"truncated":true}}
+}

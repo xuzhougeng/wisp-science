@@ -13,6 +13,8 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
     private JsonObject extra = new();
     public bool HasChanges => Draft != null && !JsonNode.DeepEquals(original, Draft);
     public bool OAuthPending { get; private set; }
+    public bool Saving { get; private set; }
+    public bool SaveConfirmed { get; private set; }
     private bool cancellingOAuth;
     public Task<bool> LoadAsync(params string[] commands) => RunAsync(async () =>
     {
@@ -25,10 +27,11 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
     public void Edit(JsonObject draft, string write, string? argument = null, JsonObject? arguments = null)
     {
         if (Busy || Closed) return;
+        SaveConfirmed = false;
         original = (JsonObject)draft.DeepClone(); Draft = (JsonObject)draft.DeepClone();
         command = write; parameter = argument; extra = (JsonObject?)arguments?.DeepClone() ?? new();
     }
-    public void Discard() { if (!Busy) { Draft = null; original = null; command = null; } }
+    public void Discard() { if (!Busy) { Draft = null; original = null; command = null; SaveConfirmed = false; } }
     public async Task<bool> SaveAsync()
     {
         if (Busy || Closed || Draft == null || command == null) return false;
@@ -41,12 +44,13 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
         var operation = command is "add_mcp_connection" or "update_mcp_connection" && Draft["transport"]?["auth"]?.GetValue<string>() == "oauth"
             ? "authorize_http_connection" : command;
         OAuthPending = operation == "authorize_http_connection";
+        Saving = true; SaveConfirmed = false;
         try
         {
             return await RunAsync(() => client.InvokeAsync(operation, args, projectId), _ =>
-            { Draft = null; original = null; command = null; });
+            { Draft = null; original = null; command = null; SaveConfirmed = true; });
         }
-        finally { OAuthPending = false; if (!Closed) Notify(); }
+        finally { OAuthPending = false; Saving = false; if (!Closed) Notify(); }
     }
     public async Task CancelOAuthAsync()
     {

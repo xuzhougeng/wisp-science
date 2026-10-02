@@ -1306,6 +1306,21 @@ fn is_chat_model(p: &ModelProfile) -> bool {
     !profile_is_image_model(p) && !is_video_generation_model(&p.model)
 }
 
+/// Match the WebView composer: only the built-in OpenAI chat transports expose Fast.
+pub(crate) fn supports_fast_service_tier(p: &ModelProfile) -> bool {
+    is_chat_model(p)
+        && matches!(
+            p.provider.trim(),
+            "openai"
+                | "openai_responses"
+                | "openai-responses"
+                | "responses"
+                | "openai_codex"
+                | "openai-codex"
+                | "codex"
+        )
+}
+
 fn can_describe_images(p: &ModelProfile) -> bool {
     is_chat_model(p) && p.supports_vision
 }
@@ -2185,6 +2200,42 @@ mod tests {
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+        }
+    }
+
+    #[test]
+    fn native_fast_matches_composer_chat_transport_capabilities() {
+        let mut profile = test_profile("p", "P", "gpt-5");
+        for provider in [
+            "openai",
+            "openai_responses",
+            "openai-responses",
+            "responses",
+            "openai_codex",
+            "openai-codex",
+            "codex",
+        ] {
+            profile.provider = provider.into();
+            assert!(supports_fast_service_tier(&profile));
+        }
+        for provider in ["openai_compatible", "anthropic", "xai", "acp", "unknown"] {
+            profile.provider = provider.into();
+            assert!(!supports_fast_service_tier(&profile));
+        }
+        profile.provider = "openai".into();
+        profile.image_generation_capable = true;
+        assert!(!supports_fast_service_tier(&profile));
+        profile.image_generation_capable = false;
+        profile.use_for_image_generation = true;
+        assert!(!supports_fast_service_tier(&profile));
+        profile.use_for_image_generation = false;
+        for model in [
+            "grok-imagine-video",
+            "grok-imagine-video-1.5",
+            "grok-imagine-video-1.5-preview",
+        ] {
+            profile.model = model.into();
+            assert!(!supports_fast_service_tier(&profile));
         }
     }
 

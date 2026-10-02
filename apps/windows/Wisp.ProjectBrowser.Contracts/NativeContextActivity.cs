@@ -23,7 +23,7 @@ public sealed record NativeRun(string Id, string? FrameId, string ContextId, str
     long CreatedAt, long? StartedAt, long? EndedAt, long? ExitCode, string? RemoteWorkdir, long? TimeoutSecs,
     long? LastPolledAt, string? LastPollError, string ProgressJson, long? HarvestedAt, long? CleanedAt,
     string? CleanupError, string? OutputFingerprint, string? Command, string? StdoutTail, string? StderrTail, string? EnvSnapshotJson);
-public sealed record NativeContextActivity(NativeRuntimeInfo[] Runtimes, NativeRun[] Runs, bool ReadOnly);
+public sealed record NativeContextActivity(NativeRuntimeInfo[] Runtimes, NativeRun[] Runs, bool ReadOnly, bool? RunReviewSupported = null);
 public sealed record NativeRuntimeExecution(string Text, string[] Plots);
 public interface INativeContextActivityClient
 {

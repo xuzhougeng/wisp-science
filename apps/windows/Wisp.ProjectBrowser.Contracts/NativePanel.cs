@@ -17,7 +17,8 @@ public static class NativePanelPaths
     }
 }
 public sealed record NativePanelContext(string Id, string Kind, string Label, string ConfigJson, string CapabilitiesJson, string? LastProbeStatus, string? LastProbeError);
-public sealed record NativePanelContexts(NativePanelContext[] Contexts, string[] EnabledIds, bool ReadOnly)
+public sealed record NativePanelDefaultContext(string? ContextId);
+public sealed record NativePanelContexts(NativePanelContext[] Contexts, string[] EnabledIds, bool ReadOnly, NativePanelDefaultContext? DefaultContext = null)
 {
     public NativePanelContext[] Attached => Contexts.Where(c => c.Kind == "local" || EnabledIds.Contains(c.Id)).ToArray();
     public NativePanelContext[] Available => Contexts.Where(c => c.Kind != "local" && !EnabledIds.Contains(c.Id)).ToArray();
@@ -26,6 +27,8 @@ public interface INativePanelClient
 {
     Task<NativePanelContexts> ContextsAsync(string project, string session, CancellationToken token = default);
     Task<string[]> SetContextEnabledAsync(string project, string session, string contextId, bool enabled, CancellationToken token = default);
+    Task SetDefaultContextAsync(string project, string session, string contextId, CancellationToken token = default)
+        => throw new NotSupportedException("Default execution context is not supported by this client");
     Task ProbeContextAsync(string project, string contextId, CancellationToken token = default);
     Task<NativePanelArtifact[]> ArtifactsAsync(string project, string session, CancellationToken token = default);
     Task<NativePanelFile[]> FilesAsync(string project, string session, string path = ".", CancellationToken token = default);
@@ -36,6 +39,12 @@ public interface INativePanelClient
 }
 public sealed class NativePanelClient(INativeSettingsClient transport) : INativePanelClient
 {
+    public async Task SetDefaultContextAsync(string project, string session, string contextId, CancellationToken token = default)
+    {
+        if (string.IsNullOrWhiteSpace(contextId)) throw new ArgumentException("Choose an execution context", nameof(contextId));
+        var result = await Call<NativePanelDefaultContext>("context_default", project, session, new() { ["context_id"] = contextId }, token);
+        if (result.ContextId != contextId) throw new InvalidDataException("Default execution context was not confirmed; refresh before trying again");
+    }
     private async Task<T> Call<T>(string action, string project, string session, JsonObject args, CancellationToken token) where T : class
     {
         args["session_id"] = session;

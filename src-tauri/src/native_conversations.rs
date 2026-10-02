@@ -95,6 +95,66 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
         model_name: item.model_name,
         timestamp: None,
         attachments,
+        run: None,
+    }
+}
+
+fn submitted_run_id(item: &dto::Item) -> Option<String> {
+    if item.role != "tool"
+        || item.ok != Some(true)
+        || !matches!(
+            item.tool_name.as_deref(),
+            Some("run_in_context" | "wisp_run_in_context" | "transfer_between_contexts")
+        )
+    {
+        return None;
+    }
+    let value: Value = serde_json::from_str(&item.text).ok()?;
+    value
+        .get("run_id")
+        .or_else(|| value.get("id"))?
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+}
+
+fn transcript_run_id(item: &dto::Item) -> Option<String> {
+    if item.role == "tool"
+        && matches!(
+            item.tool_name.as_deref(),
+            Some("monitor_run" | "wisp_monitor_run")
+        )
+    {
+        let input = item.input.as_deref()?.trim();
+        if input.is_empty() {
+            return None;
+        }
+        return Some(input.to_owned());
+    }
+    submitted_run_id(item)
+}
+
+fn annotate_runs(items: &mut [dto::Item], runs: &[wisp_store::RunSummary], session: &str) {
+    let mut owners = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if let Some(id) = submitted_run_id(item) {
+            owners.entry(id).or_insert(index);
+        }
+    }
+    for item in items {
+        item.run = transcript_run_id(item).and_then(|id| {
+            let run = runs
+                .iter()
+                .find(|run| run.id == id && run.frame_id.as_deref() == Some(session))?;
+            Some(dto::TranscriptRun {
+                owner_index: owners.get(&id).copied(),
+                id,
+                status: run.status.as_str().into(),
+                needs_review: run.status.is_terminal()
+                    && run.kind == "ssh_direct"
+                    && run.cleaned_at.is_none(),
+            })
+        });
     }
 }
 
@@ -497,6 +557,40 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 .await
                 .map_err(|e| e.to_string())?;
             timestamp_items(&mut items, user_offset, &outline);
+            if items.iter().any(|item| transcript_run_id(item).is_some()) {
+                let (run_project, scope) =
+                    crate::exploration_commands::working_project_for_frame(&state, session).await?;
+                if run_project.id != project {
+                    return Err("Project scope mismatch".into());
+                }
+                let runs = state
+                    .store
+                    .list_run_summaries_in_scope(&scope)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                annotate_runs(&mut items, &runs, session);
+            }
+            let fast_mode = if frozen || binding.is_some() || acp_agent_id.is_some() {
+                None
+            } else if let Some(profile) =
+                crate::models::profile_owned(&state.store, model.as_str().unwrap_or_default()).await
+            {
+                if crate::models::supports_fast_service_tier(&profile) {
+                    let tier = state
+                        .store
+                        .frame_service_tier(session)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Some(dto::FastMode::from_tiers(
+                        &profile.service_tier,
+                        tier.as_deref(),
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let snapshot = dto::Snapshot {
                 schema: dto::SCHEMA.into(),
                 epoch: broker.conversations.epoch.clone(),
@@ -515,6 +609,12 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     Some(crate::acp::native_interactions(&state, session).await)
                 },
                 model_id: model.as_str().unwrap_or_default().into(),
+                fast_mode,
+                plan_mode: if frozen || binding.is_some() || acp_agent_id.is_some() {
+                    None
+                } else {
+                    Some(crate::plan_mode::session_plan_mode(&state.store, session).await)
+                },
                 acp_agent_id: binding.map(|binding| binding.agent_profile_id),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
@@ -689,6 +789,73 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             .await?;
             Ok(Value::Null)
         }
+        "native_conversation_fast" => {
+            let args: dto::FastRequest = decode(&request.args)?;
+            let record = record.lock().await;
+            if record.running || running(broker, session).await {
+                return Err("Wait for the current turn before changing its service tier".into());
+            }
+            let state = broker.app.state::<crate::AppState>();
+            if acp_agent_id.is_some()
+                || state
+                    .store
+                    .get_acp_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+            {
+                return Err("Fast is not available for this ACP Agent".into());
+            }
+            if crate::models::session_profile_id(&state.store, session).await != args.model_id {
+                return Err("The conversation model changed; refresh before changing Fast".into());
+            }
+            let profile = crate::models::profile_owned(&state.store, &args.model_id)
+                .await
+                .ok_or("Model does not exist")?;
+            if !crate::models::supports_fast_service_tier(&profile) {
+                return Err("This model does not support Fast".into());
+            }
+            let tier = dto::FastMode::override_for(&profile.service_tier, args.enabled);
+            call(
+                broker,
+                project,
+                "set_session_service_tier",
+                json!({"sessionId":session,"serviceTier":tier}),
+            )
+            .await?;
+            let saved = state
+                .store
+                .frame_service_tier(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            if saved.as_deref() != tier {
+                return Err(
+                    "Service tier change was not confirmed; refresh before retrying".into(),
+                );
+            }
+            serde_json::to_value(dto::FastMode::from_tiers(
+                &profile.service_tier,
+                saved.as_deref(),
+            ))
+            .map_err(|e| e.to_string())
+        }
+        "native_conversation_plan" => {
+            let args: dto::PlanRequest = decode(&request.args)?;
+            let record = record.lock().await;
+            if record.running || running(broker, session).await {
+                return Err("Wait for the current turn before changing its mode".into());
+            }
+            if acp_agent_id.is_some() {
+                return Err("This ACP Agent owns its plan mode".into());
+            }
+            call(
+                broker,
+                project,
+                "set_session_plan_mode",
+                json!({"sessionId":session,"enabled":args.enabled}),
+            )
+            .await
+        }
         "native_conversation_model" => {
             let args: dto::ModelRequest = decode(&request.args)?;
             let record = record.lock().await;
@@ -728,6 +895,54 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transcript_run_projection_requires_exact_visible_session_owner() {
+        use super::{annotate_runs, dto};
+        let mut items: Vec<dto::Item> = serde_json::from_str(include_str!(
+            "../../contracts/native-conversations/v1/transcript-runs.json"
+        ))
+        .unwrap();
+        let activity: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/native-conversations/v1/panel-activity.json"
+        ))
+        .unwrap();
+        let mut run: wisp_store::RunSummary =
+            serde_json::from_value(activity["runs"][0].clone()).unwrap();
+        run.status = wisp_store::RunStatus::Succeeded;
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert_eq!(items[3].run.as_ref().unwrap().owner_index, Some(1));
+        // Live stored state wins over successful tool calls and stale fixture metadata.
+        run.status = wisp_store::RunStatus::Running;
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert_eq!(items[3].run.as_ref().unwrap().status, "running");
+        run.status = wisp_store::RunStatus::Succeeded;
+        run.kind = "ssh_direct".into();
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert!(items[3].run.as_ref().unwrap().needs_review);
+        run.cleaned_at = Some(10);
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert!(!items[3].run.as_ref().unwrap().needs_review);
+        // A paged-out submission is not replaced by a nearby tool or inferred title.
+        items[1].tool_name = Some("shell".into());
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert!(items[1].run.is_none());
+        assert_eq!(items[3].run.as_ref().unwrap().owner_index, None);
+        items[1].tool_name = Some("run_in_context".into());
+        items[1].ok = Some(false);
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert_eq!(items[3].run.as_ref().unwrap().owner_index, None);
+        items[1].ok = Some(true);
+        items[1].text = "not JSON".into();
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert_eq!(items[3].run.as_ref().unwrap().owner_index, None);
+        run.frame_id = Some("other-session".into());
+        annotate_runs(&mut items, &[run.clone()], "session-a");
+        assert!(items.iter().all(|row| row.run.is_none()));
+        run.frame_id = Some("session-a".into());
+        run.id = "unrelated".into();
+        annotate_runs(&mut items, &[run], "session-a");
+        assert!(items.iter().all(|row| row.run.is_none()));
+    }
     #[test]
     fn message_metadata_uses_owning_turn_and_page_offset() {
         let outline = vec![

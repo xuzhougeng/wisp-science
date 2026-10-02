@@ -1,6 +1,7 @@
 using Markdig;
 using Markdig.Extensions.TaskLists;
 using Markdig.Extensions.Tables;
+using Markdig.Extensions.Mathematics;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using Microsoft.UI.Text;
@@ -20,7 +21,7 @@ namespace Wisp.Science.Preview;
 internal static class TranscriptView
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
-        .UsePipeTables().UseTaskLists().UseAutoLinks().Build();
+        .UsePipeTables().UseTaskLists().UseAutoLinks().UseMathematics().Build();
 
     public static FrameworkElement Create(BrowserMessage message, WispDesign design)
     {
@@ -53,6 +54,10 @@ internal static class TranscriptView
         {
             switch (block)
             {
+                case MathBlock math:
+                    Flush();
+                    panel.Children.Add(new NativeRichPreview(design, "math", math.Lines.ToString(), "公式"));
+                    break;
                 case FencedCodeBlock fenced:
                     Flush();
                     panel.Children.Add(CodeElement(fenced.Lines.ToString(), fenced.Info, design));
@@ -234,6 +239,7 @@ internal static class TranscriptView
     {
         switch (inline)
         {
+            case MathInline math: return new InlineUIContainer { Child = new NativeRichPreview(design, "math", math.Content.ToString(), "公式", false) };
             case LiteralInline literal: return new Run { Text = literal.Content.ToString() };
             case CodeInline code: return new Run { Text = code.Content, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), Foreground = design.Brush("clay-strong") };
             case LineBreakInline: return new LineBreak();

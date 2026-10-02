@@ -22,6 +22,11 @@ public sealed class WorkspacePanelModel
     public NativeContextActivity? Activity { get; private set; }
     public NativeRuntimeExecution? Execution { get; private set; }
     public NativeRun? RunDetail { get; private set; }
+    public string? SelectedRunId { get; private set; }
+    public bool RunLoading { get; private set; }
+    public string? RunError { get; private set; }
+    private int runRequest;
+    private bool closed;
     public bool ActivityBusy { get; private set; }
 
     /// <summary>Run one guarded runtime mutation, then refresh the hosts tab.
@@ -29,7 +34,7 @@ public sealed class WorkspacePanelModel
     /// an ambiguous stop/dismiss reports an explicit "check manually" error.</summary>
     private async Task PerformActivityAsync(Func<CancellationToken, Task> request, CancellationToken cancellationToken, bool ambiguousAllowed = false)
     {
-        if (activity is null || ActivityBusy) return;
+        if (activity is null || ActivityBusy || closed || Activity?.ReadOnly != false || cancellationToken.IsCancellationRequested) return;
         var epoch = generation; ActivityBusy = true; Error = null;
         try
         {
@@ -40,7 +45,10 @@ public sealed class WorkspacePanelModel
         {
             if (epoch == generation) Error = (ambiguousAllowed ? "结果未确认，请刷新核对；不会自动重试。" : "操作未确认成功；不会自动重试。") + "\n" + ex.Message;
         }
-        finally { if (epoch == generation) ActivityBusy = false; }
+        catch (OperationCanceledException)
+        { if (epoch == generation) Error = "操作结果未确认，请重新读取核对；不会自动重试。"; }
+        // This operation owns the busy flag. Its own refresh advances generation.
+        finally { ActivityBusy = false; }
     }
 
     public Task StartRuntimeAsync(string contextId, string language, CancellationToken cancellationToken = default) =>
@@ -67,34 +75,61 @@ public sealed class WorkspacePanelModel
             if (epochValue == generation) Execution = result;
         }, cancellationToken);
     }
-    public Task CancelRunAsync(string runId, CancellationToken cancellationToken = default) =>
-        PerformActivityAsync(async token =>
+    public Task CancelRunAsync(string runId, CancellationToken cancellationToken = default)
+    {
+        var epochValue = generation;
+        var selection = runRequest;
+        return PerformActivityAsync(async token =>
         {
             var run = await activity!.CancelRunAsync(projectId, sessionId, runId, token);
-            if (run is null) throw new InvalidOperationException("取消结果未知。");
+            if (run is null || run.Id != runId) throw new InvalidOperationException("取消结果未知或运行身份不匹配。");
+            if (epochValue == generation && selection == runRequest && SelectedRunId == runId) RunDetail = run;
         }, cancellationToken);
+    }
     public Task HarvestRunAsync(string runId, CancellationToken cancellationToken = default)
     {
         var epochValue = generation;
+        var selection = runRequest;
         return PerformActivityAsync(async token =>
         {
             var run = await activity!.HarvestRunAsync(projectId, sessionId, runId, token);
-            if (run is null) throw new InvalidOperationException("收取结果未知。");
-            if (epochValue == generation) RunDetail = run;
+            if (run is null || run.Id != runId) throw new InvalidOperationException("收取结果未知或运行身份不匹配。");
+            if (epochValue == generation && selection == runRequest && SelectedRunId == runId) RunDetail = run;
         }, cancellationToken);
     }
-    public async Task ReadRunAsync(string runId, CancellationToken cancellationToken = default)
+    public Task ReadRunAsync(string runId, CancellationToken cancellationToken = default) =>
+        LoadRunAsync(runId, false, cancellationToken);
+    public Task OpenRunAsync(string runId, CancellationToken cancellationToken = default) =>
+        LoadRunAsync(runId, true, cancellationToken);
+    private async Task LoadRunAsync(string runId, bool openHosts, CancellationToken cancellationToken)
     {
-        if (activity is null) return;
+        if (activity is null || closed || string.IsNullOrWhiteSpace(runId) || cancellationToken.IsCancellationRequested) return;
+        var request = ++runRequest;
+        if (SelectedRunId != runId) RunDetail = null;
+        SelectedRunId = runId; RunLoading = true; RunError = null;
         var current = generation;
         try
         {
+            if (openHosts)
+            {
+                var refresh = RefreshAsync("hosts", cancellationToken: cancellationToken);
+                current = generation;
+                await refresh;
+            }
+            if (closed || current != generation || request != runRequest || Tabs.Selected != "hosts") return;
             var run = await activity.ReadRunAsync(projectId, sessionId, runId, cancellationToken);
-            if (current == generation) { RunDetail = run; Error = null; }
+            if (run.Id != runId) throw new InvalidDataException("运行详情身份不匹配，请重新读取。");
+            if (!closed && current == generation && request == runRequest) { RunDetail = run; RunError = null; }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { if (current == generation) Error = ex.Message; }
+        { if (!closed && current == generation && request == runRequest) RunError = ex.Message; }
+        catch (OperationCanceledException)
+        { if (!closed && current == generation && request == runRequest) RunError = "运行详情读取已取消。"; }
+        finally { if (request == runRequest) RunLoading = false; }
     }
+
+    public void DismissRun()
+    { runRequest++; SelectedRunId = null; RunDetail = null; RunLoading = false; RunError = null; }
 
     public bool PreviewEditable { get; private set; }
     public string Path { get; private set; } = ".";
@@ -126,6 +161,10 @@ public sealed class WorkspacePanelModel
 
     public async Task RefreshAsync(string tab, string? directory = null, CancellationToken cancellationToken = default)
     {
+        if (closed) return;
+        if (tab != "hosts") { runRequest++; RunLoading = false; }
+        var contextReadRevision = contextRevision;
+        var contextReadDuringWrite = ContextBusy;
         Tabs.Show(tab);
         var current = ++generation;
         Loading = true; Error = null;
@@ -133,22 +172,48 @@ public sealed class WorkspacePanelModel
         try
         {
             if (tab is "provenance" or "sidechat") return;
-            if (tab == "artifacts") Artifacts = await client.ArtifactsAsync(projectId, sessionId, cancellationToken);
+            if (tab == "artifacts")
+            {
+                var result = await client.ArtifactsAsync(projectId, sessionId, cancellationToken);
+                if (current == generation) Artifacts = result;
+            }
             else if (tab == "hosts")
             {
-                Contexts = await client.ContextsAsync(projectId, sessionId, cancellationToken);
-                if (activity is not null) Activity = await activity.ReadAsync(projectId, sessionId, cancellationToken);
+                var contexts = await client.ContextsAsync(projectId, sessionId, cancellationToken);
+                if (current != generation || contextReadDuringWrite || contextReadRevision != contextRevision || ContextBusy) return;
+                if (activity is not null)
+                {
+                    var result = await activity.ReadAsync(projectId, sessionId, cancellationToken);
+                    if (current != generation || contextReadRevision != contextRevision || ContextBusy) return;
+                    Activity = result;
+                }
+                Contexts = contexts;
+                ContextUncertain = false;
             }
-            else if (tab == "highlights" && highlights is not null) Highlights = await highlights.ListAsync(projectId, sessionId, cancellationToken);
-            else if (tab == "notebook" && notebook is not null) NotebookStars = await notebook.ListStarsAsync(projectId, sessionId, cancellationToken);
+            else if (tab == "highlights" && highlights is not null)
+            {
+                var result = await highlights.ListAsync(projectId, sessionId, cancellationToken);
+                if (current == generation) Highlights = result;
+            }
+            else if (tab == "notebook" && notebook is not null)
+            {
+                var result = await notebook.ListStarsAsync(projectId, sessionId, cancellationToken);
+                if (current == generation) NotebookStars = result;
+            }
             else if (tab == "agents" && agents is not null)
             {
-                Agents = await agents.ListAsync(projectId, sessionId, cancellationToken);
-                DelegationEnabled = await agents.GetDelegationAsync(projectId, sessionId, cancellationToken);
+                var result = await agents.ListAsync(projectId, sessionId, cancellationToken);
+                if (current != generation) return;
+                var enabled = await agents.GetDelegationAsync(projectId, sessionId, cancellationToken);
+                if (current != generation) return;
+                Agents = result;
+                DelegationEnabled = enabled;
             }
             else if (tab == "files")
             {
-                Files = await client.FilesAsync(projectId, sessionId, requested, cancellationToken);
+                var result = await client.FilesAsync(projectId, sessionId, requested, cancellationToken);
+                if (current != generation) return;
+                Files = result;
                 Path = requested;
             }
         }
@@ -179,14 +244,14 @@ public sealed class WorkspacePanelModel
     public async Task ReadFileAsync(string path, CancellationToken cancellationToken = default)
     {
         var current = ++generation;
-        try { Preview = await client.ReadFileAsync(projectId, sessionId, path, cancellationToken); }
+        try { var value = await client.ReadFileAsync(projectId, sessionId, path, cancellationToken); if (current == generation) { Preview = value; PreviewEditable = false; Error = null; } }
         catch (Exception ex) when (ex is not OperationCanceledException) { if (current == generation) Error = ex.Message; }
     }
 
     public async Task ReadArtifactAsync(string artifactId, CancellationToken cancellationToken = default)
     {
         var current = ++generation;
-        try { Preview = await client.ReadArtifactAsync(projectId, sessionId, artifactId, cancellationToken); }
+        try { var value = await client.ReadArtifactAsync(projectId, sessionId, artifactId, cancellationToken); if (current == generation) { Preview = value; PreviewEditable = false; Error = null; } }
         catch (Exception ex) when (ex is not OperationCanceledException) { if (current == generation) Error = ex.Message; }
     }
 
@@ -239,16 +304,38 @@ public sealed class WorkspacePanelModel
 
     public async Task SetContextEnabledAsync(string contextId, bool enabled, CancellationToken cancellationToken = default)
     {
-        if (ContextBusy || Contexts?.ReadOnly == true) return;
-        var current = generation; ContextBusy = true;
+        if (!CanChangeContext || cancellationToken.IsCancellationRequested) return;
+        await ChangeContextAsync(token => client.SetContextEnabledAsync(projectId, sessionId, contextId, enabled, token), cancellationToken);
+    }
+
+    public bool ContextUncertain { get; private set; }
+    private int contextRevision;
+    public bool CanChangeContext => !ContextBusy && !ContextUncertain && !Loading && Contexts is { ReadOnly: false };
+    public Task SetDefaultContextAsync(string contextId, CancellationToken cancellationToken = default)
+    {
+        if (!CanChangeContext || Contexts?.DefaultContext is null || cancellationToken.IsCancellationRequested
+            || Contexts.DefaultContext.ContextId == contextId
+            || !Contexts.Contexts.Any(context => context.Id == contextId || contextId == "local" && context.Kind == "local"))
+            return Task.CompletedTask;
+        return ChangeContextAsync(token => client.SetDefaultContextAsync(projectId, sessionId, contextId, token), cancellationToken);
+    }
+
+    private async Task ChangeContextAsync(Func<CancellationToken, Task> action, CancellationToken cancellationToken)
+    {
+        var current = generation; ContextBusy = true; ContextUncertain = true; contextRevision++;
+        var confirmed = false;
         try
         {
-            await client.SetContextEnabledAsync(projectId, sessionId, contextId, enabled, cancellationToken);
-            if (generation == current) await RefreshAsync("hosts", cancellationToken: cancellationToken);
+            await action(cancellationToken);
+            confirmed = true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { if (generation == current) Error = ex.Message; }
-        finally { if (generation == current) ContextBusy = false; }
+        catch (Exception ex)
+        {
+            ContextUncertain = true;
+            if (generation == current) Error = "环境设置结果未确认，请刷新核对；不会自动重试。\n" + ex.Message;
+        }
+        finally { contextRevision++; ContextBusy = false; }
+        if (confirmed && generation == current) await RefreshAsync("hosts", cancellationToken: cancellationToken);
     }
 
     public async Task SetDelegationAsync(bool enabled, CancellationToken cancellationToken = default)
@@ -284,5 +371,5 @@ public sealed class WorkspacePanelModel
 
     public void EditPreview() { PreviewEditable = Preview?.Text != null; }
     public void DismissPreview() { generation++; Preview = null; PreviewEditable = false; AgentResult = null; }
-    public void Close() { generation++; Loading = false; FileActionBusy = false; ContextBusy = false; Preview = null; }
+    public void Close() { closed = true; generation++; DismissRun(); Loading = false; FileActionBusy = false; ContextBusy = false; Preview = null; }
 }

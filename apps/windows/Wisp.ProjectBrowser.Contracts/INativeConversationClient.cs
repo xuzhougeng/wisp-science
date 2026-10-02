@@ -26,15 +26,22 @@ public interface INativeConversationClient
     Task StopAsync(string projectId, string sessionId, CancellationToken cancellationToken = default);
     Task ApproveAsync(string projectId, string sessionId, string approvalId, bool approved, CancellationToken cancellationToken = default);
     Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default);
+    Task SetPlanModeAsync(string projectId, string sessionId, bool enabled, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Plan mode is not supported by this client");
+    Task SetFastModeAsync(string projectId, string sessionId, string modelId, bool enabled, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Fast mode is not supported by this client");
 }
 public sealed record NativeInboxEntry(string Id, string ProjectId, string ProjectName, string Title, long Ts, long ActivityAt, string Status);
 public sealed record ConversationOutlineEntry(int UserIndex, string Text, long? BeforeSeq, long? SentAt, long? ResponseAt);
-public sealed record ConversationItem(string Role, string Text, string? ToolName, string? Input, bool? Ok, string? Status, string[]? Attachments = null);
+public sealed record ConversationItem(string Role, string Text, string? ToolName, string? Input, bool? Ok, string? Status, string[]? Attachments = null,
+    ulong? DurationMs = null, string? ModelName = null, long? Timestamp = null, ConversationRun? Run = null);
+public sealed record ConversationRun(string Id, string Status, int? OwnerIndex, bool NeedsReview);
 public sealed record ComposerAttachment(string Path, string Name);
 public sealed record ConversationApproval(string ApprovalId, string FrameId, string Message, string Tool, string Preview);
+public sealed record ConversationFastMode(bool Enabled, bool Inherited);
 public sealed record ConversationSnapshot(string Schema, string Epoch, ulong Sequence, string ProjectId, string SessionId,
     ConversationItem[] Items, long? NextBeforeSeq, bool Running, bool Stopping, bool ReadOnly, string ModelId,
-    string? RequestId, string? Error, ConversationApproval[] Approvals, int? UserOffset = null)
+    string? RequestId, string? Error, ConversationApproval[] Approvals, int? UserOffset = null, bool? PlanMode = null, ConversationFastMode? FastMode = null)
 {
     public const string SchemaId = "wisp.native-conversations.v1";
     public static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -117,4 +124,15 @@ public sealed class NativeConversationClient(INativeSettingsClient transport) : 
         await transport.InvokeAsync("native_conversation_approve", new() { ["session_id"] = sessionId, ["approval_id"] = approvalId, ["approved"] = approved }, projectId, cancellationToken).ConfigureAwait(false);
     public async Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default) =>
         await transport.InvokeAsync("native_conversation_model", new() { ["session_id"] = sessionId, ["model_id"] = modelId }, projectId, cancellationToken).ConfigureAwait(false);
+    public async Task SetPlanModeAsync(string projectId, string sessionId, bool enabled, CancellationToken cancellationToken = default)
+    {
+        var result = await transport.InvokeAsync("native_conversation_plan", new() { ["session_id"] = sessionId, ["enabled"] = enabled }, projectId, cancellationToken).ConfigureAwait(false);
+        if (result?.GetValue<bool>() != enabled) throw new InvalidDataException("Plan mode change was not confirmed; refresh the conversation before trying again");
+    }
+    public async Task SetFastModeAsync(string projectId, string sessionId, string modelId, bool enabled, CancellationToken cancellationToken = default)
+    {
+        var result = await transport.InvokeAsync("native_conversation_fast", new() { ["session_id"] = sessionId, ["model_id"] = modelId, ["enabled"] = enabled }, projectId, cancellationToken).ConfigureAwait(false);
+        if (result?["enabled"]?.GetValue<bool>() != enabled || result?["inherited"] is not JsonValue inherited || !inherited.TryGetValue<bool>(out _))
+            throw new InvalidDataException("Fast mode change was not confirmed; refresh the conversation before trying again");
+    }
 }

@@ -25,8 +25,10 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_run_detail",
     "native_conversation_panel_run_cancel",
     "native_conversation_panel_run_harvest",
+    "native_conversation_panel_run_review",
     "native_conversation_panel_contexts",
     "native_conversation_panel_context_enabled",
+    "native_conversation_panel_context_default",
     "native_conversation_panel_artifacts",
     "native_conversation_panel_files",
     "native_conversation_panel_readfile",
@@ -65,6 +67,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_acp_permission",
     "native_conversation_acp_answer",
     "native_conversation_model",
+    "native_conversation_plan",
+    "native_conversation_fast",
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,6 +91,8 @@ pub enum AgentAction {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct PanelActivity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_review_supported: Option<bool>,
     pub runtimes: Vec<crate::RuntimeInfo>,
     pub runs: Vec<crate::RunSummary>,
     pub read_only: bool,
@@ -97,6 +103,14 @@ pub struct PanelContexts {
     pub contexts: Vec<crate::ExecutionContext>,
     pub enabled_ids: Vec<String>,
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_context: Option<PanelDefaultContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PanelDefaultContext {
+    /// Null inherits the global default; "local" explicitly selects this machine.
+    pub context_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -213,6 +227,67 @@ pub struct ShareExportRequest {
 pub struct ArchiveConfirmRequest {
     pub session_id: String,
     pub input: crate::ConfirmResearchArchive,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunReviewRequest {
+    pub session_id: String,
+    pub run_id: String,
+    pub operation: RunReviewOperation,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RunReviewOperation {
+    List {
+        path: String,
+        name_filter: String,
+        offset: usize,
+    },
+    Download {
+        files: Vec<String>,
+        dirs: Vec<String>,
+    },
+    Delete {
+        paths: Vec<String>,
+        confirmed: bool,
+    },
+    Cleanup {
+        confirmed: bool,
+    },
+}
+impl RunReviewOperation {
+    pub fn is_mutation(&self) -> bool {
+        !matches!(self, Self::List { .. })
+    }
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Delete {
+                confirmed: false, ..
+            }
+            | Self::Cleanup { confirmed: false } => {
+                Err("Explicit deletion confirmation is required")
+            }
+            Self::Download { files, dirs }
+                if files.is_empty() && dirs.is_empty() || files.len() + dirs.len() > 1000 =>
+            {
+                Err("Select 1–1000 files or directories")
+            }
+            Self::Delete { paths, .. } if paths.is_empty() || paths.len() > 1000 => {
+                Err("Select 1–1000 paths")
+            }
+            _ => Ok(()),
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RunReviewReply {
+    pub run_id: String,
+    pub read_only: bool,
+    pub cleaned: bool,
+    pub listing: Option<crate::WorkspaceListing>,
+    pub downloaded: Option<usize>,
+    pub acknowledged: bool,
 }
 
 /// Full persisted question index. The next question's sequence is an exclusive
@@ -352,6 +427,52 @@ pub struct ModelRequest {
     pub model_id: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanRequest {
+    pub session_id: String,
+    pub enabled: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FastRequest {
+    pub session_id: String,
+    pub model_id: String,
+    pub enabled: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct FastMode {
+    pub enabled: bool,
+    pub inherited: bool,
+}
+impl FastMode {
+    pub fn from_tiers(default: &str, session_override: Option<&str>) -> Self {
+        Self {
+            enabled: matches!(
+                session_override.unwrap_or(default).trim(),
+                "priority" | "fast"
+            ),
+            inherited: session_override.is_none(),
+        }
+    }
+    pub fn override_for(default: &str, enabled: bool) -> Option<&'static str> {
+        if Self::from_tiers(default, None).enabled == enabled {
+            None
+        } else if enabled {
+            Some("priority")
+        } else {
+            Some("")
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TranscriptRun {
+    pub id: String,
+    pub status: String,
+    /// Exact submission row in this snapshot page, never inferred by proximity.
+    pub owner_index: Option<usize>,
+    pub needs_review: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Item {
     pub role: String,
     pub text: String,
@@ -371,6 +492,8 @@ pub struct Item {
     /// empty so older snapshots stay unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<TranscriptRun>,
 }
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
@@ -389,6 +512,11 @@ pub struct Snapshot {
     pub stopping: bool,
     pub read_only: bool,
     pub model_id: String,
+    /// Absent for older hosts and ACP sessions, which own their mode selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<FastMode>,
     /// Persisted ACP binding. A provisional choice before the first turn is
     /// represented by model_id = acp:<profile id>, without claiming a binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -402,7 +530,121 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn run_review_contract_requires_explicit_destructive_confirmation() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/run-review.json"
+        ))
+        .unwrap();
+        let request: RunReviewRequest = serde_json::from_value(fixture["request"].clone()).unwrap();
+        assert!(!request.operation.is_mutation());
+        assert!(request.operation.validate().is_ok());
+        let reply: RunReviewReply = serde_json::from_value(fixture["reply"].clone()).unwrap();
+        assert_eq!(reply.run_id, "run-a");
+        assert_eq!(reply.listing.unwrap().entries[1].kind, "dir");
+        for operation in [
+            RunReviewOperation::Delete {
+                paths: vec!["a".into()],
+                confirmed: false,
+            },
+            RunReviewOperation::Cleanup { confirmed: false },
+            RunReviewOperation::Download {
+                files: vec![],
+                dirs: vec![],
+            },
+        ] {
+            assert!(operation.is_mutation());
+            assert!(operation.validate().is_err());
+        }
+        assert!(RunReviewOperation::Cleanup { confirmed: true }
+            .validate()
+            .is_ok());
+        assert!(serde_json::from_value::<RunReviewOperation>(
+            serde_json::json!({"action":"cleanup"})
+        )
+        .is_err());
+        assert!(serde_json::from_value::<RunReviewOperation>(
+            serde_json::json!({"action":"execute","command":"x"})
+        )
+        .is_err());
+        assert!(serde_json::from_value::<RunReviewOperation>(
+            serde_json::json!({"action":"cleanup","confirmed":true,"path":"/"})
+        )
+        .is_err());
+    }
+    #[test]
+    fn transcript_runs_are_optional_and_preserve_page_ownership() {
+        let items: Vec<Item> = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/transcript-runs.json"
+        ))
+        .unwrap();
+        assert!(items[0].run.is_none());
+        let run = items[3].run.as_ref().unwrap();
+        assert_eq!(run.id, "run-a");
+        assert_eq!(run.owner_index, Some(1));
+        assert_eq!(run.status, "succeeded");
+        assert!(!run.needs_review);
+        let mut old = serde_json::to_value(&items[3]).unwrap();
+        old.as_object_mut().unwrap().remove("run");
+        assert!(serde_json::from_value::<Item>(old).unwrap().run.is_none());
+    }
     use super::*;
+    #[test]
+    fn fast_preserves_default_and_explicit_off_semantics() {
+        for default in ["", "default", "priority", "fast"] {
+            for enabled in [true, false] {
+                let value = FastMode::override_for(default, enabled);
+                let state = FastMode::from_tiers(default, value);
+                assert_eq!(state.enabled, enabled);
+                assert_eq!(
+                    state.inherited,
+                    FastMode::from_tiers(default, None).enabled == enabled
+                );
+            }
+        }
+        assert!(!FastMode::from_tiers("priority", Some("")).enabled);
+        assert_eq!(FastMode::override_for("priority", false), Some(""));
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/fast.json"
+        ))
+        .unwrap();
+        assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
+        let request: FastRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
+        assert_eq!(request.model_id, "model-a");
+        assert!(request.enabled);
+        assert!(
+            serde_json::from_str::<FastRequest>(r#"{"session_id":"s","enabled":true}"#).is_err()
+        );
+        assert!(serde_json::from_str::<FastRequest>(
+            r#"{"session_id":"s","model_id":"m","enabled":"true"}"#
+        )
+        .is_err());
+    }
+    #[test]
+    fn plan_mode_is_optional_and_requests_are_explicit() {
+        let mut snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/snapshot.json"
+        ))
+        .unwrap();
+        assert_eq!(snapshot.plan_mode, None);
+        assert_eq!(snapshot.fast_mode, None);
+        snapshot.plan_mode = Some(false);
+        assert_eq!(serde_json::to_value(&snapshot).unwrap()["plan_mode"], false);
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/plan.json"
+        ))
+        .unwrap();
+        assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
+        let request: PlanRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
+        assert!(request.enabled);
+        for invalid in [
+            r#"{"session_id":"s"}"#,
+            r#"{"session_id":"s","enabled":"true"}"#,
+            r#"{"session_id":"s","enabled":true,"project_id":"other"}"#,
+        ] {
+            assert!(serde_json::from_str::<PlanRequest>(invalid).is_err());
+        }
+    }
     #[test]
     fn pin_request_requires_explicit_boolean_state() {
         let request: PinRequest =
@@ -694,8 +936,27 @@ mod tests {
         assert_eq!(snapshot.contexts.len(), 3);
         assert_eq!(snapshot.enabled_ids, vec!["ssh:gpu"]);
         assert!(!snapshot.read_only);
+        assert!(snapshot.default_context.is_none());
         let encoded = serde_json::to_value(snapshot).unwrap();
         assert_eq!(encoded["contexts"][0]["kind"], "local");
+    }
+    #[test]
+    fn panel_default_context_preserves_inheritance_and_explicit_selection() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/context-default.json"
+        ))
+        .unwrap();
+        assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
+        let request: PanelRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
+        assert_eq!(request.context_id.as_deref(), Some("remote-a"));
+        for id in [None, Some("local"), Some("remote-a")] {
+            let encoded = serde_json::to_value(PanelDefaultContext {
+                context_id: id.map(str::to_owned),
+            })
+            .unwrap();
+            let decoded: PanelDefaultContext = serde_json::from_value(encoded).unwrap();
+            assert_eq!(decoded.context_id.as_deref(), id);
+        }
     }
     #[test]
     fn mutation_arguments_reject_unscoped_and_unexpected_fields() {

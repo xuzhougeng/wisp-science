@@ -114,6 +114,107 @@ internal static class WorkspaceActionTests
         catch (IOException) { }
         Check(panelClient.Actions == 1, "uncertain file delete is not replayed");
 
+        var firstDirectory = panelClient.PendingFiles = new();
+        var firstListing = panel.RefreshAsync("files", "old");
+        var secondDirectory = panelClient.PendingFiles = new();
+        var secondListing = panel.RefreshAsync("files", "new");
+        secondDirectory.SetResult([new("new.txt", false, 1, null)]);
+        await secondListing;
+        firstDirectory.SetResult([new("old.txt", false, 1, null)]);
+        await firstListing;
+        Check(panel.Path == "new" && panel.Files.Single().Name == "new.txt" && !panel.Loading,
+            "late directory listing cannot replace the current path and files");
+
+        var abandonedDirectory = panelClient.PendingFiles = new();
+        var abandonedListing = panel.RefreshAsync("files", "abandoned");
+        await panel.RefreshAsync("provenance");
+        abandonedDirectory.SetResult([new("abandoned.txt", false, 1, null)]);
+        await abandonedListing;
+        Check(panel.Tabs.Selected == "provenance" && panel.Path == "new" && panel.Files.Single().Name == "new.txt",
+            "switching tabs preserves the last accepted directory against a late response");
+
+        var abandonedContexts = panelClient.PendingContexts = new();
+        var hostRead = panel.RefreshAsync("hosts");
+        panel.Close();
+        abandonedContexts.SetResult(new([], [], true));
+        await hostRead;
+        Check(panel.Contexts is null && !panel.Loading, "closing a panel rejects late context results");
+        panelClient.PendingFiles = null;
+        panelClient.PendingContexts = null;
+
+        var contextsClient = new FakePanel
+        {
+            ContextsValue = new([
+                new("local", "local", "本机", "{}", "{}", null, null),
+                new("remote-a", "ssh", "Remote", "{}", "{}", null, null)
+            ], [], false, new("local"))
+        };
+        var contextsPanel = new WorkspacePanelModel(contextsClient, "project-a", "session-a", new NativePanelTabs(available: NativePanelTabs.All));
+        await contextsPanel.RefreshAsync("hosts");
+        await contextsPanel.SetDefaultContextAsync("remote-a");
+        Check(contextsPanel.Contexts?.DefaultContext?.ContextId == "remote-a" && !contextsPanel.ContextBusy
+            && contextsPanel.Contexts.EnabledIds.Contains("remote-a"), "default remote is confirmed and read back with enabled state without leaving Busy set");
+        await contextsPanel.SetDefaultContextAsync("remote-a");
+        Check(contextsClient.DefaultWrites == 1, "selecting the existing default does not write");
+        contextsClient.Fail = true;
+        await contextsPanel.SetDefaultContextAsync("local");
+        Check(contextsPanel.ContextUncertain && !contextsPanel.ContextBusy && !contextsPanel.CanChangeContext,
+            "lost environment response exposes uncertainty and releases busy state");
+        await contextsPanel.SetDefaultContextAsync("local");
+        await contextsPanel.SetContextEnabledAsync("remote-a", false);
+        Check(contextsClient.DefaultWrites == 2, "uncertain default environment is not replayed");
+        contextsClient.Fail = false;
+        await contextsPanel.RefreshAsync("hosts");
+        Check(!contextsPanel.ContextUncertain && contextsPanel.Contexts?.DefaultContext?.ContextId == "local",
+            "read-only refresh resolves a write that reached the host before its response was lost");
+        contextsClient.ContextsValue = contextsClient.ContextsValue with { DefaultContext = null };
+        await contextsPanel.RefreshAsync("hosts"); await contextsPanel.SetDefaultContextAsync("remote-a");
+        Check(contextsClient.DefaultWrites == 2, "old hosts without default capability cannot receive new writes");
+        contextsClient.ContextsValue = contextsClient.ContextsValue with { DefaultContext = new("local"), ReadOnly = true };
+        await contextsPanel.RefreshAsync("hosts"); await contextsPanel.SetDefaultContextAsync("remote-a");
+        Check(contextsClient.DefaultWrites == 2, "read-only environment panels cannot set a default");
+        contextsClient.ContextsValue = contextsClient.ContextsValue with { ReadOnly = false };
+        await contextsPanel.RefreshAsync("hosts");
+        var beforeWrite = contextsPanel.Contexts!;
+        var pendingDefault = contextsClient.PendingDefault = new();
+        var defaultWrite = contextsPanel.SetDefaultContextAsync("remote-a");
+        var duringWrite = contextsClient.PendingContexts = new();
+        var staleContextsRead = contextsPanel.RefreshAsync("hosts");
+        pendingDefault.SetException(new IOException("response lost"));
+        await defaultWrite;
+        duringWrite.SetResult(beforeWrite);
+        await staleContextsRead;
+        Check(contextsPanel.ContextUncertain && !contextsPanel.CanChangeContext && !contextsPanel.ContextBusy,
+            "a read begun during the write cannot clear uncertainty after the response is lost");
+        contextsClient.PendingContexts = null; contextsClient.PendingDefault = null;
+        await contextsPanel.RefreshAsync("hosts");
+        Check(!contextsPanel.ContextUncertain && contextsPanel.Contexts?.DefaultContext?.ContextId == "remote-a",
+            "only a fresh post-write read resolves the environment state");
+        pendingDefault = contextsClient.PendingDefault = new();
+        defaultWrite = contextsPanel.SetDefaultContextAsync("local");
+        await contextsPanel.RefreshAsync("provenance");
+        pendingDefault.SetResult(); await defaultWrite;
+        Check(contextsPanel.Tabs.Selected == "provenance" && !contextsPanel.ContextBusy && contextsPanel.ContextUncertain,
+            "late successful environment writes do not reopen their tab or trust stale displayed data");
+        contextsClient.PendingDefault = null;
+        await contextsPanel.RefreshAsync("hosts");
+        Check(contextsPanel.Contexts?.DefaultContext?.ContextId == "local" && contextsPanel.CanChangeContext,
+            "returning to environments restores the confirmed default and enabled actions");
+
+        panelClient.PendingPreview = new();
+        var previewRead = panel.ReadFileAsync("old.pdf");
+        panel.DismissPreview();
+        panelClient.PendingPreview.SetResult(new("old.pdf", "application/pdf", null, "JVBERg==", false, 4));
+        await previewRead;
+        Check(panel.Preview == null, "late PDF read cannot reopen a dismissed preview");
+        var oldPreview = panelClient.PendingPreview = new();
+        var oldRead = panel.ReadFileAsync("old.pdf");
+        var newPreview = panelClient.PendingPreview = new();
+        var newRead = panel.ReadArtifactAsync("new-artifact");
+        newPreview.SetResult(new("new.pdf", "application/pdf", null, "JVBERg==", false, 4)); await newRead;
+        oldPreview.SetResult(new("old.pdf", "application/pdf", null, "JVBERg==", false, 4)); await oldRead;
+        Check(panel.Preview?.Path == "new.pdf", "older file read cannot replace a newer artifact preview");
+
         var terminalClient = new FakeTerminal();
         var terminal = new WorkspaceTerminalModel(terminalClient, "project-a", "session-a");
         await terminal.LoadAsync();
@@ -217,17 +318,30 @@ internal static class WorkspaceActionTests
 
     private sealed class FakePanel : INativePanelClient
     {
+        public TaskCompletionSource<NativePanelFileContent>? PendingPreview;
+        public TaskCompletionSource<NativePanelFile[]>? PendingFiles;
+        public TaskCompletionSource<NativePanelContexts>? PendingContexts;
+        public NativePanelContexts ContextsValue = new([], [], true);
+        public int DefaultWrites;
+        public TaskCompletionSource? PendingDefault;
         public bool Fail;
         public int Actions;
         public Task<NativePanelContexts> ContextsAsync(string project, string session, CancellationToken token = default) =>
-            Task.FromResult(new NativePanelContexts([], [], true));
+            PendingContexts?.Task ?? Task.FromResult(ContextsValue);
+        public async Task SetDefaultContextAsync(string project, string session, string contextId, CancellationToken token = default)
+        {
+            DefaultWrites++;
+            ContextsValue = ContextsValue with { DefaultContext = new(contextId), EnabledIds = contextId == "local" ? ContextsValue.EnabledIds : [contextId] };
+            if (PendingDefault is { } pending) await pending.Task;
+            if (Fail) throw new IOException("lost default response");
+        }
         public Task<string[]> SetContextEnabledAsync(string project, string session, string contextId, bool enabled, CancellationToken token = default) =>
             Task.FromResult(Array.Empty<string>());
         public Task ProbeContextAsync(string project, string contextId, CancellationToken token = default) => Task.CompletedTask;
         public Task<NativePanelArtifact[]> ArtifactsAsync(string project, string session, CancellationToken token = default) =>
             Task.FromResult(Array.Empty<NativePanelArtifact>());
         public Task<NativePanelFile[]> FilesAsync(string project, string session, string path = ".", CancellationToken token = default) =>
-            Task.FromResult(new[] { new NativePanelFile("data", true, 0, null), new NativePanelFile("README.md", false, 12, null) });
+            PendingFiles?.Task ?? Task.FromResult(new[] { new NativePanelFile("data", true, 0, null), new NativePanelFile("README.md", false, 12, null) });
         public Task SaveFileAsync(string project, string session, string path, string originalText, string text, CancellationToken token = default) => Task.CompletedTask;
         public Task FileActionAsync(string project, string session, NativePanelFileAction action, string path, string? newPath = null, CancellationToken token = default)
         {
@@ -236,9 +350,9 @@ internal static class WorkspaceActionTests
             return Task.CompletedTask;
         }
         public Task<NativePanelFileContent> ReadFileAsync(string project, string session, string path, CancellationToken token = default) =>
-            Task.FromResult(new NativePanelFileContent(path, "text/plain", "ok", null, false, 2));
+            PendingPreview?.Task ?? Task.FromResult(new NativePanelFileContent(path, "text/plain", "ok", null, false, 2));
         public Task<NativePanelFileContent> ReadArtifactAsync(string project, string session, string artifactId, CancellationToken token = default) =>
-            Task.FromResult(new NativePanelFileContent(artifactId, "text/plain", "ok", null, false, 2));
+            PendingPreview?.Task ?? Task.FromResult(new NativePanelFileContent(artifactId, "text/plain", "ok", null, false, 2));
     }
 
     private sealed class FakeTerminal : INativeTerminalClient

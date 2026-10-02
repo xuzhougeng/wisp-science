@@ -28,15 +28,18 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public string? ConnectionError { get; private set; }
     public string? OperationError { get; private set; }
     public ConversationModelOption[] Models { get; private set; } = [];
+    public NativeComposerEffortModel Effort { get; } = new(settings);
+    private JsonObject[] profiles = [];
     public NativeHighlight[] SavedHighlights { get; private set; } = [];
     public string? RevealedExcerpt { get; private set; }
     public int? ScrollTarget { get; private set; }
     public int ScrollRevision { get; private set; }
     public bool CanSend =>
-        (Draft.Trim().Length > 0 || Attachments.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !UncertainSend
+        (Draft.Trim().Length > 0 || Attachments.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !Effort.Busy && !UncertainSend
         && ConnectionError == null && !ShowingHistory;
     private string? projectId, sessionId;
     private int generation;
+    private int historyGeneration;
     private bool active;
     private (Guid Id, string Text)? pending;
     private readonly Dictionary<string, string> drafts = [];
@@ -48,6 +51,7 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public async Task OpenAsync(string projectId, string sessionId, CancellationToken cancellationToken = default)
     {
         Pause();
+        profiles = []; Models = []; Effort.Reset();
         this.projectId = projectId; this.sessionId = sessionId;
         active = true;
         Draft = drafts.GetValueOrDefault(sessionId, "");
@@ -77,11 +81,15 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
             {
                 var rows = await settings.InvokeAsync("list_models", new JsonObject(), projectId, cancellationToken) as JsonArray ?? [];
                 if (current == generation)
+                {
+                    profiles = rows.OfType<JsonObject>().Select(row => (JsonObject)row.DeepClone()).ToArray();
                     Models = rows.OfType<JsonObject>()
                         .Where(row => row["use_for_image_generation"]?.GetValue<bool>() != true && row["use_for_video_generation"]?.GetValue<bool>() != true)
                         .Select(row => new ConversationModelOption(row["id"]?.GetValue<string>() ?? "",
                             string.IsNullOrEmpty(row["label"]?.GetValue<string>()) ? row["model"]?.GetValue<string>() ?? "" : row["label"]!.GetValue<string>()))
                         .Where(row => row.Id.Length > 0).ToArray();
+                    await SyncEffortAsync(cancellationToken);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             { if (current == generation) OperationError = ex.Message; }
@@ -95,6 +103,7 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
         if (sessionId is { } session) { drafts[session] = Draft; stagedFiles[session] = Attachments; }
         generation++;
         active = false;
+        Effort.Reset();
     }
 
     public void Reset()
@@ -115,6 +124,7 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
             if (current != generation) return;
             if (cursor is null || !cursor.TryAccept(value)) return;
             Snapshot = value; ConnectionError = null;
+            _ = SyncEffortAsync(cancellationToken);
             if (pending is { } waiting && value.RequestId == waiting.Id.ToString())
             {
                 if (Draft == waiting.Text) Draft = "";
@@ -190,18 +200,19 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
         UncertainSend = false; pending = null; OperationError = null; Notify();
     }
 
-    public async Task AttachAsync(string path, CancellationToken cancellationToken = default)
+    public async Task<bool> AttachAsync(string path, CancellationToken cancellationToken = default)
     {
-        if (!CanAttach || string.IsNullOrWhiteSpace(path) || projectId is not { } project || sessionId is not { } session) return;
+        if (!CanAttach || string.IsNullOrWhiteSpace(path) || projectId is not { } project || sessionId is not { } session) return false;
         var current = generation; Busy = true; OperationError = null; Notify();
         try
         {
             var file = await client.AttachAsync(project, session, path, cancellationToken);
             if (!file.Path.StartsWith("uploads/", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(file.Name)) throw new InvalidDataException("Invalid attachment response");
-            if (current != generation) return;
+            if (current != generation) return false;
             Attachments = Attachments.Where(f => f.Path != file.Path).Append(file).ToArray(); stagedFiles[session] = Attachments;
+            return true;
         }
-        catch (Exception ex) { if (current == generation) OperationError = "附件未能确认添加；不会自动重试。\n" + ex.Message; }
+        catch (Exception ex) { if (current == generation) OperationError = "附件未能确认添加；不会自动重试。\n" + ex.Message; return false; }
         finally { if (current == generation) { Busy = false; Notify(); } }
     }
     public void RemoveAttachment(string path)
@@ -258,6 +269,32 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public Task SelectModelAsync(string modelId, CancellationToken cancellationToken = default) =>
         ActAsync((project, session, token) => client.SetModelAsync(project, session, modelId, token), cancellationToken);
 
+    public bool CanChangePlanMode => CanAttach && !Effort.Busy && Snapshot is { Running: false, PlanMode: not null };
+    public bool CanChangeFastMode => CanAttach && !Effort.Busy && Snapshot is { Running: false, FastMode: not null };
+    public Task SetFastModeAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (!CanChangeFastMode || Snapshot is not { } snapshot || snapshot.FastMode?.Enabled == enabled) return Task.CompletedTask;
+        return ActAsync((project, session, token) => client.SetFastModeAsync(project, session, snapshot.ModelId, enabled, token), cancellationToken);
+    }
+    public Task SetPlanModeAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        CanChangePlanMode && Snapshot?.PlanMode != enabled
+            ? ActAsync((project, session, token) => client.SetPlanModeAsync(project, session, enabled, token), cancellationToken)
+            : Task.CompletedTask;
+
+    private Task SyncEffortAsync(CancellationToken token) => projectId != null && sessionId != null
+        ? Effort.BindAsync(projectId, sessionId, profiles.FirstOrDefault(row => row["id"]?.GetValue<string>() == Snapshot?.ModelId), token)
+        : Task.CompletedTask;
+
+    public async Task<bool> SelectEffortAsync(string effort, CancellationToken token = default)
+    {
+        if (!CanAttach || Snapshot is not { Running: false }) return false;
+        var current = generation; var id = Snapshot.ModelId;
+        var saved = await Effort.SaveAsync(effort, token);
+        if (saved && current == generation && profiles.FirstOrDefault(row => row["id"]?.GetValue<string>() == id) is { } profile)
+            profile["reasoning_effort"] = Effort.Value;
+        return saved && current == generation;
+    }
+
     public async Task OlderAsync(CancellationToken cancellationToken = default)
     {
         RevealedExcerpt = null;
@@ -265,34 +302,38 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
         var cursorSeq = (ShowingHistory ? History : Snapshot)?.NextBeforeSeq;
         if (cursorSeq is null) return;
         var current = generation;
+        var request = ++historyGeneration;
         try
         {
-            History = await client.SnapshotAsync(project, session, cursorSeq, cancellationToken);
-            if (current == generation) ShowingHistory = true;
+            var page = await client.SnapshotAsync(project, session, cursorSeq, cancellationToken);
+            if (current != generation || request != historyGeneration) return;
+            History = page;
+            ShowingHistory = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { if (current == generation) OperationError = ex.Message; }
-        if (current == generation) Notify();
+        { if (current == generation && request == historyGeneration) OperationError = ex.Message; }
+        if (current == generation && request == historyGeneration) Notify();
     }
 
-    public void Latest() { RevealedExcerpt = null; ShowingHistory = false; History = null; Notify(); }
+    public void Latest() { historyGeneration++; RevealedExcerpt = null; ShowingHistory = false; History = null; Notify(); }
 
     public async Task OpenQuestionAsync(ConversationOutlineEntry entry, CancellationToken cancellationToken = default)
     {
         RevealedExcerpt = null;
         if (projectId is not { } project || sessionId is not { } session) return;
         var current = generation;
+        var request = ++historyGeneration;
         try
         {
             var page = await client.SnapshotAsync(project, session, entry.BeforeSeq, cancellationToken);
-            if (current != generation) return;
+            if (current != generation || request != historyGeneration) return;
             var index = WorkspaceOutlineModel.QuestionItemIndex(entry.UserIndex, page.UserOffset, page.Items)
                 ?? throw new InvalidOperationException("问题位置已变化，请刷新大纲后重试。");
             History = page; ShowingHistory = true; ScrollTarget = index; ScrollRevision++;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { if (current == generation) OperationError = ex.Message; }
-        if (current == generation) Notify();
+        { if (current == generation && request == historyGeneration) OperationError = ex.Message; }
+        if (current == generation && request == historyGeneration) Notify();
     }
 
     public void RevealExcerpt(string text)
@@ -326,12 +367,23 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
 
     private async Task ActAsync(Func<string, string, CancellationToken, Task> action, CancellationToken cancellationToken)
     {
-        if (Busy || projectId is not { } project || sessionId is not { } session) return;
+        if (Busy || cancellationToken.IsCancellationRequested || projectId is not { } project || sessionId is not { } session) return;
         var current = generation; Busy = true; OperationError = null; Notify();
+        var cancelled = false;
         try { await action(project, session, cancellationToken); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            cancelled = true;
+            if (current == generation)
+            {
+                OperationError = "操作等待已取消，结果尚未确认；不会自动重试。请重新读取会话核对。";
+                ConnectionError = OperationError;
+            }
+        }
+        catch (Exception ex)
         { if (current == generation) OperationError = ex.Message; }
-        if (current == generation) { Busy = false; await RefreshAsync(cancellationToken); }
+        finally { if (current == generation) { Busy = false; Notify(); } }
+        if (current == generation && !cancelled) await RefreshAsync(cancellationToken);
     }
 
     private void Notify() => Changed?.Invoke();

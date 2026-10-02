@@ -19,6 +19,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private readonly StackPanel confirmation = new() { Spacing = 8 };
     private Action? pendingConfirmation;
     private readonly Button cancelAuthorization = new() { Content = "取消 OAuth 授权", Visibility = Visibility.Collapsed };
+    private readonly TextBlock saveFeedback = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly StackPanel editorActions = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
     public bool HasChanges => model.HasChanges || model.Draft != null && invalidFields.Count > 0;
     public bool Busy => model.Busy || channelBinding?.Busy == true;
     private static string S(JsonNode? row, string key) => row?[key]?.GetValue<string>() ?? "";
@@ -36,6 +38,11 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     {
         this.model = model; this.projectScoped = project != null; settingsProjectId = project; this.section = section;
         this.pickPath = pickPath;
+        UseSettingsLayout(); Form.MaxWidth = double.PositiveInfinity; Form.Spacing = 18;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(saveFeedback, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        Footer.Children.Add(new ScrollViewer { Content = saveFeedback, MaxHeight = 110, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        Footer.Children.Add(editorActions);
+        Footer.SizeChanged += (_, e) => editorActions.Orientation = e.NewSize.Width < 340 ? Orientation.Vertical : Orientation.Horizontal;
         cancelAuthorization.Click += async (_, _) => await model.CancelOAuthAsync();
         Notices.Children.Add(cancelAuthorization); Notices.Children.Add(confirmation); model.Changed += LockConfirmation;
     }
@@ -81,6 +88,12 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         SetContentEnabled(!Busy && pendingConfirmation == null);
         cancelAuthorization.Visibility = model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
         Notices.Visibility = pendingConfirmation != null || model.OAuthPending ? Visibility.Visible : Visibility.Collapsed;
+        Footer.Visibility = model.Draft != null || model.SaveConfirmed ? Visibility.Visible : Visibility.Collapsed;
+        editorActions.Visibility = model.Draft != null ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var button in editorActions.Children.OfType<Button>()) button.IsEnabled = !Busy && pendingConfirmation == null;
+        saveFeedback.Text = model.Saving ? "正在保存…" : model.SaveConfirmed
+            ? model.Error == null ? "已保存。" : "上次设置已保存。当前操作未确认，请查看页面中的错误详情。"
+            : model.Error ?? "修改后点击保存。离开前可以取消并保留当前草稿。";
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
     public override void Dispose()
@@ -122,6 +135,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         ClearDeviceToken();
         authTerminal?.Dispose(); authTerminal = null;
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
+        editorActions.Children.Clear();
         Form.Children.Add(Button("刷新", Reload));
         switch (section)
         {
@@ -171,12 +185,14 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
         Form.Children.Add(Design.Text(title, 20));
         fields(model.Draft);
-        Form.Children.Add(Button("保存", async () =>
+        editorActions.Children.Clear();
+        editorActions.Children.Add(Button("保存", async () =>
         {
             if (invalidFields.Count > 0) { model.Fail("请检查字段格式：" + string.Join("、", invalidFields.Select(key => key.Contains(':') ? key[(key.IndexOf(':') + 1)..] : key).Distinct())); return; }
             if (await model.SaveAsync()) await Reload();
         }));
-        Form.Children.Add(Button("取消编辑", () => { RequestLeave(() => { model.Discard(); Render(); }); return Task.CompletedTask; }));
+        editorActions.Children.Add(Button("取消编辑", () => { RequestLeave(() => { model.Discard(); Render(); }); return Task.CompletedTask; }));
+        LockConfirmation();
     }
     private void Text(JsonObject draft, string key, string title, bool multiline = false)
         => Field(title, S(draft, key), value => draft[key] = value, multiline);

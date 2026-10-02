@@ -50,10 +50,12 @@ internal sealed partial class NativeSettingsSectionPage
     {
         Preference("工作区与通知", "get_settings", "set_settings", "settings", d =>
         {
+            Form.Children.Add(Mute("这些设置应用于整个工作区。编辑后点击下方保存；切换分类前可取消离开并继续编辑。"));
             Choice(Form, "语言", S(d, "locale"), [("zh", "简体中文"), ("en", "English")], v => d["locale"] = v);
             PathField(d, "workspace_dir", "工作目录（留空使用默认目录，下次启动生效）", directory: true);
             Boolean(d, "decentralized_project_storage", "项目去中心化存储");
             Form.Children.Add(Mute("开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"));
+            Form.Children.Add(Design.Text("启动与通知", 16));
             Boolean(d, "resume_last_session", "恢复最近会话"); Boolean(d, "notifications_enabled", "桌面通知");
         });
         Preference("输入与选择", "get_appearance_prefs", "set_appearance_prefs", "prefs", d =>
@@ -102,9 +104,11 @@ internal sealed partial class NativeSettingsSectionPage
         Preference("网络与软件源", "get_network_settings", "set_network_settings", "settings", d =>
         {
             Form.Children.Add(Mute("代理留空跟随系统，none 为直连。支持 HTTP、HTTPS 和 SOCKS5。"));
+            Form.Children.Add(Design.Text("连接代理", 16));
             foreach (var (key, title) in new[] { ("model_proxy_url", "模型 API 代理"), ("subscription_proxy_url", "订阅账号登录代理"), ("mcp_proxy_url", "MCP 代理"),
                 ("command_proxy_url", "代码与命令代理"), ("conda_mirror_url", "Conda 镜像"), ("pip_index_url", "Python 软件源"), ("ca_bundle_path", "CA 证书路径") })
             {
+                if (key == "conda_mirror_url") Form.Children.Add(Design.Text("软件源与证书", 16));
                 Text(d, key, title);
                 if (key == "subscription_proxy_url") Form.Children.Add(Mute("订阅代理用于 ChatGPT / xAI 登录与令牌刷新，保存后重新开始登录。对话请求使用模型 API 代理；浏览器使用自身网络设置。"));
             }

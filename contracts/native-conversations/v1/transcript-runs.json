@@ -1,0 +1,9 @@
+[
+  {"role":"user","text":"Analyze samples"},
+  {"role":"tool","tool_name":"run_in_context","text":"{\"run_id\":\"run-a\"}","ok":true,
+   "run":{"id":"run-a","status":"succeeded","owner_index":1,"needs_review":false}},
+  {"role":"assistant","text":"Checking the result"},
+  {"role":"tool","tool_name":"monitor_run","input":" run-a ","text":"Completed output","ok":true,"duration_ms":15,
+   "run":{"id":"run-a","status":"succeeded","owner_index":1,"needs_review":false}},
+  {"role":"assistant","text":"Final report"}
+]

@@ -7,6 +7,9 @@ static class NativeConversationContractTests
     public static async Task Run(string projectFixture)
     {
         var directory = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(projectFixture)!, "../../native-conversations/v1"));
+        var runItems = JsonSerializer.Deserialize<ConversationItem[]>(File.ReadAllText(Path.Combine(directory, "transcript-runs.json")), ConversationSnapshot.JsonOptions)!;
+        Require(runItems[0].Run == null && runItems[3].Run == new ConversationRun("run-a", "succeeded", 1, false), "Run metadata preserves exact page-local ownership and optional fields");
+        Require(Wisp.ProjectBrowser.NativeTranscriptActivity.Groups(runItems, false).SequenceEqual([new Wisp.ProjectBrowser.NativeActivityGroup(1, 4)]), "Shared run fixture folds commentary and successful monitor, preserving final report");
         var timeline = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "trajectory-layout.json")))!;
         foreach (var item in timeline["cases"]!.AsArray())
         {
@@ -189,6 +192,42 @@ static class NativeConversationContractTests
         catch (IOException) { }
         Require(enqueueFake.Calls == 2, "Enqueue was retried");
         Console.WriteLine("Native conversation fixture, ordering, restart, approval and no-replay tests passed.");
+        var planFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "plan.json")))!;
+        var planFake = new Fake { Reply = planFixture["result"]!.DeepClone() };
+        var planClient = new NativeConversationClient(planFake);
+        await planClient.SetPlanModeAsync("project-a", "session-a", true);
+        Require(planFake.Command == "native_conversation_plan" && planFake.Project == "project-a"
+            && JsonNode.DeepEquals(planFake.Args, planFixture["args"]), "Plan mode fixture drift");
+        planFake.Reply = JsonValue.Create(false);
+        try { await planClient.SetPlanModeAsync("project-a", "session-a", true); throw new Exception("Expected unconfirmed plan mode"); }
+        catch (InvalidDataException) { }
+        planFake.Fail = true;
+        try { await planClient.SetPlanModeAsync("project-a", "session-a", true); throw new Exception("Expected lost plan response"); }
+        catch (IOException) { }
+        Require(planFake.Calls == 3, "Plan mode write was retried automatically");
+        var fastFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "fast.json")))!;
+        var fastFake = new Fake { Reply = fastFixture["result"]!.DeepClone() };
+        var fastClient = new NativeConversationClient(fastFake);
+        await fastClient.SetFastModeAsync("project-a", "session-a", "model-a", true);
+        Require(fastFake.Command == "native_conversation_fast" && fastFake.Project == "project-a"
+            && JsonNode.DeepEquals(fastFake.Args, fastFixture["args"]), "Fast mode fixture drift");
+        fastFake.Reply = new JsonObject { ["enabled"] = false, ["inherited"] = true };
+        try { await fastClient.SetFastModeAsync("project-a", "session-a", "model-a", true); throw new Exception("Expected unconfirmed Fast mode"); }
+        catch (InvalidDataException) { }
+        fastFake.Fail = true;
+        try { await fastClient.SetFastModeAsync("project-a", "session-a", "model-a", true); throw new Exception("Expected lost Fast response"); }
+        catch (IOException) { }
+        Require(fastFake.Calls == 3, "Fast mode write was retried automatically");
+        var contextFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "context-default.json")))!;
+        var contextFake = new Fake { Reply = contextFixture["result"]!.DeepClone() };
+        var contextClient = new NativePanelClient(contextFake);
+        await contextClient.SetDefaultContextAsync("project-a", "session-a", "remote-a");
+        Require(contextFake.Command == "native_conversation_panel_context_default" && contextFake.Project == "project-a"
+            && JsonNode.DeepEquals(contextFake.Args, contextFixture["args"]), "Default context fixture drift");
+        contextFake.Reply = new JsonObject { ["context_id"] = "local" };
+        try { await contextClient.SetDefaultContextAsync("project-a", "session-a", "remote-a"); throw new Exception("Expected unconfirmed environment"); }
+        catch (InvalidDataException) { }
+        Require(contextFake.Calls == 2, "Unconfirmed environment write was retried");
     }
     static void Require(bool value, string message) { if (!value) throw new Exception(message); }
     sealed class Fake : INativeSettingsClient

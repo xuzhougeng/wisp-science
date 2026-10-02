@@ -17,6 +17,8 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
     private readonly Action close;
     private bool closed;
     protected readonly WispDesign Design;
+    private readonly Grid header;
+    private readonly TextBlock heading;
     protected WorkspaceSheet(WispDesign design, string title, Action close)
     {
         Design = design; this.close = close;
@@ -25,10 +27,11 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-        var header = new Grid { Padding = new Thickness(20, 16, 20, 12), ColumnSpacing = 12 };
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        header = new Grid { Padding = new Thickness(20, 16, 20, 12), ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var heading = design.Text(title, 22); heading.Foreground = design.Brush("text"); header.Children.Add(heading);
+        heading = design.Text(title, 22); heading.Foreground = design.Brush("text"); header.Children.Add(heading);
         var dismiss = new Button { Content = "关闭" };
         dismiss.Click += (_, _) => HandleEscape();
         Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss);
@@ -36,13 +39,27 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         Notices = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 12), Visibility = Visibility.Collapsed };
         Grid.SetRow(Notices, 1); root.Children.Add(Notices);
         Body = new StackPanel { Spacing = 12, Padding = new Thickness(20, 0, 20, 20) };
-        var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(scroll, 2); root.Children.Add(scroll);
+        BodyScroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(BodyScroll, 2); root.Children.Add(BodyScroll);
+        Footer = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
+        Grid.SetRow(Footer, 3); root.Children.Add(Footer);
         Content = root;
         Loaded += (_, _) => Design.ApplyTypography(this);
     }
     protected StackPanel Body { get; }
+    protected ScrollViewer BodyScroll { get; }
     protected StackPanel Notices { get; }
+    protected StackPanel Footer { get; }
+    protected void UseSettingsLayout()
+    {
+        header.MaxWidth = Body.MaxWidth = Notices.MaxWidth = Footer.MaxWidth = 1000;
+        header.HorizontalAlignment = Body.HorizontalAlignment = Notices.HorizontalAlignment = Footer.HorizontalAlignment = HorizontalAlignment.Stretch;
+        header.Padding = new Thickness(28, 28, 28, 16);
+        Body.Padding = new Thickness(28, 0, 28, 28); Body.Spacing = 20;
+        Notices.Padding = new Thickness(28, 0, 28, 12);
+        Footer.Padding = new Thickness(28, 12, 28, 20);
+        Design.BindTypography(heading, 24);
+    }
     public virtual void HandleEscape() { if (!closed) close(); }
     public virtual void Dispose() { closed = true; }
     protected TextBlock Mute(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("text-muted"); return block; }

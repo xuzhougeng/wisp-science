@@ -56,6 +56,43 @@ internal static class WorkspaceConversationTests
         await model.OpenAsync("project-a", "session-a");
         Check(model.Draft == "unsent" && client.Sends == 0, "draft survives navigation and does not stop the agent");
 
+        client = new Fake { Reads = [Fixture(snapshotPath) with { NextBeforeSeq = 10 }] };
+        model = new WorkspaceConversationModel(client);
+        await model.OpenAsync("project-a", "session-a");
+        hold = client.Hold = new();
+        var oldHistory = model.OlderAsync();
+        client.Reads = [Fixture(snapshotPath, session: "session-b")];
+        await model.OpenAsync("project-a", "session-b");
+        hold.SetResult(Fixture(snapshotPath) with { NextBeforeSeq = 5 });
+        await oldHistory;
+        Check(model.History == null && !model.ShowingHistory, "late history cannot contaminate a different conversation");
+
+        client.Reads = [Fixture(snapshotPath) with { NextBeforeSeq = 10 }];
+        await model.OpenAsync("project-a", "session-a");
+        hold = client.Hold = new();
+        oldHistory = model.OlderAsync();
+        model.Latest();
+        hold.SetResult(Fixture(snapshotPath) with { NextBeforeSeq = 5 });
+        await oldHistory;
+        Check(model.History == null && !model.ShowingHistory, "return to latest invalidates an in-flight older page");
+
+        hold = client.Hold = new();
+        oldHistory = model.OlderAsync();
+        client.Reads = [Fixture(snapshotPath) with { UserOffset = 0 }];
+        await model.OpenQuestionAsync(new(0, "检查样本", 20, null, null));
+        hold.SetResult(Fixture(snapshotPath) with { UserOffset = 9 });
+        await oldHistory;
+        Check(model.ShowingHistory && model.History?.UserOffset == 0 && model.ScrollTarget == 0,
+            "an older page cannot replace a newer outline navigation");
+
+        hold = client.Hold = new();
+        var outlineRead = model.OpenQuestionAsync(new(0, "检查样本", 20, null, null));
+        model.Latest();
+        hold.SetException(new IOException("late history failure"));
+        await outlineRead;
+        Check(!model.ShowingHistory && model.History == null && model.OperationError == null,
+            "leaving outline history also discards its late failure");
+
         client = new Fake { Reads = [Fixture(snapshotPath)] };
         model = new WorkspaceConversationModel(client, client);
         await model.OpenAsync("project-a", "session-a"); model.Draft = "hello";
@@ -119,6 +156,84 @@ internal static class WorkspaceConversationTests
             catch (InvalidOperationException) { }
         }
         Console.WriteLine("WinUI live conversation model passed.");
+        client = new Fake { Reads = [Fixture(snapshotPath)] };
+        model = new WorkspaceConversationModel(client);
+        await model.OpenAsync("project-a", "session-a");
+        await model.SetPlanModeAsync(true);
+        Check(!model.CanChangePlanMode && client.PlanWrites == 0, "older hosts do not expose an inert Plan toggle");
+        client.Reads = [Fixture(snapshotPath, sequence: 8) with { PlanMode = false }];
+        await model.RefreshAsync();
+        model.Draft = "preserve this draft";
+        var planHold = client.PlanHold = new();
+        var changePlan = model.SetPlanModeAsync(true);
+        Check(model.Busy && !model.CanSend && !model.CanChangePlanMode, "pending mode change blocks a competing send or toggle");
+        client.Reads = [Fixture(snapshotPath, sequence: 9) with { PlanMode = true }];
+        planHold.SetResult(); await changePlan;
+        Check(model.Snapshot?.PlanMode == true && model.Draft == "preserve this draft", "confirmed Plan mode refresh preserves the draft");
+        await model.SetPlanModeAsync(true);
+        Check(client.PlanWrites == 1, "refresh and selecting the current mode do not write");
+        client.Reads = [Fixture(snapshotPath, sequence: 10, running: true) with { PlanMode = true }];
+        await model.RefreshAsync(); await model.SetPlanModeAsync(false);
+        Check(client.PlanWrites == 1, "running turns cannot change their mode");
+        client.Reads = [Fixture(snapshotPath, sequence: 11) with { PlanMode = true, ReadOnly = true }];
+        await model.RefreshAsync(); await model.SetPlanModeAsync(false);
+        Check(client.PlanWrites == 1, "read-only conversations cannot change their mode");
+        client.Reads = [Fixture(snapshotPath, sequence: 12) with { PlanMode = true }];
+        await model.RefreshAsync();
+        client.FailPlan = true;
+        client.Reads = [Fixture(snapshotPath, sequence: 13) with { PlanMode = true }];
+        await model.SetPlanModeAsync(false);
+        Check(client.PlanWrites == 2 && model.Snapshot?.PlanMode == true && model.OperationError != null
+            && model.Draft == "preserve this draft", "lost Plan write is not replayed and preserves the authoritative mode and draft");
+        client.FailPlan = false;
+        planHold = client.PlanHold = new();
+        changePlan = model.SetPlanModeAsync(false);
+        client.Reads = [Fixture(snapshotPath, session: "session-b") with { PlanMode = true }];
+        await model.OpenAsync("project-a", "session-b");
+        planHold.SetResult(); await changePlan;
+        Check(model.Snapshot?.SessionId == "session-b" && model.Snapshot.PlanMode == true,
+            "late mode confirmation cannot reopen or alter a different conversation");
+        client = new Fake { Reads = [Fixture(snapshotPath)] };
+        model = new WorkspaceConversationModel(client);
+        await model.OpenAsync("project-a", "session-a");
+        await model.SetFastModeAsync(true);
+        Check(!model.CanChangeFastMode && client.FastWrites == 0, "unsupported hosts and models cannot write Fast");
+        client.Reads = [Fixture(snapshotPath, sequence: 8) with { FastMode = new(false, true) }];
+        await model.RefreshAsync();
+        model.Draft = "keep fast draft";
+        var fastHold = client.FastHold = new();
+        var changeFast = model.SetFastModeAsync(true);
+        Check(model.Busy && !model.CanSend && !model.CanChangeFastMode && client.FastModel == "model-a",
+            "pending Fast writes block sending and carry the displayed model identity");
+        client.Reads = [Fixture(snapshotPath, sequence: 9) with { FastMode = new(true, false) }];
+        fastHold.SetResult(); await changeFast;
+        Check(model.Snapshot?.FastMode is { Enabled: true, Inherited: false } && model.Draft == "keep fast draft",
+            "Fast confirmation refreshes effective and inherited state without clearing the draft");
+        await model.SetFastModeAsync(true);
+        Check(client.FastWrites == 1, "Fast polling and unchanged selections never write");
+        client.Reads = [Fixture(snapshotPath, sequence: 10, running: true) with { FastMode = new(true, false) }];
+        await model.RefreshAsync(); await model.SetFastModeAsync(false);
+        Check(client.FastWrites == 1, "running turns cannot change Fast");
+        client.Reads = [Fixture(snapshotPath, sequence: 11) with { FastMode = new(true, false), ReadOnly = true }];
+        await model.RefreshAsync(); await model.SetFastModeAsync(false);
+        Check(client.FastWrites == 1, "read-only conversations cannot change Fast");
+        client.Reads = [Fixture(snapshotPath, sequence: 12) with { FastMode = new(true, false) }];
+        await model.RefreshAsync();
+        fastHold = client.FastHold = new();
+        changeFast = model.SetFastModeAsync(false);
+        fastHold.SetCanceled(); await changeFast;
+        Check(!model.Busy && model.ConnectionError != null && !model.CanSend && model.Draft == "keep fast draft",
+            "cancelled mode wait releases Busy but blocks sends until its outcome is read back");
+        await model.SetFastModeAsync(false);
+        Check(client.FastWrites == 2, "cancelled Fast write is not replayed while its result is unknown");
+        client.Reads = [Fixture(snapshotPath, sequence: 13) with { FastMode = new(false, true) }];
+        await model.RefreshAsync();
+        Check(model.CanSend && model.ConnectionError == null && model.Snapshot?.FastMode?.Enabled == false,
+            "authoritative read restores sending after a cancelled mode wait");
+        using var alreadyCancelled = new CancellationTokenSource();
+        alreadyCancelled.Cancel();
+        await model.SetFastModeAsync(true, alreadyCancelled.Token);
+        Check(client.FastWrites == 2 && !model.Busy, "already cancelled operations never start a host write");
     }
 
     private static void Check(bool passed, string name)
@@ -146,6 +261,12 @@ internal static class WorkspaceConversationTests
         public List<ConversationSnapshot> Reads = [];
         public bool FailSend, FailRead;
         public int Seen, Sends;
+        public int PlanWrites;
+        public int FastWrites;
+        public string? FastModel;
+        public TaskCompletionSource? FastHold;
+        public bool FailPlan;
+        public TaskCompletionSource? PlanHold;
         public string? LastCommand, LastSession, LastApproval, LastRequestId;
         public bool? LastApproved;
         public TaskCompletionSource<ConversationSnapshot>? Hold;
@@ -169,6 +290,10 @@ internal static class WorkspaceConversationTests
         public Task ApproveAsync(string projectId, string sessionId, string approvalId, bool approved, CancellationToken cancellationToken = default)
         { LastCommand = "approve"; LastSession = sessionId; LastApproval = approvalId; LastApproved = approved; return Task.CompletedTask; }
         public Task SetModelAsync(string projectId, string sessionId, string modelId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetPlanModeAsync(string projectId, string sessionId, bool enabled, CancellationToken cancellationToken = default)
+        { PlanWrites++; if (FailPlan) throw new IOException("Plan response lost"); return PlanHold?.Task ?? Task.CompletedTask; }
+        public Task SetFastModeAsync(string projectId, string sessionId, string modelId, bool enabled, CancellationToken cancellationToken = default)
+        { FastWrites++; FastModel = modelId; return FastHold?.Task ?? Task.CompletedTask; }
         public Task<string> CreateAsync(string projectId, CancellationToken cancellationToken = default) => Task.FromResult("new");
         public Task<NativeInboxEntry[]> InboxAsync(string projectId, CancellationToken cancellationToken = default) => Task.FromResult(Array.Empty<NativeInboxEntry>());
         public Task<NativeTrajectory> TrajectoryAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

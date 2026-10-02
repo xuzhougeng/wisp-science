@@ -7,6 +7,7 @@ pub const SCHEMA: &str = "wisp.native-journey.v1";
 pub const COMMANDS: &[&str] = &[
     "native_research_journey",
     "native_research_journey_artifact",
+    "native_research_journey_run",
 ];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -20,6 +21,12 @@ pub struct JourneyRequest {
 #[serde(deny_unknown_fields)]
 pub struct ArtifactRequest {
     pub version_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunRequest {
+    pub run_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

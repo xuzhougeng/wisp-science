@@ -5,6 +5,164 @@ range to the existing Rust desktop host. No second database writer or WebView
 project activation was added. Build with `scripts/build_native_windows.ps1`.
 An alternate browser database still requires a matching running host descriptor.
 
+## Interface improvement work in progress 2026-10-02
+
+The [visual improvement plan](superpowers/plans/2026-10-02-winui-webview-visual-improvement-plan.md)
+now has an initial implementation in the working tree:
+
+- Conversation and composer use the same 1280 DIP maximum. The workspace budgets
+  at least 560 DIPs for the center when the client width permits. Inspectors
+  become overlay drawers when docking would squeeze the center; very narrow
+  windows can open the automatically hidden sidebar as a drawer.
+- The inspector has a draggable, keyboard-adjustable width, saved locally.
+  Its selected tab has an explicit toggle state and is saved. Overlay drawers
+  participate in the window Escape order, below sheets and flyouts.
+- Inspector tabs retain their own filter and scroll position for the mounted
+  session; file directories retain separate reading positions. Changing a filter
+  returns to its first result. Late reads from a previous tab, directory or
+  closed panel cannot replace accepted data. Scroll restoration after layout
+  still requires actual WinUI acceptance, beyond the passing state-model tests.
+- Settings navigation searches the shared Chinese/English labels, groups and
+  aliases without switching the current form or discarding its draft.
+- Appearance and category pages share a 1000 DIP content limit and 28 DIP
+  inset. Editor save/cancel actions remain in a fixed footer, stacking in narrow
+  columns, with scrollable feedback. General and network forms have task-based
+  sections. A confirmed save remains confirmed if the following refresh fails;
+  a new edit resets that feedback. Failed writes continue to retain drafts.
+- The composer groups attachments, model, environment and primary actions in a
+  compact toolbar which wraps in narrow columns. A leading slash filters wired
+  commands; arrows select, Enter/Tab fills the command, and Ctrl+Enter executes.
+  Escape dismisses suggestions through the window stack. IME composition does
+  not submit. Unknown commands and extra arguments retain the draft, and upload
+  commands clear only after a confirmed attachment in the same conversation.
+- Built-in conversations expose a Plan toggle when the host advertises the
+  optional `plan_mode` snapshot field. It uses the existing session Plan tool
+  gate and persisted flag; ACP agents retain their own mode mechanism. Running,
+  read-only, historical and disconnected conversations cannot switch modes.
+  A pending write blocks sends; polling never writes, and failed responses are
+  not replayed. Old hosts omit the control. Actual native Plan submission and
+  keyboard/narrow-layout acceptance remain pending.
+- Fast is available for the same built-in OpenAI chat transports as the WebView
+  composer. It requests the provider's priority service tier and identifies
+  whether the current value is inherited or overridden for this conversation.
+  Switching to the model default clears the override; explicitly turning Fast
+  off overrides a priority default with the ordinary service tier. The command
+  checks the displayed model ID and rejects unsupported, ACP and running
+  sessions. Old hosts hide the control. Saves block competing sends and are not
+  replayed after an uncertain response. Provider billing and availability still
+  apply; actual native end-to-end request acceptance remains unverified.
+- Cancelling a pending conversation action releases the busy state without
+  assuming the write was cancelled on the host. Sending stays blocked until a
+  fresh snapshot confirms the current state; no write is automatically replayed.
+- The environments panel displays the conversation's saved default separately
+  from attached environments. An unset legacy value inherits global settings;
+  choosing local pins this machine, and choosing a remote context uses the
+  existing host operation that also enables it for the conversation. It does
+  not alter the global default or other conversations. Older hosts hide these
+  actions. Uncertain writes block further environment changes until a read-only
+  refresh confirms state; refreshing after a successful change releases Busy.
+  Reads started before or during a context write cannot resolve its uncertain
+  result. Only a fresh post-write read enables further changes. Completing a
+  write after switching tabs keeps the selected tab and waits for fresh data.
+  Actual remote setup, first-server storage preferences and native end-to-end
+  execution acceptance remain pending.
+- Unchanged transcript controls survive polling. Row keys use the persisted
+  user-turn offset, session and host epoch, with page isolation for older hosts.
+  Updated rows preserve disclosure state; reading away from the bottom exposes
+  a return-to-latest action. Unchanged approval controls also stay mounted.
+  Historical paging and outline navigation share a request generation: switching
+  conversations, returning to latest, or choosing a newer history destination
+  discards late pages and errors from the abandoned request.
+- Completed process phases share a show/hide control while the final report
+  and trailing usage stay visible. Toggling preserves mounted message controls
+  and nested tool disclosure states. Failed, pending, unknown and actionable
+  rows split groups; active turns remain visible. Run monitors remain separate
+  until the native protocol can establish their ownership and completion.
+- Tool disclosures show explicit completion, running, cancellation, failure or
+  unknown state plus the host's recorded elapsed time when present. Output is a
+  two-line wrapping preview rather than a fixed UTF-16 substring. Existing
+  optional duration/model/timestamp metadata now survives native decoding; old
+  hosts do not acquire fabricated timing. Explicit error status expands a tool
+  even when `ok` is absent and its previous successful view was collapsed.
+- The terminal uses bundled xterm.js in a WebView2 surface with local-only
+  navigation, no host objects or external resource fetching, and a per-user
+  WebView2 data directory. It supports terminal selection, VT output, Ctrl+C,
+  resize messages and draggable/keyboard-adjustable height. Empty lists do not
+  start a process automatically; use New Local Terminal or the context action.
+  Hiding keeps the process alive. Ambiguous input blocks further input on that
+  terminal until the user checks output and resumes; queued input is never
+  replayed into another terminal. If the view fails, output is shown read-only.
+- Inline and display math use Markdig math nodes and bundled KaTeX in a
+  read-only WebView2 renderer. Invalid formulas retain their source; trusted
+  HTML and external formula links are disabled. File/artifact PDFs returned by
+  the existing host render with bundled PDF.js, page controls and zoom. This
+  first canvas viewer does not provide text selection, search or annotations.
+  Truncated/missing PDF bytes and rendering errors have explicit feedback.
+  Unmounting closes browser resources. Dismissed or superseded preview reads
+  cannot reopen or replace the current preview.
+- Research Journey groups records by local date and filters type, title and
+  summary. Details show metadata and immutable artifact versions, their input
+  sources and partial content errors. Source chains have a back path; source
+  conversations open as nested read-only pages so filters and parent controls
+  remain mounted. Returning to the list restores its position and highlights
+  the selected record. Refresh failures retain and identify previous results.
+  Publication evidence has a revision summary, counts, grouped items and
+  distinct empty states; editing/binding/reproduction remain separate work.
+- Home and sidebar share session status labels and relative timestamps with
+  exact-time tooltips. Running sessions are no longer mislabeled as complete;
+  unknown statuses remain unknown. Project cards include running/attention
+  counts and update time. A project overflow button exposes settings and folder
+  reveal alongside the existing context menu. Initial loading and failed reads
+  are distinguished from an empty project/session list.
+- The composer exposes model-default thinking effort for exact catalog entries
+  with supported values, matching the current WebView persistence behavior.
+  Saving reads the latest profile, preserves unrelated fields and sends no key.
+  Only a matching host acknowledgement updates the displayed default. Unknown
+  catalog entries expose no guessed controls. Read-only/history/running states
+  disable the picker; errors offer read-only recovery, never automatic replay.
+  This does not implement Plan, Fast or session execution-context defaults.
+
+Validation so far: WinUI Release build and the full C# contract harness pass,
+including column-budget, navigation-search, transcript-identity and completed
+process boundary tests. For manual acceptance, open a finished multi-tool report,
+toggle its process, and check the report and usage stay visible; expand a tool,
+wait through polling, and verify both disclosure states persist. Repeat with a
+failure, pending question and an active turn, which must remain visible.
+These tests do not prove XAML rendering, keyboard focus, text selection or DPI
+behavior. Current Windows Computer Use initialization fails with a sandbox
+helper startup error, so real-window acceptance and normalized screenshots
+remain pending. Settings smoke checks must cover long network forms at large
+font sizes, save failure with retained values, and switching categories then
+cancelling the discard prompt. Run-monitor grouping, message action styling,
+additional rich viewers, protocol additions and full visual acceptance remain open.
+
+Home/sidebar presentation tests cover known/unknown status values, time
+boundaries, future clocks and invalid timestamps. Manual checks still need
+long Chinese/English project titles and paths, a narrow window at large font
+size, keyboard access to overflow menus and immediate Escape dismissal.
+
+Journey model tests cover explicit timezone date boundaries, combined filters,
+failed refresh with retained results, immutable source identities, input-source
+back navigation, missing sources and late replies after return/disposal. Manual
+acceptance still needs calendar → journey → source conversation → back, retained
+filters/scroll, immediate Escape, missing source content and partial-range data.
+
+Offline rich-preview Playwright coverage loads actual KaTeX/PDF.js resources:
+valid and invalid formulas, inert external links, PDF page pixel colors, page
+navigation, zoom and corrupt-file errors. The C# harness checks dismissed and
+out-of-order preview responses. Real-window acceptance must still cover inline
+formula baselines, long formulas, theme/font/DPI changes, PDF sizing in narrow
+panels, repeated close/reopen and WebView2 failure. Office, molecular, MSA and
+MCP App viewers are still pending evaluation.
+
+The native terminal's offline Playwright test loads the actual bundled xterm
+modules and verifies ANSI/CR rendering, Chinese text, Ctrl+C, disabled input,
+resize messages and stale-stream isolation. C# tests cover split UTF-8, ordered
+writes, per-terminal uncertainty, late responses and detach. These do not prove
+WebView2/PTY integration: manually test terminal selection, local/context open,
+shell editing, fullscreen terminal programs, window/DPI resizing, hiding and
+reopening, process exit and a disconnected host on the actual Windows build.
+
 ## Reading, panels and session actions (2026-10-01)
 
 Gap audit and batches W1–W5 from
@@ -264,3 +422,133 @@ installation, channel binding/sync and real SSH/WSL contexts. External-account
 flows must use dedicated test accounts; loopback fixtures do not prove those
 integrations work. Preserve the distinction between automated model/transport
 checks, actual WinUI checks and real external-service acceptance.
+
+## Conversation secondary actions (2026-10-02)
+
+Copy, quote and save remain visible native text buttons below message content.
+They now use compact spacing, transparent backgrounds and muted text; pointer
+hover or keyboard focus emphasizes the text without hiding actions or changing
+Tab order. No menu or extra Escape layer is introduced. These actions remain
+available while a later turn is running; the existing action handlers are reused.
+
+Release compilation and the full C# contract runner pass. These checks do not
+exercise WinUI pointer/focus rendering. Manual regression steps remain pending:
+
+1. Open a conversation with user messages and a final report. Confirm all three
+   actions remain visible without hover, and the final report dominates visually.
+2. Tab to each action and activate it with the keyboard. Confirm a visible native
+   focus indicator, correct copy text, quoted draft and saved selection.
+3. Hover an action, focus it, then move the pointer away. It must remain emphasized
+   while focused; moving focus away must restore its secondary text color.
+4. Start a later turn, then copy and quote an earlier message. Polling must not
+   remove focus from an unchanged message or disable read-only history actions.
+5. Repeat in light/dark and Windows high-contrast themes, at large font sizes and
+   150%/200% display scale. Check contrast, unclipped labels and usable hit targets.
+6. With touch, activate the always-visible controls without requiring a hover step.
+
+## Transcript Run ownership and folding (2026-10-02)
+
+Conversation snapshots now optionally attach stored Run state to exact submission
+and monitoring tool rows. The host resolves the requested conversation's project
+and exploration scope, then matches the Run ID and owning frame. It never guesses
+ownership from titles, commands or timestamps. `owner_index` is local to the
+returned page; a submission outside that page leaves ownership absent.
+
+Successful monitors with a successful submission in the same page can join the
+completed process disclosure, including their preceding commentary. Active,
+failed, cancelled, unknown and unowned monitors stay outside it. SSH-direct Runs
+that still expose results review remain visible, and their details expand. The
+final answer stays outside the process group. Monitoring tool success is no longer
+presented as proof that the Run finished; tool elapsed time is explicitly labelled.
+Older hosts without this metadata display an unverified Run state.
+
+The shared `transcript-runs.json` fixture verifies Rust/C# decoding and successful
+folding. Model regressions cover stale/wrong/missing ownership, active turns,
+failures, pending review, unknown states and old hosts. Host projection tests cover
+live stored state, malformed submission results and foreign frames. These do not
+replace the following pending real-host checks:
+
+1. Submit a local fixture Run and monitor it. Verify the header changes from
+   running to completed when stored Run state changes; the final answer remains
+   visible when the completed process folds.
+2. Force a nonzero exit and a timeout. Verify the relevant status stays visible
+   and the tool details expand, even when the monitor call itself succeeded.
+3. Page away from the submission and switch conversations during a refresh. No
+   unrelated Run may acquire an owner or fold into another conversation's process.
+4. Verify a completed SSH-direct Run with results review available remains visible.
+
+Live inline Run cards, direct review navigation and full WinUI window acceptance
+remain follow-up work. Exact detail navigation is now available as described below.
+
+## Open Run details from the transcript (2026-10-02)
+
+Submission and monitoring rows with verified Run metadata expose “查看运行详情”.
+The action opens the current conversation's environment panel and places the
+selected Run at the top, showing its state, exit code, working directory, command,
+stdout/stderr tails and poll/cleanup errors. “刷新详情” explicitly reads another
+snapshot; these output tails are not a live stream. Opening details performs reads
+only. It does not start a runtime, cancel a Run, harvest outputs or dismiss review.
+
+Choosing a different Run clears the previous Run's output immediately. Separate
+request identities reject out-of-order reads; tab changes, inline dismissal and
+panel disposal invalidate pending requests. A failed refresh of the same Run
+keeps the previous snapshot with a visible stale-data notice. Returned Run IDs
+must match the requested ID. Window navigation guards also abandon pending opens
+when the user changes conversations, panels or settings.
+
+Run cancellation/harvest controls are hidden in read-only activity panels. Only
+known active states offer cancellation and known terminal states offer harvesting.
+An activity operation now releases its busy flag after its own panel refresh;
+cancelled or mismatched responses report an unconfirmed outcome without replay.
+
+Automated coverage lives in `NativeRunNavigationTests.cs`. Pending real-window
+acceptance: open a Run from a long transcript with the side panel initially closed;
+confirm its details are visible at the top; select two Runs rapidly; close the
+detail or panel while reading; switch sessions and settings during host connection;
+verify a failed refresh is labelled and no read starts a runtime. In a narrow
+window, immediate Escape must close the existing topmost panel drawer only.
+Manual results review and output selection/cleanup are now implemented below.
+Live inline cards and automatic review prompting remain open.
+
+## Native Run results review (2026-10-02)
+
+For finished SSH-direct Runs, “结果与清理” opens a review inside the existing
+environment panel. Hosts explicitly advertise `run_review_supported`; older
+hosts do not show a nonfunctional review action. The protocol resolves the named
+session's project/exploration scope, allows inherited Runs to be browsed, and
+requires the owning writable scope and an unarchived session for changes.
+
+Review supports directory navigation, name filtering, pages of 200 entries,
+selection across directories, and download of selected files or archived
+directories into registered project artifacts. Selection uses exact relative
+paths. Deleting a selection displays the frozen path list before confirmation;
+whole-workspace cleanup separately warns that unretained contents will be lost.
+Both actions require an explicit confirmed operation in the typed host request.
+Existing RunManager checks and log preservation are reused. No content is
+downloaded or deleted merely by opening the review.
+
+The window Escape stack closes confirmation first, keeping review and selection,
+then returns to Run details, then closes a narrow-window panel drawer. Returning
+from a settled review refreshes the Run detail. Closing a pending operation does
+not replay or undo it. Unconfirmed responses retain selection, disable further
+writes until a fresh read, and show an explicit error. Read-only scopes cannot
+download, delete or clean. Scope changes, late responses and closed pages cannot
+replace another review's state. Successful acknowledgements remain visible even
+if the following listing refresh fails.
+
+Automated verification uses the shared `run-review.json` fixture and
+`NativeRunReviewTests.cs`, plus existing fake-runner tests in `wisp-runs` for
+selected downloads, cleanup boundaries and full-log preservation. Tests use no
+real SSH server or external data. Pending real-window acceptance: open review
+from details, browse/filter/page/select with keyboard and pointer, inspect all
+confirmed paths, immediately press Escape at both levels, use a read-only scope,
+and switch sessions during listing and mutation responses. Any real cleanup
+acceptance must use a disposable fixture workspace, not a research directory.
+Automatic end-of-turn prompting and persisted prompt dismissal are not added by
+this manual-review slice.
+
+## 研究历程运行来源补充（2026-10-02）
+
+历程中的运行记录及产物生成运行提供“查看来源运行”。通过项目主线作用域和精确 Run ID 读取已保存的状态、命令、远端工作目录、退出码及 stdout/stderr 尾部，不切换当前会话，也不启动运行时或触发远端轮询。页面只读；返回或 Escape 保留父级产物来源、筛选和滚动位置。跨项目、缺失运行与身份不匹配返回错误；关闭或返回后的晚到响应被丢弃。旧宿主不支持时显示读取错误，不提供虚假结果。
+
+验证：新增 C# 契约与模型测试覆盖精确身份、返回状态、晚到响应及不匹配拒绝；宿主测试覆盖项目隔离、缺失身份和拒绝写入参数。实窗 smoke 尚待完成：历程→运行→返回、产物→输入来源→生成运行→Escape，以及读取期间返回和窄窗长输出。

@@ -71,8 +71,10 @@ internal sealed partial class MainWindow
                     session == null ? null : item => { if (conversation?.Prefill(WorkspaceLibraryModel.ComposerText(item), append: true) == true) CloseSheet(); },
                     async item => { CloseSheet(); await model.OpenProjectAsync(item.SourceProjectId, item.SourceSessionId); }, CloseSheet),
                 "calendar" => new NativeResearchCalendarPage(new(new NativeCalendarClient(host), new NativePrivacyClient(host), model.Projects), design,
-                    (id, day) => MountSheet(new NativeJourneyPage(new NativeJourneyClient(host), id, design, day, CloseSheet), nested: true), CloseSheet),
-                "journey" when project != null => new NativeJourneyPage(new NativeJourneyClient(host), project, design, null, CloseSheet),
+                    (id, day) => MountSheet(new NativeJourneyPage(new NativeJourneyClient(host), id, design, day, CloseSheet,
+                        frame => MountSheet(new NativeJourneyConversationPage(new NativeConversationClient(host), id, frame, design, CloseSheet), nested: true)), nested: true), CloseSheet),
+                "journey" when project != null => new NativeJourneyPage(new NativeJourneyClient(host), project, design, null, CloseSheet,
+                    frame => MountSheet(new NativeJourneyConversationPage(new NativeConversationClient(host), project, frame, design, CloseSheet), nested: true)),
                 "capabilities" when project != null => new NativeCapabilitiesPage(host, project, design, section =>
                     { CloseSheet(); OpenSettingsSection(section); }, CloseSheet),
                 _ => null
@@ -212,7 +214,10 @@ internal sealed partial class MainWindow
                     var row = new Grid();
                     row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
                     row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                    var button = ContentButton(SingleLine(session.Title, 12), () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id, session.Title);
+                    var label = Stack(3); label.Children.Add(SingleLine(session.Title, 12)); label.Children.Add(SessionMetadata(session));
+                    var button = ContentButton(label, () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id,
+                        session.Title + " · " + NativeBrowserPresentation.Status(session.Status));
+                    button.Padding = new Thickness(8, 6, 8, 6);
                     if (session.Id == model.ActiveSessionId) button.Background = design.Brush("surface-hover");
                     row.Children.Add(button);
                     if (sessionGroups is { } mutationGroups)
@@ -246,6 +251,7 @@ internal sealed partial class MainWindow
     /// and the composer slash/环境 entries.</summary>
     private void ShowPanelTab(string tab)
     {
+        runNavigation++;
         var tabs = new NativePanelTabs(settings.PanelTabs, settings.PanelTab, NativePanelTabs.All);
         tabs.Show(tab);
         settings.PanelTabs = tabs.Saved; settings.PanelTab = tabs.Selected;
@@ -253,6 +259,21 @@ internal sealed partial class MainWindow
         if (panelPage == null) _ = EnsurePanelAndTerminalAsync();
         else _ = panelPage.ShowTabAsync(tab);
         Render();
+    }
+
+    private async Task OpenRunAsync(string runId)
+    {
+        if (model.ActiveProjectId is not { } project || model.ActiveSessionId is not { } session) return;
+        var navigation = ++runNavigation;
+        var tabs = new NativePanelTabs(settings.PanelTabs, settings.PanelTab, NativePanelTabs.All);
+        tabs.Show("hosts");
+        settings.PanelTabs = tabs.Saved; settings.PanelTab = tabs.Selected;
+        panelVisible = true; settings.PanelVisible = true; SaveSettings();
+        await EnsurePanelAndTerminalAsync();
+        if (windowClosed || navigation != runNavigation || !panelVisible
+            || project != model.ActiveProjectId || session != model.ActiveSessionId || panelPage is null) return;
+        Render();
+        await panelPage.ShowRunAsync(runId);
     }
 
     /// <summary>Composer slash mapping. Only commands with a working native

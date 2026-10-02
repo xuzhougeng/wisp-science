@@ -12,6 +12,9 @@ pub(crate) async fn dispatch(
     project_id: &str,
     session: &str,
 ) -> Result<Value, String> {
+    if request.command == "native_conversation_panel_run_review" {
+        return crate::native_run_review::dispatch(broker, request, project_id, session).await;
+    }
     let args: PanelRequest =
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
     let state = broker.app.state::<crate::AppState>();
@@ -397,7 +400,7 @@ pub(crate) async fn dispatch(
                         .await
                         .is_err();
             contract::<wisp_dto::native_conversations::PanelActivity>(
-                serde_json::json!({"runtimes": runtimes, "runs": runs, "read_only": read_only}),
+                serde_json::json!({"runtimes": runtimes, "runs": runs, "read_only": read_only, "run_review_supported": true}),
             )
         }
         "native_conversation_panel_runtime_inspect" => {
@@ -476,6 +479,36 @@ pub(crate) async fn dispatch(
                 contexts,
                 enabled_ids,
                 read_only,
+                default_context: Some(wisp_dto::native_conversations::PanelDefaultContext {
+                    context_id: state
+                        .store
+                        .session_default_execution_context(session)
+                        .await
+                        .map_err(|e| e.to_string())?,
+                }),
+            })
+            .map_err(|e| e.to_string())
+        }
+        "native_conversation_panel_context_default" => {
+            let context_id = args
+                .context_id
+                .ok_or("Execution context is required; use local for this machine")?;
+            if context_id.trim().is_empty() {
+                return Err("Execution context is required".into());
+            }
+            state
+                .store
+                .require_unarchived_session(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            let saved = crate::ssh_hosts::set_session_default_execution_context(
+                state,
+                session.into(),
+                Some(context_id),
+            )
+            .await?;
+            serde_json::to_value(wisp_dto::native_conversations::PanelDefaultContext {
+                context_id: saved,
             })
             .map_err(|e| e.to_string())
         }
@@ -633,7 +666,7 @@ fn require_runtime_generation(current: u64, expected: Option<u64>) -> Result<(),
     }
     Ok(())
 }
-async fn require_run_scope(
+pub(crate) async fn require_run_scope(
     store: &wisp_store::Store,
     scope: &wisp_store::StateScope,
     id: &str,

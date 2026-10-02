@@ -1,0 +1,6 @@
+{
+  "command": "native_conversation_fast",
+  "project_id": "project-a",
+  "args": { "session_id": "session-a", "model_id": "model-a", "enabled": true },
+  "result": { "enabled": true, "inherited": false }
+}

@@ -57,10 +57,23 @@ await NativeScratchContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirect
 await NativeConversationContractTests.Run(args[0]);
 
 NativePanelTabsTests.Run();
+NativeWorkspaceLayoutTests.Run();
+NativePanelViewStateTests.Run();
+NativeToolPresentationTests.Run();
+NativeSettingsSearchTests.Run();
+NativeComposerCommandsTests.Run();
+NativeTranscriptRowsTests.Run();
+NativeTranscriptActivityTests.Run();
+await NativeTerminalStreamingTests.RunAsync();
+await WorkspaceJourneyTests.RunAsync();
+NativeBrowserPresentationTests.Run();
+await NativeComposerEffortTests.RunAsync();
 NativeTranscriptTests.Run();
 await NativeWorkspaceActionsTests.RunAsync();
 await AppearanceSettingsTests.RunAsync();
 await WorkspaceActionTests.RunAsync();
+await NativeRunNavigationTests.RunAsync();
+await NativeRunReviewTests.RunAsync(args[0]);
 await WorkspaceConversationTests.RunAsync(args[0]);
 await NativeParityTests.RunAsync();
 await NativeSettingsEditorTests.RunAsync();

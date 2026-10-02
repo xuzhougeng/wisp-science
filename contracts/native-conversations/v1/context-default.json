@@ -1,0 +1,6 @@
+{
+  "command": "native_conversation_panel_context_default",
+  "project_id": "project-a",
+  "args": { "session_id": "session-a", "context_id": "remote-a" },
+  "result": { "context_id": "remote-a" }
+}
