@@ -43,6 +43,12 @@ Upgrading no longer moves old projects during application startup. Legacy
 conversations and research records remain readable and writable in the application
 database, avoiding a full database copy before the Windows window can respond.
 New projects get an independent database without copying existing history.
+Older application databases may retain retired columns such as
+`projects.default_specialist_id`. Creating a decentralized project copies only
+columns supported by its new database; no manual schema changes are needed.
+Failed preparation or publication cleans up private `project-migration-*.sqlite`
+files after closing their database connections. Published databases and recovery
+markers remain available for the existing retry/recovery flow.
 
 Enabling folder snapshots explicitly migrates a legacy project using a verified,
 filtered database copy that preserves its local runtime state. Until then, use

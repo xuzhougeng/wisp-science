@@ -90,7 +90,9 @@ fn publish_metadata_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Copy explicitly selected, trusted columns between independent databases.
+/// Copy shared columns between independent databases, ignoring retired source
+/// columns that upgraded databases may retain. Target-only columns use their
+/// defaults; SQLite still enforces required columns and other constraints.
 /// Preserve SQLite value types, NULLs and all historical epochs.
 pub(super) async fn insert_rows(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -98,18 +100,37 @@ pub(super) async fn insert_rows(
     rows: Vec<sqlx::sqlite::SqliteRow>,
 ) -> Result<()> {
     use sqlx::{Column, TypeInfo, ValueRef};
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let target_columns: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
+            .bind(table)
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .collect();
     for row in rows {
-        let columns = row
+        let shared_columns = row
             .columns()
             .iter()
-            .map(|c| format!("\"{}\"", c.name()))
+            .enumerate()
+            .filter(|(_, column)| target_columns.contains(column.name()))
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            !shared_columns.is_empty(),
+            "No shared columns to copy into {table}"
+        );
+        let columns = shared_columns
+            .iter()
+            .map(|(_, column)| format!("\"{}\"", column.name().replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(",");
         let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
             "INSERT INTO {table}({columns}) VALUES("
         ));
         let mut values = query.separated(",");
-        for (i, column) in row.columns().iter().enumerate() {
+        for (i, column) in shared_columns {
             let value = row.try_get_raw(i)?;
             if value.is_null() {
                 values.push_bind(None::<String>);
@@ -644,148 +665,167 @@ impl Store {
         );
         let staging = Path::new(&application_database)
             .with_file_name(format!("project-migration-{}.sqlite", uuid::Uuid::new_v4()));
-        // Explicit migration still snapshots legacy history. New projects only
-        // need their own registration, even when the global database is huge.
-        if !is_new {
-            sqlx::query("VACUUM INTO ?")
-                .bind(staging.to_string_lossy().as_ref())
-                .execute(&self.pool)
-                .await?;
-        }
-        let local = Self::open_snapshot(&staging).await?;
-        if is_new {
-            let project = sqlx::query("SELECT * FROM projects WHERE id=?")
+        let prepared = directory.join(format!("project-migration-{}.sqlite", uuid::Uuid::new_v4()));
+        let mut staging_pool = None;
+        let result: Result<()> = async {
+            // Explicit migration still snapshots legacy history. New projects only
+            // need their own registration, even when the global database is huge.
+            if !is_new {
+                sqlx::query("VACUUM INTO ?")
+                    .bind(staging.to_string_lossy().as_ref())
+                    .execute(&self.pool)
+                    .await?;
+            }
+            let local = Self::open_snapshot(&staging).await?;
+            staging_pool = Some(local.pool.clone());
+            if is_new {
+                let project = sqlx::query("SELECT * FROM projects WHERE id=?")
+                    .bind(id)
+                    .fetch_all(&mut *cutover)
+                    .await?;
+                let mut tx = local.begin_write().await?;
+                insert_rows(&mut tx, "projects", project).await?;
+                sqlx::query("CREATE TABLE project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
+                    .execute(&mut *tx).await?;
+                tx.commit().await?;
+            }
+            let others: Vec<String> = sqlx::query_scalar("SELECT id FROM projects WHERE id<>?")
                 .bind(id)
-                .fetch_all(&mut *cutover)
+                .fetch_all(&local.pool)
                 .await?;
+            for other in others {
+                local.delete_project(&other).await?;
+            }
             let mut tx = local.begin_write().await?;
-            insert_rows(&mut tx, "projects", project).await?;
-            sqlx::query("CREATE TABLE project_locations (project_id TEXT PRIMARY KEY, database_path TEXT NOT NULL UNIQUE)")
-                .execute(&mut *tx).await?;
-            tx.commit().await?;
-        }
-        let others: Vec<String> = sqlx::query_scalar("SELECT id FROM projects WHERE id<>?")
-            .bind(id)
-            .fetch_all(&local.pool)
-            .await?;
-        for other in others {
-            local.delete_project(&other).await?;
-        }
-        let mut tx = local.begin_write().await?;
-        // These bindings reference device-owned records. Keep the identifiers
-        // without duplicating device credentials/configuration into a project.
-        for statement in [
-            "CREATE TABLE project_plugins_local(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,plugin_id TEXT NOT NULL,version TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),grants_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL,PRIMARY KEY(project_id,plugin_id))",
-            "INSERT INTO project_plugins_local SELECT * FROM project_plugins",
-            "DROP TABLE project_plugins",
-            "ALTER TABLE project_plugins_local RENAME TO project_plugins",
-            "CREATE INDEX ix_project_plugins_enabled ON project_plugins(project_id,enabled,plugin_id)",
-            "CREATE TABLE session_execution_contexts_local(frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,context_id TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(frame_id,context_id))",
-            "INSERT INTO session_execution_contexts_local SELECT * FROM session_execution_contexts",
-            "DROP TABLE session_execution_contexts",
-            "ALTER TABLE session_execution_contexts_local RENAME TO session_execution_contexts",
-            "CREATE INDEX ix_session_execution_contexts_context ON session_execution_contexts(context_id)",
-        ] { sqlx::query(statement).execute(&mut *tx).await?; }
-        // Only frame-specific settings belong to the project. Global account,
-        // provider, device and discovery configuration must not follow it.
-        let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM settings")
-            .fetch_all(&mut *tx)
-            .await?;
-        let mut project_settings = Vec::new();
-        for key in keys {
-            let frame = super::explorations::FRAME_SETTING_PREFIXES
-                .iter()
-                .find_map(|p| key.strip_prefix(p))
-                .or_else(|| {
-                    key.strip_prefix("acp.config_options.")
-                        .and_then(|rest| rest.split_once('.').map(|(id, _)| id))
-                });
-            let keep = if let Some(frame) = frame {
-                sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM frames WHERE id=?)")
-                    .bind(frame)
-                    .fetch_one(&mut *tx)
-                    .await?
-            } else {
-                PROJECT_SETTING_PREFIXES
+            // These bindings reference device-owned records. Keep the identifiers
+            // without duplicating device credentials/configuration into a project.
+            for statement in [
+                "CREATE TABLE project_plugins_local(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,plugin_id TEXT NOT NULL,version TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),grants_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL,PRIMARY KEY(project_id,plugin_id))",
+                "INSERT INTO project_plugins_local SELECT * FROM project_plugins",
+                "DROP TABLE project_plugins",
+                "ALTER TABLE project_plugins_local RENAME TO project_plugins",
+                "CREATE INDEX ix_project_plugins_enabled ON project_plugins(project_id,enabled,plugin_id)",
+                "CREATE TABLE session_execution_contexts_local(frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,context_id TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(frame_id,context_id))",
+                "INSERT INTO session_execution_contexts_local SELECT * FROM session_execution_contexts",
+                "DROP TABLE session_execution_contexts",
+                "ALTER TABLE session_execution_contexts_local RENAME TO session_execution_contexts",
+                "CREATE INDEX ix_session_execution_contexts_context ON session_execution_contexts(context_id)",
+            ] { sqlx::query(statement).execute(&mut *tx).await?; }
+            // Only frame-specific settings belong to the project. Global account,
+            // provider, device and discovery configuration must not follow it.
+            let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM settings")
+                .fetch_all(&mut *tx)
+                .await?;
+            let mut project_settings = Vec::new();
+            for key in keys {
+                let frame = super::explorations::FRAME_SETTING_PREFIXES
                     .iter()
-                    .any(|prefix| key.strip_prefix(prefix) == Some(id))
-            };
-            if !keep {
-                sqlx::query("DELETE FROM settings WHERE key=?")
-                    .bind(key)
+                    .find_map(|p| key.strip_prefix(p))
+                    .or_else(|| {
+                        key.strip_prefix("acp.config_options.")
+                            .and_then(|rest| rest.split_once('.').map(|(id, _)| id))
+                    });
+                let keep = if let Some(frame) = frame {
+                    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM frames WHERE id=?)")
+                        .bind(frame)
+                        .fetch_one(&mut *tx)
+                        .await?
+                } else {
+                    PROJECT_SETTING_PREFIXES
+                        .iter()
+                        .any(|prefix| key.strip_prefix(prefix) == Some(id))
+                };
+                if !keep {
+                    sqlx::query("DELETE FROM settings WHERE key=?")
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await?;
+                } else {
+                    project_settings.push(key);
+                }
+            }
+            sqlx::query("DELETE FROM env_snapshots WHERE hash NOT IN (SELECT env_hash FROM execution_log WHERE env_hash IS NOT NULL UNION SELECT env_snapshot_hash FROM artifact_versions WHERE env_snapshot_hash IS NOT NULL UNION SELECT env_snapshot_hash FROM run_environment_snapshots)").execute(&mut *tx).await?;
+            for table in [
+                "project_locations",
+                "project_sync_state",
+                "global_memories",
+                "external_session_cache",
+                "plugin_installations",
+                "execution_contexts",
+            ] {
+                sqlx::query(&format!("DELETE FROM {table}"))
                     .execute(&mut *tx)
                     .await?;
-            } else {
-                project_settings.push(key);
+            }
+            tx.commit().await?;
+            let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+                .fetch_one(&local.pool)
+                .await?;
+            anyhow::ensure!(
+                integrity == "ok",
+                "Project migration failed integrity check: {integrity}"
+            );
+            sqlx::query("VACUUM").execute(&local.pool).await?;
+            local.pool.close().await;
+            // Only a fully sanitized database enters the workspace. Publish the
+            // database before committing its registration, and the manifest last.
+            std::fs::copy(&staging, &prepared)?;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&prepared)?
+                .sync_all()?;
+            let marker = MigrationMarker {
+                project_id: id.to_owned(),
+                application_database,
+                database_sha256: database_digest(&prepared)?,
+            };
+            publish_metadata_file(&marker_path, &serde_json::to_vec(&marker)?)?;
+            std::fs::hard_link(&prepared, &destination).context("publish project database")?;
+            std::fs::remove_file(&prepared)?;
+            sqlx::query("INSERT INTO project_locations(project_id,database_path) VALUES(?,?)")
+                .bind(id)
+                .bind(destination.to_string_lossy().as_ref())
+                .execute(&mut *cutover)
+                .await?;
+            let memory_sources: Vec<(String,String)> = sqlx::query_as("SELECT id,source_frame_id FROM global_memories WHERE source_frame_id IN (SELECT id FROM frames WHERE project_id=?)")
+                .bind(id).fetch_all(&mut *cutover).await?;
+            if !is_new {
+                super::project_transfer::delete_project_children(&mut cutover, id).await?;
+            }
+            for (memory, frame) in memory_sources {
+                sqlx::query("UPDATE global_memories SET source_frame_id=? WHERE id=?")
+                    .bind(frame)
+                    .bind(memory)
+                    .execute(&mut *cutover)
+                    .await?;
+            }
+            for key in project_settings {
+                sqlx::query("DELETE FROM settings WHERE key=?")
+                    .bind(key)
+                    .execute(&mut *cutover)
+                    .await?;
+            }
+            cutover.commit().await?;
+            write_metadata(root, id)?;
+            std::fs::remove_file(marker_path)?;
+            Ok(())
+        }
+        .await;
+        // Await rollback/connection shutdown before unlinking on Windows, even
+        // when preparation failed with an active transaction. Keep published
+        // databases and their recovery markers; only these private files are
+        // disposable on every exit path.
+        if let Some(pool) = staging_pool {
+            pool.close().await;
+        }
+        for path in [&staging, &prepared] {
+            if let Err(error) = std::fs::remove_file(path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(path = %path.display(), %error, "Failed to remove project migration temporary file");
+                }
             }
         }
-        sqlx::query("DELETE FROM env_snapshots WHERE hash NOT IN (SELECT env_hash FROM execution_log WHERE env_hash IS NOT NULL UNION SELECT env_snapshot_hash FROM artifact_versions WHERE env_snapshot_hash IS NOT NULL UNION SELECT env_snapshot_hash FROM run_environment_snapshots)").execute(&mut *tx).await?;
-        for table in [
-            "project_locations",
-            "project_sync_state",
-            "global_memories",
-            "external_session_cache",
-            "plugin_installations",
-            "execution_contexts",
-        ] {
-            sqlx::query(&format!("DELETE FROM {table}"))
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
-        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
-            .fetch_one(&local.pool)
-            .await?;
-        anyhow::ensure!(
-            integrity == "ok",
-            "Project migration failed integrity check: {integrity}"
-        );
-        sqlx::query("VACUUM").execute(&local.pool).await?;
-        local.pool.close().await;
-        // Only a fully sanitized database enters the workspace. Publish the
-        // database before committing its registration, and the manifest last.
-        let prepared = directory.join(format!("project-migration-{}.sqlite", uuid::Uuid::new_v4()));
-        std::fs::copy(&staging, &prepared)?;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&prepared)?
-            .sync_all()?;
-        let marker = MigrationMarker {
-            project_id: id.to_owned(),
-            application_database,
-            database_sha256: database_digest(&prepared)?,
-        };
-        publish_metadata_file(&marker_path, &serde_json::to_vec(&marker)?)?;
-        std::fs::hard_link(&prepared, &destination).context("publish project database")?;
-        std::fs::remove_file(prepared)?;
-        sqlx::query("INSERT INTO project_locations(project_id,database_path) VALUES(?,?)")
-            .bind(id)
-            .bind(destination.to_string_lossy().as_ref())
-            .execute(&mut *cutover)
-            .await?;
-        let memory_sources: Vec<(String,String)> = sqlx::query_as("SELECT id,source_frame_id FROM global_memories WHERE source_frame_id IN (SELECT id FROM frames WHERE project_id=?)")
-            .bind(id).fetch_all(&mut *cutover).await?;
-        if !is_new {
-            super::project_transfer::delete_project_children(&mut cutover, id).await?;
-        }
-        for (memory, frame) in memory_sources {
-            sqlx::query("UPDATE global_memories SET source_frame_id=? WHERE id=?")
-                .bind(frame)
-                .bind(memory)
-                .execute(&mut *cutover)
-                .await?;
-        }
-        for key in project_settings {
-            sqlx::query("DELETE FROM settings WHERE key=?")
-                .bind(key)
-                .execute(&mut *cutover)
-                .await?;
-        }
-        cutover.commit().await?;
-        write_metadata(root, id)?;
-        std::fs::remove_file(marker_path)?;
-        std::fs::remove_file(staging)?;
-        Ok(())
+        result
     }
 }
 
@@ -859,6 +899,89 @@ mod tests {
             .set_setting("decentralized_project_storage", "true")
             .await?;
         Ok(store)
+    }
+
+    fn assert_no_migration_files(directory: &Path) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            assert!(
+                !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("project-migration-"),
+                "Leaked migration file: {}",
+                entry.path().display()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_rows_copies_shared_columns_by_name_and_preserves_values() {
+        let source = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let target = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE copied (id INTEGER, obsolete TEXT, text_value TEXT, int_value INTEGER, real_value REAL, blob_value BLOB, null_value TEXT)")
+            .execute(&source).await.unwrap();
+        // Different order, a removed column, and a new column with a default.
+        sqlx::query("CREATE TABLE copied (blob_value BLOB, real_value REAL, int_value INTEGER, text_value TEXT, null_value TEXT, id INTEGER PRIMARY KEY, added TEXT NOT NULL DEFAULT 'default')")
+            .execute(&target).await.unwrap();
+        sqlx::query("INSERT INTO copied VALUES(1,'legacy','text',9223372036854775807,1.25,X'00FF',NULL),(2,'other','',-42,-0.5,X'',NULL)")
+            .execute(&source).await.unwrap();
+        let rows = sqlx::query("SELECT * FROM copied ORDER BY id")
+            .fetch_all(&source)
+            .await
+            .unwrap();
+        let mut tx = target.begin().await.unwrap();
+        insert_rows(&mut tx, "copied", rows).await.unwrap();
+        tx.commit().await.unwrap();
+        let rows = sqlx::query("SELECT * FROM copied ORDER BY id")
+            .fetch_all(&target)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        for (row, id, text, integer, real, blob) in [
+            (&rows[0], 1, "text", i64::MAX, 1.25, vec![0, 255]),
+            (&rows[1], 2, "", -42, -0.5, vec![]),
+        ] {
+            assert_eq!(row.get::<i64, _>("id"), id);
+            assert_eq!(row.get::<String, _>("text_value"), text);
+            assert_eq!(row.get::<i64, _>("int_value"), integer);
+            assert_eq!(row.get::<f64, _>("real_value"), real);
+            assert_eq!(row.get::<Vec<u8>, _>("blob_value"), blob);
+            assert_eq!(row.get::<Option<String>, _>("null_value"), None);
+            assert_eq!(row.get::<String, _>("added"), "default");
+        }
+        source.close().await;
+        target.close().await;
+    }
+
+    #[tokio::test]
+    async fn insert_rows_rejects_missing_required_columns_and_disjoint_schemas() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE copied (id INTEGER PRIMARY KEY, required TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (select, expected) in [
+            (
+                "SELECT 1 AS id, 'legacy' AS obsolete",
+                "NOT NULL constraint failed",
+            ),
+            ("SELECT 'legacy' AS obsolete", "No shared columns"),
+        ] {
+            let rows = sqlx::query(select).fetch_all(&pool).await.unwrap();
+            let mut tx = pool.begin().await.unwrap();
+            let error = insert_rows(&mut tx, "copied", rows).await.unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+            tx.rollback().await.unwrap();
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM copied")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        pool.close().await;
     }
 
     #[tokio::test]
@@ -1080,6 +1203,18 @@ mod tests {
             .execute(&legacy.pool)
             .await
             .unwrap();
+        // Upgraded application databases retain this retired column, whereas
+        // a newly migrated project database does not (#1426).
+        sqlx::query(
+            "ALTER TABLE projects ADD COLUMN default_specialist_id TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&legacy.pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE projects SET default_specialist_id='legacy-specialist' WHERE id='old'")
+            .execute(&legacy.pool)
+            .await
+            .unwrap();
         legacy.pool.close().await;
 
         let store = open_portable_application(&path).await.unwrap();
@@ -1109,6 +1244,26 @@ mod tests {
         assert_eq!(local.message_count("old-frame").await.unwrap(), 0);
         assert_eq!(store.message_count("old-frame").await.unwrap(), 1);
         assert_eq!(store.list_projects().await.unwrap().len(), 2);
+        assert!(
+            !Store::has_column(&local.pool, "projects", "default_specialist_id")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT default_specialist_id FROM projects WHERE id='old'"
+            )
+            .fetch_one(&store.pool)
+            .await
+            .unwrap(),
+            "legacy-specialist"
+        );
+        assert_eq!(
+            local.get_project("new").await.unwrap(),
+            Some(("New".into(), workspace.to_string_lossy().into_owned()))
+        );
+        assert_no_migration_files(root.path());
+        assert_no_migration_files(&workspace.join(".wisp"));
         assert!(!old_workspace.join(".wisp").exists());
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM frames WHERE id='new-frame'")
@@ -1138,6 +1293,8 @@ mod tests {
         assert!(marker.is_file());
         assert!(workspace.join(PROJECT_DATABASE).is_file());
         assert!(!workspace.join(PROJECT_METADATA).exists());
+        assert_no_migration_files(root.path());
+        assert_no_migration_files(&workspace.join(".wisp"));
         sqlx::query("DROP TRIGGER fail_project_location")
             .execute(&store.pool)
             .await
@@ -1165,6 +1322,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(local.message_count("f").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_project_preparation_cleans_staging_and_preserves_legacy_history() {
+        for operation in ["INSERT", "DELETE"] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("workspace");
+            let store = Store::open_application(&root.path().join("global.sqlite"))
+                .await
+                .unwrap();
+            store
+                .create_project("p", "Project", workspace.to_str().unwrap())
+                .await
+                .unwrap();
+            store
+                .create_frame("f", "p", "agent", "model")
+                .await
+                .unwrap();
+            store
+                .append_message("f", 1, &wisp_llm::Message::user("retained history"))
+                .await
+                .unwrap();
+            // VACUUM copies this trigger into staging. INSERT fails during open;
+            // DELETE fails during sanitization with an active transaction.
+            sqlx::query(&format!("CREATE TRIGGER fail_preparation BEFORE {operation} ON execution_contexts BEGIN SELECT RAISE(ABORT, 'simulated preparation failure'); END"))
+            .execute(&store.pool).await.unwrap();
+            let error = store.migrate_project_storage("p").await.unwrap_err();
+            assert!(
+                error.to_string().contains("simulated preparation failure"),
+                "{error:#}"
+            );
+            assert_no_migration_files(root.path());
+            assert_no_migration_files(&workspace.join(".wisp"));
+            assert!(!workspace.join(PROJECT_DATABASE).exists());
+            assert!(!workspace.join(PROJECT_METADATA).exists());
+            assert_eq!(store.message_count("f").await.unwrap(), 1);
+            assert!(store.route_project("p").await.unwrap().is_none());
+            sqlx::query("DROP TRIGGER fail_preparation")
+                .execute(&store.pool)
+                .await
+                .unwrap();
+            store.migrate_project_storage("p").await.unwrap();
+            assert_eq!(store.message_count("f").await.unwrap(), 1);
+            assert_no_migration_files(root.path());
+            assert_no_migration_files(&workspace.join(".wisp"));
+        }
     }
 
     #[tokio::test]

@@ -272,21 +272,30 @@ impl Store {
             .max_connections(4)
             .connect_with(opts)
             .await?;
-        // WAL journaling so a crash mid-turn can't corrupt the DB and committed
-        // messages survive (pairs with incremental message persistence).
-        if wal {
-            sqlx::query("PRAGMA journal_mode=WAL")
-                .execute(&pool)
-                .await?;
+        let result = async {
+            // WAL journaling so a crash mid-turn can't corrupt the DB and committed
+            // messages survive (pairs with incremental message persistence).
+            if wal {
+                sqlx::query("PRAGMA journal_mode=WAL")
+                    .execute(&pool)
+                    .await?;
+            }
+            Self::migrate(&pool).await?;
+            let store = Self {
+                pool: pool.clone(),
+                registry: None,
+                project_scope: None,
+            };
+            store.ensure_local_execution_context().await?;
+            Ok(store)
         }
-        Self::migrate(&pool).await?;
-        let store = Self {
-            pool,
-            registry: None,
-            project_scope: None,
-        };
-        store.ensure_local_execution_context().await?;
-        Ok(store)
+        .await;
+        if result.is_err() {
+            // Snapshot callers may remove a failed staging database immediately.
+            // Dropping a pool alone does not wait for SQLite handles to close.
+            pool.close().await;
+        }
+        result
     }
 
     /// Every multi-statement transaction in this store writes. Take the write
