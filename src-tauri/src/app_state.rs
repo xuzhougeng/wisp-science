@@ -625,6 +625,9 @@ pub(crate) struct AppState {
     pub(crate) after_turn_generations: StdMutex<HashMap<String, u64>>,
     /// Per-window ephemeral scratch chat (restored on close).
     pub(crate) scratch: std::sync::RwLock<HashMap<String, scratch_commands::ScratchWindow>>,
+    /// Windows showing the research assistant → the project to restore on
+    /// close (`None`: a blank window returns home).
+    pub(crate) assistant_windows: std::sync::RwLock<HashMap<String, Option<String>>>,
 }
 
 impl AppState {

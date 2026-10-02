@@ -9,6 +9,15 @@ pub fn is_scratch_project_id(id: &str) -> bool {
     id.starts_with(SCRATCH_PROJECT_PREFIX)
 }
 
+/// The global research assistant keeps its one conversation in this hidden
+/// project. Like scratch it never appears in user-facing lists; unlike
+/// scratch it is never purged.
+pub const ASSISTANT_PROJECT_ID: &str = "assistant:research";
+
+pub fn is_assistant_project_id(id: &str) -> bool {
+    id == ASSISTANT_PROJECT_ID
+}
+
 impl Store {
     pub async fn create_project(&self, id: &str, name: &str, workspace_dir: &str) -> Result<()> {
         if let Some(store) = self.route_project(id).await? {
@@ -97,7 +106,7 @@ impl Store {
             "This database needs a desktop schema upgrade before project stars can be saved. Open it with the current WebView desktop first."
         );
         let result =
-            sqlx::query("UPDATE projects SET starred=? WHERE id=? AND id NOT LIKE 'scratch:%'")
+            sqlx::query("UPDATE projects SET starred=? WHERE id=? AND id NOT LIKE 'scratch:%' AND id NOT LIKE 'assistant:%'")
                 .bind(starred)
                 .bind(id)
                 .execute(&self.pool)
@@ -129,7 +138,7 @@ impl Store {
             return Ok(std::collections::HashSet::new());
         }
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM projects WHERE starred=1 AND id NOT LIKE 'scratch:%'",
+            "SELECT id FROM projects WHERE starred=1 AND id NOT LIKE 'scratch:%' AND id NOT LIKE 'assistant:%'",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -177,7 +186,7 @@ impl Store {
                     (SELECT COUNT(*) FROM artifacts a WHERE a.project_id = p.id \
                        AND a.exploration_id IS NULL) AS artifacts \
              FROM projects p \
-             WHERE p.id NOT LIKE 'scratch:%' \
+             WHERE p.id NOT LIKE 'scratch:%' AND p.id NOT LIKE 'assistant:%' \
              ORDER BY {starred_order}p.updated_at DESC, p.rowid DESC",
             listable = self.session_listable_sql().await?,
         );

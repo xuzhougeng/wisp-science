@@ -14182,6 +14182,30 @@ test("scratch chat opens from landing and closes on Escape", async ({ page }) =>
   await expect(page.locator(".projects-screen")).toBeVisible();
 });
 
+test("research assistant reopens its one conversation and closes on Escape", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".projects-screen")).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__assistantHistory = [
+      { role: "user", text: "What did I do yesterday?", tool_name: null, ok: null },
+      { role: "assistant", text: "Yesterday you reran the DE analysis in RNA-seq.", tool_name: null, ok: null },
+    ];
+  });
+  await page.getByTestId("open-research-assistant").click();
+  await expect(page.locator(".app.scratch-mode.assistant-mode")).toBeVisible();
+  await expect(page.locator(".scratch-title")).toHaveText("Research assistant");
+  await expect(page.getByText("Yesterday you reran the DE analysis in RNA-seq.")).toBeVisible();
+  // One conversation: no session list, no branches, no explorations.
+  await expect(page.locator(".sidebar")).toBeHidden();
+  await expect(page.locator(".msg-branch-btn").first()).toBeHidden();
+  await expect(page.locator(".msg-explore-btn").first()).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".app.scratch-mode")).toHaveCount(0);
+  await expect(page.locator(".projects-screen")).toBeVisible();
+  expect(await invokeArgsList(page, "close_research_assistant")).toHaveLength(1);
+  expect(await invokeArgsList(page, "close_scratch_chat")).toHaveLength(0);
+});
+
 test("home docs button sits to the right of settings and opens tutorials", async ({ page }) => {
   await page.goto("/");
   const actions = page.locator(".projects-actions");

@@ -93,6 +93,7 @@ mod publication_freeze;
 mod publication_reproduction;
 mod quick_actions;
 mod research_archive;
+mod research_assistant;
 mod research_graph;
 mod research_recap;
 mod resource_leases;
@@ -5770,6 +5771,9 @@ pub(crate) async fn create_session_frame(
     store: &Store,
     project_id: &str,
 ) -> Result<String, String> {
+    if wisp_store::is_assistant_project_id(project_id) {
+        return Err("The research assistant keeps a single conversation.".into());
+    }
     let id = Uuid::new_v4().to_string();
     let model_id = models::active_profile_id(store).await;
     store
@@ -7219,6 +7223,7 @@ pub fn run() {
                 reviewing: Arc::new(StdMutex::new(HashSet::new())),
                 after_turn_generations: StdMutex::new(HashMap::new()),
                 scratch: std::sync::RwLock::new(HashMap::new()),
+                assistant_windows: std::sync::RwLock::new(HashMap::new()),
             };
             app.manage(state);
             workflow_approval::install(app.handle().clone());
@@ -7411,6 +7416,8 @@ pub fn run() {
             session_commands::new_session,
             scratch_commands::start_scratch_chat,
             scratch_commands::close_scratch_chat,
+            research_assistant::open_research_assistant,
+            research_assistant::close_research_assistant,
             session_commands::branch_session,
             session_commands::preview_session_branch_merge,
             session_commands::summarize_session_branch_merge,

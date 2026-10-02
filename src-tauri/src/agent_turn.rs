@@ -354,6 +354,12 @@ pub(crate) async fn send_message_inner(
         None => None,
     };
     let acp_agent_id = acp::resolve_agent_choice(acp_agent_id.as_deref(), saved_agent.as_deref())?;
+    // The research assistant coordinates and never works: its own prompt and
+    // tool set below, no runtimes, MCP or external agents.
+    let assistant = wisp_store::is_assistant_project_id(&ap.id);
+    if assistant && acp_agent_id.is_some() {
+        return Err("The research assistant runs on the built-in agent.".into());
+    }
     if acp_agent_id.is_some() {
         if project_write_locked {
             return Err(
@@ -683,7 +689,13 @@ pub(crate) async fn send_message_inner(
         *guard = None;
     }
     let model_label = models::session_label(&state.store, &frame_id).await;
-    let specialist = specialists::session_specialist(&state.store, &frame_id).await;
+    // A persona, delegation or plan mode would rewrite the assistant's prompt
+    // and tool set; its conversation never takes them.
+    let specialist = if assistant {
+        None
+    } else {
+        specialists::session_specialist(&state.store, &frame_id).await
+    };
     let max_context = match &specialist {
         Some(specialist) => specialists::specialist_context_window(&state.store, specialist).await,
         None => models::profile_context_window(&state.store, &session_profile_id)
@@ -693,8 +705,9 @@ pub(crate) async fn send_message_inner(
     .try_into()
     .unwrap_or(fallback_max_context);
     let delegation_enabled =
-        delegation_runtime::session_delegation_enabled(&state.store, &frame_id).await;
-    let plan_mode_enabled = plan_mode::session_plan_mode(&state.store, &frame_id).await;
+        !assistant && delegation_runtime::session_delegation_enabled(&state.store, &frame_id).await;
+    let plan_mode_enabled =
+        !assistant && plan_mode::session_plan_mode(&state.store, &frame_id).await;
     let (
         provider,
         api_url,
@@ -977,7 +990,13 @@ pub(crate) async fn send_message_inner(
                 "repaired unpaired tool_calls in {frame_id} so the provider transcript stays paired"
             );
         }
-        agent.seed_system_prompt(&skills, None);
+        if !assistant {
+            agent.seed_system_prompt(&skills, None);
+        } else if agent.ctx.is_empty() {
+            agent
+                .ctx
+                .append_system(research_assistant::ASSISTANT_SYSTEM);
+        }
         if let Some(message) = agent.ctx.messages.first_mut() {
             if let wisp_llm::Content::Text(prompt) = &mut message.content {
                 delegation_runtime::sync_delegation_prompt(prompt, delegation_enabled);
@@ -998,17 +1017,22 @@ pub(crate) async fn send_message_inner(
             .as_ref()
             .and_then(|s| s.connectors.as_ref())
             .map(|v| v.iter().cloned().collect());
-        let wiring = wire_runtimes_and_mcp(
-            &mut agent.tools,
-            &state.runtime_manager,
-            &ap.id,
-            frame_scope.scope_key(),
-            &frame_id,
-            &state.store,
-            None,
-            connector_allow.as_ref(),
-        )
-        .await;
+        let wiring = if assistant {
+            agent.tools = research_assistant::tools(&app);
+            ToolWiringResult::default()
+        } else {
+            wire_runtimes_and_mcp(
+                &mut agent.tools,
+                &state.runtime_manager,
+                &ap.id,
+                frame_scope.scope_key(),
+                &frame_id,
+                &state.store,
+                None,
+                connector_allow.as_ref(),
+            )
+            .await
+        };
         {
             let mut observed = state.plugin_runtime_errors.lock().unwrap();
             let project_errors = observed.entry(ap.id.clone()).or_default();
@@ -1028,7 +1052,7 @@ pub(crate) async fn send_message_inner(
     let agent = guard
         .as_mut()
         .ok_or_else(|| "Failed to prepare the session agent.".to_string())?;
-    if let Some(message) = agent.ctx.messages.first_mut() {
+    if let Some(message) = agent.ctx.messages.first_mut().filter(|_| !assistant) {
         if let wisp_llm::Content::Text(prompt) = &mut message.content {
             network::sync_package_guidance(prompt, &network::load(&state.store).await?);
         }
@@ -1224,6 +1248,9 @@ pub(crate) async fn send_message_inner(
         );
     }
     if !resume {
+        if assistant {
+            agent.ctx.inject_user(research_assistant::now_note());
+        }
         if let Some(context) = rt.mcp_app_context_injection() {
             agent.ctx.inject_user(context);
         }

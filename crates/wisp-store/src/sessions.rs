@@ -651,7 +651,7 @@ impl Store {
              FROM frames f \
              WHERE f.parent_frame_id = f.id \
                AND f.exploration_id IS NULL \
-               AND f.project_id NOT LIKE 'scratch:%' \
+               AND f.project_id NOT LIKE 'scratch:%' AND f.project_id NOT LIKE 'assistant:%' \
                AND {used} ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
             used = format!("({SESSION_HAS_USER_TURN_SQL}) AND ({})", self.session_shelved_sql(Some(false)).await?),
         );
@@ -3311,7 +3311,7 @@ impl Store {
                 FROM frames f JOIN projects p ON p.id=f.project_id \
                 WHERE f.parent_frame_id=f.id \
                   AND f.exploration_id IS NULL \
-                  AND f.project_id NOT LIKE 'scratch:%' \
+                  AND f.project_id NOT LIKE 'scratch:%' AND f.project_id NOT LIKE 'assistant:%' \
                   AND {listable} \
                   AND (? IS NULL OR f.project_id=?) \
                   AND (? IS NULL OR f.id=?) \
@@ -3406,7 +3406,7 @@ impl Store {
                     SUM(s.input) AS input, SUM(s.output) AS output, \
                     SUM(s.reasoning) AS reasoning, SUM(s.cached) AS cached \
              FROM session_usage s JOIN projects p ON p.id = s.project_id \
-             WHERE p.id NOT LIKE 'scratch:%' \
+             WHERE p.id NOT LIKE 'scratch:%' AND p.id NOT LIKE 'assistant:%' \
              GROUP BY p.id ORDER BY updated_at DESC, p.id DESC",
         )
         .fetch_all(&self.pool)
@@ -3459,7 +3459,7 @@ impl Store {
              JOIN frames f ON f.id=e.frame_id \
              JOIN frames r ON r.id=COALESCE(f.root_frame_id,f.id) \
              JOIN projects p ON p.id=r.project_id \
-             WHERE p.id NOT LIKE 'scratch:%' \
+             WHERE p.id NOT LIKE 'scratch:%' AND p.id NOT LIKE 'assistant:%' \
                AND e.event_json LIKE '{\"kind\":\"Usage\"%' \
              GROUP BY day",
         )
@@ -3516,7 +3516,7 @@ impl Store {
              JOIN frames f ON f.id=e.frame_id \
              JOIN frames r ON r.id=COALESCE(f.root_frame_id,f.id) \
              JOIN projects p ON p.id=r.project_id \
-             WHERE p.id NOT LIKE 'scratch:%' \
+             WHERE p.id NOT LIKE 'scratch:%' AND p.id NOT LIKE 'assistant:%' \
                AND e.event_json LIKE '{\"kind\":\"Usage\"%' \
              GROUP BY model_key ORDER BY tokens DESC, model_key",
         )
@@ -3578,7 +3578,7 @@ impl Store {
                 JOIN frames f ON f.id=e.frame_id \
                 JOIN frames r ON r.id=COALESCE(f.root_frame_id,f.id) \
                 JOIN projects p ON p.id=r.project_id \
-                WHERE p.id NOT LIKE 'scratch:%' \
+                WHERE p.id NOT LIKE 'scratch:%' AND p.id NOT LIKE 'assistant:%' \
                   AND e.event_json LIKE '{\"kind\":\"ToolCall\"%' \
                   AND (\
                         json_extract(e.event_json,'$.name') LIKE 'mcp:%' \

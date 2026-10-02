@@ -1084,6 +1084,10 @@ fn App() -> impl IntoView {
     provide_context(project_info.read_only());
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
     let scratch_open = create_rw_signal(false); // ephemeral scratch chat overlay
+    // The research assistant's one conversation reuses the scratch overlay
+    // shell (`scratch_open` is also true) but is persistent and never closes
+    // into a deleted project.
+    let assistant_mode = create_rw_signal(false);
     let feedback_context = create_rw_signal::<Option<String>>(None);
     let project_open_error = create_rw_signal(None::<String>);
     let project_transfer = create_rw_signal(None::<ProjectTransferProgress>);
@@ -2323,7 +2327,13 @@ fn App() -> impl IntoView {
     let composer_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
     let close_scratch = Callback::new(move |_: ()| {
         spawn_local(async move {
-            let _ = invoke("close_scratch_chat", JsValue::UNDEFINED).await;
+            let command = if assistant_mode.get_untracked() {
+                "close_research_assistant"
+            } else {
+                "close_scratch_chat"
+            };
+            let _ = invoke(command, JsValue::UNDEFINED).await;
+            assistant_mode.set(false);
             scratch_open.set(false);
             items.set(vec![]);
             active_session.set(None);
@@ -2332,7 +2342,7 @@ fn App() -> impl IntoView {
         });
     });
     let open_scratch = Callback::new(move |_: ()| {
-        if demo_mode.get_untracked() {
+        if demo_mode.get_untracked() || assistant_mode.get_untracked() {
             return;
         }
         command_palette_open.set(false);
@@ -6686,6 +6696,38 @@ fn App() -> impl IntoView {
                 restore_chat_session_scroll(&id);
                 return;
             }
+        });
+    });
+    // The research assistant is one persistent conversation: opening it binds
+    // this window to it and loads its history like any other session.
+    let open_assistant = Callback::new(move |_: ()| {
+        if demo_mode.get_untracked() || scratch_open.get_untracked() {
+            return;
+        }
+        command_palette_open.set(false);
+        action_palette_open.set(false);
+        spawn_local(async move {
+            let session_id = match invoke_checked("open_research_assistant", JsValue::UNDEFINED)
+                .await
+                .map(|value| value.as_string())
+            {
+                Ok(Some(id)) => id,
+                Ok(None) => return,
+                Err(error) => {
+                    status.set(js_error_text(error));
+                    return;
+                }
+            };
+            assistant_mode.set(true);
+            scratch_open.set(true);
+            attachments.set(vec![]);
+            composer_references.set(vec![]);
+            composer_quotes.set(vec![]);
+            show_sidebar.set(false);
+            show_right.set(false);
+            center_file.set(None);
+            load_session.call(session_id);
+            focus_composer();
         });
     });
     let toggle_model_view = Callback::new(move |_| {
@@ -11257,7 +11299,9 @@ fn App() -> impl IntoView {
     });
     let home_page = Signal::derive(move || show_projects.get());
     let window_title = Signal::derive(move || {
-        if scratch_open.get() {
+        if assistant_mode.get() {
+            app_window_title(Some(&t(locale.get(), "assistant.title")))
+        } else if scratch_open.get() {
             app_window_title(Some("Scratch"))
         } else if show_projects.get() {
             app_window_title(None)
@@ -11691,6 +11735,7 @@ fn App() -> impl IntoView {
                 open_project_transition.call((id, None));
             })
             open_scratch=open_scratch
+            open_assistant=open_assistant
             open_settings=Callback::new(move |section: Option<String>| open_settings_fn(section))
             open_library=Callback::new(move |_| show_library.set(true))
             open_project_export=open_project_export
@@ -11756,6 +11801,7 @@ fn App() -> impl IntoView {
         <div class="app"
             class:app-entering=move || app_shell_entering.get()
             class:scratch-mode=move || scratch_open.get()
+            class:assistant-mode=move || assistant_mode.get()
             // Onboarding lives in this shell, so hiding it on the projects
             // landing swallowed the first-run overlay entirely.
             class:app-hidden=move || show_projects.get() && !scratch_open.get() && !show_settings.get() && !show_onboarding.get() && modal_artifact.get().is_none()
@@ -11879,10 +11925,10 @@ fn App() -> impl IntoView {
                 .unwrap_or_default()>
             <div class="topbar">
                 <div class="scratch-topbar">
-                    <span class="scratch-title">{move || t(locale.get(), "scratch.title")}</span>
+                    <span class="scratch-title">{move || t(locale.get(), if assistant_mode.get() { "assistant.title" } else { "scratch.title" })}</span>
                     <button type="button" class="icon-btn scratch-close"
-                        title=move || t(locale.get(), "scratch.close")
-                        aria-label=move || t(locale.get(), "scratch.close")
+                        title=move || t(locale.get(), if assistant_mode.get() { "assistant.close" } else { "scratch.close" })
+                        aria-label=move || t(locale.get(), if assistant_mode.get() { "assistant.close" } else { "scratch.close" })
                         on:click=move |_| close_scratch.call(())>
                         {compose_icon("close")}
                     </button>
@@ -12903,8 +12949,8 @@ fn App() -> impl IntoView {
                     {move || (!model_view.get() && thread_items.with(|l| l.is_empty()) && !(transcript_loading.get().is_some() && transcript_loading.get() == active_session.get()) && transcript_page_error.get().is_none_or(|(id, _)| active_session.get().as_deref() != Some(id.as_str()))).then(|| view! {
                         <div class="empty">
                             <span class="empty-logo brand-wordmark" role="img" aria-label="Wisp Science"></span>
-                            <h1>{move || empty_title(locale.get(), empty_title_idx.get())}</h1>
-                            <p>{move || empty_subtitle(locale.get(), empty_subtitle_idx.get())}</p>
+                            <h1>{move || if assistant_mode.get() { t(locale.get(), "assistant.title").to_string() } else { empty_title(locale.get(), empty_title_idx.get()) }}</h1>
+                            <p>{move || if assistant_mode.get() { t(locale.get(), "assistant.empty").to_string() } else { empty_subtitle(locale.get(), empty_subtitle_idx.get()) }}</p>
                         </div>
                     })}
                     // Keyed rows (#65): the key is a content fingerprint, so a

@@ -18,6 +18,9 @@ body:has(.window-titlebar) .app.scratch-mode { top: 38px; height: calc(100% - 38
 }
 .scratch-title { font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text); }
 .scratch-topbar .scratch-close { margin-left: auto; }
+/* The research assistant keeps exactly one conversation. */
+.app.assistant-mode .msg-branch-btn,
+.app.assistant-mode .msg-explore-btn { display: none; }
 .projects-screen {
   position: absolute; inset: 0; z-index: 20;
   background:
@@ -46,7 +49,7 @@ body:has(.window-titlebar) .projects-screen { top: 38px; }
   background: transparent; color: var(--text); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
 .projects-icon-btn:hover { background: var(--bg-elev); border-color: var(--border); }
 .projects-icon-btn svg { width: 18px; height: 18px; opacity: .95; }
-.projects-import { display: inline-flex; align-items: center; gap: 7px; }
+.projects-import, .projects-assistant { display: inline-flex; align-items: center; gap: 7px; }
 .new-plus { margin-right: 2px; font-size: calc(18px * var(--ui-font-scale, 1)); line-height: 0; }
 .projects-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; width: min(100%, 1200px); }
 .projects-col { min-width: 0; }

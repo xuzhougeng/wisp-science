@@ -2352,6 +2352,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 };
               }
             }
+            if (String(arg("id") ?? "") === "research-assistant") {
+              return {
+                items: (window as any).__assistantHistory ?? [],
+                next_before_seq: null,
+                user_offset: 0,
+              };
+            }
             if (quickActionSessions[String(arg("id") ?? "")]) {
               return {
                 items: [{
@@ -5354,6 +5361,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             ((window as any).__scratchOpenEvents ??= []).push(false);
             return null;
           }
+          case "open_research_assistant":
+            return "research-assistant";
+          case "close_research_assistant":
+            return null;
           case "branch_session": {
             const source = String(arg("sessionId") ?? "");
             const sourceSession = mockSessions.find((session) => session.id === source);

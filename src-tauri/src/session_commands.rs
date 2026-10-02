@@ -44,6 +44,9 @@ pub(super) async fn branch_session(
     checkpoint_kind: Option<String>,
 ) -> Result<String, String> {
     let active = state.require_active(window.label())?;
+    if wisp_store::is_assistant_project_id(&active.id) {
+        return Err("The research assistant keeps a single conversation.".into());
+    }
     let ap = project_commands::load_active_project(&state, &active.id)
         .await?
         .0;

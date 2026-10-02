@@ -10,6 +10,7 @@ mod agent_workflow_run_activities;
 mod agent_workflows;
 mod artifacts;
 mod ask_user_requests;
+mod assistant_tasks;
 mod codex_imports;
 mod context_epochs;
 mod execution_contexts;
@@ -58,6 +59,7 @@ pub use agent_workflows::{
 };
 pub use artifacts::{logical_artifact_id, scoped_logical_artifact_id};
 pub use ask_user_requests::AskUserPoll;
+pub use assistant_tasks::{AssistantTask, ASSISTANT_TASK_STATUSES};
 pub use context_epochs::{ContextEpochRecord, OpenContextEpoch};
 pub use execution_contexts::FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX;
 pub use explorations::{
@@ -83,7 +85,9 @@ pub use project_state_revisions::{ProjectStateRevision, ProjectStateRevisionSumm
 pub use project_storage::{PROJECT_DATABASE, PROJECT_METADATA};
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;
-pub use projects::{is_scratch_project_id, SCRATCH_PROJECT_PREFIX};
+pub use projects::{
+    is_assistant_project_id, is_scratch_project_id, ASSISTANT_PROJECT_ID, SCRATCH_PROJECT_PREFIX,
+};
 pub use provenance::{canonical_json, canonical_json_sha256};
 pub use remote_staging::RemoteStagingEntry;
 pub use schedules::{next_slot_after, ScheduleRecord, ScheduleRunRecord};
@@ -856,6 +860,10 @@ impl Store {
         }
         // Mainline daily recaps, one per project and local day.
         sqlx::raw_sql(include_str!("../migrations/0060_research_recaps.sql"))
+            .execute(pool)
+            .await?;
+        // The research assistant's dated plan items.
+        sqlx::raw_sql(include_str!("../migrations/0063_assistant_tasks.sql"))
             .execute(pool)
             .await?;
         sqlx::query(

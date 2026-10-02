@@ -317,6 +317,26 @@ pub(crate) async fn draft_recap(
     {
         return Ok(None);
     }
+    let Some((input, handles)) = day_digest(store, project_id, day_start, day_end).await? else {
+        return Ok(None);
+    };
+    let (raw, model) = complete(store, project_id, &input.to_string()).await?;
+    let recap = to_recap(&raw, &handles, day_start, &model)?;
+    store
+        .save_research_recap(project_id, &recap, replace)
+        .await
+        .map_err(err)
+}
+
+/// The bounded digest a recap of `[day_start, day_end)` is drafted from; the
+/// research assistant reads the same view. `None` when nothing was recorded.
+pub(crate) async fn day_digest(
+    store: &Store,
+    project_id: &str,
+    day_start: i64,
+    day_end: i64,
+) -> Result<Option<(serde_json::Value, HashMap<String, ResearchRecapSource>)>, String> {
+    let err = |error: anyhow::Error| error.to_string();
     let (name, _) = store
         .get_project(project_id)
         .await
@@ -350,15 +370,7 @@ pub(crate) async fn draft_recap(
         .single()
         .map(|t| t.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
-    let Some((input, handles)) = digest(&name, &day, &journey.entries, &requests, &failures) else {
-        return Ok(None);
-    };
-    let (raw, model) = complete(store, project_id, &input.to_string()).await?;
-    let recap = to_recap(&raw, &handles, day_start, &model)?;
-    store
-        .save_research_recap(project_id, &recap, replace)
-        .await
-        .map_err(err)
+    Ok(digest(&name, &day, &journey.entries, &requests, &failures))
 }
 
 /// Recaps summarize the mainline; an exploration branch shows none, so a
@@ -411,7 +423,7 @@ fn parse_time(value: &str) -> Option<NaiveTime> {
 }
 
 /// Unix bounds of a local calendar day; `earliest` keeps DST gaps safe.
-fn local_day(day: NaiveDate) -> Option<(i64, i64)> {
+pub(crate) fn local_day(day: NaiveDate) -> Option<(i64, i64)> {
     let start = |d: NaiveDate| {
         Local
             .from_local_datetime(&d.and_hms_opt(0, 0, 0)?)

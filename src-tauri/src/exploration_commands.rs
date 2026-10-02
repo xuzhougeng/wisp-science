@@ -988,6 +988,9 @@ pub(crate) async fn start_exploration(
     if owner.project_id() != active.id || !matches!(owner, StateScope::Mainline { .. }) {
         return Err("Source conversation does not belong to the active mainline".into());
     }
+    if wisp_store::is_assistant_project_id(&active.id) {
+        return Err("The research assistant keeps a single conversation.".into());
+    }
     if state
         .store
         .session_branch_state(&source_frame_id)

@@ -21,6 +21,7 @@ pub(crate) fn ProjectsScreen(
     on_open_library: Callback<()>,
     on_open_demo: Callback<()>,
     on_open_scratch: Callback<()>,
+    on_open_assistant: Callback<()>,
     on_search: Callback<()>,
     on_export_project: Callback<(String, String)>,
     project_transfer: RwSignal<Option<ProjectTransferProgress>>,
@@ -723,6 +724,10 @@ pub(crate) fn ProjectsScreen(
                         aria-label=move || t(locale.get(), "menu.docs")
                         on:click=move |_| open_tutorials()>
                         {compose_icon("doc")}
+                    </button>
+                    <button type="button" class="btn-ghost projects-assistant" data-testid="open-research-assistant"
+                        on:click=move |_| on_open_assistant.call(())>
+                        {compose_icon("sparkles")}<span>{move || t(locale.get(), "assistant.open")}</span>
                     </button>
                     <button type="button" class="btn-ghost projects-scratch"
                         on:click=move |_| on_open_scratch.call(())>

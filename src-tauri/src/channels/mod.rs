@@ -871,7 +871,7 @@ async fn route_status_text(store: &Store, route: &SharedRoute) -> String {
 /// `attempt_completion` tool, so the real answer is that tool result — the
 /// desktop promotes it into the assistant bubble the same way. Fall back to
 /// the last non-empty assistant text for turns that end in plain text.
-async fn last_assistant_text(store: &Store, frame_id: &str) -> Option<String> {
+pub(crate) async fn last_assistant_text(store: &Store, frame_id: &str) -> Option<String> {
     let msgs = store.load_messages(frame_id).await.ok()?;
     msgs.iter()
         .rev()

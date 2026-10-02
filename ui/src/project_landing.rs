@@ -40,6 +40,7 @@ pub(super) fn ProjectLanding(
     open_project_session: Callback<(String, String)>,
     open_project_journey: Callback<(String, i64)>,
     open_scratch: Callback<()>,
+    open_assistant: Callback<()>,
     open_settings: Callback<Option<String>>,
     open_library: Callback<()>,
     open_project_export: Callback<(String, String)>,
@@ -109,6 +110,7 @@ pub(super) fn ProjectLanding(
                     on_open_library=open_library
                     on_open_demo=on_open_demo
                     on_open_scratch=open_scratch
+                    on_open_assistant=open_assistant
                     on_search=Callback::new(move |_| command_palette_open.set(true))
                     on_export_project=open_project_export
                     project_transfer=project_transfer
