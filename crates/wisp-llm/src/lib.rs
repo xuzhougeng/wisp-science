@@ -8,6 +8,9 @@
 //! [`Provider::stream`]. Reasoning channels (`reasoning_content` /
 //! `reasoning` / `reasoning_details`, Anthropic `thinking_delta`) are
 //! normalized to a single `reasoning` string.
+//!
+//! [`systemone`] is separate and not a [`Provider`]: the TypeSafe decision
+//! protocol (Jev) answers typed questions with probabilities, no text.
 
 pub mod anthropic;
 pub mod chatgpt_auth;
@@ -19,6 +22,7 @@ pub mod responses;
 pub mod routed;
 pub mod scripted;
 mod system_proxy;
+pub mod systemone;
 pub mod xai_auth;
 
 pub use message::{

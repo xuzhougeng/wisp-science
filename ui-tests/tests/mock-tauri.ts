@@ -1226,6 +1226,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     scimaster_api_key: false,
     ncbi_api_key: false,
     ncbi_email: false,
+    typesafe_api_key: false,
   };
   let mockCustomCredentials: Array<{
     id: string;

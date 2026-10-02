@@ -430,6 +430,12 @@ const CREDENTIALS: &[Credential] = &[
         secret: "openfda_api_key",
         env: "OPENFDA_API_KEY",
     },
+    // TypeSafe Jev decision model (`wisp_llm::systemone`).
+    Credential {
+        id: "typesafe_api_key",
+        secret: "typesafe_api_key",
+        env: "TYPESAFE_API_KEY",
+    },
 ];
 
 fn credential(id: &str) -> Option<&'static Credential> {

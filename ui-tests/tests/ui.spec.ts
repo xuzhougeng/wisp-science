@@ -10693,7 +10693,7 @@ test("credential services explain their behavior and open official setup links",
   await enterApp(page);
   await openSettingsSection(page, "Credentials");
 
-  await expect(page.locator("[data-credential-service]")).toHaveCount(4);
+  await expect(page.locator("[data-credential-service]")).toHaveCount(5);
   await page.locator('[data-credential-service="openalex"]').click();
   await expect(page.locator(".cred-help-trigger")).toHaveCount(1);
   const openAlexHelp = page.getByRole("button", { name: "OpenAlex: About this credential" });
@@ -10772,12 +10772,12 @@ test("credential service subpages navigate, discard drafts, and update list stat
   await enterApp(page);
   await openSettingsSection(page, "Credentials");
   const list = page.getByTestId("credential-service-list");
-  await expect(list.locator("button")).toHaveCount(4);
+  await expect(list.locator("button")).toHaveCount(5);
   await expect(list.locator("input")).toHaveCount(0);
   await expect.poll(async () => (await list.boundingBox())?.height ?? 0).toBeGreaterThan(250);
   await page.screenshot({ path: test.info().outputPath("credential-services.png"), animations: "disabled" });
 
-  for (const service of ["openalex", "infinisynapse", "scimaster", "ncbi"]) {
+  for (const service of ["openalex", "infinisynapse", "scimaster", "ncbi", "typesafe"]) {
     await page.locator(`[data-credential-service="${service}"]`).click();
     // Escape must work immediately, while focus is still outside the detail form.
     await page.keyboard.press("Escape");

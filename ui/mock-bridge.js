@@ -140,6 +140,7 @@ window.__WISP_MCP_APP_BACKEND__ = "legacy-iframe";
     scimaster_api_key: false,
     ncbi_api_key: false,
     ncbi_email: false,
+    typesafe_api_key: false,
   };
   let mockCustomCredentials = [];
   let nextCustomCredential = 1;
