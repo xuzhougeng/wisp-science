@@ -52,6 +52,8 @@ The assistant page has independently collapsible project and calendar sidebars a
 
 **Remote access** in the assistant header connects WeChat directly to this same conversation and all visible projects. Scan to bind, then enable the connection; keep Wisp running. This binding, switch, credentials and cursor are independent from the project bots in Settings. Existing project slash commands keep their behavior. A bot can belong to only one entry at a time. Assistant messages use natural language; `/help`, `/status` and `/stop` stay within the assistant. IM approval restrictions remain in force; handle assistant approvals on the desktop assistant and dispatched-work approvals in the relevant desktop project. Unbinding preserves conversation history and plans. Escape dismisses the connection dialog before the assistant or its drawers.
 
+The top toolbar provides the project and calendar visibility toggles. Sidebar headings show only their titles, without duplicate collapse buttons.
+
 ## 实现说明
 
 - 对话存放在隐藏项目 `assistant:research` 的固定会话 `research-assistant` 中，不出现在项目列表、最近会话、搜索或用量统计里，也不会被清理。

@@ -32,16 +32,21 @@ body:has(.window-titlebar) .app.assistant-mode { top: 38px; height: calc(100% - 
   animation: motion-fade-in var(--motion-duration-slow) var(--motion-ease-standard) both;
 }
 body:has(.window-titlebar) .projects-screen { top: 38px; }
-.projects-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); width: min(100%, 1200px);
+.projects-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); width: min(100%, 1200px);
   animation: motion-surface-in var(--motion-duration-medium) var(--motion-ease-decelerate) 20ms both; }
-/* Wrap the actions under the brand before the tagline is squeezed word by word. */
-.projects-brand { display: flex; align-items: center; gap: var(--space-5); flex: 1 1 auto; min-width: min(100%, 400px); }
+/* Let the action groups wrap beside the brand before moving below it. */
+.projects-brand { display: flex; align-items: center; gap: var(--space-5); flex: 1 1 400px; min-width: min(100%, 400px); }
 .projects-brand-mark { width: 180px; }
 .projects-title { margin: 0; flex: none; }
 .projects-tagline { margin: 0; min-width: 0; color: var(--text-muted); font-size: clamp(15px, 1.35vw, 18px); font-weight: 500; line-height: 1.65; text-wrap: balance; }
 .projects-tagline span { display: block; }
 .projects-tagline span + span { color: var(--clay-strong); }
-.projects-actions { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; margin-left: auto; }
+.projects-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); flex: 0 1 auto; min-width: 0; max-width: 100%; margin-left: auto; }
+.projects-quick-actions, .projects-main-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); max-width: 100%; }
+.projects-quick-actions { flex: 0 0 auto; }
+.projects-main-actions { min-width: 0; }
+.projects-main-actions > button { min-width: 0; }
+.projects-main-actions svg { flex-shrink: 0; }
 .project-open-error { width: min(100%, 1200px); margin: -16px 0 20px; padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--err) 32%, var(--border)); border-radius: var(--radius-sm);
   color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--bg-elev)); font-size: calc(13px * var(--ui-font-scale, 1)); }
@@ -395,7 +400,7 @@ body:has(.window-titlebar) .conversation-search-dialog { max-height: min(660px, 
   .projects-screen { padding-top: 28px; }
   .projects-head { align-items: center; flex-wrap: wrap; }
   .projects-brand { flex-basis: 100%; }
-  .projects-actions { gap: 6px; flex: 1 1 300px; flex-wrap: wrap; justify-content: flex-end; }
+  .projects-actions { flex: 1 1 100%; }
   .projects-icon-btn { width: 34px; height: 34px; }
   .projects-cols { grid-template-columns: 1fr; gap: 26px; }
   .project-search-overlay { padding: 16px 12px 16px; }

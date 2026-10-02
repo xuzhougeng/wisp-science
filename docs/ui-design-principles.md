@@ -27,6 +27,7 @@
 - Keep the wordmark large enough for the “science” lettering to read. Compact chrome and the research-graph empty state retain a small symbol; chat greetings retain the serif typography.
 - Research graph headings use Source Serif at `--text-lg`; list/canvas stay utilitarian.
 - The projects home puts a documentation control immediately to the right of Settings. It opens the tutorials index, the same page as Help → Documentation.
+- Home actions stay on one row when space permits. In narrower desktop windows, the shortcut icons form the first row and Research assistant / Import project / New project form the second, aligned right beside the brand. At small widths the action area moves below the brand; button labels may wrap to keep every action visible.
 
 ## Queued follow-ups
 
