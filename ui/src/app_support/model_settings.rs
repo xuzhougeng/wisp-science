@@ -7,6 +7,48 @@
 use super::*;
 use crate::bindings::invoke_timeout;
 
+/// Resolve selectable efforts from the exact catalog entry. A keyed result
+/// prevents a slow lookup for the previous model or endpoint leaking into the
+/// current picker. Unknown entries never imply support for every effort.
+pub(crate) fn use_model_efforts(
+    source: impl Fn() -> Option<(String, String, String)> + 'static,
+) -> Memo<Option<Vec<String>>> {
+    let key = create_memo(move |_| source());
+    let result = create_rw_signal(None::<((String, String, String), Option<Vec<String>>)>);
+    create_effect(move |_| {
+        let Some(request_key) = key.get() else {
+            result.set(None);
+            return;
+        };
+        result.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "provider": request_key.0,
+                "apiUrl": request_key.1,
+                "model": request_key.2,
+            }))
+            .unwrap();
+            let efforts = invoke_checked("model_catalog_lookup", args)
+                .await
+                .ok()
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<Option<CatalogEntryDto>>(value).ok()
+                })
+                .flatten()
+                .map(|entry| entry.efforts);
+            if key.try_get_untracked().flatten().as_ref() == Some(&request_key) {
+                result.set(Some((request_key, efforts)));
+            }
+        });
+    });
+    create_memo(move |_| {
+        let (result_key, efforts) = result.get()?;
+        (key.get().as_ref() == Some(&result_key))
+            .then_some(efforts)
+            .flatten()
+    })
+}
+
 async fn catalog_limits_or_default(provider: &str, api_url: &str, model: &str) -> (u64, u64) {
     let args = to_value(&serde_json::json!({
         "provider": provider,

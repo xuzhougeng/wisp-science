@@ -55,22 +55,33 @@ without a warning. The active profile in Settings remains the default for new
 conversations. In **Settings → AI configuration → Models**, choose **Set as
 default** to save that default immediately; **Default** identifies the selected
 profile. The list has no Save/Cancel footer. Add/edit forms still require Save,
-and cancelling an edit does not undo an earlier default change. Hovering a model row in the picker overlays the reasoning effort
-inside the model information area without reserving a separate column, and
-reveals its **Edit** button. The button opens a flyout to the right of the model
-menu listing the effort levels the model family is documented to support (same
-curated list as the model form in Settings).
-Choosing a level saves it as the profile's default — it applies to every
-conversation using that model and is not scoped to the current conversation.
-Choosing "default" clears the value so the provider decides.
+and cancelling an edit does not undo an earlier default change.
 
-The composer footer surfaces the same value as a thinking-effort pill next to
-the model picker (brain icon, current level, dropdown). The footer reads
-context usage, model, thinking effort, Fast, send. The pill edits the same
-per-profile default through the same curated list — models whose provider
-rejects the effort parameter offer only "default" — and ACP agents hide the
-pill because their model and effort come from the agent configuration. Fast
-remains a separate lightning toggle between the pill and the send button.
+The model picker only switches models. It shows one display name per HTTP
+profile; profiles sharing a name show their provider and model ID underneath
+for disambiguation. Hovering a model shows its full name, provider and model ID.
+There is no per-row reasoning-effort editor or hover badge.
+
+Use the reasoning-effort pill beside the model picker (brain icon, current
+level, dropdown) to adjust the selected profile. The footer reads context
+usage, model, reasoning effort, Fast, send. The menu uses localized labels and
+only effort values declared by the baked models.dev catalog for the exact
+provider/endpoint/model ID (including gateway vendor/model IDs). The model form
+uses the same source. Model-family guessing and the unknown-model full-list
+fallback are removed. Unknown models, lookup failures and entries without effort
+values offer only Default. A saved value absent from the catalog is preserved
+and marked unverified, but is not offered as a selectable level. Late lookups
+for a previous model or endpoint cannot replace the current choices.
+Choosing a level saves the profile default, shared by conversations using that
+profile unless they have an explicit override. Choosing **Default** clears the
+value so the provider decides. Models without declared effort values offer only Default;
+ACP agents hide the pill because the agent owns its configuration. Fast remains
+a separate lightning toggle between the pill and the send button.
+
+The model and effort menus share typography, spacing and selection marks. Their
+width and scrollable height fit the available window space, including at larger
+UI scales. Escape or clicking outside dismisses the open menu; resizing the
+window also dismisses it so reopening uses the new available space.
 
 The add/edit model page includes collapsed **Request headers (advanced)**
 (请求附加信息（高级）). It explains that these settings add HTTP request headers

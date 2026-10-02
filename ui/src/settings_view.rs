@@ -1415,156 +1415,6 @@ fn codex_accounts_panel(
     }
 }
 
-/// Every effort value any supported provider understands; shown when the
-/// model is not in the curated table below.
-pub(crate) const ALL_EFFORT_VALUES: &[&str] = &[
-    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
-];
-
-/// Curated reasoning-effort support per model family, per vendor docs as of
-/// 2026-08 (OpenAI reasoning guide, Anthropic effort docs, xAI reasoning
-/// docs, DeepSeek/Moonshot/Alibaba API references). `None` = unknown model
-/// (full list + "can't verify" hint); `Some(&[])` = the provider rejects the
-/// parameter for this model, so only "default" makes sense.
-/// ponytail: the baked model catalog (model_catalog.rs) already carries
-/// per-model effort values from models.dev; swap this table for catalog
-/// lookups in a follow-up. Keep longer patterns above their shorter
-/// siblings ("claude-opus-4-5" before "claude-opus").
-pub(crate) fn known_effort_values(_provider: &str, model: &str) -> Option<&'static [&'static str]> {
-    // Users write model names loosely ("opus-4.8", "claude-opus-4-8"), so
-    // match on a normalized form and don't require the vendor prefix.
-    let m = model.to_ascii_lowercase().replace(['.', '_'], "-");
-    if m.contains("gpt-5-pro") {
-        Some(&["high"])
-    } else if m.contains("codex-max") {
-        Some(&["none", "low", "medium", "high", "xhigh"])
-    } else if m.contains("gpt-5-1") {
-        Some(&["none", "low", "medium", "high"])
-    } else if m.contains("gpt-5-6") {
-        Some(&["none", "low", "medium", "high", "xhigh", "max"])
-    } else if m.contains("gpt-5-2")
-        || m.contains("gpt-5-3")
-        || m.contains("gpt-5-4")
-        || m.contains("gpt-5-5")
-    {
-        Some(&["none", "low", "medium", "high", "xhigh"])
-    } else if m.contains("gpt-5") {
-        Some(&["minimal", "low", "medium", "high"])
-    } else if m.starts_with("o1-mini") || m.starts_with("o1-preview") {
-        Some(&[])
-    } else if m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
-        Some(&["low", "medium", "high"])
-    } else if m.contains("opus-4-5") {
-        Some(&["low", "medium", "high"])
-    } else if m.contains("sonnet-4-5") || m.contains("haiku") {
-        // These reject the effort parameter with a 400.
-        Some(&[])
-    } else if m.contains("opus-4-6") || m.contains("sonnet-4-6") || m.contains("mythos-preview") {
-        Some(&["low", "medium", "high", "max"])
-    } else if m.contains("opus")
-        || m.contains("sonnet")
-        || m.contains("fable")
-        || m.contains("mythos")
-    {
-        Some(&["low", "medium", "high", "xhigh", "max"])
-    } else if m.contains("grok-4-6") || m.contains("grok-4-20") {
-        Some(&["low", "medium", "high", "xhigh"])
-    } else if m.contains("grok-4") {
-        Some(&["low", "medium", "high"])
-    } else if m.contains("grok") {
-        Some(&["low", "high"])
-    } else if m.contains("deepseek-v4") {
-        // medium/xhigh are silently down-mapped to high; don't offer them.
-        Some(&["low", "high", "max"])
-    } else if m.contains("kimi-k3") {
-        Some(&["low", "high", "max"])
-    } else if m.contains("kimi-k2") {
-        // k2.x only toggles thinking on/off; no effort parameter.
-        Some(&[])
-    } else if m.contains("qwen3-8-max") {
-        Some(&["low", "medium", "xhigh"])
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod effort_values_tests {
-    use super::known_effort_values;
-
-    #[test]
-    fn maps_families_and_leaves_unknown_open() {
-        assert_eq!(
-            known_effort_values("anthropic", "claude-sonnet-5"),
-            Some(&["low", "medium", "high", "xhigh", "max"][..])
-        );
-        assert_eq!(
-            known_effort_values("anthropic", "claude-opus-4-5"),
-            Some(&["low", "medium", "high"][..])
-        );
-        assert_eq!(
-            known_effort_values("anthropic", "claude-sonnet-4-6"),
-            Some(&["low", "medium", "high", "max"][..])
-        );
-        assert_eq!(
-            known_effort_values("anthropic", "claude-haiku-4-5"),
-            Some(&[][..])
-        );
-        assert_eq!(
-            known_effort_values("anthropic", "claude-sonnet-4-5"),
-            Some(&[][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "gpt-5.1-codex-max"),
-            Some(&["none", "low", "medium", "high", "xhigh"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai_responses", "gpt-5.1"),
-            Some(&["none", "low", "medium", "high"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai_responses", "gpt-5.6"),
-            Some(&["none", "low", "medium", "high", "xhigh", "max"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "gpt-5-pro"),
-            Some(&["high"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "o3-mini"),
-            Some(&["low", "medium", "high"][..])
-        );
-        assert_eq!(known_effort_values("openai", "o1-mini"), Some(&[][..]));
-        // Loose user spelling (no vendor prefix, dots) matches the same family.
-        assert_eq!(
-            known_effort_values("anthropic", "opus-4.8"),
-            Some(&["low", "medium", "high", "xhigh", "max"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "grok-4.6"),
-            Some(&["low", "medium", "high", "xhigh"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "grok-4"),
-            Some(&["low", "medium", "high"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "deepseek-v4-pro"),
-            Some(&["low", "high", "max"][..])
-        );
-        assert_eq!(
-            known_effort_values("openai", "kimi-k3"),
-            Some(&["low", "high", "max"][..])
-        );
-        assert_eq!(known_effort_values("openai", "kimi-k2.5"), Some(&[][..]));
-        assert_eq!(
-            known_effort_values("openai", "qwen3.8-max-preview"),
-            Some(&["low", "medium", "xhigh"][..])
-        );
-        assert_eq!(known_effort_values("openai", "some-future-model"), None);
-    }
-}
-
 /// Fill documented limits from the baked model catalog (models.dev, compiled
 /// in by build.rs). Exact id match only — a family id never absorbs a longer
 /// sibling (`kimi-k3` vs `k3-256k`). Unknown models keep whatever the form
@@ -2160,6 +2010,17 @@ pub(super) fn SettingsView(
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
     // Keep the edit/add branch stable while fields update. Reading the whole
     // form directly in the view gate remounts the inputs on every keystroke.
+    let form_model_efforts = crate::app_support::use_model_efforts(move || {
+        let form = model_form.get()?;
+        if form.model.trim().is_empty() || form.is_image_model() {
+            return None;
+        }
+        Some((
+            form.provider,
+            join_api_url(&form.api_url, &form.endpoint_suffix),
+            form.model,
+        ))
+    });
     let model_form_is_edit =
         create_memo(move |_| model_form.get().is_some_and(|form| form.id.is_some()));
     // The chat/image/video fields must also keep their DOM nodes while values
@@ -4524,18 +4385,8 @@ pub(super) fn SettingsView(
                                             {move || {
                                                 let form = model_form.get();
                                                 let current = form.as_ref().map(|f| f.reasoning_effort.clone()).unwrap_or_default();
-                                                let provider = form.as_ref().map(|f| f.provider.clone()).unwrap_or_default();
-                                                let model = form.as_ref().map(|f| f.model.clone()).unwrap_or_default();
-                                                let mut values: Vec<String> = known_effort_values(&provider, &model)
-                                                    .unwrap_or(ALL_EFFORT_VALUES)
-                                                    .iter()
-                                                    .map(|v| v.to_string())
-                                                    .collect();
-                                                // Keep a saved value visible even when the curated
-                                                // list for this model no longer includes it.
-                                                if !current.is_empty() && !values.iter().any(|v| v == &current) {
-                                                    values.push(current.clone());
-                                                }
+                                                let values = form_model_efforts.get().unwrap_or_default();
+                                                let unverified = !current.is_empty() && !values.contains(&current);
                                                 let loc = locale.get();
                                                 view! {
                                                     <select aria-describedby="model-reasoning-hint"
@@ -4547,9 +4398,10 @@ pub(super) fn SettingsView(
                                                         <option value="default" selected=current.is_empty()>
                                                             {t(loc, "settings.reasoning_effort.default")}
                                                         </option>
+                                                        {unverified.then(|| view! { <option value=current.clone() selected=true disabled=true>{format!("{} ({})", current, t(loc, "composer.effort.unverified"))}</option> })}
                                                         {values.into_iter().map(|v| {
                                                             let sel = v == current;
-                                                            view! { <option value=v.clone() selected=sel>{v}</option> }
+                                                            view! { <option value=v.clone() selected=sel>{crate::effort_display_label(loc, &v)}</option> }
                                                         }).collect_view()}
                                                     </select>
                                                 }
@@ -4559,13 +4411,10 @@ pub(super) fn SettingsView(
                                         // "model", and nesting it would fold that into the <select>'s
                                         // accessible name, so getByLabel("Model") would match it (#e2e).
                                         <span id="model-reasoning-hint" class="hint effort-hint">{move || {
-                                            let form = model_form.get();
-                                            let provider = form.as_ref().map(|f| f.provider.clone()).unwrap_or_default();
-                                            let model = form.as_ref().map(|f| f.model.clone()).unwrap_or_default();
                                             let loc = locale.get();
-                                            match known_effort_values(&provider, &model) {
-                                                Some([]) => t(loc, "settings.reasoning_effort.unsupported_hint").to_string(),
-                                                Some(list) => tf(loc, "settings.reasoning_effort.known_hint", &[("list", &list.join(" / "))]),
+                                            match form_model_efforts.get() {
+                                                Some(list) if list.is_empty() => t(loc, "settings.reasoning_effort.unsupported_hint").to_string(),
+                                                Some(list) => tf(loc, "settings.reasoning_effort.known_hint", &[("list", &list.iter().map(|v| crate::effort_display_label(loc, v)).collect::<Vec<_>>().join(" / "))]),
                                                 None => t(loc, "settings.reasoning_effort.unknown_hint").to_string(),
                                             }
                                         }}</span>

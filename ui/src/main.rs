@@ -84,7 +84,6 @@ use session_modals::{
     SessionArtifactChoice, SessionArtifactChoiceState, SessionTransferOverlay,
     SessionTransferOverlayState, ShelvedSessionsOverlay, TurnUndoOverlay, TurnUndoOverlayState,
 };
-use settings_view::{known_effort_values, ALL_EFFORT_VALUES};
 use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
 use std::cell::{Cell, RefCell};
@@ -124,6 +123,26 @@ const SIDE_CHAT_INPUT_ID: &str = "side-chat-input";
 
 fn service_tier_enabled(value: &str) -> bool {
     matches!(value.trim(), "priority" | "fast")
+}
+
+/// Bound both composer menus to the space above their trigger, including at
+/// large UI scales or in short windows. Recomputed each time a menu opens.
+fn composer_menu_bounds(ev: &web_sys::MouseEvent) -> String {
+    let Some(anchor) = ev
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        // Leptos delegates clicks to the window; current_target is not the
+        // button. Resolve the trigger even when its label or SVG was clicked.
+        .and_then(|target| target.closest("button").ok().flatten())
+    else {
+        return String::new();
+    };
+    let rect = anchor.get_bounding_client_rect();
+    format!(
+        "--composer-menu-height:{}px;--composer-menu-width:{}px",
+        (rect.top() - 16.0).max(0.0),
+        (rect.right() - 8.0).max(0.0),
+    )
 }
 
 /// Short localized label for a reasoning-effort value in the composer pill;
@@ -1080,25 +1099,23 @@ fn App() -> impl IntoView {
     // Thinking-effort pill beside the model picker: a dropdown over the
     // selected model's effort values (ZCode-style, per-model persisted).
     let composer_effort_open = create_rw_signal(false);
-    // Per-model effort flyout inside the model menu: (model id, left, top) in
-    // viewport coordinates. Rendered `position: fixed` so the menu's scroll
-    // box doesn't clip it.
-    let effort_menu_for = create_rw_signal(None::<(String, f64, f64)>);
-    // Shift the parent model menu left only while its right-side effort flyout
-    // is open, keeping both surfaces adjacent and inside the viewport.
-    let effort_menu_shift = create_rw_signal(0.0_f64);
-    // The effort flyout is a sibling of the scrollable model menu; collapse it
-    // whenever its parent picker closes.
-    create_effect(move |_| {
-        if !model_menu_open.get() {
-            effort_menu_for.set(None);
+    let composer_menu_style = create_rw_signal(String::new());
+    let composer_model_efforts = use_model_efforts(move || {
+        if active_acp_agent_id.get().is_some() {
+            return None;
         }
+        let profile = session_profile(
+            &models.get(),
+            &session_model_ids.get(),
+            active_session.get().as_deref(),
+        )
+        .cloned()?;
+        Some((profile.provider, profile.api_url, profile.model))
     });
     // Persist a reasoning-effort default onto the model profile itself
     // (Cursor-style per-model effort). Sessions without an explicit override
     // inherit the new default on their next turn.
     let apply_model_effort = Callback::new(move |(id, effort): (String, String)| {
-        effort_menu_for.set(None);
         composer_effort_open.set(false);
         model_settings.apply_model_effort(id, effort);
     });
@@ -9934,11 +9951,6 @@ fn App() -> impl IntoView {
             composer_effort_open.set(false);
             return;
         }
-        if effort_menu_for.get().is_some() {
-            ev.prevent_default();
-            effort_menu_for.set(None);
-            return;
-        }
         if model_menu_open.get() {
             ev.prevent_default();
             model_menu_open.set(false);
@@ -10119,6 +10131,8 @@ fn App() -> impl IntoView {
     });
 
     window_event_listener(ev::resize, move |_| {
+        model_menu_open.set(false);
+        composer_effort_open.set(false);
         let (viewport_w, viewport_h) = viewport_size();
         if let Some(geom) = context_usage_geom.get_untracked() {
             let clamped =
@@ -15266,7 +15280,8 @@ fn App() -> impl IntoView {
                             {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
                                 <div class="model-picker">
                                     <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
-                                        on:click=move |_| {
+                                        on:click=move |ev| {
+                                            composer_menu_style.set(composer_menu_bounds(&ev));
                                             composer_effort_open.set(false);
                                             model_menu_open.update(|o| *o = !*o);
                                         }>
@@ -15285,12 +15300,7 @@ fn App() -> impl IntoView {
                                     </button>
                                     {move || model_menu_open.get().then(|| view! {
                                         <div class="model-menu-backdrop" on:click=move |_| model_menu_open.set(false)></div>
-                                        <div class="model-menu"
-                                            style=move || effort_menu_for.get()
-                                                .map(|_| format!("right:{:.0}px", effort_menu_shift.get()))
-                                                .unwrap_or_default()
-                                            on:click=move |_| effort_menu_for.set(None)
-                                            on:scroll=move |_| effort_menu_for.set(None)>
+                                        <div class="model-menu composer-select-menu" style=move || composer_menu_style.get()>
                                             {move || {
                                                 let list = models.get();
                                                 let selected = active_session.get().and_then(|session_id| {
@@ -15298,20 +15308,21 @@ fn App() -> impl IntoView {
                                                 });
                                                 let acp_selected = active_acp_agent_id.get().is_some();
                                                 let acp_locked = acp_selected && session_has_items.get();
+                                                let profiles = list.clone();
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let pick_label = m.label.clone();
                                                     let pick_supports_vision = m.supports_vision;
+                                                    let duplicate_label = profiles.iter().filter(|other| other.is_chat_model()
+                                                        && other.label.trim().eq_ignore_ascii_case(m.label.trim())).count() > 1;
+                                                    let detail = format!("{} · {}", m.provider, m.model);
+                                                    let tooltip = format!("{}\n{}", m.label, detail);
                                                     let is_active = !acp_selected
                                                         && selected.as_deref().map_or(m.active, |id| id == m.id);
-                                                    let show_sub = !m.model.is_empty() && m.model != m.label;
-                                                    let effort = m.reasoning_effort.clone();
-                                                    let effort_id = m.id.clone();
-                                                    let effort_id_open = m.id.clone();
-                                                    let effort_id_expanded = m.id.clone();
                                                     view! {
                                                         <div class="model-menu-row" class:active=is_active>
                                                             <button type="button" class="model-menu-pick"
+                                                                title=tooltip
                                                                 disabled=acp_locked
                                                                 on:click=move |_| {
                                                                 if acp_locked {
@@ -15335,74 +15346,9 @@ fn App() -> impl IntoView {
                                                             }>
                                                                 <span class="model-menu-text">
                                                                     <span class="model-menu-label">{m.label.clone()}</span>
-                                                                    {show_sub.then(|| view! { <span class="model-menu-sub">{m.model.clone()}</span> })}
-                                                                    {(!effort.is_empty()).then(|| view! {
-                                                                        <span class="model-menu-effort-tag">{effort}</span>
-                                                                    })}
+                                                                    {duplicate_label.then(|| view! { <span class="model-menu-sub">{detail}</span> })}
                                                                 </span>
-                                                                {is_active.then(|| view! { <span class="model-menu-check">"✓"</span> })}
-                                                            </button>
-                                                            <button type="button" class="model-menu-effort-edit"
-                                                                class:open=move || effort_menu_for.get().as_ref().is_some_and(|(open_id, _, _)| open_id == &effort_id_open)
-                                                                title=move || t(locale.get(), "settings.reasoning_effort")
-                                                                attr:aria-expanded=move || if effort_menu_for.get().as_ref().is_some_and(|(open_id, _, _)| open_id == &effort_id_expanded) { "true" } else { "false" }
-                                                                on:click=move |ev| {
-                                                                    ev.stop_propagation();
-                                                                    if effort_menu_for.get_untracked().as_ref().is_some_and(|(open_id, _, _)| open_id == &effort_id) {
-                                                                        effort_menu_for.set(None);
-                                                                        return;
-                                                                    }
-                                                                    let Some(el) = ev.target().and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok()) else { return; };
-                                                                    let rect = el.get_bounding_client_rect();
-                                                                    let menu_rect = el
-                                                                        .closest(".model-menu")
-                                                                        .ok()
-                                                                        .flatten()
-                                                                        .map(|menu| menu.get_bounding_client_rect());
-                                                                    let menu_right = menu_rect
-                                                                        .as_ref()
-                                                                        .map(|menu| menu.right())
-                                                                        .unwrap_or(rect.right());
-                                                                    let menu_left = menu_rect
-                                                                        .as_ref()
-                                                                        .map(|menu| menu.left())
-                                                                        .unwrap_or(rect.left());
-                                                                    // When switching directly from one model's effort editor to
-                                                                    // another, the menu is already shifted left. Recover its
-                                                                    // unshifted coordinates before calculating the next flyout.
-                                                                    let applied_shift = if effort_menu_for.get_untracked().is_some() {
-                                                                        effort_menu_shift.get_untracked()
-                                                                    } else {
-                                                                        0.0
-                                                                    };
-                                                                    let base_menu_right = menu_right + applied_shift;
-                                                                    let base_menu_left = menu_left + applied_shift;
-                                                                    // Keep in sync with the flyout width in chat.css.
-                                                                    const FLYOUT_WIDTH: f64 = 200.0;
-                                                                    // Generous height allowance (default + every known level + label)
-                                                                    // so the flyout never runs past the viewport bottom.
-                                                                    const FLYOUT_MAX_HEIGHT: f64 = 340.0;
-                                                                    let window = web_sys::window();
-                                                                    let viewport_w = window
-                                                                        .as_ref()
-                                                                        .and_then(|w| w.inner_width().ok())
-                                                                        .and_then(|w| w.as_f64())
-                                                                        .unwrap_or(1280.0);
-                                                                    let viewport_h = window
-                                                                        .and_then(|w| w.inner_height().ok())
-                                                                        .and_then(|h| h.as_f64())
-                                                                        .unwrap_or(800.0);
-                                                                    let desired_left = base_menu_right + 6.0;
-                                                                    let max_left = (viewport_w - FLYOUT_WIDTH - 8.0).max(8.0);
-                                                                    let shift = (desired_left - max_left)
-                                                                        .max(0.0)
-                                                                        .min((base_menu_left - 8.0).max(0.0));
-                                                                    let left = desired_left - shift;
-                                                                    let top = (rect.top() - 4.0).clamp(8.0, (viewport_h - FLYOUT_MAX_HEIGHT - 8.0).max(8.0));
-                                                                    effort_menu_shift.set(shift);
-                                                                    effort_menu_for.set(Some((effort_id.clone(), left, top)));
-                                                                }>
-                                                                <span class="model-menu-effort-edit-label">{move || t(locale.get(), "menu.edit")}</span>
+                                                                {is_active.then(|| view! { <span class="model-menu-check">{compose_icon("check")}</span> })}
                                                             </button>
                                                         </div>
                                                     }
@@ -15464,7 +15410,7 @@ fn App() -> impl IntoView {
                                                                     <span class="model-menu-label">{agent.label.clone()}</span>
                                                                     <span class="model-menu-sub">"ACP · local stdio"</span>
                                                                 </span>
-                                                                {active.then(|| view! { <span class="model-menu-check">"✓"</span> })}
+                                                                {active.then(|| view! { <span class="model-menu-check">{compose_icon("check")}</span> })}
                                                             </button>
                                                         </div>
                                                     }
@@ -15663,46 +15609,6 @@ fn App() -> impl IntoView {
                                                 acp_form_msg.set(None);
                                             }>{move || t(locale.get(), "models.manage")}</button>
                                         </div>
-                                        {move || effort_menu_for.get().and_then(|(id, left, top)| {
-                                            let profile = models.get().into_iter().find(|m| m.id == id)?;
-                                            let current = profile.reasoning_effort.clone();
-                                            let mut values: Vec<String> = known_effort_values(&profile.provider, &profile.model)
-                                                .unwrap_or(ALL_EFFORT_VALUES)
-                                                .iter()
-                                                .map(|v| v.to_string())
-                                                .collect();
-                                            // Keep a stored value visible even when the curated list
-                                            // for this model doesn't include it.
-                                            if !current.is_empty() && !values.iter().any(|v| v == &current) {
-                                                values.push(current.clone());
-                                            }
-                                            let default_selected = current.is_empty();
-                                            let style = format!("left:{left:.0}px;top:{top:.0}px");
-                                            let default_id = id.clone();
-                                            Some(view! {
-                                                <div class="model-menu-effort-flyout" style=style data-effort-for=id.clone()
-                                                    on:click=|ev| ev.stop_propagation()>
-                                                    <div class="model-menu-effort-flyout-label">{move || t(locale.get(), "settings.reasoning_effort")}</div>
-                                                    <button type="button" class="model-menu-effort-option" data-effort="default"
-                                                        on:click=move |_| apply_model_effort.call((default_id.clone(), String::new()))>
-                                                        <span class="model-menu-effort-option-label">{move || t(locale.get(), "settings.reasoning_effort.default")}</span>
-                                                        {default_selected.then(|| view! { <span class="model-menu-effort-check">{compose_icon("check")}</span> })}
-                                                    </button>
-                                                    {values.into_iter().map(|lvl| {
-                                                        let selected = !default_selected && lvl == current;
-                                                        let pick = lvl.clone();
-                                                        let option_id = id.clone();
-                                                        view! {
-                                                            <button type="button" class="model-menu-effort-option" data-effort=lvl.clone()
-                                                                on:click=move |_| apply_model_effort.call((option_id.clone(), pick.clone()))>
-                                                                <span class="model-menu-effort-option-label">{lvl}</span>
-                                                                {selected.then(|| view! { <span class="model-menu-effort-check">{compose_icon("check")}</span> })}
-                                                            </button>
-                                                        }
-                                                    }).collect_view()}
-                                                </div>
-                                            })
-                                        })}
                                     })}
                                 </div>
                             })}
@@ -15719,16 +15625,8 @@ fn App() -> impl IntoView {
                                 )
                                 .cloned()?;
                                 let current = profile.reasoning_effort.clone();
-                                let mut values: Vec<String> = known_effort_values(&profile.provider, &profile.model)
-                                    .unwrap_or(ALL_EFFORT_VALUES)
-                                    .iter()
-                                    .map(|v| v.to_string())
-                                    .collect();
-                                // Keep a stored value visible even when the curated
-                                // list for this model doesn't include it.
-                                if !current.is_empty() && !values.iter().any(|v| v == &current) {
-                                    values.push(current.clone());
-                                }
+                                let values = composer_model_efforts.get().unwrap_or_default();
+                                let unverified = !current.is_empty() && !values.contains(&current);
                                 let profile_id = profile.id.clone();
                                 // The pill label closure owns its copy so the
                                 // dropdown closure below can still capture `current`.
@@ -15742,7 +15640,8 @@ fn App() -> impl IntoView {
                                             aria-controls="composer-effort-menu"
                                             aria-label=move || t(locale.get(), "composer.effort")
                                             title=move || t(locale.get(), "composer.effort")
-                                            on:click=move |_| {
+                                            on:click=move |ev| {
+                                                composer_menu_style.set(composer_menu_bounds(&ev));
                                                 model_menu_open.set(false);
                                                 composer_effort_open.update(|o| *o = !*o);
                                             }>
@@ -15766,9 +15665,11 @@ fn App() -> impl IntoView {
                                             view! {
                                             <div class="composer-effort-backdrop"
                                                 on:click=move |_| composer_effort_open.set(false)></div>
-                                            <div class="composer-effort-menu" id="composer-effort-menu"
+                                            <div class="composer-effort-menu composer-select-menu" id="composer-effort-menu"
+                                                style=move || composer_menu_style.get()
                                                 data-testid="composer-effort-menu">
                                                 <div class="composer-effort-menu-label">{move || t(locale.get(), "settings.reasoning_effort")}</div>
+                                                {unverified.then(|| view! { <div class="composer-effort-hint">{move || t(locale.get(), "composer.effort.unverified")}</div> })}
                                                 <button type="button" class="composer-effort-option" data-effort="default"
                                                     on:click=move |_| apply_model_effort.call((default_id.clone(), String::new()))>
                                                     <span class="composer-effort-option-label">{move || t(locale.get(), "composer.effort.default")}</span>

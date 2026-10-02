@@ -1135,92 +1135,6 @@ test("model selection stays bound to its conversation", async ({ page }) => {
   await expect(page.locator(".model-picker-label")).toHaveText("opus-4.8");
 });
 
-test("model effort is revealed on hover and saved to the model profile", async ({ page }) => {
-  await enterApp(page, "/?mockSessionModels=1");
-  await page.locator(".model-picker-btn").click();
-  await page.mouse.move(0, 0);
-
-  // Effort has no resting layout box, then overlays the model info on hover.
-  const opusRow = page.locator(".model-menu-row", { hasText: "opus-4.8" });
-  const deepseekRow = page.locator(".model-menu-row", { hasText: "deepseek-v4-pro" });
-  await expect(opusRow.locator(".model-menu-effort-tag")).toBeHidden();
-  await expect(deepseekRow.locator(".model-menu-effort-tag")).toBeHidden();
-  expect(await opusRow.locator(".model-menu-effort-tag").boundingBox()).toBeNull();
-  await opusRow.hover();
-  await expect(opusRow.locator(".model-menu-effort-tag")).toHaveText("max");
-  await expect(opusRow.locator(".model-menu-effort-tag")).toBeVisible();
-  await expect(opusRow.locator(".model-menu-effort-edit")).toBeVisible();
-  await expect(opusRow.locator(".model-menu-effort-edit svg")).toHaveCount(0);
-  const [effortBox, textBox] = await Promise.all([
-    opusRow.locator(".model-menu-effort-tag").boundingBox(),
-    opusRow.locator(".model-menu-text").boundingBox(),
-  ]);
-  expect(effortBox).not.toBeNull();
-  expect(textBox).not.toBeNull();
-  expect(effortBox!.x).toBeGreaterThanOrEqual(textBox!.x);
-  expect(effortBox!.x + effortBox!.width).toBeLessThanOrEqual(textBox!.x + textBox!.width + 1);
-
-  const menuBoxBefore = await page.locator(".model-menu").boundingBox();
-  await opusRow.locator(".model-menu-effort-edit").click();
-  const flyout = page.locator(".model-menu-effort-flyout[data-effort-for='opus']");
-  await expect(flyout).toBeVisible();
-  await expect.poll(() => flyout.evaluate((el) => el.parentElement?.classList.contains("model-picker"))).toBe(true);
-  const [menuBox, flyoutBox] = await Promise.all([
-    page.locator(".model-menu").boundingBox(),
-    flyout.boundingBox(),
-  ]);
-  expect(menuBox).not.toBeNull();
-  expect(flyoutBox).not.toBeNull();
-  expect(menuBoxBefore).not.toBeNull();
-  expect(menuBox!.x).toBeLessThan(menuBoxBefore!.x);
-  expect(flyoutBox!.x).toBeGreaterThanOrEqual(menuBox!.x + menuBox!.width + 5);
-  expect(flyoutBox!.x + flyoutBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width - 7);
-
-  // Switching editors while the first flyout is open keeps the same stable
-  // right-side anchor instead of recalculating from the already shifted menu.
-  await deepseekRow.hover();
-  await deepseekRow.locator(".model-menu-effort-edit").click();
-  const deepseekFlyout = page.locator(".model-menu-effort-flyout");
-  await expect(deepseekFlyout).toBeVisible();
-  await expect(deepseekFlyout).not.toHaveAttribute("data-effort-for", "opus");
-  const [switchedMenuBox, switchedFlyoutBox] = await Promise.all([
-    page.locator(".model-menu").boundingBox(),
-    deepseekFlyout.boundingBox(),
-  ]);
-  expect(switchedMenuBox).not.toBeNull();
-  expect(switchedFlyoutBox).not.toBeNull();
-  expect(Math.abs(switchedMenuBox!.x - menuBox!.x)).toBeLessThanOrEqual(1.5);
-  expect(switchedFlyoutBox!.x).toBeGreaterThanOrEqual(switchedMenuBox!.x + switchedMenuBox!.width + 5);
-
-  await opusRow.hover();
-  await opusRow.locator(".model-menu-effort-edit").click();
-  await expect(flyout).toBeVisible();
-  // The stored value carries the check mark.
-  await expect(
-    flyout.locator(".model-menu-effort-option[data-effort='max'] .model-menu-effort-check"),
-  ).toBeVisible();
-  await flyout.locator(".model-menu-effort-option[data-effort='high']").click();
-
-  // The effort is written onto the model profile, not the conversation.
-  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
-    profile: { id: "opus", reasoning_effort: "high" },
-  });
-  await expect.poll(() => lastInvokeArgs(page, "set_session_reasoning_effort")).toBeNull();
-
-  // The flyout closes, the menu stays open, and the row shows the new value.
-  await expect(page.locator(".model-menu-effort-flyout")).toHaveCount(0);
-  await expect(page.locator(".model-menu")).toBeVisible();
-  await expect(opusRow.locator(".model-menu-effort-tag")).toHaveText("high");
-
-  // "default" clears the profile value again.
-  await opusRow.locator(".model-menu-effort-edit").click();
-  await flyout.locator(".model-menu-effort-option[data-effort='default']").click();
-  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
-    profile: { id: "opus", reasoning_effort: "" },
-  });
-  await expect(opusRow.locator(".model-menu-effort-tag")).toHaveCount(0);
-});
-
 test("model picker uses a compact left-aligned ACP group label", async ({ page }) => {
   await enterApp(page);
   await page.locator(".model-picker-btn").click();
@@ -1238,38 +1152,6 @@ test("model picker uses a compact left-aligned ACP group label", async ({ page }
   expect(labelBox).not.toBeNull();
   expect(rowLabelBox).not.toBeNull();
   expect(Math.abs(labelBox!.x + labelPadding - rowLabelBox!.x)).toBeLessThanOrEqual(1);
-});
-
-test("Chinese reasoning effort title does not duplicate the English label", async ({ page }) => {
-  await page.goto("/?mockSessionModels=1&mockLocale=zh");
-  await page.locator(".proj-card-main").first().click();
-  await expect(page.locator(".sidebar").getByRole("button", { name: "新建会话" })).toBeVisible();
-  await page.locator(".model-picker-btn").click();
-  const opusRow = page.locator(".model-menu-row", { hasText: "opus-4.8" });
-  await opusRow.hover();
-  await opusRow.locator(".model-menu-effort-edit").click();
-
-  const title = page.locator(".model-menu-effort-flyout-label");
-  await expect(title).toHaveText("推理强度");
-  await expect(title).not.toContainText(/thinking effort/i);
-});
-
-test("effort flyout closes on Escape before the model menu", async ({ page }) => {
-  await enterApp(page, "/?mockSessionModels=1");
-  await page.locator(".model-picker-btn").click();
-  await page
-    .locator(".model-menu-row", { hasText: "opus-4.8" })
-    .locator(".model-menu-effort-edit")
-    .click();
-  await expect(page.locator(".model-menu-effort-flyout")).toBeVisible();
-
-  // One Escape closes only the flyout; the model menu stays open.
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".model-menu-effort-flyout")).toHaveCount(0);
-  await expect(page.locator(".model-menu")).toBeVisible();
-
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".model-menu")).toHaveCount(0);
 });
 
 test("Settings Models page can open ACP Agents dialog", async ({ page }) => {

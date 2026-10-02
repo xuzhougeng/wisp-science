@@ -866,6 +866,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       use_for_video_generation: false,
     },
   ];
+  if (query.get("mockComposerCatalog") === "1") {
+    mockModels[0].reasoning_effort = "high";
+    mockModels[1].model = "claude-opus-4-8";
+  }
+  if (query.has("mockComposerModel")) {
+    mockModels[0].model = query.get("mockComposerModel")!;
+    mockModels[0].api_url = "https://api.openai.com/v1";
+    mockModels[0].reasoning_effort = query.get("mockComposerEffort") ?? "";
+  }
+  if (query.get("mockComposerMenus") === "1") {
+    mockModels[0].label = "DEEPSEEK-V4-PRO";
+    mockModels.push(
+      { ...mockModels[1], id: "alias-a", label: "Shared model", model: "opus-4.8" },
+      { ...mockModels[1], id: "alias-b", label: "shared model", provider: "openai", model: "gpt-5.5" },
+      { ...mockModels[1], id: "long-name", label: "A very long custom model configuration name that should be truncated", model: "custom-reasoner" },
+    );
+  }
   const activeHttpModelId = () => mockModels.find((model) => model.active)?.id ?? mockModels[0]?.id ?? "";
   // Baked model catalog (mirrors src-tauri model_catalog): exact id match
   // within vendor namespaces, never prefix matching.
@@ -878,10 +895,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   };
   const mockCatalog: Record<string, Record<string, MockCatalogEntry>> = {
     deepseek: {
-      "deepseek-v4-pro": { context_window: 1000000, max_tokens: 384000, input_limit: null, supports_vision: false, efforts: [] },
+      "deepseek-v4-pro": { context_window: 1000000, max_tokens: 384000, input_limit: null, supports_vision: false, efforts: ["high", "max"] },
       "deepseek-v4-flash": { context_window: 1000000, max_tokens: 384000, input_limit: null, supports_vision: false, efforts: [] },
     },
     openai: {
+      "test-reasoner": { context_window: 128000, max_tokens: 4096, input_limit: null, supports_vision: false, efforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
+      "test-no-effort": { context_window: 128000, max_tokens: 4096, input_limit: null, supports_vision: false, efforts: [] },
       "gpt-5.6-luna": { context_window: 1050000, max_tokens: 128000, input_limit: null, supports_vision: true, efforts: ["none", "low", "medium", "high", "xhigh"] },
     },
     anthropic: {
@@ -3241,6 +3260,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "list_models":
             return mockModels;
           case "model_catalog_lookup": {
+            if (query.get("mockSlowCatalog") === "1" && arg("model") === "gpt-5.6-luna") {
+              await new Promise(resolve => setTimeout(resolve, 700));
+              (window as any).__slowCatalogCompleted = true;
+            }
             return mockCatalogLookup(
               String(arg("provider") ?? ""),
               String(arg("apiUrl") ?? ""),
