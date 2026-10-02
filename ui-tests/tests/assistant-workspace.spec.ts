@@ -83,6 +83,23 @@ test("project selection adds context to the same assistant session and survives 
   await expect(page.getByTestId("assistant-project-context")).toHaveCount(0);
 });
 
+test("failed sends restore the draft without duplicating the selected project", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("assistant-projects").locator('[data-project-id="other"]').click();
+  await expect(page.getByTestId("assistant-project-context")).toContainText("Other project");
+  await page.evaluate(() => { (window as any).__sendMessageError = "Context unavailable"; });
+  await composer(page).fill("Summarize the recent project work");
+  await composer(page).press("Enter");
+  await expect.poll(() => calls(page, "send_message")).toHaveLength(1);
+  await expect(composer(page)).toHaveValue("Summarize the recent project work");
+  await expect(page.locator('.composer [data-reference-kind="project"]')).toHaveCount(0);
+  await expect(page.getByTestId("assistant-project-context")).toContainText("Other project");
+  await page.evaluate(() => { (window as any).__sendMessageError = null; });
+  await composer(page).press("Enter");
+  await expect.poll(() => calls(page, "send_message")).toHaveLength(2);
+  expect((await calls(page, "send_message"))[1].references).toEqual([{ kind: "project", id: "other" }]);
+});
+
 test("saved plans carry their dates and refresh; calendar actions only prepare drafts", async ({ page }) => {
   await open(page);
   const right = page.getByTestId("assistant-calendar");

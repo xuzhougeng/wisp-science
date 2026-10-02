@@ -312,10 +312,19 @@ async fn resolve_reference_sessions(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "The current session no longer exists.".to_string())?;
 
+    let assistant_projects = if wisp_store::is_assistant_project_id(&target_project) {
+        Some(crate::research_assistant::visible_projects(store).await?)
+    } else {
+        None
+    };
     let mut sessions = Vec::new();
     let mut seen = HashSet::new();
     for project_id in project_ids {
-        if project_id != &target_project {
+        if let Some(visible) = &assistant_projects {
+            if !visible.iter().any(|project| &project.0 == project_id) {
+                return Err(format!("No visible project has id '{project_id}'."));
+            }
+        } else if project_id != &target_project {
             return Err("#project can only read sessions from the current project.".into());
         }
         let project = store
@@ -1096,6 +1105,57 @@ mod tests {
             .enumerate()
             .map(|(index, message)| (index as i64 + 1, message))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn assistant_project_references_respect_visibility_at_send_time() {
+        let database = std::env::temp_dir().join(format!(
+            "wisp_reader_assistant_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&database).await.unwrap();
+        for project in [wisp_store::ASSISTANT_PROJECT_ID, "visible", "other"] {
+            store.create_project(project, project, "").await.unwrap();
+        }
+        for (frame, project) in [
+            ("assistant", wisp_store::ASSISTANT_PROJECT_ID),
+            ("saved", "visible"),
+            ("ordinary", "other"),
+        ] {
+            store
+                .create_frame(frame, project, "OPERON", "model")
+                .await
+                .unwrap();
+        }
+        store
+            .append_message("saved", 1, &Message::user("Recent project work"))
+            .await
+            .unwrap();
+        let selected = vec!["visible".into()];
+        let sessions = resolve_reference_sessions(&store, &selected, &[], "assistant")
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "saved");
+        assert!(
+            resolve_reference_sessions(&store, &selected, &[], "ordinary")
+                .await
+                .is_err()
+        );
+        crate::privacy_mode::save(&store, true, &selected)
+            .await
+            .unwrap();
+        assert!(
+            resolve_reference_sessions(&store, &selected, &[], "assistant")
+                .await
+                .unwrap_err()
+                .contains("No visible project")
+        );
+        assert!(
+            resolve_reference_sessions(&store, &["missing".into()], &[], "assistant")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

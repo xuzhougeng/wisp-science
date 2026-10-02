@@ -5503,6 +5503,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             }, 0);
             return null;
           case "send_message": {
+            if ((window as any).__sendMessageError) throw new Error(String((window as any).__sendMessageError));
             const fid = String(arg("sessionId") ?? arg("session_id") ?? "") || "t1";
             const msg = String(arg("message") ?? "");
             lastMessageBySession[fid] = msg;

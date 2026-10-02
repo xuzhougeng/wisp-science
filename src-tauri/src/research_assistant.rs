@@ -196,7 +196,9 @@ fn parse_day(value: Option<&str>, today: NaiveDate) -> Result<NaiveDate, String>
 
 /// Projects the researcher can see: no internal projects, none hidden by
 /// privacy mode. `(id, name, description, updated_at)`.
-async fn visible_projects(store: &Store) -> Result<Vec<(String, String, String, i64)>, String> {
+pub(crate) async fn visible_projects(
+    store: &Store,
+) -> Result<Vec<(String, String, String, i64)>, String> {
     let privacy = crate::privacy_mode::load(store).await?;
     let hidden: HashSet<String> = if privacy.active {
         privacy.project_ids.into_iter().collect()
