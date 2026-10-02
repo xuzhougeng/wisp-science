@@ -214,6 +214,8 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "undo" => view! { <path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v1"/> }.into_view(),
         "undo-compact" => view! { <path d="M3 9a9 9 0 1 0 3-6.7L3 6"/><path d="M3 3v3h3"/> }.into_view(),
         "panel" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/> }.into_view(),
+        "panel-left" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/> }.into_view(),
+        "layers" => view! { <path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/> }.into_view(),
         "dock" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/> }.into_view(),
         "chevron-down" => view! { <path d="m6 9 6 6 6-6"/> }.into_view(),
         "chevron-up" => view! { <path d="m6 15 6-6 6 6"/> }.into_view(),

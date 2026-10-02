@@ -213,6 +213,69 @@ async fn visible_projects(store: &Store) -> Result<Vec<(String, String, String, 
         .collect())
 }
 
+/// The assistant's sidebars must resolve the authoritative privacy setting
+/// before they expose project names or request any calendar history.
+#[tauri::command]
+pub(crate) async fn get_research_assistant_projects(
+    state: State<'_, AppState>,
+) -> Result<Vec<wisp_dto::ProjectSummary>, String> {
+    let visible: HashSet<_> = visible_projects(&state.store)
+        .await?
+        .into_iter()
+        .map(|project| project.0)
+        .collect();
+    Ok(crate::project_commands::list_projects(state)
+        .await?
+        .into_iter()
+        .filter(|project| visible.contains(&project.id))
+        .collect())
+}
+
+async fn visible_plan(
+    store: &Store,
+    day: &str,
+) -> Result<Vec<wisp_dto::ResearchAssistantPlanItem>, String> {
+    let day = NaiveDate::parse_from_str(day, "%Y-%m-%d")
+        .map_err(|_| "Use a calendar date in YYYY-MM-DD format".to_string())?
+        .to_string();
+    let names: HashMap<_, _> = visible_projects(store)
+        .await?
+        .into_iter()
+        .map(|project| (project.0, project.1))
+        .collect();
+    Ok(store
+        .assistant_tasks(&day, &day)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|task| {
+            task.project_id
+                .as_ref()
+                .is_none_or(|id| names.contains_key(id))
+        })
+        .map(|task| wisp_dto::ResearchAssistantPlanItem {
+            project_name: task
+                .project_id
+                .as_ref()
+                .and_then(|id| names.get(id).cloned()),
+            id: task.id,
+            day: task.day,
+            title: task.title,
+            project_id: task.project_id,
+            session_id: task.session_id,
+            status: task.status,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) async fn get_research_assistant_plan(
+    state: State<'_, AppState>,
+    day: String,
+) -> Result<Vec<wisp_dto::ResearchAssistantPlanItem>, String> {
+    visible_plan(&state.store, &day).await
+}
+
 fn local_date(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
         .map(|t| t.with_timezone(&Local).format("%Y-%m-%d").to_string())
@@ -785,6 +848,96 @@ mod tests {
 
     fn day(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[tokio::test]
+    async fn sidebar_plan_preserves_dates_statuses_and_project_context() {
+        let f = Fixture::open().await;
+        f.store.create_project("p1", "RNA-seq", "").await.unwrap();
+        for (id, date, status, project_id) in [
+            ("carried", "2026-10-01", "open", Some("p1")),
+            ("old-done", "2026-10-01", "done", Some("p1")),
+            ("completed", "2026-10-02", "done", Some("p1")),
+            ("dropped", "2026-10-02", "dropped", None),
+            ("future", "2026-10-03", "open", None),
+        ] {
+            f.store
+                .add_assistant_task(&AssistantTask {
+                    id: id.into(),
+                    day: date.into(),
+                    title: format!("Plan {id}"),
+                    project_id: project_id.map(str::to_string),
+                    session_id: project_id.map(|_| "session-p1".into()),
+                    status: status.into(),
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .await
+                .unwrap();
+        }
+        let rows = visible_plan(&f.store, "2026-10-02").await.unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+            ["carried", "completed", "dropped"]
+        );
+        assert_eq!(rows[0].day, "2026-10-01");
+        assert_eq!(rows[0].project_name.as_deref(), Some("RNA-seq"));
+        assert_eq!(rows[0].session_id.as_deref(), Some("session-p1"));
+        assert_eq!(rows[1].status, "done");
+        assert_eq!(rows[2].status, "dropped");
+        // The actual command payload round-trips through the shared UI contract.
+        let wire = serde_json::to_value(&rows).unwrap();
+        assert_eq!(
+            serde_json::from_value::<Vec<wisp_dto::ResearchAssistantPlanItem>>(wire).unwrap(),
+            rows
+        );
+        assert!(visible_plan(&f.store, "2026-02-30").await.is_err());
+        assert!(visible_plan(&f.store, "tomorrow").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn sidebar_plan_excludes_hidden_and_missing_projects_including_task_titles() {
+        let f = Fixture::open().await;
+        f.store
+            .create_project("hidden", "Private research", "")
+            .await
+            .unwrap();
+        f.store
+            .create_project("visible", "Visible research", "")
+            .await
+            .unwrap();
+        crate::privacy_mode::save(&f.store, true, &["hidden".into()])
+            .await
+            .unwrap();
+        for project_id in [Some("hidden"), Some("missing"), Some("visible"), None] {
+            let id = project_id.unwrap_or("global");
+            f.store
+                .add_assistant_task(&AssistantTask {
+                    id: id.into(),
+                    day: "2026-10-02".into(),
+                    title: format!("Title for {id}"),
+                    project_id: project_id.map(str::to_string),
+                    session_id: project_id.map(|p| format!("session-{p}")),
+                    status: "open".into(),
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .await
+                .unwrap();
+        }
+        let rows = visible_plan(&f.store, "2026-10-02").await.unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+            ["global", "visible"]
+        );
+        let wire = serde_json::to_string(&rows).unwrap();
+        assert!(!wire.contains("hidden"));
+        assert!(!wire.contains("missing"));
+        assert_eq!(visible_projects(&f.store).await.unwrap().len(), 1);
+        crate::privacy_mode::save(&f.store, false, &[])
+            .await
+            .unwrap();
+        assert_eq!(visible_plan(&f.store, "2026-10-02").await.unwrap().len(), 3);
     }
 
     #[test]

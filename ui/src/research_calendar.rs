@@ -70,6 +70,10 @@ pub(crate) fn ResearchCalendar(
     on_open_journey: Callback<(String, i64)>,
     on_close: Callback<()>,
     project_transfer: ReadSignal<Option<ProjectTransferProgress>>,
+    #[prop(optional)] compact: bool,
+    #[prop(optional)] external_refresh: Option<Signal<u32>>,
+    #[prop(optional)] ready: Option<Signal<bool>>,
+    #[prop(optional)] on_plan: Option<Callback<String>>,
 ) -> impl IntoView {
     let month = create_rw_signal(month_of(now()));
     let selected = create_rw_signal(day_start(now()));
@@ -83,8 +87,15 @@ pub(crate) fn ResearchCalendar(
             .collect::<Vec<_>>()
     };
     let history = create_local_resource(
-        move || (month.get(), project_keys(), refresh.get()),
-        move |(m, keys, _)| async move {
+        move || {
+            (
+                month.get(),
+                project_keys(),
+                refresh.get(),
+                external_refresh.map(|s| s.get()),
+            )
+        },
+        move |(m, keys, _, _)| async move {
             let ids: Vec<_> = keys.into_iter().map(|p| p.0).collect();
             if ids.is_empty() {
                 return Ok(Vec::new());
@@ -95,8 +106,15 @@ pub(crate) fn ResearchCalendar(
     // A separate bounded day read keeps drill-down usable when a busy month
     // exceeds the per-project event limit; it also respects 23/25-hour days.
     let daily = create_local_resource(
-        move || (selected.get(), project_keys(), refresh.get()),
-        move |(ts, keys, _)| async move {
+        move || {
+            (
+                selected.get(),
+                project_keys(),
+                refresh.get(),
+                external_refresh.map(|s| s.get()),
+            )
+        },
+        move |(ts, keys, _, _)| async move {
             let ids: Vec<_> = keys.into_iter().map(|p| p.0).collect();
             if ids.is_empty() {
                 return Ok(Vec::new());
@@ -130,7 +148,7 @@ pub(crate) fn ResearchCalendar(
         });
     };
     view! {
-        <section class="home-calendar" data-testid="home-research-calendar" aria-label=move || j(locale.get(),"Research calendar","研究日历")>
+        <section class="home-calendar" class:assistant-calendar-compact=compact data-testid=if compact {"assistant-research-calendar"} else {"home-research-calendar"} aria-label=move || j(locale.get(),"Research calendar","研究日历")>
             <button type="button" class="calendar-back" on:click=move |_|on_close.call(())>{compose_icon("arrow-left")}{move ||j(locale.get(),"Back to home","返回首页")}</button>
             <header class="home-calendar-heading"><div><h2>{move || j(locale.get(),"Research calendar","研究日历")}</h2><p>{move || j(locale.get(),"Recorded research across your projects, day by day.","把每个项目的探索，放回同一条时间线。")}</p></div>
                 <button type="button" class="calendar-icon" aria-label=move || j(locale.get(),"Refresh calendar","刷新日历") on:click=move |_| refresh.update(|n| *n += 1)>{compose_icon("refresh")}</button>
@@ -182,6 +200,13 @@ pub(crate) fn ResearchCalendar(
                         </div>
                         <aside class="calendar-details" data-testid="home-calendar-details" aria-live="polite">
                             <h3>{move ||day_key(selected.get())}{move ||(selected.get()==day_start(now())).then(||j(locale.get()," · Today"," · 今天"))}</h3>
+                            {compact.then(|| view! {
+                                <crate::assistant_workspace::AssistantPlans locale=locale projects=projects
+                                    selected=selected.read_only() ready=ready.unwrap_or_else(|| Signal::derive(|| true))
+                                    refresh=Signal::derive(move || (refresh.get(), external_refresh.map(|s| s.get())))
+                                    on_plan=on_plan on_retry=Callback::new(move |_| refresh.update(|n| *n += 1))/>
+                                <h4 class="assistant-records-heading">{move || j(locale.get(), "Research activity", "研究记录")}</h4>
+                            })}
                             {move || {
                                 let loc=locale.get();
                                 if daily.loading().get(){return view!{<p class="calendar-empty" role="status">{j(loc,"Loading records…","正在读取当天记录…")}</p>}.into_view();}
@@ -202,7 +227,7 @@ pub(crate) fn ResearchCalendar(
                                 view!{<p class="calendar-detail-meta">{format!("{}{} · {} {}",if partial{j(loc,"Loaded: ","已读取：")}else{""},if loc==Locale::Zh{format!("{active} 个项目")}else{format!("{active} projects")},count,j(loc,"records","条记录"))}</p>
                                     <div class="calendar-record-groups" aria-label=j(loc,"Project records","各项目记录")>
                                         {groups.into_iter().map(|(id,name,entries,error,truncated,made,recap)|view!{
-                                            <CalendarProjectRecords locale=locale id=id name=name entries=entries made=made recap=recap error=error truncated=truncated day=selected.get() on_open_journey=on_open_journey project_transfer=project_transfer/>
+                                            <CalendarProjectRecords locale=locale id=id name=name entries=entries made=made recap=recap error=error truncated=truncated day=selected.get() on_open_journey=on_open_journey project_transfer=project_transfer compact=compact/>
                                         }).collect_view()}
                                     </div>
                                 }.into_view()
@@ -241,6 +266,7 @@ fn CalendarProjectRecords(
     day: i64,
     on_open_journey: Callback<(String, i64)>,
     project_transfer: ReadSignal<Option<ProjectTransferProgress>>,
+    compact: bool,
 ) -> impl IntoView {
     entries.sort_by(|a, b| {
         b.occurred_at
@@ -261,7 +287,7 @@ fn CalendarProjectRecords(
                 <button type="button" class="calendar-group-toggle" aria-expanded=move ||(!collapsed.get()).to_string() aria-controls=controls.clone() on:click=move |_|collapsed.update(|v|*v=!*v)>
                     <span class="calendar-disclosure" class:collapsed=move ||collapsed.get()>{compose_icon("chevron-down")}</span><span class="calendar-dot"></span><span class="calendar-project-name">{name.clone()}</span><span class="calendar-project-count">{format!("{total} {}",j(loc,"records","条"))}</span>
                 </button>
-                <button type="button" class="calendar-project-link" aria-label=format!("{} · {}",name,j(loc,"Research journey","研究历程")) title=j(loc,"Open research journey","打开研究历程") disabled=move ||project_transfer.get().is_some_and(|t|t.is_exporting_project(&locked)) on:click=move |_|on_open_journey.call((open_id.clone(),day))>{compose_icon("external-link")}</button>
+                <button type="button" class="calendar-project-link" aria-label=format!("{} · {}",name,if compact { j(loc,"Ask about this day","询问当天进展") } else { j(loc,"Research journey","研究历程") }) title=if compact { j(loc,"Ask about this day","询问当天进展") } else { j(loc,"Open research journey","打开研究历程") } disabled=move ||project_transfer.get().is_some_and(|t|t.is_exporting_project(&locked)) on:click=move |_|on_open_journey.call((open_id.clone(),day))>{compose_icon(if compact {"arrow-up"} else {"external-link"})}</button>
             </header>
             {error.map(|e|view!{<p class="calendar-error" role="alert">{e}</p>})}
             {truncated.then(||view!{<p class="calendar-notice">{j(loc,"Latest 2,000 events shown; more records exist on this day.","当前展示当天最近 2,000 条活动，还有更多记录。")}</p>})}

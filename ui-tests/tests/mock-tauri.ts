@@ -1894,6 +1894,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if (delay) await new Promise(resolve=>setTimeout(resolve,delay));
             return result;
           }
+          case "get_research_assistant_projects": {
+            if ((window as any).__assistantProjectsDelay) await new Promise(resolve => setTimeout(resolve, (window as any).__assistantProjectsDelay));
+            if ((window as any).__assistantProjectsError) throw new Error("Project visibility unavailable");
+            const hidden = (window as any).__assistantHiddenProjects ?? (localStorage.getItem("wisp-privacy-mode-active") === "1" ? JSON.parse(localStorage.getItem("wisp-privacy-mode-projects") ?? "[]") : []);
+            const rows = await (window as any).__TAURI__.core.invoke("list_projects", {});
+            return rows.filter((project: any) => !hidden.includes(project.id));
+          }
+          case "get_research_assistant_plan": {
+            const day = String(arg("day"));
+            const items = (window as any).__assistantPlans ?? [];
+            const hidden = (window as any).__assistantHiddenProjects ?? (localStorage.getItem("wisp-privacy-mode-active") === "1" ? JSON.parse(localStorage.getItem("wisp-privacy-mode-projects") ?? "[]") : []);
+            const rows = items.filter((item: any) => !hidden.includes(item.project_id) && (item.day === day || (item.day < day && item.status === "open")));
+            if ((window as any).__assistantPlanDelay) await new Promise(resolve => setTimeout(resolve, (window as any).__assistantPlanDelay));
+            if ((window as any).__assistantPlanError) throw new Error("Plan store unavailable");
+            return rows;
+          }
           case "get_research_archive": return researchArchives[String(arg("frameId"))] ?? null;
           case "prepare_research_archive": {
             if ((window as any).__archivePrepareError) throw new Error((window as any).__archivePrepareError);

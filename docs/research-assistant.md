@@ -16,21 +16,31 @@
 3. 每次发送时，助理会获知当前的本地日期和时间（不写入对话记录），据此理解「今天」「昨天」。
 4. 模型使用该对话在输入框中选择的模型。
 
+科研助理页采用三栏布局，首页的项目制入口保持不变：
+
+- 左侧列出可见项目。选择项目会为后续提问附上该项目的上下文，输入框上方显示可取消的项目标记；不会切换项目或另开对话。「全部项目」取消这一限定。
+- 中央保留同一条持续对话。顶部两个侧栏按钮可独立隐藏或展开项目列表、研究日历；桌面窗口记住展开偏好。隐藏侧栏不会清空草稿、重载对话或重置日历日期。
+- 右侧显示月历、所选日期的已保存计划与研究记录。计划来自助理保存的条目，标明待办、完成或放弃；早于所选日期的未完成条目保留原定日期。记录沿用首页日历的数据、错误提示和分页。
+- 「安排这一天」把带日期的提问添加到草稿；项目记录旁的提问按钮同样只准备问题，不自动发送或创建计划。助理回合结束后会刷新项目、计划和记录，也可手动刷新日历。
+- 窄于 960px 的窗口用抽屉显示侧栏，默认收起。Escape 先关闭最上层菜单或抽屉，再关闭助理；隐藏项目及其计划不会显示，无法确认项目可见性时暂停读取日历。
+
 只有一条对话：没有会话列表，不能新建、分支或开启探索。对话很长时沿用常规的归档式压缩，旧消息不会被静默丢弃。隐私模式隐藏的项目对助理不可见，也不能接收派活。
 
 ## English
 
 **Research assistant** on the home screen opens one conversation that belongs to no project and never splits into new ones. It reports recorded activity across projects (the same records and daily recaps as the research calendar, up to 7 days per read), keeps a dated plan (open / done / dropped; unfinished items carry forward to today), dispatches work by starting a titled conversation in a project and sending it a self-contained instruction, and checks a dispatched conversation's status and final answer. It cannot read or write files, run code or commands, or search literature — it organizes, project conversations do the work. Escape closes it; a running reply continues in the background. Projects hidden by privacy mode are invisible to it.
 
+The assistant page has independently collapsible project and calendar sidebars around its existing conversation. Selecting a project attaches context to future messages without navigating away. The calendar separates saved plans from recorded activity, retains its date when hidden, and refreshes after an assistant turn. Planning and activity buttons append questions to the draft for review before sending. Desktop sidebar preferences persist; narrow windows use drawers, with Escape dismissing the topmost surface first.
+
 ## 实现说明
 
 - 对话存放在隐藏项目 `assistant:research` 的固定会话 `research-assistant` 中，不出现在项目列表、最近会话、搜索或用量统计里，也不会被清理。
 - 该会话的回合使用独立的系统提示词和 5 个工具（`research_projects`、`research_activity`、`research_plan`、`dispatch_to_project`、`project_session_result`），不加载文件/Shell 工具、Python/R 运行时、MCP、Skill 或 ACP 外部 Agent。
 - 计划保存在全局表 `assistant_tasks`（迁移 `0063_assistant_tasks`，幂等），不属于任何项目，不随项目导入导出。
-- 命令：`open_research_assistant`（绑定当前窗口，记住要恢复的项目）、`close_research_assistant`（恢复）。为该项目新建会话、分支或开启探索的请求会被后端拒绝。
+- 命令：`open_research_assistant`（绑定当前窗口，记住要恢复的项目）、`close_research_assistant`（恢复）；`get_research_assistant_projects` 和 `get_research_assistant_plan` 在服务端核验隐私设置后提供侧栏数据。为该项目新建会话、分支或开启探索的请求会被后端拒绝。
 
 ## 限制
 
 - 不会主动推送：晨报需要你开口问。
 - 派出的会话完成后不会自动回报，需要问助理或打开该项目查看。
-- 计划暂不显示在研究日历上。
+- 已保存计划显示在助理页的日历侧栏；首页独立研究日历仍展示研究活动。

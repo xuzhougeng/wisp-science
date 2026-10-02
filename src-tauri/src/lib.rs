@@ -7412,6 +7412,8 @@ pub fn run() {
             session_commands::new_session,
             research_assistant::open_research_assistant,
             research_assistant::close_research_assistant,
+            research_assistant::get_research_assistant_projects,
+            research_assistant::get_research_assistant_plan,
             session_commands::branch_session,
             session_commands::preview_session_branch_merge,
             session_commands::summarize_session_branch_merge,

@@ -1,0 +1,102 @@
+/* One continuous conversation, flanked by quiet, independently collapsible rails. */
+.app.assistant-mode .workspace-main { position: relative; padding-top: 56px; }
+.app.assistant-mode .center { min-width: 0; --chat-col-max: min(calc(100% - 56px), 900px); }
+.app.assistant-mode .center > .topbar { display: none; }
+.assistant-workspace-header { position: absolute; inset: 0 0 auto; height: 56px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); background: var(--bg-app); z-index: 44; }
+.assistant-workspace-header h1 { margin: 0; font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; }
+.assistant-topbar-note { color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-calendar-toggle { margin-left: auto; }
+.assistant-panel-toggle[aria-expanded="true"] { background: var(--bg-sunken); color: var(--text); }
+.assistant-side { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; box-sizing: border-box; background: color-mix(in srgb, var(--bg-app) 62%, var(--bg-sunken)); color: var(--text); }
+.assistant-side[hidden], .assistant-side [hidden], .assistant-drawer-backdrop[hidden] { display: none !important; }
+.assistant-projects { width: clamp(204px, 17vw, 256px); border-right: 1px solid var(--border); padding: 0 12px; }
+.assistant-calendar { width: clamp(290px, 24vw, 350px); border-left: 1px solid var(--border); }
+.assistant-side-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: 18px 8px 14px; }
+.assistant-side-heading h2 { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; margin: 0; }
+.assistant-side-heading button, .assistant-context button { display: inline-flex; justify-content: center; align-items: center; padding: 5px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.assistant-side-heading button:hover, .assistant-context button:hover { background: var(--bg-sunken); color: var(--text); }
+.assistant-side svg, .assistant-context svg { width: 16px; height: 16px; flex-shrink: 0; }
+.assistant-side button:focus-visible, .assistant-context button:focus-visible { outline: 2px solid var(--clay); outline-offset: -2px; }
+.assistant-project { display: flex; align-items: center; gap: 10px; padding: 11px 10px; border: 0; background: transparent; border-radius: 7px; color: var(--text); text-align: left; font: inherit; cursor: pointer; width: 100%; }
+.assistant-project:hover { background: var(--bg-sunken); }
+.assistant-project[aria-pressed="true"] { background: color-mix(in srgb, var(--clay) 10%, var(--bg-elev)); }
+.assistant-project > svg { color: var(--text-muted); }
+.assistant-project > span { min-width: 0; overflow-wrap: anywhere; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.assistant-project small { display: block; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); margin-top: 3px; }
+.assistant-project-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.assistant-side-footer { padding: 18px 10px; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
+.assistant-side-notice { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); padding: 12px 8px; margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.assistant-side-notice[role="alert"] { color: var(--err); }
+.assistant-side-notice button { display: block; margin-top: 6px; background: transparent; border: 0; padding: 4px 0; color: var(--clay-strong); font: inherit; cursor: pointer; }
+.assistant-context { display: flex; gap: 7px; align-items: center; width: fit-content; max-width: 100%; margin: 2px 0 9px; padding: 3px 5px 3px 9px; background: var(--bg-sunken); border-radius: 6px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-context > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app.assistant-mode .chat { padding-top: 24px; }
+.app.assistant-mode .composer { padding-bottom: 18px; }
+.app.assistant-mode .session-runtime-strip { display: none; }
+.app.assistant-mode .msg .md { line-height: 1.85; }
+.assistant-calendar .assistant-side-heading { padding-inline: 18px; }
+.assistant-calendar-body { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 16px 20px; }
+.assistant-calendar-compact.home-calendar { display: block; height: auto; max-height: none; }
+.assistant-calendar-compact .calendar-back, .assistant-calendar-compact .home-calendar-heading p,
+.assistant-calendar-compact .home-calendar-heading h2, .assistant-calendar-compact .calendar-projects,
+.assistant-calendar-compact .calendar-scope { display: none; }
+.assistant-calendar-compact .home-calendar-heading { position: relative; height: 0; margin: 0; }
+.assistant-calendar-compact .home-calendar-heading > .calendar-icon { position: absolute; right: 0; top: 0; padding: 6px; }
+.assistant-calendar-compact .home-calendar-layout, .assistant-calendar-compact .calendar-workspace,
+.assistant-calendar-compact .calendar-content, .assistant-calendar-compact .calendar-details { display: block; height: auto; overflow: visible; }
+.assistant-calendar-compact .calendar-toolbar { padding-right: 30px; margin: 0 0 10px; }
+.assistant-calendar-compact .calendar-month-controls { width: 100%; gap: 1px; }
+.assistant-calendar-compact .calendar-month-controls strong { flex: 1; font-size: calc(13px * var(--ui-font-scale, 1)); margin-right: 3px; }
+.assistant-calendar-compact .calendar-month-controls .calendar-icon { padding: 5px; }
+.assistant-calendar-compact .calendar-today { font-size: calc(11px * var(--ui-font-scale, 1)); border: 0; background: transparent; padding: 5px; }
+.assistant-calendar-compact .calendar-month { display: block; overflow: visible; padding: 8px 0 16px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.assistant-calendar-compact .calendar-week { padding-bottom: 8px; font-size: calc(10px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-grid { border: 0; grid-auto-rows: minmax(36px, auto); gap: 3px 0; }
+.assistant-calendar-compact .calendar-day, .assistant-calendar-compact .calendar-blank { min-height: 36px; border: 0; }
+.assistant-calendar-compact .calendar-day { align-items: center; padding: 2px; gap: 1px; border-radius: 6px; }
+.assistant-calendar-compact .calendar-number { width: 25px; height: 25px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-marks { gap: 2px; min-height: 4px; padding: 0; justify-content: center; }
+.assistant-calendar-compact .calendar-marks .calendar-dot { width: 3px; height: 3px; flex-basis: 3px; }
+.assistant-calendar-compact .calendar-details { border: 0; border-radius: 0; background: transparent; }
+.assistant-calendar-compact .calendar-details > h3 { padding: 18px 0 12px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.assistant-plans { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.assistant-plans header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.assistant-plans h4, .assistant-records-heading { margin: 0; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600; }
+.assistant-plans .assistant-plan-draft { display: inline-flex; gap: 3px; align-items: center; border: 0; background: transparent; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--clay-strong); padding: 4px 0; }
+.assistant-plan-draft svg { width: 13px; height: 13px; }
+.assistant-plans ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.assistant-plans li { padding: 10px 0; }
+.assistant-plans li + li { border-top: 1px solid var(--border); }
+.assistant-plan-title { display: flex; align-items: baseline; gap: 12px; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.65; }
+.assistant-plan-title > span { flex: 1; min-width: 0; }
+.assistant-plan-title small { flex-shrink: 0; color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.assistant-plans li[data-status="done"] .assistant-plan-title > span, .assistant-plans li[data-status="dropped"] .assistant-plan-title > span { color: var(--text-muted); text-decoration: line-through; }
+.assistant-plans li p, .assistant-plan-empty { margin: 4px 0 0; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
+.assistant-records-heading { padding: 18px 0 8px; }
+.assistant-calendar-compact .calendar-detail-meta { padding: 0 0 4px; border: 0; font-size: calc(11px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-record-groups { overflow: visible; padding: 0; }
+.assistant-calendar-compact .calendar-project-header { position: static; background: transparent; padding: 10px 0 4px; gap: 3px; }
+.assistant-calendar-compact .calendar-group-toggle { gap: 6px; }
+.assistant-calendar-compact .calendar-project-name { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-project-count { font-size: calc(10px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-record { padding: 9px 0 9px 18px; }
+.assistant-calendar-compact .calendar-record-meta { font-size: calc(10px * var(--ui-font-scale, 1)); gap: 6px; }
+.assistant-calendar-compact .calendar-record-title { font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-recap { margin-left: 0; padding: 8px; background: transparent; }
+.assistant-calendar-compact .calendar-empty { padding: 6px 0; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.assistant-calendar-compact .calendar-footer { display: block; font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.8; }
+.assistant-calendar-compact .calendar-footer span { display: block; }
+.assistant-drawer-backdrop { display: none; }
+@media (max-width: 959px) {
+  .assistant-side { position: absolute; top: 56px; bottom: 0; z-index: 42; background: var(--bg-app); box-shadow: 0 8px 32px #0002; }
+  .assistant-side.drawer-top { z-index: 43; }
+  .assistant-projects { left: 0; width: min(280px, calc(100% - 40px)); }
+  .assistant-calendar { right: 0; width: min(350px, calc(100% - 32px)); }
+  .assistant-drawer-backdrop { display: block; position: absolute; inset: 56px 0 0; z-index: 41; border: 0; background: #0003; }
+  .app.assistant-mode .center { --chat-col-max: min(calc(100% - 32px), 820px); }
+}
+@media (max-width: 560px) {
+  .assistant-topbar-note { display: none; }
+  .assistant-workspace-header { padding-inline: 12px; gap: 8px; }
+  .app.assistant-mode .center { --chat-col-max: calc(100% - 24px); }
+}

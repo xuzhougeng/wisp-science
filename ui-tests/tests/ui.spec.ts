@@ -14177,7 +14177,7 @@ test("research assistant reopens its one conversation and closes on Escape", asy
   await page.getByTestId("open-research-assistant").click();
   await expect(page.locator(".app.assistant-mode")).toBeVisible();
   await expect(page.locator(".assistant-title")).toHaveText("Research assistant");
-  // Assistant chrome is title + close only — inbox/terminal/panel stay project-scoped.
+  // Assistant sidebars have their own header; project inbox/terminal controls stay hidden.
   await expect(page.locator(".topbar-actions")).toBeHidden();
   await expect(page.locator(".assistant-close")).toBeVisible();
   await expect(page.getByText("Yesterday you reran the DE analysis in RNA-seq.")).toBeVisible();

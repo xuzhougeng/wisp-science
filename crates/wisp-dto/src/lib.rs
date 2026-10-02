@@ -3055,6 +3055,18 @@ pub struct ProjectSummary {
     pub folder_sync: Option<String>,
 }
 
+/// A saved research-assistant plan item, separate from recorded activity.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResearchAssistantPlanItem {
+    pub id: String,
+    pub day: String,
+    pub title: String,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub session_id: Option<String>,
+    pub status: String,
+}
+
 /// Read-only scan result shown before an orphaned workspace is registered and
 /// its `.wisp/history` context archives are imported.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

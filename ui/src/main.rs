@@ -1,6 +1,7 @@
 mod acp;
 mod agent_workflows;
 mod app_overlays;
+mod assistant_workspace;
 mod automation;
 mod bindings;
 mod channels_view;
@@ -1536,6 +1537,17 @@ fn App() -> impl IntoView {
     mirror_privacy_mode(privacy_active_initial, &privacy_projects_initial);
     let privacy_mode_active = create_rw_signal(privacy_active_initial);
     let privacy_hidden_project_ids = create_rw_signal(privacy_projects_initial);
+    let assistant_workspace = assistant_workspace::use_assistant_workspace(
+        assistant_mode,
+        Signal::derive(move || busy.get()),
+        Signal::derive(move || {
+            if privacy_mode_active.get() {
+                privacy_hidden_project_ids.get().into_iter().collect()
+            } else {
+                Vec::new()
+            }
+        }),
+    );
     let privacy_mode_modal_open = create_rw_signal(false);
     // Top-nav project switcher dropdown + Project Settings modal.
     let show_proj_menu = create_rw_signal(false);
@@ -4549,7 +4561,28 @@ fn App() -> impl IntoView {
         }
         let saved_attachments = attachments.get();
         let saved_mcp_app_context = mcp_app_context.get();
-        let refs = composer_references.get();
+        let mut refs = composer_references.get();
+        if assistant_mode.get() {
+            if assistant_workspace.selected.get().is_some()
+                && (assistant_workspace.loading.get() || assistant_workspace.error.get().is_some())
+            {
+                show_toast(research_journey::j(
+                    locale.get(),
+                    "Wait for the project context to load, or clear the selected project.",
+                    "请等项目上下文读取完成，或取消项目选择。",
+                ));
+                return;
+            }
+            if let Some(project) = assistant_workspace.selected_project() {
+                let reference = ComposerReferenceChip::Project {
+                    id: project.id,
+                    name: project.name,
+                };
+                if !refs.iter().any(|item| item.key() == reference.key()) {
+                    refs.push(reference);
+                }
+            }
+        }
         let quotes = composer_quotes.get();
         let paths = attachment_paths(&saved_attachments);
         let display_message = message_with_composer_context(&message, &paths, &refs, &quotes);
@@ -4577,7 +4610,7 @@ fn App() -> impl IntoView {
         });
         if message.trim().is_empty()
             && paths.is_empty()
-            && refs.is_empty()
+            && composer_references.with(|references| references.is_empty())
             && quotes.is_empty()
             && saved_mcp_app_context.is_none()
         {
@@ -9713,12 +9746,6 @@ fn App() -> impl IntoView {
             }
             return;
         }
-        if assistant_mode.get() {
-            ev.prevent_default();
-            close_assistant.call(());
-            return;
-        }
-
         if branch_merge_detail.get().is_some() {
             ev.prevent_default();
             branch_merge_detail.set(None);
@@ -9817,7 +9844,7 @@ fn App() -> impl IntoView {
             return;
         }
 
-        if show_projects.get() {
+        if show_projects.get() && !assistant_mode.get() {
             if home_calendar_open.get() && !home_dialog_open.get() {
                 ev.prevent_default();
                 home_calendar_open.set(false);
@@ -10005,6 +10032,15 @@ fn App() -> impl IntoView {
         }
 
         // --- drag cancel ---
+        if assistant_mode.get() && assistant_workspace.close_drawer() {
+            ev.prevent_default();
+            return;
+        }
+        if assistant_mode.get() {
+            ev.prevent_default();
+            close_assistant.call(());
+            return;
+        }
         if dragging.get() {
             ev.prevent_default();
             dragging.set(false);
@@ -11876,20 +11912,31 @@ fn App() -> impl IntoView {
         })}
 
         <div class="workspace-main">
+        {move || assistant_mode.get().then(|| view! {
+            <assistant_workspace::AssistantHeader locale=locale state=assistant_workspace on_close=close_assistant
+                on_toggle=Callback::new(move |left| {
+                    compose_menu_open.set(false);
+                    model_menu_open.set(false);
+                    composer_effort_open.set(false);
+                    context_usage_open.set(false);
+                    agent_menu_open.set(false);
+                    reviewer_model_menu_open.set(false);
+                    compute_menu_open.set(false);
+                    specialist_menu_open.set(false);
+                    assistant_workspace.toggle(left);
+                })/>
+            <assistant_workspace::AssistantProjects locale=locale state=assistant_workspace/>
+            <button type="button" class="assistant-drawer-backdrop"
+                hidden=move || !assistant_workspace.narrow.get() || !(assistant_workspace.left.get() || assistant_workspace.right.get())
+                aria-label=move || research_journey::j(locale.get(), "Close sidebar", "关闭侧栏")
+                on:click=move |_| { assistant_workspace.close_drawer(); }></button>
+        })}
         <main class="center" class:split=move || center_split_on.get()
+            inert=move || (assistant_mode.get() && assistant_workspace.narrow.get() && (assistant_workspace.left.get() || assistant_workspace.right.get())).then_some("")
             style=move || center_chat_w.get()
                 .map(|width| format!("--center-chat-width:{width}px"))
                 .unwrap_or_default()>
             <div class="topbar">
-                <div class="assistant-topbar">
-                    <span class="assistant-title">{move || t(locale.get(), "assistant.title")}</span>
-                    <button type="button" class="icon-btn assistant-close"
-                        title=move || t(locale.get(), "assistant.close")
-                        aria-label=move || t(locale.get(), "assistant.close")
-                        on:click=move |_| close_assistant.call(())>
-                        {compose_icon("close")}
-                    </button>
-                </div>
                 {move || (!assistant_mode.get() && !show_sidebar.get()).then(|| view! {
                     <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>{compose_icon("chevron")}</button>
                 })}
@@ -14147,6 +14194,14 @@ fn App() -> impl IntoView {
                     on:dragover=on_drag_over
                     on:dragleave=on_drag_leave
                     on:drop=on_drop>
+                    {move || (assistant_mode.get() && assistant_workspace.selected.get().is_some()).then(|| view! {
+                        <div class="assistant-context" data-testid="assistant-project-context">
+                            {compose_icon("folder")}
+                            <span>{move || assistant_workspace.selected_project().map(|project| project.name).unwrap_or_else(|| research_journey::j(locale.get(), "Project context unavailable", "项目上下文暂不可用").into())}</span>
+                            <button type="button" aria-label=move || research_journey::j(locale.get(), "Clear project context", "取消项目上下文")
+                                on:click=move |_| assistant_workspace.selected.set(None)>{compose_icon("close")}</button>
+                        </div>
+                    })}
                     <div class="composer-resizer"
                         title=move || t(locale.get(), "composer.resize_hint")
                         on:mousedown=on_composer_resize_start></div>
@@ -14451,6 +14506,8 @@ fn App() -> impl IntoView {
                                     t(locale.get(), "exploration.mainline_frozen_placeholder").into()
                                 } else if composer_scope_locked.get() {
                                     t(locale.get(), "exploration.read_only_placeholder").into()
+                                } else if assistant_mode.get() {
+                                    research_journey::j(locale.get(), "Ask about your research, or plan the next step…", "聊聊研究进展，或安排下一步…").into()
                                 } else {
                                     tf(
                                         locale.get(),
@@ -15758,6 +15815,16 @@ fn App() -> impl IntoView {
                 </div>
             </div>
         </main>
+
+        {move || assistant_mode.get().then(|| view! {
+            <assistant_workspace::AssistantCalendar locale=locale state=assistant_workspace
+                project_transfer=project_transfer.read_only()
+                on_draft=Callback::new(move |prompt: String| {
+                    input.update(|draft| { if !draft.trim().is_empty() { draft.push_str("\n\n"); } draft.push_str(&prompt); });
+                    if assistant_workspace.narrow.get_untracked() { assistant_workspace.right.set(false); }
+                    focus_composer();
+                })/>
+        })}
 
         {move || right_pane_visible.get().then(|| view! {
             <div class="resizer" on:mousedown=on_resize_start></div>
