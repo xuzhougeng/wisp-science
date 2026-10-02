@@ -715,12 +715,7 @@ pub(super) async fn delete_project(
     id: String,
     delete_data: Option<bool>,
 ) -> Result<(), String> {
-    exploration_commands::reject_private_exploration_project_mutation(
-        &state.store,
-        &id,
-        "Project deletion",
-    )
-    .await?;
+    validate_project_deletion(&state.store, &id, delete_data.unwrap_or(false)).await?;
     let _project_activity = state.begin_project_activity(&id)?;
     let workspace_delete_target = if delete_data.unwrap_or(false) {
         let (_, workspace_dir) = state
@@ -764,6 +759,26 @@ pub(super) async fn delete_project(
         let _ = set_active_project(state.inner(), window.label(), "default").await;
     }
     Ok(())
+}
+
+async fn validate_project_deletion(
+    store: &Store,
+    id: &str,
+    delete_data: bool,
+) -> Result<(), String> {
+    // The files-preserving recovery action must work after a workspace is
+    // deleted or disconnected. Do not waive guards for destructive deletion
+    // or for other database errors (corruption, permissions, identity mismatch).
+    if !delete_data
+        && store
+            .project_database_is_missing(id)
+            .await
+            .map_err(|error| error.to_string())?
+    {
+        return Ok(());
+    }
+    exploration_commands::reject_private_exploration_project_mutation(store, id, "Project deletion")
+        .await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1034,14 +1049,150 @@ pub(super) async fn get_project_info(
 
 #[cfg(test)]
 mod tests {
+    use crate::exploration_commands::ExplorationService;
     use std::path::Path;
+    use wisp_store::Store;
 
     use super::{
         app_window_title, blank_window_url, cascaded_window_position, load_window_active_projects,
         next_blank_window_label, read_project_agent_context, remember_window_project,
         restored_window_projects, same_workspace_path, startup_main_project_id,
-        update_persisted_windows, write_project_agent_context, APP_WINDOW_TITLE,
+        update_persisted_windows, validate_project_deletion, write_project_agent_context,
+        APP_WINDOW_TITLE,
     };
+
+    #[tokio::test]
+    async fn missing_project_database_can_be_removed_without_deleting_files() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project(
+                "healthy",
+                "Healthy",
+                root.path().join("healthy").to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .create_frame("session", "healthy", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("session", 1, &wisp_llm::Message::user("keep history"))
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        let workspace = root.path().join("offline");
+        store
+            .create_project("offline", "Offline", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        // Creation closes the new project's pool before publishing its location.
+        let database = workspace.join(wisp_store::PROJECT_DATABASE);
+        let saved = root.path().join("saved.sqlite");
+        std::fs::rename(&database, &saved).unwrap();
+        let saved_bytes = std::fs::read(&saved).unwrap();
+        let user_file = workspace.join("research.txt");
+        std::fs::write(&user_file, "keep data").unwrap();
+
+        assert!(validate_project_deletion(&store, "offline", true)
+            .await
+            .unwrap_err()
+            .contains("unavailable"));
+        validate_project_deletion(&store, "offline", false)
+            .await
+            .unwrap();
+        store.delete_project("offline").await.unwrap();
+        assert!(store.get_project("offline").await.unwrap().is_none());
+        assert_eq!(store.list_projects().await.unwrap().len(), 1);
+        assert_eq!(
+            store.load_messages("session").await.unwrap()[0]
+                .content
+                .as_text(),
+            "keep history"
+        );
+        assert_eq!(std::fs::read(&saved).unwrap(), saved_bytes);
+        assert_eq!(std::fs::read_to_string(&user_file).unwrap(), "keep data");
+        assert!(!database.exists());
+    }
+
+    #[tokio::test]
+    async fn project_deletion_does_not_ignore_corrupt_registered_databases() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_application(&root.path().join("global.sqlite"))
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        let workspace = root.path().join("project");
+        store
+            .create_project("p", "P", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        let database = workspace.join(wisp_store::PROJECT_DATABASE);
+        std::fs::write(&database, b"not a SQLite database").unwrap();
+        for delete_data in [false, true] {
+            assert!(validate_project_deletion(&store, "p", delete_data)
+                .await
+                .is_err());
+        }
+        assert_eq!(std::fs::read(&database).unwrap(), b"not a SQLite database");
+    }
+
+    #[tokio::test]
+    async fn project_deletion_still_blocks_unresolved_explorations() {
+        for decentralized in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let store = Store::open_application(&root.path().join("global.sqlite"))
+                .await
+                .unwrap();
+            store
+                .set_setting("decentralized_project_storage", &decentralized.to_string())
+                .await
+                .unwrap();
+            let workspace = root.path().join("project");
+            store
+                .create_project("p", "P", workspace.to_str().unwrap())
+                .await
+                .unwrap();
+            for delete_data in [false, true] {
+                validate_project_deletion(&store, "p", delete_data)
+                    .await
+                    .unwrap();
+            }
+            store
+                .create_frame("main", "p", "agent", "model")
+                .await
+                .unwrap();
+            store
+                .append_message("main", 1, &wisp_llm::Message::user("question"))
+                .await
+                .unwrap();
+            store
+                .append_message("main", 2, &wisp_llm::Message::assistant("answer"))
+                .await
+                .unwrap();
+            let service = ExplorationService::new(store.clone(), root.path().join("app-data"));
+            let checkpoint = service.create_checkpoint("p", "main").await.unwrap();
+            service
+                .create_exploration(&checkpoint.id, "Candidate")
+                .await
+                .unwrap();
+            for delete_data in [false, true] {
+                assert!(validate_project_deletion(&store, "p", delete_data)
+                    .await
+                    .unwrap_err()
+                    .contains("exploration_project_mutation_blocked"));
+            }
+        }
+    }
 
     #[test]
     fn app_window_title_uses_the_project_name() {

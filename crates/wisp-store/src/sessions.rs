@@ -1013,10 +1013,28 @@ impl Store {
         &self,
         frame_ids: &[String],
     ) -> Result<std::collections::HashMap<String, String>> {
-        if let Some(stores) = self.routed_projects().await? {
+        if self.registry.is_some() && self.project_scope.is_none() {
+            // Route only the requested frames. Scanning every project makes a
+            // healthy session's rules depend on unrelated offline workspaces.
+            let mut groups: HashMap<Option<String>, (Store, Vec<String>)> = HashMap::new();
+            for id in frame_ids {
+                let store = self
+                    .route_entity("frames", "id", id)
+                    .await?
+                    .unwrap_or_else(|| Self {
+                        pool: self.pool.clone(),
+                        registry: None,
+                        project_scope: None,
+                    });
+                groups
+                    .entry(store.project_scope.clone())
+                    .or_insert_with(|| (store, Vec::new()))
+                    .1
+                    .push(id.clone());
+            }
             let mut result = std::collections::HashMap::new();
-            for store in stores {
-                let value = Box::pin(store.load_system_messages(frame_ids)).await?;
+            for (store, ids) in groups.into_values() {
+                let value = Box::pin(store.load_system_messages(&ids)).await?;
                 result.extend(value);
             }
             return Ok(result);
@@ -3247,8 +3265,7 @@ impl Store {
                 ))
                 .await;
             }
-        }
-        if let Some(stores) = self.routed_projects().await? {
+        } else if let Some(stores) = self.routed_projects().await? {
             let mut ranked = Vec::new();
             let q = query.trim().to_lowercase();
             let pattern = format!("%{q}%");

@@ -313,6 +313,27 @@ impl Store {
         })
     }
 
+    /// Recovery check for removing an offline registration without touching its
+    /// files. Only a missing registered database qualifies; corrupt databases,
+    /// permission errors and centralized projects still require normal checks.
+    pub async fn project_database_is_missing(&self, id: &str) -> Result<bool> {
+        let Some(registry) = &self.registry else {
+            return Ok(false);
+        };
+        anyhow::ensure!(self.project_scope.is_none(), "Application store required");
+        let path: Option<String> =
+            sqlx::query_scalar("SELECT database_path FROM project_locations WHERE project_id=?")
+                .bind(id)
+                .fetch_optional(&registry.global)
+                .await?;
+        let Some(path) = path else { return Ok(false) };
+        match std::fs::metadata(&path) {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error).with_context(|| format!("Inspect project database: {path}")),
+        }
+    }
+
     pub(super) async fn route_project(&self, id: &str) -> Result<Option<Self>> {
         let Some(registry) = &self.registry else {
             return Ok(None);
@@ -413,6 +434,20 @@ impl Store {
         };
         if self.project_scope.is_some() {
             return Ok(None);
+        }
+        // A global frame supplies its owner even when optional session records
+        // do not exist. Resolve that owner before scanning unrelated databases.
+        // Leftover global rows are only routing hints: a registered database
+        // remains authoritative, including when it is offline or lacks the frame.
+        if table == "frames" && column == "id" {
+            let owner: Option<String> =
+                sqlx::query_scalar("SELECT project_id FROM frames WHERE id=?")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            if let Some(owner) = owner {
+                return self.route_project(&owner).await;
+            }
         }
         // Identifiers are compile-time constants at the call sites, never input.
         let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE {column}=?)");
@@ -1494,6 +1529,169 @@ mod tests {
             local.frame_project_id("b").await.unwrap().as_deref(),
             Some("b")
         );
+    }
+
+    #[tokio::test]
+    async fn offline_project_does_not_block_centralized_or_available_sessions() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let store = Store::open_application(&path).await.unwrap();
+        for (id, decentralized) in [("central", false), ("offline", true), ("online", true)] {
+            store
+                .set_setting("decentralized_project_storage", &decentralized.to_string())
+                .await
+                .unwrap();
+            store
+                .create_project(id, id, root.path().join(id).to_str().unwrap())
+                .await
+                .unwrap();
+            store.create_frame(id, id, "agent", "model").await.unwrap();
+            store
+                .append_message(id, 1, &wisp_llm::Message::user("history"))
+                .await
+                .unwrap();
+        }
+        // Close every handle before moving the database, including on Windows.
+        for pool in store.registry.as_ref().unwrap().pools.lock().await.values() {
+            pool.close().await;
+        }
+        store.pool.close().await;
+        let missing = root.path().join("offline").join(PROJECT_DATABASE);
+        std::fs::rename(&missing, root.path().join("saved.sqlite")).unwrap();
+        let reopened = Store::open_application(&path).await.unwrap();
+        for id in ["central", "online"] {
+            assert_eq!(
+                reopened.frame_project_id(id).await.unwrap().as_deref(),
+                Some(id)
+            );
+            assert_eq!(reopened.message_count(id).await.unwrap(), 1);
+            assert_eq!(
+                reopened.load_messages(id).await.unwrap()[0]
+                    .content
+                    .as_text(),
+                "history"
+            );
+            assert!(reopened.session_branch_state(id).await.unwrap().is_none());
+            assert!(reopened.get_acp_session(id).await.unwrap().is_none());
+            assert!(!reopened.mainline_frame_is_frozen(id).await.unwrap());
+            assert!(reopened
+                .get_setting(&format!("frame_plan_mode:{id}"))
+                .await
+                .unwrap()
+                .is_none());
+            reopened
+                .append_message(id, 2, &wisp_llm::Message::user("after restart"))
+                .await
+                .unwrap();
+            assert_eq!(reopened.message_count(id).await.unwrap(), 2);
+            assert_eq!(
+                reopened
+                    .search_sessions(Some(id), "history", 10, None, None)
+                    .await
+                    .unwrap()
+                    .len(),
+                1
+            );
+            // Absent optional records must be resolved in the owner's store.
+            assert!(reopened
+                .load_system_messages(&[id.to_owned()])
+                .await
+                .unwrap()
+                .is_empty());
+            reopened
+                .append_message(id, 0, &wisp_llm::Message::system(format!("rules for {id}")))
+                .await
+                .unwrap();
+        }
+        let prompts = reopened
+            .load_system_messages(&["central".into(), "online".into()])
+            .await
+            .unwrap();
+        assert_eq!(prompts.len(), 2);
+        for id in ["central", "online"] {
+            let content: wisp_llm::Content = serde_json::from_str(&prompts[id]).unwrap();
+            assert_eq!(content.as_text(), format!("rules for {id}"));
+        }
+        assert!(reopened
+            .message_count("offline")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable"));
+        assert!(!missing.exists());
+        let native = Store::open_read_only(&path).await.unwrap();
+        assert_eq!(native.message_count("central").await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn registered_session_owner_never_falls_back_to_stale_global_records() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let store = Store::open_application(&path).await.unwrap();
+        let workspace = root.path().join("project");
+        store
+            .create_project("p", "P", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("stale", "p", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("stale", 1, &wisp_llm::Message::user("stale history"))
+            .await
+            .unwrap();
+        store
+            .append_message("stale", 0, &wisp_llm::Message::system("stale rules"))
+            .await
+            .unwrap();
+        // Model leftover global rows from an interrupted cutover. The registered
+        // database is authoritative even when it has no matching frame.
+        let database = root.path().join("authoritative.sqlite");
+        let authoritative = Store::open(&database).await.unwrap();
+        authoritative
+            .create_project("p", "P", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        authoritative.pool.close().await;
+        sqlx::query("INSERT INTO project_locations(project_id,database_path) VALUES(?,?)")
+            .bind("p")
+            .bind(database.to_str().unwrap())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(store.frame_project_id("stale").await.unwrap(), None);
+        assert_eq!(store.message_count("stale").await.unwrap(), 0);
+        assert!(store
+            .load_system_messages(&["stale".into()])
+            .await
+            .unwrap()
+            .is_empty());
+        for pool in store.registry.as_ref().unwrap().pools.lock().await.values() {
+            pool.close().await;
+        }
+        store.pool.close().await;
+        std::fs::rename(&database, root.path().join("saved.sqlite")).unwrap();
+        let reopened = Store::open_application(&path).await.unwrap();
+        assert!(reopened
+            .frame_project_id("stale")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable"));
+        assert!(reopened.message_count("stale").await.is_err());
+        assert!(reopened
+            .append_message("stale", 2, &wisp_llm::Message::user("must not write"))
+            .await
+            .is_err());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages WHERE frame_id='stale'")
+                .fetch_one(&reopened.pool)
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(!database.exists());
     }
 
     #[tokio::test]

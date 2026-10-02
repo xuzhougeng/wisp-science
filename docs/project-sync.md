@@ -24,6 +24,16 @@ installations that have run v1.15.0. Saved choices survive subsequent upgrades.
 Switching it does not move existing project records: centralized projects use
 the app database, while independent projects keep their own databases.
 
+If an independent project's database is missing (for example, its workspace
+was deleted or its drive disconnected), conversations in centralized and other
+available projects can still load and save. Opening the affected project reports
+the unavailable database; Wisp does not create an empty replacement or use stale
+history from the app database. Restore the original path or reconnect the drive
+to recover access. To remove the unavailable project from the list, choose
+**Delete → Remove from Wisp only**. This removes its registration without deleting
+workspace files. **Delete project and local data** still requires the database
+to be available for its deletion checks.
+
 Both storage modes use the same revision protocol. Snapshots are exported from
 the project's current database, and pulls replace that project's rows. The workspace scanner excludes the live database, its WAL/SHM/journal files
 and project identity metadata; copying those as ordinary blobs would produce
