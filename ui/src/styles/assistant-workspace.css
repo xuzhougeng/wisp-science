@@ -111,14 +111,14 @@
 .assistant-remote-toggle svg, .assistant-remote-dialog svg { width: 16px; height: 16px; }
 .assistant-remote-dialog { width: min(520px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; box-sizing: border-box; padding: 24px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px #0003; user-select: text; }
 .assistant-remote-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.assistant-remote-dialog h2 { font-size: 18px; margin: 0; }
-.assistant-remote-dialog p, .assistant-remote-dialog footer { font-size: 13px; line-height: 1.7; color: var(--text-muted); }
+.assistant-remote-dialog h2 { font-size: calc(18px * var(--ui-font-scale, 1)); margin: 0; }
+.assistant-remote-dialog p, .assistant-remote-dialog footer { font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.7; color: var(--text-muted); }
 .assistant-remote-channel { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 20px; padding: 16px 0; border-block: 1px solid var(--border); }
 .assistant-remote-channel p { margin: 4px 0 0; }
 .assistant-remote-channel .toggle:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .assistant-remote-channel .toggle input { inset: 0; width: 100%; height: 100%; cursor: inherit; z-index: 1; }
 .assistant-remote-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
-.assistant-remote-actions button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.assistant-remote-actions button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
 .assistant-remote-actions button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
 .assistant-remote-actions button:hover:not(:disabled) { filter: brightness(.96); }
 .assistant-remote-actions button:disabled { opacity: .5; cursor: not-allowed; }
