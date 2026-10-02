@@ -1538,7 +1538,7 @@ test("plan entries render full Markdown without breaking status layout", async (
   await expect(page.getByTestId("plan-card").last().getByRole("img", { name: "High priority" })).toBeVisible();
 });
 
-test("built-in ask_user option click fills an editable answer draft", async ({ page }) => {
+test("built-in ask_user option click sends the answer immediately", async ({ page }) => {
   await openMockPlanSession(page, "native");
 
   // The built-in question tool streams through the ordinary tool events; its
@@ -1570,23 +1570,14 @@ test("built-in ask_user option click fills an editable answer draft", async ({ p
   // wry's window.prompt is a no-op, so the freeform answer must be in-app.
   await expect(card.locator(".plan-question-freeform input")).toBeVisible();
 
-  const sendCount = await invokeCount(page, "send_message");
+  // An option click is the answer: it sends at once and keeps any unrelated draft.
+  await composer(page).fill("unrelated draft");
   await card.getByRole("button", { name: "STAR" }).click();
-  await expect.poll(() => invokeCount(page, "send_message")).toBe(sendCount);
-  await expect(composer(page)).toHaveValue("STAR\n\nDescription: splice-aware, needs more RAM");
-  await expect(card).toHaveAttribute("data-state", "pending");
-
-  await card.getByRole("button", { name: "HISAT2" }).click();
-  await expect(composer(page)).toHaveValue("HISAT2\n\nDescription: lighter");
-  await card.getByRole("button", { name: "STAR" }).click();
-  await expect(composer(page)).toHaveValue("STAR\n\nDescription: splice-aware, needs more RAM");
-  await expect.poll(() => invokeCount(page, "send_message")).toBe(sendCount);
-  await composer(page).fill("STAR\n\nDescription: splice-aware, needs more RAM\n\n第 4 步先跳过");
-  await page.getByRole("button", { name: "Send" }).click();
   // ?mock=1 send_message does not update the thread, so assert at the invoke layer.
   await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
-    sessionId: "s1", message: "STAR\n\nDescription: splice-aware, needs more RAM\n\n第 4 步先跳过",
+    sessionId: "s1", message: "STAR\n\nDescription: splice-aware, needs more RAM",
   });
+  await expect(composer(page)).toHaveValue("unrelated draft");
   await expect(card).toHaveAttribute("data-state", "answered");
   await expect(card).toContainText("Answer sent to the agent");
   await expect(card.locator(".plan-question-options")).toHaveCount(0);

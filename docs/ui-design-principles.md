@@ -62,13 +62,13 @@
 
 ## Native question cards
 
-- Selecting an option in a native `ask_user` card fills the composer and leaves
-  the card pending. The user can edit the answer, change the selection, or add
-  conditions before sending.
-- The generated draft contains the option label and, when present, an explicit
+- Selecting an option in a native `ask_user` card sends it immediately as the
+  next user message and settles the card; any unrelated composer draft is kept.
+  To add conditions, type a custom answer in the card's freeform field instead.
+- The sent answer contains the option label and, when present, an explicit
   `说明：` line so the option description is not lost from the submitted turn.
-- ACP `ask_user` cards continue to resolve through their protocol response path;
-  they do not use the native composer-draft behavior.
+- ACP `ask_user` cards resolve through their protocol response path instead of
+  sending a new user message.
 
 ## Composer attachments and references
 

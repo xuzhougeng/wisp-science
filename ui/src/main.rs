@@ -1219,7 +1219,6 @@ fn App() -> impl IntoView {
     // Native ask_user option clicks stage an editable answer here. The tuple
     // stores the last generated draft so selecting another option can replace
     // it without overwriting text the user has already edited.
-    let native_question_draft = create_rw_signal::<Option<(String, usize, String)>>(None);
     let side_chat_input = create_rw_signal(String::new());
     let side_chat_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
     let side_chat_items = create_rw_signal::<Vec<SideChatItem>>(vec![]);
@@ -4619,26 +4618,6 @@ fn App() -> impl IntoView {
         }
         let active = active_session.get();
         let creates_session = active.is_none();
-        if action == ComposerSendAction::Normal {
-            if let Some((question_session, question_index, _)) =
-                native_question_draft.get_untracked()
-            {
-                if active.as_deref() == Some(question_session.as_str()) {
-                    route_items(
-                        active_session,
-                        items,
-                        transcripts,
-                        &question_session,
-                        |rows| {
-                            if let Some(ChatItem::Question(card)) = rows.get_mut(question_index) {
-                                card.state = QuestionState::Answered;
-                            }
-                        },
-                    );
-                    native_question_draft.set(None);
-                }
-            }
-        }
         let pending_fast = pending_service_tier.get();
         // Any prior send-failed hint (e.g. the max_tokens truncation notice) is
         // stale once a new turn is committed; the Ok path never cleared it, so it
@@ -7654,37 +7633,9 @@ fn App() -> impl IntoView {
     // source: resolve the bridge's pending request; the answer returns inside
     // the agent's still-running turn.
     let on_question_answer = Callback::new(
-        move |(ui_index, request_id, answer, fill_only): (usize, Option<String>, String, bool)| {
+        move |(ui_index, request_id, answer): (usize, Option<String>, String)| {
             let answer = answer.trim().to_string();
             if answer.is_empty() {
-                return;
-            }
-            // Native option clicks stage an editable composer draft. The card
-            // remains pending until the user submits the resulting message.
-            // ACP responses still resolve immediately because they are a
-            // protocol reply to a live bridge request, not a new turn.
-            if fill_only && request_id.is_none() {
-                let Some(session_id) = active_session.get_untracked() else {
-                    return;
-                };
-                let previous = native_question_draft.get_untracked();
-                let current_input = input.get_untracked();
-                let draft = if previous.as_ref().is_some_and(
-                    |(previous_session, previous_index, previous_text)| {
-                        *previous_session == session_id
-                            && *previous_index == ui_index
-                            && current_input == *previous_text
-                    },
-                ) {
-                    answer.clone()
-                } else if current_input.trim().is_empty() {
-                    answer.clone()
-                } else {
-                    format!("{}\n\n{}", current_input.trim_end(), answer)
-                };
-                input.set(draft.clone());
-                native_question_draft.set(Some((session_id, ui_index, draft)));
-                focus_composer();
                 return;
             }
             // Settle the card before sending: the send appends rows, so the
@@ -7706,7 +7657,6 @@ fn App() -> impl IntoView {
                 None => {
                     // The send callback reads the composer synchronously, so
                     // swap the answer in and restore any draft right after.
-                    native_question_draft.set(None);
                     let draft = input.get_untracked();
                     input.set(answer);
                     send.call(ComposerSendAction::Normal);
