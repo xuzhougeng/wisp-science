@@ -193,6 +193,7 @@ pub(crate) fn AssistantHeader(
     state: AssistantWorkspaceState,
     on_close: Callback<()>,
     on_toggle: Callback<bool>,
+    on_remote: Callback<()>,
 ) -> impl IntoView {
     view! {
         <header class="assistant-workspace-header" data-testid="assistant-header">
@@ -203,6 +204,8 @@ pub(crate) fn AssistantHeader(
                 on:click=move |_| on_toggle.call(true)>{compose_icon("panel-left")}</button>
             <h1 class="assistant-title">{move || j(locale.get(), "Research assistant", "科研助理")}</h1>
             <span class="assistant-topbar-note">{move || j(locale.get(), "A little more clarity, every day", "让研究，日渐清晰")}</span>
+            <button type="button" id="assistant-remote-toggle" class="assistant-remote-toggle"
+                on:click=move |_| on_remote.call(())>{compose_icon("link")}{move || j(locale.get(), "Remote access", "远程接入")}</button>
             <button type="button" id="assistant-calendar-toggle" class="icon-btn assistant-panel-toggle assistant-calendar-toggle"
                 aria-label=move || j(locale.get(), "Toggle research calendar", "展开或收起研究日历")
                 title=move || j(locale.get(), "Research calendar", "研究日历")

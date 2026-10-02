@@ -8,7 +8,7 @@
 //! re-scan. Replies must go out within ~30 min of the inbound message
 //! (`context_token` window).
 
-use super::{set_status, ChannelStatus};
+use super::{set_status, weixin_keys, ChannelStatus, WeixinDestination};
 use anyhow::{bail, Result};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -298,8 +298,15 @@ async fn handle_control_text(
     client: &IlinkClient,
     latest_context: &RwLock<String>,
     message: InboundText,
+    destination: WeixinDestination,
 ) {
-    let reply = super::handle_inbound(app, "weixin", &message.from_user_id, &message.text).await;
+    let reply = super::handle_inbound(
+        app,
+        weixin_keys(destination).channel,
+        &message.from_user_id,
+        &message.text,
+    )
+    .await;
     if reply.is_empty() {
         return;
     }
@@ -315,11 +322,12 @@ async fn handle_agent_turn(
     client: &IlinkClient,
     latest_context: &RwLock<String>,
     message: InboundText,
+    destination: WeixinDestination,
 ) {
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
     let turn = super::handle_inbound_observed(
         app,
-        "weixin",
+        weixin_keys(destination).channel,
         &message.from_user_id,
         &message.text,
         Some(progress_tx),
@@ -331,7 +339,7 @@ async fn handle_agent_turn(
             reply = &mut turn => break reply,
             Some(event) = progress_rx.recv() => {
                 if let super::ProgressEvent::ApprovalRequested(request) = event {
-                    let text = super::render_approval_request(&request);
+                    let text = approval_message(destination, &request);
                     if let Err(error) = send_with_latest_context(
                         client,
                         latest_context,
@@ -355,13 +363,26 @@ async fn handle_agent_turn(
     }
 }
 
+fn approval_message(destination: WeixinDestination, request: &crate::ConfirmRequest) -> String {
+    match destination {
+        WeixinDestination::Projects => super::render_approval_request(request),
+        WeixinDestination::Assistant => format!(
+            "科研助理等待审批。请在桌面科研助理对话中确认后继续。\n工具: {}\n{}",
+            request.tool,
+            super::approval_preview(request),
+        ),
+    }
+}
+
 pub async fn run(
     app: AppHandle,
     binding: Binding,
     token: String,
     status: Arc<StdMutex<ChannelStatus>>,
     mut shutdown: watch::Receiver<bool>,
+    destination: WeixinDestination,
 ) {
+    let keys = weixin_keys(destination);
     let client = match IlinkClient::new(&binding.base_url, &token) {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -370,7 +391,7 @@ pub async fn run(
         }
     };
     let state = app.state::<crate::AppState>();
-    let mut cursor = super::get_setting(&state.store, "weixin_sync_buf").await;
+    let mut cursor = super::get_setting(&state.store, keys.cursor).await;
     let latest_context = Arc::new(RwLock::new(String::new()));
     let (turn_tx, mut turn_rx) = mpsc::channel::<InboundText>(32);
     let (turn_stop_tx, mut turn_stop_rx) = watch::channel(false);
@@ -380,14 +401,18 @@ pub async fn run(
         let latest_context = latest_context.clone();
         tokio::spawn(async move {
             loop {
+                if *turn_stop_rx.borrow() {
+                    break;
+                }
                 let message = tokio::select! {
-                    message = turn_rx.recv() => message,
+                    biased;
                     _ = turn_stop_rx.changed() => None,
+                    message = turn_rx.recv() => message,
                 };
                 let Some(message) = message else {
                     break;
                 };
-                handle_agent_turn(&app, &client, &latest_context, message).await;
+                handle_agent_turn(&app, &client, &latest_context, message, destination).await;
             }
         })
     };
@@ -400,6 +425,9 @@ pub async fn run(
             r = client.get_updates(&cursor) => r,
             _ = shutdown.changed() => break,
         };
+        if *shutdown.borrow() {
+            break;
+        }
         let updates = match updates {
             Ok(u) => u,
             Err(e) => {
@@ -412,7 +440,7 @@ pub async fn run(
         };
         if updates.errcode == SESSION_EXPIRED_ERRCODE {
             // Token is scan-only; it cannot be refreshed programmatically.
-            let _ = state.store.set_setting("weixin_enabled", "false").await;
+            let _ = state.store.set_setting(keys.enabled, "false").await;
             set_status(&status, "error", "微信登录已过期,请重新扫码绑定");
             tracing::warn!(target: "wisp", channel = "weixin", "session expired (-14); channel disabled");
             session_expired = true;
@@ -462,7 +490,7 @@ pub async fn run(
                 let client = client.clone();
                 let latest_context = latest_context.clone();
                 control_tasks.spawn(async move {
-                    handle_control_text(&app, &client, &latest_context, message).await;
+                    handle_control_text(&app, &client, &latest_context, message, destination).await;
                 });
             } else if let Err(error) = turn_tx.try_send(message) {
                 let message = error.into_inner();
@@ -481,7 +509,7 @@ pub async fn run(
         }
         if !updates.get_updates_buf.is_empty() && updates.get_updates_buf != cursor {
             cursor = updates.get_updates_buf.clone();
-            let _ = state.store.set_setting("weixin_sync_buf", &cursor).await;
+            let _ = state.store.set_setting(keys.cursor, &cursor).await;
         }
         while control_tasks.try_join_next().is_some() {}
         let pause = Duration::from_millis(updates.longpolling_timeout_ms.max(1000) as u64);
@@ -496,14 +524,29 @@ pub async fn run(
     // channel cannot cancel the shared desktop session at an arbitrary await.
     drop(turn_worker);
     control_tasks.detach_all();
-    if !session_expired {
+    if !session_expired && !*shutdown.borrow() {
         set_status(&status, "stopped", "");
     }
+    super::emit_channels_updated(&app);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assistant_approval_notice_does_not_offer_legacy_approval_commands() {
+        let request = crate::ConfirmRequest::new(
+            "research-assistant",
+            "Save a plan".into(),
+            "research_plan",
+            "add".into(),
+        );
+        let message = approval_message(WeixinDestination::Assistant, &request);
+        assert!(message.contains("桌面科研助理"));
+        assert!(!message.contains("/approve"));
+        assert!(approval_message(WeixinDestination::Projects, &request).contains("/approve"));
+    }
 
     fn binding() -> Binding {
         Binding {

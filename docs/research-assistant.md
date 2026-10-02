@@ -28,11 +28,29 @@
 
 只有一条对话：没有会话列表，不能新建、分支或开启探索。对话很长时沿用常规的归档式压缩，旧消息不会被静默丢弃。隐私模式隐藏的项目对助理不可见，也不能接收派活。
 
+## 微信远程接入
+
+科研助理页顶部的「远程接入」提供独立的微信 iLink 入口，默认关闭。目前仅支持微信：
+
+1. 打开「远程接入」，点击「扫码绑定」，用所有者微信扫码并确认。
+2. 绑定后打开「启用」开关；保持桌面 Wisp 运行且能联网。
+3. 在微信中直接提问，例如「这周所有项目进展如何」「在 RNA-seq 项目里安排差异分析」。消息进入桌面科研助理的同一条长期对话，使用其模型与可见项目权限，无需用 `/project` 切换。
+
+此处与**设置 → 远程接入**中的项目机器人分别保存绑定、开关、连接状态和消息游标。原入口的 `/project`、`/session`、`/new` 工作方式保持不变。一个机器人不能同时绑定两个入口：可使用不同机器人，或先在原入口解除绑定，再绑定到科研助理。解除助理绑定不会删除助理对话、计划，也不会关闭原项目机器人。
+
+只处理扫码所有者的一对一文本消息（以及微信提供转写的语音）。助理入口的 `/help` 提供说明，`/status` 显示助理接入，`/stop` 停止助理当前回复；这些命令不会修改项目机器人的目标。助理不会通过 `/new` 新建第二条对话。
+
+微信请求保留远程操作的审批约束：保存计划、派活等需确认的助理操作在桌面助理对话中审批，派发后的任务在对应项目中审批。助理入口暂不提供文本审批；派发完成后可继续问助理查看结果。关闭配置弹窗只结束本次扫码轮询，已启用的接入会继续运行，重启 Wisp 后自动恢复；登录过期后需要重新绑定并启用。
+
+按 Escape 会先关闭远程接入弹窗，保留助理页和已打开的侧栏。
+
 ## English
 
 **Research assistant** on the home screen opens one conversation that belongs to no project and never splits into new ones. It reports recorded activity across projects (the same records and daily recaps as the research calendar, up to 7 days per read), keeps a dated plan (open / done / dropped; unfinished items carry forward to today), dispatches work by starting a titled conversation in a project and sending it a self-contained instruction, and checks a dispatched conversation's status and final answer. It cannot read or write files, run code or commands, or search literature — it organizes, project conversations do the work. Escape closes it; a running reply continues in the background. Projects hidden by privacy mode are invisible to it.
 
 The assistant page has independently collapsible project and calendar sidebars around its existing conversation. Selecting a project attaches context to future messages without navigating away. The calendar separates saved plans from recorded activity, retains its date when hidden, and refreshes after an assistant turn. Planning and activity buttons append questions to the draft for review before sending. Desktop sidebar preferences persist; narrow windows use drawers, with Escape dismissing the topmost surface first.
+
+**Remote access** in the assistant header connects WeChat directly to this same conversation and all visible projects. Scan to bind, then enable the connection; keep Wisp running. This binding, switch, credentials and cursor are independent from the project bots in Settings. Existing project slash commands keep their behavior. A bot can belong to only one entry at a time. Assistant messages use natural language; `/help`, `/status` and `/stop` stay within the assistant. IM approval restrictions remain in force; handle assistant approvals on the desktop assistant and dispatched-work approvals in the relevant desktop project. Unbinding preserves conversation history and plans. Escape dismisses the connection dialog before the assistant or its drawers.
 
 ## 实现说明
 
@@ -40,6 +58,7 @@ The assistant page has independently collapsible project and calendar sidebars a
 - 该会话的回合使用独立的系统提示词和 5 个工具（`research_projects`、`research_activity`、`research_plan`、`dispatch_to_project`、`project_session_result`），不加载文件/Shell 工具、Python/R 运行时、MCP、Skill 或 ACP 外部 Agent。
 - 计划保存在全局表 `assistant_tasks`（迁移 `0063_assistant_tasks`，幂等），不属于任何项目，不随项目导入导出。
 - 命令：`open_research_assistant`（绑定当前窗口，记住要恢复的项目）、`close_research_assistant`（恢复）；`get_research_assistant_projects` 和 `get_research_assistant_plan` 在服务端核验隐私设置后提供侧栏数据。为该项目新建会话、分支或开启探索的请求会被后端拒绝。
+- 微信状态命令：`assistant_weixin_status`；绑定、启用和解除绑定复用微信命令并传 `destination: "assistant"`，缺省仍为原项目入口。助理配置使用 `assistant_weixin_*` 设置键，token 单独存在系统 keyring；助理消息不写入原 IM 共享路由，也不改变桌面当前项目。
 
 ## 限制
 

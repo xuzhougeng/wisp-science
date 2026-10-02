@@ -5,7 +5,7 @@
 .assistant-workspace-header { position: absolute; inset: 0 0 auto; height: 56px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); background: var(--bg-app); z-index: 44; }
 .assistant-workspace-header h1 { margin: 0; font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; }
 .assistant-topbar-note { color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
-.assistant-calendar-toggle { margin-left: auto; }
+.assistant-remote-toggle { margin-left: auto; }
 .assistant-panel-toggle[aria-expanded="true"] { background: var(--bg-sunken); color: var(--text); }
 .assistant-side { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; box-sizing: border-box; background: color-mix(in srgb, var(--bg-app) 62%, var(--bg-sunken)); color: var(--text); }
 .assistant-side[hidden], .assistant-side [hidden], .assistant-drawer-backdrop[hidden] { display: none !important; }
@@ -106,3 +106,25 @@
   .assistant-workspace-header { padding-inline: 12px; gap: 8px; }
   .app.assistant-mode .center { --chat-col-max: calc(100% - 24px); }
 }
+
+.assistant-remote-toggle { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
+.assistant-remote-toggle svg, .assistant-remote-dialog svg { width: 16px; height: 16px; }
+.assistant-remote-dialog { width: min(520px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; box-sizing: border-box; padding: 24px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px #0003; user-select: text; }
+.assistant-remote-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.assistant-remote-dialog h2 { font-size: 18px; margin: 0; }
+.assistant-remote-dialog p, .assistant-remote-dialog footer { font-size: 13px; line-height: 1.7; color: var(--text-muted); }
+.assistant-remote-channel { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 20px; padding: 16px 0; border-block: 1px solid var(--border); }
+.assistant-remote-channel p { margin: 4px 0 0; }
+.assistant-remote-channel .toggle:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.assistant-remote-channel .toggle input { inset: 0; width: 100%; height: 100%; cursor: inherit; z-index: 1; }
+.assistant-remote-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+.assistant-remote-actions button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.assistant-remote-actions button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
+.assistant-remote-actions button:hover:not(:disabled) { filter: brightness(.96); }
+.assistant-remote-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.assistant-remote-dialog button:focus-visible, .assistant-remote-toggle:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.assistant-remote-qr { text-align: center; }
+.assistant-remote-qr img { width: 220px; max-width: 100%; background: white; border-radius: 8px; }
+.assistant-remote-dialog footer { border-top: 1px solid var(--border); padding-top: 16px; }
+.assistant-remote-dialog .assistant-remote-error { color: var(--err); }
+@media (max-width: 720px) { .assistant-topbar-note { display: none; } }

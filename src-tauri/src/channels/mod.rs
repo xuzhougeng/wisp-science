@@ -16,11 +16,14 @@
 //! in the keyring.
 
 use crate::workspace_surface::WorkspaceManager;
+mod assistant;
 pub mod feishu;
 pub mod feishu_card;
 pub mod feishu_registration;
 pub mod pbbp2;
 pub mod weixin;
+
+use wisp_dto::{AssistantWeixinStatus, WeixinDestination};
 
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -35,7 +38,34 @@ use wisp_store::Store;
 const FEISHU_SECRET: &str = "feishu_app_secret";
 const FEISHU_OWNER_KEY: &str = "feishu_owner_binding";
 const FEISHU_PENDING_OWNER_KEY: &str = "feishu_pending_owner";
-const WEIXIN_TOKEN_SECRET: &str = "weixin_bot_token";
+/// Each destination owns its credentials, cursor and worker. The old keys stay
+/// unchanged, so existing installations need no migration.
+fn weixin_keys(destination: WeixinDestination) -> WeixinKeys {
+    match destination {
+        WeixinDestination::Projects => WeixinKeys {
+            enabled: "weixin_enabled",
+            binding: "weixin_binding",
+            cursor: "weixin_sync_buf",
+            token: "weixin_bot_token",
+            channel: "weixin",
+        },
+        WeixinDestination::Assistant => WeixinKeys {
+            enabled: "assistant_weixin_enabled",
+            binding: "assistant_weixin_binding",
+            cursor: "assistant_weixin_sync_buf",
+            token: "assistant_weixin_bot_token",
+            channel: "weixin_assistant",
+        },
+    }
+}
+#[derive(Clone, Copy)]
+struct WeixinKeys {
+    enabled: &'static str,
+    binding: &'static str,
+    cursor: &'static str,
+    token: &'static str,
+    channel: &'static str,
+}
 /// ponytail: single reply cap for both channels; per-channel limits if an API
 /// ever rejects shorter messages.
 const REPLY_MAX_CHARS: usize = 8000;
@@ -67,6 +97,9 @@ pub struct ChannelManager {
     weixin: StdMutex<Option<watch::Sender<bool>>>,
     feishu_status: Arc<StdMutex<ChannelStatus>>,
     weixin_status: Arc<StdMutex<ChannelStatus>>,
+    assistant_weixin: StdMutex<Option<watch::Sender<bool>>>,
+    assistant_weixin_status: Arc<StdMutex<ChannelStatus>>,
+    weixin_config_lock: tokio::sync::Mutex<()>,
     feishu_registrations:
         tokio::sync::Mutex<HashMap<String, feishu_registration::RegistrationFlow>>,
 }
@@ -76,6 +109,7 @@ impl ChannelManager {
         let mgr = Self::default();
         set_status(&mgr.feishu_status, "stopped", "");
         set_status(&mgr.weixin_status, "stopped", "");
+        set_status(&mgr.assistant_weixin_status, "stopped", "");
         mgr
     }
 
@@ -86,11 +120,25 @@ impl ChannelManager {
         set_status(&self.feishu_status, "stopped", "");
     }
 
-    pub fn stop_weixin(&self) {
-        if let Some(tx) = self.weixin.lock().unwrap().take() {
+    fn weixin_worker(
+        &self,
+        destination: WeixinDestination,
+    ) -> (
+        &StdMutex<Option<watch::Sender<bool>>>,
+        &Arc<StdMutex<ChannelStatus>>,
+    ) {
+        match destination {
+            WeixinDestination::Projects => (&self.weixin, &self.weixin_status),
+            WeixinDestination::Assistant => (&self.assistant_weixin, &self.assistant_weixin_status),
+        }
+    }
+
+    pub fn stop_weixin(&self, destination: WeixinDestination) {
+        let (worker, status) = self.weixin_worker(destination);
+        if let Some(tx) = worker.lock().unwrap().take() {
             let _ = tx.send(true);
         }
-        set_status(&self.weixin_status, "stopped", "");
+        set_status(status, "stopped", "");
     }
 
     pub async fn start_feishu(&self, app: &AppHandle) {
@@ -116,25 +164,27 @@ impl ChannelManager {
         });
     }
 
-    pub async fn start_weixin(&self, app: &AppHandle) {
-        self.stop_weixin();
+    pub async fn start_weixin(&self, app: &AppHandle, destination: WeixinDestination) {
+        self.stop_weixin(destination);
+        let (worker, status) = self.weixin_worker(destination);
+        let keys = weixin_keys(destination);
         let state = app.state::<AppState>();
-        let binding = load_weixin_binding(&state.store).await;
-        let token = load_secret(WEIXIN_TOKEN_SECRET).await;
+        let binding = load_weixin_binding_for(&state.store, destination).await;
+        let token = load_secret(keys.token).await;
         let Some(binding) = binding else {
-            set_status(&self.weixin_status, "error", "请先扫码绑定微信");
+            set_status(status, "error", "请先扫码绑定微信");
             return;
         };
         if token.is_empty() {
-            set_status(&self.weixin_status, "error", "登录凭证缺失,请重新扫码绑定");
+            set_status(status, "error", "登录凭证缺失,请重新扫码绑定");
             return;
         }
         let (tx, rx) = watch::channel(false);
-        *self.weixin.lock().unwrap() = Some(tx);
-        let status = self.weixin_status.clone();
+        *worker.lock().unwrap() = Some(tx);
+        let status = status.clone();
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            weixin::run(app, binding, token, status, rx).await;
+            weixin::run(app, binding, token, status, rx, destination).await;
         });
     }
 }
@@ -146,8 +196,11 @@ pub async fn autostart(app: AppHandle) {
     if get_setting(&state.store, "feishu_enabled").await == "true" {
         mgr.start_feishu(&app).await;
     }
-    if get_setting(&state.store, "weixin_enabled").await == "true" {
-        mgr.start_weixin(&app).await;
+    let _guard = mgr.weixin_config_lock.lock().await;
+    for destination in [WeixinDestination::Projects, WeixinDestination::Assistant] {
+        if get_setting(&state.store, weixin_keys(destination).enabled).await == "true" {
+            mgr.start_weixin(&app, destination).await;
+        }
     }
 }
 
@@ -169,7 +222,14 @@ async fn load_secret(name: &'static str) -> String {
 }
 
 async fn load_weixin_binding(store: &Store) -> Option<weixin::Binding> {
-    serde_json::from_str(&get_setting(store, "weixin_binding").await).ok()
+    load_weixin_binding_for(store, WeixinDestination::Projects).await
+}
+
+async fn load_weixin_binding_for(
+    store: &Store,
+    destination: WeixinDestination,
+) -> Option<weixin::Binding> {
+    serde_json::from_str(&get_setting(store, weixin_keys(destination).binding).await).ok()
 }
 
 fn emit_channels_updated(app: &AppHandle) {
@@ -654,6 +714,9 @@ pub(crate) async fn record_last_message_session(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("Session '{frame_id}' no longer exists."))?;
+    if wisp_store::is_assistant_project_id(&project_id) {
+        return Ok(());
+    }
     let mut route = validated_route_unlocked(store).await?;
     route
         .last_session_by_project
@@ -911,6 +974,9 @@ pub(crate) async fn handle_inbound_observed(
     if text.is_empty() {
         return String::new();
     }
+    if channel == weixin_keys(WeixinDestination::Assistant).channel {
+        return assistant::handle_inbound(app, text, progress).await;
+    }
     let state = app.state::<AppState>();
     let chat_lock_key = format!("{channel}:{chat_key}");
     let turn_lock = chat_turn_lock(&chat_lock_key);
@@ -1121,15 +1187,24 @@ pub(crate) async fn handle_inbound_observed(
         Ok(session_id) => session_id,
         Err(error) => return format!("路由消息失败: {error}"),
     };
-    let progress = progress.map(prepare_progress_observer);
-    // The routing decision is now durable. Release the short critical section
-    // before the long agent turn so a later `/stop` can interrupt it. The
-    // destination runtime serializes subsequent turns in this same session.
+    // Release routing before the long turn so /stop remains responsive.
     drop(_turn_guard);
+    send_inbound_turn(app, window.label(), session_id, text, progress).await
+}
+
+async fn send_inbound_turn(
+    app: &AppHandle,
+    window_label: &str,
+    session_id: String,
+    text: &str,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+) -> String {
+    let state = app.state::<AppState>();
+    let progress = progress.map(prepare_progress_observer);
     let result = crate::send_message_inner(
         state.inner(),
         app.clone(),
-        window.label(),
+        window_label,
         Some(session_id.clone()),
         text.to_string(),
         None,
@@ -1446,25 +1521,74 @@ pub(crate) async fn reject_feishu_pending_owner(
 }
 
 #[tauri::command]
+pub(crate) async fn assistant_weixin_status(
+    state: State<'_, AppState>,
+    mgr: State<'_, ChannelManager>,
+) -> Result<AssistantWeixinStatus, String> {
+    let destination = WeixinDestination::Assistant;
+    let snapshot = status_snapshot(&mgr.assistant_weixin_status);
+    Ok(AssistantWeixinStatus {
+        enabled: get_setting(&state.store, weixin_keys(destination).enabled).await == "true",
+        bound: load_weixin_binding_for(&state.store, destination)
+            .await
+            .is_some(),
+        state: snapshot.state,
+        detail: snapshot.detail,
+    })
+}
+
+async fn validate_weixin_binding(
+    store: &Store,
+    destination: WeixinDestination,
+    status: &weixin::QrStatus,
+) -> Result<(), String> {
+    if status.ilink_user_id.trim().is_empty() || status.ilink_bot_id.trim().is_empty() {
+        return Err("扫码确认缺少所有者或机器人信息，请重新绑定。".into());
+    }
+    let other = match destination {
+        WeixinDestination::Projects => WeixinDestination::Assistant,
+        WeixinDestination::Assistant => WeixinDestination::Projects,
+    };
+    if load_weixin_binding_for(store, other)
+        .await
+        .is_some_and(|binding| binding.account_id == status.ilink_bot_id)
+    {
+        return Err(
+            "这个微信机器人已绑定另一个入口。请使用不同的机器人，或先在原入口解除绑定。".into(),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn set_weixin_channel(
     state: State<'_, AppState>,
     mgr: State<'_, ChannelManager>,
     app: AppHandle,
     enabled: bool,
+    destination: Option<WeixinDestination>,
 ) -> Result<(), String> {
-    if enabled && load_weixin_binding(&state.store).await.is_none() {
+    let _guard = mgr.weixin_config_lock.lock().await;
+    let destination = destination.unwrap_or_default();
+    let keys = weixin_keys(destination);
+    if enabled
+        && load_weixin_binding_for(&state.store, destination)
+            .await
+            .is_none()
+    {
         return Err("启用前请先扫码绑定微信。".into());
     }
     state
         .store
-        .set_setting("weixin_enabled", if enabled { "true" } else { "false" })
+        .set_setting(keys.enabled, if enabled { "true" } else { "false" })
         .await
         .map_err(|e| e.to_string())?;
     if enabled {
-        mgr.start_weixin(&app).await;
+        mgr.start_weixin(&app, destination).await;
     } else {
-        mgr.stop_weixin();
+        mgr.stop_weixin(destination);
     }
+    emit_channels_updated(&app);
     Ok(())
 }
 
@@ -1511,7 +1635,10 @@ pub(crate) async fn weixin_bind_poll(
     mgr: State<'_, ChannelManager>,
     app: AppHandle,
     qrcode: String,
+    destination: Option<WeixinDestination>,
 ) -> Result<String, String> {
+    let destination = destination.unwrap_or_default();
+    let keys = weixin_keys(destination);
     let client = weixin::IlinkClient::new("", "").map_err(|e| e.to_string())?;
     let st = client
         .qrcode_status(&qrcode)
@@ -1526,8 +1653,10 @@ pub(crate) async fn weixin_bind_poll(
     if st.bot_token.is_empty() {
         return Err("扫码确认成功,但服务端未返回登录凭证。".into());
     }
+    let _guard = mgr.weixin_config_lock.lock().await;
+    validate_weixin_binding(&state.store, destination, &st).await?;
     let token = st.bot_token.clone();
-    tokio::task::spawn_blocking(move || Secret::set(WEIXIN_TOKEN_SECRET, &token))
+    tokio::task::spawn_blocking(move || Secret::set(keys.token, &token))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
@@ -1540,7 +1669,7 @@ pub(crate) async fn weixin_bind_poll(
     state
         .store
         .set_setting(
-            "weixin_binding",
+            keys.binding,
             &serde_json::to_string(&binding).map_err(|e| e.to_string())?,
         )
         .await
@@ -1548,12 +1677,13 @@ pub(crate) async fn weixin_bind_poll(
     // Fresh binding → fresh cursor: never replay another login's backlog.
     state
         .store
-        .set_setting("weixin_sync_buf", "")
+        .set_setting(keys.cursor, "")
         .await
         .map_err(|e| e.to_string())?;
-    if get_setting(&state.store, "weixin_enabled").await == "true" {
-        mgr.start_weixin(&app).await;
+    if get_setting(&state.store, keys.enabled).await == "true" {
+        mgr.start_weixin(&app, destination).await;
     }
+    emit_channels_updated(&app);
     Ok("confirmed".into())
 }
 
@@ -1561,30 +1691,113 @@ pub(crate) async fn weixin_bind_poll(
 pub(crate) async fn weixin_unbind(
     state: State<'_, AppState>,
     mgr: State<'_, ChannelManager>,
+    app: AppHandle,
+    destination: Option<WeixinDestination>,
 ) -> Result<(), String> {
-    mgr.stop_weixin();
-    let _ = tokio::task::spawn_blocking(|| Secret::delete(WEIXIN_TOKEN_SECRET)).await;
+    let _guard = mgr.weixin_config_lock.lock().await;
+    let destination = destination.unwrap_or_default();
+    let keys = weixin_keys(destination);
+    mgr.stop_weixin(destination);
+    let _ = tokio::task::spawn_blocking(move || Secret::delete(keys.token)).await;
     state
         .store
-        .set_setting("weixin_binding", "")
+        .set_setting(keys.binding, "")
         .await
         .map_err(|e| e.to_string())?;
     state
         .store
-        .set_setting("weixin_sync_buf", "")
+        .set_setting(keys.cursor, "")
         .await
         .map_err(|e| e.to_string())?;
     state
         .store
-        .set_setting("weixin_enabled", "false")
+        .set_setting(keys.enabled, "false")
         .await
         .map_err(|e| e.to_string())?;
+    emit_channels_updated(&app);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn weixin_destinations_have_independent_storage_and_workers() {
+        let legacy = weixin_keys(WeixinDestination::default());
+        let assistant = weixin_keys(WeixinDestination::Assistant);
+        assert_eq!(legacy.binding, "weixin_binding");
+        assert_eq!(legacy.token, "weixin_bot_token");
+        for (left, right) in [
+            (legacy.binding, assistant.binding),
+            (legacy.token, assistant.token),
+            (legacy.enabled, assistant.enabled),
+            (legacy.cursor, assistant.cursor),
+            (legacy.channel, assistant.channel),
+        ] {
+            assert_ne!(left, right);
+        }
+        let manager = ChannelManager::new();
+        let (legacy_tx, legacy_rx) = watch::channel(false);
+        let (assistant_tx, assistant_rx) = watch::channel(false);
+        *manager.weixin.lock().unwrap() = Some(legacy_tx);
+        *manager.assistant_weixin.lock().unwrap() = Some(assistant_tx);
+        set_status(&manager.weixin_status, "running", "legacy");
+        manager.stop_weixin(WeixinDestination::Assistant);
+        assert!(*assistant_rx.borrow());
+        assert!(!*legacy_rx.borrow());
+        assert_eq!(status_snapshot(&manager.weixin_status).state, "running");
+        manager.stop_weixin(WeixinDestination::Projects);
+        assert!(*legacy_rx.borrow());
+    }
+
+    #[tokio::test]
+    async fn binding_rejects_bot_reuse_and_missing_owner_without_changing_existing_config() {
+        let dir = std::env::temp_dir().join(format!("wisp-weixin-bind-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("wisp.sqlite")).await.unwrap();
+        let binding = weixin::Binding {
+            user_id: "owner".into(),
+            account_id: "bot".into(),
+            base_url: String::new(),
+            bound_at: String::new(),
+        };
+        let original = serde_json::to_string(&binding).unwrap();
+        store
+            .set_setting("weixin_binding", &original)
+            .await
+            .unwrap();
+        let mut status = weixin::QrStatus {
+            ilink_user_id: "owner".into(),
+            ilink_bot_id: "bot".into(),
+            ..Default::default()
+        };
+        assert!(
+            validate_weixin_binding(&store, WeixinDestination::Assistant, &status)
+                .await
+                .is_err()
+        );
+        status.ilink_bot_id = "another-bot".into();
+        assert!(
+            validate_weixin_binding(&store, WeixinDestination::Assistant, &status)
+                .await
+                .is_ok()
+        );
+        status.ilink_user_id.clear();
+        assert!(
+            validate_weixin_binding(&store, WeixinDestination::Assistant, &status)
+                .await
+                .is_err()
+        );
+        assert_eq!(get_setting(&store, "weixin_binding").await, original);
+        assert!(
+            load_weixin_binding_for(&store, WeixinDestination::Assistant)
+                .await
+                .is_none()
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn shared_route_serializes_project_and_session() {

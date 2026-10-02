@@ -20,6 +20,14 @@ pub(crate) enum TurnOrigin {
 }
 
 impl TurnOrigin {
+    pub(crate) fn for_dispatch(self) -> Self {
+        if matches!(self, Self::Im) {
+            Self::Im
+        } else {
+            Self::Desktop
+        }
+    }
+
     fn force_ask_mutations(self) -> bool {
         matches!(self, Self::Im)
     }
@@ -1018,7 +1026,6 @@ pub(crate) async fn send_message_inner(
             .and_then(|s| s.connectors.as_ref())
             .map(|v| v.iter().cloned().collect());
         let wiring = if assistant {
-            agent.tools = research_assistant::tools(&app);
             ToolWiringResult::default()
         } else {
             wire_runtimes_and_mcp(
@@ -1056,6 +1063,11 @@ pub(crate) async fn send_message_inner(
         if let wisp_llm::Content::Text(prompt) = &mut message.content {
             network::sync_package_guidance(prompt, &network::load(&state.store).await?);
         }
+    }
+    // The singleton agent is reused by desktop and WeChat; dispatch policy must
+    // follow this turn's origin, not whichever client first constructed it.
+    if assistant {
+        agent.tools = research_assistant::tools(&app, origin);
     }
     let (auto_continue, auto_continue_limit) = load_auto_continue_settings(&state.store).await;
     apply_live_agent_settings(
@@ -2244,6 +2256,14 @@ mod queue_tests {
         let _queued = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn assistant_dispatch_preserves_remote_approval_policy_without_reusing_queue_ids() {
+        assert!(TurnOrigin::Im.for_dispatch().force_ask_mutations());
+        assert!(!TurnOrigin::Desktop.for_dispatch().force_ask_mutations());
+        assert_eq!(TurnOrigin::Queued(42).for_dispatch(), TurnOrigin::Desktop);
+        assert_eq!(TurnOrigin::Im.for_dispatch().queue_id(), None);
     }
 
     #[test]

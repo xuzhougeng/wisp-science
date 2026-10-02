@@ -1066,3 +1066,21 @@ fn session_artifact_preview_includes_review_token_and_retention_reasons() {
     let decoded: wisp_dto::SessionArtifactPreview = roundtrip(&preview);
     assert_eq!(decoded, preview);
 }
+
+#[test]
+fn assistant_weixin_status_contract_is_separate_from_legacy_channels() {
+    let status = wisp_dto::AssistantWeixinStatus {
+        enabled: true,
+        bound: true,
+        state: "running".into(),
+        detail: "connected".into(),
+    };
+    let dto: wisp_dto::AssistantWeixinStatus = roundtrip(&status);
+    assert!(dto.enabled && dto.bound);
+    assert_eq!(dto.state, "running");
+    assert_eq!(
+        serde_json::to_value(wisp_dto::WeixinDestination::Assistant).unwrap(),
+        "assistant"
+    );
+    assert!(serde_json::from_str::<wisp_dto::WeixinDestination>("\"invalid\"").is_err());
+}

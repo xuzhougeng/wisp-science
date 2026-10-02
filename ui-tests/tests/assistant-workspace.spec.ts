@@ -209,3 +209,96 @@ test("three-column, reading and narrow layouts fit light and dark windows", asyn
   await page.screenshot({ path: testInfo.outputPath("assistant-reading.png") });
   expect(errors).toEqual([]);
 });
+
+test("assistant WeChat binds, toggles and unbinds independently of project channels", async ({ page }) => {
+  await open(page);
+  const legacy = await page.evaluate(async () => {
+    const invoke = (window as any).__TAURI__.core.invoke;
+    await invoke("weixin_bind_poll", { qrcode: "legacy-qr" });
+    await invoke("set_weixin_channel", { enabled: true });
+    return await invoke("channels_status", {});
+  });
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  const dialog = page.getByTestId("assistant-remote");
+  await expect(dialog).toContainText("all visible projects");
+  const enabled = page.getByTestId("assistant-weixin-enabled");
+  await expect(enabled).toBeDisabled();
+  await expect(enabled).not.toBeChecked();
+  await dialog.getByRole("button", { name: "Scan to bind", exact: true }).click();
+  await expect(dialog.getByAltText("WeChat binding QR code")).toBeVisible();
+  await expect(enabled).toBeEnabled();
+  expect((await calls(page, "weixin_bind_poll")).at(-1).destination).toBe("assistant");
+  await enabled.check();
+  await expect(enabled).toBeChecked();
+  await expect(dialog.getByRole("status")).toContainText("Running");
+  expect((await calls(page, "set_weixin_channel")).at(-1)).toMatchObject({ destination: "assistant", enabled: true });
+  await dialog.screenshot({ path: test.info().outputPath("assistant-remote.png") });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("assistant-header")).toBeVisible();
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  await expect(enabled).toBeChecked();
+  await dialog.getByRole("button", { name: "Unbind", exact: true }).click();
+  await expect(enabled).not.toBeChecked();
+  await expect(enabled).toBeDisabled();
+  expect((await calls(page, "weixin_unbind"))[0].destination).toBe("assistant");
+  expect(await page.evaluate(() => (window as any).__TAURI__.core.invoke("channels_status", {}))).toEqual(legacy);
+  expect(await calls(page, "set_feishu_channel")).toHaveLength(0);
+  expect(await calls(page, "send_message")).toHaveLength(0);
+});
+
+test("immediate Escape closes remote access before assistant and narrow drawers", async ({ page }) => {
+  await page.setViewportSize({ width: 780, height: 880 });
+  await open(page);
+  await page.locator("#assistant-projects-toggle").click();
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("assistant-remote")).toHaveCount(0);
+  await expect(page.getByTestId("assistant-header")).toBeVisible();
+  await expect(page.getByTestId("assistant-projects")).toBeVisible();
+  await expect(page.locator("#assistant-remote-toggle")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("assistant-projects")).toBeHidden();
+  await expect(page.getByTestId("assistant-header")).toBeVisible();
+});
+
+test("assistant connection reports status, QR and enable errors with retry", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => { (window as any).__assistantWeixinStatusError = true; });
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  const dialog = page.getByTestId("assistant-remote");
+  await expect(dialog.getByRole("alert")).toContainText("Assistant connection unavailable");
+  await expect(dialog.getByRole("button", { name: "Scan to bind", exact: true })).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).__assistantWeixinStatusError = false;
+    (window as any).__assistantWeixinPollState = "expired";
+  });
+  await dialog.getByRole("button", { name: "Refresh status", exact: true }).click();
+  await dialog.getByRole("button", { name: "Scan to bind", exact: true }).click();
+  await expect(dialog).toContainText("QR code expired");
+  await page.evaluate(() => { (window as any).__assistantWeixinPollState = "error"; });
+  await dialog.getByRole("button", { name: "Scan to bind", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Binding failed");
+  await page.evaluate(() => { (window as any).__assistantWeixinPollState = "confirmed"; });
+  await dialog.getByRole("button", { name: "Scan to bind", exact: true }).click();
+  const enabled = page.getByTestId("assistant-weixin-enabled");
+  await expect(enabled).toBeEnabled();
+  await page.evaluate(() => { (window as any).__assistantWeixinEnableError = true; });
+  await enabled.click();
+  await expect(dialog.getByRole("alert")).toContainText("Enable failed");
+  await expect(enabled).not.toBeChecked();
+});
+
+test("closing an assistant QR stops polling without binding the legacy channel", async ({ page }) => {
+  await page.addInitScript(() => { (window as any).__assistantWeixinPollState = "wait"; });
+  await open(page);
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  await page.getByRole("button", { name: "Scan to bind", exact: true }).click();
+  await expect(page.getByAltText("WeChat binding QR code")).toBeVisible();
+  await page.keyboard.press("Escape");
+  const polls = (await calls(page, "weixin_bind_poll")).length;
+  await page.waitForTimeout(1600);
+  expect((await calls(page, "weixin_bind_poll")).length).toBe(polls);
+  await page.getByRole("button", { name: "Remote access", exact: true }).click();
+  await expect(page.getByTestId("assistant-weixin-enabled")).toBeDisabled();
+});

@@ -7321,6 +7321,7 @@ pub fn run() {
             agent_turn::queued_turn_action,
             agent_turn::stop_agent,
             channels::channels_status,
+            channels::assistant_weixin_status,
             channels::set_feishu_channel,
             channels::feishu_bind_start,
             channels::feishu_bind_poll,

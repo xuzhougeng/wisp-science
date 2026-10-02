@@ -1235,6 +1235,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     present: boolean;
   }> = [];
   let nextCustomCredential = 1;
+  const mockAssistantWeixin = { enabled: false, bound: false, state: "stopped", detail: "" };
   const mockChannels = {
     feishu_enabled: false,
     feishu_bound: false,
@@ -3637,6 +3638,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return Object.entries(mockCredentials);
           case "list_custom_credentials":
             return mockCustomCredentials.map((credential) => ({ ...credential }));
+          case "assistant_weixin_status":
+            if ((window as any).__assistantWeixinStatusError) throw new Error("Assistant connection unavailable");
+            return { ...mockAssistantWeixin };
           case "channels_status":
             return { ...mockChannels, device: { ...mockChannels.device } };
           case "set_feishu_channel":
@@ -3691,15 +3695,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockChannels.feishu_pending_owner_open_id = "";
             return null;
           case "set_weixin_channel":
+            if (arg("destination") === "assistant") {
+              if ((window as any).__assistantWeixinEnableError) throw new Error("Enable failed");
+              mockAssistantWeixin.enabled = Boolean(arg("enabled"));
+              mockAssistantWeixin.state = mockAssistantWeixin.enabled ? "running" : "stopped";
+              return null;
+            }
             mockChannels.weixin_enabled = Boolean(arg("enabled"));
             mockChannels.weixin_state = mockChannels.weixin_enabled ? "running" : "stopped";
             return null;
           case "weixin_bind_start":
             return { qrcode: "mock-qr", qr_image: "data:image/svg+xml;base64," + btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><rect width="21" height="21" fill="white"/><path d="M1 1h6v6H1zm2 2v2h2V3zM14 1h6v6h-6zm2 2v2h2V3zM1 14h6v6H1zm2 2v2h2v-2zM9 2h2v2H9zm2 3h2v2h-2zM8 8h3v3H8zm5 0h2v2h-2zm3 1h4v2h-4zM9 13h2v2H9zm3-2h2v4h-2zm3 2h2v2h-2zm3 0h2v4h-2zm-9 4h3v3H9zm5-1h3v2h-3zm1 3h5v1h-5z" fill="black"/></svg>') };
           case "weixin_bind_poll":
+            if (arg("destination") === "assistant") {
+              const result = (window as any).__assistantWeixinPollState ?? "confirmed";
+              if (result === "error") throw new Error("Binding failed");
+              if (result === "confirmed") mockAssistantWeixin.bound = true;
+              return result;
+            }
             mockChannels.weixin_bound = true;
             return "confirmed";
           case "weixin_unbind":
+            if (arg("destination") === "assistant") {
+              Object.assign(mockAssistantWeixin, { enabled: false, bound: false, state: "stopped", detail: "" });
+              return null;
+            }
             mockChannels.weixin_bound = false;
             mockChannels.weixin_enabled = false;
             mockChannels.weixin_state = "stopped";

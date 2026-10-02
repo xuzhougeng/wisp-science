@@ -1,6 +1,7 @@
 mod acp;
 mod agent_workflows;
 mod app_overlays;
+mod assistant_remote;
 mod assistant_workspace;
 mod automation;
 mod bindings;
@@ -1088,6 +1089,21 @@ fn App() -> impl IntoView {
     // The research assistant's one persistent conversation, shown as a
     // full-window overlay.
     let assistant_mode = create_rw_signal(false);
+    let assistant_remote_open = create_rw_signal(false);
+    let close_assistant_remote = Callback::new(move |_: ()| {
+        assistant_remote_open.set(false);
+        if let Some(button) = document()
+            .get_element_by_id("assistant-remote-toggle")
+            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = button.focus();
+        }
+    });
+    create_effect(move |_| {
+        if !assistant_mode.get() {
+            assistant_remote_open.set(false);
+        }
+    });
     let feedback_context = create_rw_signal::<Option<String>>(None);
     let project_open_error = create_rw_signal(None::<String>);
     let project_transfer = create_rw_signal(None::<ProjectTransferProgress>);
@@ -9772,6 +9788,11 @@ fn App() -> impl IntoView {
             return;
         }
 
+        if assistant_remote_open.get() {
+            ev.prevent_default();
+            close_assistant_remote.call(());
+            return;
+        }
         if inbox_open.get() {
             ev.prevent_default();
             inbox_open.set(false);
@@ -11863,9 +11884,13 @@ fn App() -> impl IntoView {
             />
         })}
 
+        {move || (assistant_mode.get() && assistant_remote_open.get()).then(|| view! {
+            <assistant_remote::AssistantRemote locale=locale on_close=close_assistant_remote/>
+        })}
         <div class="workspace-main">
         {move || assistant_mode.get().then(|| view! {
             <assistant_workspace::AssistantHeader locale=locale state=assistant_workspace on_close=close_assistant
+                on_remote=Callback::new(move |_| assistant_remote_open.set(true))
                 on_toggle=Callback::new(move |left| {
                     compose_menu_open.set(false);
                     model_menu_open.set(false);

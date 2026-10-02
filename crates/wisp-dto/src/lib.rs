@@ -2052,6 +2052,23 @@ fn default_resume_last_session() -> bool {
     true
 }
 
+/// Separate WeChat bindings; omitted destinations retain the project channel.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinDestination {
+    #[default]
+    Projects,
+    Assistant,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct AssistantWeixinStatus {
+    pub enabled: bool,
+    pub bound: bool,
+    pub state: String,
+    pub detail: String,
+}
+
 /// Mirror of `src-tauri` `channels::ChannelsStatus` (snake_case wire shape,
 /// same style as `Settings`).
 #[derive(Deserialize, Clone, Default)]

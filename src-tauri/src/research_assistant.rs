@@ -55,7 +55,7 @@ pub(crate) fn now_note() -> String {
     format!("Local time: {}", Local::now().format("%Y-%m-%d %A %H:%M"))
 }
 
-pub(crate) fn tools(app: &AppHandle) -> Registry {
+pub(crate) fn tools(app: &AppHandle, origin: crate::TurnOrigin) -> Registry {
     let store = app.state::<AppState>().store.clone();
     // No built-ins: the assistant has no files, shell or images to work with.
     let mut tools = Registry::builtins().filtered(&[]);
@@ -68,13 +68,19 @@ pub(crate) fn tools(app: &AppHandle) -> Registry {
     tools.add(Box::new(PlanTool {
         store: store.clone(),
     }));
-    tools.add(Box::new(DispatchTool { app: app.clone() }));
+    tools.add(Box::new(DispatchTool {
+        app: app.clone(),
+        origin,
+    }));
     tools.add(Box::new(SessionResultTool { app: app.clone() }));
     tools
 }
 
 /// Create the hidden project and its one conversation on first use.
 pub(crate) async fn ensure(store: &Store, app_data: &std::path::Path) -> Result<(), String> {
+    // Desktop opening and the first remote message can arrive together.
+    static ENSURE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = ENSURE_LOCK.lock().await;
     let err = |error: anyhow::Error| error.to_string();
     if store
         .get_project(ASSISTANT_PROJECT_ID)
@@ -669,6 +675,7 @@ async fn prepare_dispatch(
 
 struct DispatchTool {
     app: AppHandle,
+    origin: crate::TurnOrigin,
 }
 
 #[async_trait]
@@ -729,6 +736,7 @@ impl Tool for DispatchTool {
         let message = format!("[From the research assistant]\n\n{}", instruction.trim());
         let app = self.app.clone();
         let session = session_id.clone();
+        let origin = self.origin.for_dispatch();
         tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
             if let Err(error) = send_message_inner(
@@ -745,7 +753,7 @@ impl Tool for DispatchTool {
                 None,
                 None,
                 None,
-                crate::TurnOrigin::Desktop,
+                origin,
             )
             .await
             {

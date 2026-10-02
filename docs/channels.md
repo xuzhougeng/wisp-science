@@ -4,6 +4,12 @@ Settings → Remote Access connects IM bots to the workspace agent: messages you
 from Feishu or WeChat drive normal agent sessions (visible in the desktop app),
 and the final answer of each turn is sent back to the chat.
 
+The **Research assistant → Remote access** entry is a separate, WeChat-only
+connection to the assistant's persistent conversation. It manages visible
+projects through natural-language requests and does not use the project route
+or project-switching commands described below. Bind and enable it separately;
+the same bot cannot be bound to both entries. See [Research assistant](research-assistant.md#微信远程接入).
+
 Desktop, Feishu, and WeChat share one durable **IM target project**. Ordinary
 IM messages continue that project's current IM session. Starting work on the
 desktop in another project does **not** move Feishu or WeChat to that project —
