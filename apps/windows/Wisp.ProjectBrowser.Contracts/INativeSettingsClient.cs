@@ -37,7 +37,7 @@ public static class NativeSettingsProtocol
 {
     public const string Schema = "wisp.native-settings.v1";
     public static readonly IReadOnlyList<string> Sections = Array.AsReadOnly(new[] {
-        "general", "session", "appearance", "pet", "models", "quick-actions", "workflows",
+        "general", "network", "session", "appearance", "pet", "models", "quick-actions", "workflows",
         "specialists", "memory", "skills", "plugins", "browser", "connections", "channels",
         "credentials", "permissions", "environments", "storage", "usage"
     });

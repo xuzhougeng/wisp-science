@@ -34,6 +34,9 @@ impl Store {
         artifact_id: &str,
         scope: &StateScope,
     ) -> Result<bool> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.artifact_visible_in_scope(artifact_id, scope)).await;
+        }
         scope.validate()?;
         let visible: bool =
             match scope {
@@ -72,6 +75,9 @@ impl Store {
         artifact_id: &str,
         scope: &StateScope,
     ) -> Result<Option<String>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.artifact_path_in_scope(artifact_id, scope)).await;
+        }
         scope.validate()?;
         match scope {
             StateScope::Mainline { .. } => Ok(sqlx::query_scalar(
@@ -116,6 +122,17 @@ impl Store {
         content_type: &str,
         storage_path: &str,
     ) -> Result<String> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.save_artifact(
+                id,
+                project_id,
+                root_frame_id,
+                filename,
+                content_type,
+                storage_path,
+            ))
+            .await;
+        }
         self.save_artifact_version(&ArtifactVersionDraft {
             version_id: None,
             artifact_id: id.to_string(),
@@ -136,6 +153,11 @@ impl Store {
     }
 
     pub async fn save_artifact_version(&self, draft: &ArtifactVersionDraft) -> Result<String> {
+        if let Some(store) = self.route_project(&draft.project_id).await? {
+            return Box::pin(store.save_artifact_version(draft)).await;
+        }
+        self.retain_environment_snapshot(draft.env_snapshot_hash.as_deref())
+            .await?;
         if draft.artifact_id.trim().is_empty()
             || draft.project_id.trim().is_empty()
             || draft.root_frame_id.trim().is_empty()
@@ -339,6 +361,9 @@ impl Store {
     /// version. This is used when an isolated Agent workspace is removed after
     /// its immutable artifact bytes have been copied to durable app storage.
     pub async fn relocate_artifact_storage(&self, id: &str, storage_path: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("artifacts", "id", id).await? {
+            return Box::pin(store.relocate_artifact_storage(id, storage_path)).await;
+        }
         let mut tx = self.begin_write().await?;
         let latest_version_id: Option<String> =
             sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
@@ -365,6 +390,12 @@ impl Store {
     }
 
     pub async fn get_artifact_version(&self, version_id: &str) -> Result<Option<ArtifactVersion>> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", version_id)
+            .await?
+        {
+            return Box::pin(store.get_artifact_version(version_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\
                     parent_version_id,producing_run_id,env_snapshot_hash,materialization,\
@@ -381,6 +412,13 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<ArtifactVersion>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.list_artifact_versions_owned_by_exploration(exploration_id))
+                .await;
+        }
         let rows = sqlx::query(
             "SELECT version.id,version.artifact_id,version.version_number,version.content_type,\
                     version.storage_path,version.size_bytes,version.checksum,version.parent_version_id,\
@@ -399,6 +437,12 @@ impl Store {
         &self,
         version_id: &str,
     ) -> Result<Option<ArtifactVersionContext>> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", version_id)
+            .await?
+        {
+            return Box::pin(store.get_artifact_version_context(version_id)).await;
+        }
         let row = sqlx::query(
             "SELECT version.id,version.artifact_id,version.version_number,\
                     version.content_type,version.storage_path,version.size_bytes,version.checksum,\
@@ -435,6 +479,9 @@ impl Store {
         &self,
         artifact_id: &str,
     ) -> Result<Option<ArtifactVersionContext>> {
+        if let Some(store) = self.route_entity("artifacts", "id", artifact_id).await? {
+            return Box::pin(store.get_latest_artifact_version_context(artifact_id)).await;
+        }
         let version_id: Option<String> =
             sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
                 .bind(artifact_id)
@@ -453,6 +500,18 @@ impl Store {
         producing_run_id: Option<&str>,
         env_snapshot_hash: Option<&str>,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", version_id)
+            .await?
+        {
+            return Box::pin(store.set_artifact_version_provenance(
+                version_id,
+                producing_run_id,
+                env_snapshot_hash,
+            ))
+            .await;
+        }
+        self.retain_environment_snapshot(env_snapshot_hash).await?;
         sqlx::query(
             "UPDATE artifact_versions SET producing_run_id=?, env_snapshot_hash=? WHERE id=?",
         )
@@ -469,6 +528,9 @@ impl Store {
         &self,
         root_frame_id: &str,
     ) -> Result<Vec<(String, String, String, String, i64, Option<String>)>> {
+        if let Some(store) = self.route_entity("frames", "id", root_frame_id).await? {
+            return Box::pin(store.list_artifacts(root_frame_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id, filename, content_type, storage_path, created_at, logical_key FROM artifacts \
              WHERE root_frame_id=? ORDER BY created_at DESC",
@@ -497,6 +559,9 @@ impl Store {
         query: &str,
         limit: i64,
     ) -> Result<Vec<(String, String, String, String, i64)>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.search_project_artifacts(project_id, query, limit)).await;
+        }
         let q = query.trim().to_lowercase();
         let rows = sqlx::query(
             "SELECT id, filename, content_type, storage_path, created_at FROM artifacts \
@@ -533,6 +598,28 @@ impl Store {
         limit: i64,
         artifact_id: Option<&str>,
     ) -> Result<Vec<ArtifactSearchResult>> {
+        if let Some(project_id) = project_id {
+            if let Some(store) = self.route_project(project_id).await? {
+                return Box::pin(store.search_artifacts(
+                    Some(project_id),
+                    query,
+                    limit,
+                    artifact_id,
+                ))
+                .await;
+            }
+        }
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                result.extend(
+                    Box::pin(store.search_artifacts(project_id, query, limit, artifact_id)).await?,
+                );
+            }
+            result.sort_by(|a, b| b.ts.cmp(&a.ts).then(a.name.cmp(&b.name)));
+            result.truncate(limit.clamp(1, 100) as usize);
+            return Ok(result);
+        }
         let q = query.trim().to_lowercase();
         let rows = sqlx::query(
             "SELECT a.id AS id, a.filename AS filename, a.content_type AS content_type, \
@@ -602,6 +689,15 @@ impl Store {
         query: &str,
         limit: i64,
     ) -> Result<Vec<ArtifactSearchResult>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.search_exploration_artifacts(
+                project_id,
+                exploration_id,
+                query,
+                limit,
+            ))
+            .await;
+        }
         let q = query.trim().to_lowercase();
         let rows = sqlx::query(
             "SELECT a.id AS id,a.filename AS filename,\
@@ -677,6 +773,9 @@ impl Store {
     /// by their display title. Empty frames never appear in the picker.
 
     pub async fn get_artifact(&self, id: &str) -> Result<Option<(String, String, String, String)>> {
+        if let Some(store) = self.route_entity("artifacts", "id", id).await? {
+            return Box::pin(store.get_artifact(id)).await;
+        }
         let row = sqlx::query(
             "SELECT filename, content_type, storage_path, root_frame_id FROM artifacts WHERE id=?",
         )
@@ -696,6 +795,9 @@ impl Store {
     /// Artifact ownership plus storage information for safe cross-project
     /// preview and explicit composer attachment resolution.
     pub async fn get_artifact_detail(&self, id: &str) -> Result<Option<ArtifactSearchResult>> {
+        if let Some(store) = self.route_entity("artifacts", "id", id).await? {
+            return Box::pin(store.get_artifact_detail(id)).await;
+        }
         let row = sqlx::query(
             "SELECT a.id AS id,a.filename AS filename,a.content_type AS content_type,\
                     a.storage_path AS storage_path,a.created_at AS created_at,\
@@ -754,6 +856,9 @@ impl Store {
     /// internal snapshot path under `.wisp/` and must not be shown as the
     /// document's real location.
     pub async fn artifact_location(&self, id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("artifacts", "id", id).await? {
+            return Box::pin(store.artifact_location(id)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT logical_key FROM artifacts WHERE id=?")
                 .bind(id)

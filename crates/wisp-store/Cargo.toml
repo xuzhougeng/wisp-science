@@ -15,13 +15,20 @@ futures-util = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
+same-file = { workspace = true }
+dunce = { workspace = true }
 uuid = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-dto = { workspace = true }
 tracing = { workspace = true }
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { workspace = true, features = ["windows-native"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { workspace = true, features = ["apple-native"] }

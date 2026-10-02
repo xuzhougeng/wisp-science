@@ -1624,6 +1624,40 @@ export function media_url(path, ownerId) {
   return ownedMediaUrl(path, ownerId, "full", acquireFullMedia);
 }
 
+/** Load unbound historical Markdown images through the project-scoped reader.
+ * Keep the exact DOM node across awaits: a late read must never overwrite a
+ * replacement message, project, or a newly arrived immutable resource binding.
+ */
+export async function hydrate_workspace_images(ownerId, unavailable) {
+  let owner = document.getElementById(ownerId);
+  if (!owner) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    owner = document.getElementById(ownerId);
+  }
+  if (!owner) return;
+  await Promise.all(Array.from(owner.querySelectorAll("img[data-workspace-image-path]"), async (img) => {
+    if (img.hasAttribute("data-resource-id") || img.dataset.imageLoading) return;
+    img.dataset.imageLoading = "true";
+    const path = img.getAttribute("data-workspace-image-path");
+    const current = () => owner.isConnected && owner.contains(img);
+    try {
+      const url = await media_url(path, ownerId);
+      if (!current()) return;
+      if (!url) throw new Error("Image bytes unavailable");
+      img.src = url;
+      img.classList.add("resource-inline-image");
+      await img.decode();
+    } catch {
+      if (!current()) return;
+      const fallback = document.createElement("span");
+      fallback.className = "resource-unresolved";
+      fallback.title = path;
+      fallback.textContent = `${img.alt || path.split("/").at(-1)} — ${unavailable}`;
+      img.replaceWith(fallback);
+    }
+  }));
+}
+
 const THUMB_MAX_EDGE = 384;
 
 export function media_thumbnail_url(path, ownerId) {

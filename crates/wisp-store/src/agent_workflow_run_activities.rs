@@ -73,6 +73,9 @@ impl Store {
         run: &RunRecord,
         activity: &AgentWorkflowRunActivity,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(&run.project_id).await? {
+            return Box::pin(store.create_agent_workflow_run_activity(run, activity)).await;
+        }
         self.create_agent_workflow_run_activity_inner(run, activity, None)
             .await
     }
@@ -85,6 +88,12 @@ impl Store {
         activity: &AgentWorkflowRunActivity,
         state: &super::MethodSearchRunState,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(&run.project_id).await? {
+            return Box::pin(
+                store.create_method_search_workflow_run_activity(run, activity, state),
+            )
+            .await;
+        }
         state.validate()?;
         if state.run_id != run.id {
             anyhow::bail!("method-search state does not match the linked Run");
@@ -299,6 +308,12 @@ impl Store {
         &self,
         attempt_id: &str,
     ) -> Result<Option<AgentWorkflowRunActivity>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", attempt_id)
+            .await?
+        {
+            return Box::pin(store.get_agent_workflow_run_activity(attempt_id)).await;
+        }
         sqlx::query(&format!("{SELECT_ACTIVITY} WHERE attempt_id=?"))
             .bind(attempt_id)
             .fetch_optional(&self.pool)
@@ -312,6 +327,9 @@ impl Store {
         &self,
         run_id: &str,
     ) -> Result<Option<AgentWorkflowRunActivity>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.get_agent_workflow_run_activity_by_run(run_id)).await;
+        }
         sqlx::query(&format!("{SELECT_ACTIVITY} WHERE run_id=?"))
             .bind(run_id)
             .fetch_optional(&self.pool)
@@ -325,6 +343,12 @@ impl Store {
         &self,
         workflow_id: &str,
     ) -> Result<Vec<AgentWorkflowRunActivity>> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.list_agent_workflow_run_activities(workflow_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_ACTIVITY} WHERE attempt_id IN (SELECT id FROM agent_workflow_attempts WHERE workflow_id=?) ORDER BY created_at,attempt_id"
         ))
@@ -339,6 +363,15 @@ impl Store {
         attempt_id: &str,
         state_json: &str,
     ) -> Result<bool> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", attempt_id)
+            .await?
+        {
+            return Box::pin(
+                store.update_agent_workflow_run_activity_state(attempt_id, state_json),
+            )
+            .await;
+        }
         if !serde_json::from_str::<serde_json::Value>(state_json)
             .is_ok_and(|value| value.is_object())
         {
@@ -361,6 +394,12 @@ impl Store {
         &self,
         attempt_id: &str,
     ) -> Result<Option<AgentWorkflowAttemptStatus>> {
+        if let Some(store) = self
+            .route_entity("agent_workflow_attempts", "id", attempt_id)
+            .await?
+        {
+            return Box::pin(store.reconcile_agent_workflow_run_activity(attempt_id)).await;
+        }
         let Some(row) = sqlx::query(
             "SELECT r.status,r.id FROM agent_workflow_run_activities link \
              JOIN runs r ON r.id=link.run_id WHERE link.attempt_id=?",

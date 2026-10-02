@@ -38,7 +38,7 @@ pub(crate) fn valid_json_tool_arguments(arguments: &str) -> String {
 
 /// reqwest's Display hides the useful part ("connection refused", "proxy
 /// unreachable", dns errors) in `source()`; walk the chain so users see it (#77).
-fn error_chain(e: &reqwest::Error) -> String {
+pub(crate) fn error_chain(e: &reqwest::Error) -> String {
     let mut s = e.to_string();
     let mut src = std::error::Error::source(e);
     while let Some(cause) = src {
@@ -289,6 +289,10 @@ pub enum ProviderKind {
     OpenAiCompatible,
     /// OpenAI's first-party `/v1/responses` endpoint.
     OpenAiResponses,
+    /// ChatGPT Plus/Pro subscription via the Codex responses endpoint (legacy).
+    OpenAiCodex,
+    /// Sign in with ChatGPT: `/v1/responses` with a plan-backed access token.
+    OpenAiChatGpt,
     /// Anthropic Messages API (`/v1/messages`).
     Anthropic,
 }
@@ -498,6 +502,39 @@ impl ProviderConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
+    pub fn openai_chatgpt(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::OpenAiChatGpt,
+            ..Self::openai_responses(base_url, api_key, model)
+        }
+    }
+    pub fn openai_codex(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::OpenAiCodex,
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            model: model.into(),
+            anthropic_version: "2023-06-01".into(),
+            max_tokens: 8192,
+            reasoning_effort: None,
+            thinking_enabled: None,
+            service_tier: None,
+            proxy: None,
+            user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
     pub fn anthropic(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -614,7 +651,7 @@ pub trait Provider: Send + Sync {
 pub fn build(cfg: ProviderConfig) -> Box<dyn Provider> {
     match cfg.kind {
         ProviderKind::OpenAiCompatible => Box::new(crate::openai::OpenAiProvider::new(cfg)),
-        ProviderKind::OpenAiResponses => {
+        ProviderKind::OpenAiResponses | ProviderKind::OpenAiCodex | ProviderKind::OpenAiChatGpt => {
             Box::new(crate::responses::OpenAiResponsesProvider::new(cfg))
         }
         ProviderKind::Anthropic => Box::new(crate::anthropic::AnthropicProvider::new(cfg)),

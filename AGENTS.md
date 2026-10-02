@@ -16,7 +16,7 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - `crates/wisp-dto/`: shared serde DTOs for the UI ⇄ Tauri invoke/event contract. Compiles for wasm32 and native; data only, no Leptos/Tauri deps. `ui/src/dto.rs` re-exports it, and `src-tauri/src/dto_contract_tests.rs` deserializes backend payloads into these types to catch serde drift. Add new cross-boundary shapes here, not as hand-mirrored copies.
 - `crates/wisp-runs/`: shared Run control plane (`run_in_context`, `monitor_run`, harvest/cleanup/transfer) used by the CLI and the desktop shell.
 - `crates/wisp-cli/`: headless `wisp-science` binary (interactive, `run`, `rpc`, `eval`).
-- `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry. `src/app_state.rs` owns `AppState`/`SessionRuntime`/`ActiveProject`; `src/agent_turn.rs` owns the send_message turn pipeline, turn queue, and stop_agent; `lib.rs` keeps command registration, setup, and shared helpers.
+- `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry. `src/app_state.rs` owns `AppState`/`SessionRuntime`/`ActiveProject`; `src/agent_turn.rs` owns the send_message turn pipeline, turn queue, and stop_agent; `src/turn_hooks.rs` owns what runs when a turn ends (Stop: automatic review/correction before `Done`; AfterTurn: memory proposal and follow-up questions after it) and the shared side-model call `side_complete`; `lib.rs` keeps command registration, setup, and shared helpers.
 - `src-tauri/src/model_catalog_shared.rs`: distilled models.dev catalog types and exact-id lookup, compiled into both `build.rs` and the runtime. `build.rs` fetches `https://models.dev/api.json` at build time and falls back to the checked-in `src-tauri/model_catalog.snapshot.json` when offline (`WISP_CATALOG_OFFLINE=1` skips the fetch); run `scripts/refresh_model_catalog.sh` to refresh the snapshot before releases.
 - `ui/`: Leptos frontend.
 - `ui-tests/`: Playwright tests with mocked Tauri bridge.
@@ -126,3 +126,11 @@ For the research-workbench roadmap, use this ordering:
 3. Workspace Manifest v1: typed project layout, save/register APIs for scripts/data/results/literature/figures.
 4. Research Graph v0: link questions, decisions, data assets, runs, artifacts, and papers.
 5. UI integration: contexts panel, runs timeline, artifact/data/literature side panels.
+
+## Cursor Cloud specific instructions
+
+Linux compiles of `src-tauri` need `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, and `libdbus-1-dev` (keyring). Reinstall those packages with `Dpkg::Options::=--force-confdef` and `--force-confold`; otherwise `fuse3` stops on the existing `/etc/fuse.conf`.
+
+`rust-toolchain.toml` selects stable Rust plus `wasm32-unknown-unknown`, rustfmt, and clippy. UI builds need `trunk` (`cargo install trunk --locked`). `cargo tauri` needs Tauri CLI v2. `uv` must be on `PATH` for `cargo run -p wisp-mcp --example smoke`.
+
+`cargo run -p wisp-cli -- eval` is the offline agent check and needs no API key. UI behavior is `cd ui-tests && npx playwright test` (it starts Trunk). `cargo tauri dev` opens a native window and needs a graphical session. If the `src-tauri` build cannot reach `https://models.dev/api.json`, set `WISP_CATALOG_OFFLINE=1`.

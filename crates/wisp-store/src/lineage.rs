@@ -7,6 +7,9 @@ use sqlx::Row;
 
 impl Store {
     pub async fn save_run_input(&self, input: &RunInput) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &input.run_id).await? {
+            return Box::pin(store.save_run_input(input)).await;
+        }
         if input.id.trim().is_empty()
             || input.run_id.trim().is_empty()
             || input.source_ref.trim().is_empty()
@@ -143,6 +146,9 @@ impl Store {
     }
 
     pub async fn list_run_inputs(&self, run_id: &str) -> Result<Vec<RunInput>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.list_run_inputs(run_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,run_id,artifact_version_id,external_resource_id,source_ref,role,\
                     required,basis,confidence,created_at \
@@ -172,6 +178,9 @@ impl Store {
     }
 
     pub async fn save_run_output(&self, output: &RunOutput) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &output.run_id).await? {
+            return Box::pin(store.save_run_output(output)).await;
+        }
         if output.id.trim().is_empty()
             || output.run_id.trim().is_empty()
             || output.artifact_version_id.trim().is_empty()
@@ -241,6 +250,9 @@ impl Store {
     }
 
     pub async fn list_run_outputs(&self, run_id: &str) -> Result<Vec<RunOutput>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.list_run_outputs(run_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,run_id,artifact_version_id,role,logical_output_key,source_path,created_at \
              FROM run_outputs WHERE run_id=? ORDER BY created_at,id",
@@ -272,6 +284,20 @@ impl Store {
         basis: LineageBasis,
         confidence: LineageConfidence,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", artifact_version_id)
+            .await?
+        {
+            return Box::pin(store.save_artifact_dependency(
+                id,
+                artifact_version_id,
+                depends_on_version_id,
+                reference_name,
+                basis,
+                confidence,
+            ))
+            .await;
+        }
         if id.trim().is_empty()
             || artifact_version_id.trim().is_empty()
             || depends_on_version_id.trim().is_empty()
@@ -340,6 +366,12 @@ impl Store {
         &self,
         artifact_version_id: &str,
     ) -> Result<Vec<ArtifactDependency>> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", artifact_version_id)
+            .await?
+        {
+            return Box::pin(store.list_artifact_dependencies(artifact_version_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,artifact_version_id,depends_on_version_id,reference_name,basis,\
                     confidence,created_at \
@@ -366,6 +398,9 @@ impl Store {
     }
 
     pub async fn save_run_code_snapshot(&self, code: &RunCodeSnapshot) -> Result<()> {
+        if let Some(store) = self.route_entity("runs", "id", &code.run_id).await? {
+            return Box::pin(store.save_run_code_snapshot(code)).await;
+        }
         if code.id.trim().is_empty()
             || code.run_id.trim().is_empty()
             || code.source_kind.trim().is_empty()
@@ -419,6 +454,9 @@ impl Store {
     }
 
     pub async fn list_run_code_snapshots(&self, run_id: &str) -> Result<Vec<RunCodeSnapshot>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.list_run_code_snapshots(run_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,run_id,source_kind,source_path,source_text,checksum,storage_path,\
                     git_commit,dirty_patch,created_at \
@@ -450,6 +488,9 @@ impl Store {
         run_id: &str,
         logical_output_key: &str,
     ) -> Result<Option<ArtifactVersion>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.get_run_output_version(run_id, logical_output_key)).await;
+        }
         let row = sqlx::query(
             "SELECT v.id,v.artifact_id,v.version_number,v.content_type,v.storage_path,\
                     v.size_bytes,v.checksum,v.parent_version_id,v.producing_run_id,\
@@ -467,6 +508,9 @@ impl Store {
     }
 
     pub async fn save_external_resource(&self, resource: &ExternalResource) -> Result<()> {
+        if let Some(store) = self.route_project(&resource.project_id).await? {
+            return Box::pin(store.save_external_resource(resource)).await;
+        }
         self.save_external_resource_in_scope(resource, &StateScope::mainline(&resource.project_id))
             .await
     }
@@ -476,6 +520,9 @@ impl Store {
         resource: &ExternalResource,
         scope: &StateScope,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.save_external_resource_in_scope(resource, scope)).await;
+        }
         if resource.id.trim().is_empty()
             || resource.project_id.trim().is_empty()
             || resource.kind.trim().is_empty()
@@ -555,6 +602,9 @@ impl Store {
     }
 
     pub async fn get_external_resource(&self, id: &str) -> Result<Option<ExternalResource>> {
+        if let Some(store) = self.route_entity("external_resources", "id", id).await? {
+            return Box::pin(store.get_external_resource(id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,project_id,kind,uri,version,checksum,size_bytes,license,visibility,\
                     access_instructions,accessed_at,created_at,updated_at \
@@ -588,6 +638,9 @@ impl Store {
         id: &str,
         scope: &StateScope,
     ) -> Result<Option<ExternalResource>> {
+        if let Some(store) = self.route_project(scope.project_id()).await? {
+            return Box::pin(store.get_external_resource_in_scope(id, scope)).await;
+        }
         let StateScope::Exploration {
             project_id,
             exploration_id,
@@ -638,6 +691,13 @@ impl Store {
         &self,
         exploration_id: &str,
     ) -> Result<Vec<ExternalResource>> {
+        if let Some(store) = self
+            .route_entity("explorations", "id", exploration_id)
+            .await?
+        {
+            return Box::pin(store.list_external_resources_owned_by_exploration(exploration_id))
+                .await;
+        }
         let rows = sqlx::query(
             "SELECT id,project_id,kind,uri,version,checksum,size_bytes,license,visibility,\
                     access_instructions,accessed_at,created_at,updated_at \

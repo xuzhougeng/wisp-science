@@ -446,8 +446,8 @@ fn resource_reference_matches(rendered: &str, original: &str) -> bool {
 }
 
 /// Replace path-bearing Markdown tags with durable resource identities. Only
-/// bindings persisted with this exact message are considered; old unbound
-/// messages intentionally retain their original behavior.
+/// bindings persisted with this exact message are considered. Unbound local
+/// images are handled separately, without changing any persisted history.
 fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> String {
     if resources.is_empty() {
         return html;
@@ -484,6 +484,17 @@ fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> S
         };
         consumed[resource_index] = true;
         let resource = &resources[resource_index];
+        // Older messages attempted to snapshot directory links as files. Let
+        // live path classification route failed links, including those old
+        // directory bindings. Captured versions and image placeholders stay
+        // on the durable-resource route.
+        if attribute == "href"
+            && resource.status != "ready"
+            && resource.artifact_version_id.is_none()
+        {
+            out.push_str(tag);
+            continue;
+        }
         let old = format!(r#"{attribute}="{}""#, reference);
         let title = html_escape(
             resource
@@ -519,23 +530,95 @@ fn replace_bound_resource_tags(html: String, resources: &[MessageResource]) -> S
     out
 }
 
-/// Paths the UI has already asked `missing_files` about. A mention becomes a
-/// clickable workspace link only when it is in `checked` and not in `missing`.
+/// True when `replace_bound_resource_tags` left this resource as an `<img>`
+/// embed. A link to an image carries the same id but stays a link, so its
+/// version bytes are never needed.
+pub(crate) fn html_embeds_resource_image(html: &str, resource_id: &str) -> bool {
+    html.contains(&format!(
+        r#"src="" data-resource-id="{}""#,
+        html_escape(resource_id)
+    ))
+}
+
+/// Old messages can contain local images without a captured resource version.
+/// Give those images an absolute project path for the native byte reader, not
+/// a relative WebView URL. Existing bindings (including failures) always win.
+pub(crate) fn prepare_workspace_images(html: String, project_root: Option<&str>) -> String {
+    let Some(root) = project_root.filter(|root| !root.is_empty()) else {
+        return html;
+    };
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("<img ") {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find('>') else { break };
+        let tag = &rest[..=end];
+        rest = &rest[end + 1..];
+        let path = html_attr(tag, "src")
+            .filter(|_| html_attr(tag, "data-resource-id").is_none())
+            .and_then(|reference| {
+                workspace_image_path(root, &reference).map(|path| (reference, path))
+            });
+        if let Some((reference, path)) = path {
+            out.push_str(&tag.replacen(
+                &format!(r#"src="{reference}""#),
+                &format!(r#"data-workspace-image-path="{}""#, html_escape(&path)),
+                1,
+            ));
+        } else {
+            out.push_str(tag);
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn workspace_image_path(root: &str, reference: &str) -> Option<String> {
+    let decoded = decode_href(&decode_html_attribute(reference)).replace('\\', "/");
+    let mut path = decoded.as_str();
+    if path.to_ascii_lowercase().starts_with("file:///") {
+        path = &path["file://".len()..];
+        if matches!(path.as_bytes(), [b'/', drive, b':', b'/', ..] if drive.is_ascii_alphabetic()) {
+            path = &path[1..];
+        }
+    }
+    // Do not route URL schemes, network URLs or parent traversal to local IPC.
+    // The backend additionally validates the canonical path against the active
+    // project, including symlinks. Resolve before caching to isolate projects.
+    if path.starts_with("//")
+        || path.split('/').any(|part| part == "..")
+        || (path.contains(':')
+            && !matches!(path.as_bytes(), [drive, b':', b'/', ..] if drive.is_ascii_alphabetic()))
+        || file_kind(path) != Some("image")
+    {
+        return None;
+    }
+    let relative = workspace_relative_path(root, path)?;
+    Some(format!(
+        "{}/{}",
+        root.replace('\\', "/").trim_end_matches('/'),
+        relative
+    ))
+}
+
+/// Verified types from the current project's filesystem. Unchecked paths
+/// remain plain text until classification completes successfully.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WorkspacePathLiveness {
     pub checked: HashSet<String>,
     pub missing: HashSet<String>,
+    pub directories: HashSet<String>,
 }
 
 impl WorkspacePathLiveness {
     pub(crate) fn is_openable(&self, path: &str) -> bool {
         self.checked.contains(path) && !self.missing.contains(path)
     }
-
-    pub(crate) fn is_known_missing(&self, path: &str) -> bool {
-        self.checked.contains(path) && self.missing.contains(path)
-    }
 }
+
+#[derive(Clone, Copy)]
+pub(crate) struct OpenWorkspaceDirectory(pub Callback<String>);
 
 /// Post-process rendered Markdown: durable resources, artifact chips, code
 /// wrappers, and filename links.
@@ -558,7 +641,7 @@ pub(crate) fn enrich_md_html(
     html = wrap_code_filenames_as_art_refs(html, arts);
     html = linkify_bare_urls(html);
     html = wrap_inline_workspace_paths(html, project_root, liveness);
-    html = unwrap_known_missing_file_links(html, project_root, liveness);
+    html = classify_workspace_links(html, project_root, liveness);
     html = strip_list_markers_before_art_refs(&html);
     html = collapse_orphan_separator_paragraphs(html);
     html = html.replace("<pre><code", "<pre class=\"md-code\"><code");
@@ -590,26 +673,35 @@ pub(crate) fn enrich_app_markdown(
     }
 }
 
-/// Portable workspace-relative href for a previewable file that lives under
-/// `root`. Globs, commands, and paths outside the project are rejected; a
-/// bare filename is allowed when it actually names a file at the project root.
-pub(crate) fn workspace_file_href(root: &str, candidate: &str) -> Option<String> {
-    let candidate = normalize_path(candidate.trim());
-    if candidate.is_empty() || candidate.chars().any(char::is_whitespace) {
+/// Portable workspace-relative href for a filesystem entry that lives under
+/// `root`. Reject globs, URL schemes and traversal. The caller must verify
+/// metadata before making this candidate clickable, including bare names.
+pub(crate) fn workspace_path_href(root: &str, candidate: &str) -> Option<String> {
+    let candidate = match candidate.trim() {
+        "./" | ".\\" => ".".to_string(),
+        candidate => normalize_path(candidate),
+    };
+    if candidate.is_empty()
+        || is_external_href(&candidate)
+        || candidate.contains("://")
+        || candidate
+            .replace('\\', "/")
+            .split('/')
+            .any(|part| part == "..")
+        || (candidate.contains(':')
+            && !matches!(candidate.as_bytes(), [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic()))
+    {
         return None;
     }
     if looks_like_glob(&candidate) {
         return None;
     }
     let relative = workspace_relative_path(root, &candidate)?;
-    if relative.is_empty()
-        || relative.chars().any(char::is_whitespace)
-        || looks_like_glob(&relative)
-    {
+    if looks_like_glob(&relative) {
         return None;
     }
-    file_kind(&relative)?;
-    Some(relative)
+    let relative = relative.trim_end_matches('/');
+    Some(if relative.is_empty() { "." } else { relative }.to_string())
 }
 
 fn looks_like_glob(path: &str) -> bool {
@@ -665,18 +757,20 @@ fn collect_markdown_workspace_paths(
 ) {
     collect_image_tag_paths(markdown, root, out, seen);
     collect_file_citation_paths(markdown, root, out, seen);
-    let mut in_fence = false;
-    for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
+    // Use the same Markdown grammar as rendering, including reference links,
+    // optional titles and parentheses in directory names. Guessing destinations
+    // with string splits leaves valid paths permanently unverified.
+    for event in pulldown_cmark::Parser::new(markdown) {
+        match event {
+            pulldown_cmark::Event::Code(path) => {
+                remember_workspace_path(root, &path, out, seen);
+            }
+            pulldown_cmark::Event::Start(
+                pulldown_cmark::Tag::Link { dest_url, .. }
+                | pulldown_cmark::Tag::Image { dest_url, .. },
+            ) => remember_workspace_path(root, &dest_url, out, seen),
+            _ => {}
         }
-        if in_fence {
-            continue;
-        }
-        collect_inline_code_spans(line, root, out, seen);
-        collect_markdown_destinations(line, root, out, seen);
     }
 }
 
@@ -686,54 +780,11 @@ fn remember_workspace_path(
     out: &mut Vec<String>,
     seen: &mut HashSet<String>,
 ) {
-    let Some(path) = workspace_file_href(root, raw) else {
+    let Some(path) = workspace_path_href(root, &decode_href(raw)) else {
         return;
     };
     if seen.insert(path.clone()) {
         out.push(path);
-    }
-}
-
-fn collect_inline_code_spans(
-    line: &str,
-    root: &str,
-    out: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-) {
-    let mut rest = line;
-    while let Some(start) = rest.find('`') {
-        rest = &rest[start + 1..];
-        if rest.starts_with('`') {
-            continue;
-        }
-        let Some(end) = rest.find('`') else {
-            break;
-        };
-        remember_workspace_path(root, &rest[..end], out, seen);
-        rest = &rest[end + 1..];
-    }
-}
-
-fn collect_markdown_destinations(
-    line: &str,
-    root: &str,
-    out: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-) {
-    let mut rest = line;
-    while let Some(idx) = rest.find("](") {
-        rest = &rest[idx + 2..];
-        let dest = if let Some(inner) = rest.strip_prefix('<') {
-            inner.split('>').next().unwrap_or(inner)
-        } else {
-            rest.split(')').next().unwrap_or(rest)
-        };
-        remember_workspace_path(root, dest.trim(), out, seen);
-        if let Some(end) = rest.find(')') {
-            rest = &rest[end + 1..];
-        } else {
-            break;
-        }
     }
 }
 
@@ -812,7 +863,7 @@ fn wrap_inline_workspace_paths(
         };
         let encoded = &code_rest[..end];
         let candidate = decode_html_attribute(encoded);
-        let linked = workspace_file_href(root, &candidate)
+        let linked = workspace_path_href(root, &candidate)
             .filter(|path| live.is_openable(path))
             .filter(|_| {
                 !code_is_inside_art_ref(before)
@@ -835,17 +886,14 @@ fn wrap_inline_workspace_paths(
     out
 }
 
-/// Drop local file anchors that we already know cannot be opened. Bound
-/// resources, external URLs, and directory links keep their existing routes.
-fn unwrap_known_missing_file_links(
+/// Route verified local links by filesystem type. Missing and unverified
+/// paths become monospace text; immutable versions and external links survive.
+fn classify_workspace_links(
     html: String,
     project_root: Option<&str>,
     liveness: Option<&WorkspacePathLiveness>,
 ) -> String {
     let Some(root) = project_root.filter(|root| !root.is_empty()) else {
-        return html;
-    };
-    let Some(live) = liveness else {
         return html;
     };
     let mut out = String::with_capacity(html.len());
@@ -865,15 +913,31 @@ fn unwrap_known_missing_file_links(
         };
         let inner = &after[..end];
         rest = &after[end + 4..];
-        let missing_file = extract_href_from_tag(tag)
-            .map(|href| decode_href(&href))
+        let local_href = extract_href_from_tag(tag)
+            .map(|href| decode_href(&decode_html_attribute(&href)))
             .filter(|href| !is_external_href(href) && !opens_in_system_browser(href))
-            .filter(|_| !tag.contains("data-resource-id"))
-            .filter(|href| !href.ends_with(['/', '\\']))
-            .and_then(|href| workspace_file_href(root, &href))
-            .is_some_and(|path| live.is_known_missing(&path));
-        if missing_file {
-            out.push_str(inner);
+            .filter(|_| !tag.contains("data-resource-id"));
+        if let Some(href) = local_href {
+            let path = workspace_path_href(root, &href);
+            let verified = path
+                .as_ref()
+                .filter(|path| liveness.is_some_and(|live| live.is_openable(path)));
+            if let Some(path) = verified {
+                let kind = if liveness.is_some_and(|live| live.directories.contains(path)) {
+                    "directory"
+                } else {
+                    "file"
+                };
+                out.push_str(&format!(r#"<a class="workspace-path-link" href="{}" data-workspace-path="{}" data-workspace-kind="{kind}">"#, html_escape(path), html_escape(path)));
+                out.push_str(inner);
+                out.push_str("</a>");
+            } else if inner.starts_with("<code>") && inner.ends_with("</code>") {
+                out.push_str(inner);
+            } else {
+                out.push_str("<code>");
+                out.push_str(inner);
+                out.push_str("</code>");
+            }
             continue;
         }
         out.push_str(tag);
@@ -1046,6 +1110,102 @@ mod art_ref_marker_tests {
     }
 
     #[test]
+    fn historical_images_resolve_against_the_project_on_both_platforms() {
+        for (root, reference, expected) in [
+            (
+                "E:/project",
+                "species_fix_out/figures/sample_statistics.png",
+                "E:/project/species_fix_out/figures/sample_statistics.png",
+            ),
+            (
+                r"E:\project",
+                "e:%5Cproject%5Cfigures%5Cplot.png",
+                "E:/project/figures/plot.png",
+            ),
+            (
+                "E:/project",
+                "file:///E:/project/plot.png",
+                "E:/project/plot.png",
+            ),
+            (
+                "/Users/me/project",
+                "file:///Users/me/project/plot.png",
+                "/Users/me/project/plot.png",
+            ),
+            (
+                "/Users/me/project",
+                "figures/%E5%9B%BE%201%20%26%202.png",
+                "/Users/me/project/figures/图 1 & 2.png",
+            ),
+        ] {
+            assert_eq!(
+                workspace_image_path(root, reference).as_deref(),
+                Some(expected)
+            );
+            let html = md_to_html(&format!("![plot](<{reference}>)"));
+            let html = prepare_workspace_images(html, Some(root));
+            assert!(
+                html.contains(&format!(
+                    r#"data-workspace-image-path="{}""#,
+                    html_escape(expected)
+                )),
+                "{html}"
+            );
+            assert!(!html.contains(" src="), "{html}");
+        }
+    }
+
+    #[test]
+    fn historical_images_do_not_read_urls_or_paths_outside_the_project() {
+        for reference in [
+            "https://example.com/a.png",
+            "//example.com/a.png",
+            "blob:a.png",
+            "data:image/png;base64,AA",
+            "../a.png",
+            "figures/%2e%2e/a.png",
+            "D:/other/a.png",
+            "E:/project-other/a.png",
+            "file://server/a.png",
+            "/elsewhere/a.png",
+        ] {
+            assert_eq!(
+                workspace_image_path("E:/project", reference),
+                None,
+                "{reference}"
+            );
+        }
+        let html = md_to_html("![plot](figures/plot.png)");
+        assert_eq!(prepare_workspace_images(html.clone(), None), html);
+    }
+
+    #[test]
+    fn historical_image_fallback_never_overrides_existing_resource_versions() {
+        let html =
+            md_to_html("![saved](saved.png)\n\n![missing](missing.png)\n\n![legacy](legacy.png)");
+        let html = enrich_md_html(
+            html,
+            &[],
+            &[
+                message_resource("saved.png", "image", true),
+                message_resource("missing.png", "image", false),
+            ],
+            Locale::En,
+            Some("/project"),
+            None,
+        );
+        let html = prepare_workspace_images(html, Some("/project"));
+        assert_eq!(
+            html.matches("data-workspace-image-path=").count(),
+            1,
+            "{html}"
+        );
+        assert!(html.contains(r#"data-workspace-image-path="/project/legacy.png""#));
+        assert!(html.contains(r#"data-resource-status="ready""#));
+        assert!(html.contains(r#"class="resource-unresolved""#));
+    }
+
+    #[test]
     fn replaces_bound_links_and_images_with_resource_identity() {
         let html = r#"<p><a href="D:/work/report.md">report</a><img src="figures/plot.png" alt="plot" /></p>"#;
         let resources = vec![
@@ -1060,14 +1220,38 @@ mod art_ref_marker_tests {
     }
 
     #[test]
-    fn unresolved_binding_is_visible_and_never_keeps_the_raw_path() {
+    fn only_image_embeds_count_as_embedded_resources() {
+        let render = |markdown: &str| {
+            let resource = message_resource("figures/plot.png", "image", true);
+            enrich_md_html(
+                md_to_html(markdown),
+                &[],
+                &[resource],
+                Locale::En,
+                None,
+                None,
+            )
+        };
+        let linked = render("| file |\n|-|\n| [plot](figures/plot.png)（pdf） |");
+        assert!(linked.contains(r#"data-resource-id="resource-link""#));
+        assert!(!html_embeds_resource_image(&linked, "resource-link"));
+        let embedded = render("![plot](figures/plot.png)");
+        assert!(html_embeds_resource_image(&embedded, "resource-link"));
+    }
+
+    #[test]
+    fn unresolved_binding_uses_live_classification_and_missing_path_is_plain() {
         let html = r#"<p><a href="figures/missing.md">missing</a></p>"#;
-        let out = replace_bound_resource_tags(
+        let out = enrich_md_html(
             html.into(),
+            &[],
             &[message_resource("figures/missing.md", "markdown", false)],
+            Locale::En,
+            Some("/mock/root"),
+            None,
         );
-        assert!(out.contains(r#"data-resource-status="unresolved""#));
-        assert!(out.contains(r#"title="not found""#));
+        assert!(out.contains("<code>missing</code>"));
+        assert!(!out.contains("<a "));
         assert!(!out.contains("figures/missing.md"));
     }
 
@@ -1205,6 +1389,7 @@ mod art_ref_marker_tests {
         WorkspacePathLiveness {
             checked: paths.iter().map(|path| (*path).to_string()).collect(),
             missing: HashSet::new(),
+            directories: HashSet::new(),
         }
     }
 
@@ -1212,6 +1397,7 @@ mod art_ref_marker_tests {
         WorkspacePathLiveness {
             checked: checked.iter().map(|path| (*path).to_string()).collect(),
             missing: missing.iter().map(|path| (*path).to_string()).collect(),
+            directories: HashSet::new(),
         }
     }
 
@@ -1349,10 +1535,82 @@ mod art_ref_marker_tests {
             &[".cache/Figure-style-rbq.png"],
             &[".cache/Figure-style-rbq.png"],
         );
-        let out = unwrap_known_missing_file_links(html.into(), Some("/mock/root"), Some(&live));
+        let out = classify_workspace_links(html.into(), Some("/mock/root"), Some(&live));
         assert!(!out.contains(r#"href=".cache/Figure-style-rbq.png""#));
         assert!(out.contains("Image #1"));
-        assert!(out.contains(r#"<a href="results/">results</a>"#));
+        assert!(out.contains("<code>results</code>"));
+    }
+
+    #[test]
+    fn directories_in_old_failed_bindings_and_inline_code_open_as_directories() {
+        let path = "docs/07.celltype_auto_annotation";
+        let mut live = openable_paths(&[path, "my data"]);
+        live.directories.extend([path.into(), "my data".into()]);
+        let html = format!(
+            r#"<p><a href="{path}">annotation</a> <code>{path}/</code> <a href="my%20data/">data</a></p>"#
+        );
+        let out = enrich_md_html(
+            html,
+            &[],
+            &[message_resource(path, "file", false)],
+            Locale::En,
+            Some("/mock/root"),
+            Some(&live),
+        );
+        assert_eq!(out.matches(r#"data-workspace-kind="directory""#).count(), 3);
+        assert!(!out.contains("unresolved"));
+        assert!(!out.contains("data-resource-id"));
+    }
+
+    #[test]
+    fn classification_preserves_external_links_and_snapshot_identity() {
+        let html = r#"<a href="saved.md">saved</a> <a href="https://example.com">web</a> <a href="unknown.txt">unknown</a> <a href="../outside.txt">outside</a>"#;
+        let out = enrich_md_html(
+            html.into(),
+            &[],
+            &[message_resource("saved.md", "markdown", true)],
+            Locale::En,
+            Some("/mock/root"),
+            None,
+        );
+        assert!(out.contains(r##"href="#" data-resource-id="resource-link""##));
+        assert!(out.contains(r#"href="https://example.com""#));
+        assert!(out.contains("<code>unknown</code>"));
+        assert!(out.contains("<code>outside</code>"));
+        assert!(!out.contains("data-workspace-path"));
+    }
+
+    #[test]
+    fn directory_candidates_preserve_hidden_names_and_reject_escapes() {
+        assert_eq!(
+            workspace_path_href("/project", "/project/"),
+            Some(".".into())
+        );
+        assert_eq!(workspace_path_href("/project", "./"), Some(".".into()));
+        assert_eq!(
+            workspace_path_href("/project", "docs/07.celltype_auto_annotation/"),
+            Some("docs/07.celltype_auto_annotation".into())
+        );
+        assert_eq!(
+            workspace_path_href("/project", ".cache/plot.png"),
+            Some(".cache/plot.png".into())
+        );
+        assert_eq!(workspace_path_href("/project", "../outside"), None);
+        assert_eq!(workspace_path_href("/project", "https://example.com"), None);
+        assert_eq!(
+            workspace_path_href("D:/Project", r"D:\Project\docs"),
+            Some("docs".into())
+        );
+    }
+
+    #[test]
+    fn discovers_directory_links_with_titles_spaces_and_reference_syntax() {
+        let mut paths = Vec::new();
+        collect_markdown_workspace_paths(
+            "[folder](docs/annotation(1)/ \"title\") [data][dir]\n\n[dir]: <my data/>\n\n`README`\n\n~~~\n`ignored/path`\n~~~",
+            "/project", &mut paths, &mut HashSet::new(),
+        );
+        assert_eq!(paths, ["docs/annotation(1)", "my data", "README"]);
     }
 
     #[test]
@@ -1473,6 +1731,17 @@ pub(crate) fn handle_md_click(
             return;
         }
         if n.tag_name().eq_ignore_ascii_case("a") {
+            if n.get_attribute("data-workspace-kind").as_deref() == Some("directory") {
+                ev.prevent_default();
+                ev.stop_propagation();
+                if let (Some(path), Some(open)) = (
+                    n.get_attribute("data-workspace-path"),
+                    use_context::<OpenWorkspaceDirectory>(),
+                ) {
+                    open.0.call(path);
+                }
+                return;
+            }
             if let Some(resource_id) = n.get_attribute("data-resource-id") {
                 ev.prevent_default();
                 ev.stop_propagation();

@@ -15,7 +15,9 @@ use std::{
     sync::Arc,
 };
 use tauri::{AppHandle, State};
-use wisp_store::{secrets::Secret, ProjectSyncState, Store};
+use wisp_store::{
+    secrets::Secret, FolderSyncOutcome, ProjectSyncState, Store, WORKSPACE_TRANSPORT,
+};
 use wisp_sync::{
     decrypt_blob, encrypt_blob, random_project_key, sha256_hex, sign_revision, verify_revision,
     CommitOutcome, CommitRequest, FileRelay, HttpRelay, SyncRevision, SyncTransport, WorkspaceFile,
@@ -1309,6 +1311,146 @@ async fn clear_project_runtime_cache(state: &AppState, project_id: &str, frame_i
     }
 }
 
+fn folder_result(outcome: FolderSyncOutcome) -> ProjectSyncResult {
+    let direction = match outcome.status {
+        "published" => "push",
+        "pulled" => "pull",
+        _ => "none",
+    };
+    ProjectSyncResult {
+        status: outcome.status.into(),
+        direction: direction.into(),
+        revision: outcome.revision,
+        uploaded_files: 0,
+        downloaded_files: 0,
+        skipped_paths: Vec::new(),
+    }
+}
+
+async fn is_folder_project(store: &Store, id: &str) -> Result<bool, String> {
+    Ok(store
+        .get_project_sync_state(id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some_and(|state| state.transport_kind == WORKSPACE_TRANSPORT))
+}
+
+/// Cloud-folder projects publish/adopt snapshots inside their own folder; the
+/// drive client moves the workspace files, so no relay or device code is used.
+async fn sync_folder_project(
+    state: &AppState,
+    id: &str,
+    strategy: Option<&str>,
+) -> Result<ProjectSyncResult, String> {
+    let _quiet = begin_quiet_sync(state, id).await?;
+    let old_frame_ids = state
+        .store
+        .list_project_frame_ids(id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let device_id = device_id(&state.store).await?;
+    let outcome = state
+        .store
+        .sync_folder_snapshots(id, &device_id, true, strategy)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    if outcome.status == "pulled" {
+        clear_project_runtime_cache(state, id, &old_frame_ids).await;
+    }
+    Ok(folder_result(outcome))
+}
+
+/// Opening a cloud-folder project adopts a version another device published,
+/// but only while this device has nothing unpublished. Anything else leaves
+/// local records alone; the project card reports the folder state.
+pub(super) async fn adopt_newer_folder_version(state: &AppState, id: &str) {
+    if !matches!(
+        state.store.folder_snapshot_status(id).await,
+        Ok(Some("remote-newer"))
+    ) {
+        return;
+    }
+    if let Err(error) = sync_folder_project(state, id, None).await {
+        tracing::warn!(project_id=%id, %error, "Newer cloud-folder version not adopted");
+    }
+}
+
+#[tauri::command]
+pub(super) async fn enable_project_folder_sync(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ProjectSyncResult, String> {
+    exploration_commands::reject_private_exploration_project_mutation(
+        &state.store,
+        &id,
+        "Cloud-drive folder saving",
+    )
+    .await?;
+    let _quiet = begin_quiet_sync(&state, &id).await?;
+    let device_id = device_id(&state.store).await?;
+    state
+        .store
+        .enable_folder_snapshots(&id, &device_id)
+        .await
+        .map(folder_result)
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// Publish this device's edits to cloud-folder projects once they settle.
+/// Adopting another device's version is left to opening the project or Sync
+/// now, so records never change underneath an open conversation.
+pub(crate) fn start_folder_publisher(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut checked = BTreeSet::new();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
+        loop {
+            tick.tick().await;
+            publish_changed_folders(&app, &mut checked).await;
+        }
+    });
+}
+
+async fn publish_changed_folders(app: &AppHandle, checked: &mut BTreeSet<String>) {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let Ok(ids) = state.store.folder_snapshot_projects().await else {
+        return;
+    };
+    for id in ids {
+        // The first pass after launch compares hashes once: the previous run
+        // may have exited before publishing. Later passes need a cache write.
+        let unpublished = matches!(
+            state.store.folder_snapshot_status(&id).await,
+            Ok(Some("unpublished"))
+        );
+        if checked.contains(&id) && !unpublished {
+            continue;
+        }
+        // A turn in progress is consistent but incomplete; wait for it.
+        let Ok(_activity) = state.begin_project_activity(&id) else {
+            continue;
+        };
+        if project_has_frame_activity(&state, &id)
+            .await
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let Ok(device_id) = device_id(&state.store).await else {
+            return;
+        };
+        checked.insert(id.clone());
+        if let Err(error) = state
+            .store
+            .sync_folder_snapshots(&id, &device_id, false, None)
+            .await
+        {
+            tracing::warn!(project_id=%id, error=%format!("{error:#}"), "Cloud-folder publish deferred");
+        }
+    }
+}
+
 #[tauri::command]
 pub(super) async fn sync_project(
     state: State<'_, AppState>,
@@ -1320,6 +1462,9 @@ pub(super) async fn sync_project(
         "Project synchronization",
     )
     .await?;
+    if is_folder_project(&state.store, &id).await? {
+        return sync_folder_project(&state, &id, None).await;
+    }
     let _quiet = begin_quiet_sync(&state, &id).await?;
     let old_frame_ids = state
         .store
@@ -1397,6 +1542,9 @@ pub(super) async fn resolve_project_sync(
         "Project synchronization conflict resolution",
     )
     .await?;
+    if is_folder_project(&state.store, &id).await? {
+        return sync_folder_project(&state, &id, Some(&strategy)).await;
+    }
     let _quiet = begin_quiet_sync(&state, &id).await?;
     let old_frame_ids = state
         .store
@@ -1494,6 +1642,9 @@ pub(super) async fn project_sync_code(
         .ok_or_else(|| {
             "Synchronize this project once before copying its device code.".to_string()
         })?;
+    if cursor.transport_kind == WORKSPACE_TRANSPORT {
+        return Err("This project is shared through its cloud-drive folder. Import that folder on the other device instead of using a device code.".into());
+    }
     if cursor.base_revision.is_none() {
         return Err("Synchronize this project successfully before copying its device code.".into());
     }

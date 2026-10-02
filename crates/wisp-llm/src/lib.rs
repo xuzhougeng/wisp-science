@@ -10,6 +10,8 @@
 //! normalized to a single `reasoning` string.
 
 pub mod anthropic;
+pub mod chatgpt_auth;
+pub mod codex_auth;
 pub mod message;
 pub mod openai;
 pub mod provider;
@@ -17,6 +19,7 @@ pub mod responses;
 pub mod routed;
 pub mod scripted;
 mod system_proxy;
+pub mod xai_auth;
 
 pub use message::{
     tool_call_pairing, Completion, Content, FunctionCall, ImageUrl, Message, Part, Role, ToolCall,

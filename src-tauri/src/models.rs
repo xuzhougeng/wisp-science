@@ -151,7 +151,7 @@ impl Default for VideoGenerationOptions {
 }
 
 const PROFILES_KEY: &str = "model_profiles";
-const ACTIVE_KEY: &str = "active_model_id";
+pub(crate) const ACTIVE_KEY: &str = "active_model_id";
 const VISION_KEY: &str = "vision_model_id";
 const IMAGE_GENERATION_KEY: &str = "image_generation_model_id";
 const VIDEO_GENERATION_KEY: &str = "video_generation_model_id";
@@ -252,10 +252,20 @@ fn same_endpoint(left: &str, right: &str) -> bool {
     !left.is_empty() && left == normalize_endpoint(right)
 }
 
+/// Subscription profiles hold an OAuth access token that rotates with its
+/// refresh token. It is not an API key and must not be shared with siblings.
+pub(crate) fn is_subscription_provider(provider: &str) -> bool {
+    matches!(provider, "openai_codex" | "openai_chatgpt" | "xai_oauth")
+}
+
 fn sibling_key(profiles: &[ModelProfile], api_url: &str, exclude_id: &str) -> String {
     profiles
         .iter()
-        .filter(|profile| profile.id != exclude_id && same_endpoint(&profile.api_url, api_url))
+        .filter(|profile| {
+            profile.id != exclude_id
+                && !is_subscription_provider(&profile.provider)
+                && same_endpoint(&profile.api_url, api_url)
+        })
         .map(|profile| key_for(&profile.id))
         .find(|key| !key.is_empty())
         .unwrap_or_default()
@@ -276,12 +286,21 @@ fn store_profile_key(
     api_url: &str,
     profiles: &[ModelProfile],
 ) -> Result<(), String> {
+    // A subscription is an OAuth token pair, not a shared API key.
+    // Inheriting or rotating it would detach the refresh token from the access token.
+    if profiles
+        .iter()
+        .any(|profile| profile.id == id && is_subscription_provider(&profile.provider))
+    {
+        return Ok(());
+    }
     if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
         let previous = key_for(id);
         secret_set(&secret_name(id), key)?;
         if !previous.is_empty() && previous != key {
             for profile in profiles {
                 if profile.id != id
+                    && !is_subscription_provider(&profile.provider)
                     && same_endpoint(&profile.api_url, api_url)
                     && key_for(&profile.id) == previous
                 {
@@ -879,6 +898,250 @@ fn key_for(id: &str) -> String {
     }
 }
 
+pub(crate) fn codex_oauth_secret(id: &str) -> String {
+    format!("codex_oauth:{id}")
+}
+
+pub(crate) fn store_codex_credentials(
+    profile_id: &str,
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(&secret_name(profile_id), &creds.access_token)?;
+    let json = creds.to_json();
+    secret_set(&codex_oauth_secret(profile_id), &json)?;
+    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &json)?;
+    store_codex_account(creds)
+}
+
+pub(crate) fn store_global_codex(
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(wisp_llm::codex_auth::SUBSCRIPTION_SECRET, &creds.to_json())?;
+    store_codex_account(creds)
+}
+
+pub(crate) fn load_global_codex() -> Option<wisp_llm::codex_auth::CodexCredentials> {
+    wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(
+        wisp_llm::codex_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+/// Ordered account ids of the ChatGPT account pool (no credentials).
+const CODEX_ACCOUNTS_SECRET: &str = "codex_accounts";
+
+fn codex_account_secret(account_id: &str) -> String {
+    format!("codex_account:{account_id}")
+}
+
+pub(crate) fn codex_account_ids() -> Vec<String> {
+    serde_json::from_str(&secret_get(CODEX_ACCOUNTS_SECRET)).unwrap_or_default()
+}
+
+pub(crate) fn load_codex_account(
+    account_id: &str,
+) -> Option<wisp_llm::codex_auth::CodexCredentials> {
+    wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(&codex_account_secret(
+        account_id,
+    )))
+}
+
+/// Every write of an account's tokens lands here too, so switching back to it
+/// never restores a refresh token that rotation already invalidated.
+pub(crate) fn store_codex_account(
+    creds: &wisp_llm::codex_auth::CodexCredentials,
+) -> Result<(), String> {
+    secret_set(&codex_account_secret(&creds.account_id), &creds.to_json())?;
+    let ids = codex_account_ids();
+    let next = with_account_id(&ids, &creds.account_id);
+    if next == ids {
+        return Ok(());
+    }
+    secret_set(
+        CODEX_ACCOUNTS_SECRET,
+        &serde_json::to_string(&next).unwrap_or_default(),
+    )
+}
+
+pub(crate) fn forget_codex_account(account_id: &str) -> Result<(), String> {
+    let next: Vec<String> = codex_account_ids()
+        .into_iter()
+        .filter(|id| id != account_id)
+        .collect();
+    secret_set(
+        CODEX_ACCOUNTS_SECRET,
+        &serde_json::to_string(&next).unwrap_or_default(),
+    )?;
+    secret_del(&codex_account_secret(account_id))
+}
+
+fn with_account_id(ids: &[String], account_id: &str) -> Vec<String> {
+    ids.iter()
+        .cloned()
+        .chain((!ids.iter().any(|id| id == account_id)).then(|| account_id.to_string()))
+        .collect()
+}
+
+/// Of two copies of one account, the later expiry was refreshed last and holds
+/// the live refresh token.
+pub(crate) fn fresher_codex(
+    a: wisp_llm::codex_auth::CodexCredentials,
+    b: Option<wisp_llm::codex_auth::CodexCredentials>,
+) -> wisp_llm::codex_auth::CodexCredentials {
+    b.filter(|b| b.account_id == a.account_id && b.expires_at_ms > a.expires_at_ms)
+        .unwrap_or(a)
+}
+
+/// One Sign in with ChatGPT serves every `openai_chatgpt` model. Its refresh
+/// token rotates, so the token pair lives only in the account secret; a
+/// profile keeps just the latest access token (for `has_api_key`).
+pub(crate) fn store_chatgpt_credentials(
+    profile_id: Option<&str>,
+    creds: &wisp_llm::chatgpt_auth::ChatGptCredentials,
+) -> Result<(), String> {
+    secret_set(
+        wisp_llm::chatgpt_auth::SUBSCRIPTION_SECRET,
+        &creds.to_json(),
+    )?;
+    match profile_id {
+        Some(id) => secret_set(&secret_name(id), &creds.access_token),
+        None => Ok(()),
+    }
+}
+
+pub(crate) fn load_global_chatgpt() -> Option<wisp_llm::chatgpt_auth::ChatGptCredentials> {
+    wisp_llm::chatgpt_auth::ChatGptCredentials::from_json(&secret_get(
+        wisp_llm::chatgpt_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+/// This installation's agent id for Sign in with ChatGPT, created once.
+pub(crate) fn chatgpt_host_id() -> Result<uuid::Uuid, String> {
+    let saved = secret_get(wisp_llm::chatgpt_auth::HOST_ID_SECRET);
+    if let Ok(id) = uuid::Uuid::parse_str(saved.trim()) {
+        return Ok(id);
+    }
+    let id = uuid::Uuid::new_v4();
+    secret_set(wisp_llm::chatgpt_auth::HOST_ID_SECRET, &id.to_string())?;
+    Ok(id)
+}
+
+async fn fresh_chatgpt_access_token(id: &str, access: String) -> String {
+    let Some(creds) = load_global_chatgpt() else {
+        return access;
+    };
+    let client = crate::network::subscription_http_client();
+    match wisp_llm::chatgpt_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms())
+        .await
+    {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_chatgpt_credentials(Some(id), &next) {
+                    tracing::warn!(target: "wisp", %error, "chatgpt token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "chatgpt token refresh failed");
+            access
+        }
+    }
+}
+
+pub(crate) fn xai_oauth_secret(id: &str) -> String {
+    format!("xai_oauth:{id}")
+}
+
+pub(crate) fn store_xai_credentials(
+    profile_id: &str,
+    creds: &wisp_llm::xai_auth::XaiCredentials,
+) -> Result<(), String> {
+    secret_set(&secret_name(profile_id), &creds.access_token)?;
+    let json = creds.to_json();
+    secret_set(&xai_oauth_secret(profile_id), &json)?;
+    secret_set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &json)?;
+    Ok(())
+}
+
+pub(crate) fn store_global_xai(creds: &wisp_llm::xai_auth::XaiCredentials) -> Result<(), String> {
+    secret_set(wisp_llm::xai_auth::SUBSCRIPTION_SECRET, &creds.to_json())
+}
+
+pub(crate) fn load_global_xai() -> Option<wisp_llm::xai_auth::XaiCredentials> {
+    wisp_llm::xai_auth::XaiCredentials::from_json(&secret_get(
+        wisp_llm::xai_auth::SUBSCRIPTION_SECRET,
+    ))
+}
+
+async fn fresh_xai_access_token(id: &str, access: String) -> String {
+    let Some(mut creds) =
+        wisp_llm::xai_auth::XaiCredentials::from_json(&secret_get(&xai_oauth_secret(id)))
+    else {
+        return access;
+    };
+    if !access.is_empty() {
+        creds.access_token = access.clone();
+    }
+    let client = crate::network::subscription_http_client();
+    match wisp_llm::xai_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_xai_credentials(id, &next) {
+                    tracing::warn!(target: "wisp", %error, "xai token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "xai token refresh failed");
+            access
+        }
+    }
+}
+
+/// Access token for a turn. Subscription profiles refresh before the token is
+/// inside the five-minute expiry window and write the rotated refresh token back.
+async fn fresh_access_token(provider: &str, id: &str) -> String {
+    let access = key_for(id);
+    if provider == "xai_oauth" {
+        return fresh_xai_access_token(id, access).await;
+    }
+    if provider == "openai_chatgpt" {
+        return fresh_chatgpt_access_token(id, access).await;
+    }
+    if provider != "openai_codex" {
+        return access;
+    }
+    let Some(stored) =
+        wisp_llm::codex_auth::CodexCredentials::from_json(&secret_get(&codex_oauth_secret(id)))
+    else {
+        return access;
+    };
+    let mut creds = stored;
+    if !access.is_empty() {
+        creds.access_token = access.clone();
+    }
+    // Another model may have refreshed this account since this copy was written.
+    let account = load_codex_account(&creds.account_id);
+    let creds = fresher_codex(creds, account);
+    let client = crate::network::subscription_http_client();
+    match wisp_llm::codex_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await
+    {
+        Ok(next) => {
+            if next.access_token != access {
+                if let Err(error) = store_codex_credentials(id, &next) {
+                    tracing::warn!(target: "wisp", %error, "codex token refresh could not be stored");
+                }
+            }
+            next.access_token
+        }
+        Err(error) => {
+            tracing::warn!(target: "wisp", %error, "codex token refresh failed");
+            access
+        }
+    }
+}
+
 /// The active profile's `(provider, api_url, model, api_key)` for a turn.
 pub async fn active_config(store: &wisp_store::Store) -> (String, String, String, String) {
     let profiles = ensure(store).await;
@@ -892,7 +1155,8 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
         return ("openai".into(), String::new(), String::new(), String::new());
     };
     let api_url = effective_api_url(&p);
-    (p.provider, api_url, p.model, key_for(&p.id))
+    let access = fresh_access_token(&p.provider, &p.id).await;
+    (p.provider, api_url, p.model, access)
 }
 
 pub(crate) const IMAGE_GENERATION_UNSUPPORTED: &str =
@@ -903,33 +1167,13 @@ pub(crate) fn model_id_tail(model: &str) -> &str {
     model.rsplit('/').next().unwrap_or(model)
 }
 
-/// Known IDs used only for backwards-compatible automatic classification.
-/// This is a hint, not an allowlist: explicit image profiles accept custom IDs.
-pub(crate) fn is_image_generation_model(model: &str) -> bool {
-    let tail = model_id_tail(model);
-    tail.eq_ignore_ascii_case("gpt-image-2") || tail.eq_ignore_ascii_case("grok-imagine-image-2.0")
-}
-
-pub(crate) fn is_grok_imagine_model(model: &str) -> bool {
-    model_id_tail(model).eq_ignore_ascii_case("grok-imagine-image-2.0")
-}
+// Shared with the UI so both sides classify model IDs identically.
+pub(crate) use wisp_dto::{
+    is_grok_imagine_model, is_image_generation_model, is_video_generation_model,
+    VIDEO_ASPECT_RATIOS, VIDEO_DURATION_MAX_SECS, VIDEO_DURATION_MIN_SECS, VIDEO_RESOLUTIONS,
+};
 
 pub(crate) const VIDEO_GENERATION_UNSUPPORTED: &str = "Video generation currently supports xAI grok-imagine-video, grok-imagine-video-1.5, and grok-imagine-video-1.5-preview.";
-
-pub(crate) const VIDEO_ASPECT_RATIOS: &[&str] = &["16:9", "9:16", "1:1", "4:3", "3:4"];
-pub(crate) const VIDEO_RESOLUTIONS: &[&str] = &["480p", "720p", "1080p"];
-pub(crate) const VIDEO_DURATION_MIN_SECS: u32 = 1;
-pub(crate) const VIDEO_DURATION_MAX_SECS: u32 = 15;
-
-/// Video-generation model IDs. Gateway `vendor/model` ids match on the last
-/// path segment. Exact IDs only — `grok-imagine-video` must not absorb
-/// `grok-imagine-video-1.5-preview` or a future sibling.
-pub(crate) fn is_video_generation_model(model: &str) -> bool {
-    let tail = model_id_tail(model);
-    tail.eq_ignore_ascii_case("grok-imagine-video")
-        || tail.eq_ignore_ascii_case("grok-imagine-video-1.5")
-        || tail.eq_ignore_ascii_case("grok-imagine-video-1.5-preview")
-}
 
 fn profile_is_image_model(profile: &ModelProfile) -> bool {
     profile.image_generation_capable
@@ -937,12 +1181,30 @@ fn profile_is_image_model(profile: &ModelProfile) -> bool {
         || is_image_generation_model(&profile.model)
 }
 
-fn normalize_image_role(profile: &mut ModelProfile, existing: Option<&ModelProfile>) {
+fn normalize_image_role(
+    profile: &mut ModelProfile,
+    existing: Option<&ModelProfile>,
+    restore_chat_model: bool,
+) -> Result<(), String> {
+    if restore_chat_model {
+        if profile.use_for_image_generation
+            || profile.use_for_video_generation
+            || is_image_generation_model(&profile.model)
+            || is_video_generation_model(&profile.model)
+        {
+            return Err(
+                "A dedicated image or video model cannot be restored as a chat model.".into(),
+            );
+        }
+        profile.image_generation_capable = false;
+        return Ok(());
+    }
     profile.image_generation_capable = profile.use_for_image_generation
         || is_image_generation_model(&profile.model)
         || existing.is_some_and(|old| {
             old.model.trim() == profile.model.trim() && profile_is_image_model(old)
         });
+    Ok(())
 }
 
 fn normalize_image_options(profile: &mut ModelProfile) -> Result<(), String> {
@@ -1108,13 +1370,13 @@ pub async fn vision_config(
     let p = profiles.iter().find(|p| p.id == id)?.clone();
     let api_url = effective_api_url(&p);
     Some((
-        p.provider,
+        p.provider.clone(),
         api_url,
-        p.model,
-        key_for(&p.id),
+        p.model.clone(),
+        fresh_access_token(&p.provider, &p.id).await,
         p.max_tokens,
-        p.reasoning_effort,
-        p.service_tier,
+        p.reasoning_effort.clone(),
+        p.service_tier.clone(),
         p.user_agent.clone(),
         p.send_user_agent,
         p.send_session_id,
@@ -1369,7 +1631,7 @@ pub async fn profile_llm(
         p.provider.clone(),
         effective_api_url(p),
         p.model.clone(),
-        key_for(&p.id),
+        fresh_access_token(&p.provider, &p.id).await,
         p.max_tokens,
         p.reasoning_effort.clone(),
         p.service_tier.clone(),
@@ -1378,6 +1640,13 @@ pub async fn profile_llm(
         p.send_session_id,
         p.session_header_name.clone(),
     ))
+}
+
+pub(crate) async fn profile_owned(store: &wisp_store::Store, id: &str) -> Option<ModelProfile> {
+    ensure(store)
+        .await
+        .into_iter()
+        .find(|profile| profile.id == id)
 }
 
 /// Stored key for a specific profile id, or None when the profile does not
@@ -1431,6 +1700,10 @@ async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
         .collect()
 }
 
+pub(crate) async fn decorated_models(store: &wisp_store::Store) -> Vec<ModelProfile> {
+    decorated(store).await
+}
+
 pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
     decorated(store)
         .await
@@ -1475,10 +1748,10 @@ pub async fn get_session_model(
     // ACP-bound frames run through the agent, not an HTTP model. Return the
     // agent's label under an `acp:` marker so message badges don't fall back
     // to the active HTTP model.
-    if let Ok(Some(binding)) = state.store.get_acp_session(&session_id).await {
-        let label = crate::acp::profile_label(&state.store, &binding.agent_profile_id)
+    if let Some(agent) = crate::acp::session_agent_id(&state.store, &session_id).await? {
+        let label = crate::acp::profile_label(&state.store, &agent)
             .await
-            .unwrap_or_else(|| "ACP Agent".into());
+            .unwrap_or(agent);
         return Ok(format!("acp:{label}"));
     }
     Ok(session_profile_id(&state.store, &session_id).await)
@@ -1542,6 +1815,7 @@ pub async fn save_model(
     use_for_vision: Option<bool>,
     use_for_image_generation: Option<bool>,
     use_for_video_generation: Option<bool>,
+    restore_chat_model: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
     // Explicit top-level param: the flag nested inside `profile` was observed
     // arriving as false through the webview IPC boundary, losing the
@@ -1554,10 +1828,32 @@ pub async fn save_model(
     profile.use_for_vision = assign_vision;
     profile.use_for_image_generation = assign_image_generation;
     profile.use_for_video_generation = assign_video_generation;
+    let result = save_model_profile(
+        &state.store,
+        profile,
+        key.as_deref(),
+        restore_chat_model.unwrap_or(false),
+    )
+    .await?;
+    crate::clear_idle_agents(&state).await;
+    Ok(result)
+}
+
+// Keep the persistence path independent of Tauri so role transitions and
+// failed saves can be exercised against a temporary store.
+async fn save_model_profile(
+    store: &wisp_store::Store,
+    mut profile: ModelProfile,
+    key: Option<&str>,
+    restore_chat_model: bool,
+) -> Result<Vec<ModelProfile>, String> {
+    let assign_vision = profile.use_for_vision;
+    let assign_image_generation = profile.use_for_image_generation;
+    let assign_video_generation = profile.use_for_video_generation;
     if assign_image_generation && assign_video_generation {
         return Err("Choose either image or video generation for a model profile.".into());
     }
-    let mut profiles = ensure(&state.store).await;
+    let mut profiles = ensure(store).await;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
@@ -1571,7 +1867,7 @@ pub async fn save_model(
     profile.session_header_name =
         wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
     let existing = profiles.iter().find(|old| old.id == profile.id);
-    normalize_image_role(&mut profile, existing);
+    normalize_image_role(&mut profile, existing, restore_chat_model)?;
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
@@ -1601,73 +1897,63 @@ pub async fn save_model(
     } else {
         profiles.push(profile);
     }
-    save_raw(&state.store, &profiles).await?;
-    store_profile_key(&id, key.as_deref(), &api_url, &profiles)?;
-    if assign_vision {
-        let _ = state.store.set_setting(VISION_KEY, &id).await;
-    } else {
-        let cur = state
-            .store
-            .get_setting(VISION_KEY)
+    let mut assignments = Vec::new();
+    for (setting, assign) in [
+        (VISION_KEY, assign_vision),
+        (IMAGE_GENERATION_KEY, assign_image_generation),
+        (VIDEO_GENERATION_KEY, assign_video_generation),
+    ] {
+        let current = store
+            .get_setting(setting)
             .await
-            .ok()
-            .flatten()
+            .map_err(|error| error.to_string())?
             .unwrap_or_default();
-        if cur == id
-            && !profiles
-                .iter()
-                .any(|p| can_describe_images(p) && p.id != id)
+        let value = if assign {
+            id.clone()
+        } else if current == id
+            && (setting != VISION_KEY
+                || !profiles
+                    .iter()
+                    .any(|p| can_describe_images(p) && p.id != id))
         {
-            let _ = state.store.set_setting(VISION_KEY, "").await;
-        }
+            String::new()
+        } else {
+            current
+        };
+        assignments.push((setting, value));
     }
-    if assign_image_generation {
-        let _ = state.store.set_setting(IMAGE_GENERATION_KEY, &id).await;
-    } else {
-        let current = state
-            .store
-            .get_setting(IMAGE_GENERATION_KEY)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        if current == id {
-            let _ = state.store.set_setting(IMAGE_GENERATION_KEY, "").await;
-        }
-    }
-    if assign_video_generation {
-        let _ = state.store.set_setting(VIDEO_GENERATION_KEY, &id).await;
-    } else {
-        let current = state
-            .store
-            .get_setting(VIDEO_GENERATION_KEY)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        if current == id {
-            let _ = state.store.set_setting(VIDEO_GENERATION_KEY, "").await;
-        }
-    }
-    // Land the user on a freshly added model so they can edit/use it right away.
+    let mut active = store
+        .get_setting(ACTIVE_KEY)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    // Restoring an existing chat profile does not change the current default.
     if is_new && profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
-        let _ = state.store.set_setting(ACTIVE_KEY, &id).await;
-    } else if !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
-        let active = state
-            .store
-            .get_setting(ACTIVE_KEY)
-            .await
-            .ok()
-            .flatten()
+        active = id.clone();
+    } else if active == id && !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
+        active = profiles
+            .iter()
+            .find(|p| is_chat_model(p))
+            .map(|p| p.id.clone())
             .unwrap_or_default();
-        if active == id {
-            if let Some(first) = profiles.iter().find(|p| is_chat_model(p)) {
-                let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
-            }
-        }
     }
-    crate::clear_idle_agents(&state).await;
-    Ok(decorated(&state.store).await)
+    assignments.push((ACTIVE_KEY, active));
+    assignments.push((
+        PROFILES_KEY,
+        serde_json::to_string(&profiles).map_err(|error| error.to_string())?,
+    ));
+    // A keyring failure must not publish the role change. Role recovery with
+    // a blank key keeps the existing credentials, as with any ordinary edit.
+    store_profile_key(&id, key, &api_url, &profiles)?;
+    let settings: Vec<_> = assignments
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    store
+        .set_global_settings(&settings)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(decorated(store).await)
 }
 
 #[tauri::command]
@@ -1687,6 +1973,8 @@ pub async fn remove_model(
     profiles.retain(|p| p.id != id);
     save_raw(&state.store, &profiles).await?;
     let _ = secret_del(&secret_name(&id));
+    let _ = secret_del(&codex_oauth_secret(&id));
+    let _ = secret_del(&xai_oauth_secret(&id));
     // If we removed the active profile, fall back to the first remaining one.
     let cur = state
         .store
@@ -1762,6 +2050,12 @@ pub async fn set_active_model(
         return Err("Image or video generation models cannot be used for chat.".into());
     }
     if let Some(session_id) = session_id.filter(|value| !value.is_empty()) {
+        if crate::acp::session_agent_id(&state.store, &session_id)
+            .await?
+            .is_some()
+        {
+            return Err("Start a new conversation to switch away from this ACP Agent".into());
+        }
         let (project, scope) =
             crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
         let _activity = state.begin_project_activity(&project.id)?;
@@ -2436,7 +2730,7 @@ mod tests {
         image.use_for_image_generation = true;
         image.image_size = "1536x1024".into();
         image.image_quality = "high".into();
-        normalize_image_role(&mut image, None);
+        normalize_image_role(&mut image, None, false).unwrap();
         normalize_image_options(&mut image).unwrap();
         assert!(image.image_generation_capable);
         save_raw(&store, &[chat.clone(), image.clone()])
@@ -2459,7 +2753,7 @@ mod tests {
         assert!(!deselected.use_for_image_generation);
         assert!(deselected.image_generation_capable);
         assert!(!is_chat_model(&deselected));
-        normalize_image_role(&mut deselected, Some(&image));
+        normalize_image_role(&mut deselected, Some(&image), false).unwrap();
         save_raw(&store, &[chat, deselected.clone()]).await.unwrap();
         assert_eq!(
             delegation_profiles(&store)
@@ -2471,11 +2765,140 @@ mod tests {
         );
         assert!(image_generation_config(&store).await.is_none());
         deselected.model = "renamed-chat-id".into();
-        normalize_image_role(&mut deselected, Some(&image));
+        normalize_image_role(&mut deselected, Some(&image), false).unwrap();
         assert!(!deselected.image_generation_capable);
         assert!(is_chat_model(&deselected));
         drop(store);
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn explicit_chat_recovery_keeps_identity_credentials_and_restores_vision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("models.sqlite"))
+            .await
+            .unwrap();
+        let id = format!("recover-{}", uuid::Uuid::new_v4());
+        let mut profile = test_profile(&id, "original", "gateway/custom-chat-id");
+        profile.supports_vision = true;
+        profile.use_for_vision = true;
+        let fallback = test_profile("fallback", "fallback", "other-chat-id");
+        // Use the in-memory secret cache: this test never writes real credentials.
+        secret_cache()
+            .lock()
+            .unwrap()
+            .insert(secret_name(&id), "test-key".into());
+        save_raw(&store, &[profile.clone(), fallback])
+            .await
+            .unwrap();
+        store.set_setting(ACTIVE_KEY, &id).await.unwrap();
+        store.set_setting(VISION_KEY, &id).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        store
+            .create_frame("session", "p", "OPERON", &id)
+            .await
+            .unwrap();
+
+        profile.use_for_vision = false;
+        profile.supports_vision = false;
+        profile.use_for_image_generation = true;
+        profile.image_size = "1536x1024".into();
+        let saved = save_model_profile(&store, profile, None, false)
+            .await
+            .unwrap();
+        let mut image = saved.into_iter().find(|p| p.id == id).unwrap();
+        assert!(image.image_generation_capable);
+        assert_eq!(active_profile_id(&store).await, "fallback");
+        assert_eq!(session_profile_id(&store, "session").await, "fallback");
+
+        // Assignment-only deselection, including an old client with a false
+        // capability field, must retain the custom image-only role.
+        image.use_for_image_generation = false;
+        image.image_generation_capable = false;
+        let saved = save_model_profile(&store, image, None, false)
+            .await
+            .unwrap();
+        let mut restored = saved.into_iter().find(|p| p.id == id).unwrap();
+        assert!(restored.image_generation_capable);
+        assert!(!is_chat_model(&restored));
+        assert!(image_generation_config(&store).await.is_none());
+
+        // Explicit recovery runs before vision eligibility validation.
+        restored.supports_vision = true;
+        restored.use_for_vision = true;
+        let saved = save_model_profile(&store, restored, None, true)
+            .await
+            .unwrap();
+        let restored = saved.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(restored.model, "gateway/custom-chat-id");
+        assert_eq!(restored.label, "original");
+        assert!(!restored.image_generation_capable);
+        assert!(restored.use_for_vision);
+        assert!(restored.has_api_key);
+        assert_eq!(key_for(&id), "test-key");
+        assert!(restored.image_size.is_empty());
+        assert!(delegation_profiles(&store).await.iter().any(|p| p.id == id));
+        assert_eq!(active_profile_id(&store).await, "fallback");
+        assert_eq!(session_profile_id(&store, "session").await, "fallback");
+        store.set_setting(ACTIVE_KEY, &id).await.unwrap();
+        assert_eq!(active_profile_id(&store).await, id);
+        let reloaded = decorated(&store).await;
+        assert!(reloaded
+            .iter()
+            .any(|p| p.id == id && p.active && p.use_for_vision));
+        secret_cache().lock().unwrap().remove(&secret_name(&id));
+    }
+
+    #[tokio::test]
+    async fn failed_chat_recovery_does_not_change_saved_role_or_assignments() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("models.sqlite"))
+            .await
+            .unwrap();
+        let mut image = test_profile("image", "image", "custom-image-id");
+        image.image_generation_capable = true;
+        image.use_for_image_generation = true;
+        save_raw(
+            &store,
+            &[test_profile("chat", "chat", "chat-id"), image.clone()],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "chat").await.unwrap();
+        store
+            .set_setting(IMAGE_GENERATION_KEY, "image")
+            .await
+            .unwrap();
+        let before = store.get_setting(PROFILES_KEY).await.unwrap();
+        image.use_for_image_generation = false;
+        image.use_for_vision = true;
+        image.supports_vision = false;
+        assert!(save_model_profile(&store, image, None, true).await.is_err());
+        assert_eq!(store.get_setting(PROFILES_KEY).await.unwrap(), before);
+        assert_eq!(
+            store
+                .get_setting(IMAGE_GENERATION_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("image")
+        );
+        assert_eq!(active_profile_id(&store).await, "chat");
+    }
+
+    #[test]
+    fn chat_recovery_rejects_generation_assignment_and_known_dedicated_models() {
+        for model in [
+            "gpt-image-2",
+            "vendor/grok-imagine-image-2.0",
+            "grok-imagine-video",
+        ] {
+            let mut profile = test_profile("image", "image", model);
+            assert!(normalize_image_role(&mut profile, None, true).is_err());
+        }
+        let mut profile = test_profile("image", "image", "custom-id");
+        profile.use_for_image_generation = true;
+        assert!(normalize_image_role(&mut profile, None, true).is_err());
     }
 
     #[test]
@@ -2801,6 +3224,109 @@ mod tests {
         assert!(key_for(&new_id).is_empty());
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn codex_subscription_does_not_inherit_or_replace_a_sibling_key() {
+        let prefix = uuid::Uuid::new_v4();
+        let existing_id = format!("{prefix}-a");
+        let new_id = format!("{prefix}-b");
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+        secret_set(&secret_name(&existing_id), "access-token").unwrap();
+        let mut existing = test_profile(&existing_id, "codex", "gpt-5.5");
+        existing.provider = "openai_codex".into();
+        existing.api_url = "https://chatgpt.com/backend-api".into();
+        let mut added = test_profile(&new_id, "codex-2", "gpt-5.5");
+        added.provider = "openai_codex".into();
+        added.api_url = "https://chatgpt.com/backend-api".into();
+        let added_url = added.api_url.clone();
+        store_profile_key(&new_id, Some("sk-pasted"), &added_url, &[existing, added]).unwrap();
+        assert_eq!(key_for(&existing_id), "access-token");
+        assert!(key_for(&new_id).is_empty());
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn chatgpt_sign_in_and_an_openai_api_key_on_the_same_url_stay_separate() {
+        let prefix = uuid::Uuid::new_v4();
+        let api_id = format!("{prefix}-api");
+        let chatgpt_id = format!("{prefix}-chatgpt");
+        let url = "https://api.openai.com/v1";
+        let mut api = test_profile(&api_id, "api", "gpt-5.5");
+        api.provider = "openai_responses".into();
+        api.api_url = url.into();
+        let mut chatgpt = test_profile(&chatgpt_id, "chatgpt", "gpt-5.5");
+        chatgpt.provider = "openai_chatgpt".into();
+        chatgpt.api_url = url.into();
+        let profiles = [api, chatgpt];
+        secret_set(&secret_name(&api_id), "sk-old").unwrap();
+        // A new sign-in profile does not pick up the API key...
+        store_profile_key(&chatgpt_id, None, url, &profiles).unwrap();
+        assert!(key_for(&chatgpt_id).is_empty());
+        // ...and rotating the API key leaves the sign-in token alone.
+        secret_set(&secret_name(&chatgpt_id), "sk-old").unwrap();
+        store_profile_key(&api_id, Some("sk-new"), url, &profiles).unwrap();
+        assert_eq!(key_for(&chatgpt_id), "sk-old");
+        let _ = secret_del(&secret_name(&api_id));
+        let _ = secret_del(&secret_name(&chatgpt_id));
+    }
+
+    #[test]
+    fn codex_account_pool_keeps_order_and_the_most_recently_refreshed_copy() {
+        let ids = vec!["acct-a".to_string(), "acct-b".to_string()];
+        assert_eq!(with_account_id(&ids, "acct-b"), ids);
+        assert_eq!(
+            with_account_id(&ids, "acct-c"),
+            vec!["acct-a", "acct-b", "acct-c"]
+        );
+        assert_eq!(with_account_id(&[], "acct-a"), vec!["acct-a"]);
+        let creds = |account: &str, expires_at_ms: i64, refresh: &str| {
+            wisp_llm::codex_auth::CodexCredentials {
+                access_token: format!("access-{refresh}"),
+                refresh_token: refresh.into(),
+                expires_at_ms,
+                account_id: account.into(),
+            }
+        };
+        let profile = creds("acct-a", 1_000, "profile-copy");
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-a", 2_000, "pool-copy"))).refresh_token,
+            "pool-copy"
+        );
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-a", 500, "pool-copy"))).refresh_token,
+            "profile-copy"
+        );
+        assert_eq!(
+            fresher_codex(profile.clone(), Some(creds("acct-b", 9_000, "other"))).refresh_token,
+            "profile-copy"
+        );
+        assert_eq!(fresher_codex(profile, None).refresh_token, "profile-copy");
+    }
+
+    #[test]
+    fn xai_api_key_profile_neither_inherits_nor_rotates_the_subscription_token() {
+        let prefix = uuid::Uuid::new_v4();
+        let oauth_id = format!("{prefix}-oauth");
+        let api_id = format!("{prefix}-api");
+        let _ = secret_del(&secret_name(&api_id));
+        secret_set(&secret_name(&oauth_id), "xai-access-token").unwrap();
+        let mut oauth = test_profile(&oauth_id, "grok", "grok-4.6");
+        oauth.provider = "xai_oauth".into();
+        oauth.api_url = "https://api.x.ai/v1".into();
+        let mut api = test_profile(&api_id, "grok-api", "grok-4.6");
+        api.api_url = "https://api.x.ai".into();
+        let profiles = [oauth, api];
+        store_profile_key(&api_id, None, "https://api.x.ai", &profiles).unwrap();
+        assert!(key_for(&api_id).is_empty());
+        secret_set(&secret_name(&api_id), "xai-access-token").unwrap();
+        store_profile_key(&api_id, Some("xai-pasted"), "https://api.x.ai", &profiles).unwrap();
+        assert_eq!(key_for(&oauth_id), "xai-access-token");
+        assert_eq!(key_for(&api_id), "xai-pasted");
+        let _ = secret_del(&secret_name(&oauth_id));
+        let _ = secret_del(&secret_name(&api_id));
     }
 
     #[test]

@@ -13,6 +13,9 @@ pub fn frame_default_execution_context_key(frame_id: &str) -> String {
 impl Store {
     /// Opening the database must preserve the user's Local configuration.
     pub(crate) async fn ensure_local_execution_context(&self) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.ensure_local_execution_context()).await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query("INSERT OR IGNORE INTO execution_contexts(id,kind,label,config_json,capabilities_json,created_at,updated_at) VALUES('local','local','Local','{}','{}',?,?)")
             .bind(now).bind(now).execute(&self.pool).await?;
@@ -25,6 +28,9 @@ impl Store {
         &self,
         paths: &std::collections::BTreeMap<String, String>,
     ) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.save_detected_local_paths(paths)).await;
+        }
         let mut tx = self.begin_write().await?;
         let raw: String =
             sqlx::query_scalar("SELECT config_json FROM execution_contexts WHERE id='local'")
@@ -68,6 +74,9 @@ impl Store {
         &self,
         paths: &std::collections::BTreeMap<String, String>,
     ) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.save_local_environment_paths(paths)).await;
+        }
         for (key, value) in paths {
             anyhow::ensure!(
                 matches!(
@@ -120,6 +129,9 @@ impl Store {
     }
 
     pub async fn upsert_execution_context(&self, ctx: &ExecutionContext) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.upsert_execution_context(ctx)).await;
+        }
         ctx.validate()?;
         sqlx::query(
             "INSERT INTO execution_contexts(\
@@ -147,6 +159,9 @@ impl Store {
     }
 
     pub async fn get_execution_context(&self, id: &str) -> Result<Option<ExecutionContext>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.get_execution_context(id)).await;
+        }
         ExecutionContextKind::from_id(id)?;
         let row = sqlx::query(
             "SELECT id,kind,label,config_json,capabilities_json,last_probe_at,last_probe_status,last_probe_error,created_at,updated_at \
@@ -159,6 +174,9 @@ impl Store {
     }
 
     pub async fn list_execution_contexts(&self) -> Result<Vec<ExecutionContext>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.list_execution_contexts()).await;
+        }
         let rows = sqlx::query(
             "SELECT id,kind,label,config_json,capabilities_json,last_probe_at,last_probe_status,last_probe_error,created_at,updated_at \
              FROM execution_contexts ORDER BY CASE id WHEN 'local' THEN 0 ELSE 1 END, id",
@@ -169,7 +187,20 @@ impl Store {
     }
 
     pub async fn delete_execution_context(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.delete_execution_context(id)).await;
+        }
         ExecutionContextKind::from_id(id)?;
+        if let Some(stores) = self.routed_projects().await? {
+            for store in stores {
+                sqlx::query("DELETE FROM session_execution_contexts WHERE context_id=?")
+                    .bind(id)
+                    .execute(&store.pool)
+                    .await?;
+                sqlx::query("DELETE FROM settings WHERE key LIKE 'frame_default_execution_context:%' AND value=?")
+                    .bind(id).execute(&store.pool).await?;
+            }
+        }
         sqlx::query("DELETE FROM session_execution_contexts WHERE context_id=?")
             .bind(id)
             .execute(&self.pool)
@@ -187,6 +218,12 @@ impl Store {
         context_id: &str,
         enabled: bool,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(
+                store.set_session_execution_context_enabled(frame_id, context_id, enabled),
+            )
+            .await;
+        }
         let context = self
             .get_execution_context(context_id)
             .await?
@@ -229,6 +266,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.session_default_execution_context(frame_id)).await;
+        }
         Ok(self
             .get_setting(&frame_default_execution_context_key(frame_id))
             .await?
@@ -241,6 +281,9 @@ impl Store {
         frame_id: &str,
         value: Option<&str>,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.set_session_default_execution_context(frame_id, value)).await;
+        }
         let key = frame_default_execution_context_key(frame_id);
         match value.map(str::trim).filter(|value| !value.is_empty()) {
             Some(value) => self.set_setting(&key, value).await,
@@ -249,6 +292,9 @@ impl Store {
     }
 
     pub async fn list_session_execution_context_ids(&self, frame_id: &str) -> Result<Vec<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_session_execution_context_ids(frame_id)).await;
+        }
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT context_id FROM session_execution_contexts \
              WHERE frame_id=? ORDER BY context_id",
@@ -264,6 +310,9 @@ impl Store {
         frame_id: &str,
         context_id: &str,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.session_execution_context_enabled(frame_id, context_id)).await;
+        }
         let row: (i64,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM session_execution_contexts \
              WHERE frame_id=? AND context_id=?)",

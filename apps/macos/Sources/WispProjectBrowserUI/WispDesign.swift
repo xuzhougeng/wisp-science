@@ -6,11 +6,14 @@ import WispProjectBrowser
 enum WispDesign {
     // SwiftPM's generated lookup differs across Swift releases. Packaged apps
     // always put resources in Contents/Resources; `swift test/run` uses module.
-    private static let resources: Bundle = {
-        if let url = Bundle.main.url(forResource: "WispSciencePreview_WispProjectBrowserUI", withExtension: "bundle"),
+    static let resources = resourceBundle(in: .main, module: { Bundle.module })
+
+    static func resourceBundle(in main: Bundle, module: () -> Bundle) -> Bundle {
+        if let url = main.url(forResource: "WispSciencePreview_WispProjectBrowserUI", withExtension: "bundle"),
            let bundle = Bundle(url: url) { return bundle }
-        return Bundle.module
-    }()
+        // Keep this lazy: SwiftPM's accessor can trap in a relocated .app.
+        return module()
+    }
     static let english: [String: String] = {
         let url = resources.url(forResource: "native-english", withExtension: "json")!
         return (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))) ?? [:]
@@ -61,11 +64,14 @@ enum WispDesign {
         return family.isEmpty ? .system(size: scaled, weight: weight, design: design) : .custom(family, size: scaled).weight(weight)
     }
 
-    static func apply(_ prefs: WispProjectBrowser.SettingsValue) {
+    static func apply(_ prefs: WispProjectBrowser.SettingsValue, defaults: UserDefaults = .standard) {
+        if case .bool(let value) = prefs["send_with_modifier"] {
+            defaults.set(value, forKey: "nativeSettings.send_with_modifier")
+        }
         guard prefs["theme"] != .null else { return }
-        for key in ["light_palette", "dark_palette", "ui_font_family", "code_font_family"] { UserDefaults.standard.set(prefs[key].string, forKey: "nativeSettings." + key) }
-        for key in ["ui_font_size", "code_font_size"] { UserDefaults.standard.set(prefs[key].integer, forKey: "nativeSettings." + key) }
-        UserDefaults.standard.set(prefs["theme"].string, forKey: "projectBrowser.appearance")
+        for key in ["light_palette", "dark_palette", "ui_font_family", "code_font_family"] { defaults.set(prefs[key].string, forKey: "nativeSettings." + key) }
+        for key in ["ui_font_size", "code_font_size"] { defaults.set(prefs[key].integer, forKey: "nativeSettings." + key) }
+        defaults.set(prefs["theme"].string, forKey: "projectBrowser.appearance")
     }
 
     static func image(_ name: String) -> NSImage {
@@ -130,4 +136,21 @@ struct WispUnavailableAction: View {
 
 func localized(_ text: String) -> String {
     UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? (WispDesign.english[text] ?? text) : text
+}
+
+/// Workspace navigation has the same reading rhythm as the WebView sidebar.
+/// Keep this separate from compact buttons used inside dense inspectors.
+struct WispSidebarButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(WispDesign.font(size: 14))
+            .foregroundStyle(WispDesign.color("text-muted", scheme))
+            .padding(.horizontal, 12).frame(height: 40)
+            .background(configuration.isPressed ? WispDesign.color("surface-hover", scheme) : .clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .opacity(enabled ? 1 : 0.45)
+    }
 }

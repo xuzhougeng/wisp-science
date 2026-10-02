@@ -12,11 +12,23 @@ struct NativeAgentPanelView: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("代理任务会在当前对话中返回结果；这里可查看工作流状态与详情。").font(.caption).foregroundStyle(.secondary)
-            Button("管理工作流", action: manageWorkflows)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Agents").font(.headline)
+                Text(localized("代理任务会在当前对话中返回结果；这里可查看工作流状态与详情。")).font(.caption).foregroundStyle(.secondary)
+                Button(localized("管理工作流"), action: manageWorkflows)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
             Toggle("允许当前会话委派代理任务", isOn: Binding(get: { model.agentDelegationEnabled ?? false }, set: { enabled in Task { await model.setAgentDelegation(enabled) } }))
                 .disabled(readOnly || model.agentDelegationBusy || model.agentDelegationEnabled == nil)
             if model.agentDelegationBusy { ProgressView().controlSize(.small) }
+            if model.agentDelegationEnabled == false {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(localized("代理委派已关闭")).font(.subheadline.weight(.medium))
+                    Text(localized("当前会话不会自动委派新任务；已有工作流仍可查看。开启委派不会跳过审批。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
+            }
             if model.agentResultLoading { ProgressView().controlSize(.small) }
             ForEach(model.agents.filter { query.isEmpty || $0.workflow.name.localizedCaseInsensitiveContains(query) || $0.workflow.goal.localizedCaseInsensitiveContains(query) }) { snapshot in
                 VStack(alignment: .leading, spacing: 10) {
@@ -47,7 +59,7 @@ struct NativeAgentPanelView: View {
                     }
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
             }
-            if model.agents.isEmpty && !model.loading { Text("当前会话暂无代理工作流").foregroundStyle(.secondary).padding(.vertical) }
+            if model.agents.isEmpty && !model.loading && model.error == nil { Text(localized("当前会话暂无代理工作流")).foregroundStyle(.secondary).padding(.vertical) }
         }
         .confirmationDialog(action == .approve ? "批准此版本的代理计划？自动模式将立即启动。" : (action == .cancel ? "取消正在执行的工作流？" : "丢弃此工作流？"), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             if let snapshot = pending {

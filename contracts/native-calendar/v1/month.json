@@ -1,0 +1,36 @@
+{
+  "schema": "wisp.native-calendar.v1",
+  "command": "native_research_calendar",
+  "project_id": null,
+  "args": {
+    "project_ids": ["research-1"],
+    "from": 0,
+    "until": 86400
+  },
+  "result": [
+    {
+      "project_id": "research-1",
+      "history": {
+        "entries": [
+          {
+            "id": "journal:entry-1",
+            "kind": "finding",
+            "title": "a finding",
+            "summary": "Evidence",
+            "occurred_at": 100,
+            "recorded_at": 100,
+            "source_id": "entry-1",
+            "frame_id": null,
+            "status": "recorded",
+            "content_type": "",
+            "version_number": null,
+            "source_discarded": false,
+            "manual": true
+          }
+        ],
+        "truncated": false
+      },
+      "error": null
+    }
+  ]
+}

@@ -623,6 +623,9 @@ impl super::Store {
         workflow: &AgentWorkflow,
         steps: &[AgentWorkflowStep],
     ) -> Result<()> {
+        if let Some(store) = self.route_project(&workflow.project_id).await? {
+            return Box::pin(store.create_agent_workflow_plan(workflow, steps)).await;
+        }
         workflow.validate()?;
         if workflow.status != AgentWorkflowStatus::Draft {
             anyhow::bail!("new agent workflow plans must start as draft");
@@ -682,6 +685,15 @@ impl super::Store {
         expected_status: AgentWorkflowStatus,
         expected_version: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_project(&workflow.project_id).await? {
+            return Box::pin(store.replace_agent_workflow_plan_for_retry(
+                workflow,
+                steps,
+                expected_status,
+                expected_version,
+            ))
+            .await;
+        }
         workflow.validate()?;
         if workflow.depth != 0
             || !matches!(
@@ -784,6 +796,9 @@ impl super::Store {
         id: &str,
         expected_version: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("agent_workflows", "id", id).await? {
+            return Box::pin(store.approve_agent_workflow_plan(id, expected_version)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE agent_workflows SET status='approved',approved_at=?,version=version+1,updated_at=? WHERE id=? AND version=? AND status='draft'",
@@ -803,6 +818,9 @@ impl super::Store {
         from: AgentWorkflowStatus,
         to: AgentWorkflowStatus,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("agent_workflows", "id", id).await? {
+            return Box::pin(store.transition_agent_workflow_status(id, from, to)).await;
+        }
         let allowed = matches!(
             (from, to),
             (AgentWorkflowStatus::Approved, AgentWorkflowStatus::Running)
@@ -863,6 +881,9 @@ impl super::Store {
     }
 
     pub async fn get_agent_workflow(&self, id: &str) -> Result<Option<AgentWorkflow>> {
+        if let Some(store) = self.route_entity("agent_workflows", "id", id).await? {
+            return Box::pin(store.get_agent_workflow(id)).await;
+        }
         sqlx::query(&format!("{SELECT_WORKFLOW} WHERE id=?"))
             .bind(id)
             .fetch_optional(&self.pool)
@@ -873,6 +894,9 @@ impl super::Store {
     }
 
     pub async fn list_agent_workflows(&self, project_id: &str) -> Result<Vec<AgentWorkflow>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_agent_workflows(project_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "{SELECT_WORKFLOW} WHERE project_id=? ORDER BY name,id"
         ))
@@ -883,6 +907,9 @@ impl super::Store {
     }
 
     pub async fn delete_agent_workflow(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("agent_workflows", "id", id).await? {
+            return Box::pin(store.delete_agent_workflow(id)).await;
+        }
         let mut tx = self.begin_write().await?;
         sqlx::query("UPDATE agent_workflows SET status='draft' WHERE id=?")
             .bind(id)
@@ -905,6 +932,9 @@ impl super::Store {
     }
 
     pub async fn get_agent_workflow_step(&self, id: &str) -> Result<Option<AgentWorkflowStep>> {
+        if let Some(store) = self.route_entity("agent_workflow_steps", "id", id).await? {
+            return Box::pin(store.get_agent_workflow_step(id)).await;
+        }
         sqlx::query("SELECT id,workflow_id,position,agent_id,template_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,spec_json,task_kind,activity_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE id=?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -918,6 +948,12 @@ impl super::Store {
         &self,
         workflow_id: &str,
     ) -> Result<Vec<AgentWorkflowStep>> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.list_agent_workflow_steps(workflow_id)).await;
+        }
         let rows = sqlx::query("SELECT id,workflow_id,position,agent_id,template_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,spec_json,task_kind,activity_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE workflow_id=? ORDER BY position,id")
             .bind(workflow_id)
             .fetch_all(&self.pool)

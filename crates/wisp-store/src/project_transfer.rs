@@ -208,6 +208,21 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
         .execute(&mut **tx)
         .await?;
     }
+    // Display preferences are optional in older project bundles.
+    if attached_table_columns(tx, "frames")
+        .await?
+        .contains("shelved")
+    {
+        sqlx::query("UPDATE frames SET shelved=(SELECT source.shelved FROM transfer.frames source WHERE source.id=frames.id) WHERE project_id=?")
+            .bind(project_id).execute(&mut **tx).await?;
+    }
+    if attached_table_columns(tx, "frames")
+        .await?
+        .contains("acp_agent_selection")
+    {
+        sqlx::query("UPDATE frames SET acp_agent_selection=(SELECT source.acp_agent_selection FROM transfer.frames source WHERE source.id=frames.id) WHERE project_id=?")
+            .bind(project_id).execute(&mut **tx).await?;
+    }
     if attached_table_columns(tx, "frames")
         .await?
         .contains("head_epoch")
@@ -863,6 +878,9 @@ async fn copy_publication_children(
             sqlx::query("INSERT INTO research_archive_continuations SELECT c.* FROM transfer.research_archive_continuations c JOIN research_archives a ON a.id=c.archive_id WHERE a.project_id=?").bind(project_id).execute(&mut **tx).await?;
         }
     }
+    if attached_table_exists(tx, "research_recaps").await? {
+        sqlx::query("INSERT INTO research_recaps(id,project_id,day_start,status,recap_json,created_at,updated_at) SELECT id,project_id,day_start,status,recap_json,created_at,updated_at FROM transfer.research_recaps WHERE project_id=?").bind(project_id).execute(&mut **tx).await?;
+    }
     Ok(())
 }
 
@@ -943,6 +961,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM research_edges WHERE project_id=?",
         "DELETE FROM research_nodes WHERE project_id=?",
         "DELETE FROM research_journal_entries WHERE project_id=?",
+        "DELETE FROM research_recaps WHERE project_id=?",
         "DELETE FROM artifacts WHERE project_id=?",
         "DELETE FROM external_resources WHERE project_id=?",
         "DELETE FROM runs WHERE project_id=?",
@@ -1334,7 +1353,7 @@ async fn restore_import_paths(
 }
 
 impl Store {
-    async fn database_path(&self) -> Result<PathBuf> {
+    pub(super) async fn database_path(&self) -> Result<PathBuf> {
         let rows = sqlx::query("PRAGMA database_list")
             .fetch_all(&self.pool)
             .await?;
@@ -1404,6 +1423,7 @@ impl Store {
             ("research_journal_entries", "*", "id"),
             ("research_archives", "*", "id"),
             ("research_archive_continuations", "*", "frame_id"),
+            ("research_recaps", "*", "id"),
         ];
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", database.display()))?
             .read_only(true);
@@ -1419,7 +1439,17 @@ impl Store {
             .bind(table)
             .fetch_one(&pool)
             .await?;
-            if !exists {
+            // Tables added after this format shipped count only once they hold
+            // rows, so an upgrade alone never changes a published fingerprint.
+            let late = *table == "research_recaps";
+            if !exists
+                || (late
+                    && !sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {table})"
+                    ))
+                    .fetch_one(&pool)
+                    .await?)
+            {
                 continue;
             }
             digest.update((table.len() as u64).to_le_bytes());
@@ -1462,6 +1492,9 @@ impl Store {
         project_id: &str,
         destination: &Path,
     ) -> Result<ProjectTransferStats> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.export_project_database(project_id, destination)).await;
+        }
         let (_, source_root) = self
             .get_project(project_id)
             .await?
@@ -1543,6 +1576,13 @@ impl Store {
         project_id: &str,
         workspace: &Path,
     ) -> Result<()> {
+        if self.registry.is_some() {
+            anyhow::ensure!(
+                !workspace.join(super::PROJECT_DATABASE).exists()
+                    && !workspace.join(super::PROJECT_METADATA).exists(),
+                "This workspace already contains project storage; register its folder instead"
+            );
+        }
         if self.get_project(project_id).await?.is_some() {
             anyhow::bail!("this project is already present on this device");
         }
@@ -1592,7 +1632,15 @@ impl Store {
         let _ = sqlx::query("DETACH DATABASE transfer")
             .execute(&mut *connection)
             .await;
-        result.context("could not import project metadata")
+        drop(connection);
+        result.context("could not import project metadata")?;
+        if self.registry.is_some()
+            && self.project_scope.is_none()
+            && self.decentralized_project_storage().await?
+        {
+            self.migrate_project_storage(project_id).await?;
+        }
+        Ok(())
     }
 
     /// Replace an existing project's portable rows from a trusted, decrypted
@@ -1606,6 +1654,17 @@ impl Store {
         workspace: &Path,
         sync_state: &ProjectSyncState,
     ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            Box::pin(store.replace_project_database(
+                archive_database,
+                project_id,
+                workspace,
+                sync_state,
+            ))
+            .await?;
+            self.upsert_project_sync_state(sync_state).await?;
+            return Ok(());
+        }
         if sync_state.project_id != project_id {
             anyhow::bail!("sync cursor does not belong to the replaced project");
         }

@@ -15,6 +15,124 @@ use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsCast;
 
 #[derive(Clone, Copy)]
+pub(crate) struct SessionArtifactChoiceState {
+    pub selected: RwSignal<bool>,
+    pub previews: RwSignal<std::collections::HashMap<String, SessionArtifactPreview>>,
+    pub busy: RwSignal<bool>,
+    pub error: RwSignal<Option<String>>,
+}
+impl SessionArtifactChoiceState {
+    pub(crate) fn new() -> Self {
+        Self {
+            selected: create_rw_signal(false),
+            previews: create_rw_signal(Default::default()),
+            busy: create_rw_signal(false),
+            error: create_rw_signal(None),
+        }
+    }
+    pub(crate) fn blocked(self) -> bool {
+        self.selected.get()
+            && (self.busy.get() || self.error.get().is_some() || self.previews.get().is_empty())
+    }
+}
+
+#[component]
+pub(crate) fn SessionArtifactChoice(
+    locale: RwSignal<Locale>,
+    ids: Vec<String>,
+    target: Option<String>,
+    state: SessionArtifactChoiceState,
+) -> impl IntoView {
+    state.selected.set(false);
+    state.previews.set(Default::default());
+    state.error.set(None);
+    state.busy.set(false);
+    let moving = target.is_some();
+    let generation = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+    let cleanup = alive.clone();
+    on_cleanup(move || cleanup.set(false));
+    let reload = Callback::new(move |_: ()| {
+        generation.set(generation.get() + 1);
+        let ticket = generation.get();
+        state.busy.set(true);
+        state.error.set(None);
+        state.previews.set(Default::default());
+        let ids = ids.clone();
+        let target = target.clone();
+        let alive = alive.clone();
+        let generation = generation.clone();
+        spawn_local(async move {
+            let mut previews = std::collections::HashMap::new();
+            let mut error = None;
+            for id in ids {
+                let args =
+                    to_value(&serde_json::json!({"id":id,"targetProjectId":target})).unwrap();
+                match invoke_checked("preview_session_artifacts", args).await {
+                    Ok(value) => {
+                        match serde_wasm_bindgen::from_value::<SessionArtifactPreview>(value) {
+                            Ok(preview) => {
+                                previews.insert(id, preview);
+                            }
+                            Err(e) => {
+                                error = Some(e.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error = Some(localize_backend(locale.get_untracked(), &js_error_text(e)));
+                        break;
+                    }
+                }
+            }
+            if !alive.get() || generation.get() != ticket {
+                return;
+            }
+            state.previews.set(previews);
+            state.error.set(error);
+            state.busy.set(false);
+        });
+    });
+    view! {
+        <div class="session-artifact-choice">
+            <label class="session-artifact-toggle">
+                <input type="checkbox" prop:checked=move || state.selected.get()
+                    on:change=move |ev| {
+                        let checked=event_target_checked(&ev); state.selected.set(checked);
+                        if checked { reload.call(()); }
+                    } />
+                <span>{move || t(locale.get(), if moving { "session.artifacts.move" } else { "session.artifacts.delete" })}</span>
+            </label>
+            {move || state.selected.get().then(|| view! {
+                <div class="hint">{move || t(locale.get(), "session.artifacts.scope")}</div>
+                {move || state.busy.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
+                {move || state.error.get().map(|error| view! {
+                    <p class="session-transfer-error" role="alert">{error}</p>
+                    <button type="button" on:click=move |_| reload.call(())>{move || t(locale.get(), "session.artifacts.refresh")}</button>
+                })}
+                {move || {
+                    let previews=state.previews.get();
+                    let count:usize=previews.values().map(|p|p.artifacts.len()).sum();
+                    let mut files=previews.values().flat_map(|p|p.files.clone()).collect::<Vec<_>>(); files.sort(); files.dedup();
+                    let retained=previews.values().flat_map(|p|p.retained.clone()).collect::<Vec<_>>();
+                    (!previews.is_empty()).then(|| view! {
+                        <p>{tf(locale.get(), "session.artifacts.count", &[("artifacts", &count.to_string()), ("files", &files.len().to_string())])}</p>
+                        <ul class="session-artifact-files">{files.into_iter().map(|path|view! { <li>{path}</li> }).collect_view()}</ul>
+                        {(!retained.is_empty()).then(||view! {
+                            <p>{move || t(locale.get(), "session.artifacts.retained")}</p>
+                            <ul class="session-artifact-files">{retained.into_iter().map(|item|view! {
+                                <li>{item.name}{" — "}{t(locale.get(), &format!("session.artifacts.{}",item.reason)).to_string()}</li>
+                            }).collect_view()}</ul>
+                        })}
+                    })
+                }}
+            })}
+        </div>
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct SessionTransferOverlayState {
     pub(crate) locale: RwSignal<Locale>,
     pub(crate) session_transfer: RwSignal<Option<SessionTransfer>>,
@@ -22,6 +140,7 @@ pub(crate) struct SessionTransferOverlayState {
     pub(crate) session_transfer_error: RwSignal<Option<String>>,
     pub(crate) project_info: RwSignal<Option<ProjectInfo>>,
     pub(crate) proj_list: RwSignal<Vec<ProjectSummary>>,
+    pub(crate) artifacts: SessionArtifactChoiceState,
 }
 
 #[component]
@@ -36,6 +155,7 @@ pub(crate) fn SessionTransferOverlay(
         session_transfer_error,
         project_info,
         proj_list,
+        artifacts,
     } = state;
     view! {
         {move || session_transfer.get().map(|transfer| {
@@ -65,6 +185,8 @@ pub(crate) fn SessionTransferOverlay(
             };
             let hint_key = if transfer.from_demo {
                 "session.copy_demo_hint"
+            } else if transfer.mode == SessionTransferMode::Move {
+                "session.move_hint"
             } else {
                 "session.transfer_hint"
             };
@@ -98,6 +220,10 @@ pub(crate) fn SessionTransferOverlay(
                             }).collect_view()}
                         </select>
                     </label>
+                    {(transfer.mode == SessionTransferMode::Move && !transfer.from_demo).then(|| view! {
+                        <SessionArtifactChoice locale=locale ids=vec![transfer.id.clone()]
+                            target=Some(transfer.target_project_id.clone()) state=artifacts />
+                    })}
                     {(!has_target).then(|| view! {
                         <div class="hint session-transfer-error">{move || t(locale.get(), empty_key)}</div>
                     })}
@@ -112,7 +238,7 @@ pub(crate) fn SessionTransferOverlay(
                                 session_transfer_error.set(None);
                             }>{move || t(locale.get(), "settings.cancel")}</button>
                         <button type="button" class="primary"
-                            disabled=move || !has_target || session_transfer_busy.get()
+                            disabled=move || !has_target || session_transfer_busy.get() || (transfer.mode == SessionTransferMode::Move && artifacts.blocked())
                             on:click=move |ev| on_save.call(ev)>{move || t(locale.get(), action_key)}</button>
                     </div>
                 </div>
@@ -239,9 +365,17 @@ pub(crate) fn FolderModalOverlay(
                     <h2>{move || t(locale.get(), title_key)}</h2>
                     <label>
                         {move || t(locale.get(), label_key)}
+                        // Chromium treats autocomplete="off" as a hint and still
+                        // lists previously typed values. An unrecognized token
+                        // opts the field out of that saved-info popup.
                         <input
                             id="folder-modal-input"
                             type="text"
+                            name="wisp-group-name"
+                            autocomplete="nope"
+                            autocorrect="off"
+                            autocapitalize="none"
+                            spellcheck="false"
                             autofocus=true
                             prop:value=move || folder_modal_input.get()
                             on:input=move |ev| folder_modal_input.set(dom_value(&ev))
@@ -1408,5 +1542,121 @@ pub(crate) fn ExplorationOverlayView(
                 </div>
             }
         })}
+    }
+}
+
+/// Project-scoped recovery collection. Escape belongs to the app stack so a
+/// context menu opened over this dialog closes before the dialog itself.
+#[component]
+pub(crate) fn ShelvedSessionsOverlay(
+    locale: RwSignal<Locale>,
+    revision: ReadSignal<u64>,
+    on_close: Callback<()>,
+    on_open: Callback<SessionInfo>,
+    on_restore: Callback<String>,
+    on_context: Callback<(web_sys::MouseEvent, SessionInfo)>,
+) -> impl IntoView {
+    let query = create_rw_signal(String::new());
+    let items = create_rw_signal(Vec::<SessionInfo>::new());
+    let cursor = create_rw_signal::<Option<SessionCursor>>(None);
+    let loading = create_rw_signal(false);
+    let error = create_rw_signal::<Option<String>>(None);
+    let generation = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+    let cleanup_alive = alive.clone();
+    on_cleanup(move || cleanup_alive.set(false));
+    let fetch = Callback::new(move |next: Option<SessionCursor>| {
+        generation.set(generation.get() + 1);
+        let ticket = generation.get();
+        let generation = generation.clone();
+        let alive = alive.clone();
+        let append = next.is_some();
+        let args = to_value(&serde_json::json!({
+            "shelved": true, "query": query.get_untracked(), "cursor": next,
+        }))
+        .unwrap();
+        loading.set(true);
+        error.set(None);
+        if !append {
+            items.set(Vec::new());
+            cursor.set(None);
+        }
+        spawn_local(async move {
+            let result = invoke_checked("list_sessions_page", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<SessionPage>(value).map_err(|e| e.to_string())
+                });
+            if !alive.get() || ticket != generation.get() {
+                return;
+            }
+            match result {
+                Ok(page) => {
+                    if append {
+                        items.update(|rows| rows.extend(page.items));
+                    } else {
+                        items.set(page.items);
+                    }
+                    cursor.set(page.next_cursor);
+                }
+                Err(message) => error.set(Some(localize_backend(locale.get_untracked(), &message))),
+            }
+            loading.set(false);
+        });
+    });
+    create_effect(move |_| {
+        query.get();
+        revision.get();
+        fetch.call(None);
+    });
+    view! {
+        <div class="overlay" on:click=move |_| on_close.call(())>
+            <section class="modal shelved-sessions-modal" role="dialog" aria-modal="true"
+                aria-label=move || t(locale.get(), "session.shelved")
+                on:click=|ev| ev.stop_propagation()>
+                <header>
+                    <h2>{move || t(locale.get(), "session.shelved")}</h2>
+                    <button type="button" class="icon-btn" aria-label=move || t(locale.get(), "trajectory.close")
+                        on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
+                </header>
+                <p class="hint">{move || t(locale.get(), "session.shelved_hint")}</p>
+                <input type="search" aria-label=move || t(locale.get(), "session.shelved_search")
+                    placeholder=move || t(locale.get(), "session.shelved_search")
+                    prop:value=move || query.get()
+                    on:input=move |ev| query.set(event_target_value(&ev)) />
+                {move || error.get().map(|message| view! { <p role="alert">{message}</p> })}
+                <div class="shelved-sessions-list" aria-busy=move || loading.get().to_string()>
+                    {move || items.get().into_iter().map(|session| {
+                        let open_session = session.clone();
+                        let restore_id = session.id.clone();
+                        let menu_session = session.clone();
+                        view! {
+                            <div class="shelved-session-row" data-session-id=session.id
+                                on:contextmenu=move |ev: web_sys::MouseEvent| {
+                                    ev.prevent_default(); ev.stop_propagation();
+                                    on_context.call((ev, menu_session.clone()));
+                                }>
+                                <button type="button" class="shelved-session-open"
+                                    on:click=move |_| on_open.call(open_session.clone())>
+                                    {compose_icon("chat")}<span>{session.title}</span>
+                                </button>
+                                <button type="button" class="btn" on:click=move |_| on_restore.call(restore_id.clone())>
+                                    {compose_icon("undo")}<span>{move || t(locale.get(), "session.restore")}</span>
+                                </button>
+                            </div>
+                        }
+                    }).collect_view()}
+                    {move || (!loading.get() && error.get().is_none() && items.get().is_empty()).then(|| view! {
+                        <p class="hint">{move || t(locale.get(), "session.shelved_empty")}</p>
+                    })}
+                </div>
+                {move || loading.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
+                {move || cursor.get().is_some().then(|| view! {
+                    <button type="button" class="btn" disabled=move || loading.get()
+                        on:click=move |_| fetch.call(cursor.get_untracked())>{move || t(locale.get(), "sidebar.load_older")}</button>
+                })}
+            </section>
+        </div>
     }
 }

@@ -68,6 +68,9 @@ impl RemoteStagingEntry {
 
 impl Store {
     pub async fn record_remote_staging(&self, entry: &RemoteStagingEntry) -> Result<()> {
+        if let Some(store) = self.route_project(&entry.project_id).await? {
+            return Box::pin(store.record_remote_staging(entry)).await;
+        }
         entry.validate()?;
         sqlx::query(
             "INSERT INTO remote_staging(\
@@ -96,6 +99,10 @@ impl Store {
         context_id: &str,
         include_removed: bool,
     ) -> Result<Vec<RemoteStagingEntry>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_remote_staging(project_id, context_id, include_removed))
+                .await;
+        }
         let sql = if include_removed {
             "SELECT id,project_id,context_id,run_id,remote_path,source,checksum,size_bytes,\
              created_at,removed_at FROM remote_staging \
@@ -152,6 +159,14 @@ impl Store {
     }
 
     pub async fn mark_remote_staging_removed(&self, ids: &[String]) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.mark_remote_staging_removed(ids)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let mut removed = 0;
         for id in ids {
@@ -170,6 +185,9 @@ impl Store {
     /// Workspace cleanup deleted the run's workdir, taking its staged inputs
     /// with it.
     pub async fn mark_remote_staging_removed_for_run(&self, run_id: &str) -> Result<u64> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.mark_remote_staging_removed_for_run(run_id)).await;
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE remote_staging SET removed_at=? \
@@ -185,6 +203,9 @@ impl Store {
     /// Insert unless an unremoved row already exists for the same
     /// project/context/path/source/run. Harvest retries stay idempotent.
     pub async fn ensure_remote_staging(&self, entry: &RemoteStagingEntry) -> Result<bool> {
+        if let Some(store) = self.route_project(&entry.project_id).await? {
+            return Box::pin(store.ensure_remote_staging(entry)).await;
+        }
         entry.validate()?;
         let exists: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM remote_staging \
@@ -208,6 +229,15 @@ impl Store {
     /// Live External references on this context across every project.
     /// Host disposal is alias-global, so the audit cannot be project-scoped.
     pub async fn count_external_references_on_context_all(&self, uri_prefix: &str) -> Result<i64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value =
+                    Box::pin(store.count_external_references_on_context_all(uri_prefix)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM artifact_versions v \
              JOIN artifacts a ON a.id=v.artifact_id \
@@ -224,6 +254,14 @@ impl Store {
     }
 
     pub async fn count_remote_staging_on_context(&self, context_id: &str) -> Result<i64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.count_remote_staging_on_context(context_id)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM remote_staging \
              WHERE context_id=? AND removed_at IS NULL",
@@ -241,6 +279,10 @@ impl Store {
         project_id: &str,
         uri_prefix: &str,
     ) -> Result<i64> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.count_external_references_on_context(project_id, uri_prefix))
+                .await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM artifact_versions v \
              JOIN artifacts a ON a.id=v.artifact_id \
@@ -263,6 +305,10 @@ impl Store {
         project_id: &str,
         uri_prefix: &str,
     ) -> Result<Vec<String>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_live_external_uris_on_context(project_id, uri_prefix))
+                .await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT v.storage_path FROM artifact_versions v \
              JOIN artifacts a ON a.id=v.artifact_id \
@@ -282,6 +328,15 @@ impl Store {
     /// Mark External artifact versions whose storage URI matches `uri_prefix`
     /// (typically `ssh://<alias>/`) as abandoned after the server is dropped.
     pub async fn mark_external_artifacts_source_discarded(&self, uri_prefix: &str) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value =
+                    Box::pin(store.mark_external_artifacts_source_discarded(uri_prefix)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let result = sqlx::query(
             "UPDATE artifact_versions SET source_discarded_at=? \
@@ -297,6 +352,14 @@ impl Store {
 
     /// Mark exact External URIs discarded (user deleted the remote file).
     pub async fn mark_external_uris_source_discarded(&self, uris: &[String]) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value = Box::pin(store.mark_external_uris_source_discarded(uris)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         if uris.is_empty() {
             return Ok(0);
         }
@@ -320,6 +383,14 @@ impl Store {
     /// True when any External version of this exact URI has been discarded.
     /// Re-adding the same host alias must not resurrect abandoned references.
     pub async fn ssh_uri_source_discarded(&self, uri: &str) -> Result<bool> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = false;
+            for store in stores {
+                let value = Box::pin(store.ssh_uri_source_discarded(uri)).await?;
+                result |= value;
+            }
+            return Ok(result);
+        }
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM artifact_versions \
              WHERE materialization='external' AND storage_path=? \
@@ -333,6 +404,15 @@ impl Store {
     /// Abandon the ledger when the server itself is dropped. Files stay on the
     /// discarded machine; the project no longer claims them.
     pub async fn mark_remote_staging_removed_for_context(&self, context_id: &str) -> Result<u64> {
+        if let Some(stores) = self.routed_projects().await? {
+            let mut result = 0;
+            for store in stores {
+                let value =
+                    Box::pin(store.mark_remote_staging_removed_for_context(context_id)).await?;
+                result += value;
+            }
+            return Ok(result);
+        }
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
             "UPDATE remote_staging SET removed_at=? \

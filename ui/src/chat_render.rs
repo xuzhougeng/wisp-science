@@ -71,6 +71,7 @@ pub(crate) fn completed_run_owners(
 #[cfg(test)]
 mod submitted_run_id_tests {
     use super::{completed_run_owners, submitted_run_id};
+    use crate::app_support::completed_activity_groups;
     use crate::dto::{ChatItem, RunSummary};
 
     fn tool(name: &str, output: &str) -> ChatItem {
@@ -126,6 +127,88 @@ mod submitted_run_id_tests {
         assert_eq!(submitted_run_id("monitor_run", output), None);
         assert_eq!(submitted_run_id("harvest_run", output), None);
         assert_eq!(submitted_run_id("shell", output), None);
+    }
+
+    #[test]
+    fn completed_monitors_and_their_commentary_share_the_submission_activity() {
+        let monitor = |name: &str, id: &str| ChatItem::Tool {
+            name: name.into(),
+            input: format!(" {id} "),
+            output: "monitored output".into(),
+            ok: Some(true),
+            started_at_ms: None,
+            duration_ms: Some(50),
+        };
+        let assistant = |text: &str| ChatItem::Assistant {
+            text: text.into(),
+            model: None,
+            resources: Vec::new(),
+        };
+        let mut items = vec![
+            ChatItem::User("Analyze and transfer".into()),
+            tool(
+                "run_in_context",
+                r#"{"run_id":"run-1","status":"submitted"}"#,
+            ),
+            monitor("monitor_run", "run-1"),
+            tool(
+                "transfer_between_contexts",
+                r#"{"run_id":"xfer-1","status":"submitted"}"#,
+            ),
+            assistant("Checking the transfer"),
+            ChatItem::Reasoning("Verify the result".into()),
+            monitor("wisp_monitor_run", "xfer-1"),
+            assistant("Final report"),
+        ];
+        for status in ["succeeded", "failed", "cancelled", "timed_out", "lost"] {
+            let owners = completed_run_owners(
+                &items,
+                &[
+                    run("run-1", "session", status),
+                    run("xfer-1", "session", status),
+                ],
+                "session",
+            );
+            assert_eq!(
+                completed_activity_groups(&items, false, &owners),
+                vec![1..7]
+            );
+            assert!(completed_activity_groups(&items, true, &owners).is_empty());
+        }
+
+        // Running, unknown, and foreign Runs must keep their standalone card.
+        for first in [
+            run("run-1", "session", "running"),
+            run("run-1", "elsewhere", "succeeded"),
+            run("unrelated", "session", "succeeded"),
+        ] {
+            let owners = completed_run_owners(
+                &items,
+                &[first, run("xfer-1", "session", "succeeded")],
+                "session",
+            );
+            assert_eq!(
+                completed_activity_groups(&items, false, &owners),
+                vec![1..2, 3..7]
+            );
+        }
+
+        let owners = completed_run_owners(
+            &items,
+            &[
+                run("run-1", "session", "succeeded"),
+                run("xfer-1", "session", "succeeded"),
+            ],
+            "session",
+        );
+        items.push(ChatItem::QueuedUser {
+            id: 1,
+            text: "Queued question".into(),
+        });
+        assert!(completed_activity_groups(&items, true, &owners).is_empty());
+        items.pop();
+        items.push(ChatItem::User("Next question".into()));
+        assert_eq!(completed_activity_groups(&items, true, &owners), vec![1..7]);
     }
 
     #[test]
@@ -2095,11 +2178,6 @@ pub(crate) fn RunMonitorCard(
     tool_ok: Option<bool>,
     tool_output: String,
     dismissed_runs: RwSignal<HashSet<String>>,
-    /// Only foreground `monitor_run` cards nominate their Run for the
-    /// results-review prompt. AutoRun cards cover exploratory command Runs,
-    /// which must never interrupt with a review modal (#897).
-    #[prop(optional)]
-    auto_review: bool,
     #[prop(optional)] embedded: bool,
 ) -> impl IntoView {
     let locale = use_locale();
@@ -2161,41 +2239,6 @@ pub(crate) fn RunMonitorCard(
     // Manual entry point: the review button on the card opens the modal
     // directly, for any card.
     let review_modal = use_context::<crate::overlays::RunReviewModal>().map(|modal| modal.0);
-    // When a foreground-monitored SSH Run finishes successfully in this
-    // session, nominate it for the results-review prompt. The root drains the
-    // queue once the session goes idle and asks the backend whether the Run
-    // has an unresolved product decision before opening the modal, so work in
-    // progress is never interrupted and empty workspaces never prompt (#897).
-    let review_queue = auto_review
-        .then(|| use_context::<crate::overlays::PendingRunReviews>().map(|queue| queue.0))
-        .flatten();
-    if let Some(review_queue) = review_queue {
-        let prompted = Rc::new(Cell::new(false));
-        create_effect(move |previous: Option<Option<String>>| {
-            let Some(run) = selected_run.get() else {
-                return None;
-            };
-            let status = run.status.clone();
-            let was_active = matches!(
-                previous.flatten().as_deref(),
-                Some("submitted") | Some("running") | Some("cancelling")
-            );
-            if was_active
-                && status == "succeeded"
-                && run.kind == "ssh_direct"
-                && run.cleaned_at.is_none()
-                && !prompted.get()
-            {
-                prompted.set(true);
-                review_queue.update(|ids| {
-                    if !ids.contains(&run.id) {
-                        ids.push(run.id.clone());
-                    }
-                });
-            }
-            Some(status)
-        });
-    }
     view! {
         {move || {
             if !embedded
@@ -2530,6 +2573,7 @@ pub(crate) fn render_item(
                     move |_| on_memory.call((session_id.clone(), explore_turn_index))
                 })
                 on_review=Callback::new(move |_| on_review.call(session_id.clone()))
+                busy=busy
                 on_branch=Callback::new(on_branch)
                 can_branch=can_branch
                 show_actions=show_actions
@@ -2618,7 +2662,6 @@ pub(crate) fn render_item(
                 tool_ok=*ok
                 tool_output=output.clone()
                 dismissed_runs=dismissed_runs
-                auto_review=true
             />
         }
         .into_view(),

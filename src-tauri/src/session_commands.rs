@@ -414,16 +414,21 @@ pub(super) async fn list_sessions_page(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     cursor: Option<SessionCursor>,
+    shelved: Option<bool>,
+    query: Option<String>,
 ) -> Result<SessionPage, String> {
     let ap = state.require_active(window.label())?;
+    let shelved = shelved.unwrap_or(false);
     let mut rows = state
         .store
-        .list_sessions_page(
+        .list_sessions_page_with_visibility(
             &ap.id,
             cursor
                 .as_ref()
                 .map(|cursor| (cursor.ts, cursor.id.as_str())),
             SESSION_HISTORY_PAGE_SIZE + 1,
+            Some(shelved),
+            query.as_deref().unwrap_or(""),
         )
         .await
         .map_err(|e| format!("{e}"))?;
@@ -440,12 +445,12 @@ pub(super) async fn list_sessions_page(
     // the newest keyset page, so fetch them once (first page only) and prepend any
     // that aren't already in this page. The keyset cursor is left untouched.
     let pinned_rows = match cursor {
-        None => state
+        None if !shelved => state
             .store
             .list_pinned_sessions(&ap.id)
             .await
             .map_err(|e| format!("{e}"))?,
-        Some(_) => Vec::new(),
+        _ => Vec::new(),
     };
     let pinned_ids: HashSet<String> = pinned_rows.iter().map(|row| row.0.clone()).collect();
     let page_ids: HashSet<String> = rows.iter().map(|row| row.0.clone()).collect();
@@ -497,7 +502,20 @@ pub(super) async fn list_sessions_page(
     for item in &mut items {
         item.stale_prompt = stale.contains(&item.id);
     }
+    let shelved_active_id = match state.active_frame(window.label()) {
+        Some(id)
+            if state
+                .store
+                .session_is_shelved(&id)
+                .await
+                .map_err(|e| e.to_string())? =>
+        {
+            Some(id)
+        }
+        _ => None,
+    };
     Ok(SessionPage {
+        shelved_active_id,
         items,
         next_cursor,
         running_ids: running.into_iter().collect(),
@@ -680,12 +698,34 @@ pub(super) async fn move_session(
 }
 
 #[tauri::command]
+pub(super) async fn preview_session_artifacts(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    id: String,
+    target_project_id: Option<String>,
+) -> Result<wisp_dto::SessionArtifactPreview, String> {
+    let source = state.require_active(window.label())?;
+    let _source = state.begin_project_activity(&source.id)?;
+    let _target = target_project_id
+        .as_deref()
+        .map(|id| state.begin_project_activity(id))
+        .transpose()?;
+    state
+        .store
+        .preview_session_artifacts(&id, &source.id, target_project_id.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(super) async fn transfer_session_to_project(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     id: String,
     target_project_id: String,
     mode: String,
+    include_artifacts: Option<bool>,
+    artifact_fingerprint: Option<String>,
 ) -> Result<String, String> {
     let source = state.require_active(window.label())?;
     if target_project_id == source.id {
@@ -745,8 +785,30 @@ pub(super) async fn transfer_session_to_project(
         );
     }
 
-    let _source_activity = state.begin_project_activity(&source.id)?;
-    let _target_activity = state.begin_project_activity(&target_project_id)?;
+    let include_artifacts = include_artifacts.unwrap_or(false);
+    if include_artifacts && (!remove_source || artifact_fingerprint.is_none()) {
+        return Err("Moving artifacts requires a fresh preview and move mode.".into());
+    }
+    let _source_exclusive = if include_artifacts {
+        Some(state.begin_project_exclusive_activity(&source.id)?)
+    } else {
+        None
+    };
+    let _target_exclusive = if include_artifacts {
+        Some(state.begin_project_exclusive_activity(&target_project_id)?)
+    } else {
+        None
+    };
+    let _source_activity = if !include_artifacts {
+        Some(state.begin_project_activity(&source.id)?)
+    } else {
+        None
+    };
+    let _target_activity = if !include_artifacts {
+        Some(state.begin_project_activity(&target_project_id)?)
+    } else {
+        None
+    };
     let runtime = state.sessions.lock().await.get(&id).cloned();
     let _workflow_guard = match runtime.as_ref() {
         Some(runtime) => Some(runtime.workflow.lock().await),
@@ -765,11 +827,25 @@ pub(super) async fn transfer_session_to_project(
 
     let new_id = Uuid::new_v4().to_string();
     if remove_source {
-        state
-            .store
-            .move_session_to_project(&id, &source.id, &target_project_id, &new_id)
-            .await
-            .map_err(|error| error.to_string())?;
+        if include_artifacts {
+            state.runtime_manager.stop_session(&source.id, &id).await;
+            state
+                .store
+                .operate_session_with_artifacts(
+                    &id,
+                    &source.id,
+                    Some((&target_project_id, &new_id)),
+                    artifact_fingerprint.as_deref().unwrap_or_default(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+        } else {
+            state
+                .store
+                .move_session_to_project(&id, &source.id, &target_project_id, &new_id)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         if let Some(runtime) = runtime.as_ref() {
             runtime.deleted.store(true, Ordering::SeqCst);
             runtime.cancel.store(true, Ordering::Relaxed);
@@ -800,6 +876,8 @@ pub(super) async fn delete_session(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     id: String,
+    include_artifacts: Option<bool>,
+    artifact_fingerprint: Option<String>,
 ) -> Result<(), String> {
     state
         .store
@@ -807,7 +885,27 @@ pub(super) async fn delete_session(
         .await
         .map_err(|e| e.to_string())?;
     let ap = state.require_active(window.label())?;
-    let _project_activity = state.begin_project_activity(&ap.id)?;
+    let include_artifacts = include_artifacts.unwrap_or(false);
+    if include_artifacts && artifact_fingerprint.is_none() {
+        return Err("Deleting artifacts requires a fresh preview.".into());
+    }
+    if include_artifacts
+        && (state.running_turns.lock().await.contains(&id)
+            || state.awaiting_confirm.lock().unwrap().contains(&id)
+            || state.reviewing.lock().unwrap().contains(&id))
+    {
+        return Err("Wait for the session to finish before deleting its files.".into());
+    }
+    let _exclusive = if include_artifacts {
+        Some(state.begin_project_exclusive_activity(&ap.id)?)
+    } else {
+        None
+    };
+    let _project_activity = if !include_artifacts {
+        Some(state.begin_project_activity(&ap.id)?)
+    } else {
+        None
+    };
     let owner = state
         .store
         .frame_project_id(&id)
@@ -840,14 +938,19 @@ pub(super) async fn delete_session(
         return Err("session_has_branches: delete its branches before deleting main".into());
     }
     let runtime = state.sessions.lock().await.get(&id).cloned();
+    let was_cancelled = runtime
+        .as_ref()
+        .is_some_and(|rt| rt.cancel.load(Ordering::Relaxed));
     if let Some(rt) = runtime.as_ref() {
         rt.deleted.store(true, Ordering::SeqCst);
         rt.cancel.store(true, Ordering::Relaxed);
     }
-    acp::cancel_frame(&state, &id).await;
-    // Revoke Host ownership before waiting for a turn that may be connecting.
-    // This also fences background restore/wiring snapshots for this frame.
-    mcp_connections::host().retire_frame(&id).await;
+    if !include_artifacts {
+        // Transcript-only deletion may cancel a live turn. File operations
+        // require an idle project and keep these bridges until commit succeeds.
+        acp::cancel_frame(&state, &id).await;
+        mcp_connections::host().retire_frame(&id).await;
+    }
     // Match send/Plan lock order. The tombstone prevents work already queued
     // behind these guards from restarting after the DB cascade.
     let _workflow_guard = match runtime.as_ref() {
@@ -858,6 +961,33 @@ pub(super) async fn delete_session(
         Some(rt) => Some(rt.agent.lock().await),
         None => None,
     };
+    state.runtime_manager.stop_session(&ap.id, &id).await;
+    let result = if include_artifacts {
+        state
+            .store
+            .operate_session_with_artifacts(
+                &id,
+                &ap.id,
+                None,
+                artifact_fingerprint.as_deref().unwrap_or_default(),
+            )
+            .await
+    } else {
+        state.store.delete_session(&id, &ap.id).await
+    };
+    if let Err(error) = result {
+        if let Some(runtime) = runtime.as_ref() {
+            runtime.deleted.store(false, Ordering::SeqCst);
+            if include_artifacts {
+                runtime.cancel.store(was_cancelled, Ordering::Relaxed);
+            }
+        }
+        return Err(error.to_string());
+    }
+    if include_artifacts {
+        acp::cancel_frame(&state, &id).await;
+        mcp_connections::host().retire_frame(&id).await;
+    }
     acp::close_frame(&state, &id).await;
     state.sessions.lock().await.remove(&id);
     if let Ok(mut sessions) = state.full_permission_sessions.write() {
@@ -871,14 +1001,6 @@ pub(super) async fn delete_session(
     if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
         state.set_active_frame(window.label(), None);
     }
-    // Interpreters are keyed per conversation; a deleted conversation's
-    // Python/R workers must not linger until project close.
-    state.runtime_manager.stop_session(&ap.id, &id).await;
-    state
-        .store
-        .delete_session(&id, &ap.id)
-        .await
-        .map_err(|e| format!("{e}"))?;
     Ok(())
 }
 
@@ -914,6 +1036,22 @@ pub(super) async fn set_session_pinned(
         .await
         .map_err(|e| format!("{e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub(super) async fn set_session_shelved(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    id: String,
+    shelved: bool,
+) -> Result<(), String> {
+    let ap = state.require_active(window.label())?;
+    let _project_activity = state.begin_project_activity(&ap.id)?;
+    state
+        .store
+        .set_session_shelved(&id, &ap.id, shelved)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// How many sessions appear on the Projects landing "Recent sessions" column.

@@ -16,6 +16,15 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public bool Loading { get; private set; }
     public bool Busy { get; private set; }
     public bool UncertainSend { get; private set; }
+    public ComposerAttachment[] Attachments { get; private set; } = [];
+    public string? QueuedFollowUp { get; private set; }
+    private readonly Dictionary<string, ComposerAttachment[]> stagedFiles = [];
+    private readonly Dictionary<string, ComposerAttachment[]> submittedFiles = [];
+    private readonly Dictionary<string, string> queuedDrafts = [];
+    private readonly HashSet<string> uncertainQueues = [];
+    public bool CanAttach => Snapshot is { ReadOnly: false } && !Busy && !UncertainSend && !ShowingHistory && ConnectionError == null;
+    public bool CanQueue => CanAttach && Snapshot?.Running == true && (Draft.Trim().Length > 0 || Attachments.Length > 0)
+        && QueuedFollowUp == null && sessionId != null && !uncertainQueues.Contains(sessionId);
     public string? ConnectionError { get; private set; }
     public string? OperationError { get; private set; }
     public ConversationModelOption[] Models { get; private set; } = [];
@@ -24,10 +33,11 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public int? ScrollTarget { get; private set; }
     public int ScrollRevision { get; private set; }
     public bool CanSend =>
-        Draft.Trim().Length > 0 && Snapshot is { Running: false, ReadOnly: false } && !Busy && !UncertainSend
+        (Draft.Trim().Length > 0 || Attachments.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !UncertainSend
         && ConnectionError == null && !ShowingHistory;
     private string? projectId, sessionId;
     private int generation;
+    private bool active;
     private (Guid Id, string Text)? pending;
     private readonly Dictionary<string, string> drafts = [];
     private readonly Dictionary<string, (Guid Id, string Text)> pendingSends = [];
@@ -39,7 +49,10 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     {
         Pause();
         this.projectId = projectId; this.sessionId = sessionId;
+        active = true;
         Draft = drafts.GetValueOrDefault(sessionId, "");
+        Attachments = stagedFiles.GetValueOrDefault(sessionId, []);
+        QueuedFollowUp = queuedDrafts.GetValueOrDefault(sessionId);
         Snapshot = null; History = null; ShowingHistory = false; RevealedExcerpt = null; ScrollTarget = null;
         SavedHighlights = []; cursor = new(projectId, sessionId);
         pending = pendingSends.TryGetValue(sessionId, out var waiting) ? waiting : null;
@@ -79,20 +92,22 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
 
     public void Pause()
     {
-        if (sessionId is { } session) drafts[session] = Draft;
+        if (sessionId is { } session) { drafts[session] = Draft; stagedFiles[session] = Attachments; }
         generation++;
+        active = false;
     }
 
     public void Reset()
     {
         Pause();
         projectId = null; sessionId = null; Snapshot = null; History = null; ShowingHistory = false;
+        Attachments = []; QueuedFollowUp = null;
         Loading = false; Busy = false; ConnectionError = null; Notify();
     }
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        if (projectId is not { } project || sessionId is not { } session) return;
+        if (!active || projectId is not { } project || sessionId is not { } session) return;
         var current = generation;
         try
         {
@@ -104,12 +119,16 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
             {
                 if (Draft == waiting.Text) Draft = "";
                 pending = null; pendingSends.Remove(session); UncertainSend = false; OperationError = null;
+                Attachments = []; stagedFiles[session] = [];
             }
             if (!value.Running && submittedDrafts.TryGetValue(session, out var submitted) && value.RequestId == submitted.Id.ToString())
             {
-                if (value.Error != null && Draft.Length == 0) Draft = submitted.Text;
+                if (value.Error != null && Draft.Length == 0)
+                { Draft = submitted.Text; Attachments = submittedFiles.GetValueOrDefault(session, []); stagedFiles[session] = Attachments; }
                 submittedDrafts.Remove(session);
+                submittedFiles.Remove(session);
             }
+            if (!value.Running) { QueuedFollowUp = null; queuedDrafts.Remove(session); }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -142,15 +161,18 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     {
         if (UncertainSend || Busy || !CanSend || projectId is not { } project || sessionId is not { } session) return;
         var text = Draft; var id = Guid.NewGuid(); var current = generation;
+        var files = Attachments; submittedFiles[session] = files;
         Busy = true; OperationError = null; pending = (id, text); pendingSends[session] = pending.Value; submittedDrafts[session] = pending.Value;
         Notify();
         try
         {
-            await client.SendAsync(project, session, id, text, cancellationToken);
+            await client.SendFilesAsync(project, session, id, text, files.Select(f => f.Path).ToArray(), cancellationToken);
             pendingSends.Remove(session);
+            stagedFiles[session] = [];
             if (drafts.GetValueOrDefault(session) == text) drafts[session] = "";
             if (generation != current) return;
             if (Draft == text) Draft = "";
+            Attachments = [];
             pending = null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -164,8 +186,70 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
 
     public void AcknowledgeUncertainSend()
     {
-        if (sessionId is { } session) pendingSends.Remove(session);
+        if (sessionId is { } session) { pendingSends.Remove(session); uncertainQueues.Remove(session); }
         UncertainSend = false; pending = null; OperationError = null; Notify();
+    }
+
+    public async Task AttachAsync(string path, CancellationToken cancellationToken = default)
+    {
+        if (!CanAttach || string.IsNullOrWhiteSpace(path) || projectId is not { } project || sessionId is not { } session) return;
+        var current = generation; Busy = true; OperationError = null; Notify();
+        try
+        {
+            var file = await client.AttachAsync(project, session, path, cancellationToken);
+            if (!file.Path.StartsWith("uploads/", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(file.Name)) throw new InvalidDataException("Invalid attachment response");
+            if (current != generation) return;
+            Attachments = Attachments.Where(f => f.Path != file.Path).Append(file).ToArray(); stagedFiles[session] = Attachments;
+        }
+        catch (Exception ex) { if (current == generation) OperationError = "附件未能确认添加；不会自动重试。\n" + ex.Message; }
+        finally { if (current == generation) { Busy = false; Notify(); } }
+    }
+    public void RemoveAttachment(string path)
+    {
+        if (Busy || UncertainSend) return;
+        Attachments = Attachments.Where(f => f.Path != path).ToArray();
+        if (sessionId != null) stagedFiles[sessionId] = Attachments;
+        Notify();
+    }
+    public async Task QueueAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanQueue || projectId is not { } project || sessionId is not { } session) return;
+        var current = generation; var text = Draft; var files = Attachments.Select(f => f.Path).ToArray();
+        Busy = true; OperationError = null; Notify();
+        try
+        {
+            await client.EnqueueFilesAsync(project, session, Guid.NewGuid(), text, files, cancellationToken);
+            queuedDrafts[session] = text; stagedFiles[session] = [];
+            if (drafts.GetValueOrDefault(session) == text) drafts[session] = "";
+            if (current != generation) return;
+            QueuedFollowUp = text; if (Draft == text) Draft = ""; Attachments = [];
+        }
+        catch (Exception ex)
+        {
+            uncertainQueues.Add(session);
+            if (current == generation) OperationError = "后续未能确认排队；请核对会话，不会自动重试。\n" + ex.Message;
+        }
+        finally { if (current == generation) { Busy = false; Notify(); } }
+    }
+    public bool Prefill(string text, bool append = false)
+    {
+        if (sessionId == null || Busy || UncertainSend || Snapshot is not { ReadOnly: false }) return false;
+        Draft = append && !string.IsNullOrWhiteSpace(Draft) ? Draft + "\n\n" + text : text; Notify(); return true;
+    }
+    public async Task PrepareIssueReportAsync()
+    {
+        if (settings == null || projectId is not { } project || sessionId == null || Busy) return;
+        var current = generation; var original = Draft;
+        try
+        {
+            var bootstrap = await settings.InvokeAsync("get_bootstrap_status", new(), project);
+            if (current != generation || Draft != original) return;
+            string Field(string key) => bootstrap?[key]?.GetValue<string>() ?? "未记录";
+            var model = Snapshot?.ModelId.StartsWith("acp:", StringComparison.Ordinal) == true
+                ? Snapshot.ModelId[4..] : Models.FirstOrDefault(m => m.Id == Snapshot?.ModelId)?.Label ?? Models.FirstOrDefault()?.Label ?? "not configured";
+            Prefill($"请帮我向 xuzhougeng/wisp-science 提交一个 GitHub issue。\n\n【已自动采集，请勿向我索要 API key、transcript、项目文件、环境变量、用户名或绝对路径】\n- Wisp 版本：{Field("app_version")}\n- OS / 架构：{Field("os")} / {Field("arch")}\n- 模型配置：{model}\n- 启动耗时：{Field("startup")}\n\n请用中文逐条引导我说明：发生了什么、复现步骤、预期与实际行为，以及我知道的 Run ID 或错误信息。\n若启动很慢或长时间白屏，提醒我在 Windows 正式版可把日志发给维护者：%APPDATA%\\science.wisp-science\\wisp-science\\logs\\wisp.log（上次启动：wisp.previous.log）。\n信息足够后，给出简短 issue 标题和 Markdown 正文，并提供预填链接：https://github.com/xuzhougeng/wisp-science/issues/new?title=...&body=...\n提醒截图需在 GitHub 页面手动附加，Wisp 不会上传截图。");
+        }
+        catch (Exception ex) { if (current == generation) { OperationError = ex.Message; Notify(); } }
     }
 
     public Task StopAsync(CancellationToken cancellationToken = default) => ActAsync((project, session, token) => client.StopAsync(project, session, token), cancellationToken);

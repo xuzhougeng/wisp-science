@@ -2258,8 +2258,36 @@ pub(crate) fn SessionRuntimeStrip(
             if groups.is_empty() {
                 return None;
             }
+            // No runtime process anywhere: keep the context buttons and state each
+            // language once ("Python · R Not started"), instead of a full row of
+            // idle cards.
+            let all_idle = groups.iter().all(|group| {
+                group
+                    .chips
+                    .iter()
+                    .all(|chip| matches!(chip.status.as_str(), "missing" | "unavailable"))
+            });
+            let idle_summary = all_idle.then(|| {
+                let mut by_status: Vec<(&str, Vec<&str>)> = Vec::new();
+                for chip in groups.iter().flat_map(|group| &group.chips) {
+                    let language = language_display(&chip.language);
+                    match by_status.iter_mut().find(|(status, _)| *status == chip.status) {
+                        Some((_, languages)) if languages.contains(&language) => {}
+                        Some((_, languages)) => languages.push(language),
+                        None => by_status.push((&chip.status, vec![language])),
+                    }
+                }
+                by_status
+                    .into_iter()
+                    .map(|(status, languages)| {
+                        format!("{} {}", languages.join(" · "), runtime_status_label(locale.get(), status))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            });
             Some(view! {
                 <div class="session-runtime-strip" data-testid="session-runtime-strip"
+                    class:all-idle=all_idle
                     aria-label=t(locale.get(), "runtime.strip_title")>
                     {groups.into_iter().map(|group| {
                         let manage_id = group.context_id.clone();
@@ -2343,6 +2371,9 @@ pub(crate) fn SessionRuntimeStrip(
                             </div>
                         }
                     }).collect_view()}
+                    {idle_summary.map(|summary| view! {
+                        <span class="session-runtime-idle" data-testid="session-runtime-idle">{summary}</span>
+                    })}
                 </div>
             })
         }}
@@ -2733,7 +2764,7 @@ fn MethodSearchRunPanel(
     let refresh_run_id = run_id.clone();
     view! {
         <div class="method-search-panel" data-testid="method-search-panel">
-            <button type="button" class="secondary method-search-inspect"
+            <button type="button" class="btn-ghost method-search-inspect"
                 data-testid="method-search-inspect"
                 aria-expanded=move || expanded.get().to_string()
                 on:click=move |_| {
@@ -2835,7 +2866,7 @@ fn MethodSearchRunPanel(
                                 })}
                                 <div class="method-search-actions">
                                     {(status == "draft").then(|| view! {
-                                        <button type="button" class="primary"
+                                        <button type="button" class="btn-primary"
                                             data-testid="method-search-start"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(
@@ -2844,7 +2875,7 @@ fn MethodSearchRunPanel(
                                             )>{move || t(locale.get(), "method_search.start")}</button>
                                     })}
                                     {matches!(status.as_str(), "submitted" | "running").then(|| view! {
-                                        <button type="button" class="secondary"
+                                        <button type="button" class="btn-ghost"
                                             data-testid="method-search-pause"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(
@@ -2853,7 +2884,7 @@ fn MethodSearchRunPanel(
                                             )>{move || t(locale.get(), "method_search.pause")}</button>
                                     })}
                                     {(status == "paused").then(|| view! {
-                                        <button type="button" class="primary"
+                                        <button type="button" class="btn-primary"
                                             data-testid="method-search-resume"
                                             disabled=move || loading.get()
                                             on:click=move |_| control_method_search(

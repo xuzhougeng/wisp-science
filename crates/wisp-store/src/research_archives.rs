@@ -5,6 +5,9 @@ use wisp_dto::ResearchArchive;
 
 impl Store {
     pub async fn research_archive(&self, frame_id: &str) -> Result<Option<ResearchArchive>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.research_archive(frame_id)).await;
+        }
         let row: Option<String> =
             sqlx::query_scalar("SELECT record_json FROM research_archives WHERE frame_id=?")
                 .bind(frame_id)
@@ -15,6 +18,9 @@ impl Store {
     }
 
     pub async fn require_unarchived_session(&self, frame_id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.require_unarchived_session(frame_id)).await;
+        }
         let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM research_archives a JOIN frames f ON f.root_frame_id=a.frame_id WHERE f.id=? AND a.frozen_at IS NOT NULL)")
             .bind(frame_id).fetch_one(&self.pool).await?;
         if locked {
@@ -26,6 +32,9 @@ impl Store {
     /// Include executed cells and the full visual notebook in the guard even if
     /// model context was compacted. The source export is stored beside the archive.
     pub async fn research_archive_source(&self, frame_id: &str) -> Result<(String, String)> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.research_archive_source(frame_id)).await;
+        }
         let messages = self.load_messages_with_seq(frame_id).await?;
         let cells = sqlx::query("SELECT tool,language,source,exit_status,files_read,files_written FROM execution_log WHERE frame_id=? ORDER BY cell_index,id")
             .bind(frame_id).fetch_all(&self.pool).await?.into_iter().map(|r| {
@@ -38,6 +47,9 @@ impl Store {
     }
 
     pub async fn save_research_archive_draft(&self, archive: &ResearchArchive) -> Result<()> {
+        if let Some(store) = self.route_project(&archive.project_id).await? {
+            return Box::pin(store.save_research_archive_draft(archive)).await;
+        }
         self.require_unarchived_session(&archive.frame_id).await?;
         if archive.frozen_at.is_some()
             || self.frame_project_id(&archive.frame_id).await?.as_deref()
@@ -51,6 +63,9 @@ impl Store {
     }
 
     pub async fn freeze_research_archive(&self, archive: &ResearchArchive) -> Result<()> {
+        if let Some(store) = self.route_project(&archive.project_id).await? {
+            return Box::pin(store.freeze_research_archive(archive)).await;
+        }
         if archive.frozen_at.is_none() {
             bail!("Archive freeze timestamp is required");
         }
@@ -72,6 +87,9 @@ impl Store {
         frame_id: &str,
         receipts: &[(String, String)],
     ) -> Result<ResearchArchive> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.record_archive_cleanup(frame_id, receipts)).await;
+        }
         let mut archive = self
             .research_archive(frame_id)
             .await?
@@ -100,6 +118,9 @@ impl Store {
 
     /// Known writes plus registered material. Never infer ownership from a folder scan.
     pub async fn research_archive_paths(&self, frame_id: &str) -> Result<Vec<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.research_archive_paths(frame_id)).await;
+        }
         let paths: Vec<String> = sqlx::query_scalar("SELECT path FROM turn_file_undo WHERE frame_id=?1 UNION SELECT CASE WHEN logical_key LIKE 'path:%' THEN substr(logical_key,6) ELSE storage_path END FROM artifacts WHERE root_frame_id=?1 UNION SELECT display_name FROM message_resource_links WHERE frame_id=?1 UNION SELECT f.value FROM execution_log e,json_each(e.files_read) f WHERE e.frame_id=?1 AND f.type='text' UNION SELECT f.value FROM execution_log e,json_each(e.files_written) f WHERE e.frame_id=?1 AND f.type='text' ORDER BY 1")
             .bind(frame_id).fetch_all(&self.pool).await?;
         Ok(paths)
@@ -108,6 +129,9 @@ impl Store {
     /// A deletion candidate needs creation provenance, no other notebook use,
     /// no registered project evidence and no original-input identity.
     pub async fn archive_path_deletable(&self, frame_id: &str, path: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.archive_path_deletable(frame_id, path)).await;
+        }
         let created: Option<bool> = sqlx::query_scalar("SELECT NOT before_exists FROM turn_file_undo WHERE frame_id=? AND path=? ORDER BY user_message_seq LIMIT 1")
             .bind(frame_id).bind(path).fetch_optional(&self.pool).await?;
         if created != Some(true) {
@@ -151,6 +175,9 @@ impl Store {
     }
 
     pub async fn research_archive_index(&self, project_id: &str) -> Result<String> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.research_archive_index(project_id)).await;
+        }
         let rows = sqlx::query("SELECT id,title,frame_id FROM research_archives WHERE project_id=? AND frozen_at IS NOT NULL ORDER BY frozen_at DESC LIMIT 100")
             .bind(project_id).fetch_all(&self.pool).await?;
         if rows.is_empty() {
@@ -173,6 +200,9 @@ impl Store {
         archive: &ResearchArchive,
         frame_id: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.link_archive_continuation(archive, frame_id)).await;
+        }
         if archive.frozen_at.is_none()
             || self.frame_project_id(frame_id).await?.as_deref() != Some(&archive.project_id)
         {

@@ -1,0 +1,37 @@
+{
+  "schema": "wisp.native-publication.v1",
+  "command": "native_publication_workspace",
+  "project_id": "research-1",
+  "args": {},
+  "result": {
+    "publications": [
+      {
+        "id": "pub-1",
+        "project_id": "research-1",
+        "title": "RNA-seq paper",
+        "description": "Differential expression"
+      }
+    ],
+    "publication": {
+      "id": "pub-1",
+      "project_id": "research-1",
+      "title": "RNA-seq paper",
+      "description": "Differential expression"
+    },
+    "revision": {
+      "id": "rev-1",
+      "publication_id": "pub-1",
+      "revision_number": 1,
+      "label": "v1",
+      "state": "draft"
+    },
+    "items": [
+      {
+        "id": "item-1",
+        "title": "The treatment changes expression",
+        "kind": "claim",
+        "ordinal": 0
+      }
+    ]
+  }
+}

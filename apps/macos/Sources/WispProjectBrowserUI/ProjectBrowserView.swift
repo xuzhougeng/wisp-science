@@ -3,14 +3,28 @@ import WispProjectBrowser
 
 public struct ProjectBrowserView: View {
     @ObservedObject private var model: ProjectBrowserModel
+    @ObservedObject private var library: NativeLibraryModel
+    @ObservedObject private var calendar: NativeCalendarModel
+    @ObservedObject private var capabilities: NativeCapabilitiesModel
+    @ObservedObject private var scratch: NativeScratchModel
     @AppStorage("projectBrowser.appearance") private var appearance = "system"
 
-    public init(model: ProjectBrowserModel) { self.model = model }
+    public init(model: ProjectBrowserModel) {
+        self.model = model
+        self.library = model.library
+        self.calendar = model.calendar
+        self.capabilities = model.capabilities
+        self.scratch = model.scratch
+    }
 
     public var body: some View {
         Group {
             if model.settingsPresented {
                 NativeSettingsView(databaseURL: model.databaseURL, projects: model.projects, projectID: model.projectSettingsID ?? model.activeProjectID, editProject: model.projectSettingsID != nil, initialSection: NativeSettingsSection(rawValue: model.settingsSectionID ?? "") ?? .general) { model.settingsPresented = false; model.projectSettingsID = nil; model.settingsSectionID = nil; Task { await model.refresh() } }
+            } else if calendar.presented {
+                NativeCalendarPage(model: model, calendar: calendar)
+            } else if scratch.presented {
+                NativeScratchChat(model: model, scratch: model.scratch)
             } else if let project = model.projects.first(where: { $0.id == model.activeProjectID }) {
                 ProjectWorkspace(model: model, project: project)
             } else {
@@ -20,6 +34,26 @@ public struct ProjectBrowserView: View {
             .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
             .sheet(isPresented: $model.searchPresented) {
                 ProjectSearchSheet(model: model, projectID: model.activeProjectID, close: { model.searchPresented = false })
+            }
+            .sheet(isPresented: $model.createPresented) {
+                NewProjectSheet(model: model)
+            }
+            .sheet(isPresented: $model.importOptionsPresented) {
+                NativeProjectImportSheet(model: model)
+            }
+            .sheet(item: $model.syncProject) { project in
+                NativeProjectSyncSheet(model: NativeProjectSyncModel(project: project, client: model.libraryClient())) {
+                    model.syncProject = nil; Task { await model.refresh() }
+                }
+            }
+            .sheet(item: $model.exportProject) { project in
+                NativeProjectExportSheet(project: project, client: model.libraryClient()) { model.exportProject = nil }
+            }
+            .sheet(isPresented: $library.presented) {
+                NativeLibrarySheet(model: model, library: library)
+            }
+            .sheet(isPresented: $capabilities.presented) {
+                NativeCapabilitiesSheet(model: model, capabilities: capabilities)
             }
     }
 }
@@ -37,7 +71,8 @@ private struct ProjectLanding: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header.padding(.bottom, 32)
-                    if let error = model.error { errorBanner(error).padding(.bottom, 20) }
+                    if let error = model.error { errorBanner(error, stale: model.listRefreshFailed).padding(.bottom, 20) }
+                    if let error = model.importError { errorBanner(error).padding(.bottom, 20) }
                     let columns = geometry.size.width < 820
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 26))
                         : AnyLayout(HStackLayout(alignment: .top, spacing: 40))
@@ -92,13 +127,39 @@ private struct ProjectLanding: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            WispUnavailableAction(title: "研究日历", icon: "calendar", iconOnly: true)
-            WispUnavailableAction(title: "收藏", icon: "star", iconOnly: true)
+            Button { model.calendar.presented = true } label: { WispIcon(name: "calendar") }
+                .buttonStyle(WispButtonStyle()).help("研究日历").accessibilityLabel("研究日历")
+                .accessibilityIdentifier("home-calendar")
+            Button { model.library.presented = true } label: { WispIcon(name: "star") }
+                .buttonStyle(WispButtonStyle()).help("收藏").accessibilityLabel("收藏")
+                .accessibilityIdentifier("home-library")
             searchAction
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
-            WispUnavailableAction(title: "随手一聊")
-            WispUnavailableAction(title: "导入项目", icon: "upload")
-            WispUnavailableAction(title: "新建项目", icon: "plus", primary: true)
+            Link(destination: URL(string: "https://wispscience.com/tutorials.html")!) { WispIcon(name: "doc") }
+                .buttonStyle(WispButtonStyle()).help("文档").accessibilityLabel("文档")
+                .accessibilityIdentifier("home-docs")
+            Button { Task { await model.scratch.open(model.calendarClient()) } } label: { Text("随手一聊") }
+                .buttonStyle(WispButtonStyle())
+                .disabled(model.scratch.busy || model.scratch.presented)
+                .help("随手一聊")
+                .accessibilityLabel("随手一聊")
+                .accessibilityIdentifier("home-scratch")
+            Button { model.importOptionsPresented = true } label: {
+                HStack(spacing: 8) { WispIcon(name: "upload", size: 16); Text("导入项目") }
+            }
+            .buttonStyle(WispButtonStyle())
+            .disabled(model.importBusy)
+            .help("导入项目")
+            .accessibilityLabel("导入项目")
+            .accessibilityIdentifier("import-project")
+            Button { model.createPresented = true } label: {
+                HStack(spacing: 8) { WispIcon(name: "plus", size: 16); Text("新建项目") }
+            }
+            .buttonStyle(WispButtonStyle(primary: true))
+            .disabled(model.createBusy)
+            .help("新建项目")
+            .accessibilityLabel("新建项目")
+            .accessibilityIdentifier("new-project")
         }
     }
 
@@ -123,6 +184,8 @@ private struct ProjectLanding: View {
                         ProjectCard(project: project, selected: false, busy: model.isLoading, saving: model.savingProjectID == project.id,
                                     toggleStar: { Task { await model.toggleStar(project.id) } },
                                     settings: { model.openProjectSettings(project.id) },
+                                    export: { model.exportProject = project },
+                                    sync: { model.syncProject = project },
                                     select: { Task { await model.openProject(project.id) } }, reveal: { model.reveal(project) })
                     }
                 }
@@ -140,9 +203,11 @@ private struct ProjectLanding: View {
                 Button { Task { await model.openProject(session.projectID, sessionID: session.id) } } label: {
                     HStack(spacing: 10) {
                         Text(session.title).font(WispDesign.font(size: 14, weight: .semibold)).lineLimit(1)
-                        Spacer(minLength: 0)
                         Text(session.status == "needs_you" ? "待查看" : "已完成")
-                            .font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
+                            .font(WispDesign.font(size: 11)).foregroundStyle(color(session.status == "needs_you" ? "clay-strong" : "text-muted"))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(color("bg-sunken"), in: Capsule())
+                        Spacer(minLength: 0)
                     }
                     .padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 10))
@@ -164,11 +229,11 @@ private struct ProjectLanding: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color("border")))
     }
 
-    private func errorBanner(_ error: String) -> some View {
+    private func errorBanner(_ error: String, stale: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("项目操作未完成").font(WispDesign.font(size: 13, weight: .semibold))
             Text(error).font(WispDesign.font(size: 12)).textSelection(.enabled)
-            if model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
+            if stale && model.lastLoaded != nil { Text("当前显示上次成功读取的项目。实时数据可能已变化。").font(WispDesign.font(size: 12)) }
         }
         .padding(13).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -210,6 +275,8 @@ private struct ProjectCard: View {
     let saving: Bool
     let toggleStar: () -> Void
     let settings: () -> Void
+    let export: () -> Void
+    let sync: () -> Void
     let select: () -> Void
     let reveal: () -> Void
     @Environment(\.colorScheme) private var scheme
@@ -235,6 +302,13 @@ private struct ProjectCard: View {
                         Spacer(minLength: 0)
                     }
                     .font(WispDesign.font(size: 12)).foregroundStyle(color("text-faint"))
+                    if let status = NativeProjectSyncStatus(project) {
+                        Text(status.label).font(WispDesign.font(size: 11))
+                            .foregroundStyle(status.needsAttention ? color("clay-strong") : color("text-muted"))
+                            .help(NativeProjectSyncStatus.lastSaved(project) ?? status.label)
+                            .accessibilityLabel(status.label + (NativeProjectSyncStatus.lastSaved(project).map { "，" + $0 } ?? ""))
+                            .accessibilityIdentifier("project-sync-\(project.id)")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16).padding(.leading, 18)
                 .contentShape(Rectangle())
@@ -261,7 +335,11 @@ private struct ProjectCard: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color(selected || hovering ? "clay" : "border")))
         .shadow(color: Color.black.opacity(0.035), radius: 2, y: 1)
         .onHover { hovering = $0 }
-        .contextMenu { Button("在 Finder 中显示", action: reveal).disabled(!ProjectBrowserModel.workspaceExists(project)) }
+        .contextMenu {
+            Button(action: reveal) { HStack { WispIcon(name: "folder"); Text("在 Finder 中显示") } }.disabled(!ProjectBrowserModel.workspaceExists(project))
+            Button(action: export) { HStack { WispIcon(name: "share"); Text("导出项目…") } }.disabled(busy)
+            Button(action: sync) { HStack { WispIcon(name: "sync"); Text("项目同步…") } }.disabled(busy)
+        }
     }
 }
 

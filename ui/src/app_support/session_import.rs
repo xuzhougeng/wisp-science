@@ -509,10 +509,7 @@ pub(crate) fn SessionImportModal(
     }
 }
 
-fn matching_sessions(
-    items: Vec<ExternalSessionInfo>,
-    query: &str,
-) -> Vec<ExternalSessionInfo> {
+fn matching_sessions(items: Vec<ExternalSessionInfo>, query: &str) -> Vec<ExternalSessionInfo> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return items;

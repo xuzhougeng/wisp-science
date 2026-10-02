@@ -52,11 +52,12 @@ struct NativeSettingsField: View {
             }
         case .records(let fields):
             NativeSettingsRecords(value: $value, fields: fields)
-        case .path, .file:
+        case .path, .file, .directory:
             HStack {
                 TextField(localized(field.label), text: text).textFieldStyle(NativeSettingsTextFieldStyle()).labelsHidden()
                 Button(localized("选择…")) {
                     let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = true
+                    if case .directory = field.kind { panel.canChooseFiles = false }
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url { value = .string(url.path) }
                 }
@@ -87,7 +88,7 @@ struct NativeSettingsEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(spacing: 22) {
-                if editor.command == "save_model" {
+                if editor.command == "save_model" && !NativeModelSettings.isSubscription(editor.draft) {
                     editorFields(["api_url", "key"])
                     Divider().padding(.vertical, 4)
                     Text(localized("模型配置")).font(WispDesign.font(size: 15, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
@@ -113,7 +114,7 @@ struct NativeSettingsEditorView: View {
                     editorFields(editor.fields.map(\.key))
                 }
             }.disabled(editor.readOnly)
-            if editor.command == "save_model" { HStack {
+            if editor.command == "save_model" && !NativeModelSettings.isSubscription(editor.draft) { HStack {
                 Button(localized("查询模型目录")) { Task {
                     if let result = await model.run("model_catalog_lookup", ["provider": editor.draft["provider"], "apiUrl": editor.draft["api_url"], "model": editor.draft["model"]], refresh: false, success: "模型目录已查询") {
                         model.message = result == .null ? "目录没有此精确模型 ID，请按服务商说明填写容量。" : "目录上限：" + result.object.keys.sorted().map { $0 + " " + result[$0].string }.joined(separator: " · ")
@@ -287,12 +288,15 @@ struct NativeSettingsChoice: View {
     let label: String
     @Binding var selection: String
     let choices: [(String, String)]
+    static func selectedTitle(_ selection: String, choices: [(String, String)]) -> String {
+        choices.first(where: { $0.0 == selection })?.1 ?? selection
+    }
     var body: some View {
         Menu {
             ForEach(choices, id: \.0) { key, title in Button(localized(title)) { selection = key } }
         } label: {
             HStack {
-                Text(localized(choices.first(where: { $0.0 == selection })?.1 ?? selection)).lineLimit(1)
+                Text(localized(Self.selectedTitle(selection, choices: choices))).lineLimit(1)
                 Spacer(minLength: 8)
                 WispIcon(name: "chevron-down", size: 13).foregroundStyle(.secondary)
             }
@@ -320,12 +324,21 @@ struct NativePreferenceRow<Control: View>: View {
     var hint = ""
     @ViewBuilder let control: () -> Control
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(localized(title)).font(WispDesign.font(size: 14, weight: .medium))
-                if !hint.isEmpty { Text(localized(hint)).font(WispDesign.font(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            control()
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 24) {
+                explanation.frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+                control().fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                explanation
+                control().frame(maxWidth: .infinity, alignment: .leading)
+            }
         }.padding(.vertical, 9)
+    }
+    private var explanation: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(localized(title)).font(WispDesign.font(size: 14, weight: .medium))
+            if !hint.isEmpty { Text(localized(hint)).font(WispDesign.font(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }
     }
 }

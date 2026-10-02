@@ -42,3 +42,5 @@ __pycache__/
 /.wrangler/
 /docs/.wrangler/
 /docs/worker-configuration.d.ts
+# design QA screenshots/evidence: keep out of git (clone size)
+/docs/design-qa/

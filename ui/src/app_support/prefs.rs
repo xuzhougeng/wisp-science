@@ -19,19 +19,38 @@ pub(crate) fn load_privacy_mode() -> (bool, HashSet<String>) {
     (active, projects)
 }
 
+pub(crate) fn privacy_host_args(active: bool, projects: &HashSet<String>) -> serde_json::Value {
+    let mut project_ids = projects.iter().map(String::as_str).collect::<Vec<_>>();
+    project_ids.sort_unstable();
+    serde_json::json!({
+        "active": active && !project_ids.is_empty(),
+        "projectIds": project_ids,
+    })
+}
+
+pub(crate) fn mirror_privacy_mode(active: bool, projects: &HashSet<String>) {
+    let args = privacy_host_args(active, projects);
+    leptos::spawn_local(async move {
+        if let Ok(args) = serde_wasm_bindgen::to_value(&args) {
+            let _ = crate::bindings::invoke("set_privacy_mode", args).await;
+        }
+    });
+}
+
 pub(crate) fn save_privacy_mode(active: bool, projects: &HashSet<String>) {
-    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-    else {
-        return;
-    };
-    if let Ok(value) = serde_json::to_string(projects) {
-        let _ = storage.set_item(PRIVACY_MODE_PROJECTS_KEY, &value);
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
+        if let Ok(value) = serde_json::to_string(projects) {
+            let _ = storage.set_item(PRIVACY_MODE_PROJECTS_KEY, &value);
+        }
+        let _ = if active && !projects.is_empty() {
+            storage.set_item(PRIVACY_MODE_ACTIVE_KEY, "1")
+        } else {
+            storage.remove_item(PRIVACY_MODE_ACTIVE_KEY)
+        };
     }
-    let _ = if active && !projects.is_empty() {
-        storage.set_item(PRIVACY_MODE_ACTIVE_KEY, "1")
-    } else {
-        storage.remove_item(PRIVACY_MODE_ACTIVE_KEY)
-    };
+    mirror_privacy_mode(active, projects);
 }
 
 pub(crate) fn model_switch_warning_disabled() -> bool {
@@ -234,6 +253,7 @@ pub(crate) struct AppPrefsPatch {
     pub auto_continue_limit: Option<u64>,
     pub follow_up_questions: Option<bool>,
     pub resume_last_session: Option<bool>,
+    pub decentralized_project_storage: Option<bool>,
     pub notifications_enabled: Option<bool>,
 }
 
@@ -311,6 +331,9 @@ pub(crate) fn parse_app_prefs_payload(payload: &serde_json::Value) -> AppPrefsPa
             .and_then(|value| value.as_u64()),
         follow_up_questions: payload
             .get("follow_up_questions")
+            .and_then(|value| value.as_bool()),
+        decentralized_project_storage: payload
+            .get("decentralized_project_storage")
             .and_then(|value| value.as_bool()),
         resume_last_session: payload
             .get("resume_last_session")
@@ -398,6 +421,9 @@ pub(crate) fn apply_prefs_patch(
         if let Some(value) = patch.follow_up_questions {
             cfg.follow_up_questions = value;
         }
+        if let Some(value) = patch.decentralized_project_storage {
+            cfg.decentralized_project_storage = value;
+        }
         if let Some(value) = patch.resume_last_session {
             cfg.resume_last_session = value;
         }
@@ -429,7 +455,11 @@ pub(crate) fn apply_font_prefs(ui_size: u16, code_size: u16, ui_family: &str, co
         return;
     };
     if let Some(root) = window.document().and_then(|d| d.document_element()) {
-        let mut style = format!("--ui-font-size:{ui_size}px;--code-font-size:{code_size}px");
+        // The slider reaches 0px; floor the scale so every label cannot vanish.
+        let ui_scale = f64::from(ui_size.max(8)) / 14.0;
+        let mut style = format!(
+            "--ui-font-size:{ui_size}px;--ui-font-scale:{ui_scale:.4};--code-font-size:{code_size}px"
+        );
         if !ui_family.is_empty() {
             style.push_str(&format!(";--font-user-ui:{ui_family}"));
         }
@@ -760,6 +790,29 @@ pub(crate) fn load_context_usage_geom() -> Option<ContextUsageGeom> {
     Some(clamp_context_usage_geom(x, y, w, h, viewport_w, viewport_h))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::privacy_host_args;
+    use std::collections::HashSet;
+
+    #[test]
+    fn privacy_host_args_match_the_stored_record() {
+        let mut projects = HashSet::new();
+        projects.insert("hidden".into());
+        projects.insert("research-1".into());
+        let args = privacy_host_args(true, &projects);
+        assert_eq!(args["active"], true);
+        assert_eq!(args["projectIds"][0], "hidden");
+        assert_eq!(args["projectIds"][1], "research-1");
+        let off = privacy_host_args(false, &projects);
+        assert_eq!(off["active"], false);
+        assert_eq!(off["projectIds"].as_array().unwrap().len(), 2);
+        let empty = privacy_host_args(true, &HashSet::new());
+        assert_eq!(empty["active"], false);
+        assert!(empty["projectIds"].as_array().unwrap().is_empty());
+    }
+}
+
 pub(crate) fn save_context_usage_geom(geom: ContextUsageGeom) {
     if let Some(storage) =
         web_sys::window().and_then(|window| window.local_storage().ok().flatten())
@@ -817,13 +870,15 @@ mod app_prefs_payload_tests {
             "ui_font_size": 18,
             "theme": "dark",
             "locale": "zh",
-            "auto_compact": false
+            "auto_compact": false,
+            "decentralized_project_storage": true
         });
         let patch = parse_app_prefs_payload(&payload);
         assert_eq!(patch.ui_font_size, Some(18));
         assert_eq!(patch.theme.as_deref(), Some("dark"));
         assert_eq!(patch.locale.as_deref(), Some("zh"));
         assert_eq!(patch.auto_compact, Some(false));
+        assert_eq!(patch.decentralized_project_storage, Some(true));
         assert_eq!(patch.code_font_size, None);
         assert_eq!(patch.custom_css, None);
     }

@@ -10,7 +10,7 @@ Wisp Science provides separate entry points for these needs. Choosing the right 
 
 | Need | Export | How the recipient uses it |
 | --- | --- | --- |
-| Continue the whole project on another computer | Project ZIP | Restore through Import project in Wisp |
+| Continue the whole project on another computer | Project directory or ZIP | Restore through Import project in Wisp |
 | Hand off one complete conversation and exportable associated artifacts | Session ZIP | Use Import session archive in the target project |
 | Show a few messages | PNG long image or HTML sharing export | Read with an image viewer or browser |
 | Inspect the execution process | Trajectory HTML export | Review calls, results, time, and usage |
@@ -23,9 +23,9 @@ Wait for active conversations and tasks in the project to finish. Click **Export
 
 ![Project export dialog offering a full ZIP archive](../../assets/tutorials/en/transfer/02-project-export.png)
 
-*Figure 1: Copy the ordinary project folder yourself when you only need files. Choose a full ZIP when you also need Wisp conversations and project records.*
+*Figure 1 shows the previous interface. The current dialog offers Export directory and Export ZIP. Both include files, conversations and project records; directory export skips compression.*
 
-Choose **Export ZIP** and a destination. A progress card at the lower right reports stage, file count, bytes, and current path. Wait for completion before copying the ZIP.
+Choose **Export directory** or **Export ZIP** and a destination. A progress card at the lower right reports stage, file count, bytes, and current path. Wait for completion before copying the complete directory or ZIP.
 
 The source project is temporarily read-only during export; other projects remain usable. Do not send a destination file that is unfinished or still empty.
 
@@ -38,13 +38,13 @@ The package includes regular workspace files and project-owned conversations, ar
 
 The recipient must configure their own models and servers. A remote path may survive as a reference, but importing the ZIP does not grant access to it.
 
-**Distinguish a project ZIP from an ordinary folder.**
+**Choose the matching project folder or ZIP import entry.**
 
 Click **Import project** on the Projects screen to see the choices.
 
 ![Project import choices: open a folder in place, import a ZIP, or recover workspace conversations](../../assets/tutorials/en/transfer/01-project-import.png)
 
-*Figure 2: Open an already-copied folder in place. Use ZIP import for a complete Wisp project export. Workspace conversation recovery is a separate fallback.*
+*Figure 2 shows the previous interface. Import project folder now replaces Open a folder in place and requires an exported project package. Workspace conversation recovery remains a separate fallback.*
 
 For a complete migration:
 
@@ -53,7 +53,9 @@ For a complete migration:
 3. Wait for the progress card to finish, then open the project from the Projects screen.
 4. Check conversations, scripts, figures, and key data paths, then configure models and environments on the destination computer.
 
-For an ordinary folder, choose **Open a folder in place**. This registers the existing location without copying a second workspace. Copying a folder alone cannot restore complete conversation records that exist only in the other computer's database.
+For an exported directory, choose **Import project folder** and select the package root containing `manifest.json`, `metadata/project.sqlite` and `workspace`. Wisp validates metadata, restores records and uses the packaged workspace in place. Ordinary folders without metadata are rejected instead of creating a blank project.
+
+Metadata is a snapshot taken at export time. It does not automatically update as you work; export again before the next transfer.
 
 Use **Recover conversations from a workspace** when the original app database and complete archive are lost but the workspace remains. It attempts to recover saved history snapshots; not every ordinary conversation necessarily has one.
 

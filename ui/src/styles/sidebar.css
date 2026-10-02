@@ -38,15 +38,17 @@
 
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
-/* Keep the settings footer reachable with large fonts in short windows. */
-.sidebar > .nav { min-height: 0; overflow-y: auto; }
+/* The nav never shrinks or scrolls: flex-shrink is weighted by content size,
+   so a long session list used to squeeze it into a tiny scroller. Short
+   windows fold its tail into the "More" flyout (tiers below) instead. */
+.sidebar > .nav { flex-shrink: 0; }
 .sidebar > .side-foot { flex-shrink: 0; }
 .side-btn {
   display: flex; align-items: center; gap: 10px;
   width: 100%; text-align: left;
   background: transparent; color: var(--text-muted);
   border: 1px solid transparent; border-radius: var(--radius-sm);
-  padding: 8px 10px; font: inherit; font-size: 13.5px; cursor: pointer;
+  padding: 8px 10px; font: inherit; font-size: calc(13.5px * var(--ui-font-scale, 1)); cursor: pointer;
   transition: background .12s ease, color .12s ease;
 }
 .side-btn:hover { background: var(--bg-elev); color: var(--text); }
@@ -60,19 +62,52 @@
 .side-btn.primary > svg { opacity: 1; }
 .side-shortcut {
   flex: 0 0 auto; margin-left: auto; border: 0; background: transparent;
-  color: var(--text-faint); font: 11px/1 var(--font-ui); opacity: .78;
+  color: var(--text-faint); font: calc(11px * var(--ui-font-scale, 1))/1 var(--font-ui); opacity: .78;
 }
 .side-btn:hover .side-shortcut { color: var(--text-muted); opacity: 1; }
+
+/* "More" flyout (Kimi-style), opening to the right of the button. Entries
+   carry a tier: below that window height they leave the inline nav and show
+   in the flyout instead. Tall windows show everything inline and no More.
+   ponytail: px tiers ignore --ui-font-size; measure the nav with a
+   ResizeObserver if very large UI fonts still crowd the session list. */
+.nav-more, .nav-more-menu .side-btn { display: none; }
+.nav-more.open { background: var(--bg-elev); color: var(--text); }
+.nav-more-caret { display: inline-flex; margin-left: auto; opacity: .55; }
+.nav-more-caret svg { width: 14px; height: 14px; }
+.nav-more-backdrop { position: fixed; inset: 0; z-index: 80; }
+.nav-more-menu {
+  position: fixed; z-index: 81; min-width: 184px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-elev); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14);
+  transform-origin: top left;
+  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
+}
+.nav-more-menu .side-btn:hover { background: var(--bg-sunken); }
+.nav-more-menu .side-btn.active { background: var(--clay-soft); color: var(--clay-strong); }
+@media (max-height: 820px) {
+  .nav > .nav-tier-1 { display: none; }
+  .nav-more, .nav-more-menu .nav-tier-1 { display: flex; }
+  /* A folded entry that is open (e.g. Publication) lights up More instead. */
+  .nav:has(> .nav-tier-1.active) > .nav-more { background: var(--clay-soft); }
+  .nav:has(> .nav-tier-1.active) > .nav-more,
+  .nav:has(> .nav-tier-1.active) > .nav-more > svg { color: var(--clay-strong); }
+}
+@media (max-height: 640px) {
+  .nav > .nav-tier-2 { display: none; }
+  .nav-more-menu .nav-tier-2 { display: flex; }
+}
 
 .side-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; flex: 1 1 auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 
 /* --- Session sort/group control --- */
 .side-sessions-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 4px; }
-.side-sessions-title { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-faint); }
+.side-sessions-title { font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .02em; color: var(--text-faint); }
 .side-sessions-head-actions { display: flex; align-items: center; gap: 3px; }
 .side-select-btn {
   border: 0; border-radius: var(--radius-xs); padding: 4px 6px;
-  background: transparent; color: var(--text-faint); font: inherit; font-size: 11px; cursor: pointer;
+  background: transparent; color: var(--text-faint); font: inherit; font-size: calc(11px * var(--ui-font-scale, 1)); cursor: pointer;
 }
 .side-select-btn:hover, .side-select-btn[aria-pressed="true"] { background: var(--bg-elev); color: var(--text); }
 .side-select-btn:disabled { cursor: default; opacity: .45; }
@@ -87,12 +122,12 @@
   transform-origin: top right;
   animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
-.side-sort-label { font-size: 10.5px; color: var(--text-faint); padding: 2px 6px 5px; }
+.side-sort-label { font-size: calc(10.5px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 2px 6px 5px; }
 .side-sort-opts { display: flex; flex-direction: column; gap: 1px; }
 .side-sort-opt {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
   background: transparent; border: none; border-radius: var(--radius-xs); padding: 6px 8px;
-  font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left;
+  font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text); cursor: pointer; text-align: left;
 }
 .side-sort-opt:hover { background: var(--bg-sunken); }
 .side-sort-opt.active { color: var(--clay); }
@@ -101,27 +136,27 @@
 .side-sort-check svg { width: 15px; height: 15px; }
 .side-sort-sep { height: 1px; background: var(--border); margin: 7px 4px; }
 .side-bulk-actions { display: flex; flex-direction: column; gap: 5px; padding: 2px 8px 7px; }
-.side-bulk-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: 11px; }
+.side-bulk-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .side-bulk-link { border: 0; padding: 2px; background: transparent; color: var(--clay); font: inherit; font-size: inherit; cursor: pointer; }
 .side-bulk-link:hover { text-decoration: underline; }
 .side-bulk-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .side-bulk-controls select {
   min-width: 0; flex: 1 1 auto; height: 29px; padding: 3px 6px;
   border: 1px solid var(--border); border-radius: var(--radius-xs);
-  background: var(--bg-input); color: var(--text); font: inherit; font-size: 11.5px;
+  background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1));
 }
 .side-bulk-delete {
   height: 29px; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--radius-xs);
-  background: transparent; color: var(--err); font: inherit; font-size: 11.5px; cursor: pointer;
+  background: transparent; color: var(--err); font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1)); cursor: pointer;
 }
 .side-bulk-controls :disabled { cursor: default; opacity: .45; }
 .side-item {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 10px; border-radius: var(--radius-sm);
-  font-size: 13px; color: var(--text-muted); white-space: nowrap;
+  font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text-muted); white-space: nowrap;
 }
 .side-item:hover { background: var(--bg-elev); color: var(--text); }
-button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: 13px; cursor: pointer; }
+button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
 button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; }
 button.side-item.ses.selecting { padding-right: 10px; }
 .session-select-mark {
@@ -161,10 +196,10 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .session-actions, .folder-actions {
   position: absolute; z-index: 1; top: 50%; right: 5px; transform: translateY(-50%);
   display: inline-flex; align-items: center; justify-content: center;
-  width: 25px; height: 25px; padding: 0 0 4px;
+  width: 25px; height: 25px; padding: 0;
   border: 1px solid transparent; border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
-  color: var(--text-faint); font: inherit; font-size: 18px; line-height: 1;
+  color: var(--text-faint); font: inherit; line-height: 1;
   cursor: pointer; opacity: 0;
   transition: opacity .12s ease, color .12s ease, background .12s ease;
 }
@@ -174,7 +209,7 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .side-folder:focus-within .folder-actions { opacity: 1; }
 .session-actions:hover, .session-actions:focus-visible,
 .folder-actions:hover, .folder-actions:focus-visible { color: var(--text); background: var(--bg-input); }
-.session-actions svg { width: 14px; height: 14px; }
+.session-actions svg, .folder-actions svg { width: 14px; height: 14px; }
 .session-actions.selection-hidden { display: none; }
 .side-item.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 @keyframes ses-spin { to { transform: rotate(360deg); } }
@@ -185,6 +220,7 @@ button.side-item.ses.selecting { padding-right: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .ses-live svg, .ses-attention svg { animation: none; }
 }
+.ses-initial { display: none; }
 .ses-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .side-exploration-group {
   display: grid; gap: 2px; margin: 2px 0 5px 14px; padding: 5px 0 2px 9px;
@@ -194,7 +230,7 @@ button.side-item.ses.selecting { padding-right: 10px; }
   display: flex; align-items: center; gap: 5px; width: 100%;
   padding: 1px 4px 3px; border: 0; border-radius: var(--radius-xs);
   background: transparent; color: var(--text-faint); font: inherit;
-  font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   cursor: pointer; text-align: left;
 }
 .side-nest-toggle:hover { color: var(--text-muted); background: var(--bg-elev); }
@@ -214,10 +250,10 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .exploration-kind-icon { display: inline-flex; flex: 0 0 auto; color: var(--clay); }
 .exploration-kind-icon svg { width: 14px; height: 14px; }
 .side-exploration-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
-.side-exploration-title { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.side-exploration-meta { overflow: hidden; color: var(--text-faint); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
-.side-hint { font-size: 12px; color: var(--text-faint); padding: 6px 10px; }
-.side-load-more { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; }
+.side-exploration-title { overflow: hidden; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.side-exploration-meta { overflow: hidden; color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.side-hint { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 6px 10px; }
+.side-load-more { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
 .side-load-more:hover { background: var(--surface-hover); color: var(--text); }
 .side-load-more:disabled { cursor: default; opacity: .6; }
 
@@ -236,9 +272,10 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .update-card-icon { color: var(--clay); flex: 0 0 auto; }
 .update-card-icon svg { width: 17px; height: 17px; display: block; }
 .update-card-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
-.update-card-title { font-size: 13px; font-weight: 600; line-height: 1.2; }
-.update-card-ver { font-size: 11px; color: var(--text-faint); line-height: 1.3; }
-.update-card-arrow { color: var(--text-muted); flex: 0 0 auto; font-size: 15px; }
+.update-card-title { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 1.2; }
+.update-card-ver { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); line-height: 1.3; }
+.update-card-arrow { display: inline-flex; color: var(--text-muted); flex: 0 0 auto; }
+.update-card-arrow svg { width: 15px; height: 15px; }
 
 /* Keep the research canvas usable only when the window is genuinely narrow.
    The Tauri window opens at 1100 CSS px; using that same value here made the
@@ -253,7 +290,9 @@ button.side-item.ses.selecting { padding-right: 10px; }
     padding: 10px 6px;
     overflow: visible;
   }
-  .sidebar .side-list { overflow-x: hidden; }
+  /* A reserved scrollbar gutter would push every row left of the icon column;
+     the 56px rail scrolls by wheel/trackpad instead. */
+  .sidebar .side-list { overflow-x: hidden; scrollbar-gutter: auto; scrollbar-width: none; }
   .sidebar-head {
     flex-direction: column;
     justify-content: flex-start;
@@ -316,7 +355,8 @@ button.side-item.ses.selecting { padding-right: 10px; }
     color: transparent;
   }
   .sidebar .side-btn-label,
-  .sidebar .side-shortcut { display: none; }
+  .sidebar .side-shortcut,
+  .sidebar .nav-more-caret { display: none; }
   .sidebar .side-btn > svg {
     width: 17px;
     height: 17px;
@@ -331,6 +371,20 @@ button.side-item.ses.selecting { padding-right: 10px; }
     padding-right: 8px;
   }
   .sidebar .side-item .ses-status { margin: 0; }
+  /* Drop the right gutter kept for the (hidden here) row menu. */
+  .sidebar button.side-item.ses { padding-right: 8px; }
+  /* Titles are hidden here: show the title's initial at rest, and the
+     running / needs-you icon in its place while one applies. */
+  .sidebar .ses-initial {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 1;
+  }
+  .sidebar .side-item.ses.active .ses-initial { color: var(--clay-strong); }
+  .sidebar .side-item.ses:not(.running):not(.attention) .ses-status,
+  .sidebar .side-item.ses.running .ses-initial,
+  .sidebar .side-item.ses.attention .ses-initial,
+  .sidebar .side-item.ses.selecting .ses-initial,
+  .sidebar .session-branch-icon { display: none; }
   .sidebar .side-folder { min-height: 32px; }
   .sidebar .side-folder > svg { margin: 0; }
   .sidebar .side-folder-sessions { padding-left: 0; }
@@ -345,3 +399,5 @@ button.side-item.ses.selecting { padding-right: 10px; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .nav { gap: 4px; }
 }
+
+.side-shelved-btn svg { width: 15px; height: 15px; }

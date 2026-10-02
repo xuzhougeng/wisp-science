@@ -1,6 +1,12 @@
 # Native project browser preview
 
 Wisp has SwiftUI (macOS) and WinUI 3 (Windows) project browsers alongside the existing Tauri client.
+
+The next GitHub Release containing the packaging change also provides signed,
+notarized **SwiftUI Preview** DMGs for Apple Silicon and Intel, alongside the
+WebView installers. See [installation, shared data, and manual preview updates](app-updates.md#swiftui-preview-alongside-the-macos-release).
+
+For current Windows coverage of PRs #1332–#1351, validation, and remaining differences, see [Windows native parity](native-windows-parity.md). Earlier milestone sections below describe their original delivery boundaries.
 It lists real projects, preserves the desktop's ordering and metadata, searches
 names/descriptions/paths, refreshes on demand, and reveals a selected workspace
 in Finder or Explorer. The existing desktop remains the client for chat and execution.
@@ -51,6 +57,14 @@ Rust toolchain. No Swift package dependencies are downloaded.
 bash scripts/build_native_macos.sh
 open "target/native-macos/Wisp Science Preview.app"
 ```
+
+Both the SwiftUI shell and embedded host are stamped from the product version in
+`src-tauri/tauri.conf.json`. Their plists also contain `WispSourceRevision` and
+`WispSourceDirty`, so a local edited preview is distinguishable from a clean
+commit. `scripts/test_stamp_native_macos.py` verifies the metadata and identifier
+preservation. The native shell uses one workspace scene: closing the last window
+keeps the app alive; opening it again from Finder/Dock restores a workspace with
+the same project model, without launching another host.
 
 This builds a debug app for the current architecture, bundles `wisp-service`, and
 applies an ad-hoc local signature. It is a local preview, not a notarized release
@@ -250,20 +264,270 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order; search is connected. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, library, calendar, scratch, new project, and import are connected. WinUI also connects these actions. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
-| Session controls | Selection and sorting/grouping retain their positions; not connected yet. |
-| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. |
+| Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
+| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. macOS 对话附件 copies a local file into the project and shows it on the saved message. WinUI connects the same attachment flow. |
 | Search | Home/project scope, Up/Down and Enter navigation, topmost Escape, Command-K / Ctrl+K even with the sidebar collapsed. |
 | Preview utilities | Database selection, refresh and appearance remain in the home footer / Windows sidebar footer; these do not replace WebView actions. |
 
 ## Remaining feature work
 
-The preview aligns the home/workspace shell and includes native settings and the
-conversation loop described below. Home creation/import, calendar/library,
-the sidebar tools and artifact search still require their native services.
-Their action slots are visible but explicitly disabled in the preview.
+The preview aligns the home/workspace shell and includes native settings, project
+creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, scratch chat, and the conversation loop described below.
+The macOS workspace additionally connects terminal/files, Notebook, Highlights,
+Provenance, SideChat, contexts, Runs and Agent panels. Their implementation does
+not imply complete parity behind every entry: ACP main conversations, full
+publication editing and the project-folder workflow are tracked in the
+[2026-09-25 parity audit](superpowers/plans/2026-09-25-macos-native-parity-iteration.md)
+and [repair progress](superpowers/plans/2026-09-25-macos-native-parity-progress.md).
+
+The sidebar **新建分组** button creates a session group for the explicit project.
+Sessions can be sorted by recent or name, grouped by folder or date, and
+selected and moved. A folder section header can rename that group. Those
+commands are `native_project_folders`, `native_project_folder_create`,
+`native_project_folder_rename`, and `native_project_session_move`. Each one
+requires a project id and does not change the WebView's active project or
+session. An empty name or a lost reply is not retried, and the rename draft
+stays open. Escape closes only the new-group or rename sheet while a sort menu
+under it stays open.
+
+The sidebar **文件** button selects the existing right-hand files page and
+expands that panel. It uses the same tab layout as the panel itself and does
+not add a host command. Escape continues to dismiss only the panel's own top
+surface.
+
+## Library
+
+**收藏** on the home header and in the project sidebar opens the same library
+sheet. Search and delete go to the desktop host's app-global library store
+(`library.sqlite` via `AppState.library`), the same store the WebView library
+uses. `wisp-service` cannot search or delete that store.
+
+`native_library_search` takes a query and an optional kind (`code`, `figure`,
+or `text`). An empty query lists the library. `native_library_delete` removes
+one item by id. Neither command takes a project id. A non-empty project id is
+rejected and nothing is deleted. The dispatcher does not create a settings
+webview and does not change the WebView's active project or session.
+
+Both commands are announced on `native_settings_capabilities` as `library` and
+`library_schema` (`wisp.native-library.v1`). They are not in the settings
+command allowlist. A lost search keeps the current list and is not retried. A
+lost delete keeps the row and is not retried. A second click while that delete
+is in flight does not send again.
+
+**填入对话框** is shown only when a native session is already open. It writes
+the item text into that session's composer and does not send. The home page
+has no active session, so the button is absent there. **打开来源** closes the
+sheet and opens the item's source project and session through the native
+project list. It does not call `set_active`.
+
+Escape immediately after the sheet opens closes only the library sheet. A
+search surface that was already open stays open. A search reply that arrives
+after the sheet has closed does not reopen a project.
+
+WinUI connects the same library search, filters, delete, source navigation and composer insertion through `INativeLibraryClient`.
+
+## Research calendar
+
+Home **研究日历** opens one calendar sheet. It asks `native_research_calendar`
+for the current local month, then for the selected day. The body lists
+`project_ids`, `from`, and `until`. The command does not take a project id, does
+not create a settings webview, and does not change the WebView's active project
+or session. It is announced as `calendar` and `calendar_schema`
+(`wisp.native-calendar.v1`) and is not in the settings allowlist.
+
+The request includes the projects currently listed on the home screen. Opening
+or refreshing the sheet first calls `get_privacy_mode`. That command reads the
+privacy list the WebView writes with `set_privacy_mode` into the desktop
+settings store (`wisp-privacy-mode-active` and `wisp-privacy-mode-projects`).
+It does not take a project id. Month changes, day selection, and refresh do
+not send `native_research_calendar` until that reply is in. When privacy mode
+is on, those project ids are left out of the calendar request. A lost privacy
+read does not ask for every project and is not retried. A project
+filter only hides rows that were already read; it does not add a project. A
+lost read keeps the last rows and is not retried. Choosing a date shows that
+day's records inside the sheet. **打开研究历程** closes the calendar and opens
+that project on the dated research-journey entry. A calendar reply that arrives
+after the sheet has closed does not open a project.
+
+Escape immediately after the sheet opens closes only the calendar. WinUI uses the same privacy gate and `INativeCalendarClient`. Its dated journey opens above the calendar so one Escape returns to the selected calendar day.
+
+## Research journey
+
+The sidebar **研究历程** button, and the calendar's **打开研究历程** action,
+open the same journey sheet for one project. `native_research_journey` requires
+that project id and reads only its mainline history for the requested range.
+The calendar passes the selected day; the sidebar reads the current local month.
+The command is announced as `journey` and `journey_schema`
+(`wisp.native-journey.v1`). It is not in the settings allowlist and does not
+change the WebView's active project or session.
+
+A lost read keeps the last rows and is not retried. Search filters the rows
+already read. A reply that arrives after the sheet has closed does not open or
+change a project. Escape closes only the journey sheet. Adding a journal
+entry, artifact detail, and run detail stay out of this slice. WinUI connects the same read through `INativeJourneyClient`, with date range and local title search.
+
+## Publication workspace
+
+The sidebar **论文证据** button replaces the conversation column with the
+publication workspace for the open project. `native_publication_workspace`
+reads that project's papers. `native_publication_create` creates one paper and
+its first revision. Both commands require the project id, are announced as
+`publication` and `publication_schema` (`wisp.native-publication.v1`), and are
+not in the settings allowlist. They do not change the WebView's active project
+or session.
+
+An empty title or revision label keeps the draft and does not call the host.
+A lost create keeps the draft and is not retried. A reply that arrives after
+the workspace has closed does not open a project. Escape closes only the
+publication column and returns to the conversation. Evidence binding, readiness,
+and reproduction stay out of this slice. WinUI connects `INativePublicationClient` in the project column, retaining the sidebar and conversation draft.
+
+## Capabilities
+
+The sidebar **能力** button opens a summary for the current project. It reads
+`get_bootstrap_status`, `list_skills`, `list_mcp_connections`, and
+`get_memory_view` through the existing settings host. Each call carries that
+project id. Enabled bundled skills are counted separately from other enabled
+skills. Enabled connections and memory files are counted from those replies.
+The summary does not call `probe_execution_context` and does not add a host
+command. A lost read is not retried. A reply that arrives after the sheet
+closes does not open a project. Choosing a count opens the existing settings
+section for skills, connections, or memory. Escape closes only the summary.
+WinUI connects the same summary. Counts open native read-only detail pages; editing skills, connections and memory remains part of the older Windows settings gap.
+
+## Issue feedback
+
+The sidebar **反馈问题** button is available when a native session is open. It
+reads `get_bootstrap_status` for that project and writes the same feedback
+prompt the WebView builds into the current composer. The prompt includes the
+app version, OS, architecture, model, and startup timing. It does not include
+the workspace path. The button does not send the message. A lost read keeps the
+composer unchanged and is not retried. A reply that arrives after the user has
+returned home does not prefill a composer or open a project. WinUI connects the same prefill behavior and also preserves edits made while the bootstrap read was pending.
+
+## Scratch chat
+
+Home **随手一聊** calls `native_scratch_open`. That command creates a hidden
+`scratch:` project, one session frame, and a writable sandbox directory under
+the desktop app-data `scratch/` folder. It does not take a project id, does not
+call `start_scratch_chat`, and does not change the WebView's active project or
+session. The preview then opens that session with the existing native
+conversation loop.
+
+**关闭** and Escape call `native_scratch_close` for that scratch project id.
+The command deletes the project row and the sandbox directory when the
+directory is inside `scratch/`. It does not restore or rewrite another project,
+and it refuses a normal project id or a scratch id whose workspace is outside
+`scratch/`. A lost open or close is not retried. Closing the preview without
+this command leaves the project and sandbox for the existing startup purge:
+that purge records the orphans before any new scratch chat can be created, so
+a chat opened while the purge is still running is spared. WinUI opens the same independent hidden conversation through `INativeScratchClient`; its close button and Escape call the scoped close command.
+
+## Creating a project
+
+The home **新建项目** button opens a SwiftUI form with 名称, 工作目录, 说明,
+Agent Context, and a 标准布局 switch. The directory can be typed or chosen with
+the system open panel. `native_project_create` runs on the desktop host and uses
+the same checks as the WebView `create_project` command: create a missing
+directory, then reject an empty name, an empty directory, a folder already
+registered as a project, or a directory that is not writable. The command takes
+no project id. It does not change the WebView's active project or active session,
+and it does not create a conversation.
+
+With 标准布局 off, the host does not precreate the standard workspace tree.
+Non-empty Agent Context is still written to `.wisp/WISP.md`. Turning the switch
+on inserts the same convention block the WebView editor inserts; turning it off
+removes that block and leaves the rest of the text.
+
+The command is announced on `native_settings_capabilities` under `projects` and
+`project_schema` (`wisp.native-projects.v1`). It is not in the settings command
+allowlist and `wisp-service` cannot create projects. A validation error keeps the
+form and draft open. A lost reply does the same and is not retried; refresh the
+project list to see whether the host finished. A confirmed summary closes the
+form, reloads the read-only project list, and opens that project. Escape
+immediately after the form opens closes only the form. While the request is in
+flight the submit button stays disabled, including a second click.
+
+WinUI provides the corresponding native form, folder picker, standard-layout convention and host call through `INativeProjectClient.CreateAsync`.
+
+## Importing a project
+
+The 2026-09-26 reliability acceptance run
+verifies legacy directory registration and readable history, immediate Escape
+from the macOS directory picker, and explicit local/remote conflict resolution
+with different-content synthetic revisions. It includes failure/retry evidence
+and a reusable synthetic archive. These checks use isolated local stores and do
+not claim real cloud-drive or multi-device validation.
+
+The macOS home **导入项目** button opens native import options. **打开项目文件夹**
+uses a directory-only system picker and sends `native_project_import_directory`
+with an explicit `directory_path` and no project ID. The host reuses the WebView
+project-folder importer: workspace-owned `.wisp` metadata and legacy exported
+packages both register in place. It does not copy large workspace data. Missing
+metadata, duplicate projects, incomplete cloud downloads and conflicts return
+errors without inventing a new project or falling back to ZIP import.
+
+**导入 ZIP 归档** uses the existing `native_project_import` path: it verifies the
+archive, places the workspace in a new directory next to it, and registers the
+project. Canceling a picker does not call the host. Escape closes the
+system picker before the options sheet; immediate Escape in the options sheet
+closes only that sheet. In-flight imports disable duplicate submission and
+switching databases. Confirmed imports refresh and open the returned project;
+failed or ambiguous replies preserve the options and error, without automatic
+retry. Progress is a busy state rather than a streamed byte counter.
+
+**从旧工作区恢复历史** first calls `native_project_recovery_preview` to scan
+`.wisp/history` without registering a project. A nested sheet shows recoverable
+sessions, messages, dates and invalid/duplicate archive counts, and allows editing
+the project name. Only confirmation calls `native_project_recover_workspace`;
+the host rescans and uses the shared WebView recovery path. This restores archived
+messages, not a complete project database, and preserves source archives. Empty
+names or previews with no recoverable sessions cannot be submitted. Immediate
+Escape closes only the preview and leaves import options open. A lost response
+preserves the preview and asks the user to check the project list, without retry.
+
+These commands are advertised in the native project capability family and
+execute without a WebView window selection. `wisp-service` remains read-only.
+WinUI retains its ZIP picker and `INativeProjectClient.ImportAsync` form.
+
+Project cards display the shared `folder_sync` state when present: saved,
+unpublished, a newer remote version, waiting for files, or conflict. Configured
+relay synchronization remains separately labeled. The last synchronization time
+is available through the status tooltip and VoiceOver label. Old payloads without
+`folder_sync` still decode; an unknown state is displayed explicitly and is never
+reported as saved. These indicators report the host snapshot and do not initiate
+network transfers or enable synchronization.
+
+The project card's **项目同步…** menu opens native controls for enabling workspace
+folder snapshots, manually synchronizing an already configured project, and
+resolving conflicts. Enabling saves snapshots in `.wisp`; the user's drive client
+moves files. The same existing backend handles folder and configured relay sync,
+including idle-project checks and runtime invalidation after a pull. Native
+requests must have matching explicit project scope and `id`, and only conflict
+resolution accepts a `local`/`remote` strategy. No visible or hidden WebView is
+selected for these three native calls. A conflict never chooses a version
+automatically: a nested confirmation explains which copy will replace the other.
+Escape closes only that confirmation, preserving the sync sheet. Failed or
+unknown responses stay unconfirmed and never retry. Closing refreshes project
+cards. Creating a relay configuration is outside this menu's scope.
+
+## Exporting a project
+
+Right-click a macOS project card and choose **导出项目…**. The native sheet offers
+ZIP or an uncompressed project directory, using the system save picker. Both
+include project records and workspace files; large workspace data is copied only
+when the user explicitly exports. Canceling the picker sends no host request.
+`native_project_export` carries the explicit project ID, destination and format.
+The host reuses the WebView export lock, running-session/job checks and validated
+transfer writer. A directory destination must be new and outside the source
+workspace. ZIP output is verified before publishing. A confirmed response shows
+the destination with a Finder action; failures preserve the sheet without retry.
+The busy state blocks duplicate export and dismissal. Immediate Escape closes
+only the idle export sheet. Byte-level progress is not yet shown in the native UI.
+
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
 
@@ -286,6 +550,10 @@ interface. The project-browser service remains focused on project/session reads
 and project stars.
 
 ### Windows alignment after #1281
+
+This subsection records the original #1281 increment. Its disabled-settings,
+read-only conversation and font-styling limits have since been superseded;
+see [Windows parity](native-windows-parity.md) for current behavior and acceptance.
 
 This increment carries forward #1279, merges #1281 and enables:
 
@@ -341,3 +609,24 @@ automatically terminate another desktop process.
 SwiftUI now connects HTTP-model conversations to the desktop runtime for sending,
 live snapshots, stopping and one-shot approvals. See [native-conversations.md](native-conversations.md)
 for scope, recovery guarantees and the equivalent WinUI 3 client contract.
+
+The composer **对话附件** button copies one local file into that project's
+`uploads/` directory through `native_conversation_attach`. The command requires
+the open project id and session id. It uses the same upload-name rules as
+`upload_file` and binds the copy with `bind_new_message_resources`. It does not
+send a message and does not change the WebView's active project or session.
+Send then includes those project-relative paths in the `attachments` list and
+in the same `Uploaded files:` text the WebView persists. A reloaded snapshot
+shows those names on the saved user message. A lost attach or send is not
+retried. Removing a chip drops it from this draft. WinUI enables its 对话附件 button, retains staged files per conversation, and includes their paths in send and enqueue calls.
+
+**排队后续** is enabled while a turn is running. It parks the current
+composer draft with `native_conversation_enqueue` for that project and
+session. The existing queue driver sends that one draft after the current
+turn releases its workflow lock, then stops. A second distinct draft is
+refused, and the button does not send another turn by itself. A lost reply
+is not retried. The command does not change the WebView's active project or
+session. WinUI enables 排队后续 only for a writable running turn. An uncertain result preserves the draft and blocks resubmission until the user explicitly acknowledges checking the result.
+
+Sync errors wrap inside the native status and confirmation sheets, keeping both
+the backend explanation and the no-automatic-retry notice readable.

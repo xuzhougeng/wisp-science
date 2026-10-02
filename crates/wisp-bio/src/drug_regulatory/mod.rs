@@ -17,7 +17,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -1429,14 +1429,4 @@ fn trim_opt(value: &Option<String>) -> Option<&str> {
         .as_deref()
         .map(str::trim)
         .filter(|item| !item.is_empty())
-}
-
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }

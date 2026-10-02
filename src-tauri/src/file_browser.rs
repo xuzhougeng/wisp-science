@@ -122,46 +122,7 @@ pub(super) struct FileSearchHit {
     size: u64,
 }
 
-pub(super) fn mime_for_path(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("pdf") => "application/pdf",
-        Some("doc" | "docm") => "application/msword",
-        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        Some("xls" | "xlsm" | "xlsb") => "application/vnd.ms-excel",
-        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        Some("ppt" | "pps" | "pot" | "pptm" | "ppsx" | "ppsm") => "application/vnd.ms-powerpoint",
-        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        Some("odt") => "application/vnd.oasis.opendocument.text",
-        Some("ods") => "application/vnd.oasis.opendocument.spreadsheet",
-        Some("odp") => "application/vnd.oasis.opendocument.presentation",
-        Some("rtf") => "application/rtf",
-        Some("epub") => "application/epub+zip",
-        Some("bib") => "text/x-bibtex",
-        Some("csv") => "text/csv",
-        Some("tsv") => "text/tab-separated-values",
-        Some("html" | "htm") => "text/html",
-        Some("json") => "application/json",
-        Some("ipynb") => "application/x-ipynb+json",
-        Some("md") => "text/markdown",
-        Some("r") => "text/x-r",
-        Some("py") => "text/x-python",
-        Some("sh") => "text/x-shellscript",
-        Some("fasta" | "fa") => "text/x-fasta",
-        Some("pdb") | Some("mol2") | Some("cif") => "chemical/x-pdb",
-        Some("sdf" | "mol") => "chemical/x-mdl-molfile",
-        _ => "application/octet-stream",
-    }
-}
+pub(super) use wisp_runs::mime::mime_for_path;
 
 fn preview_byte_cap(max_bytes: Option<u64>) -> u64 {
     max_bytes
@@ -496,31 +457,39 @@ fn collect_file_search_hits(
     Ok(())
 }
 
+// Filesystem commands below must not be plain sync commands: those run on the
+// UI thread, and on Windows a slow tree, cloud placeholder or network share
+// then freezes the whole window (#1380). A full-tree walk goes to the blocking
+// pool; the bounded ones use `command(async)` (a runtime worker).
 #[tauri::command]
-pub(super) fn search_files(
+pub(super) async fn search_files(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<FileSearchHit>, String> {
-    let ap = state.require_active(window.label())?;
-    let q = query.trim();
-    if q.is_empty() {
-        return Ok(vec![]);
-    }
-    let cap = limit.unwrap_or(200).clamp(1, 500);
-    let mut hits = Vec::new();
-    collect_file_search_hits(&ap.root, ".", q, cap, &mut hits)?;
-    hits.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
-            .then(a.path.cmp(&b.path))
-    });
-    Ok(hits)
+    let root = state.require_active(window.label())?.root;
+    tauri::async_runtime::spawn_blocking(move || {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(vec![]);
+        }
+        let cap = limit.unwrap_or(200).clamp(1, 500);
+        let mut hits = Vec::new();
+        collect_file_search_hits(&root, ".", q, cap, &mut hits)?;
+        hits.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.path.cmp(&b.path))
+        });
+        Ok(hits)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn list_dir(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
@@ -1342,7 +1311,7 @@ fn file_content_from_bytes(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn read_file(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
@@ -1352,7 +1321,7 @@ pub(super) fn read_file(
     read_file_at(&state.require_active(window.label())?.root, path, max_bytes)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn read_file_bytes(
     state: State<'_, AppState>,
     window: WorkspaceSurface,

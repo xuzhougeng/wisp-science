@@ -7,7 +7,7 @@ The desktop process owns sessions, waits, staging, and approval.
 Agent tools
     -> Browser Runtime (src-tauri/src/browser_bridge)
         -> ws://127.0.0.1:18765  shared / daily Chrome
-        -> ws://127.0.0.1:18766  workspace Chrome (dedicated profile)
+        -> ws://127.0.0.1:<allocated-port>/<instance-token>  project workspace
             -> Manifest V3 extension (browser-extension/)
 ```
 
@@ -16,23 +16,44 @@ Agent tools
 | Session | Browser | Login state | Port |
 |---|---|---|---|
 | `shared` | User's existing Chrome/Edge profile | Daily cookies and extensions | 18765 |
-| `workspace` | Chrome-family build launched with `%APPDATA%/science.wisp-science/browser-workspace` | Clean until the user signs in there | 18766 |
+| `workspace` | Per-project Chrome-family profile under the app data directory, `browser-workspaces/<SHA-256(project_id)>/profile` | Persistent for that project | OS-allocated loopback port |
 
 Both can be connected at once. Omitting `session` always selects `shared`;
 workspace mode is used only when a tool explicitly passes `session=workspace`.
 
-Each session is also an independent Browser Task Lease. Two projects cannot
-drive the same session at once: the first browser tool holds that session's
-lease until its turn completes. A project using `shared` and another project
-using `workspace` can run browser tools in parallel because they target
-different profiles and connections. There is currently one global workspace
-profile, so this provides two parallel lanes rather than one workspace per
-project.
+Each resolved lane has an independent Browser Task Lease, held until the turn
+completes. `shared` remains one globally serialized lane. The tool-facing
+`workspace` alias resolves from the trusted ToolEnv project id into that
+project's running instance; tools reject missing project context and never
+accept another project's internal lane name. Multiple projects can therefore
+use their own workspaces concurrently while shared Chrome remains protected.
+
+The registry owns each process, listener, profile path, extension copy, and
+connection identity. Profile and extension directories use a SHA-256 digest
+of the opaque project id, never a raw path component. Every start assigns a
+new lane generation and WebSocket URL token. A client must present both the
+bundled extension origin and the correct token, so a stale extension cannot
+attach to a different project after a port is reused. Tabs, selected tabs,
+pending requests, turn ledgers and human-verification state use resolved lanes.
+
+Lifecycle transitions are serialized; normal commands on independent lanes
+remain concurrent. Up to three workspace instances may run at once. At the
+limit, start fails with instructions to stop an idle project's workspace.
+Repeated starts reuse the existing process. `stop_workspace` stops only the
+current project's instance, fails its pending requests, and drops its tab and
+human-verification records. Project deletion also stops that project's instance.
+Profiles are retained for the same project's later login sessions; the old
+unscoped `browser-workspace` profile is never adopted by an arbitrary project.
+After app restart, old workspace cleanup and human-verification records are
+discarded because tab ids are process-local; shared records retain their
+existing recovery behavior. Closing a Wisp window still leaves its running
+sessions alive; idle-window reclamation and a dedicated workspace status UI
+remain follow-up work.
 
 ### Workspace mode needs a build that still loads unpacked extensions
 
 The workspace window is launched with `--load-extension` pointed at a copy
-of `browser-extension/` whose `session_config.js` targets port 18766.
+of `browser-extension/` whose `session_config.js` targets its own allocated endpoint and instance token.
 **Official Google Chrome removed that flag in version 137** and now only
 logs `--load-extension is not allowed in Google Chrome, ignoring`, so the
 window opens with no Wisp extension. Chromium and Chrome for Testing keep
@@ -89,7 +110,7 @@ The extension never writes project directories and never returns large base64 fi
 
 ## What the Runtime does
 
-- Multiplexes two WebSocket listeners
+- Multiplexes one shared listener and up to three project workspace listeners
 - Per-session Browser Task Leases with `shared` as the default and explicit
   `workspace` routing
 - Copies staged files into the project and hashes SHA-256

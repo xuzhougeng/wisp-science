@@ -38,6 +38,7 @@
         <a href="../index.html#features" data-i18n="nav.features">功能</a>
         <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
         <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
         <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
         <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
         <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
@@ -78,7 +79,7 @@
 <tbody>
 <tr>
 <td>换电脑继续整个项目</td>
-<td>项目 ZIP</td>
+<td>项目目录或 ZIP</td>
 <td>在 Wisp 的“导入项目”中恢复</td>
 </tr>
 <tr>
@@ -102,8 +103,8 @@
 <p><strong>导出整个项目，适合迁移和完整交接。</strong></p>
 <p>先等当前项目的活动对话和任务结束。然后在项目卡片上点击 <strong>导出项目</strong>，也可以打开项目后使用 <strong>文件 → 导出当前项目</strong>。</p>
 <p><img src="../assets/tutorials/transfer/02-project-export.png" alt="项目导出说明：选择导出 ZIP，准备包含文件与项目记录的迁移包" loading="lazy" width="1440" height="1000" /></p>
-<p><em>图 1：只要普通文件时，可以自行复制项目文件夹；需要一起带走 Wisp 中的会话和项目记录时，选择完整 ZIP。</em></p>
-<p>选择 <strong>导出 ZIP</strong> 和保存位置后，右下角会显示处理阶段、文件数量、大小和当前路径。等待导出完成，再复制生成的 ZIP。</p>
+<p><em>图 1 为旧版界面示意。当前导出提供“导出目录”和“导出 ZIP”，两者都包含文件、会话及项目记录；目录格式省去压缩。</em></p>
+<p>选择 <strong>导出目录</strong> 或 <strong>导出 ZIP</strong> 和保存位置后，右下角会显示处理阶段、文件数量、大小和当前路径。等待导出完成，再复制生成的完整目录或 ZIP。</p>
 <p>导出期间，源项目会临时只读；其他项目仍可使用。不要把尚未完成或仍为空的目标文件发给接收方。</p>
 <p>项目包包括工作区里的普通文件，以及项目拥有的会话、产物、Run、计划、溯源和研究图谱记录。它不会一并携带：</p>
 <ul>
@@ -113,10 +114,10 @@
 <li>远程引用背后的整份服务器数据。</li>
 </ul>
 <p>因此，接收方恢复项目后，仍需要配置自己的模型和服务器。远程路径可以作为引用保留，但不会因为 ZIP 导入就自动获得访问权限。</p>
-<p><strong>导入整个项目，先区分 ZIP 与普通文件夹。</strong></p>
+<p><strong>导入整个项目，选择对应的目录或 ZIP 入口。</strong></p>
 <p>在项目首页点击 <strong>导入项目</strong>，可以看到不同的导入方式。</p>
 <p><img src="../assets/tutorials/transfer/01-project-import.png" alt="导入项目的三种方式：打开现有文件夹、导入 ZIP 和恢复工作区会话" loading="lazy" width="1440" height="1000" /></p>
-<p><em>图 2：已经复制到本机的文件夹，可以原地打开；Wisp 导出的完整项目 ZIP，应走 ZIP 导入入口。工作区会话恢复是另一种应急方式。</em></p>
+<p><em>图 2 为旧版界面示意。“原地打开文件夹”现已改为“导入项目文件夹”，需要完整的导出包。工作区会话恢复仍是单独的应急方式。</em></p>
 <p>迁移完整项目时：</p>
 <ol>
 <li>选择 <strong>导入 ZIP 压缩包</strong>，打开 Wisp 导出的项目 ZIP。</li>
@@ -124,7 +125,8 @@
 <li>等待右下角导入进度完成，再从项目页打开。</li>
 <li>核对会话、脚本、图表和关键数据路径，再配置目标机器需要的模型与环境。</li>
 </ol>
-<p>如果手里只是普通文件夹，选择 <strong>原地打开文件夹</strong>。它登记的是这个现有位置，不会复制一份新工作区；只复制文件夹，也不能恢复仅存于另一台设备数据库中的完整会话记录。</p>
+<p>对于 <strong>导出目录</strong> 生成的项目包，选择 <strong>导入项目文件夹</strong>，选中包含 <code>manifest.json</code>、<code>metadata/project.sqlite</code> 和 <code>workspace</code> 的顶层目录。Wisp 校验 metadata 后恢复会话和项目记录，并直接使用包内工作区。普通文件夹缺少 metadata 时会提示错误，不会创建空项目。</p>
+<p>metadata 保存的是导出时的快照，不会随之后的聊天自动更新。继续工作后如需迁移，请重新导出完整项目。</p>
 <p>当原来的应用数据库和完整项目包都丢失，但工作区还在时，才考虑 <strong>从工作区恢复会话</strong>。它尝试读取工作区保存过的历史快照，并不是每条普通对话都一定能找回。</p>
 <p>同一台设备重复导入相同项目 ID 会被拒绝，不会自动合并两个项目。需要经常切换设备时，可以进一步了解<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.zh-CN.md">手动项目同步</a>。</p>
 <p><strong>只交接一个会话，在会话列表里导出。</strong></p>
@@ -246,7 +248,7 @@
 <tbody>
 <tr>
 <td>Continue the whole project on another computer</td>
-<td>Project ZIP</td>
+<td>Project directory or ZIP</td>
 <td>Restore through Import project in Wisp</td>
 </tr>
 <tr>
@@ -270,8 +272,8 @@
 <p><strong>Export a whole project for migration or a complete handoff.</strong></p>
 <p>Wait for active conversations and tasks in the project to finish. Click <strong>Export project</strong> on its project card, or open it and choose <strong>File → Export current project</strong>.</p>
 <p><img src="../assets/tutorials/en/transfer/02-project-export.png" alt="Project export dialog offering a full ZIP archive" loading="lazy" width="1440" height="1000" /></p>
-<p><em>Figure 1: Copy the ordinary project folder yourself when you only need files. Choose a full ZIP when you also need Wisp conversations and project records.</em></p>
-<p>Choose <strong>Export ZIP</strong> and a destination. A progress card at the lower right reports stage, file count, bytes, and current path. Wait for completion before copying the ZIP.</p>
+<p><em>Figure 1 shows the previous interface. The current dialog offers Export directory and Export ZIP. Both include files, conversations and project records; directory export skips compression.</em></p>
+<p>Choose <strong>Export directory</strong> or <strong>Export ZIP</strong> and a destination. A progress card at the lower right reports stage, file count, bytes, and current path. Wait for completion before copying the complete directory or ZIP.</p>
 <p>The source project is temporarily read-only during export; other projects remain usable. Do not send a destination file that is unfinished or still empty.</p>
 <p>The package includes regular workspace files and project-owned conversations, artifacts, Runs, plans, provenance, and research-graph records. It does not carry:</p>
 <ul>
@@ -281,10 +283,10 @@
 <li>Entire server datasets behind remote references.</li>
 </ul>
 <p>The recipient must configure their own models and servers. A remote path may survive as a reference, but importing the ZIP does not grant access to it.</p>
-<p><strong>Distinguish a project ZIP from an ordinary folder.</strong></p>
+<p><strong>Choose the matching project folder or ZIP import entry.</strong></p>
 <p>Click <strong>Import project</strong> on the Projects screen to see the choices.</p>
 <p><img src="../assets/tutorials/en/transfer/01-project-import.png" alt="Project import choices: open a folder in place, import a ZIP, or recover workspace conversations" loading="lazy" width="1440" height="1000" /></p>
-<p><em>Figure 2: Open an already-copied folder in place. Use ZIP import for a complete Wisp project export. Workspace conversation recovery is a separate fallback.</em></p>
+<p><em>Figure 2 shows the previous interface. Import project folder now replaces Open a folder in place and requires an exported project package. Workspace conversation recovery remains a separate fallback.</em></p>
 <p>For a complete migration:</p>
 <ol>
 <li>Choose <strong>Import a ZIP archive</strong> and select the exported Wisp project ZIP.</li>
@@ -292,7 +294,8 @@
 <li>Wait for the progress card to finish, then open the project from the Projects screen.</li>
 <li>Check conversations, scripts, figures, and key data paths, then configure models and environments on the destination computer.</li>
 </ol>
-<p>For an ordinary folder, choose <strong>Open a folder in place</strong>. This registers the existing location without copying a second workspace. Copying a folder alone cannot restore complete conversation records that exist only in the other computer's database.</p>
+<p>For an exported directory, choose <strong>Import project folder</strong> and select the package root containing <code>manifest.json</code>, <code>metadata/project.sqlite</code> and <code>workspace</code>. Wisp validates metadata, restores records and uses the packaged workspace in place. Ordinary folders without metadata are rejected instead of creating a blank project.</p>
+<p>Metadata is a snapshot taken at export time. It does not automatically update as you work; export again before the next transfer.</p>
 <p>Use <strong>Recover conversations from a workspace</strong> when the original app database and complete archive are lost but the workspace remains. It attempts to recover saved history snapshots; not every ordinary conversation necessarily has one.</p>
 <p>Importing the same project ID twice on a device is rejected rather than merged. For frequent switching between devices, see <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.md">Manual Project Sync</a>.</p>
 <p><strong>Export one conversation from the sidebar.</strong></p>
@@ -409,6 +412,7 @@
       </a>
       <nav class="footer-links">
         <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
         <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
         <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
         <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>

@@ -5,6 +5,15 @@ does not remove generated files from the project workspace. Use the archive
 review below to preserve a completed research stage and explicitly clean up its
 recorded local intermediate files.
 
+To keep a temporary conversation out of everyday navigation, right-click its
+sidebar row and choose **Shelve conversation**. Shelved conversations leave the
+main list, recent sessions, default search and `#` suggestions. Use **Shelved
+conversations** beside the sidebar's conversation heading to search, open or
+**Restore to main list**. Existing references remain usable; messages, files,
+pins and folders are retained. This display preference persists across restarts
+and is independent of research archiving: restoring a sealed notebook keeps it
+read-only.
+
 Use **Archive research** in the conversation toolbar, or `/archive`, after a
 research stage is complete. Wisp prepares an editable draft using the saved
 notebook and recorded operations. This does not run analysis code or remove files.
@@ -30,6 +39,14 @@ editable and original files untouched. A cleanup failure leaves the archive and 
 shows per-file receipts and allows retry of the already-approved cleanup.
 Changed or newly protected files are skipped, including on retry.
 
+While the review is preparing or confirming, it can be minimized with the
+header button. The review collapses into a small status pill in the corner and
+the flow keeps running in the background, so other conversations stay usable.
+The pill shows the archive state (running, ready for review, needs attention,
+or archived); click it to bring the review back, or use its close button to
+dismiss a finished review. Escape does not restore or dismiss a minimized
+review.
+
 The original conversation remains readable. Sending, compaction, undo, deletion,
 and moving that notebook to another project cannot rewrite the archived record.
 The milestone appears in **Research journey**, with links to retained materials,
@@ -42,6 +59,12 @@ archive metadata and workspace snapshots; unconfirmed drafts are not exported.
 归档相当于完成实验记录本中的一个研究阶段：保留完整原始记录，把结论、关键代码、
 必要数据和最终结果整理成一个研究历程节点。集中确认后，会话只读，确认过的本地
 中间文件立即永久删除。后续研究从节点创建关联的新会话，保留旧结论及其材料。
+
+The draft is written by the model bound to the built-in **Archivist** specialist
+(Settings → Specialists → Archivist). While it is unbound, or its profile was
+deleted, the archive uses the archived session's own model, as before.
+归档草稿使用 **设置 → 专家 → Archivist** 绑定的模型；未绑定或绑定的模型已删除时，
+沿用被归档会话自己的模型。
 
 Current limits: preparation accepts up to 4 MiB of saved source records, split
 into bounded model requests when necessary. Draft synthesis turns off extra

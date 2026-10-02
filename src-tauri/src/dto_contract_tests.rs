@@ -9,6 +9,17 @@
 use serde_json::json;
 
 #[test]
+fn workspace_path_classification_distinguishes_directories_and_unavailable_entries() {
+    use wisp_dto::WorkspacePathKind;
+    let wire = json!({"report.md": "file", "docs/annotation": "directory", "gone": "unavailable"});
+    let kinds: std::collections::HashMap<String, WorkspacePathKind> =
+        serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(kinds["docs/annotation"], WorkspacePathKind::Directory);
+    assert_eq!(kinds["gone"], WorkspacePathKind::Unavailable);
+    assert_eq!(serde_json::to_value(kinds).unwrap(), wire);
+}
+
+#[test]
 fn workflow_conversion_progress_preserves_request_identity_and_stage() {
     use wisp_dto::{WorkflowConversionProgress, WorkflowConversionStage};
     let progress = WorkflowConversionProgress {
@@ -70,6 +81,7 @@ fn network_settings_support_partial_persisted_configuration() {
     }))
     .unwrap();
     assert!(settings.mcp_proxy_url.is_empty());
+    assert!(settings.subscription_proxy_url.is_empty());
     assert!(settings.command_proxy_url.is_empty());
     let ui: wisp_dto::NetworkSettings = roundtrip(&settings);
     assert_eq!(ui, settings);
@@ -617,9 +629,26 @@ fn research_journey_contract_preserves_version_and_occurrence_time() {
             source_id: "v1".into(),
             version_number: Some(1),
             source_discarded: true,
+            run_id: Some("run".into()),
             ..Default::default()
         }],
         truncated: true,
+        recaps: vec![wisp_dto::ResearchRecap {
+            id: "recap".into(),
+            day_start: 0,
+            status: "draft".into(),
+            headline: "Compared methods".into(),
+            done: vec![wisp_dto::ResearchRecapItem {
+                text: "Ran comparison".into(),
+                refs: vec![0],
+            }],
+            sources: vec![wisp_dto::ResearchRecapSource {
+                kind: "run".into(),
+                id: "run".into(),
+                title: "Compare".into(),
+            }],
+            ..Default::default()
+        }],
     };
     let ui: wisp_dto::ResearchJourney = roundtrip(&backend);
     assert_eq!(ui, backend);
@@ -646,8 +675,8 @@ fn research_calendar_contract_preserves_project_errors_and_truncation() {
         wisp_dto::ResearchCalendarProject {
             project_id: "p".into(),
             history: wisp_dto::ResearchJourney {
-                entries: vec![],
                 truncated: true,
+                ..Default::default()
             },
             error: None,
         },
@@ -956,4 +985,84 @@ fn project_summary_star_defaults_for_older_payloads_and_roundtrips() {
     assert_eq!(payload["starred"], true);
     let decoded: wisp_dto::ProjectSummary = serde_json::from_value(payload).unwrap();
     assert!(decoded.starred);
+}
+
+#[test]
+fn project_storage_setting_roundtrips_between_backend_and_ui() {
+    let baseline = serde_json::to_value(wisp_dto::Settings::default()).unwrap();
+    for enabled in [false, true] {
+        let mut payload = baseline.clone();
+        payload["decentralized_project_storage"] = json!(enabled);
+        let backend: crate::Settings = serde_json::from_value(payload).unwrap();
+        let ui: wisp_dto::Settings = roundtrip(&backend);
+        assert_eq!(ui.decentralized_project_storage, enabled);
+    }
+    let mut legacy = baseline;
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("decentralized_project_storage");
+    let ui: wisp_dto::Settings = serde_json::from_value(legacy).unwrap();
+    assert!(!ui.decentralized_project_storage);
+}
+
+#[test]
+fn after_turn_hook_events_roundtrip_to_ui() {
+    let backend: super::AgentEvent = serde_json::from_value(json!({
+        "kind": "MemoryProposal",
+        "frame_id": "f",
+        "proposal": {
+            "session_id": "f", "turn_index": 2, "scope": "project",
+            "content": "Validate paths before retrying.", "trigger": "tool_failures",
+            "tool_calls": 3, "failed_tool_calls": 2, "failure_rate": 66.7,
+            "global_memories": []
+        }
+    }))
+    .expect("backend accepts its own proposal shape");
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::MemoryProposal { frame_id, proposal } => {
+            assert_eq!(frame_id, "f");
+            assert_eq!(proposal.turn_index, 2);
+            assert_eq!(proposal.trigger, "tool_failures");
+            assert_eq!(proposal.failed_tool_calls, 2);
+        }
+        _ => panic!("expected MemoryProposal"),
+    }
+
+    let backend = super::AgentEvent::FollowUps {
+        frame_id: "f".into(),
+        questions: vec!["One?".into(), "Two?".into(), "Three?".into()],
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::FollowUps { questions, .. } => assert_eq!(questions.len(), 3),
+        _ => panic!("expected FollowUps"),
+    }
+
+    let backend = super::AgentEvent::HookFailed {
+        frame_id: "f".into(),
+        hook: crate::turn_hooks::HookId::MemoryProposal.as_str().into(),
+        message: "Reviewer ACP Agent is not configured.".into(),
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::HookFailed { hook, message, .. } => {
+            assert_eq!(hook, "memory_proposal");
+            assert!(message.contains("not configured"));
+        }
+        _ => panic!("expected HookFailed"),
+    }
+}
+
+#[test]
+fn session_artifact_preview_includes_review_token_and_retention_reasons() {
+    let preview = wisp_dto::SessionArtifactPreview {
+        fingerprint: "content-and-ownership-hash".into(),
+        artifacts: vec!["plot.svg".into()],
+        files: vec!["results/plot.svg".into()],
+        retained: vec![wisp_dto::RetainedSessionArtifact {
+            name: "uploads/input.csv".into(),
+            reason: "upload".into(),
+        }],
+    };
+    let decoded: wisp_dto::SessionArtifactPreview = roundtrip(&preview);
+    assert_eq!(decoded, preview);
 }

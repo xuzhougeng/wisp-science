@@ -2011,8 +2011,8 @@ pub(crate) fn ArtifactModal(
     name: String,
     kind: String,
     session: Option<String>,
-    can_prev: bool,
-    can_next: bool,
+    can_prev: Signal<bool>,
+    can_next: Signal<bool>,
     on_prev: Callback<()>,
     on_next: Callback<()>,
     on_close: Callback<()>,
@@ -2071,20 +2071,20 @@ pub(crate) fn ArtifactModal(
             <div class="modal artifact-modal" class:html-preview=is_html on:click=|ev| ev.stop_propagation()>
                 <div class="am-head">
                     <span class="am-name">{name.clone()}</span>
-                    {(can_prev || can_next).then(|| view! {
+                    <Show when=move || can_prev.get() || can_next.get()>
                         <div class="am-nav">
                             <button type="button" class="icon-btn am-nav-btn"
-                                disabled=!can_prev
+                                disabled=move || !can_prev.get()
                                 aria-label=move || t(locale.get(), "artifact.prev_image")
                                 title=move || format!("{} (←)", t(locale.get(), "artifact.prev_image"))
                                 on:click=move |_| on_prev.call(())>{compose_icon("chevron-left")}</button>
                             <button type="button" class="icon-btn am-nav-btn"
-                                disabled=!can_next
+                                disabled=move || !can_next.get()
                                 aria-label=move || t(locale.get(), "artifact.next_image")
                                 title=move || format!("{} (→)", t(locale.get(), "artifact.next_image"))
                                 on:click=move |_| on_next.call(())>{compose_icon("chevron-right")}</button>
                         </div>
-                    })}
+                    </Show>
                     <div class="spacer"></div>
                     {can_star.then(|| view! {
                         <button type="button" class="icon-btn" class:starred=move || starred.get()

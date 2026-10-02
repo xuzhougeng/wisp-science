@@ -1,0 +1,24 @@
+{
+  "schema": "wisp.native-library.v1",
+  "command": "native_library_search",
+  "project_id": null,
+  "args": {
+    "query": "RNA",
+    "kind": "code"
+  },
+  "result": [
+    {
+      "id": "item-1",
+      "kind": "code",
+      "title": "plot RNA",
+      "language": "python",
+      "code_preview": "import pandas",
+      "source_project_id": "research-1",
+      "source_project_name": "RNA-seq 研究",
+      "source_session_id": "session-a",
+      "source_session_title": "探索",
+      "source_path": null,
+      "created_at": 1789600000
+    }
+  ]
+}

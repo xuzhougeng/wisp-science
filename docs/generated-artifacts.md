@@ -21,3 +21,13 @@ one of the files and changes this reply's Generated count.
 Manual smoke: generate many outputs across nested directories, open Generated,
 check counts, expand individual folders, preview a file, and use Open in center.
 Check a narrow window, keyboard toggling, root files and duplicate basenames.
+
+An open artifact preview stays in place while background tools produce or update
+other outputs. Its zoom, provenance tab, and unsent code edits are preserved;
+image navigation updates as new images become available. Selecting another image
+loads that image and its provenance.
+
+Manual smoke: open a figure while analysis continues, zoom in, switch provenance
+tabs or edit the recorded code, and let tools save more outputs. Check that the
+preview does not flash or reset, new images are reachable with the navigation
+buttons and arrow keys, and Escape closes the preview immediately after opening.

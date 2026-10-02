@@ -15,6 +15,9 @@ pub struct GlobalMemory {
 
 impl Store {
     pub async fn insert_global_memory(&self, memory: &GlobalMemory) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.insert_global_memory(memory)).await;
+        }
         sqlx::query(
             "INSERT INTO global_memories(\
              id,content,source_frame_id,source_turn_index,created_at,updated_at) \
@@ -32,6 +35,9 @@ impl Store {
     }
 
     pub async fn list_global_memories(&self, limit: usize) -> Result<Vec<GlobalMemory>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.list_global_memories(limit)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,content,source_frame_id,source_turn_index,created_at,updated_at \
              FROM global_memories ORDER BY updated_at DESC,id DESC LIMIT ?",
@@ -59,6 +65,9 @@ impl Store {
         content: &str,
         updated_at: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.update_global_memory(id, content, updated_at)).await;
+        }
         let result = sqlx::query(
             "UPDATE global_memories SET content=?,updated_at=MAX(?,updated_at+1) WHERE id=?",
         )
@@ -71,6 +80,9 @@ impl Store {
     }
 
     pub async fn delete_global_memory(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.delete_global_memory(id)).await;
+        }
         sqlx::query("DELETE FROM global_memories WHERE id=?")
             .bind(id)
             .execute(&self.pool)

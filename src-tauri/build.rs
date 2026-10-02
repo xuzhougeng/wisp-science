@@ -18,18 +18,22 @@ const MODELS_DEV_API: &str = "https://models.dev/api.json";
 fn main() {
     purge_stale_seed_dirs();
     bake_model_catalog();
-    tauri_build::build();
-    // tauri-build embeds the Windows manifest into binaries, not examples.
-    // The real-WebView smoke also needs Common Controls v6 (TaskDialogIndirect).
-    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/webview_recovery_smoke.manifest");
+    let msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    let mut attributes = tauri_build::Attributes::new();
+    if msvc {
+        // The linker below owns the manifest for all executable targets.
+        // A second manifest in tauri-build's app-only .res causes CVT1100.
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    tauri_build::try_build(attributes).expect("build Tauri resources");
+    // Unit-test and example executables also import Common Controls v6
+    // (TaskDialogIndirect). They must start without post-build binary patches.
+    if msvc {
+        let manifest = manifest_dir().join("examples/webview_recovery_smoke.manifest");
         println!("cargo:rerun-if-changed={}", manifest.display());
-        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
-        println!(
-            "cargo:rustc-link-arg-examples=/MANIFESTINPUT:{}",
-            manifest.display()
-        );
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
     }
 }
 
@@ -54,7 +58,7 @@ fn bake_model_catalog() {
             }
         }
     }
-    let snapshot = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("model_catalog.snapshot.json");
+    let snapshot = manifest_dir().join("model_catalog.snapshot.json");
     fs::copy(&snapshot, &dest).unwrap_or_else(|e| {
         panic!(
             "model catalog unavailable: no network and {} ({e}); \
@@ -95,8 +99,7 @@ fn fetch_distilled_catalog() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 fn purge_stale_seed_dirs() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let target = manifest_dir.join("..").join("target");
+    let target = manifest_dir().join("..").join("target");
     if !target.is_dir() {
         return;
     }
@@ -107,6 +110,12 @@ fn purge_stale_seed_dirs() {
         }
     }
     println!("cargo:rerun-if-changed=../seed");
+}
+
+/// Read at run time: `env!` would bake in the checkout that first compiled this
+/// script, which goes stale when worktrees share one target dir.
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
 }
 
 fn remove_dir_if_present(dir: &Path) {

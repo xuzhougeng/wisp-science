@@ -4,6 +4,21 @@ Build, architecture, CLI environment, and tests. For first-run desktop setup see
 [basic configuration](basic-configuration.md). For HTTP model profiles see
 [model configuration](model-configuration.md).
 
+## WebView composer input smoke test
+
+For #1413, run `cd ui-tests && npx playwright test tests/composer-input.spec.ts`.
+The mocked tests inject the macOS arrow-key codes through `beforeinput`, input
+fallbacks, and programmatic drafts; they do not reproduce the native WKWebView
+timing bug itself.
+
+On macOS, use both ABC and a Chinese input method. Hold Left at the start and
+Right at the end of an empty or populated composer for several seconds, then
+repeat after moving the caret into the text. No boxes should appear. Check
+Shift/Option/Command arrow selection/navigation, multiline text, emoji, and IME
+candidate confirmation. Send with and without an attachment and confirm the
+saved message contains no U+001C–U+001F. Also check ordinary typing, selection,
+paste, and Enter/Shift+Enter on Windows and Linux.
+
 ## GitHub Pages tutorials
 
 The website's [tutorial directory](tutorials.html) links to one independent page
@@ -98,9 +113,13 @@ storage from content sent to configured model or data services.
 
 ## Build from source
 
+Clone with `git clone --filter=blob:none https://github.com/xuzhougeng/wisp-science.git`
+to skip downloading old screenshots and other large files from history; Git
+fetches past file versions on demand.
+
 Prerequisites:
 
-- **Rust** (stable, 1.88+) with `wasm32-unknown-unknown`:
+- **Rust** (stable, 1.90+) with `wasm32-unknown-unknown`:
   `rustup target add wasm32-unknown-unknown`
 - **uv**: <https://docs.astral.sh/uv/>
 - **Trunk**: `cargo install --locked trunk`
@@ -206,11 +225,19 @@ next launch). The `startup finished` line breaks pre-first-paint work by phase
 purge, and restoring project windows run after the window is interactive and
 are logged as `deferred startup finished`.
 
+If the window stops responding while quitting and the process has to be killed,
+the tail of `wisp.log` shows how far the exit sequence got. Each cleanup step is
+logged as it is entered (`app.exit.step` with `step="shutdown-mcp-broker"`,
+`"shutdown-mcp-connections"`, `"pause-method-searches"`, `"stop-device-bridge"`,
+`"shutdown-runtimes"`, `"shutdown-terminals"`, `"done"`), and the final line adds
+the total wall time (`app.exit.finished` with `elapsed_ms=…`). A log that ends at
+one of these lines names the step that never returned.
+
 ## Headless CLI
 
 ```bash
 export WISP_API_KEY=<your provider key>
-export WISP_PROVIDER=openai            # openai | openai_responses | anthropic
+export WISP_PROVIDER=openai            # openai | openai_responses | openai_chatgpt | openai_codex | xai_oauth | anthropic
 export WISP_MODEL=deepseek-v4-flash
 cargo run -p wisp-cli                  # interactive agent
 cargo run -p wisp-cli -- run "Summarize the files in this project"
@@ -225,7 +252,7 @@ Eval and the long-lived JSONL RPC protocol:
 | Variable             | Purpose                                                       |
 |----------------------|---------------------------------------------------------------|
 | `WISP_API_KEY`       | Provider API key (CLI). Desktop uses the OS keyring.          |
-| `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, or `anthropic` |
+| `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, `openai_chatgpt`, `openai_codex`, `xai_oauth`, or `anthropic`. `openai_chatgpt` uses `wisp-science login chatgpt`, legacy `openai_codex` uses `wisp-science login codex`, and `xai_oauth` uses `wisp-science login xai` instead of `WISP_API_KEY`. |
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
 | `WISP_VISION`        | `1`/`true` if the primary model can read images natively (default off) |
@@ -419,6 +446,20 @@ wisp-science/
 ## Testing
 
 - **Rust unit tests** — `cargo test --workspace`
+- **Windows desktop dependency upgrades** — run
+  `cargo check --locked -p wisp-tauri --all-targets --target x86_64-pc-windows-msvc`
+  to cover the desktop, tests, and every native smoke example with isolated target
+  features. Tauri 2.12, opener 2.7, and `tauri-winrt-notification` 0.8.1 use
+  `windows` 0.62; `notify-rust` 4.18.1 also routes the notification plugin through
+  the same WinRT dependency. Keep the existing `vendor/tao` redraw fix when updating plugins.
+  For opener/notification changes, manually check opening a URL/file, revealing
+  a file in Explorer, and clicking a notification while its owning project
+  window is hidden or minimized. The click must restore that window and open
+  the notification's session without navigating other project windows. Include
+  Chinese text and XML-sensitive characters (`&`, `<`, `>`) in the notification.
+  Run `webview_recovery_smoke` and `mcp_app_isolation_smoke` on Windows to cover
+  real WebView IPC and renderer isolation; mocked Playwright tests do not cover
+  native shell integration or toast activation.
 - **MCP client smoke** — `cargo run -p wisp-mcp --example smoke` launches the
   bundled mock MCP server via `uv` and round-trips `tools/list` + `tools/call`.
 - **UI E2E (Playwright + Tauri mock)** — `ui-tests/` runs the Leptos UI in a

@@ -26,6 +26,9 @@ impl Store {
         source_id: &str,
         provider: &str,
     ) -> Result<Vec<ExternalSessionCacheRecord>> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.list_external_session_cache(source_id, provider)).await;
+        }
         let rows = sqlx::query(
             "SELECT source_id,provider,source_path,file_size,modified_at_ms,session_id,title,cwd,\
              message_count,created_at_ms,last_active_at_ms,changed_since_import \
@@ -62,6 +65,10 @@ impl Store {
         provider: &str,
         records: &[ExternalSessionCacheRecord],
     ) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.replace_external_session_cache(source_id, provider, records))
+                .await;
+        }
         if records
             .iter()
             .any(|record| record.source_id != source_id || record.provider != provider)
@@ -108,6 +115,16 @@ impl Store {
         message_count: i64,
         last_active_at_ms: i64,
     ) -> Result<()> {
+        if let Some(store) = self.route_global() {
+            return Box::pin(store.mark_external_session_cache_synced(
+                source_id,
+                provider,
+                source_path,
+                message_count,
+                last_active_at_ms,
+            ))
+            .await;
+        }
         sqlx::query(
             "UPDATE external_session_cache SET message_count=?,\
              last_active_at_ms=CASE WHEN ?>0 THEN ? ELSE last_active_at_ms END,\

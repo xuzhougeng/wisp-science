@@ -7,7 +7,9 @@ recent user turns, so completing a long, tool-heavy conversation does not load
 and duplicate its full history. The suggestion panel can be hidden per reply,
 or the setting can be turned off to skip the extra model call entirely. Wisp
 does not request suggestions for failed, cancelled, paused, or tool-only turns;
-the current turn must contain a visible final answer.
+the current turn must contain a visible final answer. Suggestions are produced
+by the app after the turn ends, so turns started from the queue, IM channels,
+or scheduled tasks get them as well.
 
 The desktop transcript also treats ordinary tool output as a preview: tool
 results are limited to 4,000 characters and streamed terminal output to 64 KiB
@@ -62,6 +64,14 @@ Choosing a level saves it as the profile's default — it applies to every
 conversation using that model and is not scoped to the current conversation.
 Choosing "default" clears the value so the provider decides.
 
+The composer footer surfaces the same value as a thinking-effort pill next to
+the model picker (brain icon, current level, dropdown). The footer reads
+context usage, model, thinking effort, Fast, send. The pill edits the same
+per-profile default through the same curated list — models whose provider
+rejects the effort parameter offer only "default" — and ACP agents hide the
+pill because their model and effort come from the agent configuration. Fast
+remains a separate lightning toggle between the pill and the send button.
+
 The add/edit model page includes collapsed **Request headers (advanced)**
 (请求附加信息（高级）). It explains that these settings add HTTP request headers
 to requests sent to the model service, including connection validation. Keep the
@@ -92,6 +102,134 @@ model-to-protocol mapping; changing between Go and Zen preserves your entries.
 Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
 [Zen](https://opencode.ai/docs/zen/#endpoints) endpoint documentation for the
 model ID and protocol supported by your chosen service.
+
+**ChatGPT** (official Sign in with ChatGPT) is the first card in **Settings →
+Models → Subscription accounts**. **Sign in** opens ChatGPT's consent page: pick
+the account, name the agent (prefilled **Wisp Science**), and allow it to use
+your ChatGPT plan's usage. OpenAI registers each Wisp installation as one
+connected agent, identified by a stable id kept in the OS keyring, and returns
+the client id it issued in the redirect to `http://127.0.0.1:1455/auth/callback`.
+If that redirect cannot reach this machine, paste the **full** redirect URL
+from the address bar (it must include `client_id`). There is no device-code
+option for this sign-in. Wisp stores the access token, refresh token, expiry
+and issued client id in the OS keyring and refreshes the token automatically.
+One sign-in serves every ChatGPT model on the card. Chat requests go to the
+ordinary `https://api.openai.com/v1/responses` endpoint with that token (no API
+key), streamed and without `max_output_tokens`. When the plan's limit for
+connected apps is reached, the error points to
+`https://chatgpt.com/settings/usage`. Quota bars and multiple accounts are
+available only on the legacy card below. `wisp-science login chatgpt` stores
+the same sign-in for the CLI and this page.
+
+**ChatGPT Codex (legacy)** borrows the Codex CLI's public client instead. Keep it
+for existing models or when only device-code sign-in works. Sign in to your account,
+save the account, then use **Add model**. After authorization, **Save account** is the primary
+action beside **Cancel** and **Sign in again**. It shows **Saving account…**
+and disables the actions while saving; a save failure keeps authorization
+available so you can retry without signing in again. Each model asks for its ID
+and an optional alias. You can add multiple models using the same account. The account card reports saved credentials; it
+does not guarantee current entitlement or network access. Subscription models
+are listed here and in the conversation model picker, separately from API models.
+Subscription is an authentication method, not a conversation protocol: Wisp
+manages the Responses connection and all other model parameters. The Models page
+has three peer tabs: API models, ACP Agents and Subscription accounts. Editing a
+subscription model only exposes its ID and alias; API and advanced controls are absent.
+Browser sign-in opens ChatGPT and listens on `127.0.0.1:1455` for the
+redirect. Enable device-code login in ChatGPT security settings or workspace
+permissions before using the one-time-code alternative when the browser
+cannot reach this machine, including SSH and WSL. Paste the final redirect URL
+if the local callback does not arrive. Wisp stores the access token, refresh
+token, expiry, and ChatGPT account id in the OS keyring, refreshes the access
+token automatically, and sends chat requests to
+`https://chatgpt.com/backend-api/codex/responses`. The model ID is whatever
+that subscription can call, such as `gpt-5.5`. A sign-in from
+`wisp-science login codex` is stored on the same machine and can be reused
+from this page.
+
+You can save several ChatGPT accounts. Once signed in, the card's first button
+reads **Add account**: signing in with a different ChatGPT account adds it and
+makes it active, while signing in to a saved account updates its tokens. The
+**Accounts** list shows each account's email (or account id), plan and quota.
+Exactly one account is active; every ChatGPT model uses it. **Use this
+account** switches all ChatGPT models to another account; each conversation's
+next turn uses it. Remove an inactive account with the trash
+button; its tokens are deleted from the OS keyring after confirmation. Switch
+away from the active account before removing it.
+
+Quota comes from ChatGPT's read-only `https://chatgpt.com/backend-api/wham/usage`
+endpoint (the one Codex CLI and CLIProxyAPI read) and does not consume quota.
+Each account shows its short (usually 5-hour) and weekly windows as bars with
+the percentage used and the time until reset, turning amber at 80% and red at
+100%; **Limit reached** marks an exhausted account. Quota loads when the page
+opens; **Refresh usage** reloads it. An expired access token is refreshed first.
+Quota requests use the **Subscription sign-in** network route. A failed request
+is shown on that account only.
+
+**Import local sign-in** adds ChatGPT sign-ins already saved on this machine:
+Codex CLI's `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) and
+CLIProxyAPI's `~/.cli-proxy-api/codex-*.json`. API-key sign-ins are skipped.
+The first imported account becomes active only when no ChatGPT account is
+signed in; an already-saved account is updated only when the local copy is
+newer. Importing shares the refresh token with that tool: once Wisp refreshes
+it, Codex CLI or CLIProxyAPI may ask you to sign in again, and vice versa. Sign
+in from Wisp instead when both tools must stay signed in.
+
+ChatGPT subscription requests use the service-managed output limit: Wisp does
+not send the public API's `max_output_tokens` parameter, which the subscription
+endpoint rejects with HTTP 400. API-key Responses profiles still send their
+configured output limit. Recognized unsupported-parameter errors name the
+request field without exposing the raw service response or credentials.
+
+On Windows, long ChatGPT and xAI credentials are split across protected
+Credential Manager entries to stay within its per-entry size limit. Saving
+and token refresh publish the new credential only after every fragment is
+written; existing short credentials remain readable. No token is stored in
+the project database. If a saved credential is incomplete or damaged, sign in
+again to replace it.
+
+Canceling or leaving the sign-in page cancels the attempt. An HTML 403 is
+reported as a web access/verification response with network and proxy guidance,
+without displaying the HTML. It is not treated as a successful login or as
+indefinite device authorization. A 401 asks you to sign in again.
+See the [official authentication guide](https://learn.chatgpt.com/docs/auth)
+for account and device-code requirements.
+
+Subscription sign-in and token refresh use **Settings → Network →
+Subscription sign-in**. Model requests continue to use **Model API**, independently.
+The new sign-in setting defaults to System, including when upgrading a configuration
+that previously set Model API to Direct. Active sign-in attempts keep the client
+route they started with; save the new setting and start a new sign-in. **Direct** explicitly disables the system and
+environment proxies, even if your browser uses a proxy. If the browser opens
+but Wisp's token exchange fails, check this route; select **System** to follow
+the environment/system proxy, or configure the intended proxy explicitly, save,
+and start a new sign-in. Wisp reports OpenAI's
+`unsupported_country_region_territory` response as a network-location rejection,
+not evidence that the account lacks Codex access. Use a network location
+supported by the provider. xAI must fetch OIDC metadata and a device code before
+it has a verification URL to open; a discovery transport failure therefore
+occurs before browser launch. Transport errors include the underlying cause
+(such as timeout, TLS, or proxy connection failure).
+
+For a credential-free manual network check, run
+`cargo run -p wisp-llm --example auth_network_probe` (system/environment route),
+or append `-- none` / `-- http://host:port` for an explicit route. The check
+fetches public xAI discovery metadata and sends an intentionally invalid OpenAI
+authorization code: a normal OAuth 400/401 means validation was reached, not
+that a real account was signed in. This manual example is not an automated
+external-service test and never reads the keyring.
+
+**SuperGrok / X Premium+ (xAI)** is also a subscription login, separate from an
+xAI API key. In **Settings → Models → Subscription accounts**, choose **SuperGrok**. Wisp starts an
+xAI device-code sign-in and opens the `accounts.x.ai` page. Approve it there,
+and enter the one-time code if the page asks for it. This works over SSH and
+WSL because no local callback is needed. Wisp stores the access token, refresh
+token, expiry, and xAI token endpoint in the OS keyring, refreshes the access
+token automatically, and sends chat requests to
+`https://api.x.ai/v1/chat/completions`. The token is only ever sent to HTTPS
+hosts on `x.ai`. The default model is `grok-4.6`. xAI may refuse some
+subscription tiers with HTTP 403 even after a successful sign-in. In that case,
+use an xAI API key instead. A sign-in from `wisp-science login xai` can be
+reused from this page.
 
 Use the bare API model ID, without OpenCode's client-side provider prefix.
 Context and output ceilings continue to come from Wisp's baked models.dev
@@ -137,6 +275,12 @@ shows the effective state and stores an independent per-conversation override;
 turning it back to the profile default clears that override. The button is
 disabled during a running turn and hidden for unsupported providers and ACP
 Agents. ACP Fast Mode remains a separate Agent session configuration.
+
+Two more built-in specialists draft documents rather than chat, so only their
+model binding is configurable and they never appear in the session or workflow
+specialist pickers: **Archivist** writes research archive drafts (unbound: the
+archived session's model) and **Recap** writes daily research recaps (unbound:
+the active model). Both turn off extra reasoning for their JSON output.
 
 The built-in Reader used by `#` session references inherits that profile's
 model, not its reasoning effort. Retrieval turns disable DeepSeek thinking
@@ -215,7 +359,22 @@ pickers.
 
 The persistent `image_generation_capable` role is separate from the currently
 assigned image profile: deselecting an image profile does not accidentally make
-it a chat model. Renaming a profile to a different model resets the old role
+it a chat model. The list always shows an **Image-only** type badge, separately
+from the **Image generation** assignment badge. For a chat model mistakenly
+assigned to image generation, open the profile, choose **Restore as chat model**,
+optionally enable **Supports image input** / **Use for image analysis**, and
+save. This keeps the profile ID, model ID, and stored credentials; no deletion or
+temporary model rename is needed. Known dedicated image/video IDs cannot be
+restored as chat models.
+
+Role edits remain local to the form until Save; Cancel discards them. The profile
+and its role assignments/default are persisted together. Converting the default
+chat profile to image-only selects another chat profile; sessions bound to it
+fall back on their next use. Restoring chat eligibility does not automatically
+change the current default or sessions that have already switched: choose
+**Set as default** or select the restored model in the relevant conversation.
+
+Renaming a profile to a different model resets the old role
 unless image generation is explicitly selected for the new ID. Existing
 profiles without the new marker retain backwards-compatible known-name and
 assignment hints. Chat catalog limits still use exact model-ID matching.
@@ -403,10 +562,17 @@ The desktop app stores model profile metadata in `.wisp/wisp.sqlite`. Existing s
 ## Headless CLI
 
 The `wisp-science` headless CLI uses environment variables and supports the
-same API protocols:
+same API protocols. `wisp-science login chatgpt` uses the official Sign in with
+ChatGPT (browser, or paste the full redirect URL); after that,
+`WISP_PROVIDER=openai_chatgpt` uses the stored sign-in and does not need
+`WISP_API_KEY`. The legacy `wisp-science login codex` signs in through the Codex
+CLI client (`--method device` for a one-time code) for
+`WISP_PROVIDER=openai_codex`. `wisp-science login xai` does the same for a SuperGrok or
+X Premium+ subscription with an xAI device code; then use
+`WISP_PROVIDER=xai_oauth`.
 
 ```powershell
-$env:WISP_PROVIDER = "openai"           # openai, openai_responses, or anthropic
+$env:WISP_PROVIDER = "openai"           # openai, openai_responses, openai_chatgpt, openai_codex, xai_oauth, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your provider key>"

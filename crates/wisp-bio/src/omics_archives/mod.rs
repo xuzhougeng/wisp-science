@@ -20,7 +20,7 @@ mod pride;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::Method;
@@ -583,16 +583,6 @@ fn names(value: Option<&Value>) -> Vec<String> {
     out.sort();
     out.dedup();
     out
-}
-
-fn looks_like_html(text: &str) -> bool {
-    let prefix: String = text
-        .trim_start()
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }
 
 fn glob_match(pattern: &str, name: &str) -> bool {

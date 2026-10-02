@@ -134,6 +134,12 @@ const CATALOG: &[SettingSpec] = &[
         summary: "Generate three follow-up questions after each reply.",
     },
     SettingSpec {
+        key: "decentralized_project_storage",
+        kind: ValueKind::Bool,
+        writable: true,
+        summary: "Store new projects in their own folders. Existing project locations are unchanged.",
+    },
+    SettingSpec {
         key: "resume_last_session",
         kind: ValueKind::Bool,
         writable: true,
@@ -774,6 +780,13 @@ async fn current_values(store: &Store) -> Result<Map<String, Value>, String> {
     values.insert("auto_continue_limit".into(), json!(auto_continue_limit));
     values.insert("follow_up_questions".into(), json!(follow_up_questions));
     values.insert("resume_last_session".into(), json!(resume_last_session));
+    values.insert(
+        "decentralized_project_storage".into(),
+        json!(store
+            .decentralized_project_storage()
+            .await
+            .map_err(|e| e.to_string())?),
+    );
     values.insert("notifications_enabled".into(), json!(notifications_enabled));
     Ok(values)
 }
@@ -1020,6 +1033,9 @@ async fn apply_one(
         }
         "follow_up_questions" => write_bool_setting(store, "follow_up_questions", incoming).await,
         "resume_last_session" => write_bool_setting(store, "resume_last_session", incoming).await,
+        "decentralized_project_storage" => {
+            write_bool_setting(store, "decentralized_project_storage", incoming).await
+        }
         "notifications_enabled" => {
             write_bool_setting(store, "notifications_enabled", incoming).await
         }
@@ -1312,6 +1328,41 @@ mod tests {
             result.content
         );
         assert!(result.content.contains("reviewer"), "{}", result.content);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[tokio::test]
+    async fn project_storage_preference_roundtrips_and_rejects_invalid_values() {
+        let (store, root, db) = test_store().await;
+        let env = NoEnv(root.clone());
+        let configure = tool(store.clone(), root.clone());
+        assert!(!store.decentralized_project_storage().await.unwrap());
+        for enabled in [true, false] {
+            let result = configure
+                .run(
+                    &json!({"action": "set", "values": {"decentralized_project_storage": enabled}}),
+                    &env,
+                )
+                .await;
+            assert!(result.success, "{}", result.content);
+            assert_eq!(
+                store.decentralized_project_storage().await.unwrap(),
+                enabled
+            );
+            assert_eq!(
+                current_values(&store).await.unwrap()["decentralized_project_storage"],
+                json!(enabled)
+            );
+        }
+        let invalid = configure
+            .run(
+                &json!({"action": "set", "values": {"decentralized_project_storage": "invalid"}}),
+                &env,
+            )
+            .await;
+        assert!(!invalid.success);
+        assert!(!store.decentralized_project_storage().await.unwrap());
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_file(db);
     }

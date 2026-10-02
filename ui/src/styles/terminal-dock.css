@@ -93,7 +93,7 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .terminal-dock-tab:hover { background: var(--surface-hover); color: var(--text); }
@@ -155,7 +155,7 @@
   white-space: nowrap;
   font-weight: 500;
 }
-.terminal-dock-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: 10px/1.2 var(--font-mono); }
+.terminal-dock-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
 .terminal-dock-spacer { flex: 1; }
 
 .terminal-dock-action {
@@ -169,7 +169,7 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
-  font: 11px/1 var(--font-ui);
+  font: calc(11px * var(--ui-font-scale, 1))/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -200,7 +200,7 @@
 .terminal-dock-add-label {
   padding: 5px 8px 7px;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -223,8 +223,8 @@
 
 .terminal-dock-add-item:hover { background: var(--surface-hover); }
 .terminal-dock-add-item svg { width: 14px; height: 14px; color: var(--text-muted); }
-.terminal-dock-add-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.terminal-dock-add-item small { color: var(--text-faint); font: 10px/1.2 var(--font-mono); }
+.terminal-dock-add-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.terminal-dock-add-item small { color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
 
 .terminal-dock-frames {
   width: 100%;
@@ -276,7 +276,7 @@
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--err) 16%, var(--bg-elev));
   color: var(--err);
-  font: 11px/1.35 var(--font-ui);
+  font: calc(11px * var(--ui-font-scale, 1))/1.35 var(--font-ui);
   box-shadow: var(--shadow-md);
 }
 

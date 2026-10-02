@@ -723,7 +723,7 @@ async fn project_choices(store: &Store) -> Result<Vec<ProjectChoice>, String> {
 
 async fn session_choices(store: &Store, project_id: &str) -> Result<Vec<SessionChoice>, String> {
     store
-        .list_sessions(project_id)
+        .list_sessions_page(project_id, None, usize::MAX)
         .await
         .map_err(|error| error.to_string())
         .map(|rows| {

@@ -65,7 +65,7 @@ struct NativeSideChatView: View {
                     quoteText = ""; quoteSource = ""; quoteEditor = false
                 }.disabled(quoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }.font(.caption)
-            NativeSideChatInput(text: $model.draft, canSubmit: { model.canSend }, submit: { Task { await model.send() } })
+            NativeMessageInput(text: $model.draft, canSubmit: { model.canSend }, submit: { Task { await model.send() } })
                 .frame(minHeight: 55, maxHeight: 95)
             HStack {
                 Menu {

@@ -17,7 +17,7 @@ mod kegg;
 #[cfg(test)]
 mod tests;
 
-use crate::http::{Source, MAX_RESPONSE};
+use crate::http::{looks_like_html, path_segment, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -776,7 +776,7 @@ async fn hydrate_go_names(bio: &NativeBio, records: &mut [Value]) -> Result<()> 
     for chunk in needed.chunks(20) {
         let ids = chunk
             .iter()
-            .map(|id| percent_encode(id))
+            .map(|id| path_segment(id))
             .collect::<Vec<_>>()
             .join(",");
         let raw = json_request(
@@ -1530,77 +1530,18 @@ async fn post_plain(
     params: &[(String, String)],
     body: String,
 ) -> Result<Value> {
-    for attempt in 0..2 {
-        let mut response = bio
-            .http()
-            .0
-            .request(Method::POST, url)
-            .query(params)
-            .header(reqwest::header::CONTENT_TYPE, "text/plain")
-            .body(body.clone())
-            .send()
-            .await
-            .map_err(|_| anyhow!("{} connection failed or timed out", source.0))?;
-        let status = response.status();
-        if attempt == 0 && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-            let delay = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .map(|header| header.to_str().ok().and_then(retry_after_seconds))
-                .unwrap_or(Some(2));
-            if let Some(delay) = delay.filter(|seconds| *seconds <= 5) {
-                drop(response);
-                tokio::time::sleep(Duration::from_secs(delay)).await;
-                continue;
-            }
-        }
-        if !status.is_success() {
-            bail!("{} returned HTTP {}", source.0, status.as_u16());
-        }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE as u64)
-        {
-            bail!(
-                "{} response exceeded 4 MiB; request fewer records",
-                source.0
-            );
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow!("{} response could not be read", source.0))?
-        {
-            if bytes.len() + chunk.len() > MAX_RESPONSE {
-                bail!(
-                    "{} response exceeded 4 MiB; request fewer records",
-                    source.0
-                );
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        if looks_like_html(&bytes) {
-            bail!("{} returned HTML instead of JSON", source.0);
-        }
-        return serde_json::from_slice(&bytes)
-            .with_context(|| format!("{} returned invalid JSON", source.0));
-    }
-    unreachable!("second attempt returns a response")
-}
-
-fn retry_after_seconds(value: &str) -> Option<u64> {
-    value.parse().ok()
-}
-
-pub(super) fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
+    let response = bio
+        .http()
+        .execute(source, Method::POST, |outgoing| {
+            bio.http()
+                .0
+                .request(outgoing, url)
+                .query(params)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain")
+                .body(body.clone())
+        })
+        .await?;
+    decode_json(source, response)
 }
 
 fn require_terms(values: &[String], bound: usize, what: &str) -> Result<Vec<String>> {
@@ -1924,25 +1865,8 @@ fn string_or_first(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn percent_encode(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 fn double_encode(value: &str) -> String {
-    percent_encode(&percent_encode(value))
-}
-
-fn path_segment(value: &str) -> String {
-    percent_encode(value)
+    path_segment(&path_segment(value))
 }
 
 fn mygene_base(bio: &NativeBio) -> String {

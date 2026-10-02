@@ -260,16 +260,14 @@ test("conversation branches appear at their checkpoint and expose merge-back act
   await expect(page.getByRole("button", { name: "Start exploration", exact: true })).toHaveCount(0);
   await expect(page.getByTestId("exploration-start-overlay")).toHaveCount(0);
   await expect(page.locator("#composer-input")).toBeEnabled();
-  await page.getByRole("button", { name: "Message options" }).click();
-  await expect(page.getByRole("button", { name: "Branch in new session", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Side chat", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".send-mode-menu")).toHaveCount(0);
-  await expect(page.locator("#composer-input")).toBeEnabled();
+  // The composer send dropdown was removed: branching a branch is guarded in
+  // the slash menu instead, and side chat stays reachable through /btw.
+  await expect(page.getByRole("button", { name: "Message options" })).toHaveCount(0);
   await page.locator("#composer-input").pressSequentially("/");
   const slashMenu = page.locator(".mention-menu");
   await expect(slashMenu).toBeVisible();
   await expect(slashMenu).toContainText("/compact");
+  await expect(slashMenu).toContainText("/btw");
   await expect(slashMenu).not.toContainText("/fork");
   await page.keyboard.press("Escape");
   await page.locator("#composer-input").fill("/fork nested branch");
@@ -497,7 +495,9 @@ test("exploration candidates remain writable while mainline is frozen", async ({
   await userMessage.click({ button: "right" });
   await expect(page.getByRole("button", { name: "Branch to new conversation", exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page.locator(".send-menu-toggle").click();
+  // The removed composer send dropdown leaves no "Branch in new session"
+  // entry anywhere inside an exploration.
+  await expect(page.locator(".send-menu-toggle")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Branch in new session", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Branch to new conversation", exact: true })).toHaveCount(0);
 });

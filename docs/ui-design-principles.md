@@ -10,7 +10,8 @@
 ## Buttons
 
 - Standalone CTAs use `.btn-primary` / `.btn-ghost` from `ui/src/styles/base.css`.
-- Toolbar rows that already own chrome (modal/settings `.row`, plugin toolbar, plan/approval actions, file retry) use `button.primary` for the filled clay look; do not redefine clay fills per surface.
+- Toolbar rows that already own chrome (modal/settings `.row`, settings toolbar, plan/approval actions, file retry) use `button.primary` for the filled clay look; do not redefine clay fills per surface.
+- Keep form confirmation buttons in their action row, after secondary actions. Outside a styled row, use the complete `.btn-primary` primitive, including for plugin installation, manual sign-in submission, and method-search start/resume. `.primary` alone does not supply standalone button chrome.
 - Do not use bare `button.primary` for sidebar nav — `.side-btn.primary` is a soft affordance, not a filled CTA.
 - Toggle switches use the shared softened clay track and light thumb; keep the full accent fill for primary actions instead of making settings switches visually compete with them.
 
@@ -25,6 +26,7 @@
 - Projects landing and chat empty use the full molecular wordmark (`.brand-wordmark`) with transparent backgrounds. Select its light or dark asset through the app theme; explicit appearance choices override the system preference.
 - Keep the wordmark large enough for the “science” lettering to read. Compact chrome and the research-graph empty state retain a small symbol; chat greetings retain the serif typography.
 - Research graph headings use Source Serif at `--text-lg`; list/canvas stay utilitarian.
+- The projects home puts a documentation control immediately to the right of Settings. It opens the tutorials index, the same page as Help → Documentation.
 
 ## Queued follow-ups
 
@@ -70,6 +72,11 @@
 
 ## Composer attachments and references
 
+- The WebView composer rejects leaked macOS arrow-key control characters
+  (U+001C–U+001F) before insertion and removes them from pasted/restored drafts
+  before sending. Fallback cleanup preserves UTF-16 caret/selection positions
+  and waits for IME composition to finish; normal arrow navigation, selection,
+  tabs, newlines, and Unicode text keep their native behavior.
 - The composer keeps its top-edge resize affordance invisible at rest while preserving the full-width drag target and persisted custom height.
 - Context usage sits immediately left of the model picker as a number-free gauge; its needle sweeps from upper-left to upper-right as the active conversation fills its context window.
 - The context-usage panel opens docked in the composer column, pushing the transcript up instead of covering it. Dragging the header undocks it into a floating window that stays open while typing; a dock button or double-click returns it. There is no full-screen click-swallowing backdrop.
@@ -104,6 +111,11 @@
 - The default 1100 px desktop window keeps the sidebar, conversation, and Inspector as resizable columns. At 960 px and below, the Inspector becomes a modal drawer, preserving the conversation width. After shrinking the window, Escape closes the drawer's own menu first, then the drawer, then any composer menu or conversation outline it covered. Each press dismisses only the topmost layer; growing back restores the split-pane order.
 - Conversation messages, runtime controls, and the composer grow together with the available center pane, leaving 16 px outer gutters and capping the column at 1280 px on wide screens. Resizing the window or opening the Inspector recalculates that width through CSS; document/chat split views continue to fill their narrower chat pane.
 - Scrollable lists keep stable scrollbar gutters and contain overscroll so a nested list does not unexpectedly move the surrounding workspace.
+
+## Command palette
+
+- Ctrl+K (search) and Ctrl+P (commands) move the highlight through rows already on screen. The list scrolls only when the next row would leave the visible area, and then only far enough to show that row and its section label.
+- The active row is an inset rounded highlight (`--clay-soft`) with the icon in the accent color. Do not paint a full-bleed stripe or a selection rail against the dialog edge.
 
 ## Dense settings lists
 

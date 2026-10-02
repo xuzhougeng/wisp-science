@@ -1,0 +1,38 @@
+{
+  "schema": "wisp.native-projects.v1",
+  "preview_request": {
+    "command": "native_project_recovery_preview",
+    "project_id": null,
+    "args": {
+      "workspace_dir": "/Users/researcher/Old study"
+    }
+  },
+  "preview_result": {
+    "workspace_dir": "/Users/researcher/Old study",
+    "suggested_name": "Old study",
+    "archive_count": 3,
+    "valid_archive_count": 2,
+    "recoverable_session_count": 1,
+    "message_count": 4,
+    "invalid_archive_count": 1,
+    "duplicate_archive_count": 1,
+    "earliest_message_at": 1700000000,
+    "latest_message_at": 1700000300
+  },
+  "recover_request": {
+    "command": "native_project_recover_workspace",
+    "project_id": null,
+    "args": {
+      "workspace_dir": "/Users/researcher/Old study",
+      "name": "Recovered study"
+    }
+  },
+  "recover_result": {
+    "project_id": "recovered-1",
+    "project_name": "Recovered study",
+    "recovered_session_count": 1,
+    "message_count": 4,
+    "invalid_archive_count": 1,
+    "duplicate_archive_count": 1
+  }
+}

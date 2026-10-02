@@ -3,14 +3,14 @@ import XCTest
 import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
-private func fixture(_ session: String = "session-a", sequence: UInt64 = 7, epoch: String = "host-one", running: Bool = false, requestID: String? = nil, error: String? = nil) throws -> ConversationSnapshot {
+private func fixture(_ session: String = "session-a", sequence: UInt64 = 7, epoch: String = "host-one", running: Bool = false, requestID: String? = nil, error: String? = nil, approvalID: String? = nil) throws -> ConversationSnapshot {
     var url = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { url.deleteLastPathComponent() }
     var value = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: url.appendingPathComponent("contracts/native-conversations/v1/snapshot.json")))
     value["session_id"] = .string(session); value["sequence"] = .integer(Int64(sequence)); value["epoch"] = .string(epoch)
     value["running"] = .bool(running); value["request_id"] = requestID.map(SettingsValue.string) ?? .null
     value["error"] = error.map(SettingsValue.string) ?? .null
-    value["approvals"] = .array([])
+    value["approvals"] = .array(approvalID.map { id in [.object(["approval_id": .string(id), "frame_id": .string(session), "message": .string("Run?"), "tool": .string("shell"), "preview": .string("echo test")])] } ?? [])
     return try ConversationSnapshot.decode(value, projectID: "project-a", sessionID: session)
 }
 private actor ConversationFake: NativeConversationQuerying {
@@ -20,6 +20,8 @@ private actor ConversationFake: NativeConversationQuerying {
     var failRead = false
     var held: CheckedContinuation<ConversationSnapshot, Error>?
     var holdRead = false
+    var heldPreferences: CheckedContinuation<SettingsValue, Never>?
+    var holdPreferences = false
     func configure(_ values: [ConversationSnapshot], failSend: Bool = false, failRead: Bool = false) { reads = values; self.failSend = failSend; self.failRead = failRead }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot {
         if holdRead { holdRead = false; return try await withCheckedThrowingContinuation { held = $0 } }
@@ -27,7 +29,11 @@ private actor ConversationFake: NativeConversationQuerying {
         return reads.count > 1 ? reads.removeFirst() : try reads.first ?? fixture(sessionID)
     }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
-        if command == "list_models" { return .array([]) }
+        if command == "get_appearance_prefs" {
+            if holdPreferences { holdPreferences = false; return await withCheckedContinuation { heldPreferences = $0 } }
+            return .null
+        }
+        if command == "list_models" || command == "list_acp_agents" { return .array([]) }
         writes.append((command, args, projectID))
         if failSend { throw ProjectBrowserError.service("response lost") }
         return .null
@@ -38,10 +44,26 @@ private actor ConversationFake: NativeConversationQuerying {
     func seenCount() -> Int { writes.filter { $0.0 == "native_conversation_seen" }.count }
     func lastArgs() -> [String: SettingsValue] { writes.last?.1 ?? [:] }
     func hold() { holdRead = true }
+    func holdInputPreferences() { holdPreferences = true }
+    func isHoldingPreferences() -> Bool { heldPreferences != nil }
+    func finishPreferences() { heldPreferences?.resume(returning: .null); heldPreferences = nil }
     func isHeld() -> Bool { held != nil }
     func finish(_ value: ConversationSnapshot) { held?.resume(returning: value); held = nil }
 }
 final class NativeConversationModelTests: XCTestCase {
+    @MainActor func testComposerWaitsForSavedInputPolicyBeforeAcceptingMessages() async {
+        let client = ConversationFake(); let model = NativeConversationModel(client: client)
+        await client.holdInputPreferences()
+        let opening = Task { await model.open(project: "project-a", session: "session-a") }
+        while !(await client.isHoldingPreferences()) { await Task.yield() }
+        model.draft = "not yet ready"
+        XCTAssertFalse(model.canSend)
+        await model.send()
+        let before = await client.count(); XCTAssertEqual(before, 0)
+        await client.finishPreferences(); await opening.value
+        XCTAssertTrue(model.canSend)
+        model.pause()
+    }
     @MainActor func testSavedExcerptSelectsRenderedMessageAndDoesNotClearNewerHighlight() async throws {
         let client = ConversationFake(); let model = NativeConversationModel(client: client)
         await client.configure([try fixture()]); await model.open(project: "project-a", session: "session-a")
@@ -127,15 +149,23 @@ final class NativeConversationModelTests: XCTestCase {
     }
     @MainActor func testStopAndApprovalCarrySessionAndExactApprovalIdentity() async throws {
         let client = ConversationFake(); let model = NativeConversationModel(client: client)
+        await client.configure([try fixture(approvalID: "exact-id")])
         await model.open(project: "project-a", session: "session-a")
         await model.stop()
         var args = await client.lastArgs(); XCTAssertEqual(args["session_id"]?.string, "session-a")
         let approval = try JSONDecoder().decode(ConversationApproval.self, from: Data(#"{"approval_id":"exact-id","frame_id":"session-a","message":"Run?","tool":"shell","preview":"echo test"}"#.utf8))
-        await model.approve(approval, allowed: false)
+        await model.approve(approval, allowed: false, feedback: "  Use the selected control sample.  ")
         args = await client.lastArgs()
         XCTAssertEqual(args["session_id"]?.string, "session-a")
         XCTAssertEqual(args["approval_id"]?.string, "exact-id")
-        XCTAssertEqual(args["approved"], .bool(false)); model.pause()
+        XCTAssertEqual(args["approved"], .bool(false))
+        XCTAssertEqual(args["feedback"], .string("Use the selected control sample."))
+        await client.configure([try fixture(sequence: 8, approvalID: "new-id")]); await model.refresh()
+        let count = await client.count()
+        let stale = await model.approve(approval, allowed: true)
+        XCTAssertFalse(stale)
+        let after = await client.count(); XCTAssertEqual(after, count)
+        model.pause()
     }
     func testSnapshotRejectsWrongProjectOrApprovalScope() throws {
         let data = try JSONEncoder().encode(fixture())

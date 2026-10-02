@@ -1,7 +1,9 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { tauriMock, parallelMock, parallelReplyTailText } from "./mock-tauri";
+import { openSidebarEntry } from "./sidebar-nav";
+import { expectPrimaryButton } from "./button-style";
 
 const officeFixtures = {
   xlsxBase64: readFileSync(resolve(__dirname, "../fixtures/office-preview.xlsx")).toString("base64"),
@@ -375,6 +377,20 @@ test("Example project demos can be copied into a workspace", async ({ page }) =>
   });
 });
 
+test("send button is a circular icon that greys out without a draft", async ({ page }) => {
+  await enterApp(page);
+  const send = page.locator("button.send");
+  // Icon-only button keeps its accessible name via aria-label.
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  await expect(send.locator("svg")).toBeVisible();
+  // Empty composer: neutral grey circle.
+  await expect(send).toHaveClass(/is-empty/);
+  await composer(page).fill("hello there");
+  await expect(send).not.toHaveClass(/is-empty/);
+  await composer(page).fill("");
+  await expect(send).toHaveClass(/is-empty/);
+});
+
 test("send streams a mocked assistant reply", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await enterApp(page);
@@ -430,7 +446,6 @@ test("completed turns propose editable memory and require confirmation", async (
   await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
     sessionId: expect.stringMatching(/^s-/),
     turnIndex: 0,
-    automatic: false,
   });
 
   // Root-owned modal participates in the window Escape stack without focus.
@@ -500,10 +515,6 @@ test("tool-only turn endings do not generate follow-up questions", async ({ page
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await page.waitForTimeout(100);
   await expect(page.getByTestId("follow-up-questions")).toHaveCount(0);
-  expect(await page.evaluate(() =>
-    ((window as any).__skillInvokeLog ?? [])
-      .filter((call: any) => call.cmd === "generate_follow_up_questions").length,
-  )).toBe(0);
 });
 
 test("manual review blocks sending and shows a playful progress animation", async ({ page }) => {
@@ -570,6 +581,11 @@ test("general settings can use Ctrl+Enter to send and Enter for newline", async 
   await page.reload();
   await page.locator(".proj-card-main").first().click();
   await expect(page.locator(".composer-hint")).toContainText("Ctrl+Enter to send · Enter for newline");
+
+  await openSettingsSection(page, "General");
+  await expect(page.getByTestId("send-shortcut")).toHaveValue("modifier_enter");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-page")).toHaveCount(0);
 
   const input = composer(page);
   await input.fill("first line");
@@ -868,6 +884,56 @@ test("Memory project picker consumes Escape before leaving Settings", async ({ p
   await expect(page.getByTestId("memory-project-menu")).toHaveCount(0);
   await expect(page.locator(".settings-page")).toBeVisible();
   await expect(page.locator(".settings-nav button.active")).toHaveText("Memory");
+});
+
+test("Codex subscription sign-in closes on Escape before leaving Settings", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("models-category-subscriptions").click();
+  await page.getByTestId("add-codex-login").click();
+  await expect(page.getByTestId("codex-login-form")).toBeVisible();
+  await expect(page.locator(".settings-breadcrumb")).toContainText("ChatGPT");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("codex-login-form")).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Models");
+  await expect(page.getByTestId("add-codex-login")).toBeVisible();
+});
+
+test("SuperGrok sign-in uses a device code and saves an xAI subscription model", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("models-category-subscriptions").click();
+  await page.getByTestId("add-xai-login").click();
+  const form = page.getByTestId("codex-login-form");
+  await expect(form).toBeVisible();
+  await expect(page.locator(".settings-breadcrumb")).toContainText("SuperGrok / X Premium+");
+  await expect(page.getByTestId("codex-login-method")).toBeHidden();
+  await expect(page.getByTestId("codex-login-redirect")).toHaveCount(0);
+  await expect(page.getByTestId("codex-login-model")).toHaveCount(0);
+
+  await page.getByTestId("codex-login-start").click();
+  await expect(page.getByTestId("codex-user-code")).toContainText("GROK-1234");
+  await expect(page.getByTestId("codex-login-save")).toBeVisible();
+  await page.getByTestId("codex-login-save").click();
+  await expect(form).toHaveCount(0);
+
+  await page.getByTestId("add-xai-model").click();
+  await expect(page.getByTestId("codex-login-model")).toHaveValue("grok-4.6");
+  await page.getByTestId("codex-login-save").click();
+
+  const calls = await page.evaluate(() => (window as any).__skillInvokeLog
+    .filter((call: any) => ["start_codex_login", "save_codex_login"].includes(call.cmd))
+    .map((call: any) => ({
+      cmd: call.cmd,
+      provider: call.args instanceof Map ? call.args.get("provider") : call.args?.provider,
+    })));
+  expect(calls).toEqual([
+    { cmd: "start_codex_login", provider: "xai" },
+    { cmd: "save_codex_login", provider: "xai" },
+    { cmd: "save_codex_login", provider: "xai" },
+  ]);
+  await expect(page.locator(".settings-page")).toContainText("Grok grok-4.6");
 });
 
 test("settings subpages consume Escape before leaving Settings", async ({ page }) => {
@@ -1808,7 +1874,7 @@ test("ACP cancellation is scoped to the active bound frame", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stopping-toast")).toHaveCount(0);
   await page.waitForTimeout(100);
-  expect(await invokeArgsList(page, "propose_turn_memory")).toHaveLength(0);
+  await expect(page.getByTestId("turn-memory-overlay")).toHaveCount(0);
 });
 
 test("an idle composer dismisses a leftover stopping banner", async ({ page }) => {
@@ -2362,7 +2428,6 @@ test("composer slash commands run the matching shell actions", async ({ page }) 
   await expect(memoryModal).toBeVisible();
   await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
     turnIndex: 0,
-    automatic: false,
   });
   await page.keyboard.press("Escape");
   await expect(memoryModal).toHaveCount(0);
@@ -2385,8 +2450,7 @@ test("composer slash commands run the matching shell actions", async ({ page }) 
     message: "/notacommand",
   });
 
-  // /fork fills via the picker; Enter then sends the payload as a branch,
-  // exactly like the "Branch in new session" send-mode item.
+  // /fork fills via the picker; Enter then sends the payload as a branch.
   await composerInput.pressSequentially("/fork");
   await menu.locator(".mention-item").filter({ hasText: "/fork" }).click();
   await expect(composerInput).toHaveValue("/fork ");
@@ -2901,12 +2965,148 @@ test("Ctrl+K opens in place and Ctrl+Enter opens a project window", async ({ pag
   });
 });
 
+test("command palette arrows move inside the window and scroll only at the edge", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await enterApp(page);
+  await page.keyboard.press("Control+k");
+  const dialog = page.locator(".conversation-search-dialog");
+  const results = dialog.locator(".project-search-results");
+  const rows = dialog.locator(".project-search-row");
+  const search = page.locator("#command-palette-input");
+  await expect(search).toBeFocused();
+  await expect(rows.first()).toHaveClass(/active/);
+  await dialog.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+  await expect(dialog.locator(".project-search-label").first()).toHaveText("Projects");
+  await expect(dialog.locator(".project-search-label", { hasText: "Commands" })).toHaveCount(1);
+  // The mock catalog is short, so cap the list. Real projects overflow on their own.
+  await results.evaluate((el) => {
+    const list = el as HTMLElement;
+    list.style.maxHeight = "280px";
+    list.style.flex = "0 0 auto";
+  });
+
+  const geometry = () => results.evaluate((container) => {
+    const active = container.querySelector(".project-search-row.active");
+    if (!(container instanceof HTMLElement) || !(active instanceof HTMLElement)) return null;
+    const view = container.getBoundingClientRect();
+    const row = active.getBoundingClientRect();
+    return {
+      scrollTop: container.scrollTop,
+      activeTop: row.top - view.top,
+      activeBottom: row.bottom - view.bottom,
+      fullyVisible: row.top >= view.top - 1 && row.bottom <= view.bottom + 1,
+    };
+  });
+
+  const before = await geometry();
+  expect(before?.scrollTop).toBe(0);
+  for (let i = 0; i < 3; i++) await search.press("ArrowDown");
+  await expect(rows.nth(3)).toHaveClass(/active/);
+  const mid = await geometry();
+  expect(mid?.scrollTop).toBe(0);
+  expect(mid?.fullyVisible).toBe(true);
+  expect(mid?.activeTop ?? 0).toBeGreaterThan(24);
+
+  let scrolled = false;
+  for (let i = 0; i < 40 && !scrolled; i++) {
+    await search.press("ArrowDown");
+    const next = await geometry();
+    expect(next?.fullyVisible).toBe(true);
+    if ((next?.scrollTop ?? 0) > 0) {
+      scrolled = true;
+      expect(next?.activeTop ?? 0).toBeGreaterThan(40);
+      expect(Math.abs(next?.activeBottom ?? 99)).toBeLessThan(8);
+    }
+  }
+  expect(scrolled).toBe(true);
+
+  const parked = (await geometry())?.scrollTop ?? 0;
+  await search.press("ArrowUp");
+  const steppedBack = await geometry();
+  expect(steppedBack?.scrollTop).toBe(parked);
+  expect(steppedBack?.fullyVisible).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+p");
+  const actions = page.locator(".action-palette");
+  const actionInput = page.locator("#action-palette-input");
+  const actionResults = actions.locator(".project-search-results");
+  const actionRows = actions.locator(".project-search-row");
+  await expect(actionInput).toBeFocused();
+  await expect(actionRows.first()).toHaveClass(/active/);
+  await actions.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+  const actionGeometry = () => actionResults.evaluate((container) => {
+    const active = container.querySelector(".project-search-row.active");
+    if (!(container instanceof HTMLElement) || !(active instanceof HTMLElement)) return null;
+    const view = container.getBoundingClientRect();
+    const row = active.getBoundingClientRect();
+    return {
+      scrollTop: container.scrollTop,
+      activeTop: row.top - view.top,
+      fullyVisible: row.top >= view.top - 1 && row.bottom <= view.bottom + 1,
+    };
+  });
+  for (let i = 0; i < 3; i++) await actionInput.press("ArrowDown");
+  const actionMid = await actionGeometry();
+  expect(actionMid?.scrollTop).toBe(0);
+  expect(actionMid?.fullyVisible).toBe(true);
+  expect(actionMid?.activeTop ?? 0).toBeGreaterThan(20);
+});
+
+test("the palette footer fade only paints while the list overflows", async ({ page }) => {
+  await enterApp(page);
+  const fadeOf = (palette: ReturnType<typeof page.locator>) => palette.locator(".project-search-foot").evaluate(
+    (foot) => {
+      const style = getComputedStyle(foot, "::before");
+      // Without overflow the fade pseudo-element is not generated at all.
+      return style.content === "none" ? "hidden" : style.opacity;
+    },
+  );
+  const settle = (palette: ReturnType<typeof page.locator>) => palette.evaluate((el) =>
+    Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+  );
+
+  await page.keyboard.press("Control+p");
+  const palette = page.locator(".action-palette");
+  await expect(palette).toBeVisible();
+  await settle(palette);
+  // The full command list scrolls: the row clipped by the footer fades out.
+  await expect(palette).toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(palette)).toBe("1");
+  // A filtered list that fits must not carry the fade tint.
+  await page.locator("#action-palette-input").fill("privacy");
+  await expect(palette.locator(".project-search-row")).toHaveCount(1);
+  await expect(palette).not.toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(palette)).toBe("hidden");
+
+  // Ctrl+K shares the same chrome: the project/session/command list overflows
+  // on open, and a filtered empty list drops the fade.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+k");
+  const search = page.locator(".conversation-search-dialog");
+  const searchInput = page.locator("#command-palette-input");
+  await expect(search).toBeVisible();
+  await settle(search);
+  await expect(search).toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(search)).toBe("1");
+  await searchInput.fill("zzz-no-match");
+  await expect(search).not.toHaveClass(/palette-overflow/);
+  await expect.poll(() => fadeOf(search)).toBe("hidden");
+});
+
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
   await enterApp(page);
   const bell = page.locator(".inbox-wrap .icon-btn");
-  await expect(bell.locator(".inbox-badge")).toHaveText("1");
+  // Another project's session is listed but must not badge this window.
+  await expect(bell).toHaveAttribute("title", "0 need you");
+  await expect(bell.locator(".inbox-badge")).toHaveCount(0);
   await bell.click();
   const item = page.locator(".inbox-item");
+  await expect(page.locator(".inbox-drop .inbox-title").nth(1)).toHaveText("Other projects");
   await expect(item).toContainText("Other project");
   await expect(item).toContainText("Cross-project counts");
   await page.keyboard.press("Escape");
@@ -3751,6 +3951,8 @@ test("conversation action button renames, transfers, and deletes sessions (#557)
 
   await page.getByRole("button", { name: "New group" }).click();
   const folderInput = page.locator("#folder-modal-input");
+  await expect(folderInput).toHaveAttribute("autocomplete", "nope");
+  await expect(folderInput).toHaveAttribute("name", "wisp-group-name");
   await folderInput.fill("Results");
   await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
   await expect(page.locator(".side-folder", { hasText: "Results" })).toBeVisible();
@@ -4080,9 +4282,8 @@ test("long unbroken user text wraps inside the chat column", async ({ page }) =>
 
 test("side chat answers in a temporary side panel and can switch model", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("what did the main thread miss?");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw what did the main thread miss?");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   await expect(panel).toBeVisible();
@@ -4122,9 +4323,8 @@ test("side chat answers in a temporary side panel and can switch model", async (
 
 test("side chat composer matches the main input and keeps long drafts contained", async ({ page }, testInfo) => {
   await enterApp(page);
-  await composer(page).fill("Check analysis progress");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw Check analysis progress");
+  await composer(page).press("Enter");
   const panel = page.locator(".rightpane");
   const input = panel.getByPlaceholder("Follow up…");
   const frame = panel.locator(".sidechat-composer-inner");
@@ -4160,9 +4360,8 @@ test("side chat composer matches the main input and keeps long drafts contained"
 
 test("side chat reports when the frozen conversation has no evidence", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("NO_EVIDENCE_TEST");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw NO_EVIDENCE_TEST");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   await expect(panel.getByText(
@@ -4177,9 +4376,8 @@ test("side chat reports when the frozen conversation has no evidence", async ({ 
 
 test("side chat stays at the latest message after sending and switching tabs", async ({ page }) => {
   await enterApp(page);
-  await composer(page).fill("SIDESCROLLTEST");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Side chat" }).click();
+  await composer(page).fill("/btw SIDESCROLLTEST");
+  await composer(page).press("Enter");
 
   const panel = page.locator(".rightpane");
   const log = panel.locator(".sidechat-log");
@@ -4202,7 +4400,7 @@ test("side chat stays at the latest message after sending and switching tabs", a
   await expect.poll(bottomGap).toBeLessThan(8);
 });
 
-test("clicking a PNG path opens the image preview without the selection popup", async ({ page }) => {
+test("clicking a verified PNG path opens the image preview without the selection popup", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("CLIPBOARDIMAGE");
   await page.getByRole("button", { name: "Send" }).click();
@@ -4211,8 +4409,11 @@ test("clicking a PNG path opens the image preview without the selection popup", 
   await expect(reply).toBeVisible({ timeout: 10_000 });
   const pathLink = reply.locator("a", { hasText: "clipboard-preview.png" }).first();
   await expect(pathLink).toBeVisible();
+  // An unbound temporary file outside this project is not a verified path.
+  await expect(reply.locator("a", { hasText: "clipboard-preview-2.png" })).toHaveCount(0);
+  await expect(reply.locator("code", { hasText: "clipboard-preview-2.png" })).toBeVisible();
 
-  // Clicking a long Windows path often selects the link label. mouseup used to
+  // Clicking a file path can select the link label. mouseup used to
   // treat that leftover selection as a quote and stack the popup on the preview.
   await pathLink.evaluate((el) => {
     const range = document.createRange();
@@ -4720,9 +4921,8 @@ test("branch in new session starts a new frame from the current session", async 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 
-  await composer(page).fill("try another route");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Branch in new session" }).click();
+  await composer(page).fill("/fork try another route");
+  await composer(page).press("Enter");
 
   await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
     title: "try another route",
@@ -4761,6 +4961,68 @@ test("branch on an earlier user message opens a new session from that point", as
     message: "first idea, but normalize first",
   });
 });
+
+for (const branchFrom of ["assistant", "user"] as const) {
+  test(`historical message actions work during a running turn (${branchFrom} branch)`, async ({ page }) => {
+    await enterApp(page);
+    await composer(page).fill("completed convention");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const reply = page.locator(".msg.assistant").filter({ hasText: "Hello from mock wisp-science." }).first();
+    await expect(reply.getByRole("button", { name: "Memory", exact: true })).toBeVisible();
+    const sourceId = (await lastInvokeArgs(page, "send_message"))!.sessionId;
+    await composer(page).fill("MONITORRUN continue working");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })).toBeVisible();
+    const stop = page.getByRole("button", { name: "Stop", exact: true });
+    await expect(stop).toBeVisible();
+
+    for (const name of ["Memory", "Branch", "Copy message"]) {
+      await expect(reply.getByRole("button", { name, exact: true })).toBeEnabled();
+    }
+    await expect(reply.getByRole("button", { name: "Review", exact: true })).toBeDisabled();
+    await expect(reply.getByTestId("start-exploration")).toBeDisabled();
+    await expect(reply.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+    const oldUser = page.locator(".msg.user", { hasText: "completed convention" });
+    await expect(oldUser.getByRole("button", { name: "Rewind", exact: true })).toBeDisabled();
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })
+      .getByRole("button", { name: "Branch", exact: true })).toHaveCount(0);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text: string) => { (window as any).__copiedHistory = text; },
+      });
+    });
+    await reply.getByRole("button", { name: "Copy message", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedHistory)).toBe("Hello from mock wisp-science.");
+    await oldUser.hover();
+    await oldUser.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedHistory)).toBe("completed convention");
+
+    await reply.getByRole("button", { name: "Memory", exact: true }).click();
+    await expect(page.getByTestId("turn-memory-overlay")).toBeVisible();
+    await expect.poll(() => lastInvokeArgs(page, "propose_turn_memory")).toMatchObject({
+      sessionId: sourceId, turnIndex: 0,
+    });
+    await page.getByTestId("turn-memory-scope").selectOption("global");
+    await page.getByTestId("turn-memory-confirm").click();
+    await expect.poll(() => lastInvokeArgs(page, "confirm_turn_memory")).toMatchObject({ sessionId: sourceId, turnIndex: 0 });
+    await expect(page.getByTestId("turn-memory-overlay")).toHaveCount(0);
+    await expect(stop).toBeVisible();
+    expect(await invokeCount(page, "review_session")).toBe(0);
+    await page.screenshot({ path: test.info().outputPath("historical-actions-running.png") });
+
+    await (branchFrom === "assistant" ? reply : oldUser).getByRole("button", { name: "Branch", exact: true }).click();
+    await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
+      sessionId: sourceId, userIndex: 0,
+      checkpointKind: branchFrom === "assistant" ? "after_response" : "before_user",
+    });
+    await expect(composer(page)).toHaveValue("");
+    // The original turn may finish in the background after switching to its branch.
+    expect(await invokeCount(page, "stop_agent")).toBe(0);
+    await page.evaluate(() => (window as any).__finishMonitorRun());
+    await expect(page.locator(".msg.user", { hasText: "MONITORRUN continue working" })).toHaveCount(0);
+  });
+}
 
 test("assistant actions are icon-only and can branch from the preceding user turn", async ({ page }) => {
   await enterApp(page);
@@ -4896,6 +5158,10 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
     buffer: Buffer.from("a,b\n1,2"),
   });
   await expect(page.locator(".composer-attachment.ready")).toHaveText("counts.csv");
+  await page.locator(".composer-attachment-open").click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => page.evaluate(() => {
@@ -4993,12 +5259,12 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   });
 
   // Ordinary project-directory Markdown links share the same route.
-  const directoryPath = reply.locator('a[href="results/"]');
+  const directoryPath = reply.locator('a[data-workspace-kind="directory"][href="results"]');
   await directoryPath.click({ button: "right" });
-  await expect(pathMenu.getByRole("button", { name: "Open with default app" })).toBeVisible();
-  await pathMenu.getByRole("button", { name: "Show in file manager" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "reveal_in_file_manager")).toMatchObject({
-    path: "results/",
+  await expect(pathMenu.getByRole("button", { name: "Open in Files", exact: true })).toBeVisible();
+  await pathMenu.getByRole("button", { name: "Open in file manager", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_workspace_path")).toMatchObject({
+    path: "results",
   });
 
   await pathLink.click();
@@ -6206,6 +6472,11 @@ test("pasted image attaches to the composer", async ({ page }) => {
 
   await expect(page.locator(".composer-attachment.ready")).toHaveText(/pasted_image_\d+_1\.png/);
   await expect(page.locator(".composer-attachment-row.image img")).toBeVisible();
+  await page.locator(".composer-attachment-open").click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(page.locator(".composer-attachment-row.image")).toBeVisible();
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => page.evaluate(() => {
@@ -6599,6 +6870,8 @@ test("settings edits an existing SSH server with its saved values", async ({ pag
 test("Escape closes the topmost environment modal before settings", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Environments");
+  await expectPrimaryButton(page.getByRole("button", { name: "Add SSH host" }));
+  await expectPrimaryButton(page.getByRole("button", { name: "Add SSH host" }), true);
   await page.getByRole("button", { name: "Add SSH host" }).click();
   await expect(page.locator(".host-modal")).toBeVisible();
 
@@ -6753,12 +7026,12 @@ test("auto-review stays with the session that enabled it", async ({ page }) => {
 
 test("research relationships remain available inside the daily journey", async ({ page }) => {
   await enterApp(page);
-  await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+  await openSidebarEntry(page, "Research journey");
   const journey = page.getByTestId("research-journey");
   await expect(journey).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(journey).toHaveCount(0);
-  await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+  await openSidebarEntry(page, "Research journey");
   await journey.getByRole("tab", { name: "Relationships", exact: true }).click();
   await expect(journey).toContainText("5 nodes · 3 relationships");
   await journey.getByRole("button", { name: "cites: Love et al. 2014" }).click();
@@ -6986,6 +7259,8 @@ test("method-search Run reviews the frozen contract before start and exposes con
   await expect(details).toContainText("Candidate reachability");
   await expect(details).toContainText("runtime_seconds lte 120");
   await expect(details.getByTestId("method-search-start")).toBeVisible();
+  await expectPrimaryButton(details.getByTestId("method-search-start"));
+  await expectPrimaryButton(details.getByTestId("method-search-start"), true);
   await expect(details.getByTestId("method-search-lineage")).toContainText("Candidate lineage (2)");
   await expect(details.getByTestId("method-search-outputs")).toContainText("selected_method");
 
@@ -6997,6 +7272,7 @@ test("method-search Run reviews the frozen contract before start and exposes con
   await expect.poll(() => lastInvokeArgs(page, "pause_method_search"))
     .toMatchObject({ runId: "method-search-001" });
   await expect(details.getByTestId("method-search-resume")).toBeVisible();
+  await expectPrimaryButton(details.getByTestId("method-search-resume"));
   await details.getByTestId("method-search-resume").click();
   await expect.poll(() => lastInvokeArgs(page, "resume_method_search"))
     .toMatchObject({ runId: "method-search-001" });
@@ -7008,7 +7284,7 @@ test("method-search Run reviews the frozen contract before start and exposes con
 
 test("publication is an independent project page and source selection binds an exact version", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   const workspace = page.getByTestId("publication-workspace");
   await expect(workspace).toHaveAttribute("role", "region");
   await expect(page.locator(".sidebar")).toBeVisible();
@@ -7030,7 +7306,7 @@ test("publication is an independent project page and source selection binds an e
 
 test("publication conversation picker translates selected Chinese and emoji to UTF-8 bytes", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   await page.getByTestId("add-publication-evidence").click();
   await page.getByRole("button", { name: "Research conversations", exact: true }).click();
   await page.locator(".publication-source-choice").click();
@@ -7050,7 +7326,7 @@ test("publication conversation picker translates selected Chinese and emoji to U
 
 test("publication checks before locking and policy changes invalidate the check", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   await page.getByRole("button", { name: "Finalization check", exact: true }).click();
   const confirm=page.getByTestId("freeze-publication");
   await expect(confirm).toBeDisabled();
@@ -7073,7 +7349,7 @@ test("publication checks before locking and policy changes invalidate the check"
 
 test("publication page keeps its evidence and actions within the available width", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
   for (const width of [1280, 900, 600]) {
     await page.setViewportSize({width,height:900});
     await expect(page.getByTestId("publication-workspace")).toBeVisible();
@@ -7092,7 +7368,7 @@ test("publication page keeps its evidence and actions within the available width
 
 test("precise message evidence uses a stable locator and Escape closes only the top layer", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("add-publication-evidence").click();
@@ -7131,7 +7407,7 @@ test("precise message evidence uses a stable locator and Escape closes only the 
 
 test("Frozen Publication is read-only and exposes exact source plus late-capture readiness", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await expect(workspace).toBeVisible();
@@ -7150,7 +7426,7 @@ test("Frozen Publication is read-only and exposes exact source plus late-capture
 
 test("Frozen Publication verifies a Run and surfaces environment plus comparator results", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("verify-publication-run").click();
@@ -7170,7 +7446,7 @@ test("Frozen Publication verifies a Run and surfaces environment plus comparator
 
 test("Frozen Publication builds a selective Capsule and shows its immutable hashes", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
-  await page.locator(".sidebar").getByRole("button", { name: "Publication", exact: true }).click();
+  await openSidebarEntry(page, "Publication");
 
   const workspace = page.getByTestId("publication-workspace");
   await workspace.getByTestId("build-publication-capsule").click();
@@ -8853,6 +9129,64 @@ test("center split keeps the same conversation beside the open document", async 
   await expect(chat).toBeHidden();
 });
 
+test("artifact modal stays mounted while background tools update outputs", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make plot first.png");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="first.png"] .rp-tile-main').click();
+  const modal = page.locator(".artifact-modal");
+  const image = modal.locator(".rp-img");
+  await expect(image).toBeVisible();
+  await expect(modal).toContainText("savefig");
+  await modal.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await modal.getByRole("button", { name: "Edit code and re-run", exact: true }).click();
+  const draft = "# keep my unsent edits\nprint('draft')";
+  await modal.locator(".am-edit-area").fill(draft);
+  await modal.evaluate((el) => { (el as any).__stableProbe = true; });
+  await image.evaluate((el) => { (el as any).__stableProbe = true; });
+  const provenanceReads = await invokeCount(page, "get_artifact_provenance");
+  const frameId = await page.locator(".side-item.ses.active").getAttribute("data-session-id");
+  expect(frameId).toBeTruthy();
+
+  await emitTauriEvent(page, "agent", { kind: "User", frame_id: frameId, text: "Continue analysis" });
+  for (const [index, path] of ["second.png", "summary.csv", "third.png"].entries()) {
+    await emitTauriEvent(page, "agent", { kind: "ToolCall", frame_id: frameId, name: "python", preview: `save ${path}` });
+    await emitTauriEvent(page, "agent", { kind: "FileChanged", frame_id: frameId, path: `/mock/root/${path}` });
+    await emitTauriEvent(page, "agent", { kind: "ToolResult", frame_id: frameId, name: "python", ok: true, content: `Saved ${path}` });
+    // The artifact list must really change; keeping a stale list is not a fix.
+    await expect(page.locator(`.rp-tile[data-artifact-name="${path}"]`)).toHaveCount(1);
+    expect(await modal.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+    expect(await image.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+    await expect(modal.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+    await expect(modal.locator(".am-edit-area")).toHaveValue(draft);
+    expect(await invokeCount(page, "get_artifact_provenance")).toBe(provenanceReads);
+    if (index === 0) {
+      await expect(modal.getByRole("button", { name: "Next image" })).toBeEnabled();
+      await expect(modal.getByRole("button", { name: "Previous image" })).toBeDisabled();
+    }
+  }
+  await modal.locator(".am-tab", { hasText: "Environment" }).click();
+  await emitTauriEvent(page, "agent", { kind: "FileChanged", frame_id: frameId, path: "/mock/root/environment.csv" });
+  await expect(page.locator('.rp-tile[data-artifact-name="environment.csv"]')).toHaveCount(1);
+  await expect(modal.locator(".am-tab.active")).toHaveText("Environment");
+  await expect(modal.locator(".am-env")).toContainText("matplotlib");
+  expect(await modal.evaluate((el) => (el as any).__stableProbe === true)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("artifact-modal-background.png") });
+  await emitTauriEvent(page, "agent", { kind: "Done", frame_id: frameId });
+  await modal.getByRole("button", { name: "Next image" }).click();
+  await expect(modal.locator(".am-name")).toHaveText("second.png");
+  await page.keyboard.press("ArrowRight");
+  await expect(modal.locator(".am-name")).toHaveText("third.png");
+  await expect(modal.getByRole("button", { name: "Next image" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await page.locator('.rp-tile[data-artifact-name="first.png"] .rp-tile-main').click();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+});
+
 test("artifact modal switches between images with left and right arrows", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("make plots first.png second.png third.png");
@@ -9109,6 +9443,8 @@ for (const locale of ["en", "zh"]) {
     await expect(image).toBeChecked();
     await expect(video).toHaveCount(0);
     await image.uncheck();
+    await expect(video).toHaveCount(0);
+    await page.getByTestId("restore-chat-model").click();
     await expect(video).not.toBeChecked();
     await video.check();
     await expect(image).not.toBeChecked();
@@ -9955,11 +10291,83 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await expect(page.getByTestId("image-size")).toBeVisible();
     await page.getByRole("button", { name: "Save" }).click();
     await expect(row.getByRole("button", { name: "Set as default" })).toHaveCount(0);
+    await expect(row.getByTestId("image-role-badge")).toHaveText("Image-only");
+    await expect(row.locator(".settings-cap-badge", { hasText: "Image generation" })).toHaveCount(0);
     await page.locator(".settings-head-close").click();
     await page.locator(".model-picker-btn").click();
     await expect(page.locator(".model-menu")).not.toContainText(modelId);
   });
 }
+
+test("misclassified chat model can recover its role without changing identity or credentials", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  const row = page.locator(".settings-list-row", { hasText: "deepseek-v4-pro" });
+  await row.click();
+  await expect(page.getByTestId("use-for-image-generation")).toHaveAccessibleDescription(/Sessions using this profile/);
+  await page.getByTestId("use-for-image-generation").check();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(row.getByTestId("image-role-badge")).toHaveText("Image-only");
+  await expect(row.locator(".settings-model-default")).toHaveCount(0);
+  await expect(page.locator(".settings-list-row", { hasText: "opus-4.8" }).locator(".settings-model-default")).toBeVisible();
+
+  await row.click();
+  await page.getByTestId("use-for-image-generation").uncheck();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+  await row.click();
+  await page.getByRole("button", { name: "Restore as chat model" }).click();
+  // Re-selecting then deselecting the assignment must not display chat fields
+  // while the backend would still inherit the original image role.
+  await page.getByTestId("use-for-image-generation").check();
+  await page.getByTestId("use-for-image-generation").uncheck();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByTestId("restore-chat-model").click();
+  await expect(page.getByTestId("image-size")).toHaveCount(0);
+  await expect(page.getByLabel("Supports image input")).toBeVisible();
+  await expect(page.getByTestId("restore-chat-hint")).toContainText("current default and sessions");
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+
+  // A rejected save leaves both the saved role and the existing default alone.
+  await row.click();
+  await page.getByTestId("restore-chat-model").click();
+  await page.getByLabel("Supports image input").check();
+  await page.getByLabel("Use for image analysis").check();
+  await page.evaluate(() => { (window as any).__failSaveModel = true; });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".settings-status.fail")).toContainText("Could not save model");
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await expect(row.getByTestId("image-role-badge")).toBeVisible();
+  await row.click();
+  await expect(page.getByTestId("image-size")).toBeVisible();
+  await page.getByTestId("restore-chat-model").click();
+  await page.getByLabel("Supports image input").check();
+  await page.getByLabel("Use for image analysis").check();
+  await page.evaluate(() => { (window as any).__failSaveModel = false; });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
+    restoreChatModel: true,
+    key: undefined,
+    useForVision: true,
+    useForImageGeneration: false,
+    profile: { id: "default", model: "deepseek-v4-pro", supports_vision: true },
+  });
+  await expect(row.getByTestId("image-role-badge")).toHaveCount(0);
+  await row.getByRole("button", { name: "Set as default" }).click();
+  await expect(row.locator(".settings-model-default")).toBeVisible();
+  await row.click();
+  await expect(page.getByLabel("Supports image input")).toBeChecked();
+  await expect(page.getByLabel("Use for image analysis")).toBeChecked();
+  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("deepseek-v4-pro");
+  await expect(page.locator("#model-form-api-key")).toHaveValue("");
+  await expect(page.locator("#model-form-api-key")).toHaveAttribute("placeholder", /.+/);
+  await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+  await page.locator(".settings-head-close").click();
+  await page.locator(".model-picker-btn").click();
+  await expect(page.locator(".model-menu")).toContainText("deepseek-v4-pro");
+});
 
 test("gpt-image-2 can be assigned for generation but not selected for chat", async ({ page }) => {
   await enterApp(page);
@@ -9974,6 +10382,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await expect(page.getByLabel("Supports image input")).toHaveCount(0);
   await expect(page.getByTestId("image-size")).toBeVisible();
   await expect(page.getByTestId("image-quality")).toBeVisible();
+  await expect(page.getByTestId("restore-chat-model")).toHaveCount(0);
   await page.getByTestId("image-size").selectOption("1536x1024");
   await page.getByTestId("image-quality").selectOption("high");
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
@@ -10830,11 +11239,13 @@ test("plugin settings diagnose, launch, install, and remove a feature plugin", a
   section = page.getByTestId("plugin-settings");
   const localInstall = section.getByRole("button", { name: "Install plugin", exact: true });
   await expect(localInstall).toBeDisabled();
+  await expectPrimaryButton(localInstall);
   await section.getByRole("button", { name: "Choose ZIP", exact: true }).click();
   await expect(section.getByRole("textbox", { name: "Plugin ZIP" }))
     .toHaveValue("/downloads/motif-update.zip");
   await expect.poll(() => lastInvokeArgs(page, "install_plugin")).toBeNull();
   await expect(localInstall).toBeEnabled();
+  await expectPrimaryButton(localInstall, true);
   await localInstall.click();
   await expect.poll(() => lastInvokeArgs(page, "install_plugin")).toMatchObject({
     srcPath: "/downloads/motif-update.zip",
@@ -10848,6 +11259,7 @@ test("plugin settings diagnose, launch, install, and remove a feature plugin", a
   await section.getByRole("tab", { name: "Release URL" }).click();
   await section.locator('input[type="url"]').fill("https://example.test/motif.zip");
   await section.locator('input[placeholder*="64 hexadecimal"]').fill("b".repeat(64));
+  await expectPrimaryButton(section.getByRole("button", { name: "Download & install" }));
   await section.getByRole("button", { name: "Download & install" }).click();
   await expect.poll(() => lastInvokeArgs(page, "install_plugin_url")).toMatchObject({
     sourceUrl: "https://example.test/motif.zip",
@@ -12213,6 +12625,87 @@ test("sidebar search opens the Ctrl+K palette and finds sessions beyond loaded h
   await expect(sidebar.getByRole("button", { name: "Paged session 101", exact: true })).toHaveCount(0);
 });
 
+test("short windows fold the sidebar nav tail into a More flyout instead of scrolling", async ({ page }) => {
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  const nav = page.locator(".sidebar .nav");
+  const more = nav.getByRole("button", { name: "More", exact: true });
+  const menu = page.getByTestId("sidebar-more-menu");
+  // A long session list must not squeeze the nav into its own scroller.
+  await expect.poll(() => nav.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+
+  // 720px tall: the last three entries fold; New group / Files stay inline.
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeHidden();
+  await more.click();
+  await expect(menu.getByRole("button")).toHaveText(["Research journey", "Publication", "Library"]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator(".sidebar")).toBeVisible();
+
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await more.click();
+  await expect(menu.getByRole("button")).toHaveText(["New group", "Files", "Research journey", "Publication", "Library"]);
+  await menu.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("library-screen")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(more).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
+});
+
+test("the UI font size scales every font size proportionally instead of flattening controls", async ({ page }) => {
+  // A raw px font size would ignore the UI font size setting (settings.css).
+  const stylesDir = resolve(__dirname, "../../ui/src/styles");
+  const raw = readdirSync(stylesDir).filter((name) => name.endsWith(".css")).flatMap((name) =>
+    readFileSync(resolve(stylesDir, name), "utf8").split("\n")
+      .map((line, index) => ({ at: `${name}:${index + 1}`, line }))
+      .filter(({ line }) => /(?<![\w-])font(-size)?:\s*(?:(?:italic|oblique|normal|bold|small-caps|\d{3})\s+)*\d*\.?\d+px/.test(line))
+      .map(({ at }) => at));
+  expect(raw).toEqual([]);
+
+  await page.addInitScript(() => localStorage.setItem("wisp-ui-font-size", "21"));
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  // 11px title and 11px button both grow by 21/14 — the button is no longer forced to 21px.
+  await expect(page.locator(".side-sessions-title")).toHaveCSS("font-size", "16.5px");
+  await expect(page.locator(".side-select-btn")).toHaveCSS("font-size", "16.5px");
+});
+
+test("the compact rail shows session initials and swaps in live status", async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 900 });
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+  const row = page.locator('.sidebar .side-item.ses[data-session-title="Paged session 1"]');
+  await expect(row.locator(".ses-initial")).toBeVisible();
+  await expect(row.locator(".ses-initial")).toHaveText("P");
+  // Lined up with the rail's icon column, not pushed left by the row-menu or scrollbar gutter.
+  const center = async (locator: Locator) => { const box = (await locator.boundingBox())!; return box.x + box.width / 2; };
+  await expect.poll(async () => Math.abs(
+    await center(row.locator(".ses-initial")) - await center(page.locator(".sidebar .nav .side-btn.primary svg")),
+  )).toBeLessThan(1.5);
+  await expect(row.locator(".ses-title")).toBeHidden();
+  await expect(row.locator(".ses-status")).toBeHidden();
+  await row.evaluate((el) => el.classList.add("running"));
+  await expect(row.locator(".ses-initial")).toBeHidden();
+  await expect(row.locator(".ses-live")).toBeVisible();
+});
+
+test("a runtime strip with nothing started collapses to one line", async ({ page }) => {
+  await enterApp(page, "/?mockRuntimes=none");
+  const strip = page.getByTestId("session-runtime-strip");
+  await expect(strip).toHaveClass(/all-idle/);
+  await expect(strip.getByTestId("session-runtime-chip").first()).toBeHidden();
+  await expect(strip.getByTestId("session-runtime-idle")).toHaveText("Python Not started · R Unavailable");
+  await strip.locator('[data-runtime-context="local"] .session-runtime-host').click();
+  const dialog = page.getByRole("dialog", { name: "Runtimes" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("home search opens artifacts, sessions, and settings", async ({ page }) => {
   await page.goto("/");
 
@@ -13545,6 +14038,45 @@ test("bound report links own file actions and copy file paths", async ({ page })
     .toMatchObject({ versionId: "resource-version-bib" });
 });
 
+test("historical local images survive a cold reload and session switching without resource bindings", async ({ page }) => {
+  await page.goto("/?mockHistoricalImages=1");
+  const openSession = async () => {
+    await page.getByRole("button", { name: /^Search( sessions)?$/ }).click();
+    const search = commandPalette(page);
+    await search.fill("Enumerate");
+    await search.press("Enter");
+    for (const alt of ["sample stats", "gene dotplot", "schematic tree", "saved version"]) {
+      const image = page.locator(`.msg.assistant img[alt="${alt}"]`);
+      await expect(image).toHaveAttribute("src", /^blob:/);
+      await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    }
+    await expect(page.locator(".msg.assistant .resource-unresolved")).toContainText("missing image");
+    await expect.poll(() => lastInvokeArgs(page, "read_artifact_version_bytes")).toEqual({ versionId: "saved-image-v1" });
+    // A bound image *link* in a table cell stays inline, not a block image box.
+    const linked = page.locator('.msg.assistant td a[data-resource-id="linked-image-link"]');
+    await expect(linked).not.toHaveClass(/resource-inline-image/);
+    await expect(linked).toHaveCSS("display", "inline");
+    const versionReads = await page.evaluate(() => (window as any).__skillInvokeLog
+      .filter((call: any) => call.cmd === "read_artifact_version_bytes")
+      .map((call: any) => call.args instanceof Map ? call.args.get("versionId") : call.args.versionId));
+    expect(versionReads).not.toContain("linked-image-v1");
+    const paths = await page.evaluate(() => (window as any).__skillInvokeLog
+      .filter((call: any) => call.cmd === "read_file_bytes")
+      .map((call: any) => call.args instanceof Map ? call.args.get("path") : call.args.path));
+    expect(paths).toContain("/mock/root/species_fix_out/figures/sample_statistics.png");
+    expect(paths.some((path: string) => path.endsWith("/saved.png"))).toBe(false);
+  };
+  await openSession();
+  const original = await page.locator('img[alt="sample stats"]').getAttribute("src");
+  await page.reload();
+  // A reload creates a new WebView lifetime: no in-memory image URLs survive.
+  await openSession();
+  expect(await page.locator('img[alt="sample stats"]').getAttribute("src")).not.toBe(original);
+  await newSessionButton(page).click();
+  await expect(page.locator('img[alt="sample stats"]')).toHaveCount(0);
+  await openSession();
+});
+
 test("bound Markdown resources use immutable versions and a scrollable center preview", async ({ page }) => {
   await page.goto("/?mockResourceSession=1");
   await page.getByRole("button", { name: "Search", exact: true }).click();
@@ -13768,6 +14300,24 @@ test("scratch chat opens from landing and closes on Escape", async ({ page }) =>
   await expect(page.locator(".projects-screen")).toBeVisible();
 });
 
+test("home docs button sits to the right of settings and opens tutorials", async ({ page }) => {
+  await page.goto("/");
+  const actions = page.locator(".projects-actions");
+  // Hydration and the saved locale can settle after page.goto resolves.
+  await expect.poll(async () => {
+    const labels = await actions.locator("button").evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("data-testid") || button.getAttribute("aria-label"))
+    );
+    return labels[labels.indexOf("Settings") + 1];
+  }).toBe("open-tutorials");
+  const docs = page.getByTestId("open-tutorials");
+  await expect(docs).toHaveAttribute("aria-label", "Documentation");
+  await docs.click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
+    url: "https://wispscience.com/tutorials.html",
+  });
+});
+
 test("projects landing stays centered on wide windows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/");
@@ -13866,7 +14416,7 @@ test("Windows uses the integrated title bar without covering the project landing
   await exportCurrentProject.click();
   const exportOptions = page.getByTestId("project-export-options");
   await expect(exportOptions).toBeVisible();
-  await expect(exportOptions).toContainText("Copy this folder directly");
+  await expect(exportOptions).toContainText("Both formats include workspace files");
   await page.keyboard.press("Escape");
   await expect(exportOptions).toBeHidden();
   await expect(page.locator(".app")).toBeVisible();
@@ -13903,7 +14453,7 @@ test("Windows uses the integrated title bar without covering the project landing
     ((window as any).__skillInvokeLog ?? [])
       .filter((c: any) => c.cmd === "open_external_url")
       .map((c: any) => (c.args instanceof Map ? c.args.get("url") : c.args?.url))
-  )).toContain("https://github.com/xuzhougeng/wisp-science#readme");
+  )).toContain("https://wispscience.com/tutorials.html");
 
   await context.close();
 });
@@ -14191,107 +14741,97 @@ test("new project form enables Create after name and folder are set", async ({ p
   await expect(create).toBeEnabled();
 });
 
-test("import can open an existing folder in place without copying it", async ({ page }) => {
-  await page.goto("/");
+test("project folder import restores records and opens its workspace in place", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/?mockProjectFolder=valid");
   await page.getByRole("button", { name: "Import project" }).click();
   const options = page.getByTestId("project-import-options");
-  await expect(options).toBeVisible();
-  await expect(options).toContainText("without copying it");
-
-  // The choice dialog is the top layer: Escape closes only it immediately,
-  // without moving focus first or leaving the Projects screen.
+  await expect(options).toContainText("checks its metadata");
   await page.keyboard.press("Escape");
   await expect(options).toBeHidden();
   await expect(page.locator(".projects-screen")).toBeVisible();
   await expect.poll(() => lastInvokeArgs(page, "import_project")).toBeNull();
-
   await page.getByRole("button", { name: "Import project" }).click();
-  await options.getByRole("button", { name: "Open a folder in place" }).click();
-  const form = page.locator(".overlay", { has: page.locator("#new-project-name") });
-  await expect(form.getByRole("heading", { name: "Open project folder" })).toBeVisible();
-  await expect(page.locator("#new-project-name")).toHaveValue("new-project");
-  await expect(form.locator(".pn-dir .path")).toHaveText("/mock/root/new-project");
-  await expect(form.locator(".pn-layout")).toHaveCount(0);
-  await form.getByRole("button", { name: "Open project" }).click();
-
-  await expect.poll(() => lastInvokeArgs(page, "create_project")).toMatchObject({
-    name: "new-project",
-    workspaceDir: "/mock/root/new-project",
-    standardLayout: false,
-  });
-  await expect.poll(() => lastInvokeArgs(page, "import_project")).toBeNull();
+  await options.getByRole("button", { name: "Import project folder" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "import_project")).toMatchObject({ directory: true });
+  await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
+  await expect(page.locator(".rp-files")).toBeVisible();
+  await expect(page.locator(".fb-root")).toContainText("/mock/root/new-project/workspace");
+  await expect(page.locator('.fb-row[data-workspace-path="report.csv"]')).toBeVisible();
+  await expect(page.locator(".side-item.ses")).toHaveCount(3);
+  await page.locator('.fb-row[data-workspace-path="DEG"]').click();
+  await expect(page.locator('.fb-row[data-workspace-path="DEG/scripts"]')).toBeVisible();
+  await page.locator(".fb-up").click();
+  await page.locator('.fb-row[data-workspace-path="report.csv"]').click();
+  await expect(page.locator(".artifact-modal table")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("project-folder-import.png"), fullPage: true, animations: "disabled" });
+  expect(errors).toEqual([]);
 });
 
-test("opening a registered folder offers every project identity before switching", async ({ page }) => {
-  await page.goto("/?mockWorkspaceProjects=multiple");
-  const openFolder = async () => {
+for (const [mode, message] of [
+  ["missing", "manifest.json"],
+  ["corrupt", "Project metadata is damaged"],
+  ["duplicate", "already present"],
+]) {
+  test(`project folder import rejects ${mode} metadata without creating a blank project`, async ({ page }) => {
+    await page.goto(`/?mockProjectFolder=${mode}`);
     await page.getByRole("button", { name: "Import project" }).click();
-    await page.getByTestId("project-import-options")
-      .getByRole("button", { name: "Open a folder in place" }).click();
-  };
-  await openFolder();
-  const picker = page.getByTestId("workspace-project-picker");
-  await expect(picker).toBeVisible();
-  await expect(picker.locator("[data-project-id]")).toHaveCount(4);
-  await expect(picker.locator('[data-project-id="P15"]')).toContainText("31 sessions");
-  await expect(picker.locator('[data-project-id="P37"]')).toContainText("9 sessions");
-  await expect(picker.locator('[data-project-id="P15"]')).toContainText("ID: P15");
-  await expect.poll(() => lastInvokeArgs(page, "list_workspace_projects"))
-    .toMatchObject({ workspaceDir: "/mock/root/new-project" });
-  await expect.poll(() => lastInvokeArgs(page, "open_project")).toBeNull();
-  await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
-  await page.keyboard.press("Escape");
-  await expect(picker).toBeHidden();
-  await expect(page.locator(".projects-screen")).toBeVisible();
-  await expect.poll(() => lastInvokeArgs(page, "open_project")).toBeNull();
-
-  await openFolder();
-  await picker.locator('[data-project-id="P15"]').click();
-  await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "P15" });
-  await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
-  await expect.poll(() => lastInvokeArgs(page, "recover_workspace_sessions")).toBeNull();
-});
-
-test("opening a folder with one existing project reuses its identity", async ({ page }) => {
-  await page.goto("/?mockWorkspaceProjects=single");
-  await page.getByRole("button", { name: "Import project" }).click();
-  await page.getByTestId("project-import-options")
-    .getByRole("button", { name: "Open a folder in place" }).click();
-  const picker = page.getByTestId("workspace-project-picker");
-  await expect(picker.locator("[data-project-id]")).toHaveCount(1);
-  await picker.locator('[data-project-id="P37"]').click();
-  await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "P37" });
-  await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
-});
-
-test("registered folder chooser respects hidden project identities", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("wisp-privacy-mode-active", "1");
-    localStorage.setItem("wisp-privacy-mode-projects", JSON.stringify(["P15"]));
-  });
-  await page.goto("/?mockWorkspaceProjects=multiple");
-  await page.getByRole("button", { name: "Import project" }).click();
-  await page.getByTestId("project-import-options")
-    .getByRole("button", { name: "Open a folder in place" }).click();
-  const picker = page.getByTestId("workspace-project-picker");
-  await expect(picker.locator("[data-project-id]")).toHaveCount(3);
-  await expect(picker.locator('[data-project-id="P15"]')).toHaveCount(0);
-  await expect(picker).toContainText("Projects hidden by Privacy mode are omitted");
-});
-
-for (const mode of ["error", "malformed"]) {
-  test(`workspace lookup ${mode} does not fall through to registration`, async ({ page }) => {
-    await page.goto(`/?mockWorkspaceProjects=${mode}`);
-    await page.getByRole("button", { name: "Import project" }).click();
-    await page.getByTestId("project-import-options")
-      .getByRole("button", { name: "Open a folder in place" }).click();
-    await expect(page.locator(".project-open-error")).toBeVisible();
+    await page.getByTestId("project-import-options").getByRole("button", { name: "Import project folder" }).click();
+    await expect(page.getByTestId("project-transfer-progress")).toContainText(message);
+    await expect(page.locator(".projects-screen")).toBeVisible();
     await expect(page.locator("#new-project-name")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-project-picker")).toHaveCount(0);
     await expect.poll(() => lastInvokeArgs(page, "create_project")).toBeNull();
     await expect.poll(() => lastInvokeArgs(page, "open_project")).toBeNull();
   });
 }
+
+test("cancelling project folder import leaves the project list unchanged", async ({ page }) => {
+  await page.goto("/?mockProjectFolder=cancel");
+  await page.getByRole("button", { name: "Import project" }).click();
+  await page.getByTestId("project-import-options").getByRole("button", { name: "Import project folder" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "import_project")).toMatchObject({ directory: true });
+  await expect(page.getByTestId("project-transfer-progress")).toBeHidden();
+  await expect(page.locator(".projects-screen")).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "open_project")).toBeNull();
+});
+
+for (const locale of ["en", "zh"]) {
+  test(`project transfer choices fit a narrow window in ${locale}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 430, height: 850 });
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card:not(.proj-example)").first().getByRole("button", { name: locale === "zh" ? "导出项目" : "Export project" }).click();
+    const options = page.getByTestId("project-export-options");
+    await expectInsideViewport(options.locator('[role="dialog"]'), 430, 850);
+    await expect(options.getByRole("button", { name: locale === "zh" ? "导出目录" : "Export directory" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`export-formats-${locale}-narrow.png`), fullPage: true, animations: "disabled" });
+    await page.keyboard.press("Escape");
+    await expect(options).toBeHidden();
+    await page.getByRole("button", { name: locale === "zh" ? "导入项目" : "Import project", exact: true }).click();
+    const imports = page.getByTestId("project-import-options");
+    await expectInsideViewport(imports.locator('[role="dialog"]'), 430, 850);
+    await expect(imports.getByRole("button", { name: locale === "zh" ? "导入项目文件夹" : "Import project folder" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`import-formats-${locale}-narrow.png`), fullPage: true, animations: "disabled" });
+    await page.keyboard.press("Escape");
+    await expect(imports).toBeHidden();
+  });
+}
+
+test("directory export selects the uncompressed format and reports its destination", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await page.locator(".proj-card:not(.proj-example)").first().getByRole("button", { name: "Export project" }).click();
+  const options = page.getByTestId("project-export-options");
+  await expect(options.getByRole("button", { name: "Export ZIP" })).toBeVisible();
+  await expect(options).toContainText("snapshot taken at export time");
+  await page.screenshot({ path: testInfo.outputPath("export-formats-en.png"), fullPage: true, animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await expect(options).toBeHidden();
+  await expect.poll(() => lastInvokeArgs(page, "export_project")).toBeNull();
+  await page.locator(".proj-card:not(.proj-example)").first().getByRole("button", { name: "Export project" }).click();
+  await options.getByRole("button", { name: "Export directory" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "export_project")).toMatchObject({ directory: true });
+  await expect(page.getByTestId("project-transfer-progress")).toContainText("/mock/exported-project");
+});
 
 test("workspace recovery previews archived conversations before transactional import", async ({ page }) => {
   await page.goto("/");
@@ -14339,8 +14879,8 @@ test("project transfers stay in a lower-right progress card without blocking oth
   await page.evaluate(() => (window as any).__delayNextProjectTransfer("export", 800));
   await exportProject.click();
   const exportOptions = page.getByTestId("project-export-options");
-  await expect(exportOptions).toContainText("A ZIP is the complete portable copy");
-  await expect(exportOptions).toContainText("/mock/root");
+  await expect(exportOptions).toContainText("Both formats include workspace files");
+  await expect(exportOptions.getByRole("button", { name: "Export directory" })).toBeVisible();
   await exportOptions.getByRole("button", { name: "Export ZIP" }).click();
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "export_project"),
@@ -14672,19 +15212,12 @@ for (const locale of ["en", "zh"]) {
     await python.fill("C:/Users/Researcher/" + "long-environment-directory/".repeat(12) + "python.exe");
     await python.scrollIntoViewIfNeeded();
     await expectInsideViewport(python, 820, 740);
-    for (const scope of ["model", "mcp", "command"]) {
-      await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
-      const save = page.getByTestId(`save-proxy-${scope}`);
-      await save.evaluate(el => el.scrollIntoView({ block: "center" }));
-      await expectInsideViewport(save, 820, 740);
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    }
     expect(await pane.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`general-${locale}-narrow.png`) });
   });
 }
 
-test("general settings group workspace prefs, local environment, and network", async ({ page }) => {
+test("general keeps workspace prefs and local environment, and network is the next preferences item", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
   await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("General");
@@ -14693,10 +15226,14 @@ test("general settings group workspace prefs, local environment, and network", a
   await expect(page.getByTestId("max-iter")).toHaveCount(0);
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
   await expect(page.getByTestId("local-environment")).toBeVisible();
+  await expect(page.locator(".network-settings")).toHaveCount(0);
+  const preferences = page.locator(".settings-nav").getByRole("group").first();
+  await expect(preferences.locator("button")).toHaveText(["General", "Network", "Session", "Appearance", "Pet"]);
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("Network");
   await expect(page.getByTestId("network-proxy-model")).toBeVisible();
-  await expect(page.locator(".settings-nav").getByRole("button", { name: "Network", exact: true })).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.getByTestId("local-environment")).toHaveCount(0);
+  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.locator(".network-settings")).toHaveCount(0);
   await expect(page.getByTestId("models-category-http")).toBeVisible();
 });
@@ -14705,7 +15242,7 @@ test("network saves each proxy independently and preserves the legacy model prox
   await page.goto("/?mockLegacyProxy=http://127.0.0.1:7890");
   await openSettingsSection(page, "Models");
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
-  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
   await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://127.0.0.1:7890");
   await page.getByTestId("proxy-address-model").fill("");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("custom");
@@ -14729,18 +15266,44 @@ test("network saves each proxy independently and preserves the legacy model prox
   await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
     settings: { model_proxy_url: "", mcp_proxy_url: "none", command_proxy_url: "http://127.0.0.1:8080" },
   });
-  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.getByTestId("settings-nav-general").click();
   await page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".settings-page")).toHaveCount(0);
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await expect(page.getByTestId("proxy-mode-model")).toHaveValue("system");
   await expect(page.getByTestId("proxy-mode-mcp")).toHaveValue("direct");
   await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
 });
 
+test("subscription sign-in proxy saves independently from model proxy and survives reopening", async ({ page }) => {
+  await page.goto("/?mockLegacyProxy=none");
+  await openSettingsSection(page, "Network");
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
+  await expect(page.getByTestId("proxy-mode-subscription")).toHaveValue("system");
+  await expect(page.getByTestId("network-proxy-subscription")).toContainText("ChatGPT / xAI");
+  await page.getByTestId("proxy-mode-model").selectOption("custom");
+  await page.getByTestId("proxy-address-model").fill("http://unsaved-model.test:8080");
+  await page.getByTestId("proxy-mode-subscription").selectOption("custom");
+  await page.getByTestId("proxy-address-subscription").fill("http://localhost:7897");
+  await page.getByTestId("save-proxy-subscription").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "none", subscription_proxy_url: "http://localhost:7897", mcp_proxy_url: "", command_proxy_url: "" },
+  });
+  await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://unsaved-model.test:8080");
+  await page.locator(".settings-nav").getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("direct");
+  await expect(page.getByTestId("proxy-address-subscription")).toHaveValue("http://localhost:7897");
+  await page.getByTestId("network-proxy-subscription").getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByTestId("save-proxy-subscription").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "none", subscription_proxy_url: "" },
+  });
+});
+
 test("network package mirror saves guidance and Escape closes only its subpage", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("configure-package-mirrors").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("package-mirrors")).toHaveCount(0);
@@ -14777,33 +15340,34 @@ test("network Chinese pages fit desktop and narrow windows", async ({ page }, te
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?mockLocale=zh&mockLegacyProxy=http://127.0.0.1:7890");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.locator(".settings-nav").getByRole("button", { name: "常规", exact: true }).click();
-  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("常规");
-  await expect(page.locator(".network-heading h3")).toHaveText("网络");
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".settings-content > .settings-head h2")).toHaveText("网络");
+  await expect(page.locator(".network-heading h3")).toHaveCount(0);
   await page.locator(".network-settings").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("save-proxy-model")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-zh.png") });
+  await expect(page.getByTestId("network-proxy-subscription")).toContainText("订阅账号登录");
+  await page.getByTestId("network-proxy-subscription").screenshot({ animations: "disabled", path: testInfo.outputPath("subscription-network-zh.png") });
   await page.getByTestId("configure-package-mirrors").click();
   await expect(page.getByTestId("save-package-mirrors")).toBeVisible();
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("package-mirror-zh.png") });
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 820, height: 740 });
-  for (const scope of ["model", "mcp", "command"]) {
-    await page.getByTestId(`network-proxy-${scope}`).scrollIntoViewIfNeeded();
-    if (scope === "model") {
-      await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
-    } else {
-      await expect(page.getByTestId(`proxy-address-${scope}`)).toHaveCount(0);
-    }
-    await expectInsideViewport(page.getByTestId(`save-proxy-${scope}`), 820, 740);
+  for (const scope of ["model", "subscription", "mcp", "command"]) {
+    await page.getByTestId(`proxy-mode-${scope}`).selectOption("custom");
+    const save = page.getByTestId(`save-proxy-${scope}`);
+    await save.evaluate(el => el.scrollIntoView({ block: "center" }));
+    await expectInsideViewport(save, 820, 740);
+    await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
   }
+  expect(await page.getByTestId("network-settings-pane").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-narrow.png") });
 });
 
 test("network address fields appear only for custom proxies in every scope", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
-  for (const scope of ["model", "mcp", "command"]) {
+  await openSettingsSection(page, "Network");
+  for (const scope of ["model", "subscription", "mcp", "command"]) {
     const mode = page.getByTestId(`proxy-mode-${scope}`);
     const address = page.getByTestId(`proxy-address-${scope}`);
     await expect(mode).toHaveValue("system");
@@ -14834,7 +15398,7 @@ test("network address fields appear only for custom proxies in every scope", asy
 
 test("network shows validation errors without discarding the draft", async ({ page }) => {
   await page.goto("/");
-  await openSettingsSection(page, "General");
+  await openSettingsSection(page, "Network");
   await page.getByTestId("proxy-mode-mcp").selectOption("custom");
   await page.getByTestId("save-proxy-mcp").click();
   await expect(page.getByRole("alert")).toContainText("Enter a proxy address");
@@ -15033,7 +15597,8 @@ test("a leftover proxy connect error points at General Network settings", async 
   const card = page.locator(".finding.err");
   await expect(card).toBeVisible();
   await expect(card.locator(".finding-title")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
-  await expect(card.locator(".finding-body")).toContainText("Settings → General → Network");
+  await expect(card.locator(".finding-body")).toContainText("Settings → Network");
+  await expect(card.locator(".finding-body")).not.toContainText("Settings → General → Network");
   await expect(card.locator(".finding-body")).toContainText("Direct");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → Models");
 });
@@ -15245,6 +15810,23 @@ test("open-session for the project already on screen switches conversations with
   await expect(page.locator(".app-entering")).toHaveCount(0);
 });
 
+test("an unsent composer draft stays with its own session (#1406)", async ({ page }) => {
+  await page.goto("/");
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame" });
+  await composer(page).fill("only for the first session");
+
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame-2" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame-2" });
+  await expect(composer(page)).toHaveValue("");
+  await composer(page).fill("second session draft");
+
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect(composer(page)).toHaveValue("only for the first session");
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame-2" });
+  await expect(composer(page)).toHaveValue("second session draft");
+});
+
 test("a sync conflict requires an explicit authoritative device choice", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => { (window as any).__failSyncConflict = true; });
@@ -15255,6 +15837,34 @@ test("a sync conflict requires an explicit authoritative device choice", async (
   await page.getByRole("button", { name: "Use remote version" }).click();
   await expect.poll(() => lastInvokeArgs(page, "resolve_project_sync")).toMatchObject({
     id: "default", strategy: "remote",
+  });
+});
+
+test("a cloud-drive folder project shows whether its latest changes reached the folder", async ({ page }) => {
+  await page.goto("/?mockSyncUnconfigured=1");
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await expect(projectCard.getByRole("button", { name: "Sync now" })).toHaveCount(0);
+  await projectCard.getByTestId("project-card-settings").click();
+  const settings = page.getByTestId("project-home-settings");
+  await settings.getByTestId("enable-project-folder-sync").click();
+  await expect.poll(() => lastInvokeArgs(page, "enable_project_folder_sync")).toMatchObject({ id: "default" });
+  await expect(settings.getByTestId("project-folder-sync-enabled")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+
+  // Folder projects sync through the folder itself: no relay setup and no device code.
+  await expect(projectCard.locator('.pc-sync-state[data-folder-sync="saved"]')).toContainText("Saved to folder");
+  await projectCard.hover();
+  await expect(projectCard.getByRole("button", { name: "Copy device code" })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__folderSync.default = "conflict";
+    (window as any).__failSyncConflict = true;
+  });
+  await projectCard.getByRole("button", { name: "Sync now" }).click();
+  await expect(page.getByRole("dialog", { name: "Both devices changed this project" })).toBeVisible();
+  await page.getByRole("button", { name: "Use this device" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "resolve_project_sync")).toMatchObject({
+    id: "default", strategy: "local",
   });
 });
 
@@ -15942,7 +16552,7 @@ test("an SVG star saves a Notebook cell in the global library", async ({ page })
   await star.click();
   await expect(cell.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await expect(page.getByTestId("library-screen")).toBeVisible();
   await expect(page.locator('.library-card[data-library-kind="code"]')).toContainText("zcat counts.txt.gz");
   await expect(page.locator('.library-card[data-library-kind="code"]')).toContainText("wisp-science / Current analysis");
@@ -15987,7 +16597,7 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await expect(modal.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
   await modal.getByRole("button", { name: "Close panel" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   const figure = page.locator('.library-card[data-library-kind="figure"]');
   await expect(figure).toContainText("volcano.png");
   await figure.locator(".library-card-main").click();
@@ -16016,7 +16626,7 @@ test("a starred code item edits into a new version and re-runs from the composer
   await page.getByRole("button", { name: "Notebook (2)", exact: true }).click();
   await page.locator(".notebook-cell").first().getByRole("button", { name: "Add to library" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await page.locator('.library-card[data-library-kind="code"] .library-card-main').click();
   const detail = page.locator(".library-detail");
   await expect(detail.locator(".library-code-head h3")).toHaveText("v1");
@@ -16053,7 +16663,7 @@ test("a starred figure's generating code is editable as a new version (#474)", a
   await modal.getByRole("button", { name: "Add to library" }).click();
   await modal.getByRole("button", { name: "Close panel" }).click();
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await page.locator('.library-card[data-library-kind="figure"] .library-card-main').click();
   const code = page.locator(".library-generating-code");
   await code.getByRole("button", { name: "Edit code" }).click();
@@ -16152,7 +16762,7 @@ test("the selection popup saves a highlight into the right pane and library", as
   await expect(page.getByText("stream line 23", { exact: false })).toBeVisible({ timeout: 10_000 });
 
   // The global library lists it under the Highlights filter.
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await openSidebarEntry(page, "Library");
   await expect(page.getByTestId("library-screen")).toBeVisible();
   await page.locator(".library-filters button", { hasText: "Highlights" }).click();
   await expect(page.locator('.library-card[data-library-kind="text"]')).toContainText(selected.trim().slice(0, 30));
@@ -16187,6 +16797,7 @@ test("specialists page configures the builtin Reader and saves a custom speciali
   await expect(page.getByText("Reviewer")).toBeVisible();
   await expect(page.getByText("Reader")).toBeVisible();
   await expect(page.getByText("Scientific Illustrator")).toBeVisible();
+  await expect(page.locator(".settings-list-title").filter({ hasText: /^(Archivist|Recap)$/ })).toHaveCount(2);
   // Builtin rows have no remove button.
   await expect(page.locator(".settings-list-remove")).toHaveCount(0);
 
@@ -16344,6 +16955,10 @@ test("new session can pick a specialist and it locks after the first message", a
   await agentMenu.getByRole("button", { name: /^Specialist/ }).click();
   const specialistMenu = page.getByRole("menu", { name: "Specialist" });
   await expect(specialistMenu.getByRole("button", { name: "Scientific Illustrator" })).toBeVisible();
+  // Document-drafting built-ins are configured in Settings, never chat personas.
+  for (const name of ["Reader", "Archivist", "Recap"]) {
+    await expect(specialistMenu.getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
   await specialistMenu.getByRole("button", { name: "Paper hunter" }).click();
   await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
 
@@ -17460,3 +18075,17 @@ test("project star save failure leaves ordering and state unchanged", async ({ p
   await expect(other.getByTestId("project-card-star")).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".proj-card:not(.proj-example)").first()).not.toContainText("Other project");
 });
+
+for (const initial of [false, true]) {
+  test(`general project storage preserves and saves ${initial ? "v1.15" : "centralized"} preference`, async ({ page }) => {
+    await page.goto(`/?mockDecentralizedStorage=${initial ? "1" : "0"}`);
+    await openSettingsSection(page, "General");
+    const toggle = page.getByTestId("decentralized-project-storage");
+    await expect(toggle).toBeChecked({ checked: initial });
+    await toggle.locator("..").click();
+    await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+      settings: { decentralized_project_storage: !initial },
+    });
+  });
+}

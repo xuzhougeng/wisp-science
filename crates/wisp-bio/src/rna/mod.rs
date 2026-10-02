@@ -13,7 +13,7 @@
 #[cfg(test)]
 mod tests;
 
-use crate::http::{Response, Source};
+use crate::http::{looks_like_html, path_segment, Response, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -591,7 +591,7 @@ fn classify_poll(response: Response) -> Result<Poll> {
     match response.status {
         StatusCode::ACCEPTED => Ok(Poll::Pending),
         StatusCode::OK => {
-            if looks_like_html_bytes(&response.body) {
+            if looks_like_html(&response.body) {
                 bail!("Rfam returned HTML instead of JSON");
             }
             let text = std::str::from_utf8(&response.body).unwrap_or("").trim();
@@ -799,7 +799,7 @@ fn reject_status(status: StatusCode, context: &str) -> Result<()> {
 }
 
 fn parse_json(response: Response) -> Result<Value> {
-    if looks_like_html_bytes(&response.body) {
+    if looks_like_html(&response.body) {
         bail!("Rfam returned HTML instead of JSON");
     }
     serde_json::from_slice(&response.body).context("Rfam returned invalid JSON")
@@ -807,24 +807,10 @@ fn parse_json(response: Response) -> Result<Value> {
 
 fn utf8_text(response: Response) -> Result<String> {
     let text = String::from_utf8(response.body).context("Rfam returned invalid UTF-8")?;
-    if looks_like_html(&text) {
+    if looks_like_html(text.as_bytes()) {
         bail!("Rfam returned HTML instead of text");
     }
     Ok(text)
-}
-
-fn looks_like_html_bytes(body: &[u8]) -> bool {
-    looks_like_html(std::str::from_utf8(body).unwrap_or(""))
-}
-
-fn looks_like_html(body: &str) -> bool {
-    let prefix: String = body
-        .trim_start()
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
 }
 
 fn attach_text(result: &mut Value, field: &str, text: String, max_bytes: usize) {
@@ -894,7 +880,7 @@ const REGION_COLUMNS: [&str; 7] = [
 ];
 
 fn parse_regions(tsv: &str) -> Result<ParsedRegions> {
-    if looks_like_html(tsv) {
+    if looks_like_html(tsv.as_bytes()) {
         bail!("Rfam returned HTML instead of text");
     }
     let mut declared_count = None;
@@ -1234,17 +1220,6 @@ fn family_path(family: &str, suffix: &str) -> String {
 
 fn public_family_url(family: &str) -> String {
     format!("{RFAM_PUBLIC}/family/{}", path_segment(family))
-}
-
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 fn str_field(value: &Value, keys: &[&str]) -> Option<String> {

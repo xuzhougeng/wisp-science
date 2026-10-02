@@ -1,0 +1,22 @@
+{
+  "schema": "wisp.native-projects.v1",
+  "command": "native_project_import",
+  "project_id": null,
+  "args": {
+    "archive_path": "/Users/researcher/Exports/RNA seq.zip"
+  },
+  "result": {
+    "id": "research-1",
+    "name": "RNA-seq 研究",
+    "description": "Differential expression analysis",
+    "workspace_dir": "/Users/researcher/Projects/RNA seq",
+    "starred": false,
+    "session_count": 0,
+    "artifact_count": 0,
+    "updated_at": 1789600000,
+    "running_count": 0,
+    "needs_you_count": 0,
+    "sync_configured": false,
+    "last_synced_at": null
+  }
+}

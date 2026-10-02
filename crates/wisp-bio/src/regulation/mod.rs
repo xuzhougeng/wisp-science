@@ -19,7 +19,7 @@ mod encode;
 mod jaspar;
 mod unibind;
 
-use crate::http::Source;
+use crate::http::{looks_like_html, path_segment, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -470,16 +470,6 @@ async fn get_json_ok(
     }
 }
 
-fn looks_like_html(body: &[u8]) -> bool {
-    let text = std::str::from_utf8(body).unwrap_or("").trim_start();
-    let prefix: String = text
-        .chars()
-        .take(32)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    prefix.starts_with("<!doctype") || prefix.starts_with("<html")
-}
-
 fn bound_rows(n: u32, max: u32) -> Result<u32> {
     if !(1..=max).contains(&n) {
         bail!("max_rows must be between 1 and {max}");
@@ -563,17 +553,6 @@ fn extra_filters(extra: Option<BTreeMap<String, String>>) -> Result<BTreeMap<Str
         );
     }
     Ok(out)
-}
-
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 fn nested_name(value: &Value) -> Option<String> {

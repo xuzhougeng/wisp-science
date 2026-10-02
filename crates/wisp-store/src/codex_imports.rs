@@ -9,6 +9,12 @@ use anyhow::Result;
 impl Store {
     /// The frame a Codex rollout was already imported into, if any.
     pub async fn find_codex_import(&self, codex_session_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self
+            .route_entity("codex_imports", "codex_session_id", codex_session_id)
+            .await?
+        {
+            return Box::pin(store.find_codex_import(codex_session_id)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT frame_id FROM codex_imports WHERE codex_session_id=?")
                 .bind(codex_session_id)
@@ -24,6 +30,10 @@ impl Store {
         frame_id: &str,
         source_path: &str,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.record_codex_import(codex_session_id, frame_id, source_path))
+                .await;
+        }
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO codex_imports(codex_session_id,frame_id,source_path,created_at,updated_at) \

@@ -413,11 +413,18 @@ pub(super) async fn preview_workspace_session_recovery(
     state: State<'_, AppState>,
     workspace_dir: String,
 ) -> Result<WorkspaceSessionRecoveryPreview, String> {
+    preview_workspace_history(&state.store, &workspace_dir).await
+}
+
+pub(crate) async fn preview_workspace_history(
+    store: &Store,
+    workspace_dir: &str,
+) -> Result<WorkspaceSessionRecoveryPreview, String> {
     let path = PathBuf::from(workspace_dir.trim());
     let scan = tokio::task::spawn_blocking(move || scan_workspace(&path))
         .await
         .map_err(|error| error.to_string())??;
-    ensure_workspace_is_unregistered(&state.store, Path::new(&scan.preview.workspace_dir)).await?;
+    ensure_workspace_is_unregistered(store, Path::new(&scan.preview.workspace_dir)).await?;
     Ok(scan.preview)
 }
 
@@ -427,15 +434,23 @@ pub(super) async fn recover_workspace_sessions(
     workspace_dir: String,
     name: String,
 ) -> Result<WorkspaceSessionRecoveryResult, String> {
+    recover_workspace_history(&state.store, &workspace_dir, &name).await
+}
+
+pub(crate) async fn recover_workspace_history(
+    store: &Store,
+    workspace_dir: &str,
+    name: &str,
+) -> Result<WorkspaceSessionRecoveryResult, String> {
     let path = PathBuf::from(workspace_dir.trim());
     let scan = tokio::task::spawn_blocking(move || scan_workspace(&path))
         .await
         .map_err(|error| error.to_string())??;
     let root = PathBuf::from(&scan.preview.workspace_dir);
-    ensure_workspace_is_unregistered(&state.store, &root).await?;
+    ensure_workspace_is_unregistered(store, &root).await?;
     probe_workspace_writable(&root)?;
-    let model_id = models::active_profile_id(&state.store).await;
-    persist_scan(&state.store, scan, &name, &model_id).await
+    let model_id = models::active_profile_id(store).await;
+    persist_scan(store, scan, name, &model_id).await
 }
 
 #[cfg(test)]

@@ -4,7 +4,14 @@
 //! file in the user's home dir. macOS binds each keychain item to the calling
 //! app's code signature, which `tauri dev` regenerates on every rebuild — so the
 //! real keyring pops the login-keychain password prompt on every dev run. Dev
-//! keys aren't worth that friction. Release builds use the OS keyring unchanged.
+//! keys aren't worth that friction. Release builds use the OS keyring; Windows
+//! splits large credentials into bounded entries and publishes their manifest last.
+
+#[cfg(any(all(target_os = "windows", not(debug_assertions)), test))]
+mod windows;
+
+#[cfg(all(not(debug_assertions), target_os = "windows"))]
+use windows as backend;
 
 /// A named secret (e.g. an API key) stored in the OS credential manager.
 pub struct Secret;
@@ -23,7 +30,7 @@ impl Secret {
     }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), not(target_os = "windows")))]
 mod backend {
     use keyring::Entry;
 

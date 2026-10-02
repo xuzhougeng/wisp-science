@@ -198,6 +198,7 @@ fn ensure_pet_window(app: &AppHandle) -> Result<(), String> {
         .skip_taskbar(true)
         .focused(false)
         .visible(false)
+        .general_autofill_enabled(false)
         .on_navigation(crate::guard_webview_navigation);
     if let Some((x, y)) = default_pet_position(app) {
         builder = builder.position(x, y);
@@ -225,7 +226,10 @@ pub(crate) fn sync_pet_window(_app: &tauri::AppHandle, _enabled: bool) -> Result
 }
 
 #[tauri::command]
-pub(crate) fn set_pet_window_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+pub(crate) async fn set_pet_window_visible(
+    app: tauri::AppHandle,
+    visible: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         if visible {

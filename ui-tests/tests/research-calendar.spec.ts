@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { openSidebarEntry } from "./sidebar-nav";
 
 test.use({ timezoneId: "Asia/Shanghai" });
 test.beforeEach(async ({ page }) => {
@@ -35,9 +36,14 @@ test("aggregates project marks, deduplicates sessions, filters and navigates mon
   const details=page.getByTestId("home-calendar-details");
   await expect(calendar.getByRole("button",{name:"All projects",exact:true})).toHaveAttribute("aria-pressed","true");
   await expect(details.locator(".calendar-record-group")).toHaveCount(2);
-  await expect(details).toContainText("2 projects · 11 records");
+  await expect(details).toContainText("2 projects · 10 records");
   await expect(calendar.locator('[data-date="2026-09-09"] .calendar-dot')).toHaveCount(2);
   await expect(details).toContainText("normalized_counts.csv · v2");
+  // The run's start/end pair is one record and its output folds into it.
+  const compare = details.locator(".calendar-record").filter({hasText:"Completed normalization comparison"});
+  await expect(compare).toHaveCount(1);
+  await expect(compare).toContainText("Experiment · Completed · 1 outputs");
+  await expect(details).not.toContainText("normalization_comparison.png");
   await expect(details.locator(".calendar-record").filter({hasText:"Normalization method comparison"})).toHaveCount(1);
   await calendar.locator('.calendar-projects [data-project-id="other"]').click();
   await expect(details).toContainText("Other project finding");
@@ -68,10 +74,10 @@ test("opens the selected project and date; normal sidebar entry resets date scop
   await expect(journey.locator(".journey-day")).toHaveAttribute("data-day","2026-09-08");
   await page.keyboard.press("Escape");
   await expect(journey).toHaveCount(0);
-  await page.locator(".sidebar").getByRole("button",{name:"Publication",exact:true}).click();
+  await openSidebarEntry(page, "Publication");
   const publication=page.getByTestId("publication-workspace");
   await expect(publication).toBeVisible();
-  await page.locator(".sidebar").getByRole("button",{name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await expect(publication).toHaveCount(0);
   await expect(journey.locator(".journey-day")).toHaveCount(3);
 });
@@ -314,4 +320,22 @@ test("dense desktop panels fit the viewport and scroll independently", async ({ 
     expect(await shell.evaluate(el=>el.scrollTop)).toBeGreaterThan(0);
   }
   await page.screenshot({path:testInfo.outputPath("dense-mobile.png")});
+});
+
+test("a project's recap leads its records for the selected day", async ({ page }) => {
+  await page.goto("/");
+  const from = await page.evaluate(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); });
+  await page.evaluate(({ from }) => (window as any).__TAURI__.core.invoke("generate_research_recap", { from, until: from + 86400 }), { from });
+  // Open without reloading: the mocked recap lives in this page.
+  await page.getByTestId("open-research-calendar").click();
+  const calendar = page.getByTestId("home-research-calendar");
+  const group = calendar.locator('.calendar-record-group[data-project-id="default"]');
+  const recap = group.getByTestId("calendar-recap");
+  await expect(recap).toHaveAttribute("data-status", "draft");
+  await expect(recap).toContainText("Normalization compared; method B chosen");
+  await expect(recap).toContainText("Recap · AI draft");
+  await expect(recap.locator("li")).toHaveText(["Compared two normalization methods"]);
+  await expect(calendar.locator('.calendar-record-group[data-project-id="other"]').getByTestId("calendar-recap")).toHaveCount(0);
+  await calendar.getByRole("button", { name: "2026-09-08", exact: true }).click();
+  await expect(calendar.getByTestId("calendar-recap")).toHaveCount(0);
 });

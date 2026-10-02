@@ -21,7 +21,7 @@ mod pdb;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{path_segment, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -347,17 +347,6 @@ pub(crate) fn require_ok(source: Source, status: StatusCode) -> Result<()> {
     } else {
         bail!("{} returned HTTP {}", source.0, status.as_u16())
     }
-}
-
-pub(crate) fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 pub(crate) struct UniqueIds {

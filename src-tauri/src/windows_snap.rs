@@ -58,9 +58,21 @@ pub fn install_for_window(window: &WorkspaceSurface) {
     if !should_install_snap(window.label()) {
         return;
     }
+    // A Win32 window belongs to the thread that creates it. Project windows are
+    // built on tokio workers, which never pump messages: a child owned there
+    // would hang every cross-thread SendMessage from the UI thread (#1379).
+    // Runs inline when already on the main thread (setup).
     #[cfg(windows)]
-    if let Err(error) = attach_maximize_overlay(window) {
-        tracing::warn!(label = %window.label(), %error, "windows snap overlay was not installed");
+    {
+        let target = window.clone();
+        let dispatched = window.run_on_main_thread(move || {
+            if let Err(error) = attach_maximize_overlay(&target) {
+                tracing::warn!(label = %target.label(), %error, "windows snap overlay was not installed");
+            }
+        });
+        if let Err(error) = dispatched {
+            tracing::warn!(label = %window.label(), %error, "windows snap overlay was not scheduled");
+        }
     }
     #[cfg(not(windows))]
     let _ = window;
@@ -104,7 +116,7 @@ fn attach_maximize_overlay(window: &WorkspaceSurface) -> Result<(), String> {
 
     use tauri::Manager;
     use windows::core::w;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{SetLastError, HWND, LPARAM, LRESULT, WIN32_ERROR, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassInfoExW, GetWindowLongPtrW,
@@ -243,8 +255,14 @@ fn attach_maximize_overlay(window: &WorkspaceSurface) -> Result<(), String> {
                 lpszClassName: CLASS,
                 ..Default::default()
             };
+            // The failed GetClassInfoExW above leaves ERROR_CLASS_DOES_NOT_EXIST
+            // behind; clear it so a failure below reports its own error.
+            SetLastError(WIN32_ERROR(0));
             if RegisterClassExW(&class) == 0 {
-                return Err("could not register snap overlay class".into());
+                return Err(format!(
+                    "could not register snap overlay class: {}",
+                    windows::core::Error::from_thread()
+                ));
             }
         }
     }
@@ -256,6 +274,7 @@ fn attach_maximize_overlay(window: &WorkspaceSurface) -> Result<(), String> {
     let state_ptr = Box::into_raw(state);
 
     let overlay = unsafe {
+        SetLastError(WIN32_ERROR(0));
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_NOACTIVATE,
             CLASS,

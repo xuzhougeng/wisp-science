@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -1373,51 +1374,14 @@ fn setup_workspace(case: &EvalCase, root: &Path) -> Result<()> {
         write_fixture(root, path, contents.as_bytes())?;
     }
     for (path, encoded) in &case.base64_files {
-        let bytes = decode_base64(encoded)
+        // Fixtures may wrap base64 across lines.
+        let compact: String = encoded.split_ascii_whitespace().collect();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(compact)
             .with_context(|| format!("invalid base64 fixture '{path}' in case '{}'", case.id))?;
         write_fixture(root, path, &bytes)?;
     }
     Ok(())
-}
-
-fn decode_base64(value: &str) -> Result<Vec<u8>> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut inverse = [u8::MAX; 256];
-    for (index, byte) in ALPHABET.iter().enumerate() {
-        inverse[*byte as usize] = index as u8;
-    }
-    let clean: Vec<_> = value
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect();
-    if clean.len() % 4 != 0 {
-        bail!("base64 length is not divisible by four");
-    }
-    let mut out = Vec::new();
-    for chunk in clean.chunks(4) {
-        let mut numbers = [0u8; 4];
-        let mut padding = 0;
-        for (index, byte) in chunk.iter().enumerate() {
-            if *byte == b'=' {
-                padding += 1;
-                numbers[index] = 0;
-            } else {
-                let decoded = inverse[*byte as usize];
-                if decoded == u8::MAX {
-                    bail!("invalid base64 character");
-                }
-                numbers[index] = decoded;
-            }
-        }
-        out.push((numbers[0] << 2) | (numbers[1] >> 4));
-        if padding < 2 {
-            out.push((numbers[1] << 4) | (numbers[2] >> 2));
-        }
-        if padding == 0 {
-            out.push((numbers[2] << 6) | numbers[3]);
-        }
-    }
-    Ok(out)
 }
 
 fn build_agent(

@@ -20,27 +20,33 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
     protected WorkspaceSheet(WispDesign design, string title, Action close)
     {
         Design = design; this.close = close;
+        design.BindTypography(this);
         var root = new Grid { Background = design.Brush("bg-app") };
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         var header = new Grid { Padding = new Thickness(20, 16, 20, 12), ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        header.Children.Add(new TextBlock { Text = title, FontSize = 22, Foreground = design.Brush("text") });
+        var heading = design.Text(title, 22); heading.Foreground = design.Brush("text"); header.Children.Add(heading);
         var dismiss = new Button { Content = "关闭" };
         dismiss.Click += (_, _) => HandleEscape();
         Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss);
         root.Children.Add(header);
+        Notices = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 12), Visibility = Visibility.Collapsed };
+        Grid.SetRow(Notices, 1); root.Children.Add(Notices);
         Body = new StackPanel { Spacing = 12, Padding = new Thickness(20, 0, 20, 20) };
         var scroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(scroll, 1); root.Children.Add(scroll);
+        Grid.SetRow(scroll, 2); root.Children.Add(scroll);
         Content = root;
+        Loaded += (_, _) => Design.ApplyTypography(this);
     }
     protected StackPanel Body { get; }
+    protected StackPanel Notices { get; }
     public virtual void HandleEscape() { if (!closed) close(); }
     public virtual void Dispose() { closed = true; }
-    protected TextBlock Mute(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, Foreground = Design.Brush("text-muted"), FontSize = 13 };
-    protected TextBlock Warn(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, Foreground = Design.Brush("clay-strong"), FontSize = 13 };
+    protected TextBlock Mute(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("text-muted"); return block; }
+    protected TextBlock Warn(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("clay-strong"); return block; }
 }
 
 internal sealed class NativeOutlinePage : WorkspaceSheet

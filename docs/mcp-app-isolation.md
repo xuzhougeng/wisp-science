@@ -126,7 +126,9 @@ Pop-Location
 
 The native isolation probe uses hidden disposable windows, fake sessions,
 the production native registry/create/close implementation and production
-child shell. Its profiles are under `target/mcp-isolation-smoke/`. It records
+child shell. Its profiles are retained in the short `wisp-mcp-*` system temporary
+directory printed at startup, so deep checkout paths do not exhaust WebView2's
+cache path budget. It records
 browser/renderer process trees, runs a bounded 20-second guest block, exercises
 primary DOM control handlers during the block, rejects a child workspace IPC,
 tests scoped native Stop, closes a blocked child and cycles mount/destruction.

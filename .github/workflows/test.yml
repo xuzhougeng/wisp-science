@@ -69,6 +69,9 @@ jobs:
       - name: Run MCP process-tree shutdown regression
         run: cargo test -p wisp-mcp --test process_tree_shutdown
 
+      - name: Run project storage startup and migration regressions
+        run: cargo test -p wisp-store project_storage::tests
+
       # Interpreters are often launchers: Windows Rscript.exe re-launches
       # bin\x64\Rscript.exe through cmd.exe. Stopping a runtime must reclaim
       # that whole tree, which only a real per-OS process tree can prove.
@@ -113,7 +116,7 @@ jobs:
       # An explicit target keeps host build-dependency features from masking
       # missing Windows API features in the runtime (Tao uses windows 0.62).
       - name: Check desktop Windows target feature isolation
-        run: cargo check --locked -p wisp-tauri --target x86_64-pc-windows-msvc
+        run: cargo check --locked -p wisp-tauri --all-targets --target x86_64-pc-windows-msvc
       - name: Build desktop and native regression with the locked runtime
         run: cargo build --locked -p wisp-tauri --bin wisp-tauri --example windows_input_reentrancy_smoke
       # Each invocation owns a hidden native window and has a 45-second
@@ -158,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        toolchain: [stable, 1.88.0]
+        toolchain: [stable, 1.90.0]
     steps:
       - uses: actions/checkout@v4
 

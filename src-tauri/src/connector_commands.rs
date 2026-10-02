@@ -426,6 +426,10 @@ pub(super) async fn authorize_http_connection(
         }
         return Err(error);
     }
+    // A connection that failed before authorization would otherwise sit out its retry cooldown.
+    crate::mcp_connections::host()
+        .invalidate_connector(&connection_id)
+        .await;
     clear_idle_agents(&state).await;
     Ok(())
 }

@@ -78,8 +78,114 @@ impl Conversations {
         Ok(record)
     }
 }
+fn snapshot_item(item: crate::UiItem) -> dto::Item {
+    let attachments = if item.role == "user" {
+        dto::saved_attachment_names(&item.text)
+    } else {
+        Vec::new()
+    };
+    dto::Item {
+        role: item.role,
+        text: item.text,
+        tool_name: item.tool_name,
+        input: item.input,
+        ok: item.ok,
+        status: item.status,
+        duration_ms: item.duration_ms,
+        model_name: item.model_name,
+        timestamp: None,
+        attachments,
+    }
+}
+
+fn timestamp_items(
+    items: &mut [dto::Item],
+    user_offset: usize,
+    outline: &[(i64, String, i64, Option<i64>)],
+) {
+    let mut turn = None;
+    for item in items {
+        if matches!(item.role.as_str(), "user" | "queued_user") {
+            turn = Some(turn.map_or(user_offset, |index| index + 1));
+        }
+        let Some((_, _, sent_at, response_at)) = turn.and_then(|index| outline.get(index)) else {
+            continue;
+        };
+        item.timestamp = match item.role.as_str() {
+            "user" | "queued_user" => Some(*sent_at),
+            "assistant" => *response_at,
+            _ => None,
+        }
+        .filter(|value| *value > 0);
+    }
+}
+
+/// Copy one local file into the named project's uploads directory and bind it
+/// with the same message-resource snapshot used for Markdown file links.
+/// Does not select a WebView window or send a turn.
+pub(crate) async fn attach_local_file(
+    store: &wisp_store::Store,
+    root: &std::path::Path,
+    project_id: &str,
+    frame_id: &str,
+    source: &std::path::Path,
+) -> Result<dto::ComposerAttachment, String> {
+    if source.as_os_str().is_empty() {
+        return Err("An attachment path is required".into());
+    }
+    let (dest, relative, name) =
+        crate::artifact_commands::copy_local_file_into_uploads(root, source)?;
+    let markdown = format!("[{name}]({relative})");
+    let links = crate::resource_refs::bind_new_message_resources(
+        store, root, project_id, frame_id, 0, &markdown,
+    )
+    .await;
+    if links.first().is_none_or(|link| link.status != "ready") {
+        let _ = std::fs::remove_file(&dest);
+        let error = links
+            .first()
+            .and_then(|link| link.error.clone())
+            .unwrap_or_else(|| "Attachment could not be bound".into());
+        return Err(error);
+    }
+    Ok(dto::ComposerAttachment {
+        path: relative,
+        name,
+    })
+}
+
+fn follow_up_id(request_id: &str) -> Result<u64, String> {
+    let id = uuid::Uuid::parse_str(request_id).map_err(|_| "Invalid follow-up request ID")?;
+    let bytes = id.as_bytes();
+    Ok(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+}
+
 fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| error.to_string())
+}
+
+fn delete_session_arguments(value: &Value) -> Result<Value, String> {
+    let args: dto::SessionRequest = decode(value)?;
+    if args.before_seq.is_some() {
+        return Err("Delete does not accept a history cursor".into());
+    }
+    Ok(json!({"id": args.session_id}))
+}
+
+fn require_acp_profile(profiles: &[crate::acp::AcpAgentProfile], id: &str) -> Result<(), String> {
+    if id.trim().is_empty() || !profiles.iter().any(|profile| profile.id == id) {
+        return Err("ACP Agent profile does not exist; refresh the model list".into());
+    }
+    Ok(())
+}
+
+fn turn_arguments(
+    session: &str,
+    message: &str,
+    attachments: &[String],
+    agent: Option<&str>,
+) -> Value {
+    json!({"sessionId":session,"message":message,"attachments":attachments,"acpAgentId":agent})
 }
 
 pub(crate) async fn require_owner(
@@ -98,6 +204,25 @@ pub(crate) async fn require_owner(
         return Err("Conversation does not belong to the selected project".into());
     }
     Ok(())
+}
+
+async fn owned_session_exists(
+    store: &wisp_store::Store,
+    project: &str,
+    session: &str,
+) -> Result<bool, String> {
+    if session.is_empty() {
+        return Err("A conversation is required".into());
+    }
+    match store
+        .frame_project_id(session)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        None => Ok(false),
+        Some(owner) if owner == project => Ok(true),
+        Some(_) => Err("Conversation does not belong to the selected project".into()),
+    }
 }
 async fn running(broker: &Broker, session: &str) -> bool {
     broker
@@ -139,16 +264,42 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         return Ok(Value::Array(rows));
     }
     if request.command == "native_conversation_create" {
-        if !request.args.as_object().is_some_and(|v| v.is_empty()) {
-            return Err("Create takes no arguments".into());
+        let args: dto::CreateRequest = decode(&request.args)?;
+        if let Some(agent) = args.acp_agent_id.as_deref() {
+            let state = broker.app.state::<crate::AppState>();
+            require_acp_profile(&crate::acp::profiles(&state.store).await, agent)?;
         }
-        return call(broker, project, "new_session", json!({})).await;
+        let value = call(broker, project, "new_session", json!({})).await?;
+        let id = value.as_str().ok_or("Invalid new conversation response")?;
+        if let Some(agent) = args.acp_agent_id {
+            broker
+                .app
+                .state::<crate::AppState>()
+                .store
+                .set_frame_acp_agent_selection(id, project, &agent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(value);
     }
     let session = request
         .args
         .get("session_id")
         .and_then(Value::as_str)
         .ok_or("A conversation is required")?;
+    if request.command == "native_conversation_exists" {
+        let args: dto::SessionRequest = decode(&request.args)?;
+        if args.before_seq.is_some() {
+            return Err("Existence check does not accept a history cursor".into());
+        }
+        return owned_session_exists(
+            &broker.app.state::<crate::AppState>().store,
+            project,
+            session,
+        )
+        .await
+        .map(Value::Bool);
+    }
     require_owner(
         &broker.app.state::<crate::AppState>().store,
         project,
@@ -161,8 +312,39 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if request.command.starts_with("native_conversation_panel_") {
         return crate::native_panels::dispatch(broker, request, project, session).await;
     }
+    let acp_agent_id =
+        crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_delete" => {
+            call(
+                broker,
+                project,
+                "delete_session",
+                delete_session_arguments(&request.args)?,
+            )
+            .await
+        }
+        "native_conversation_pin" => {
+            let args: dto::PinRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "set_session_pinned",
+                json!({"id":session,"pinned":args.pinned}),
+            )
+            .await
+        }
+        "native_conversation_rename" => {
+            let args: dto::RenameRequest = decode(&request.args)?;
+            call(
+                broker,
+                project,
+                "rename_session",
+                json!({"id":session,"title":args.title}),
+            )
+            .await
+        }
         "native_conversation_share" => {
             let _: dto::SessionRequest = decode(&request.args)?;
             let state = broker.app.state::<crate::AppState>();
@@ -289,38 +471,51 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             let (items, next_before_seq, frozen, user_offset) =
                 crate::session_commands::native_transcript(&state, session, args.before_seq)
                     .await?;
-            let model = call(
+            let mut model = call(
                 broker,
                 project,
                 "get_session_model",
                 json!({"sessionId":session}),
             )
             .await?;
+            let binding = state
+                .store
+                .get_acp_session(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            if binding.is_none() {
+                if let Some(agent) = &acp_agent_id {
+                    model = json!(format!("acp:{agent}"));
+                }
+            }
             record.sequence += 1;
-            let read_only = frozen || model.as_str().is_some_and(|id| id.starts_with("acp:"));
+            let read_only = frozen;
+            let mut items: Vec<_> = items.into_iter().map(snapshot_item).collect();
+            let outline = state
+                .store
+                .load_session_user_messages(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            timestamp_items(&mut items, user_offset, &outline);
             let snapshot = dto::Snapshot {
                 schema: dto::SCHEMA.into(),
                 epoch: broker.conversations.epoch.clone(),
                 sequence: record.sequence,
                 project_id: project.into(),
                 session_id: session.into(),
-                items: items
-                    .into_iter()
-                    .map(|item| dto::Item {
-                        role: item.role,
-                        text: item.text,
-                        tool_name: item.tool_name,
-                        input: item.input,
-                        ok: item.ok,
-                        status: item.status,
-                    })
-                    .collect(),
+                items,
                 next_before_seq,
                 user_offset,
                 running: record.running || running(broker, session).await,
                 stopping: record.stopping,
                 read_only,
+                acp: if frozen {
+                    None
+                } else {
+                    Some(crate::acp::native_interactions(&state, session).await)
+                },
                 model_id: model.as_str().unwrap_or_default().into(),
+                acp_agent_id: binding.map(|binding| binding.agent_profile_id),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
                 approvals: state
@@ -340,21 +535,81 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             };
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
-        "native_conversation_send" => {
-            let args: dto::SendRequest = decode(&request.args)?;
-            // ACP authorization/questions need a separate native protocol. Keep
-            // saved ACP transcripts readable, but never start an invisible flow.
-            if broker
-                .app
-                .state::<crate::AppState>()
+        "native_conversation_attach" => {
+            let args: dto::AttachRequest = decode(&request.args)?;
+            let state = broker.app.state::<crate::AppState>();
+            let (_, workspace) = state
                 .store
-                .get_acp_session(session)
+                .get_project(project)
                 .await
-                .map_err(|e| e.to_string())?
-                .is_some()
+                .map_err(|error| error.to_string())?
+                .ok_or("Project was not found")?;
+            let attached = attach_local_file(
+                &state.store,
+                std::path::Path::new(&workspace),
+                project,
+                session,
+                std::path::Path::new(args.path.trim()),
+            )
+            .await?;
+            serde_json::to_value(attached).map_err(|error| error.to_string())
+        }
+        "native_conversation_enqueue" => {
+            let args: dto::SendRequest = decode(&request.args)?;
+            if acp_agent_id.is_some()
+                && broker
+                    .app
+                    .state::<crate::AppState>()
+                    .store
+                    .get_acp_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_none()
             {
-                return Err("ACP conversations are read-only in the native preview".into());
+                return Err(
+                    "Wait for the ACP session to connect before queuing a follow-up".into(),
+                );
             }
+            let turn_running = {
+                let guard = record.lock().await;
+                guard.running || running(broker, session).await
+            };
+            let state = broker.app.state::<crate::AppState>();
+            let runtime = {
+                let mut sessions = state.sessions.lock().await;
+                sessions
+                    .entry(session.to_owned())
+                    .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
+                    .clone()
+            };
+            let id = follow_up_id(&args.request_id)?;
+            let text = crate::agent_turn::queue_one_follow_up(
+                turn_running,
+                &runtime,
+                id,
+                &args.message,
+                &args.attachments,
+            )?;
+            if !runtime
+                .draining
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                // The hidden label is not the WebView's main window. The
+                // existing driver sends this one parked draft after the
+                // current turn releases the workflow lock, then stops.
+                crate::agent_turn::spawn_queue_driver(
+                    broker.app.clone(),
+                    runtime,
+                    session.to_owned(),
+                    "native-follow-up".into(),
+                );
+            }
+            Ok(json!({"queued": true, "message": text}))
+        }
+        "native_conversation_send" => {
+            let mut args: dto::SendRequest = decode(&request.args)?;
+            args.attachments.retain(|path| !path.trim().is_empty());
+            args.message = dto::message_with_attachments(&args.message, &args.attachments);
             let mut guard = record.lock().await;
             if guard.accept(&args, running(broker, session).await)? {
                 let broker = broker.clone();
@@ -362,12 +617,14 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let record = record.clone();
                 let session = session.to_owned();
                 let message = args.message.clone();
+                let attachments = args.attachments.clone();
+                let acp_agent_id = acp_agent_id.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(call(
                         &broker,
                         &project,
                         "send_message",
-                        json!({"sessionId":session,"message":message}),
+                        turn_arguments(&session, &message, &attachments, acp_agent_id.as_deref()),
                     ));
                     // The Stop request can precede creation of SessionRuntime.
                     // Keep cancelling until the turn settles, without dropping
@@ -412,11 +669,43 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             .await?;
             Ok(Value::Null)
         }
+        "native_conversation_acp_permission" => {
+            let args: dto::AcpPermissionResponse = decode(&request.args)?;
+            crate::acp::respond_native_permission(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
+        "native_conversation_acp_answer" => {
+            let args: dto::AcpQuestionResponse = decode(&request.args)?;
+            crate::acp::respond_native_question(
+                &broker.app.state::<crate::AppState>(),
+                &broker.app,
+                args,
+            )
+            .await?;
+            Ok(Value::Null)
+        }
         "native_conversation_model" => {
             let args: dto::ModelRequest = decode(&request.args)?;
             let record = record.lock().await;
             if record.running || running(broker, session).await {
                 return Err("Wait for the current turn before changing its model".into());
+            }
+            if acp_agent_id.is_some()
+                || broker
+                    .app
+                    .state::<crate::AppState>()
+                    .store
+                    .get_acp_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+            {
+                return Err("Start a new conversation to switch away from this ACP Agent".into());
             }
             let profiles = call(broker, project, "list_models", json!({})).await?;
             if !profiles.as_array().is_some_and(|rows| {
@@ -439,7 +728,85 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn message_metadata_uses_owning_turn_and_page_offset() {
+        let outline = vec![
+            (1, "same".into(), 10, Some(12)),
+            (5, "same".into(), 20, Some(25)),
+            (9, "last".into(), 30, None),
+        ];
+        let mut items: Vec<crate::native_conversations::dto::Item> = [
+            "assistant",
+            "user",
+            "tool",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        .into_iter()
+        .map(|role| serde_json::from_value(serde_json::json!({"role":role,"text":"same"})).unwrap())
+        .collect();
+        super::timestamp_items(&mut items, 1, &outline);
+        assert_eq!(
+            items.iter().map(|item| item.timestamp).collect::<Vec<_>>(),
+            vec![None, Some(20), None, Some(25), Some(30), None]
+        );
+        assert!(items[0].duration_ms.is_none());
+        assert!(items[0].model_name.is_none());
+        let metadata: super::dto::Item = serde_json::from_value(serde_json::json!({
+            "role":"tool", "text":"done", "duration_ms":1250, "model_name":"exact-model", "timestamp":20
+        })).unwrap();
+        assert_eq!(metadata.duration_ms, Some(1250));
+        assert_eq!(
+            serde_json::to_value(metadata).unwrap()["model_name"],
+            "exact-model"
+        );
+    }
+    #[test]
+    fn deletion_uses_only_the_explicit_session_and_rejects_history_or_scope_overrides() {
+        assert_eq!(
+            super::delete_session_arguments(&serde_json::json!({"session_id":"s"})).unwrap(),
+            serde_json::json!({"id":"s"})
+        );
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"session_id":"s","before_seq":1}),
+            serde_json::json!({"session_id":"s","project_id":"other"}),
+            serde_json::json!({"session_id":"s","id":"other"}),
+        ] {
+            assert!(super::delete_session_arguments(&args).is_err());
+        }
+    }
     use super::*;
+    #[test]
+    fn acp_creation_requires_exact_profile_and_turn_routing_preserves_session() {
+        let profiles = vec![crate::acp::AcpAgentProfile {
+            id: "agent".into(),
+            label: "Agent".into(),
+            command: "fake-acp".into(),
+            args: vec![],
+        }];
+        assert!(require_acp_profile(&profiles, "agent").is_ok());
+        for id in ["", "agent-other", "missing", " agent "] {
+            assert!(require_acp_profile(&profiles, id).is_err());
+        }
+        let new = turn_arguments(
+            "new-session",
+            "hello",
+            &["uploads/a.csv".into()],
+            Some("agent"),
+        );
+        assert_eq!(
+            new,
+            json!({"sessionId":"new-session", "message":"hello", "attachments":["uploads/a.csv"], "acpAgentId":"agent"})
+        );
+        let resume = turn_arguments("saved-session", "continue", &[], None);
+        assert_eq!(resume["sessionId"], "saved-session");
+        assert!(
+            resume["acpAgentId"].is_null(),
+            "Saved bindings are resolved by the shared send pipeline"
+        );
+    }
     #[test]
     fn sending_is_idempotent_and_rejects_ambiguous_id_reuse_and_busy_sessions() {
         let mut record = Record::default();
@@ -447,6 +814,7 @@ mod tests {
             session_id: "a".into(),
             request_id: uuid::Uuid::new_v4().to_string(),
             message: "hello".into(),
+            attachments: Vec::new(),
         };
         assert!(record.accept(&request, false).unwrap());
         assert!(!record.accept(&request, false).unwrap());
@@ -476,6 +844,85 @@ mod tests {
         assert!(require_owner(&store, "b", "s").await.is_err());
         assert!(require_owner(&store, "a", "").await.is_err());
         assert!(require_owner(&store, "a", "missing").await.is_err());
+        assert!(owned_session_exists(&store, "a", "s").await.unwrap());
+        assert!(!owned_session_exists(&store, "a", "missing").await.unwrap());
+        assert!(owned_session_exists(&store, "b", "s").await.is_err());
+        assert!(owned_session_exists(&store, "a", "").await.is_err());
+        drop(store);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn attach_binds_the_file_and_a_saved_message_shows_it() {
+        let directory = std::env::temp_dir().join(format!("wisp_attach_{}", uuid::Uuid::new_v4()));
+        let workspace = directory.join("project");
+        let other = directory.join("other");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("keep.txt"), b"keep").unwrap();
+        let source = directory.join("notes.csv");
+        std::fs::write(&source, b"a,b\n1,2\n").unwrap();
+        let store = wisp_store::Store::open(&directory.join("test.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project("research-1", "Research", &workspace.to_string_lossy())
+            .await
+            .unwrap();
+        store
+            .create_frame("session-a", "research-1", "OPERON", "model")
+            .await
+            .unwrap();
+        let missing = attach_local_file(
+            &store,
+            &workspace,
+            "research-1",
+            "session-a",
+            std::path::Path::new(""),
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.contains("required"));
+        let attached = attach_local_file(&store, &workspace, "research-1", "session-a", &source)
+            .await
+            .unwrap();
+        assert_eq!(attached.path, "uploads/notes.csv");
+        assert_eq!(attached.name, "notes.csv");
+        assert_eq!(
+            std::fs::read(workspace.join(&attached.path)).unwrap(),
+            b"a,b\n1,2\n"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"a,b\n1,2\n");
+        assert!(other.join("keep.txt").is_file());
+        let links = store
+            .list_message_resource_links("session-a", 0, None)
+            .await
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].status, "ready");
+        assert_eq!(links[0].display_name, "notes.csv");
+        let message = dto::message_with_attachments("看看", &[attached.path.clone()]);
+        store
+            .append_message("session-a", 1, &wisp_llm::Message::user(&message))
+            .await
+            .unwrap();
+        let saved = store.load_messages("session-a").await.unwrap();
+        let item = snapshot_item(crate::UiItem {
+            role: "user".into(),
+            text: saved[0].content.as_text(),
+            tool_name: None,
+            ok: None,
+            duration_ms: None,
+            input: None,
+            model_name: None,
+            call_id: None,
+            kind: None,
+            status: None,
+            locations: None,
+            resources: Vec::new(),
+        });
+        assert_eq!(item.attachments, vec!["uploads/notes.csv".to_string()]);
+        assert!(item.text.contains("uploads/notes.csv"));
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
     }

@@ -182,7 +182,11 @@ impl ModelSettingsState {
                     .map(|m| m.has_api_key)
             })
             .unwrap_or(false);
-        let cfg = model_form_to_settings(&form, has_key && key.is_empty());
+        let cfg = model_form_to_settings(
+            &form,
+            (has_key && key.is_empty())
+                || matches!(provider_value(&form.provider), "openai_codex" | "xai_oauth"),
+        );
         if let Some(err_key) = settings_required_error_key(&cfg, &key) {
             let err = t(loc, err_key);
             let text = tf(loc, "status.save_failed", &[("msg", &err)]);
@@ -192,7 +196,10 @@ impl ModelSettingsState {
         // A catalog-known chat model has a documented output ceiling; saving a
         // larger max_tokens only ever surfaces as a provider 400 mid-turn.
         // Image and video models do not take token limits.
-        if !form.is_image_model() && !is_video_generation_model(&form.model) {
+        if !matches!(provider_value(&form.provider), "openai_codex" | "xai_oauth")
+            && !form.is_image_model()
+            && !is_video_generation_model(&form.model)
+        {
             if let Some(dto) = model_catalog_limits.get() {
                 if form.max_tokens > dto.max_tokens {
                     let text = tf(
@@ -246,6 +253,7 @@ impl ModelSettingsState {
                 "useForVision": form.use_for_vision,
                 "useForImageGeneration": form.use_for_image_generation,
                 "useForVideoGeneration": form.use_for_video_generation,
+                "restoreChatModel": form.restore_chat_model,
             }))
             .unwrap();
             match invoke_checked("save_model", arg).await {

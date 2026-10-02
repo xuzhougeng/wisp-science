@@ -2,6 +2,9 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Wisp.ProjectBrowser;
 using Wisp.ProjectBrowser.Contracts;
@@ -21,42 +24,57 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly Button send = new() { Content = "发送" };
     private readonly Button stop = new() { Content = "停止" };
     private readonly Button createSession = new() { Content = "新建会话" };
+    private readonly Button attach = new() { Content = "对话附件" };
+    private readonly Button queue = new() { Content = "排队后续" };
+    private readonly Button retry = new() { Content = "重新读取" };
+    private readonly Button acknowledge = new() { Content = "已检查，允许再次发送或排队…" };
+    private readonly StackPanel attachments = new() { Spacing = 4 };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly TextBlock hint = new() { FontSize = 11 };
     private readonly Grid composerBar = new();
     private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly CancellationTokenSource lifetime = new();
+    private readonly TextBlock slashHint = new() { FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private bool disposed, followLatest = true;
+    private readonly Func<string, bool>? slashCommand;
+    private readonly Action? openHosts;
+    private readonly Func<Task<string?>>? pickAttachment;
 
-    public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create)
+    public NativeConversationPage(WorkspaceConversationModel model, WispDesign design, Action<string> quote, Func<Task> create,
+        Func<Task<string?>>? pickAttachment = null, Func<string, bool>? slashCommand = null, Action? openHosts = null)
     {
         this.model = model; this.design = design; this.quote = quote; this.create = create;
+        this.slashCommand = slashCommand; this.openHosts = openHosts; this.pickAttachment = pickAttachment;
+        design.BindTypography(status, 12); design.BindTypography(hint, 11);
         model.Changed += Refresh;
+        design.TypographyChanged += Refresh;
         var root = new Grid();
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         status.Margin = new Thickness(24, 12, 24, 0);
-        var retry = new Button { Content = "重新读取" };
         retry.Click += async (_, _) => await model.RefreshAsync(lifetime.Token);
-        var ack = new Button { Content = "已检查，允许再次发送…" };
-        ack.Click += (_, _) => model.AcknowledgeUncertainSend();
+        acknowledge.Click += (_, _) => model.AcknowledgeUncertainSend();
         var banner = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(24, 8, 24, 0) };
-        banner.Children.Add(retry); banner.Children.Add(ack);
+        banner.Children.Add(retry); banner.Children.Add(acknowledge);
         var header = new StackPanel(); header.Children.Add(status); header.Children.Add(banner);
         root.Children.Add(header);
         scroll.Content = transcript; Grid.SetRow(scroll, 1); root.Children.Add(scroll);
         Grid.SetRow(approvals, 2); root.Children.Add(approvals);
-        composer.TextChanged += (_, _) => model.Draft = composer.Text;
+        composer.TextChanged += (_, _) =>
+        {
+            model.Draft = composer.Text; send.IsEnabled = model.CanSend; queue.IsEnabled = model.CanQueue;
+            UpdateSlashHint();
+        };
         composer.KeyDown += (_, e) =>
         {
             if (e.Key != VirtualKey.Enter) return;
             var shift = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(VirtualKeyStates.Down);
             var control = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(VirtualKeyStates.Down);
-            if (control && !shift) { e.Handled = true; _ = model.SendAsync(lifetime.Token); }
+            if (control && !shift) { e.Handled = true; Submit(); }
         };
-        send.Click += async (_, _) => await model.SendAsync(lifetime.Token);
+        send.Click += (_, _) => Submit();
         stop.Click += async (_, _) => await model.StopAsync(lifetime.Token);
         models.SelectionChanged += async (_, _) =>
         {
@@ -64,6 +82,12 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
                 await model.SelectModelAsync(id, lifetime.Token);
         };
         createSession.Click += async (_, _) => await create();
+        attach.Click += async (_, _) => await DoAttachAsync();
+        attach.Visibility = pickAttachment == null ? Visibility.Collapsed : Visibility.Visible;
+        queue.Click += async (_, _) => await model.QueueAsync(lifetime.Token);
+        var hosts = new Button { Content = "环境" };
+        hosts.Click += (_, _) => openHosts?.Invoke();
+        hosts.Visibility = openHosts == null ? Visibility.Collapsed : Visibility.Visible;
         var actions = new Grid();
         actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -71,19 +95,27 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         send.HorizontalAlignment = HorizontalAlignment.Right; stop.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetColumn(send, 1); Grid.SetColumn(stop, 1); actions.Children.Add(send); actions.Children.Add(stop);
         var card = new StackPanel { Spacing = 12, Padding = new Thickness(16) };
-        card.Children.Add(composer); card.Children.Add(actions);
+        var extras = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        extras.Children.Add(attach); extras.Children.Add(queue); extras.Children.Add(hosts);
+        card.Children.Add(extras); card.Children.Add(attachments); card.Children.Add(composer); card.Children.Add(actions);
+        design.BindTypography(slashHint, 11);
+        slashHint.Foreground = design.Brush("text-faint");
+        slashHint.Text = "可用命令：/upload /files /outline /share /trajectory /archive /library /calendar /journey /publication /settings /scratch";
+        slashHint.Visibility = Visibility.Collapsed;
         var follow = new CheckBox { Content = "跟随最新回复", IsChecked = true, FontSize = 11 };
         follow.Checked += (_, _) => followLatest = true; follow.Unchecked += (_, _) => followLatest = false;
         var footer = new Grid { Margin = new Thickness(24, 0, 24, 16), MaxWidth = 850 };
         footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var footerHints = new StackPanel { Spacing = 2 };
+        footerHints.Children.Add(hint); footerHints.Children.Add(slashHint);
         hint.Text = "Ctrl+Enter 发送 · Enter 换行";
-        footer.Children.Add(hint); Grid.SetColumn(follow, 1); footer.Children.Add(follow);
+        footer.Children.Add(footerHints); Grid.SetColumn(follow, 1); footer.Children.Add(follow);
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var empty = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(24) };
-        empty.Children.Add(new TextBlock { Text = "开始新的研究对话", FontSize = 22, HorizontalAlignment = HorizontalAlignment.Center });
+        var emptyHeading = design.Text("开始新的研究对话", 22); emptyHeading.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(emptyHeading);
         empty.Children.Add(createSession);
         composerBar.Children.Add(empty);
         var border = new Border { Child = card, CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(24, 0, 24, 8), MaxWidth = 850 };
@@ -109,10 +141,51 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         catch (OperationCanceledException) { }
     }
 
+    private async Task DoAttachAsync()
+    {
+        if (pickAttachment == null || !model.CanAttach) return;
+        if (await pickAttachment() is { } path) await model.AttachAsync(path, lifetime.Token);
+    }
+
+    private void UpdateSlashHint()
+    {
+        // Live discovery only; routing happens on submit so an unfinished
+        // command never sends as a message.
+        slashHint.Visibility = composer.Text.TrimStart().StartsWith('/') ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Send attempt. A leading slash routes to a client-side command
+    /// mapping instead of the send API; unknown commands keep the draft and
+    /// surface the available set. Real sends are untouched.</summary>
+    private void Submit()
+    {
+        var draft = model.Draft.Trim();
+        if (draft.StartsWith('/'))
+        {
+            var command = draft.Split([' ', '\n'], 2)[0].ToLowerInvariant();
+            if (command == "/upload" && pickAttachment != null)
+            {
+                model.Draft = ""; Refresh(); _ = DoAttachAsync(); return;
+            }
+            if (slashCommand != null && slashCommand(draft))
+            {
+                if (model.Draft == composer.Text && model.Draft.Length > 0) { model.Draft = ""; Refresh(); }
+                return;
+            }
+            UpdateSlashHint();
+            return;
+        }
+        _ = model.SendAsync(lifetime.Token);
+    }
+
     public void Refresh()
     {
         if (disposed) return;
+        FontFamily = design.Font(); FontSize = design.FontSize(14);
+        composer.FontFamily = design.Font(); composer.FontSize = design.FontSize(14);
         var error = model.ConnectionError ?? model.OperationError ?? model.Snapshot?.Error;
+        retry.Visibility = error != null ? Visibility.Visible : Visibility.Collapsed;
+        acknowledge.Visibility = model.UncertainSend ? Visibility.Visible : Visibility.Collapsed;
         status.Text = error ?? "";
         status.Foreground = design.Brush(error == null ? "text-muted" : "clay-strong");
         status.Visibility = error == null && !model.UncertainSend ? Visibility.Collapsed : Visibility.Visible;
@@ -125,6 +198,14 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         send.Visibility = model.Snapshot?.Running == true ? Visibility.Collapsed : Visibility.Visible;
         stop.Visibility = model.Snapshot?.Running == true ? Visibility.Visible : Visibility.Collapsed;
         send.IsEnabled = model.CanSend; stop.IsEnabled = !model.Busy;
+        attach.IsEnabled = model.CanAttach; queue.IsEnabled = model.CanQueue;
+        queue.Content = model.QueuedFollowUp == null ? "排队后续" : "后续已排队";
+        attachments.Children.Clear();
+        foreach (var file in model.Attachments)
+        {
+            var remove = new Button { Content = file.Name + " · 移除", IsEnabled = !model.Busy && !model.UncertainSend };
+            remove.Click += (_, _) => model.RemoveAttachment(file.Path); attachments.Children.Add(remove);
+        }
         stop.Content = model.Snapshot?.Stopping == true ? "正在停止…" : "停止";
         if (models.Items.Count != model.Models.Length)
         {
@@ -135,6 +216,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         models.IsEnabled = !model.Busy && model.Snapshot is { Running: false, ReadOnly: false };
         RenderTranscript();
         RenderApprovals();
+        design.ApplyTypography(this);
         if (followLatest && !model.ShowingHistory) scroll.ChangeView(null, scroll.ScrollableHeight, null);
     }
 
@@ -163,9 +245,18 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         foreach (var item in model.VisibleItems)
         {
             var captured = index;
+            if (TranscriptPresentation.UsageSummary(item.Role, item.Text) is { } usage)
+            {
+                // Usage rows stay bare like the WebView's metadata line: no card, no actions.
+                transcript.Children.Add(new TextBlock { Text = usage, FontSize = design.FontSize(12),
+                    FontFamily = design.Font(), Foreground = design.Brush("text-faint"), MaxWidth = 850, Margin = new Thickness(24, 0, 24, 0) });
+                index++;
+                continue;
+            }
             var card = new StackPanel { Spacing = 8, Padding = new Thickness(16) };
             var role = item.Role == "user" ? "你" : item.Role == "tool" ? item.ToolName ?? "工具" : item.Role == "reasoning" ? "思考" : "Wisp Science";
             card.Children.Add(new TextBlock { Text = role, FontSize = 12, Foreground = design.Brush("text-muted") });
+            foreach (var path in item.Attachments ?? []) card.Children.Add(new TextBlock { Text = "附件 · " + path, TextWrapping = TextWrapping.Wrap });
             if (item.Role == "question" && JsonNode.Parse(item.Text) is JsonObject question)
             {
                 card.Children.Add(new TextBlock { Text = question["question"]?.GetValue<string>() ?? item.Text, TextWrapping = TextWrapping.Wrap });
@@ -181,19 +272,37 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             else if (item.Role == "tool")
             {
                 var body = new StackPanel { Spacing = 8 };
-                if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(new TextBox { Text = item.Input, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap });
-                body.Children.Add(new TextBox { Text = item.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap });
+                if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(new TextBox { Text = item.Input, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(12, true) });
+                if (TranscriptPresentation.ToolImagePath(item.Text) is { } imagePath && File.Exists(imagePath))
+                {
+                    try
+                    {
+                        body.Children.Add(new Border
+                        {
+                            Child = new Image { Source = new BitmapImage(new Uri(imagePath)), MaxHeight = 340, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left },
+                            CornerRadius = new CornerRadius(8), Padding = new Thickness(4), Background = design.Brush("bg-sunken")
+                        });
+                    }
+                    catch { }
+                }
+                body.Children.Add(new TextBox { Text = item.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(12, true) });
                 card.Children.Add(new Expander { Header = item.Text.Length == 0 ? "执行中…" : item.Text[..Math.Min(180, item.Text.Length)], Content = body, IsExpanded = item.Ok == false });
             }
             else
             {
                 card.Children.Add(TranscriptView.Create(new BrowserMessage(captured, item.Role, item.Text, item.ToolName), design));
                 var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                var copy = new Button { Content = "复制" };
+                copy.Click += (_, _) =>
+                {
+                    try { var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy }; package.SetText(item.Text); Clipboard.SetContent(package); }
+                    catch { }
+                };
                 var quoteButton = new Button { Content = "引用" };
                 quoteButton.Click += (_, _) => quote(item.Text);
                 var star = new Button { Content = "收藏" };
                 star.Click += async (_, _) => await model.SaveSelectionAsync(item.Text, lifetime.Token);
-                actions.Children.Add(quoteButton); actions.Children.Add(star); card.Children.Add(actions);
+                actions.Children.Add(copy); actions.Children.Add(quoteButton); actions.Children.Add(star); card.Children.Add(actions);
             }
             transcript.Children.Add(new Border
             {
@@ -221,7 +330,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             card.Children.Add(new TextBlock { Text = "需要确认 · " + approval.Tool, FontSize = 13 });
             card.Children.Add(new TextBlock { Text = approval.Message, TextWrapping = TextWrapping.Wrap });
             if (approval.Preview.Length > 0)
-                card.Children.Add(new TextBox { Text = approval.Preview, IsReadOnly = true, AcceptsReturn = true, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), MaxHeight = 130 });
+                card.Children.Add(new TextBox { Text = approval.Preview, IsReadOnly = true, AcceptsReturn = true, FontFamily = design.Font(true), FontSize = design.FontSize(12, true), MaxHeight = 130 });
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
             var deny = new Button { Content = "拒绝", IsEnabled = !model.Busy && model.ConnectionError == null };
             deny.Click += async (_, _) => await model.ApproveAsync(captured, false, lifetime.Token);
@@ -235,6 +344,6 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Pause(); lifetime.Dispose();
+        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
     }
 }

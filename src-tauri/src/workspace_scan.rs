@@ -72,11 +72,27 @@ pub(crate) fn scan_workspace(
         .iter()
         .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
         .collect::<Vec<_>>();
-    let excluded_prefixes = options
+    let mut excluded_prefixes = options
         .excluded_relative_prefixes
         .iter()
         .map(|prefix| root.join(prefix.trim_matches('/')))
         .collect::<Vec<_>>();
+    // Live persistence is snapshotted by the store, never copied by a file
+    // walker (including WAL/SHM and crash-recovery files).
+    excluded_prefixes.extend(
+        [
+            ".wisp/project.sqlite",
+            ".wisp/project.sqlite-wal",
+            ".wisp/project.sqlite-shm",
+            ".wisp/project.sqlite-journal",
+            ".wisp/project.json",
+            ".wisp/storage-migration.json",
+            // Published folder snapshots are moved by the cloud drive itself.
+            ".wisp/revisions",
+        ]
+        .into_iter()
+        .map(|path| root.join(path)),
+    );
     let excluded_directory_names = options
         .excluded_directory_names
         .iter()
@@ -101,6 +117,15 @@ pub(crate) fn scan_workspace(
             return true;
         }
         let path = entry.path();
+        if path
+            .parent()
+            .is_some_and(|parent| parent.file_name().is_some_and(|name| name == ".wisp"))
+            && ["project-migration-", "storage-write-"]
+                .iter()
+                .any(|prefix| entry.file_name().to_string_lossy().starts_with(prefix))
+        {
+            return false;
+        }
         if excluded_roots
             .iter()
             .any(|excluded| path == excluded || path.starts_with(excluded))
@@ -198,6 +223,33 @@ fn modified_unix_millis(metadata: &std::fs::Metadata) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_database_sidecars_are_excluded_but_project_artifacts_remain() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".wisp/artifacts")).unwrap();
+        for name in [
+            "project.sqlite",
+            "project.sqlite-wal",
+            "project.sqlite-shm",
+            "project.sqlite-journal",
+            "project.json",
+            "storage-migration.json",
+            "project-migration-incomplete.sqlite",
+        ] {
+            std::fs::write(root.path().join(".wisp").join(name), b"private persistence").unwrap();
+        }
+        std::fs::create_dir_all(root.path().join(".wisp/revisions")).unwrap();
+        std::fs::write(root.path().join(".wisp/revisions/r.sqlite"), b"snapshot").unwrap();
+        std::fs::write(root.path().join(".wisp/artifacts/plot.svg"), b"figure").unwrap();
+        let nodes = scan_workspace(root.path(), &WorkspaceScanOptions::default()).unwrap();
+        let files: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.kind == WorkspaceNodeKind::File)
+            .map(|n| n.relative_path.as_str())
+            .collect();
+        assert_eq!(files, vec![".wisp/artifacts/plot.svg"]);
+    }
 
     #[test]
     fn scan_is_sorted_and_does_not_follow_symlinks() {

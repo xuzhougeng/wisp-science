@@ -3,7 +3,7 @@ import SwiftUI
 import WispProjectBrowser
 
 enum NativeSettingsSection: String, CaseIterable, Identifiable {
-    case general, session, appearance, pet, models
+    case general, network, session, appearance, pet, models
     case quickActions = "quick-actions"
     case workflows, specialists, memory, skills, plugins, browser, connections, channels, credentials, permissions, environments, storage, usage
     var id: String { rawValue }
@@ -17,7 +17,8 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
     }
     var reads: [String] {
         switch self {
-        case .general: return ["get_settings", "get_appearance_prefs", "get_network_settings", "get_bootstrap_status", "get_update_check_enabled"]
+        case .general: return ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"]
+        case .network: return ["get_network_settings"]
         case .session: return ["get_settings", "get_auto_review_enabled"]
         case .appearance: return ["get_appearance_prefs"]
         case .pet: return ["get_settings", "get_pet_runtime_status", "get_pet"]
@@ -44,8 +45,10 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
 final class NativeSettingsModel: ObservableObject {
     @Published var section: NativeSettingsSection = .general
     @Published var projectID: String?
+    @Published var modelCategory = "api"
     @Published var search = ""
     @Published var values: [String: SettingsValue] = [:]
+    @Published private(set) var readRevision = UUID()
     @Published var loading = false
     @Published var busy = false
     @Published var error: String?
@@ -89,11 +92,15 @@ final class NativeSettingsModel: ObservableObject {
                 }
             }
         }
-        if current == generation { loading = false }
+        if current == generation { loading = false; readRevision = UUID() }
     }
 
     var hasUnsavedChanges: Bool { values.contains { key, value in snapshots[key] != nil && snapshots[key] != value } }
-    func discardDrafts() { for (key, value) in snapshots { values[key] = value } }
+    func discardDrafts() {
+        for (key, value) in snapshots { values[key] = value }
+        error = nil
+        message = nil
+    }
 
     func leave() { generation = UUID(); editor = nil }
 
@@ -130,11 +137,33 @@ final class NativeSettingsModel: ObservableObject {
         })
     }
 
-    func saveSettings() async { _ = await run("set_settings", ["settings": values["get_settings"] ?? .null]) }
+    static let numberLabels = ["max_iter": "每轮最大 Agent 迭代次数", "auto_continue_limit": "自动继续次数上限", "semantic_compact_idle_hours": "空闲多久后提示语义压缩"]
+    static let numberDefaults: [String: Int64] = ["max_iter": 100, "auto_continue_limit": 10, "semantic_compact_idle_hours": 24]
+
+    func numberText(_ key: String) -> String {
+        // Absent fields in an older host use the documented defaults; an edited
+        // empty value remains empty so validation can explain it without data loss.
+        guard let value = values["get_settings"]?.object[key] else { return String(Self.numberDefaults[key] ?? 0) }
+        return value.string
+    }
+
+    func saveSettings() async {
+        guard let document = values["get_settings"], !document.object.isEmpty, !loading, !busy else { return }
+        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours"] {
+            guard let value = document.object[key] else { continue }
+            let minimum: Int64 = key == "auto_continue_limit" ? 1 : 0
+            guard case .integer(let number) = value, number >= minimum else {
+                error = localized(Self.numberLabels[key]!) + ": " + localized(minimum == 0 ? "请输入不小于 0 的整数。" : "请输入不小于 1 的整数。")
+                message = nil
+                return
+            }
+        }
+        _ = await run("set_settings", ["settings": document])
+    }
 }
 
 struct SettingsField: Identifiable {
-    enum Kind { case text, secure, multiline, json, lines, integer, toggle, choice([(String, String)]), path, file
+    enum Kind { case text, secure, multiline, json, lines, integer, toggle, choice([(String, String)]), path, file, directory
         indirect case object([SettingsField])
         indirect case records([SettingsField]) }
     let key: String

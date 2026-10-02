@@ -1,6 +1,6 @@
 //! Workflow Studio editor and persisted Agent workflow activity surface.
 
-use crate::app_support::{compose_icon, show_toast};
+use crate::app_support::{compose_icon, js_error_text, show_toast};
 use crate::bindings::invoke_checked;
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
@@ -910,17 +910,6 @@ pub(super) fn refresh_agent_workflows(state: AgentPanelState) {
     });
 }
 
-fn js_error_text(error: JsValue) -> String {
-    error
-        .as_string()
-        .or_else(|| {
-            js_sys::Reflect::get(&error, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|value| value.as_string())
-        })
-        .unwrap_or_else(|| "Unknown Agent workflow error".into())
-}
-
 #[derive(Clone)]
 struct AgentWorkflowGroup {
     frame_id: String,
@@ -1179,7 +1168,7 @@ fn dynamic_task_editor(
                     <option value="" prop:selected=move || task_value(state.dynamic_form, key, |task| task.specialist_id.clone()).is_empty()>
                         {move || t(locale.get(), "agents.task.temporary")}
                     </option>
-                    <For each=move || specialists.get() key=|specialist| specialist.id.clone()
+                    <For each=move || task_specialists(specialists) key=|specialist| specialist.id.clone()
                         children=move |specialist| {
                             let id = specialist.id.clone();
                             let selected_id = id.clone();
@@ -4873,4 +4862,13 @@ mod tests {
         assert_eq!(parse_budget_u32("42", "token budget").unwrap(), Some(42));
         assert!(parse_budget_u32("nope", "token budget").is_err());
     }
+}
+
+/// Archivist and Recap draft documents; they cannot run a workflow task.
+fn task_specialists(specialists: RwSignal<Vec<Specialist>>) -> Vec<Specialist> {
+    specialists
+        .get()
+        .into_iter()
+        .filter(|specialist| !["archivist", "recap"].contains(&specialist.id.as_str()))
+        .collect()
 }

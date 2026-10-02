@@ -125,6 +125,7 @@ final class NativeAgentPanelTests: XCTestCase {
     }
     @MainActor func testRenderAgentPanelAndResult() async throws {
         guard let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] else { throw XCTSkip("Opt-in rendering") }
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let model = NativePanelModel(client: try client(), projectID: "project-a", sessionID: "session-a")
         await model.refresh("agents"); await model.readAgentResult(workflow: "workflow-a", step: "workflow-a:review")
         let result = try XCTUnwrap(model.agentResult)

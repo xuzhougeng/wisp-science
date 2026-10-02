@@ -1,11 +1,14 @@
 //! OpenAI first-party Responses API (`/v1/responses`).
 
+use crate::codex_auth::{self, account_id_from_access_token};
 use crate::message::{Content, Message, Part, Role, ToolCall, ToolSchema};
 use crate::provider::{
-    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, Result, StreamSink,
+    openai_internal_tool_name, openai_wire_tool_name, LlmError, Provider, ProviderKind, Result,
+    StreamSink, Utf8Stream,
 };
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 
 pub struct OpenAiResponsesProvider {
@@ -19,8 +22,24 @@ impl OpenAiResponsesProvider {
         Self { cfg, client }
     }
 
+    fn is_codex(&self) -> bool {
+        matches!(self.cfg.kind, ProviderKind::OpenAiCodex)
+    }
+
+    /// Subscription tokens get the Codex-shaped streaming request: Sign in with
+    /// ChatGPT, like the Codex endpoint, rejects `max_output_tokens`.
+    fn is_subscription(&self) -> bool {
+        matches!(
+            self.cfg.kind,
+            ProviderKind::OpenAiCodex | ProviderKind::OpenAiChatGpt
+        )
+    }
+
     fn endpoint(&self) -> String {
         let base = self.cfg.base_url.trim_end_matches('/');
+        if self.is_codex() {
+            return codex_auth::codex_responses_url(base);
+        }
         if base.ends_with("/responses") {
             base.to_string()
         } else if base.ends_with("/v1") {
@@ -43,10 +62,35 @@ impl OpenAiResponsesProvider {
                 h.insert(reqwest::header::AUTHORIZATION, v);
             }
         }
+        if self.is_codex() {
+            if let Some(account) = account_id_from_access_token(&self.cfg.api_key) {
+                insert_header(&mut h, "chatgpt-account-id", &account);
+            }
+            insert_header(&mut h, "originator", codex_auth::ORIGINATOR);
+            insert_header(&mut h, "openai-beta", "responses=experimental");
+            h.insert(
+                reqwest::header::ACCEPT,
+                reqwest::header::HeaderValue::from_static("text/event-stream"),
+            );
+            if !self.cfg.session_id.is_empty() {
+                insert_header(&mut h, "session_id", &self.cfg.session_id);
+                insert_header(&mut h, "x-client-request-id", &self.cfg.session_id);
+            }
+        }
         h
     }
 
     fn build_body(&self, messages: &[Message], tools: &[ToolSchema]) -> Value {
+        if self.is_subscription() {
+            return codex_request_body(
+                &self.cfg.model,
+                self.cfg.reasoning_effort.as_deref(),
+                self.cfg.service_tier.as_deref(),
+                &self.cfg.session_id,
+                messages,
+                tools,
+            );
+        }
         // DeepSeek/OpenAI Responses reject unpaired function_call items with
         // "No tool output found for tool call …". Match chat-completions #74:
         // drop unanswered calls (and orphan outputs) before building `input`.
@@ -307,13 +351,22 @@ fn parse_usage(u: &Value) -> Usage {
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
     fn name(&self) -> &str {
-        "openai-responses"
+        match self.cfg.kind {
+            ProviderKind::OpenAiCodex => "openai-codex",
+            ProviderKind::OpenAiChatGpt => "openai-chatgpt",
+            _ => "openai-responses",
+        }
     }
     fn model(&self) -> &str {
         &self.cfg.model
     }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
+        if self.is_subscription() {
+            return self
+                .codex_round(messages, tools, &mut crate::provider::NullSink)
+                .await;
+        }
         let val = self.request(self.build_body(messages, tools)).await?;
         ensure_completed_response(&val)?;
         Ok(parse_completion(&val))
@@ -325,6 +378,9 @@ impl Provider for OpenAiResponsesProvider {
         tools: &[ToolSchema],
         sink: &mut dyn StreamSink,
     ) -> Result<Completion> {
+        if self.is_subscription() {
+            return self.codex_round(messages, tools, sink).await;
+        }
         let comp = self.complete(messages, tools).await?;
         if !comp.content.is_empty() {
             sink.on_text(&comp.content);
@@ -334,6 +390,342 @@ impl Provider for OpenAiResponsesProvider {
         }
         sink.on_usage(comp.usage.clone());
         Ok(comp)
+    }
+}
+
+impl OpenAiResponsesProvider {
+    async fn codex_round(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> Result<Completion> {
+        if self.is_codex() && account_id_from_access_token(&self.cfg.api_key).is_none() {
+            return Err(LlmError::Config(
+                "Codex subscription token has no ChatGPT account id. Sign in again.".into(),
+            ));
+        }
+        let body = self.build_body(messages, tools);
+        let endpoint = self.endpoint();
+        tracing::info!(
+            target: "wisp",
+            provider = self.name(),
+            model = %self.cfg.model,
+            endpoint_kind = if self.is_codex() { "codex_responses" } else { "responses" },
+            endpoint_host = %endpoint_host(&endpoint),
+            stream = true,
+            "llm_request_dispatch"
+        );
+        let response = self
+            .cfg
+            .request_headers(self.client.post(endpoint).headers(self.headers()))
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status().as_u16();
+        if status >= 400 {
+            let text = response.text().await.unwrap_or_default();
+            return Err(LlmError::Api {
+                status,
+                body: codex_auth::http_error("model request", status, &text),
+            });
+        }
+        let mut bytes = response.bytes_stream();
+        let mut utf8 = Utf8Stream::default();
+        let mut sse = SseBuffer::default();
+        let mut raw = String::new();
+        let mut acc = CodexStream::default();
+        let mut streamed_calls = false;
+        while let Some(chunk) = bytes.next().await {
+            if sink.is_cancelled() {
+                return Ok(acc.into_completion(true));
+            }
+            let chunk = chunk?;
+            let text = utf8.push(&chunk);
+            raw.push_str(&text);
+            for data in sse.push(&text) {
+                let event: Value = serde_json::from_str(&data)?;
+                if apply_codex_event(&mut acc, &event, sink) {
+                    streamed_calls = true;
+                }
+                if let Some(message) = acc.failed.clone() {
+                    return Err(LlmError::Api {
+                        status: 200,
+                        body: message,
+                    });
+                }
+            }
+        }
+        for data in sse.finish() {
+            let event: Value = serde_json::from_str(&data)?;
+            if apply_codex_event(&mut acc, &event, sink) {
+                streamed_calls = true;
+            }
+        }
+        if sink.is_cancelled() {
+            return Ok(acc.into_completion(true));
+        }
+        if acc.final_response.is_none() {
+            if let Ok(value) = serde_json::from_str::<Value>(raw.trim()) {
+                if value.get("output").is_some() || value.get("output_text").is_some() {
+                    acc.final_response = Some(value);
+                }
+            }
+        }
+        let Some(final_response) = acc.final_response.clone() else {
+            return Err(LlmError::Incomplete);
+        };
+        ensure_completed_response(&final_response)?;
+        let mut completion = parse_completion(&final_response);
+        if completion.content.is_empty() {
+            completion.content = acc.text;
+        }
+        if completion.reasoning.is_none() && !acc.reasoning.is_empty() {
+            completion.reasoning = Some(acc.reasoning);
+        }
+        // The subscription endpoint always sends `"output": []` in
+        // `response.completed`, so tool-only turns exist only in the stream.
+        if completion.tool_calls.is_empty() {
+            completion.tool_calls = acc.calls;
+        }
+        sink.on_usage(completion.usage.clone());
+        if !streamed_calls {
+            for (index, call) in completion.tool_calls.iter().enumerate() {
+                sink.on_tool_call(index, &call.function.name, &call.function.arguments);
+            }
+        }
+        Ok(completion)
+    }
+}
+
+fn insert_header(headers: &mut reqwest::header::HeaderMap, name: &'static str, value: &str) {
+    if let Ok(value) = reqwest::header::HeaderValue::from_str(value) {
+        headers.insert(reqwest::header::HeaderName::from_static(name), value);
+    }
+}
+
+fn codex_request_body(
+    model: &str,
+    reasoning_effort: Option<&str>,
+    service_tier: Option<&str>,
+    session_id: &str,
+    messages: &[Message],
+    tools: &[ToolSchema],
+) -> Value {
+    let mut instructions = String::new();
+    let mut input = Vec::new();
+    for message in sanitize_messages(messages) {
+        if message.role == Role::System {
+            let text = message.content.as_text();
+            if !text.is_empty() {
+                if !instructions.is_empty() {
+                    instructions.push('\n');
+                }
+                instructions.push_str(&text);
+            }
+        } else {
+            input.extend(message_to_input(&message));
+        }
+    }
+    if instructions.is_empty() {
+        instructions = "You are a helpful assistant.".into();
+    }
+    // The ChatGPT subscription endpoint rejects max_output_tokens even though
+    // the public, API-key Responses endpoint accepts it. Its output limit is
+    // service-managed; keep the configured limit on ordinary Responses only.
+    let mut body = json!({
+        "model": model,
+        "store": false,
+        "stream": true,
+        "instructions": instructions,
+        "input": input,
+    });
+    if !session_id.is_empty() {
+        body["prompt_cache_key"] = json!(session_id);
+    }
+    let tools_json: Vec<Value> = tools.iter().map(tool_to_responses).collect();
+    if !tools_json.is_empty() {
+        body["tools"] = json!(tools_json);
+        body["tool_choice"] = json!("auto");
+        body["parallel_tool_calls"] = json!(true);
+    }
+    if let Some(effort) = reasoning_effort {
+        body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
+    }
+    if let Some(tier) = service_tier {
+        body["service_tier"] = json!(tier);
+    }
+    body
+}
+
+#[derive(Default)]
+struct SseBuffer {
+    pending: String,
+}
+
+impl SseBuffer {
+    fn push(&mut self, chunk: &str) -> Vec<String> {
+        self.pending.push_str(chunk);
+        let mut events = Vec::new();
+        while let Some(index) = self.pending.find("\n\n") {
+            let raw = self.pending[..index].to_string();
+            self.pending.drain(..index + 2);
+            if let Some(data) = sse_data(&raw) {
+                events.push(data);
+            }
+        }
+        events
+    }
+
+    fn finish(&mut self) -> Vec<String> {
+        let raw = std::mem::take(&mut self.pending);
+        sse_data(&raw).into_iter().collect()
+    }
+}
+
+fn sse_data(raw: &str) -> Option<String> {
+    let data = raw
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_end_matches('\r');
+            line.strip_prefix("data:")
+                .map(|rest| rest.trim_start().to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if data.is_empty() || data == "[DONE]" {
+        None
+    } else {
+        Some(data)
+    }
+}
+
+#[derive(Default)]
+struct CodexStream {
+    text: String,
+    reasoning: String,
+    calls: Vec<ToolCall>,
+    /// Responses item ids, parallel to `calls`. Argument deltas address these,
+    /// while the agent loop needs the separate `call_id`.
+    call_item_ids: Vec<String>,
+    final_response: Option<Value>,
+    failed: Option<String>,
+}
+
+impl CodexStream {
+    fn into_completion(self, cancelled: bool) -> Completion {
+        Completion {
+            content: self.text,
+            reasoning: if self.reasoning.is_empty() {
+                None
+            } else {
+                Some(self.reasoning)
+            },
+            tool_calls: self.calls,
+            finish_reason: cancelled.then(|| "cancelled".into()),
+            usage: Usage::default(),
+        }
+    }
+}
+
+/// Returns whether a function-call delta was forwarded to the sink.
+fn apply_codex_event(acc: &mut CodexStream, event: &Value, sink: &mut dyn StreamSink) -> bool {
+    let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
+    match kind {
+        "response.output_text.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                acc.text.push_str(delta);
+                sink.on_text(delta);
+            }
+            false
+        }
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                acc.reasoning.push_str(delta);
+                sink.on_reasoning(delta);
+            }
+            false
+        }
+        "response.output_item.added" => {
+            let Some(item) = event.get("item") else {
+                return false;
+            };
+            if item.get("type").and_then(Value::as_str) != Some("function_call") {
+                return false;
+            }
+            let call = function_call_item(item);
+            let index = acc.calls.len();
+            sink.on_tool_call(index, &call.function.name, &call.function.arguments);
+            acc.call_item_ids.push(
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(call.id.as_str())
+                    .to_string(),
+            );
+            acc.calls.push(call);
+            true
+        }
+        "response.function_call_arguments.delta" => {
+            let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+            if delta.is_empty() || acc.calls.is_empty() {
+                return false;
+            }
+            let item_id = event.get("item_id").and_then(Value::as_str).unwrap_or("");
+            let index = acc
+                .call_item_ids
+                .iter()
+                .position(|id| id == item_id)
+                .or_else(|| acc.calls.iter().position(|call| call.id == item_id))
+                .unwrap_or(acc.calls.len() - 1);
+            acc.calls[index].function.arguments.push_str(delta);
+            let name = acc.calls[index].function.name.clone();
+            let arguments = acc.calls[index].function.arguments.clone();
+            sink.on_tool_call(index, &name, &arguments);
+            true
+        }
+        "response.completed" | "response.done" | "response.incomplete" | "response.failed" => {
+            if let Some(response) = event.get("response") {
+                acc.final_response = Some(response.clone());
+            }
+            false
+        }
+        "error" => {
+            let message = event
+                .pointer("/error/message")
+                .or_else(|| event.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("Codex response failed");
+            acc.failed = Some(message.to_string());
+            false
+        }
+        _ => false,
+    }
+}
+
+fn function_call_item(item: &Value) -> ToolCall {
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .map(openai_internal_tool_name)
+        .unwrap_or_default()
+        .to_string();
+    let arguments = item
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    ToolCall {
+        id,
+        kind: "function".into(),
+        function: FunctionCall { name, arguments },
     }
 }
 
@@ -695,5 +1087,273 @@ mod tests {
         let body = provider.build_body(&[Message::user("hi")], &[]);
         assert!(body.get("service_tier").is_none());
         assert_eq!(body["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn chatgpt_sign_in_uses_public_responses_with_the_subscription_body() {
+        let mut cfg = crate::ProviderConfig::openai_chatgpt(
+            "https://api.openai.com/v1",
+            "sign-in-access-token",
+            "gpt-5.5",
+        );
+        cfg.max_tokens = 4096;
+        let provider = OpenAiResponsesProvider::new(cfg);
+        assert_eq!(provider.name(), "openai-chatgpt");
+        assert_eq!(provider.endpoint(), "https://api.openai.com/v1/responses");
+        let headers = provider.headers();
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            "Bearer sign-in-access-token"
+        );
+        assert!(headers.get("chatgpt-account-id").is_none());
+        assert!(headers.get("originator").is_none());
+        let body = provider.build_body(&[Message::system("Be precise."), Message::user("Hi")], &[]);
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["instructions"], "Be precise.");
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn codex_body_is_stateless_and_moves_the_system_prompt() {
+        let body = codex_request_body(
+            "gpt-5.5",
+            Some("low"),
+            None,
+            "session-1",
+            &[
+                Message::system("Be precise."),
+                Message::user("hi"),
+                assistant_with_call("", "call_1", "python", "{}"),
+                Message::tool("call_1", "python", "ok"),
+            ],
+            &[ToolSchema::new(
+                "python",
+                "Run Python",
+                json!({"type": "object"}),
+            )],
+        );
+        assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
+        assert!(body.get("max_output_tokens").is_none());
+        assert_eq!(body["instructions"], "Be precise.");
+        assert_eq!(body["prompt_cache_key"], "session-1");
+        assert_eq!(body["tools"][0]["name"], "wisp_python");
+        assert_eq!(body["tool_choice"], "auto");
+        let input = body["input"].as_array().unwrap();
+        assert!(input
+            .iter()
+            .all(|item| item.get("role").and_then(|role| role.as_str()) != Some("system")));
+        assert!(input.iter().any(|item| item["type"] == "function_call"));
+        assert!(input
+            .iter()
+            .any(|item| item["type"] == "function_call_output"));
+    }
+
+    #[test]
+    fn output_limit_is_sent_only_to_api_key_responses() {
+        for max_tokens in [0, 1024, 131_072] {
+            let mut cfg = crate::ProviderConfig::openai_codex(
+                "https://chatgpt.com/backend-api",
+                "unused",
+                "gpt-6-luna",
+            );
+            cfg.max_tokens = max_tokens;
+            let codex =
+                OpenAiResponsesProvider::new(cfg.clone()).build_body(&[Message::user("hi")], &[]);
+            assert!(codex.get("max_output_tokens").is_none());
+            cfg.kind = ProviderKind::OpenAiResponses;
+            let api = OpenAiResponsesProvider::new(cfg).build_body(&[Message::user("hi")], &[]);
+            assert_eq!(api["max_output_tokens"], max_tokens);
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_complete_and_stream_send_subscription_compatible_requests() {
+        use base64::Engine;
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let (head, body) = loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0 && request.len() < 32_768);
+                    request.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let head = String::from_utf8(request[..end].to_vec()).unwrap();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if request.len() >= end + 4 + length {
+                            let body: Value =
+                                serde_json::from_slice(&request[end + 4..end + 4 + length])
+                                    .unwrap();
+                            break (head, body);
+                        }
+                    }
+                };
+                assert!(head.starts_with("POST /codex/responses HTTP/1.1"));
+                assert!(head
+                    .to_ascii_lowercase()
+                    .contains("chatgpt-account-id: test-account"));
+                assert_eq!(body["model"], "gpt-6-luna");
+                assert_eq!(body["store"], false);
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["instructions"], "Reply only OK.");
+                assert!(body.get("max_output_tokens").is_none());
+                let event = json!({"type": "response.completed", "response": {
+                    "status": "completed", "output_text": "OK", "output": [],
+                    "usage": {"input_tokens": 2, "output_tokens": 1}
+                }});
+                let body = format!("data: {event}\n\n");
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"test-account"}}"#);
+        let mut cfg = crate::ProviderConfig::openai_codex(
+            &endpoint,
+            format!("e30.{claims}.synthetic"),
+            "gpt-6-luna",
+        );
+        cfg.proxy = Some("none".into());
+        cfg.max_tokens = 1024;
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let messages = [
+            Message::system("Reply only OK."),
+            Message::user("Reply OK."),
+        ];
+        tokio::time::timeout(Duration::from_secs(10), async {
+            assert_eq!(
+                provider.complete(&messages, &[]).await.unwrap().content,
+                "OK"
+            );
+            let result = provider
+                .stream(&messages, &[], &mut crate::provider::NullSink)
+                .await
+                .unwrap();
+            assert_eq!(result.content, "OK");
+            assert_eq!(result.usage.output_tokens, 1);
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    struct Collect {
+        text: String,
+        calls: Vec<(usize, String, String)>,
+    }
+
+    impl StreamSink for Collect {
+        fn on_text(&mut self, delta: &str) {
+            self.text.push_str(delta);
+        }
+        fn on_reasoning(&mut self, _: &str) {}
+        fn on_tool_call(&mut self, index: usize, name: &str, arguments_so_far: &str) {
+            self.calls
+                .push((index, name.to_string(), arguments_so_far.to_string()));
+        }
+        fn on_usage(&mut self, _: Usage) {}
+    }
+
+    #[test]
+    fn codex_sse_forwards_text_and_assembles_the_completed_response() {
+        let mut buffer = SseBuffer::default();
+        let mut events = buffer.push(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n\
+             data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"wisp_python\",\"arguments\":\"\"}}\n\n\
+             data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"c1\",\"delta\":\"{}\"}\n\n",
+        );
+        events.extend(buffer.finish());
+        let mut acc = CodexStream::default();
+        let mut sink = Collect {
+            text: String::new(),
+            calls: Vec::new(),
+        };
+        for data in events {
+            let event: Value = serde_json::from_str(&data).unwrap();
+            apply_codex_event(&mut acc, &event, &mut sink);
+        }
+        apply_codex_event(
+            &mut acc,
+            &json!({
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "output_text": "Hi",
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "wisp_python",
+                        "arguments": "{}"
+                    }],
+                    "usage": {"input_tokens": 2, "output_tokens": 3}
+                }
+            }),
+            &mut sink,
+        );
+        assert_eq!(sink.text, "Hi");
+        assert_eq!(sink.calls.len(), 2);
+        let completion = parse_completion(acc.final_response.as_ref().unwrap());
+        assert_eq!(completion.content, "Hi");
+        assert_eq!(completion.tool_calls[0].function.name, "python");
+        assert_eq!(completion.usage.output_tokens, 3);
+    }
+
+    /// Real captured subscription-endpoint stream: one `shell` call, no text,
+    /// and `response.completed` carrying `"output": []`.
+    #[tokio::test]
+    async fn codex_round_keeps_streamed_tool_calls_when_completed_output_is_empty() {
+        use base64::Engine;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let sse = include_str!("../tests/fixtures/codex_tool_only.sse");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 65_536];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sse}", sse.len());
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"test-account"}}"#);
+        let mut cfg = crate::ProviderConfig::openai_codex(
+            &endpoint,
+            format!("e30.{claims}.synthetic"),
+            "gpt-6-luna",
+        );
+        cfg.proxy = Some("none".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let completion = provider
+            .stream(
+                &[Message::user("list the files")],
+                &[],
+                &mut crate::provider::NullSink,
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert!(completion.content.is_empty());
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(completion.tool_calls[0].function.name, "shell");
+        assert!(completion.tool_calls[0]
+            .function
+            .arguments
+            .contains("command"));
     }
 }

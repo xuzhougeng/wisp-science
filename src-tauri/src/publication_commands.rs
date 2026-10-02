@@ -79,6 +79,16 @@ pub(crate) struct CreatePublicationInput {
     revision_label: String,
 }
 
+impl CreatePublicationInput {
+    pub(crate) fn new(title: String, description: String, revision_label: String) -> Self {
+        Self {
+            title,
+            description,
+            revision_label,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SavePublicationItemInput {
@@ -374,7 +384,7 @@ async fn writable_publication_mainline_project(
     Ok((project, activity))
 }
 
-async fn publication_workspace(
+pub(crate) async fn publication_workspace(
     store: &Store,
     project_id: &str,
     publication_id: Option<&str>,
@@ -502,7 +512,7 @@ async fn publication_workspace(
     })
 }
 
-async fn create_publication(
+pub(crate) async fn create_publication(
     store: &Store,
     project_id: &str,
     input: &CreatePublicationInput,

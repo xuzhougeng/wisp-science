@@ -1,7 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { tauriMock } from "./mock-tauri";
+import { openSidebarEntry } from "./sidebar-nav";
 
 const image = readFileSync(resolve(__dirname, "../fixtures/research-comparison.png")).toString("base64");
 test.use({ timezoneId: "Asia/Shanghai" });
@@ -13,7 +14,7 @@ test.beforeEach(async ({ page }) => {
 async function open(page: Page, query = "") {
   await page.goto(`/${query}`);
   await page.locator(".proj-card-main").first().click();
-  await page.locator(".sidebar").getByRole("button", { name: /Research journey|研究历程/, exact: true }).click();
+  await openSidebarEntry(page, /Research journey|研究历程/);
   await expect(page.getByTestId("research-journey")).toBeVisible();
 }
 
@@ -42,7 +43,7 @@ for (const route of ["sidebar", "command palette"]) {
     await page.getByRole("button", { name: "Back to projects", exact: true }).click();
     await page.locator(".proj-card-main").first().click();
     await expect(journey).toHaveCount(0);
-    await page.locator(".sidebar").getByRole("button", { name: "Research journey", exact: true }).click();
+    await openSidebarEntry(page, "Research journey");
     await expect(journey).toBeVisible();
     await expect(journey.locator(".journey-day")).toHaveCount(3);
     await page.keyboard.press("Escape");
@@ -90,7 +91,7 @@ for (const platform of ["Windows NT 10.0; Win64; x64", "Macintosh; Intel Mac OS 
 test("Chinese research journey naming is consistent across navigation and page controls", async ({ page }) => {
   await open(page, "?mockLocale=zh&mockJourney=design");
   const journey = page.getByTestId("research-journey");
-  await expect(page.locator(".sidebar").getByRole("button", {name:"研究历程",exact:true})).toBeVisible();
+  await expect(page.locator('.sidebar .nav .side-btn[title="研究历程"]')).toHaveCount(1);
   await expect(journey).toHaveAttribute("aria-label", "研究历程");
   await expect(journey.getByRole("heading", {name:"研究历程",exact:true})).toBeVisible();
   await expect(journey.locator(".journey-breadcrumb")).toContainText("研究历程");
@@ -167,6 +168,10 @@ test("daily history groups sessions, opens exact versions and preserves Escape l
   const today = journey.locator('[data-day="2026-09-09"]');
   await expect(today).toContainText("2 experiments · 3 outputs · 4 notes · 1 conversations");
   await expect(today.locator(".journey-session-links button")).toHaveCount(1);
+  // A run that started and finished today is one row, carrying its outputs.
+  const compare = today.locator(".journey-activity").filter({ hasText: "Completed normalization comparison" });
+  await expect(compare).toHaveCount(1);
+  await expect(compare).toContainText("1 outputs · Completed");
   await today.getByRole("button", { name: "normalized_counts.csv", exact: true }).click();
   const source = journey.getByTestId("journey-source");
   await expect(source).toContainText("Version 2");
@@ -227,7 +232,7 @@ test("manual backdated notes persist across reopening and show recording dates",
   await expect(journey.getByTestId("journey-source")).toContainText("Added on 2026-09-09");
   await expect(journey.getByTestId("journey-source")).not.toContainText("12:00");
   await page.keyboard.press("Escape");
-  await page.locator(".sidebar").getByRole("button", {name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await page.getByRole("button", {name:"Previous month"}).click();
   await expect(page.getByTestId("journey-feed")).toContainText("Baseline sensitivity observed");
 });
@@ -237,7 +242,7 @@ test("read and save errors stay recoverable without losing entry text", async ({
   await expect(page.getByRole("alert")).toContainText("Research store unavailable");
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await page.locator(".sidebar").getByRole("button",{name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await page.getByRole("button",{name:"Add entry",exact:true}).click();
   await page.getByLabel("Title",{exact:true}).fill("Do not lose this note");
   await page.evaluate(()=>{(window as any).__journeySaveError=true;});
@@ -259,32 +264,23 @@ test("research journey design matches the selected desktop layout and fits narro
   await expect(journey.getByTestId("journey-source")).toContainText("归一化方法比较");
   await page.evaluate(()=>document.fonts.ready);
   await expect(journey.locator(".journey-headline").first()).toHaveCSS("font-size","18px");
-  mkdirSync(resolve(__dirname,"../../docs/design-qa/research-journey"),{recursive:true});
-  await page.screenshot({path:resolve(__dirname,"../../docs/design-qa/research-journey/desktop.png")});
-  const comparison=await page.context().newPage();
-  await comparison.setViewportSize({width:2976,height:1090});
-  const before=readFileSync(resolve(__dirname,"../../docs/design-qa/research-journey/reference.png")).toString("base64");
-  const after=readFileSync(resolve(__dirname,"../../docs/design-qa/research-journey/desktop.png")).toString("base64");
-  await comparison.setContent(`<body style="margin:0;background:white"><div style="display:grid;grid-template-columns:1fr 1fr;font:16px sans-serif"><section><div>Selected reference</div><img style="width:100%;display:block" src="data:image/png;base64,${before}"></section><section><div>Implemented research journey</div><img style="width:100%;display:block" src="data:image/png;base64,${after}"></section></div></body>`);
-  await comparison.locator("img").evaluateAll(imgs=>Promise.all(imgs.map(img=>(img as HTMLImageElement).decode())));
-  await comparison.screenshot({path:resolve(__dirname,"../../docs/design-qa/research-journey/comparison.png")});
-  await comparison.close();
+  await page.screenshot({path:test.info().outputPath("desktop.png")});
   await page.setViewportSize({width:800,height:900});
   let bounds=await journey.boundingBox();expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(800);
   await expect.poll(async()=>Math.round((await page.locator(".sidebar").boundingBox())!.width)).toBe(56);
   expect(bounds!.x).toBe(56);
   await expect(page.locator(".sidebar .side-btn.active")).toHaveCSS("color","rgba(0, 0, 0, 0)");
   expect(await journey.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
-  await page.screenshot({path:resolve(__dirname,"../../docs/design-qa/research-journey/narrow.png")});
+  await page.screenshot({path:test.info().outputPath("narrow.png")});
   await page.setViewportSize({width:390,height:844});
   bounds=await journey.boundingBox();expect(bounds!.x).toBe(0);expect(bounds!.width).toBeLessThanOrEqual(390);
   expect(await journey.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
   await expect(journey.locator(".journey-day").first()).toBeInViewport();
-  await page.screenshot({path:resolve(__dirname,"../../docs/design-qa/research-journey/mobile.png")});
+  await page.screenshot({path:test.info().outputPath("mobile.png")});
   await page.setViewportSize({width:1488,height:1058});
   await expect.poll(async()=>Math.abs((await page.locator(".sidebar").boundingBox())!.width-(await journey.boundingBox())!.x)).toBeLessThan(1);
   await page.evaluate(()=>document.documentElement.setAttribute("data-theme","dark"));
-  await page.screenshot({path:resolve(__dirname,"../../docs/design-qa/research-journey/dark.png")});
+  await page.screenshot({path:test.info().outputPath("dark.png")});
   expect(errors).toEqual([]);
 });
 
@@ -322,7 +318,7 @@ test("closing during a history request does not resurrect the page", async ({ pa
   await page.getByRole("button",{name:"Previous month"}).click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("research-journey")).toHaveCount(0);
-  await page.getByRole("button",{name:"Research journey",exact:true}).click();
+  await openSidebarEntry(page, "Research journey");
   await expect(page.getByTestId("journey-calendar")).toContainText("2026 / 09");
   await expect(page.locator(".journey-day")).toHaveCount(3);
   expect(errors).toEqual([]);
@@ -387,4 +383,65 @@ test("relationship list scrolls under the wheel over a middle column", async ({ 
   const canvasBefore = await canvas.evaluate((el) => el.scrollTop);
   await page.mouse.wheel(0, 600);
   await expect.poll(() => canvas.evaluate((el) => el.scrollTop)).toBeGreaterThan(canvasBefore + 40);
+});
+
+test("daily recap drafts with citations, confirms, edits inline and can be dismissed", async ({ page }) => {
+  await open(page);
+  const journey = page.getByTestId("research-journey");
+  const today = journey.locator('[data-day="2026-09-09"]');
+  await page.evaluate(() => { (window as any).__recapError = "Recap model is not configured"; });
+  await today.getByTestId("journey-recap-generate").click();
+  await expect(today.getByRole("alert")).toContainText("Recap model is not configured");
+  await page.evaluate(() => { delete (window as any).__recapError; });
+  await today.getByTestId("journey-recap-generate").click();
+  const recap = today.getByTestId("journey-recap");
+  await expect(recap).toHaveAttribute("data-status", "draft");
+  await expect(recap).toContainText("AI draft · review before keeping");
+  await expect(today.getByTestId("journey-recap-headline")).toHaveText("Normalization compared; method B chosen");
+  await expect(today.locator(".journey-day-summary")).toHaveCount(0);
+  await expect(recap.locator('[data-section="done"] li')).toHaveCount(1);
+  await expect(recap.locator('[data-section="issues"]')).toHaveCount(0);
+  await expect(recap).toContainText("Drafted by mock-recap-model. Change the model in Settings → Specialists → Recap.");
+  // Citations open the exact output version and the cited record.
+  await recap.getByRole("button", { name: "normalization_comparison.png", exact: true }).click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(journey).toBeVisible();
+  await recap.locator('[data-section="findings"] .journey-recap-ref').click();
+  await expect(journey.getByTestId("journey-source")).toContainText("Method B is more stable");
+  await recap.getByTestId("journey-recap-confirm").click();
+  await expect(recap).toHaveAttribute("data-status", "confirmed");
+  await expect(recap).toContainText("AI-drafted · confirmed");
+  // Inline editing is the topmost Escape layer inside the page.
+  await recap.getByRole("button", { name: "Edit recap", exact: true }).click();
+  const editor = today.getByTestId("journey-recap-editor");
+  await expect(editor).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await expect(journey).toBeVisible();
+  await today.getByTestId("journey-recap").getByRole("button", { name: "Edit recap", exact: true }).click();
+  await editor.getByRole("textbox", { name: "Headline" }).fill("Method B selected");
+  await editor.getByRole("textbox", { name: "Next" }).fill("Validate on the full dataset\nShare with the lab");
+  await editor.getByRole("button", { name: "Save and confirm", exact: true }).click();
+  await expect(today.getByTestId("journey-recap-headline")).toHaveText("Method B selected");
+  const next = today.getByTestId("journey-recap").locator('[data-section="next"] li');
+  await expect(next).toHaveCount(2);
+  await expect(next.nth(0).locator(".journey-recap-ref")).toHaveCount(1);
+  await expect(next.nth(1).locator(".journey-recap-ref")).toHaveCount(0);
+  await today.getByRole("button", { name: "Dismiss recap", exact: true }).click();
+  await expect(today.getByTestId("journey-recap")).toHaveCount(0);
+  await expect(today.getByTestId("journey-recap-generate")).toBeVisible();
+  await expect(today.locator(".journey-day-summary")).toBeVisible();
+});
+
+test("Chinese recap labels follow the locale", async ({ page }) => {
+  await open(page, "?mockLocale=zh&mockJourney=design");
+  const today = page.getByTestId("research-journey").locator('[data-day="2026-09-09"]');
+  await today.getByTestId("journey-recap-generate").click();
+  const recap = today.getByTestId("journey-recap");
+  await expect(recap).toContainText("每日回顾");
+  await expect(recap).toContainText("AI 草稿 · 待确认");
+  await expect(recap.locator('[data-section="done"] h4')).toHaveText("今日完成");
+  await expect(recap).toContainText("可在 设置 → 专家 → Recap 中更换模型");
 });

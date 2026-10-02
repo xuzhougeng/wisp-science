@@ -32,6 +32,13 @@ pub struct Response {
 }
 
 pub const COMMANDS: &[&str] = &[
+    "codex_subscription_status",
+    "start_codex_login",
+    "codex_login_status",
+    "submit_codex_login_redirect",
+    "cancel_codex_login",
+    "save_codex_login",
+    "enable_project_folder_sync",
     "authorize_http_connection",
     "cancel_oauth_authorization",
     "get_pet",
@@ -235,5 +242,6 @@ mod tests {
         assert!(!allowed.contains("send_message"));
         assert!(!allowed.contains("open_terminal"));
         assert!(allowed.contains("import_wsl_contexts"));
+        assert!(allowed.contains("authorize_http_connection"));
     }
 }

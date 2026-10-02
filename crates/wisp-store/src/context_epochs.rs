@@ -99,6 +99,9 @@ const SELECT_EPOCH: &str = "SELECT frame_id,epoch,parent_epoch,strategy,kind,bef
 
 impl Store {
     pub async fn frame_head_epoch(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_head_epoch(frame_id)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT COALESCE((SELECT head_epoch FROM frames WHERE id=?),0)")
                 .bind(frame_id)
@@ -113,6 +116,9 @@ impl Store {
         frame_id: &str,
         epoch: i64,
     ) -> Result<Vec<(i64, Message)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.load_messages_in_epoch(frame_id, epoch)).await;
+        }
         let rows = sqlx::query(
             "SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
              FROM messages m WHERE m.frame_id=? AND m.epoch=? ORDER BY seq ASC",
@@ -139,6 +145,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<(i64, i64, Message)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.load_messages_all_epochs(frame_id)).await;
+        }
         let rows = sqlx::query(
             "SELECT epoch,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
              FROM messages m WHERE m.frame_id=? ORDER BY seq ASC",
@@ -164,6 +173,9 @@ impl Store {
         frame_id: &str,
         input: OpenContextEpoch<'_>,
     ) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.open_context_epoch(frame_id, input)).await;
+        }
         if input.messages.is_empty() {
             anyhow::bail!("a context epoch needs at least one message");
         }
@@ -249,6 +261,9 @@ impl Store {
 
     /// Recorded epochs (epoch 0 is implicit), oldest first.
     pub async fn context_epochs(&self, frame_id: &str) -> Result<Vec<ContextEpochRecord>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.context_epochs(frame_id)).await;
+        }
         let rows = sqlx::query(&format!("{SELECT_EPOCH} WHERE frame_id=? ORDER BY epoch"))
             .bind(frame_id)
             .fetch_all(&self.pool)
@@ -261,6 +276,9 @@ impl Store {
         frame_id: &str,
         epoch: i64,
     ) -> Result<Option<ContextEpochRecord>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.context_epoch(frame_id, epoch)).await;
+        }
         let row = sqlx::query(&format!("{SELECT_EPOCH} WHERE frame_id=? AND epoch=?"))
             .bind(frame_id)
             .bind(epoch)
@@ -276,6 +294,9 @@ impl Store {
         epoch: i64,
         ui_event_seq: i64,
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.set_context_epoch_ui_event(frame_id, epoch, ui_event_seq)).await;
+        }
         let mut tx = self.begin_write().await?;
         let updated =
             sqlx::query("UPDATE context_epochs SET ui_event_seq=? WHERE frame_id=? AND epoch=?")
@@ -305,6 +326,9 @@ impl Store {
     /// event, if any. `auto_continue` reuses the Compaction event for
     /// truncated-output continuation and is not a context rewrite.
     pub async fn latest_compaction_ui_event_seq(&self, frame_id: &str) -> Result<Option<i64>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.latest_compaction_ui_event_seq(frame_id)).await;
+        }
         Ok(sqlx::query_scalar(
             "SELECT MAX(seq) FROM session_ui_events WHERE frame_id=? \
              AND json_extract(event_json,'$.kind')='Compaction' \
@@ -317,6 +341,9 @@ impl Store {
 
     /// The epoch that owns `(frame_id, seq)`, or `None` when no such row.
     pub async fn resolve_message_epoch(&self, frame_id: &str, seq: i64) -> Result<Option<i64>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.resolve_message_epoch(frame_id, seq)).await;
+        }
         Ok(
             sqlx::query_scalar("SELECT epoch FROM messages WHERE frame_id=? AND seq=?")
                 .bind(frame_id)
@@ -328,6 +355,9 @@ impl Store {
 
     /// Read a checkpoint or copied message without loading an entire frozen epoch.
     pub async fn load_message_at_seq(&self, frame_id: &str, seq: i64) -> Result<Option<Message>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.load_message_at_seq(frame_id, seq)).await;
+        }
         let row = sqlx::query(
             "SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
             FROM messages WHERE frame_id=? AND seq=?",
@@ -351,6 +381,9 @@ impl Store {
         frame_id: &str,
         user_index: usize,
     ) -> Result<Option<i64>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_turn_anchor(frame_id, user_index)).await;
+        }
         let rows = sqlx::query(
             "SELECT json_extract(event_json,'$.kind') AS kind, \
              json_extract(event_json,'$.text') AS text, \
@@ -396,6 +429,9 @@ impl Store {
         frame_id: &str,
         user_index: usize,
     ) -> Result<Option<(i64, i64)>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_turn_end(frame_id, user_index)).await;
+        }
         let rows = sqlx::query(
             "SELECT seq AS ui_seq, \
              json_extract(event_json,'$.kind') AS kind, \
@@ -456,6 +492,9 @@ impl Store {
         frame_id: &str,
         user_index: usize,
     ) -> Result<Option<i64>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_turn_end_seq(frame_id, user_index)).await;
+        }
         Ok(self
             .visual_turn_end(frame_id, user_index)
             .await?
@@ -464,6 +503,9 @@ impl Store {
 
     /// Visual user turns in the live transcript (checkpoint cards omitted).
     pub async fn visual_user_count(&self, frame_id: &str) -> Result<usize> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_user_count(frame_id)).await;
+        }
         let rows: Vec<Option<String>> = sqlx::query_scalar(
             "SELECT json_extract(event_json,'$.text') FROM session_ui_events \
              WHERE frame_id=? AND json_extract(event_json,'$.kind')='User' ORDER BY seq",
@@ -485,6 +527,9 @@ impl Store {
         frame_id: &str,
         seq: i64,
     ) -> Result<Option<usize>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_user_index_for_seq(frame_id, seq)).await;
+        }
         let rows = sqlx::query(
             "SELECT json_extract(event_json,'$.kind') AS kind, \
              json_extract(event_json,'$.text') AS text, \
@@ -538,6 +583,9 @@ impl Store {
         frame_id: &str,
         kept_seq: i64,
     ) -> Result<Option<usize>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_user_index_for_kept_seq(frame_id, kept_seq)).await;
+        }
         let Some(kept_seq) = self
             .original_context_message_seq(frame_id, kept_seq)
             .await?
@@ -654,6 +702,9 @@ impl Store {
     /// has no rows past `initial_head_seq` (the user has not continued).
     /// Returns the undone epoch number.
     pub async fn undo_context_epoch(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.undo_context_epoch(frame_id)).await;
+        }
         let mut tx = self.begin_write().await?;
         let head: Option<i64> = sqlx::query_scalar("SELECT head_epoch FROM frames WHERE id=?")
             .bind(frame_id)
@@ -701,6 +752,9 @@ impl Store {
 
     /// Epochs named by persisted `CompactionUndone` UI events.
     pub async fn undone_context_epochs(&self, frame_id: &str) -> Result<Vec<i64>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.undone_context_epochs(frame_id)).await;
+        }
         let rows: Vec<Option<i64>> = sqlx::query_scalar(
             "SELECT json_extract(event_json,'$.epoch') FROM session_ui_events \
              WHERE frame_id=? AND json_extract(event_json,'$.kind')='CompactionUndone' \
@@ -717,6 +771,9 @@ impl Store {
     /// records) disappear. The visual transcript is cut at the last
     /// `MessageBoundary` whose message seq is `<= keep_seq`.
     pub async fn rewind_to_seq(&self, frame_id: &str, epoch: i64, keep_seq: i64) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.rewind_to_seq(frame_id, epoch, keep_seq)).await;
+        }
         let mut tx = self.begin_write().await?;
         let current: Option<i64> = sqlx::query_scalar("SELECT head_epoch FROM frames WHERE id=?")
             .bind(frame_id)

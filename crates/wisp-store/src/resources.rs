@@ -9,6 +9,10 @@ impl Store {
         message_seq: i64,
         links: &[MessageResourceLink],
     ) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.replace_message_resource_links(frame_id, message_seq, links))
+                .await;
+        }
         let mut tx = self.begin_write().await?;
         sqlx::query("DELETE FROM message_resource_links WHERE frame_id=? AND message_seq=?")
             .bind(frame_id)
@@ -51,6 +55,10 @@ impl Store {
         start_seq: i64,
         before_seq: Option<i64>,
     ) -> Result<Vec<MessageResourceLink>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.list_message_resource_links(frame_id, start_seq, before_seq))
+                .await;
+        }
         let rows = sqlx::query(
             "SELECT id,frame_id,message_seq,ordinal,original_reference,artifact_id,\
              artifact_version_id,display_name,resource_kind,mime_type,status,error,\
@@ -91,6 +99,9 @@ impl Store {
         &self,
         artifact_id: &str,
     ) -> Result<Option<ArtifactVersion>> {
+        if let Some(store) = self.route_entity("artifacts", "id", artifact_id).await? {
+            return Box::pin(store.latest_artifact_version(artifact_id)).await;
+        }
         let row = sqlx::query(
             "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\
              parent_version_id,producing_run_id,env_snapshot_hash,materialization,\
@@ -109,6 +120,15 @@ impl Store {
         size_bytes: i64,
         checksum: &str,
     ) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("artifact_versions", "id", version_id)
+            .await?
+        {
+            return Box::pin(
+                store.set_artifact_version_file_metadata(version_id, size_bytes, checksum),
+            )
+            .await;
+        }
         sqlx::query("UPDATE artifact_versions SET size_bytes=?,checksum=? WHERE id=?")
             .bind(size_bytes)
             .bind(checksum)

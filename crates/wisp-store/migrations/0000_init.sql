@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS frames (
     model           TEXT,
     reasoning_effort TEXT,
     service_tier    TEXT,
+    acp_agent_selection TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     created_at      INTEGER NOT NULL,
@@ -944,4 +945,15 @@ CREATE TABLE IF NOT EXISTS project_sync_state (
     base_manifest_json TEXT NOT NULL DEFAULT '{"version":1,"files":[],"skipped_paths":[]}',
     last_synced_at     INTEGER,
     last_direction     TEXT
+);
+
+-- Local commit receipts for filesystem journals. Intentionally excluded from
+-- portable project exports: they belong to the device performing the operation.
+CREATE TABLE IF NOT EXISTS session_file_operations (
+    operation_id TEXT NOT NULL,
+    role         TEXT NOT NULL CHECK(role IN ('source','target')),
+    project_id   TEXT NOT NULL,
+    frame_id     TEXT NOT NULL,
+    committed_at INTEGER NOT NULL,
+    PRIMARY KEY(operation_id, role)
 );

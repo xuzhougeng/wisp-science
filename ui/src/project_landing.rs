@@ -10,6 +10,8 @@ use wasm_bindgen::JsValue;
 pub(super) struct ProjectLandingState {
     pub(super) home_dialog_open: RwSignal<bool>,
     pub(super) home_calendar_open: RwSignal<bool>,
+    pub(super) home_automation_open: RwSignal<bool>,
+    pub(super) home_automation_form: RwSignal<bool>,
     pub(super) show_projects: RwSignal<bool>,
     pub(super) demo_mode: RwSignal<bool>,
     pub(super) items: RwSignal<Vec<ChatItem>>,
@@ -34,6 +36,7 @@ pub(super) struct ProjectLandingState {
 pub(super) fn ProjectLanding(
     state: ProjectLandingState,
     open_project: Callback<String>,
+    open_project_folder: Callback<String>,
     open_project_session: Callback<(String, String)>,
     open_project_journey: Callback<(String, i64)>,
     open_scratch: Callback<()>,
@@ -44,6 +47,8 @@ pub(super) fn ProjectLanding(
     let ProjectLandingState {
         home_calendar_open,
         home_dialog_open,
+        home_automation_open,
+        home_automation_form,
         show_projects,
         demo_mode,
         items,
@@ -87,12 +92,16 @@ pub(super) fn ProjectLanding(
                 <ProjectsScreen
                     locale=locale
                     calendar_open=home_calendar_open
+                    automation_open=home_automation_open
+                    automation_form=home_automation_form
+                    on_open_specialists=Callback::new(move |_| open_settings.call(Some("specialists".into())))
                     dialog_open=home_dialog_open
                     running=running
                     approval_pending=approval_pending.read_only()
                     sync_actions_available=sync_actions_available.read_only()
                     open_error=project_open_error
                     on_open=open_project
+                    on_open_folder=open_project_folder
                     on_open_session=open_project_session
                     on_open_journey=open_project_journey
                     on_open_artifact=on_open_artifact

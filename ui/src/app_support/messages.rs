@@ -192,6 +192,17 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "plan" => view! { <path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6l1 1 2-2"/><path d="M3 12l1 1 2-2"/><path d="M3 18l1 1 2-2"/> }.into_view(),
         "chat" => view! { <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 10h8"/><path d="M8 14h5"/> }.into_view(),
         "branch" => view! { <path d="M6 3v6a4 4 0 0 0 4 4h8"/><path d="M18 7v12"/><path d="M14 15l4 4 4-4"/><circle cx="6" cy="3" r="2"/> }.into_view(),
+        "brain" => view! {
+            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+            <path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+            <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+            <path d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+            <path d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+            <path d="M6 18a4 4 0 0 1-1.967-.516"/>
+            <path d="M19.967 17.484A4 4 0 0 1 18 18"/>
+        }.into_view(),
         "flask" => view! { <path d="M10 2v7.3"/><path d="M14 9.3V2"/><path d="M8.5 2h7"/><path d="m10 9.3-6.5 10.8a1 1 0 0 0 .9 1.5h15.2a1 1 0 0 0 .9-1.5L14 9.3"/><path d="M6.5 16h11"/> }.into_view(),
         "dna" => view! { <path d="M4 3c5 0 11 18 16 18"/><path d="M20 3C15 3 9 21 4 21"/><path d="M7 6h10"/><path d="M5 10h14"/><path d="M5 14h14"/><path d="M7 18h10"/> }.into_view(),
         "arrow-left" => view! { <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/> }.into_view(),
@@ -221,7 +232,9 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "arrow-right" => view! { <path d="M5 12h14m-6-6 6 6-6 6"/> }.into_view(),
+        "arrow-up" => view! { <path d="m5 12 7-7 7 7"/><path d="M12 19V5"/> }.into_view(),
         "minus" => view! { <path d="M5 12h14"/> }.into_view(),
+        "stop" => view! { <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/> }.into_view(),
         "database" => view! { <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/> }.into_view(),
         "trash" => view! { <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/> }.into_view(),
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
@@ -260,6 +273,8 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "computer" => view! { <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
         "monitor" => view! { <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/> }.into_view(),
+        "sun" => view! { <circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/> }.into_view(),
+        "moon" => view! { <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/> }.into_view(),
         "user" => view! { <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/> }.into_view(),
         "wrench" => view! { <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/> }.into_view(),
         "clock" => view! { <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/> }.into_view(),
@@ -905,7 +920,7 @@ pub(crate) fn UserMessage(
     .collect_view();
     view! {
         <div class="user-bubble"
-            data-branch-ui-index=can_branch.get_untracked().then(|| ui_index.to_string())>
+            data-branch-ui-index=move || can_branch.get().then(|| ui_index.to_string())>
             {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
             {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
             {has_context.then(|| view! { <div class="user-context-cards">{context_cards}</div> })}
@@ -942,7 +957,6 @@ pub(crate) fn UserMessage(
                 <button
                     type="button"
                     class="msg-btn"
-                    disabled=move || busy.get()
                     title=move || t(locale.get(), "msg.copy")
                     on:click=move |_| on_copy.call(text.clone())
                 >{move || t(locale.get(), "msg.copy")}</button>
@@ -1042,6 +1056,7 @@ pub(crate) fn AssistantMessage(
     on_copy: Callback<String>,
     on_memory: Callback<()>,
     on_review: Callback<()>,
+    busy: ReadSignal<bool>,
     on_branch: Callback<usize>,
     can_branch: Signal<bool>,
     show_actions: Signal<bool>,
@@ -1064,12 +1079,14 @@ pub(crate) fn AssistantMessage(
         // fingerprint that used to remount every assistant row on any artifact
         // event — the remount storm behind the dead-window reports.
         artifacts.with(|arts| {
-            enrich_app_markdown(
+            let html = enrich_app_markdown(
                 md_to_html(&text_for_html),
                 arts,
                 &resources_for_html,
                 locale.get(),
-            )
+            );
+            let root = project.and_then(|project| project.get().map(|project| project.root));
+            prepare_workspace_images(html, root.as_deref())
         })
     });
     let hid = unique_dom_id("md");
@@ -1081,14 +1098,24 @@ pub(crate) fn AssistantMessage(
     let hid_for_resources = hid.clone();
     let resources_for_effect = resources.clone();
     create_effect(move |_| {
-        let _ = html.get();
-        let dom_id = hid_for_resources.clone();
-        let resources = resources_for_effect.clone();
-        spawn_local(async move {
-            for resource in resources
-                .into_iter()
+        // Only embeds get pixels: a bound `[plot](x.png)` link stays an inline
+        // link, so skip its byte read and never restyle it as a block image.
+        let embedded: Vec<_> = html.with(|html| {
+            resources_for_effect
+                .iter()
                 .filter(|resource| resource.status == "ready" && resource.kind == "image")
-            {
+                .filter(|resource| html_embeds_resource_image(html, &resource.id))
+                .cloned()
+                .collect()
+        });
+        let dom_id = hid_for_resources.clone();
+        let fallback_dom_id = dom_id.clone();
+        let unavailable = t(locale.get(), "chat.image_preview_unavailable");
+        spawn_local(async move {
+            crate::bindings::hydrate_workspace_images(&fallback_dom_id, &unavailable).await;
+        });
+        spawn_local(async move {
+            for resource in embedded {
                 let Some(version_id) = resource.artifact_version_id else {
                     continue;
                 };
@@ -1099,7 +1126,7 @@ pub(crate) fn AssistantMessage(
                 let Some(url) = crate::bindings::media_url(&path, &dom_id).await.as_string() else {
                     continue;
                 };
-                let selector = format!(r#"#{dom_id} [data-resource-id="{}"]"#, resource.id);
+                let selector = format!(r#"#{dom_id} img[data-resource-id="{}"]"#, resource.id);
                 if let Some(element) = web_sys::window()
                     .and_then(|window| window.document())
                     .and_then(|document| document.query_selector(&selector).ok().flatten())
@@ -1222,6 +1249,7 @@ pub(crate) fn AssistantMessage(
                 <button
                     type="button"
                     class="msg-icon-btn msg-review-btn"
+                    disabled=move || busy.get()
                     title=move || t(locale.get(), "msg.review")
                     aria-label=move || t(locale.get(), "msg.review")
                     on:click=move |_| on_review.call(())

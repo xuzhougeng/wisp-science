@@ -55,8 +55,11 @@ pub(super) fn require_owned_finish(finished: bool, subject: &str) -> Result<(), 
 }
 
 pub(super) fn harvest_lease_interval() -> Duration {
+    // Each renewal is a SQLite write. At 10ms a loaded runner's slow commits
+    // left the write lock almost always held, and a harvest write waiting on
+    // busy_timeout gave up with "database is locked" after 5s.
     if cfg!(test) {
-        Duration::from_millis(10)
+        Duration::from_millis(250)
     } else {
         Duration::from_secs(1)
     }

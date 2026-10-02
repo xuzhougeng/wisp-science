@@ -42,7 +42,7 @@ struct NativeAppearanceSettings: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(localized("预览")).font(WispDesign.font(size: 14, weight: .semibold))
                     preview
-                    Text(localized("预览展示主题与字号。保存后应用到原生客户端及 WebView。")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
+                    Text(localized("预览展示尚未保存的主题、配色与字体。保存后应用到所有项目；取消恢复已保存的偏好。")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
                 }
             }
             NativeSettingsGroup(title: "高级") {
@@ -57,7 +57,7 @@ struct NativeAppearanceSettings: View {
                     if let saved = await model.run("set_appearance_prefs", ["prefs": prefs]) { WispDesign.apply(saved) }
                 } }.buttonStyle(NativeSettingsButtonStyle(primary: true)).disabled(model.loading || model.busy)
             }
-        }.disabled(model.values["get_appearance_prefs"] == nil)
+        }.disabled(model.loading || model.values["get_appearance_prefs"] == nil)
     }
 
     private func themeTile(_ value: String, _ title: String, dark: Bool) -> some View {
@@ -89,6 +89,13 @@ struct NativeAppearanceSettings: View {
     private func previewColor(_ token: String) -> Color {
         WispDesign.paletteColor(token, scheme: previewScheme, palette: prefs[previewScheme == .dark ? "dark_palette" : "light_palette"].string)
     }
+    private func previewFont(code: Bool) -> Font {
+        let prefix = code ? "code" : "ui"
+        let fallback: Int64 = code ? 12 : 14
+        let size = CGFloat(prefs[prefix + "_font_size"] == .null ? fallback : prefs[prefix + "_font_size"].integer)
+        let family = prefs[prefix + "_font_family"].string
+        return family.isEmpty ? .system(size: size, design: code ? .monospaced : .default) : .custom(family, size: size)
+    }
     private var preview: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack { Text("Wisp Science").fontWeight(.semibold); Spacer(); Text(localized("新对话")).foregroundStyle(previewColor("text-muted")) }
@@ -101,10 +108,10 @@ struct NativeAppearanceSettings: View {
             }
             VStack(alignment: .leading, spacing: 9) {
                 Text("Python").font(.system(size: 11)).foregroundStyle(previewColor("text-muted"))
-                Text("import pandas as pd\ndata = pd.read_csv(\"samples.csv\")\ndata.head()").font(.system(size: CGFloat(max(10, prefs["code_font_size"].integer)), design: .monospaced)).fixedSize(horizontal: false, vertical: true)
+                Text("import pandas as pd\ndata = pd.read_csv(\"samples.csv\")\ndata.head()").font(previewFont(code: true)).fixedSize(horizontal: false, vertical: true)
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(previewColor("bg-sunken"), in: RoundedRectangle(cornerRadius: 10))
             Text(localized("输入消息…")).foregroundStyle(previewColor("text-muted")).padding(14).frame(maxWidth: .infinity, alignment: .leading).overlay(RoundedRectangle(cornerRadius: 12).stroke(previewColor("border")))
-        }.font(.system(size: CGFloat(max(12, prefs["ui_font_size"].integer))))
+        }.font(previewFont(code: false))
             .foregroundStyle(previewColor("text")).padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(previewColor("bg-elev"), in: RoundedRectangle(cornerRadius: 16))

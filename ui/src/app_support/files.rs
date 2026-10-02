@@ -55,14 +55,49 @@ pub(crate) fn upload_to_remote_context(
     });
 }
 
+thread_local! {
+    // ponytail: one Files panel per window (one wasm instance), so one counter
+    // per helper; key it by signal if a second local browser ever appears.
+    static DIR_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static SEARCH_REQUEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// `list_dir`/`search_files` run off the UI thread, so replies can arrive out
+/// of order. Returns a check that is true only while this is the newest request.
+fn begin_request(
+    counter: &'static std::thread::LocalKey<std::cell::Cell<u64>>,
+) -> impl Fn() -> bool {
+    let id = counter.with(|c| {
+        c.set(c.get().wrapping_add(1));
+        c.get()
+    });
+    move || counter.with(|c| c.get() == id)
+}
+
+/// Clear the local listing and drop any reply still in flight.
+pub(crate) fn clear_dir_listing(entries: RwSignal<Vec<DirEntry>>) {
+    let _ = begin_request(&DIR_REQUEST);
+    entries.set(vec![]);
+}
+
+/// Clear search hits and drop any search still in flight.
+pub(crate) fn clear_file_search(hits: RwSignal<Vec<FileSearchHit>>) {
+    let _ = begin_request(&SEARCH_REQUEST);
+    hits.set(vec![]);
+}
+
 pub(crate) fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
+    let path = cwd.get_untracked();
+    let is_current = begin_request(&DIR_REQUEST);
     spawn_local(async move {
-        let path = cwd.get();
         let v = invoke(
             "list_dir",
             to_value(&serde_json::json!({ "path": path })).unwrap(),
         )
         .await;
+        if !is_current() {
+            return;
+        }
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DirEntry>>(v) {
             entries.set(list);
         }
@@ -133,17 +168,21 @@ pub(crate) fn refresh_active_file_dir(
 }
 
 pub(crate) fn refresh_file_search(query: RwSignal<String>, hits: RwSignal<Vec<FileSearchHit>>) {
+    let q = query.get_untracked().trim().to_string();
+    if q.is_empty() {
+        clear_file_search(hits);
+        return;
+    }
+    let is_current = begin_request(&SEARCH_REQUEST);
     spawn_local(async move {
-        let q = query.get().trim().to_string();
-        if q.is_empty() {
-            hits.set(vec![]);
-            return;
-        }
         let v = invoke(
             "search_files",
             to_value(&serde_json::json!({ "query": q, "limit": 200 })).unwrap(),
         )
         .await;
+        if !is_current() {
+            return;
+        }
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<FileSearchHit>>(v) {
             hits.set(list);
         }

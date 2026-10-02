@@ -373,6 +373,10 @@ pub enum SessionAction {
         id: String,
         pinned: bool,
     },
+    SetShelved {
+        id: String,
+        shelved: bool,
+    },
     ReloadProjectRules(String),
     Transfer {
         id: String,
@@ -494,6 +498,11 @@ pub fn session_menu(
             session_id.to_string(),
         ));
         items.push(item(
+            "shelveSession",
+            i18n::t(locale, "session.shelve"),
+            session_id.to_string(),
+        ));
+        items.push(item(
             "renameSession",
             i18n::t(locale, "ctx.rename_session"),
             format!("{session_id}\u{1e}{title}"),
@@ -542,6 +551,25 @@ pub fn session_menu(
         }
     }
     CtxMenu { x, y, items }
+}
+
+pub fn shelved_session_menu(x: f64, y: f64, id: &str, locale: Locale) -> CtxMenu {
+    CtxMenu {
+        x,
+        y,
+        items: vec![
+            item(
+                "openSession",
+                i18n::t(locale, "ctx.open_session"),
+                id.into(),
+            ),
+            item(
+                "restoreSession",
+                i18n::t(locale, "session.restore"),
+                id.into(),
+            ),
+        ],
+    }
 }
 
 pub fn demo_menu(x: f64, y: f64, demo_id: &str, title: &str, locale: Locale) -> CtxMenu {
@@ -677,6 +705,22 @@ pub fn build(
     // file-focused menu: ordinary path links and collected-artifact chips.
     // This must run before selection/message fallbacks.
     if let Some(path) = chat_workspace_path(&target, project_root) {
+        if closest(&target, ".md [data-workspace-kind=directory]").is_some() {
+            let mut items = vec![
+                item(
+                    "openWorkspaceDirectory",
+                    i18n::t(locale, "ctx.open_in_files"),
+                    path.clone(),
+                ),
+                item(
+                    "openWorkspacePathInSystem",
+                    i18n::t(locale, "ctx.open_directory_in_system"),
+                    path.clone(),
+                ),
+            ];
+            items.extend(workspace_path_copy_items(&path, &[], project_root, locale));
+            return Some(CtxMenu { x, y, items });
+        }
         return Some(chat_workspace_path_menu(x, y, path, project_root, locale));
     }
 
@@ -1261,6 +1305,12 @@ pub fn session_action(action: &str, payload: &str) -> Option<SessionAction> {
                 folder_id: (!folder_id.is_empty()).then(|| folder_id.to_string()),
             })
         }
+        "shelveSession" | "restoreSession" if !payload.is_empty() => {
+            Some(SessionAction::SetShelved {
+                id: payload.to_string(),
+                shelved: action == "shelveSession",
+            })
+        }
         "pinSession" if !payload.is_empty() => Some(SessionAction::SetPinned {
             id: payload.to_string(),
             pinned: true,
@@ -1381,7 +1431,9 @@ pub fn ContextMenuPortal(
             return;
         };
         request_animation_frame(move || {
-            let Some(el) = menu_el.get() else { return };
+            let Some(el) = menu_el.get_untracked() else {
+                return;
+            };
             let Some((viewport_width, viewport_height)) = viewport_size() else {
                 return;
             };
@@ -1407,7 +1459,9 @@ pub fn ContextMenuPortal(
             return;
         };
         request_animation_frame(move || {
-            let Some(el) = submenu_el.get() else { return };
+            let Some(el) = submenu_el.get_untracked() else {
+                return;
+            };
             let Some((viewport_width, viewport_height)) = viewport_size() else {
                 return;
             };

@@ -11,9 +11,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub mod codex_login;
+pub mod native_calendar;
 pub mod native_conversations;
+pub mod native_journey;
+pub mod native_library;
+pub mod native_projects;
+pub mod native_publication;
+pub mod native_scratch;
 pub mod native_settings;
 pub mod project_browser;
+mod session_artifacts;
+pub use session_artifacts::*;
 
 mod mcp_app_child;
 pub use mcp_app_child::*;
@@ -21,6 +30,16 @@ pub use mcp_app_child::*;
 /// Identifies a stopped ACP turn in persisted errors and invoke rejections.
 /// The UI must not offer native HTTP transcript recovery for these errors.
 pub const ACP_TURN_ERROR_PREFIX: &str = "ACP turn failed: ";
+
+/// Current filesystem type of a project path. Unavailable includes missing,
+/// unreadable, unsupported entries and paths outside the project boundary.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePathKind {
+    File,
+    Directory,
+    Unavailable,
+}
 
 /// Bounded numeric renderer diagnostics. Never includes user or plugin content.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -347,6 +366,22 @@ pub enum AgentEvent {
     CorrectionStarted {
         frame_id: String,
         model: String,
+    },
+    /// AfterTurn hook: a memory worth confirming from the finished turn.
+    MemoryProposal {
+        frame_id: String,
+        proposal: TurnMemoryProposal,
+    },
+    /// AfterTurn hook: questions the user could ask next.
+    FollowUps {
+        frame_id: String,
+        questions: Vec<String>,
+    },
+    /// An AfterTurn hook failed; the finished turn is unaffected.
+    HookFailed {
+        frame_id: String,
+        hook: String,
+        message: String,
     },
 }
 
@@ -1481,7 +1516,7 @@ impl LibraryItem {
 
 /// Bounded Library list row. Full code/text is fetched only for the active
 /// session or an opened detail.
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 pub struct LibraryItemSummary {
     pub id: String,
     pub kind: String,
@@ -1824,6 +1859,9 @@ pub struct Settings {
     pub follow_up_questions: bool,
     #[serde(default = "default_resume_last_session")]
     pub resume_last_session: bool,
+    /// Store new projects in their own folders. Existing locations are preserved.
+    #[serde(default)]
+    pub decentralized_project_storage: bool,
     #[serde(default)]
     pub max_tokens: u64,
     #[serde(default)]
@@ -2141,6 +2179,7 @@ impl Default for Settings {
             auto_continue_limit: default_auto_continue_limit(),
             follow_up_questions: true,
             resume_last_session: true,
+            decentralized_project_storage: false,
             max_tokens: 8192,
             reasoning_effort: String::new(),
             service_tier: String::new(),
@@ -2363,8 +2402,10 @@ pub struct AskUserResolved {
     pub expired: bool,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct SessionInfo {
+    #[serde(default)]
+    pub running: bool,
     pub id: String,
     pub title: String,
     pub ts: i64,
@@ -2585,11 +2626,35 @@ pub struct SessionCursor {
     pub id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct SessionPage {
+    /// Prevent the active shelved conversation from being reinserted as a draft.
+    #[serde(default)]
+    pub shelved_active_id: Option<String>,
     pub items: Vec<SessionInfo>,
     pub next_cursor: Option<SessionCursor>,
     pub running_ids: Vec<String>,
+}
+
+#[cfg(test)]
+mod session_page_contract_tests {
+    use super::*;
+
+    #[test]
+    fn session_pages_accept_legacy_payloads_and_round_trip_shelved_active_id() {
+        let mut page: SessionPage = serde_json::from_value(serde_json::json!({
+            "items": [{"id":"f","title":"Draft","ts":1}],
+            "next_cursor": null,
+            "running_ids": []
+        }))
+        .unwrap();
+        assert!(page.shelved_active_id.is_none());
+        assert!(!page.items[0].running);
+        page.shelved_active_id = Some("hidden".into());
+        let decoded: SessionPage =
+            serde_json::from_value(serde_json::to_value(page).unwrap()).unwrap();
+        assert_eq!(decoded.shelved_active_id.as_deref(), Some("hidden"));
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -2990,6 +3055,11 @@ pub struct ProjectSummary {
     pub sync_configured: bool,
     #[serde(default)]
     pub last_synced_at: Option<i64>,
+    /// Cloud-folder snapshot state: `saved`, `unpublished`, `remote-newer`,
+    /// `conflict` or `waiting`. Omitted when the project is not in that mode,
+    /// keeping the existing wire contract for every other project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_sync: Option<String>,
 }
 
 /// Read-only scan result shown before an orphaned workspace is registered and
@@ -3029,6 +3099,10 @@ pub struct ProjectSettings {
     pub description: String,
     #[serde(default)]
     pub agent_context: String,
+    /// The live database is cached locally and snapshots are published into
+    /// the (cloud-drive synchronized) project folder.
+    #[serde(default)]
+    pub folder_sync: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3247,6 +3321,13 @@ pub struct RecentSession {
     pub ts: i64,
     #[serde(default)]
     pub status: String,
+    /// Sidebar group. Omitted when the session is ungrouped so older clients
+    /// keep the previous JSON shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
+    /// Project sidebar pin state. Global recent-session queries do not fetch it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Clone, serde::Deserialize, PartialEq)]
@@ -3779,6 +3860,8 @@ pub struct ModelForm {
     pub use_for_vision: bool,
     pub use_for_image_generation: bool,
     pub image_generation_capable: bool,
+    /// Explicit recovery intent; ordinary assignment changes keep the role.
+    pub restore_chat_model: bool,
     pub image_size: String,
     pub image_quality: String,
     pub image_aspect_ratio: String,
@@ -3858,6 +3941,73 @@ impl Default for AutoFailureAnalysisSettings {
             minimum_failures: 2,
         }
     }
+}
+
+/// Lifecycle point a user command hook runs at. Names match Claude Code /
+/// Codex hooks so existing scripts read the same `hook_event_name`.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookEvent {
+    UserPromptSubmit,
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
+    Stop,
+}
+
+impl HookEvent {
+    pub const ALL: [Self; 5] = [
+        Self::UserPromptSubmit,
+        Self::PreToolUse,
+        Self::PostToolUse,
+        Self::PostToolUseFailure,
+        Self::Stop,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UserPromptSubmit => "UserPromptSubmit",
+            Self::PreToolUse => "PreToolUse",
+            Self::PostToolUse => "PostToolUse",
+            Self::PostToolUseFailure => "PostToolUseFailure",
+            Self::Stop => "Stop",
+        }
+    }
+
+    /// Only tool events filter by `CommandHook::matcher`.
+    pub fn matches_tools(self) -> bool {
+        matches!(
+            self,
+            Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
+        )
+    }
+}
+
+/// A user-defined shell command run at a lifecycle event (Settings → Hooks).
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct CommandHook {
+    pub event: HookEvent,
+    /// Tool-name regex for tool events; empty or `*` matches every tool.
+    #[serde(default)]
+    pub matcher: String,
+    pub command: String,
+    pub enabled: bool,
+    /// Seconds before the command is stopped; `None` is the 60 s default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+/// The active project's `.wisp/hooks.json`, as the Hooks page reviews it.
+/// Its hooks run only while the file still has the content the user trusted.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ProjectHooks {
+    pub path: String,
+    pub hooks: Vec<CommandHook>,
+    /// SHA-256 of the file; trusting records it.
+    pub sha256: String,
+    pub trusted: bool,
+    /// The file could not be read as hooks; nothing in it runs.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -4039,7 +4189,7 @@ pub struct PublicationItemLinkInfo {
     pub relation: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationEvidenceBinding {
     pub id: String,
     pub revision_id: String,
@@ -5398,6 +5548,8 @@ mod mcp_secret_entry_tests {
 #[serde(default)]
 pub struct NetworkSettings {
     pub model_proxy_url: String,
+    /// Subscription OAuth only. Missing legacy values follow system/env proxies.
+    pub subscription_proxy_url: String,
     pub mcp_proxy_url: String,
     pub command_proxy_url: String,
     pub conda_mirror_url: String,
@@ -5407,6 +5559,8 @@ pub struct NetworkSettings {
 
 mod research_journey;
 pub use research_journey::*;
+mod automation;
+pub use automation::*;
 mod research_archive;
 pub use research_archive::*;
 /// Host-authored logical binding. Never accepts an iframe-supplied connector.

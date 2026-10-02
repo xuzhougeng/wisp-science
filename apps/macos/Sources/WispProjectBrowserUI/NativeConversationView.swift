@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WispProjectBrowser
 
@@ -5,11 +6,14 @@ struct NativeConversationView: View {
     @ObservedObject var conversation: NativeConversationModel
     var projectID: String?
     var sessionID: String?
+    var createAcpConversation: ((String) -> Void)?
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
+    @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
     @State private var confirmResend = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
+    @State private var feedbackApproval: ConversationApproval?
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -40,7 +44,7 @@ struct NativeConversationView: View {
                             HStack(spacing: 8) { ProgressView().controlSize(.small); Text(conversation.snapshot?.stopping == true ? "正在停止…" : "正在处理…").font(WispDesign.font(size: 12)) }
                         }
                         Color.clear.frame(height: 1).id("latest")
-                    }.frame(maxWidth: 800).padding(24).frame(maxWidth: .infinity)
+                    }.frame(maxWidth: 800).padding(.horizontal, 16).padding(.vertical, 26).frame(maxWidth: .infinity)
                 }
                 .onChange(of: conversation.scrollRevision) { _ in
                     if let target = conversation.scrollTarget { expandedTools.insert(target); followLatest = false; scroll.scrollTo(target, anchor: .center) }
@@ -50,6 +54,15 @@ struct NativeConversationView: View {
                 }
             }
             if !conversation.showingHistory {
+                if let permissions = conversation.snapshot?.acp?.permissions, !permissions.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            ForEach(permissions) { permission in
+                                NativeAcpPermissionCard(conversation: conversation, permission: permission)
+                            }
+                        }.frame(maxWidth: 800).padding(.horizontal, 24)
+                    }.frame(maxHeight: 260).padding(.bottom, 12)
+                }
                 ForEach(conversation.snapshot?.approvals ?? []) { approval in
                     VStack(alignment: .leading, spacing: 10) {
                         Text("需要确认 · \(approval.tool)").font(WispDesign.font(size: 13, weight: .semibold))
@@ -63,10 +76,11 @@ struct NativeConversationView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         HStack {
+                            Button("修改意见…") { feedbackApproval = approval }
                             Spacer()
                             Button("拒绝") { Task { await conversation.approve(approval, allowed: false) } }
                             Button("允许这一次") { Task { await conversation.approve(approval, allowed: true) } }.buttonStyle(WispButtonStyle(primary: true))
-                        }.disabled(conversation.busy || conversation.connectionError != nil)
+                        }.disabled(!conversation.canApprove(approval))
                     }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color("clay")))
                         .frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 12)
@@ -80,15 +94,19 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = [] }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
+        .sheet(item: $feedbackApproval) { approval in
+            NativeApprovalFeedback(approval: approval, conversation: conversation) { feedbackApproval = nil }
+        }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
             Button("取消", role: .cancel) {}
         }
     }
     private func markedText(_ item: ConversationItem, index: Int, input: Bool = false) -> AttributedString {
-        var text = input ? AttributedString(item.input ?? "") : item.role == "tool" ? AttributedString(item.text) : ((try? AttributedString(markdown: item.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(item.text))
+        let source = item.role == "user" && !input ? SavedAttachments.body(in: item.text) : item.text
+        var text = AttributedString(input ? item.input ?? "" : source)
         if conversation.scrollTarget == index, let excerpt = conversation.revealedExcerpt,
            let range = NativeSavedExcerpt.range(in: String(text.characters), excerpt: excerpt) {
             let start = text.characters.index(text.startIndex, offsetBy: range.lowerBound)
@@ -97,77 +115,146 @@ struct NativeConversationView: View {
         }
         return text
     }
-    private func message(_ item: ConversationItem, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(item.role == "user" ? "你" : item.role == "tool" ? (item.tool_name ?? "工具") : item.role == "reasoning" ? "思考" : "Wisp Science")
-                    .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
-                if let ok = item.ok { Text(ok ? "已完成" : "失败").font(WispDesign.font(size: 11)).foregroundStyle(ok ? color("clay") : .orange) }
-                if let status = item.status { Text(status).font(.caption).foregroundStyle(.secondary) }
-            }
-            if item.role == "tool" {
-                DisclosureGroup(isExpanded: Binding(get: {
-                    expandedTools.contains(index)
-                }, set: { expanded in
-                    if expanded { expandedTools.insert(index) } else { expandedTools.remove(index) }
-                })) {
-                    if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
-                    selectableMessage(item, index: index)
-                } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
-            } else if item.role == "question", let data = item.text.data(using: .utf8), let question = try? JSONDecoder().decode(SettingsValue.self, from: data) {
-                Text(question["question"].string).font(WispDesign.font(size: 14)).textSelection(.enabled)
-                ForEach(Array(question["options"].array.enumerated()), id: \.offset) { _, option in
-                    Button { conversation.draft = option["label"].string } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(option["label"].string)
-                            if !option["description"].string.isEmpty { Text(option["description"].string).font(.caption).foregroundStyle(.secondary) }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.disabled(conversation.showingHistory || conversation.snapshot?.read_only == true)
+    @ViewBuilder private func message(_ item: ConversationItem, index: Int) -> some View {
+        if item.role == "usage" {
+            if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(item.role == "user" ? "你" : item.role == "tool" ? (item.tool_name ?? "工具") : item.role == "reasoning" ? "思考" : "Wisp Science")
+                        .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
+                    if let ok = item.ok { Text(ok ? "已完成" : "失败").font(WispDesign.font(size: 11)).foregroundStyle(ok ? color("clay") : .orange) }
+                    if let status = item.status { Text(status).font(.caption).foregroundStyle(.secondary) }
+                    if let duration = item.duration_ms { Text(String(format: "%.1f s", Double(duration) / 1000)).font(.caption).foregroundStyle(.secondary).help(localized("工具耗时")) }
+                    if let name = item.model_name, !name.isEmpty { Text(name).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(name) }
+                    if let timestamp = item.timestamp, timestamp > 0 {
+                        Text(Date(timeIntervalSince1970: Double(timestamp)), style: .time).font(.caption).foregroundStyle(.secondary)
+                            .help(Date(timeIntervalSince1970: Double(timestamp)).formatted(date: .abbreviated, time: .standard))
+                    }
                 }
-                Text("选择选项会填入输入框，点击发送后继续。").font(WispDesign.font(size: 11)).foregroundStyle(.secondary)
-            } else {
-                selectableMessage(item, index: index)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
-            .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
+                if item.role == "tool" {
+                    DisclosureGroup(isExpanded: Binding(get: {
+                        expandedTools.contains(index)
+                    }, set: { expanded in
+                        if expanded { expandedTools.insert(index) } else { expandedTools.remove(index) }
+                    })) {
+                        if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
+                        selectableMessage(item, index: index)
+                    } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
+                } else if item.role == "question", let question = NativeQuestion(item.text) {
+                    NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
+                        .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
+                } else {
+                    selectableMessage(item, index: index)
+                    if item.role == "user" {
+                        let files = SavedAttachments.files(in: item.text)
+                        ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                            Text((file as NSString).lastPathComponent)
+                                .font(WispDesign.font(size: 12))
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
+                                .accessibilityLabel("附件 \((file as NSString).lastPathComponent)")
+                        }
+                    }
+                }
+                if ["user", "assistant", "reasoning"].contains(item.role), !item.text.isEmpty {
+                    NativeMessageActions(source: item.role == "user" ? SavedAttachments.body(in: item.text) : item.text, quote: quoteSelection, save: { _ in
+                        guard let projectID, let sessionID else { return }
+                        let selection = NativeConversationModel.renderedText(item)
+                        Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
+                    })
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
+        }
     }
     private func selectableMessage(_ item: ConversationItem, index: Int, input: Bool = false) -> some View {
         NativeSelectableMessage(text: markedText(item, index: index, input: input), saved: conversation.savedHighlights.map(\.code), quote: quoteSelection, save: { selection in
             guard let projectID, let sessionID else { return }
             Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
-        }, monospaced: item.role == "tool").frame(maxWidth: .infinity, alignment: .leading)
+        }, monospaced: item.role == "tool",
+           markdown: item.role == "tool" || input ? nil : item.role == "user" ? SavedAttachments.body(in: item.text) : item.text,
+           revealed: conversation.scrollTarget == index ? conversation.revealedExcerpt : nil).frame(maxWidth: .infinity, alignment: .leading)
     }
     private var composer: some View {
         VStack(spacing: 8) {
             if conversation.snapshot?.read_only == true {
-                Text("该会话为只读（已归档、冻结或使用 ACP），请在 WebView 中继续，或新建原生会话。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
+                Text("该会话已归档或冻结，请新建会话继续。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 12) {
-                TextEditor(text: $conversation.draft).font(WispDesign.font(size: 14)).frame(minHeight: 58, maxHeight: 110)
-                    .scrollContentBackground(.hidden).accessibilityLabel("消息输入框")
-                    .disabled(conversation.snapshot?.read_only == true || conversation.showingHistory)
+                if let queued = conversation.queuedFollowUp {
+                    Text("已排队一条后续：\(queued)").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
+                        .accessibilityIdentifier("queued-follow-up")
+                }
+                if !conversation.attachments.isEmpty {
+                    ForEach(conversation.attachments) { file in
+                        HStack {
+                            Text(file.name).lineLimit(1)
+                            Spacer()
+                            Button("移除") { conversation.removeAttachment(file.path) }
+                                .accessibilityLabel("移除 \(file.name)")
+                        }.font(WispDesign.font(size: 12))
+                    }
+                }
+                NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend }, submit: { Task { await conversation.send() } },
+                                   sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
+                                   accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "请输入问题…", fitsContent: true)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
+                    Button { attachFiles() } label: { WispIcon(name: "plus", size: 17).frame(width: 32, height: 32)
+                        .background(color("bg-elev"), in: Circle()).overlay(Circle().strokeBorder(color("border-strong"))) }
+                        .buttonStyle(.plain).help("添加到消息").accessibilityLabel("对话附件")
+                        .disabled(!conversation.canAttach)
+                        .accessibilityIdentifier("composer-attach")
+                    Spacer(minLength: 8)
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
                             Button(profile["label"].string.isEmpty ? profile["model"].string : profile["label"].string) { Task { await conversation.selectModel(profile["id"].string) } }
+                                .disabled(conversation.isAcp)
+                        }
+                        if let createAcpConversation, !conversation.acpAgents.isEmpty {
+                            Divider()
+                            Section("ACP · 新会话") {
+                                ForEach(Array(conversation.acpAgents.enumerated()), id: \.offset) { _, agent in
+                                    Button(agent["label"].string) { createAcpConversation(agent["id"].string) }
+                                }
+                            }
                         }
                     } label: {
-                        Text(conversation.models.first(where: { $0["id"].string == conversation.snapshot?.model_id })?["label"].string ?? "选择模型").lineLimit(1)
-                    }.frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
-                    Spacer()
+                        Text(conversation.modelLabel).lineLimit(1)
+                    }.menuStyle(.borderlessButton).padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(color("bg-elev"), in: Capsule()).overlay(Capsule().strokeBorder(color("border")))
+                        .frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
                     if conversation.snapshot?.running == true {
+                        Button("排队后续") { Task { await conversation.queueFollowUp() } }
+                            .disabled(!conversation.canQueueFollowUp)
+                            .accessibilityIdentifier("composer-queue")
                         Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle()).disabled(conversation.busy)
                     } else {
-                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend).keyboardShortcut(.return, modifiers: .command)
+                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend)
                     }
                 }
-            }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(color("border")))
+            }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(color("border")))
             HStack {
-                Text("⌘Enter 发送 · Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
+                Text(sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
-        }.frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 16)
+        }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)
+    }
+    private func attachFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "添加"
+        guard panel.runModal() == .OK else { return }
+        let paths = panel.urls.map(\.path)
+        Task {
+            for path in paths {
+                await conversation.attach(source: path, client: conversation.client)
+            }
+        }
     }
 }

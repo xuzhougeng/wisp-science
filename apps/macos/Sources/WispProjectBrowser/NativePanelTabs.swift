@@ -32,6 +32,14 @@ public struct NativePanelTabs: Equatable, Sendable {
         guard let from = open.firstIndex(of: id), let to = open.firstIndex(of: target), from != to else { return }
         open.insert(open.remove(at: from), at: to)
     }
+    /// Sidebar 「文件」 opens the existing files page. Visibility is client layout;
+    /// the host is not called.
+    public static func revealFiles(saved: String, selected: String) -> (saved: String, selected: String, visible: Bool) {
+        var tabs = NativePanelTabs(saved: saved, selected: selected, available: NativePanelTabs.all)
+        tabs.show("files")
+        return (tabs.saved, tabs.selected, true)
+    }
+
     public mutating func reopen() {
         if open.isEmpty {
             open = Self.defaults.filter { available.contains($0) }

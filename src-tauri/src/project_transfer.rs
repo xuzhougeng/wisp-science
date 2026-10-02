@@ -346,6 +346,38 @@ fn copy_with_progress<R: Read, W: Write>(
     Ok(copied)
 }
 
+fn project_manifest(
+    project: ArchivedProject,
+    stats: &wisp_store::ProjectTransferStats,
+    workspace_files: u64,
+    workspace_bytes: u64,
+    skipped_paths: Vec<String>,
+) -> ProjectArchiveManifest {
+    ProjectArchiveManifest {
+        archive_kind: ARCHIVE_KIND.into(),
+        archive_version: ARCHIVE_VERSION,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        source_os: std::env::consts::OS.into(),
+        source_app_version: env!("CARGO_PKG_VERSION").into(),
+        project,
+        contents: ArchivedContents {
+            workspace_files,
+            workspace_bytes,
+            frames: stats.frames,
+            messages: stats.messages,
+            artifacts: stats.artifacts,
+            runs: stats.runs,
+            path_warnings: stats.path_warnings,
+        },
+        path_policy: ArchivedPathPolicy {
+            workspace_paths: "relative-forward-slash".into(),
+            remote_references: "preserved-not-reconnected".into(),
+            machine_local_state: "excluded".into(),
+        },
+        skipped_paths,
+    }
+}
+
 fn write_project_archive(
     destination: &Path,
     database: &Path,
@@ -438,29 +470,13 @@ fn write_project_archive(
             }
         }
 
-        let manifest = ProjectArchiveManifest {
-            archive_kind: ARCHIVE_KIND.into(),
-            archive_version: ARCHIVE_VERSION,
-            exported_at: chrono::Utc::now().to_rfc3339(),
-            source_os: std::env::consts::OS.into(),
-            source_app_version: env!("CARGO_PKG_VERSION").into(),
+        let manifest = project_manifest(
             project,
-            contents: ArchivedContents {
-                workspace_files,
-                workspace_bytes,
-                frames: stats.frames,
-                messages: stats.messages,
-                artifacts: stats.artifacts,
-                runs: stats.runs,
-                path_warnings: stats.path_warnings,
-            },
-            path_policy: ArchivedPathPolicy {
-                workspace_paths: "relative-forward-slash".into(),
-                remote_references: "preserved-not-reconnected".into(),
-                machine_local_state: "excluded".into(),
-            },
-            skipped_paths: collected.skipped_paths,
-        };
+            stats,
+            workspace_files,
+            workspace_bytes,
+            collected.skipped_paths,
+        );
         let manifest_bytes =
             serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
         zip.start_file(MANIFEST_PATH, zip_options(None, false))
@@ -491,7 +507,261 @@ fn read_manifest(archive_path: &Path) -> Result<ProjectArchiveManifest, String> 
     manifest_file
         .read_to_end(&mut bytes)
         .map_err(|error| format!("cannot read project archive manifest: {error}"))?;
-    let manifest: ProjectArchiveManifest = serde_json::from_slice(&bytes)
+    parse_manifest(&bytes)
+}
+
+/// Publish a complete, uncompressed transfer package. Never overwrite a user's
+/// directory, and keep staging outside the source workspace to avoid recursion.
+fn write_project_directory(
+    destination: &Path,
+    database: &Path,
+    workspace: &Path,
+    project: ArchivedProject,
+    stats: &wisp_store::ProjectTransferStats,
+    reporter: Option<&TransferReporter>,
+) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or("export directory has no parent")?;
+    let parent = std::fs::canonicalize(parent).map_err(|error| error.to_string())?;
+    let workspace = std::fs::canonicalize(workspace).map_err(|error| error.to_string())?;
+    if parent.starts_with(&workspace) {
+        return Err("Choose an export destination outside the project workspace.".into());
+    }
+    if destination.exists() {
+        return Err("project export directory already exists".into());
+    }
+    let staging_path = parent.join(format!(".wisp-export-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&staging_path).map_err(|error| error.to_string())?;
+    let staging = TempDir(staging_path);
+    std::fs::create_dir(staging.0.join("metadata")).map_err(|error| error.to_string())?;
+    std::fs::create_dir(staging.0.join(WORKSPACE_PREFIX)).map_err(|error| error.to_string())?;
+    std::fs::copy(database, staging.0.join(DATABASE_PATH)).map_err(|error| error.to_string())?;
+    if let Some(reporter) = reporter {
+        reporter.report("scanning", 0, None, 0, None, None);
+    }
+    let collected = collect_workspace(&workspace, &staging.0)?;
+    let total_files = collected
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, WorkspaceEntryKind::File))
+        .count() as u64;
+    let total_bytes = collected.entries.iter().map(|entry| entry.size).sum();
+    let mut files = 0;
+    let mut bytes = 0;
+    for entry in &collected.entries {
+        let target = staging.0.join(WORKSPACE_PREFIX).join(&entry.archive_path);
+        match entry.kind {
+            WorkspaceEntryKind::Directory => {
+                std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+            }
+            WorkspaceEntryKind::File => {
+                let mut input =
+                    std::fs::File::open(&entry.source).map_err(|error| error.to_string())?;
+                let mut output =
+                    std::fs::File::create(&target).map_err(|error| error.to_string())?;
+                bytes += copy_with_progress(
+                    &mut input,
+                    &mut output,
+                    reporter,
+                    "copying",
+                    &entry.archive_path,
+                    files,
+                    total_files,
+                    bytes,
+                    total_bytes,
+                )
+                .map_err(|error| format!("cannot export {}: {error}", entry.source.display()))?;
+                files += 1;
+                if let Some(reporter) = reporter {
+                    reporter.report(
+                        "copying",
+                        files,
+                        Some(total_files),
+                        bytes,
+                        Some(total_bytes),
+                        Some(&entry.archive_path),
+                    );
+                }
+            }
+        }
+    }
+    // Apply modes after writing all children, so read-only source directories
+    // do not prevent their own contents from being exported on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in collected.entries.iter().rev() {
+            if let Some(mode) = entry.mode {
+                std::fs::set_permissions(
+                    staging.0.join(WORKSPACE_PREFIX).join(&entry.archive_path),
+                    std::fs::Permissions::from_mode(mode & 0o777),
+                )
+                .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    let manifest = project_manifest(project, stats, files, bytes, collected.skipped_paths);
+    std::fs::write(
+        staging.0.join(MANIFEST_PATH),
+        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(reporter) = reporter {
+        reporter.report("validating", 0, None, 0, None, None);
+    }
+    let (_, exported) = read_project_directory(&staging.0)?;
+    if exported
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, WorkspaceEntryKind::File))
+        .count() as u64
+        != files
+        || exported.entries.iter().map(|entry| entry.size).sum::<u64>() != bytes
+    {
+        return Err("project export directory does not match its manifest".into());
+    }
+    if let Some(reporter) = reporter {
+        reporter.report("publishing", files, Some(files), bytes, Some(bytes), None);
+    }
+    if destination.exists() {
+        return Err("project export directory already exists".into());
+    }
+    std::fs::rename(&staging.0, destination)
+        .map_err(|error| format!("cannot publish project directory: {error}"))
+}
+
+fn require_package_path(path: &Path, directory: bool) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| "project_folder_invalid: Select an exported project folder containing manifest.json, metadata/project.sqlite and workspace.".to_string())?;
+    if metadata.file_type().is_symlink()
+        || if directory {
+            !metadata.is_dir()
+        } else {
+            !metadata.is_file()
+        }
+    {
+        return Err("project_folder_invalid: Project package paths must be regular files and directories, not links.".into());
+    }
+    Ok(())
+}
+
+fn read_project_directory(
+    package: &Path,
+) -> Result<(ProjectArchiveManifest, CollectedWorkspace), String> {
+    require_package_path(package, true)?;
+    require_package_path(&package.join(MANIFEST_PATH), false)?;
+    require_package_path(&package.join("metadata"), true)?;
+    require_package_path(&package.join(DATABASE_PATH), false)?;
+    require_package_path(&package.join(WORKSPACE_PREFIX), true)?;
+    let input =
+        std::fs::File::open(package.join(MANIFEST_PATH)).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    input
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let manifest = parse_manifest(&bytes)?;
+    let workspace = collect_workspace(&package.join(WORKSPACE_PREFIX), &package.join("metadata"))?;
+    if !workspace.skipped_paths.is_empty() {
+        return Err(
+            "project_folder_invalid: Project workspace contains links or unsupported file types."
+                .into(),
+        );
+    }
+    // File totals describe the export snapshot. A folder's workspace is editable
+    // after import; its current files need not match those historical totals.
+    Ok((manifest, workspace))
+}
+
+/// Register a native-picker selection in place through the same validation as
+/// WebView imports. No data synchronization and no window-owned file dialog.
+pub(crate) async fn import_project_folder(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    package: &Path,
+) -> Result<String, String> {
+    import_project_directory(store, app_data, package, None).await
+}
+
+async fn import_project_directory(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    package: &Path,
+    reporter: Option<&TransferReporter>,
+) -> Result<String, String> {
+    // An exported package may have been opened and edited in place. Its live
+    // workspace database takes precedence over the original export snapshot.
+    let has_live_storage = |root: &Path| {
+        root.join(wisp_store::PROJECT_METADATA).exists()
+            || root.join(wisp_store::PROJECT_DATABASE).exists()
+            || root.join(".wisp/storage-migration.json").exists()
+    };
+    let live_workspace = if has_live_storage(package) {
+        Some(package.to_path_buf())
+    } else if has_live_storage(&package.join(WORKSPACE_PREFIX)) {
+        Some(package.join(WORKSPACE_PREFIX))
+    } else {
+        None
+    };
+    if let Some(workspace) = live_workspace {
+        return store
+            .register_project_folder(&workspace)
+            .await
+            .map_err(|error| {
+                // A cloud folder that is still downloading or holds two
+                // devices' versions is not damaged; say what to wait for.
+                let message = format!("{error:#}");
+                if message.starts_with(wisp_store::FOLDER_WAITING)
+                    || message.starts_with("Sync conflict")
+                {
+                    message
+                } else {
+                    format!("project_folder_metadata_invalid: {message}")
+                }
+            });
+    }
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())));
+    let package = package.to_path_buf();
+    let database_copy = database.0.clone();
+    let (manifest, workspace) = tokio::task::spawn_blocking(move || {
+        let (manifest, _) = read_project_directory(&package)?;
+        let workspace = std::fs::canonicalize(package.join(WORKSPACE_PREFIX))
+            .map_err(|error| error.to_string())?;
+        // Attach a disposable copy: SQLite must never create sidecars or modify
+        // metadata in the user-selected package, including on failed imports.
+        std::fs::copy(package.join(DATABASE_PATH), database_copy)
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((manifest, workspace))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if store
+        .get_project(&manifest.project.id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("This project is already present on this device.".into());
+    }
+    if let Some(reporter) = reporter {
+        reporter.set_project_id(manifest.project.id.clone());
+        reporter.report("registering", 0, None, 0, None, None);
+    }
+    store
+        .import_project_database(&database.0, &manifest.project.id, &workspace)
+        .await
+        .map_err(|error| format!("project_folder_metadata_invalid: {error:#}"))?;
+    Ok(manifest.project.id)
+}
+
+fn parse_manifest(bytes: &[u8]) -> Result<ProjectArchiveManifest, String> {
+    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err("project archive manifest is too large".into());
+    }
+    let manifest: ProjectArchiveManifest = serde_json::from_slice(bytes)
         .map_err(|error| format!("invalid project archive manifest: {error}"))?;
     if manifest.archive_kind != ARCHIVE_KIND || manifest.archive_version != ARCHIVE_VERSION {
         return Err(format!(
@@ -837,41 +1107,92 @@ pub(super) async fn export_project(
     state: State<'_, AppState>,
     window: WorkspaceSurface,
     id: String,
+    directory: Option<bool>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    exploration_commands::reject_private_exploration_project_mutation(
-        &state.store,
-        &id,
-        "Project export",
-    )
-    .await?;
-    let reporter = TransferReporter::new(app.clone(), &window, "export", Some(id.clone()));
-    reporter.report("selecting_export_destination", 0, None, 0, None, None);
-    let _project_activity = state.begin_project_exclusive_activity(&id)?;
-    let (name, description, workspace_dir) = state
+    let _project_activity = begin_project_export(&state, &id).await?;
+    let (name, _, _) = state
         .store
         .get_project_meta(&id)
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Project not found".to_string())?;
+        .ok_or("Project not found")?;
+    let reporter = TransferReporter::new(app.clone(), &window, "export", Some(id.clone()));
+    reporter.report("selecting_export_destination", 0, None, 0, None, None);
+    let directory = directory.unwrap_or(false);
+    let destination = if directory {
+        pick_import_parent(&app)
+            .await?
+            .map(|parent| unique_destination(&parent, &name))
+            .transpose()?
+    } else {
+        let default_name = format!("wisp-project-{}.zip", archive_component(&name));
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .add_filter("Wisp project", &["zip"])
+            .set_file_name(&default_name)
+            .save_file(move |path| {
+                let _ = sender.send(path);
+            });
+        receiver
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|path| path.into_path().map_err(|error| error.to_string()))
+            .transpose()?
+    };
+    let Some(destination) = destination else {
+        return Ok(None);
+    };
+
+    export_project_contents(
+        &state.store,
+        &state.app_data,
+        &id,
+        &destination,
+        directory,
+        Some(reporter),
+    )
+    .await?;
+    Ok(Some(destination.to_string_lossy().into_owned()))
+}
+
+async fn begin_project_export(
+    state: &AppState,
+    id: &str,
+) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>, String> {
+    exploration_commands::reject_private_exploration_project_mutation(
+        &state.store,
+        id,
+        "Project export",
+    )
+    .await?;
+    let guard = state.begin_project_exclusive_activity(id)?;
     let running_frames = state.running_turns.lock().await.clone();
+    ensure_project_export_idle(&state.store, id, &running_frames).await?;
+    Ok(guard)
+}
+
+async fn ensure_project_export_idle(
+    store: &wisp_store::Store,
+    id: &str,
+    running_frames: &HashSet<String>,
+) -> Result<(), String> {
     for frame_id in running_frames {
-        if state
-            .store
-            .frame_project_id(&frame_id)
+        if store
+            .frame_project_id(frame_id)
             .await
             .map_err(|error| error.to_string())?
             .as_deref()
-            == Some(id.as_str())
+            == Some(id)
         {
             return Err(
                 "Wait for running sessions to finish before exporting this project.".into(),
             );
         }
     }
-    if state
-        .store
+    if store
         .list_active_runs()
         .await
         .map_err(|error| error.to_string())?
@@ -880,66 +1201,103 @@ pub(super) async fn export_project(
     {
         return Err("Wait for running jobs to finish before exporting this project.".into());
     }
+    Ok(())
+}
 
-    let default_name = format!("wisp-project-{}.zip", archive_component(&name));
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .add_filter("Wisp project", &["zip"])
-        .set_file_name(&default_name)
-        .save_file(move |path| {
-            let _ = sender.send(path);
-        });
-    let Some(destination) = receiver
+/// Native export keeps the same project lock and active-run checks as WebView.
+/// Destination was chosen by the caller's system picker; no window is selected.
+pub(crate) async fn export_project_to(
+    state: &AppState,
+    id: &str,
+    destination: &Path,
+    directory: bool,
+) -> Result<(), String> {
+    if !destination.is_absolute() {
+        return Err("Choose an absolute export destination".into());
+    }
+    let _project_activity = begin_project_export(state, id).await?;
+    export_project_contents(
+        &state.store,
+        &state.app_data,
+        id,
+        destination,
+        directory,
+        None,
+    )
+    .await
+}
+
+async fn export_project_contents(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    id: &str,
+    destination: &Path,
+    directory: bool,
+    reporter: Option<TransferReporter>,
+) -> Result<(), String> {
+    let (name, description, workspace_dir) = store
+        .get_project_meta(id)
         .await
         .map_err(|error| error.to_string())?
-        .map(|path| path.into_path().map_err(|error| error.to_string()))
-        .transpose()?
-    else {
-        return Ok(None);
-    };
-
-    reporter.report("preparing", 0, None, 0, None, None);
-    std::fs::create_dir_all(&state.app_data).map_err(|error| error.to_string())?;
-    let database = TempFile(
-        state
-            .app_data
-            .join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())),
-    );
-    let stats = state
-        .store
-        .export_project_database(&id, &database.0)
+        .ok_or("Project not found")?;
+    if let Some(progress) = &reporter {
+        progress.report("preparing", 0, None, 0, None, None);
+    }
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())));
+    let stats = store
+        .export_project_database(id, &database.0)
         .await
         .map_err(|error| error.to_string())?;
     let workspace = PathBuf::from(workspace_dir);
     let project = ArchivedProject {
-        id,
+        id: id.to_owned(),
         name,
         description,
     };
-    let temporary = temporary_archive_path(&destination)?;
-    let _temporary_archive = TempFile(temporary.clone());
-    let destination_for_task = destination.clone();
-    let reporter_for_task = reporter.clone();
-    tokio::task::spawn_blocking(move || {
-        write_project_archive(
-            &temporary,
-            &database.0,
-            &workspace,
-            &destination_for_task,
-            project,
-            &stats,
-            Some(&reporter_for_task),
-        )?;
-        let manifest = read_manifest(&temporary)?;
-        verify_project_archive(&temporary, &manifest, Some(&reporter_for_task))?;
-        reporter_for_task.report("publishing", 0, None, 0, None, None);
-        publish_archive(&temporary, &destination_for_task)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    reporter.report("complete", 0, None, 0, None, None);
-    Ok(Some(destination.to_string_lossy().into_owned()))
+    let output = destination.to_path_buf();
+    let progress = reporter.clone();
+    if directory {
+        tokio::task::spawn_blocking(move || {
+            write_project_directory(
+                &output,
+                &database.0,
+                &workspace,
+                project,
+                &stats,
+                progress.as_ref(),
+            )
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+    } else {
+        let temporary = temporary_archive_path(destination)?;
+        let _temporary_archive = TempFile(temporary.clone());
+        tokio::task::spawn_blocking(move || {
+            write_project_archive(
+                &temporary,
+                &database.0,
+                &workspace,
+                &output,
+                project,
+                &stats,
+                progress.as_ref(),
+            )?;
+            let manifest = read_manifest(&temporary)?;
+            verify_project_archive(&temporary, &manifest, progress.as_ref())?;
+            if let Some(progress) = &progress {
+                progress.report("publishing", 0, None, 0, None, None);
+            }
+            publish_archive(&temporary, &output)
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+    }
+    if let Some(progress) = &reporter {
+        progress.report("complete", 0, None, 0, None, None);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -947,6 +1305,7 @@ pub(super) async fn import_project(
     app: AppHandle,
     state: State<'_, AppState>,
     window: WorkspaceSurface,
+    directory: Option<bool>,
 ) -> Result<Option<ProjectSummary>, String> {
     let (_, scope) =
         exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
@@ -957,6 +1316,18 @@ pub(super) async fn import_project(
         );
     }
     let reporter = TransferReporter::new(app.clone(), &window, "import", None);
+    if directory.unwrap_or(false) {
+        reporter.report("selecting_project_folder", 0, None, 0, None, None);
+        let Some(package) = pick_import_parent(&app).await? else {
+            return Ok(None);
+        };
+        reporter.report("reading", 0, None, 0, None, None);
+        let id = import_project_directory(&state.store, &state.app_data, &package, Some(&reporter))
+            .await?;
+        let summary = build_project_summary(&state, &id).await;
+        reporter.report("complete", 0, None, 0, None, None);
+        return Ok(Some(summary));
+    }
     reporter.report("selecting_archive", 0, None, 0, None, None);
     let Some(archive_path) = pick_archive(&app).await? else {
         return Ok(None);
@@ -980,36 +1351,78 @@ pub(super) async fn import_project(
     let Some(parent) = pick_import_parent(&app).await? else {
         return Ok(None);
     };
-    let destination = unique_destination(&parent, &manifest.project.name)?;
+    let id = import_archived_project_with_reporter(
+        &state.store,
+        &state.app_data,
+        &archive_path,
+        &parent,
+        Some(&reporter),
+    )
+    .await?;
+    let summary = build_project_summary(&state, &id).await;
+    reporter.report("complete", 0, None, 0, None, None);
+    Ok(Some(summary))
+}
+
+/// Place an archive into `parent` and register it. No file dialog and no
+/// WebView window.
+pub(crate) async fn import_archived_project(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    archive_path: &Path,
+    parent: &Path,
+) -> Result<String, String> {
+    import_archived_project_with_reporter(store, app_data, archive_path, parent, None).await
+}
+
+async fn import_archived_project_with_reporter(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    archive_path: &Path,
+    parent: &Path,
+    reporter: Option<&TransferReporter>,
+) -> Result<String, String> {
+    let manifest = read_manifest(archive_path)?;
+    if store
+        .get_project(&manifest.project.id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("This project is already present on this device.".into());
+    }
+    let destination = unique_destination(parent, &manifest.project.name)?;
     let staging = TempDir(parent.join(format!(".wisp-import-{}", uuid::Uuid::new_v4())));
     std::fs::create_dir(&staging.0)
         .map_err(|error| format!("cannot create import staging directory: {error}"))?;
-    std::fs::create_dir_all(&state.app_data).map_err(|error| error.to_string())?;
-    let database = TempFile(
-        state
-            .app_data
-            .join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())),
-    );
-    let archive_for_extract = archive_path.clone();
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())));
+    let archive_for_extract = archive_path.to_path_buf();
     let staging_for_extract = staging.0.clone();
     let database_for_extract = database.0.clone();
     let manifest_for_extract = manifest.clone();
-    let reporter_for_extract = reporter.clone();
+    let reporter_for_extract = reporter.cloned();
     tokio::task::spawn_blocking(move || {
         extract_project_archive(
             &archive_for_extract,
             &staging_for_extract,
             &database_for_extract,
             &manifest_for_extract,
-            Some(&reporter_for_extract),
+            reporter_for_extract.as_ref(),
         )
     })
     .await
     .map_err(|error| error.to_string())??;
-
-    reporter.report("registering", 0, None, 0, None, None);
-    std::fs::rename(&staging.0, &destination)
-        .map_err(|error| format!("cannot place imported project: {error}"))?;
+    if let Some(reporter) = reporter {
+        reporter.report("registering", 0, None, 0, None, None);
+    }
+    let staging_path = staging.0.clone();
+    if let Err(error) = std::fs::rename(&staging_path, &destination) {
+        return Err(format!("cannot place imported project: {error}"));
+    }
+    // The staging guard would otherwise delete the moved directory's old path.
+    std::mem::forget(staging);
     if let Err(error) = workspace_manifest::init_workspace_layout(
         &destination,
         &manifest.project.id,
@@ -1018,22 +1431,433 @@ pub(super) async fn import_project(
         let _ = std::fs::remove_dir_all(&destination);
         return Err(error);
     }
-    if let Err(error) = state
-        .store
+    if let Err(error) = store
         .import_project_database(&database.0, &manifest.project.id, &destination)
         .await
     {
         let _ = std::fs::remove_dir_all(&destination);
         return Err(error.to_string());
     }
-    let summary = build_project_summary(&state, &manifest.project.id).await;
-    reporter.report("complete", 0, None, 0, None, None);
-    Ok(Some(summary))
+    Ok(manifest.project.id)
+}
+
+#[cfg(test)]
+pub(crate) async fn export_project_archive(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    project_id: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    export_project_contents(store, app_data, project_id, destination, false, None).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shared_export_preserves_records_in_both_formats_and_rejects_bad_destinations() {
+        let base = tempfile::tempdir().unwrap();
+        let _package = directory_fixture(base.path()).await;
+        let source = wisp_store::Store::open(&base.path().join("source.sqlite"))
+            .await
+            .unwrap();
+        for directory in [false, true] {
+            let destination = base.path().join(if directory {
+                "native-directory"
+            } else {
+                "native.zip"
+            });
+            export_project_contents(
+                &source,
+                base.path(),
+                "project",
+                &destination,
+                directory,
+                None,
+            )
+            .await
+            .unwrap();
+            let target = wisp_store::Store::open_application(&base.path().join(if directory {
+                "directory.sqlite"
+            } else {
+                "zip.sqlite"
+            }))
+            .await
+            .unwrap();
+            let imported = if directory {
+                import_project_directory(&target, base.path(), &destination, None)
+                    .await
+                    .unwrap()
+            } else {
+                import_archived_project(&target, base.path(), &destination, base.path())
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(imported, "project");
+            assert_eq!(target.list_sessions(&imported).await.unwrap().len(), 3);
+            let workspace =
+                PathBuf::from(target.get_project_meta(&imported).await.unwrap().unwrap().2);
+            assert_eq!(
+                std::fs::read(workspace.join(".wisp/artifacts/plot.txt")).unwrap(),
+                b"figure"
+            );
+        }
+        let occupied = base.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep"), b"original").unwrap();
+        assert!(
+            export_project_contents(&source, base.path(), "project", &occupied, true, None)
+                .await
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"original");
+        let recursive = base.path().join("source/nested-export");
+        assert!(
+            export_project_contents(&source, base.path(), "project", &recursive, true, None)
+                .await
+                .unwrap_err()
+                .contains("outside")
+        );
+        assert!(!recursive.exists());
+        let missing = base.path().join("unknown.zip");
+        assert!(
+            export_project_contents(&source, base.path(), "unknown", &missing, false, None)
+                .await
+                .is_err()
+        );
+        assert!(!missing.exists());
+    }
+
+    #[tokio::test]
+    async fn shared_export_idle_gate_scopes_running_sessions_and_jobs() {
+        let base = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&base.path().join("test.sqlite"))
+            .await
+            .unwrap();
+        for project in ["chosen", "other"] {
+            store
+                .create_project(
+                    project,
+                    project,
+                    base.path().join(project).to_str().unwrap(),
+                )
+                .await
+                .unwrap();
+            store
+                .create_frame(
+                    &format!("frame-{project}"),
+                    project,
+                    "Conversation",
+                    "model",
+                )
+                .await
+                .unwrap();
+        }
+        ensure_project_export_idle(
+            &store,
+            "chosen",
+            &HashSet::from(["frame-other".to_string()]),
+        )
+        .await
+        .unwrap();
+        assert!(ensure_project_export_idle(
+            &store,
+            "chosen",
+            &HashSet::from(["frame-chosen".to_string()])
+        )
+        .await
+        .unwrap_err()
+        .contains("running sessions"));
+        let mut run =
+            wisp_store::RunRecord::new("job-other", "other", "local", "Analysis", "command");
+        run.status = wisp_store::RunStatus::Running;
+        store.create_run(&run).await.unwrap();
+        ensure_project_export_idle(&store, "chosen", &HashSet::new())
+            .await
+            .unwrap();
+        run.id = "job-chosen".into();
+        run.project_id = "chosen".into();
+        store.create_run(&run).await.unwrap();
+        assert!(
+            ensure_project_export_idle(&store, "chosen", &HashSet::new())
+                .await
+                .unwrap_err()
+                .contains("running jobs")
+        );
+    }
+
+    async fn directory_fixture(base: &Path) -> PathBuf {
+        let workspace = base.join("source");
+        std::fs::create_dir_all(workspace.join("empty")).unwrap();
+        std::fs::create_dir_all(workspace.join(".wisp/artifacts")).unwrap();
+        std::fs::write(workspace.join(".wisp/artifacts/plot.txt"), "figure").unwrap();
+        let source = wisp_store::Store::open(&base.join("source.sqlite"))
+            .await
+            .unwrap();
+        source
+            .create_project("project", "Study", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        for frame in ["frame-1", "frame-2", "frame-3"] {
+            source
+                .create_frame(frame, "project", frame, "model")
+                .await
+                .unwrap();
+            source
+                .append_message(frame, 1, &wisp_llm::Message::user("saved conversation"))
+                .await
+                .unwrap();
+        }
+        source
+            .save_artifact(
+                "artifact",
+                "project",
+                "frame-1",
+                "plot.txt",
+                "text/plain",
+                workspace.join(".wisp/artifacts/plot.txt").to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+        let database = base.join("snapshot.sqlite");
+        let stats = source
+            .export_project_database("project", &database)
+            .await
+            .unwrap();
+        assert_eq!((stats.frames, stats.messages, stats.artifacts), (3, 3, 1));
+        let project = ArchivedProject {
+            id: "project".into(),
+            name: "Study".into(),
+            description: String::new(),
+        };
+        let package = base.join("package");
+        write_project_directory(
+            &package,
+            &database,
+            &workspace,
+            project.clone(),
+            &stats,
+            None,
+        )
+        .unwrap();
+        write_project_archive(
+            &base.join("project.zip"),
+            &database,
+            &workspace,
+            &base.join("project.zip"),
+            project,
+            &stats,
+            None,
+        )
+        .unwrap();
+        package
+    }
+
+    #[tokio::test]
+    async fn reopening_an_edited_package_uses_live_project_records() {
+        let base = tempfile::tempdir().unwrap();
+        let package = directory_fixture(base.path()).await;
+        let original_metadata = std::fs::read(package.join(DATABASE_PATH)).unwrap();
+        let store = wisp_store::Store::open_application(&base.path().join("device.sqlite"))
+            .await
+            .unwrap();
+        store
+            .set_setting("decentralized_project_storage", "true")
+            .await
+            .unwrap();
+        import_project_directory(&store, base.path(), &package, None)
+            .await
+            .unwrap();
+        store
+            .append_message(
+                "frame-1",
+                2,
+                &wisp_llm::Message::user("written after importing the package"),
+            )
+            .await
+            .unwrap();
+        store.delete_project("project").await.unwrap();
+        let fresh = wisp_store::Store::open_application(&base.path().join("fresh.sqlite"))
+            .await
+            .unwrap();
+        import_project_directory(&fresh, base.path(), &package, None)
+            .await
+            .unwrap();
+        assert_eq!(fresh.message_count("frame-1").await.unwrap(), 2);
+        assert_eq!(
+            std::fs::read(package.join(DATABASE_PATH)).unwrap(),
+            original_metadata
+        );
+        let collected =
+            collect_workspace(&package.join(WORKSPACE_PREFIX), &base.path().join("unused"))
+                .unwrap();
+        assert!(!collected
+            .entries
+            .iter()
+            .any(|entry| entry.archive_path.contains("project.sqlite")
+                || entry.archive_path == ".wisp/project.json"));
+    }
+
+    #[tokio::test]
+    async fn directory_and_zip_restore_the_same_complete_project() {
+        let base = tempfile::tempdir().unwrap();
+        let package = directory_fixture(base.path()).await;
+        let before = std::fs::read(package.join(DATABASE_PATH)).unwrap();
+        let (folder_manifest, _) = read_project_directory(&package).unwrap();
+        let zip_manifest = read_manifest(&base.path().join("project.zip")).unwrap();
+        assert_eq!(
+            serde_json::to_value(folder_manifest.contents).unwrap(),
+            serde_json::to_value(zip_manifest.contents).unwrap()
+        );
+        let folders = wisp_store::Store::open(&base.path().join("folders.sqlite"))
+            .await
+            .unwrap();
+        let archives = wisp_store::Store::open(&base.path().join("archives.sqlite"))
+            .await
+            .unwrap();
+        let id = import_project_directory(&folders, &base.path().join("app"), &package, None)
+            .await
+            .unwrap();
+        assert_eq!(id, "project");
+        std::fs::create_dir(base.path().join("unzipped")).unwrap();
+        import_archived_project(
+            &archives,
+            &base.path().join("app"),
+            &base.path().join("project.zip"),
+            &base.path().join("unzipped"),
+        )
+        .await
+        .unwrap();
+        for (store, expected_root) in [
+            (&folders, package.join(WORKSPACE_PREFIX)),
+            (&archives, base.path().join("unzipped/Study")),
+        ] {
+            let (_, _, root) = store.get_project_meta("project").await.unwrap().unwrap();
+            assert_eq!(
+                std::fs::canonicalize(&root).unwrap(),
+                std::fs::canonicalize(expected_root).unwrap()
+            );
+            assert_eq!(
+                store.list_project_frame_ids("project").await.unwrap().len(),
+                3
+            );
+            for frame in ["frame-1", "frame-2", "frame-3"] {
+                assert_eq!(store.load_messages(frame).await.unwrap().len(), 1);
+            }
+            let artifact = store.get_artifact("artifact").await.unwrap().unwrap();
+            assert_eq!(std::fs::read(&artifact.2).unwrap(), b"figure");
+            assert!(Path::new(&root).join("empty").is_dir());
+        }
+        assert_eq!(std::fs::read(package.join(DATABASE_PATH)).unwrap(), before);
+        assert!(
+            import_project_directory(&folders, &base.path().join("app"), &package, None)
+                .await
+                .unwrap_err()
+                .contains("already present")
+        );
+        assert_eq!(
+            folders
+                .list_project_frame_ids("project")
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(std::fs::read(package.join(DATABASE_PATH)).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn invalid_directory_metadata_never_registers_or_changes_source() {
+        let base = tempfile::tempdir().unwrap();
+        let package = directory_fixture(base.path()).await;
+        let store = wisp_store::Store::open(&base.path().join("target.sqlite"))
+            .await
+            .unwrap();
+        let app = base.path().join("app");
+        // A plain working folder must not fall through to creating an empty project.
+        assert!(
+            import_project_directory(&store, &app, &base.path().join("source"), None)
+                .await
+                .unwrap_err()
+                .contains("project_folder_invalid")
+        );
+        let manifest = std::fs::read(package.join(MANIFEST_PATH)).unwrap();
+        for replacement in [
+            b"broken".to_vec(),
+            {
+                let mut value: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+                value["archive_version"] = 999.into();
+                serde_json::to_vec(&value).unwrap()
+            },
+            {
+                let mut value: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+                value["project"]["id"] = "another-project".into();
+                serde_json::to_vec(&value).unwrap()
+            },
+        ] {
+            std::fs::write(package.join(MANIFEST_PATH), &replacement).unwrap();
+            assert!(import_project_directory(&store, &app, &package, None)
+                .await
+                .is_err());
+            assert!(store.get_project("project").await.unwrap().is_none());
+            assert!(store
+                .get_project("another-project")
+                .await
+                .unwrap()
+                .is_none());
+            assert_eq!(
+                std::fs::read(package.join(MANIFEST_PATH)).unwrap(),
+                replacement
+            );
+        }
+        std::fs::write(package.join(MANIFEST_PATH), &manifest).unwrap();
+        std::fs::write(package.join(DATABASE_PATH), b"corrupted sqlite").unwrap();
+        assert!(import_project_directory(&store, &app, &package, None)
+            .await
+            .unwrap_err()
+            .contains("project_folder_metadata_invalid"));
+        assert!(store.get_project("project").await.unwrap().is_none());
+        assert_eq!(
+            std::fs::read(package.join(DATABASE_PATH)).unwrap(),
+            b"corrupted sqlite"
+        );
+        std::fs::remove_file(package.join(DATABASE_PATH)).unwrap();
+        assert!(import_project_directory(&store, &app, &package, None)
+            .await
+            .unwrap_err()
+            .contains("project_folder_invalid"));
+        assert!(!package.join(DATABASE_PATH).exists());
+        assert_eq!(
+            std::fs::read(package.join("workspace/.wisp/artifacts/plot.txt")).unwrap(),
+            b"figure"
+        );
+    }
+
+    #[tokio::test]
+    async fn directory_export_refuses_recursion_and_existing_destinations() {
+        let base = tempfile::tempdir().unwrap();
+        let package = directory_fixture(base.path()).await;
+        for destination in [base.path().join("source/nested"), package.clone()] {
+            assert!(write_project_directory(
+                &destination,
+                &base.path().join("snapshot.sqlite"),
+                &base.path().join("source"),
+                sample_manifest().project,
+                &wisp_store::ProjectTransferStats::default(),
+                None
+            )
+            .is_err());
+        }
+        assert!(!base.path().join("source/nested").exists());
+        assert!(package.join(DATABASE_PATH).is_file());
+        assert!(!std::fs::read_dir(base.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".wisp-export-")));
+    }
 
     #[test]
     fn progress_reporter_throttles_same_stage_but_not_stage_changes_or_completion() {

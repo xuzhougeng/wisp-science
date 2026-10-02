@@ -79,6 +79,9 @@ async fn run_tests() -> Result<(), String> {
     test_stderr_bound_and_drop_cleanup()
         .await
         .map_err(|error| format!("stderr and cleanup: {error}"))?;
+    test_cancel_during_initialize()
+        .await
+        .map_err(|error| format!("initialize cancellation: {error}"))?;
     Ok(())
 }
 
@@ -379,6 +382,35 @@ async fn test_stderr_bound_and_drop_cleanup() -> Result<(), String> {
     check(first == second, "dropping handle stops child process")
 }
 
+async fn test_cancel_during_initialize() -> Result<(), String> {
+    let marker = unique_temp_path("wisp-acp-initialize-cleanup");
+    let launch = tokio::spawn(AcpSessionHandle::launch(profile(
+        "initialize-hang",
+        vec![marker.to_string_lossy().to_string()],
+    )));
+    let started = tokio::time::timeout(Duration::from_secs(5), async {
+        while !marker.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    launch.abort();
+    check(
+        matches!(launch.await, Err(error) if error.is_cancelled()),
+        "initialize task was not cancelled",
+    )?;
+    started.map_err(|_| "child did not reach its initialization wait")?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let first = std::fs::read(&marker).map_err(stringify)?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let second = std::fs::read(&marker).map_err(stringify)?;
+    let _ = std::fs::remove_file(marker);
+    check(
+        first == second,
+        "cancelling initialize left its child alive",
+    )
+}
+
 fn unique_temp_path(prefix: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -411,7 +443,7 @@ fn fake_agent(args: &[String]) -> ExitCode {
             eprintln!("argument boundaries changed: {args:?}");
             return ExitCode::FAILURE;
         }
-        "cleanup" => {
+        "cleanup" | "initialize-hang" => {
             eprintln!("{}", "x".repeat(2048));
             let marker = PathBuf::from(args.get(1).expect("cleanup marker"));
             std::thread::spawn(move || {
@@ -422,6 +454,11 @@ fn fake_agent(args: &[String]) -> ExitCode {
                     std::thread::sleep(Duration::from_millis(20));
                 }
             });
+            if scenario == "initialize-hang" {
+                loop {
+                    std::thread::park();
+                }
+            }
         }
         "environment" => {
             if std::env::var("WISP_ACP_TEST_ENV").as_deref() != Ok("controlled-child") {

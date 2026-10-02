@@ -1,0 +1,13 @@
+{
+  "schema": "wisp.native-conversations.v1",
+  "command": "native_conversation_attach",
+  "project_id": "project-a",
+  "args": {
+    "session_id": "session-a",
+    "path": "/tmp/notes.csv"
+  },
+  "result": {
+    "path": "uploads/notes.csv",
+    "name": "notes.csv"
+  }
+}

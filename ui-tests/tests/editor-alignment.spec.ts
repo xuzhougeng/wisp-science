@@ -45,8 +45,9 @@ for (const variant of [
     for (const [layer, style] of Object.entries(metrics)) {
       expect(style, layer).toEqual(metrics.input);
     }
-    // The toolbar remains at the independently configured UI size.
-    await expect(page.locator("[data-editor-run]")).toHaveCSS("font-size", `${variant.ui}px`);
+    // The toolbar follows the UI size (its 12px design scaled by ui/14), not the code size.
+    const runSize = await page.locator("[data-editor-run]").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(runSize).toBeCloseTo((12 * variant.ui) / 14, 1);
 
     // Clicking glyphs in the visible mirror must place the native textarea
     // caret at the corresponding offset, including a tab and later lines.

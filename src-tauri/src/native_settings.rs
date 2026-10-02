@@ -27,6 +27,18 @@ pub(crate) fn requested(args: impl IntoIterator<Item = String>) -> bool {
     args.into_iter().any(|arg| arg == "--native-settings-host")
 }
 
+/// Keeps the host out of the Dock. Tao launches every app as Regular and so
+/// overrides the host bundle's `LSUIElement`; `setup` only runs after launch,
+/// where the icon would already flash, so this must precede `App::run`.
+#[allow(unused_mut)] // Only macOS mutates.
+pub(crate) fn background_policy(mut app: tauri::App) -> tauri::App {
+    #[cfg(target_os = "macos")]
+    if requested(std::env::args()) {
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
+    app
+}
+
 pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     if app.try_state::<HostDescriptor>().is_some() {
         return Ok(());
@@ -85,6 +97,28 @@ pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn capabilities() -> Value {
+    serde_json::json!({
+        "commands": COMMANDS,
+        "schema": SCHEMA,
+        "conversations": wisp_dto::native_conversations::COMMANDS,
+        "conversation_schema": wisp_dto::native_conversations::SCHEMA,
+        "projects": wisp_dto::native_projects::COMMANDS,
+        "project_schema": wisp_dto::native_projects::SCHEMA,
+        "library": wisp_dto::native_library::COMMANDS,
+        "library_schema": wisp_dto::native_library::SCHEMA,
+        "calendar": wisp_dto::native_calendar::COMMANDS,
+        "calendar_schema": wisp_dto::native_calendar::SCHEMA,
+        "journey": wisp_dto::native_journey::COMMANDS,
+        "journey_schema": wisp_dto::native_journey::SCHEMA,
+        "publication": wisp_dto::native_publication::COMMANDS,
+        "publication_schema": wisp_dto::native_publication::SCHEMA,
+        "scratch": wisp_dto::native_scratch::COMMANDS,
+        "scratch_schema": wisp_dto::native_scratch::SCHEMA,
+        "privacy": ["get_privacy_mode"],
+    })
+}
+
 fn authorize(headers: &HeaderMap, expected: &str) -> bool {
     // A browser origin is never a native settings client. No CORS is enabled.
     !headers.contains_key("origin")
@@ -116,15 +150,80 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
         return Err("Invalid native settings request".into());
     }
     if request.command == "native_settings_capabilities" {
-        return Ok(
-            serde_json::json!({ "commands": COMMANDS, "schema": SCHEMA, "conversations": wisp_dto::native_conversations::COMMANDS, "conversation_schema": wisp_dto::native_conversations::SCHEMA }),
-        );
+        return Ok(capabilities());
+    }
+    if wisp_dto::native_projects::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        if request.command == "native_project_export" {
+            return crate::native_projects::execute_export(&state, request).await;
+        }
+        if matches!(
+            request.command.as_str(),
+            "native_project_recovery_preview" | "native_project_recover_workspace"
+        ) {
+            return crate::native_projects::execute_recovery(&state.store, request).await;
+        }
+        if wisp_dto::native_projects::returns_project_summary(&request.command) {
+            let id =
+                crate::native_projects::execute(&state.store, &state.app_data, request).await?;
+            return serde_json::to_value(crate::build_project_summary(&state, &id).await)
+                .map_err(|error| error.to_string());
+        }
+        return crate::native_projects::execute_folders(&state.store, request).await;
+    }
+    if wisp_dto::native_library::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_library::execute(&state.library, request).await;
+    }
+    if request.command == "get_privacy_mode" {
+        let state = broker.app.state::<crate::AppState>();
+        let mode =
+            crate::privacy_mode::read(&state.store, request.project_id.as_deref(), &request.args)
+                .await?;
+        return serde_json::to_value(mode).map_err(|error| error.to_string());
+    }
+    if wisp_dto::native_calendar::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_calendar::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_journey::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_journey::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_publication::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_scratch::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_scratch::execute(&state.store, &state.app_data, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
         return crate::native_conversations::dispatch(broker, request).await;
     }
     if !COMMANDS.contains(&request.command.as_str()) {
         return Err("Command is not available to native settings".into());
+    }
+    if matches!(
+        request.command.as_str(),
+        "enable_project_folder_sync" | "sync_project" | "resolve_project_sync"
+    ) {
+        let input = crate::native_projects::validate_sync_request(request)?;
+        let state = broker.app.state::<crate::AppState>();
+        let result = match request.command.as_str() {
+            "enable_project_folder_sync" => {
+                crate::project_sync::enable_project_folder_sync(state, input.id).await?
+            }
+            "sync_project" => crate::project_sync::sync_project(state, input.id).await?,
+            _ => {
+                let strategy = match input.strategy.ok_or("A conflict strategy is required")? {
+                    wisp_dto::native_projects::SyncConflictStrategy::Local => "local",
+                    wisp_dto::native_projects::SyncConflictStrategy::Remote => "remote",
+                };
+                crate::project_sync::resolve_project_sync(state, input.id, strategy.into()).await?
+            }
+        };
+        return serde_json::to_value(result).map_err(|error| error.to_string());
     }
     if matches!(
         request.command.as_str(),
@@ -299,5 +398,81 @@ mod tests {
         assert!(requested(["wisp".into(), "--native-settings-host".into()]));
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(!COMMANDS.contains(&"shell"));
+        assert!(!COMMANDS.contains(&"native_project_create"));
+        assert!(!COMMANDS.contains(&"native_library_delete"));
+        assert!(!COMMANDS.contains(&"native_research_calendar"));
+        assert!(!COMMANDS.contains(&"native_research_journey"));
+        assert!(!COMMANDS.contains(&"native_publication_create"));
+        assert!(!COMMANDS.contains(&"native_scratch_open"));
+        assert!(!COMMANDS.contains(&"native_conversation_attach"));
+        assert!(!COMMANDS.contains(&"native_conversation_enqueue"));
+        assert!(!COMMANDS.contains(&"get_privacy_mode"));
+        assert!(!COMMANDS.contains(&"set_privacy_mode"));
+        assert!(!COMMANDS.contains(&"start_scratch_chat"));
+        let advertised = capabilities();
+        assert_eq!(advertised["projects"][0], "native_project_create");
+        assert_eq!(
+            advertised["project_schema"],
+            wisp_dto::native_projects::SCHEMA
+        );
+        assert_eq!(advertised["library"][0], "native_library_search");
+        assert_eq!(advertised["library"][1], "native_library_delete");
+        assert_eq!(
+            advertised["library_schema"],
+            wisp_dto::native_library::SCHEMA
+        );
+        assert_eq!(advertised["calendar"][0], "native_research_calendar");
+        assert_eq!(
+            advertised["calendar_schema"],
+            wisp_dto::native_calendar::SCHEMA
+        );
+        assert_eq!(advertised["journey"][0], "native_research_journey");
+        assert_eq!(
+            advertised["journey_schema"],
+            wisp_dto::native_journey::SCHEMA
+        );
+        assert_eq!(advertised["publication"][0], "native_publication_workspace");
+        assert_eq!(advertised["publication"][1], "native_publication_create");
+        assert_eq!(
+            advertised["publication_schema"],
+            wisp_dto::native_publication::SCHEMA
+        );
+        assert_eq!(advertised["scratch"][0], "native_scratch_open");
+        assert_eq!(advertised["scratch"][1], "native_scratch_close");
+        assert_eq!(
+            advertised["scratch_schema"],
+            wisp_dto::native_scratch::SCHEMA
+        );
+        assert_eq!(advertised["privacy"][0], "get_privacy_mode");
+        assert!(advertised["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command == "native_conversation_attach"));
+        assert!(advertised["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command == "native_conversation_enqueue"));
+        assert!(advertised["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|command| {
+                command != "native_project_create"
+                    && command != "native_library_search"
+                    && command != "native_library_delete"
+                    && command != "native_research_calendar"
+                    && command != "native_research_journey"
+                    && command != "native_publication_workspace"
+                    && command != "native_publication_create"
+                    && command != "native_scratch_open"
+                    && command != "native_scratch_close"
+                    && command != "native_conversation_attach"
+                    && command != "native_conversation_enqueue"
+                    && command != "get_privacy_mode"
+                    && command != "set_privacy_mode"
+                    && command != "start_scratch_chat"
+            }));
     }
 }

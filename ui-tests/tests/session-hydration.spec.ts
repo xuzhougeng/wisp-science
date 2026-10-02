@@ -8,7 +8,7 @@ async function setup(page: Page) {
   await page.evaluate(() => {
     const w = window as any;
     const invoke = w.__TAURI__.core.invoke;
-    w.hydration = { loads: 0, delay: 0, fail: false, text: "Latest results ready for transfer", approval: true };
+    w.hydration = { loads: 0, snapshotGate: null, fail: false, text: "Latest results ready for transfer", approval: true };
     w.approval = { approval_id: "approval-1", frame_id: "live-session", tool: "transfer_between_contexts", preview: "CPU3 results -> local results", message: "Run tool 'transfer_between_contexts'?" };
     w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
       const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
@@ -18,8 +18,9 @@ async function setup(page: Page) {
       };
       if (cmd === "load_session" && arg("id") === "live-session") {
         const state = { ...w.hydration };
+        w.hydration.snapshotGate = null;
         w.hydration.loads++;
-        if (state.delay) await new Promise(resolve => setTimeout(resolve, state.delay));
+        if (state.snapshotGate) await state.snapshotGate;
         if (state.fail) throw new Error("snapshot unavailable");
         return {
           items: [{ role: "user", text: "Analyze CRA002586" }, { role: "assistant", text: state.text }],
@@ -36,12 +37,20 @@ async function open(page: Page, session = "live-session") {
   await page.evaluate(sessionId => (window as any).__tauriEmit("open-session", { projectId: "other", sessionId }), session);
 }
 
+async function holdNextSnapshot(page: Page) {
+  await page.evaluate(() => {
+    const state = (window as any).hydration;
+    state.snapshotGate = new Promise<void>(resolve => { state.releaseSnapshot = resolve; });
+  });
+}
+
 test("a cold window hydrates a running conversation and its existing approval", async ({ page }) => {
   await setup(page);
-  await page.evaluate(() => { (window as any).hydration.delay = 400; });
+  await holdNextSnapshot(page);
   await open(page);
   await expect(page.getByTestId("transcript-loading")).toBeVisible();
   await expect(page.locator(".chat .empty")).toHaveCount(0);
+  await page.evaluate(() => (window as any).hydration.releaseSnapshot());
   await expect(page.getByText("Latest results ready for transfer", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
   await expect(page.getByTestId("transcript-loading")).toHaveCount(0);
@@ -61,13 +70,14 @@ test("returning to a running conversation replaces stale window cache", async ({
 
 test("an approval resolved during hydration is not resurrected by a late snapshot", async ({ page }) => {
   await setup(page);
-  await page.evaluate(() => { (window as any).hydration.delay = 350; });
+  await holdNextSnapshot(page);
   await open(page);
   await expect.poll(() => page.evaluate(() => (window as any).hydration.loads)).toBe(1);
   await page.evaluate(() => {
     const w = window as any;
     w.hydration.approval = false;
     w.__tauriEmit("confirm-resolved", w.approval);
+    w.hydration.releaseSnapshot();
   });
   await expect.poll(() => page.evaluate(() => (window as any).hydration.loads)).toBeGreaterThan(1);
   await expect(page.getByTestId("transcript-loading")).toHaveCount(0);
@@ -77,13 +87,15 @@ test("an approval resolved during hydration is not resurrected by a late snapsho
 
 test("live events invalidate an older snapshot without duplicating deltas", async ({ page }) => {
   await setup(page);
-  await page.evaluate(() => { Object.assign((window as any).hydration, { delay: 350, approval: false }); });
+  await holdNextSnapshot(page);
+  await page.evaluate(() => { (window as any).hydration.approval = false; });
   await open(page);
   await expect.poll(() => page.evaluate(() => (window as any).hydration.loads)).toBe(1);
   await page.evaluate(() => {
     const w = window as any;
     w.hydration.text = "Latest results plus streamed update";
     w.__tauriEmit("agent", { kind: "Text", frame_id: "live-session", delta: " plus streamed update" });
+    w.hydration.releaseSnapshot();
   });
   await expect(page.getByText("Latest results plus streamed update", { exact: true })).toBeVisible();
   await expect(page.getByTestId("transcript-loading")).toHaveCount(0);

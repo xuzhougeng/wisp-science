@@ -74,6 +74,7 @@ extern "C" {
     /// `owner_id` is a unique mounted element that owns the URL until removal.
     #[wasm_bindgen(js_name = media_url)]
     pub(crate) async fn media_url(path: &str, owner_id: &str) -> JsValue;
+    pub(crate) async fn hydrate_workspace_images(owner_id: &str, unavailable: &str);
     /// Small canvas-downscaled variant of [`media_url`] for thumbnail-sized
     /// cards, so long histories do not keep full-size decoded bitmaps alive.
     #[wasm_bindgen(js_name = media_thumbnail_url)]
@@ -132,6 +133,13 @@ extern "C" {
     fn follow_run_outputs();
 }
 
+#[wasm_bindgen(module = "/src/scrollbars.js")]
+extern "C" {
+    /// One document-level scroll listener that toggles `.is-scrolling` on
+    /// whatever container is scrolling (see base.css scrollbar reveal).
+    fn install_scrollbar_reveal();
+}
+
 #[wasm_bindgen(module = "/src/marks.js")]
 extern "C" {
     /// Underline the given saved excerpts (JSON string array) in the transcript.
@@ -155,6 +163,11 @@ extern "C" {
 /// Bind the chat scroller so it keeps pinned to the bottom as content grows.
 pub(crate) fn attach_chat_autoscroll() {
     attach_chat_scroll(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
+}
+
+/// Hide scrollbar thumbs until their container scrolls (then fade out on idle).
+pub(crate) fn setup_scrollbar_reveal() {
+    install_scrollbar_reveal();
 }
 
 /// Nudge the chat view after a non-transcript layout change (respects scroll-up).
@@ -210,6 +223,13 @@ pub(crate) fn set_highlighted_code(id: String, text: String) {
     spawn_local(async move {
         let _ = highlight_set_code(&id, &text).await;
     });
+}
+
+/// Tutorials index. Help → Documentation and the home docs button both open it.
+pub(crate) const TUTORIALS_URL: &str = "https://wispscience.com/tutorials.html";
+
+pub(crate) fn open_tutorials() {
+    open_external_url(TUTORIALS_URL.to_string());
 }
 
 /// Open an http(s)/mailto/tel link in the OS default handler (not the app webview).

@@ -8,36 +8,9 @@
 
 use super::Store;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScheduleRecord {
-    pub id: String,
-    pub project_id: String,
-    /// Target session. `None` creates a fresh session for every fire.
-    pub frame_id: Option<String>,
-    pub name: String,
-    pub prompt: String,
-    pub skill: Option<String>,
-    pub interval_secs: i64,
-    pub enabled: bool,
-    pub next_run_at: i64,
-    pub last_run_at: Option<i64>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScheduleRunRecord {
-    pub id: String,
-    pub schedule_id: String,
-    pub frame_id: Option<String>,
-    /// `fired` or `failed`.
-    pub status: String,
-    pub error: Option<String>,
-    pub fired_at: i64,
-}
+pub use wisp_dto::{ScheduleRecord, ScheduleRunRecord};
 
 /// Smallest `anchor + k*interval` strictly greater than `now`. Advancing from
 /// the previous slot (not `now`) keeps the schedule on its original cadence.
@@ -71,6 +44,9 @@ const SCHEDULE_COLUMNS: &str =
 
 impl Store {
     pub async fn create_schedule(&self, schedule: &ScheduleRecord) -> Result<()> {
+        if let Some(store) = self.route_project(&schedule.project_id).await? {
+            return Box::pin(store.create_schedule(schedule)).await;
+        }
         sqlx::query(
             "INSERT INTO schedules(\
              id,project_id,frame_id,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at) \
@@ -94,6 +70,9 @@ impl Store {
     }
 
     pub async fn get_schedule(&self, id: &str) -> Result<Option<ScheduleRecord>> {
+        if let Some(store) = self.route_entity("schedules", "id", id).await? {
+            return Box::pin(store.get_schedule(id)).await;
+        }
         let row = sqlx::query(&format!(
             "SELECT {SCHEDULE_COLUMNS} FROM schedules WHERE id=?"
         ))
@@ -104,6 +83,9 @@ impl Store {
     }
 
     pub async fn list_schedules(&self, project_id: &str) -> Result<Vec<ScheduleRecord>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_schedules(project_id)).await;
+        }
         let rows = sqlx::query(&format!(
             "SELECT {SCHEDULE_COLUMNS} FROM schedules WHERE project_id=? ORDER BY created_at,id"
         ))
@@ -114,6 +96,9 @@ impl Store {
     }
 
     pub async fn set_schedule_enabled(&self, id: &str, enabled: bool, now: i64) -> Result<bool> {
+        if let Some(store) = self.route_entity("schedules", "id", id).await? {
+            return Box::pin(store.set_schedule_enabled(id, enabled, now)).await;
+        }
         let result = sqlx::query("UPDATE schedules SET enabled=?, updated_at=? WHERE id=?")
             .bind(enabled as i64)
             .bind(now)
@@ -124,6 +109,9 @@ impl Store {
     }
 
     pub async fn delete_schedule(&self, id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("schedules", "id", id).await? {
+            return Box::pin(store.delete_schedule(id)).await;
+        }
         sqlx::query("DELETE FROM schedule_runs WHERE schedule_id=?")
             .bind(id)
             .execute(&self.pool)
@@ -138,6 +126,15 @@ impl Store {
     /// Enabled schedules whose slot has passed. The poller claims each row
     /// before firing so a slow turn can never double-fire a schedule.
     pub async fn due_schedules(&self, now: i64) -> Result<Vec<ScheduleRecord>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                let value = Box::pin(store.due_schedules(now)).await?;
+                result.extend(value);
+            }
+            result.sort_by(|a, b| a.next_run_at.cmp(&b.next_run_at).then(a.id.cmp(&b.id)));
+            return Ok(result);
+        }
         let rows = sqlx::query(&format!(
             "SELECT {SCHEDULE_COLUMNS} FROM schedules \
              WHERE enabled=1 AND next_run_at<=? \
@@ -160,6 +157,15 @@ impl Store {
         new_next_run_at: i64,
         fired_at: i64,
     ) -> Result<bool> {
+        if let Some(store) = self.route_entity("schedules", "id", id).await? {
+            return Box::pin(store.claim_schedule_fire(
+                id,
+                expected_next_run_at,
+                new_next_run_at,
+                fired_at,
+            ))
+            .await;
+        }
         let result = sqlx::query(
             "UPDATE schedules SET next_run_at=?, last_run_at=?, updated_at=? \
              WHERE id=? AND next_run_at=? AND enabled=1",
@@ -175,6 +181,12 @@ impl Store {
     }
 
     pub async fn record_schedule_run(&self, run: &ScheduleRunRecord) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("schedules", "id", &run.schedule_id)
+            .await?
+        {
+            return Box::pin(store.record_schedule_run(run)).await;
+        }
         sqlx::query(
             "INSERT INTO schedule_runs(id,schedule_id,frame_id,status,error,fired_at) \
              VALUES(?,?,?,?,?,?)",
@@ -195,6 +207,9 @@ impl Store {
         schedule_id: &str,
         limit: usize,
     ) -> Result<Vec<ScheduleRunRecord>> {
+        if let Some(store) = self.route_entity("schedules", "id", schedule_id).await? {
+            return Box::pin(store.list_schedule_runs(schedule_id, limit)).await;
+        }
         let rows = sqlx::query(
             "SELECT id,schedule_id,frame_id,status,error,fired_at FROM schedule_runs \
              WHERE schedule_id=? ORDER BY fired_at DESC,id DESC LIMIT ?",

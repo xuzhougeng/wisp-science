@@ -12,11 +12,16 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "apps/macos/Sources/WispProjectBrowserUI/Resources"
-ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge")
+ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more")
+# WebView-only settings sections the native preview has no page for yet.
+WEBVIEW_ONLY_SECTIONS = {"hooks"}
 COLORS = ("bg-app", "bg-elev", "bg-sunken", "surface-hover", "text", "text-muted", "text-faint", "border", "border-strong", "clay", "clay-strong")
 
 
 def exports():
+    # Use the same pinned language grammars as WebView; JavaScriptCore produces
+    # token ranges while AppKit keeps the text selectable and renders it natively.
+    yield "highlight.min.js", (ROOT / "ui/vendor-src/highlight.min.js").read_bytes()
     for theme in ("light", "dark"):
         yield f"wordmark-{theme}.svg", (ROOT / f"docs/assets/wordmark-{theme}.svg").read_bytes()
     source = (ROOT / "ui/src/app_support/messages.rs").read_text(encoding="utf-8")
@@ -39,9 +44,11 @@ def exports():
     navigation = {}
     for group, entries in re.findall(r'"(settings.nav.[^"]+)",\s*&\[(.*?)\]', navigation_block, re.S):
         for section, aliases in re.findall(r'\(\s*"([^"]+)",\s*"([^"]+)",?\s*\)', entries):
+            if section in WEBVIEW_ONLY_SECTIONS:
+                continue
             key = "settings.nav." + section.replace("-", "_")
             navigation[section] = {"zh": by_locale["Zh"][key], "en": by_locale["En"][key], "group": by_locale["Zh"][group], "group_en": by_locale["En"][group], "aliases": aliases}
-    if len(navigation) != 19:
+    if len(navigation) != 20:
         raise ValueError("Review settings navigation export after WebView changes")
     yield "settings-navigation.json", (json.dumps(navigation, ensure_ascii=False, indent=2) + "\n").encode()
     labels = {value: by_locale["En"][key] for key, value in by_locale["Zh"].items() if key in by_locale["En"]}

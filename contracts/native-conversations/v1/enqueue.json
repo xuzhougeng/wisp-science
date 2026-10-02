@@ -1,0 +1,14 @@
+{
+  "schema": "wisp.native-conversations.v1",
+  "command": "native_conversation_enqueue",
+  "project_id": "project-a",
+  "args": {
+    "session_id": "session-a",
+    "request_id": "c2bb7a45-ddbb-47b1-82db-82f289d9aa7d",
+    "message": "继续检查对照"
+  },
+  "result": {
+    "queued": true,
+    "message": "继续检查对照"
+  }
+}

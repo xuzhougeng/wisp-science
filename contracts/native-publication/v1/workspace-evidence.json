@@ -1,0 +1,74 @@
+{
+  "schema": "wisp.native-publication.v1",
+  "command": "native_publication_workspace",
+  "project_id": "research-1",
+  "args": {},
+  "result": {
+    "publications": [
+      {
+        "id": "pub-1",
+        "project_id": "research-1",
+        "title": "RNA-seq paper",
+        "description": "Differential expression"
+      }
+    ],
+    "publication": {
+      "id": "pub-1",
+      "project_id": "research-1",
+      "title": "RNA-seq paper",
+      "description": "Differential expression"
+    },
+    "revision": {
+      "id": "rev-1",
+      "publication_id": "pub-1",
+      "revision_number": 1,
+      "label": "v1",
+      "state": "draft"
+    },
+    "items": [
+      {
+        "id": "section-1",
+        "revision_id": "rev-1",
+        "parent_item_id": null,
+        "title": "结果",
+        "kind": "section",
+        "ordinal": 0,
+        "content": ""
+      },
+      {
+        "id": "item-1",
+        "title": "The treatment changes expression",
+        "kind": "claim",
+        "ordinal": 1,
+        "revision_id": "rev-1",
+        "parent_item_id": "section-1",
+        "content": "处理改变基因表达，证据来自版本化差异表达表。"
+      }
+    ],
+    "revisions": [
+      {
+        "id": "rev-1",
+        "publication_id": "pub-1",
+        "revision_number": 1,
+        "label": "v1",
+        "state": "draft"
+      }
+    ],
+    "bindings": [
+      {
+        "id": "binding-1",
+        "revision_id": "rev-1",
+        "item_id": "item-1",
+        "source_kind": "artifact_version",
+        "source_id": "artifact-version-17",
+        "purpose": "差异表达结果",
+        "supported_claim_item_id": null,
+        "selection_state": "selected",
+        "review_state": "unreviewed",
+        "reproduction_state": "not_run",
+        "visibility": "private",
+        "source_snapshot_json": "{\"title\": \"counts.csv\", \"version\": 17}"
+      }
+    ]
+  }
+}

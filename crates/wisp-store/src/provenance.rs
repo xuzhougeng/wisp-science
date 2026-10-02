@@ -35,6 +35,9 @@ pub fn canonical_json_sha256(value: &serde_json::Value) -> (String, String) {
 impl Store {
     /// Next `cell_index` for a frame = count of existing rows.
     pub async fn next_cell_index(&self, frame_id: &str) -> Result<i64> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.next_cell_index(frame_id)).await;
+        }
         let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM execution_log WHERE frame_id=?")
             .bind(frame_id)
             .fetch_one(&self.pool)
@@ -43,6 +46,11 @@ impl Store {
     }
 
     pub async fn insert_execution_log(&self, e: &ExecLog) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", &e.frame_id).await? {
+            return Box::pin(store.insert_execution_log(e)).await;
+        }
+        self.retain_environment_snapshot(e.env_hash.as_deref())
+            .await?;
         let now = chrono::Utc::now().timestamp();
         let fw = serde_json::to_string(&e.files_written).unwrap_or_else(|_| "[]".into());
         let fr = serde_json::to_string(&e.files_read).unwrap_or_else(|_| "[]".into());
@@ -86,6 +94,9 @@ impl Store {
     }
 
     pub async fn get_env_snapshot(&self, hash: &str) -> Result<Option<(Option<String>, String)>> {
+        if let Some(store) = self.route_entity("env_snapshots", "hash", hash).await? {
+            return Box::pin(store.get_env_snapshot(hash)).await;
+        }
         let row: Option<(Option<String>, String)> =
             sqlx::query_as("SELECT env_name, packages_json FROM env_snapshots WHERE hash=?")
                 .bind(hash)
@@ -100,6 +111,10 @@ impl Store {
         env_name: Option<&str>,
         snapshot: &serde_json::Value,
     ) -> Result<String> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.record_run_environment_snapshot(run_id, env_name, snapshot))
+                .await;
+        }
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE id=?)")
             .bind(run_id)
             .fetch_one(&self.pool)
@@ -146,6 +161,9 @@ impl Store {
         &self,
         run_id: &str,
     ) -> Result<Option<EnvironmentSnapshot>> {
+        if let Some(store) = self.route_entity("runs", "id", run_id).await? {
+            return Box::pin(store.get_run_environment_snapshot(run_id)).await;
+        }
         let row = sqlx::query(
             "SELECT environment.hash,environment.env_name,environment.packages_json,\
                     environment.snapshot_json,environment.hash_algorithm,environment.created_at \
@@ -176,6 +194,9 @@ impl Store {
         frame_id: &str,
         path: &str,
     ) -> Result<Option<ExecLog>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.find_provenance_by_path(frame_id, path)).await;
+        }
         // Substring prefilter pushed into SQL so we don't fetch and JSON-parse
         // every row in the frame. The needle is the path's JSON encoding
         // (quotes included) because that's the byte form stored in the column —
@@ -227,6 +248,9 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<std::collections::HashSet<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_written_paths(frame_id)).await;
+        }
         let rows = sqlx::query("SELECT files_written FROM execution_log WHERE frame_id=?")
             .bind(frame_id)
             .fetch_all(&self.pool)

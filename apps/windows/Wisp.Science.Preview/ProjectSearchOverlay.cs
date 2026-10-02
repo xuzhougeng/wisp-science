@@ -73,6 +73,7 @@ internal sealed class ProjectSearchOverlay : Grid
             }
             results.SelectedIndex = results.Items.Count > 0 ? 0 : -1;
             empty.Visibility = results.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            design.ApplyTypography(this);
         }
         void Accept(ListViewItem? item) { if (item?.Tag is SearchResult result) { close(); open(result); } }
         var composing = false;

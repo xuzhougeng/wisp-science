@@ -150,6 +150,30 @@ struct ManualCompactCommand {
     instruction: Option<String>,
 }
 
+/// UserPromptSubmit command hooks: exit 2 refuses the prompt before the turn
+/// starts; stdout becomes context for this turn.
+async fn user_prompt_hooks(
+    app: &AppHandle,
+    frame_id: &str,
+    project: &ActiveProject,
+    prompt: &str,
+) -> Result<Option<String>, String> {
+    let outcome = command_hooks::fire(
+        app,
+        frame_id,
+        &project.id,
+        &project.root,
+        wisp_dto::HookEvent::UserPromptSubmit,
+        None,
+        serde_json::json!({ "prompt": prompt }),
+    )
+    .await;
+    match outcome.block {
+        Some(reason) => Err(format!("Blocked by a UserPromptSubmit hook: {reason}")),
+        None => Ok((!outcome.context.is_empty()).then_some(outcome.context)),
+    }
+}
+
 fn parse_manual_compact_command(message: &str) -> Option<ManualCompactCommand> {
     let command = message.trim();
     let Some(rest) = command.strip_prefix("/compact") else {
@@ -325,19 +349,12 @@ pub(crate) async fn send_message_inner(
         session_id.as_deref().filter(|id| !id.is_empty()),
     )
     .await?;
-    let saved_binding = match session_id.as_deref().filter(|id| !id.is_empty()) {
-        Some(id) => state
-            .store
-            .get_acp_session(id)
-            .await
-            .map_err(|error| error.to_string())?,
+    let saved_agent = match session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => acp::session_agent_id(&state.store, id).await?,
         None => None,
     };
-    if acp_agent_id
-        .as_deref()
-        .is_some_and(|id| !id.trim().is_empty())
-        || saved_binding.is_some()
-    {
+    let acp_agent_id = acp::resolve_agent_choice(acp_agent_id.as_deref(), saved_agent.as_deref())?;
+    if acp_agent_id.is_some() {
         if project_write_locked {
             return Err(
                 "exploration_mainline_frozen: ACP conversations cannot enforce the exploration read-only project lock; use the built-in Agent or finish the exploration round first."
@@ -420,6 +437,11 @@ pub(crate) async fn send_message_inner(
         if let Some(compute) = ssh_hosts::stored_compute_section(&state.store, &frame_id).await {
             injected_context.push(compute);
         }
+        if !resume {
+            if let Some(context) = user_prompt_hooks(&app, &frame_id, &ap, &message).await? {
+                injected_context.push(context);
+            }
+        }
         let completion_deliveries = if resume {
             Vec::new()
         } else {
@@ -475,17 +497,29 @@ pub(crate) async fn send_message_inner(
             .await
         };
         match result {
-            Ok(_stop_reason) => {
+            Ok(stop_reason) => {
                 if !completion_delivery_ids.is_empty() {
                     let _ = state
                         .store
                         .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
                         .await;
                 }
-                if !resume && load_auto_review_enabled(&state.store, &frame_id).await {
-                    automatic_review_acp(state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
-                        .await;
-                }
+                let end = turn_hooks::TurnEnd {
+                    frame_id: &frame_id,
+                    project_id: &ap.id,
+                    project_root: &ap.root,
+                    stop_reason: Some(stop_reason.as_str()),
+                    resume,
+                    reviewer_session: false,
+                    turn_start,
+                };
+                let mut driver = turn_hooks::TurnDriver::Acp {
+                    state,
+                    app: &app,
+                    project: &ap,
+                    frame_id: &frame_id,
+                };
+                turn_hooks::run_stop(state, &app, &end, &mut driver, &runtime.cancel).await;
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
                 persist_and_emit_terminal_event(
@@ -494,11 +528,12 @@ pub(crate) async fn send_message_inner(
                     &frame_id,
                     AgentEvent::Done {
                         frame_id: frame_id.clone(),
-                        stop_reason: Some(_stop_reason),
+                        stop_reason: Some(stop_reason.clone()),
                         effective_max_iter: None,
                     },
                 )
                 .await;
+                turn_hooks::spawn_after_turn(&app, &end);
                 return Ok(frame_id);
             }
             Err(error) => {
@@ -1208,6 +1243,9 @@ pub(crate) async fn send_message_inner(
         {
             agent.ctx.inject_user(injection);
         }
+        if let Some(context) = user_prompt_hooks(&app, &frame_id, &ap, &message).await? {
+            agent.ctx.inject_user(context);
+        }
         // Context resolved before the turn belongs before the user's actual
         // request. Observations and review corrections injected later remain
         // at the tail.
@@ -1475,31 +1513,38 @@ pub(crate) async fn send_message_inner(
     // can roll the context back to it; any other outcome clears the marker.
     *rt.interrupted_turn_start.lock().unwrap() =
         (result.is_err() && rt.cancel.load(Ordering::SeqCst)).then_some(turn_start);
-    if result.is_ok() {
+    let reviewer_session = specialist
+        .as_ref()
+        .is_some_and(|specialist| specialist.id == "reviewer");
+    let turn_end = |stop_reason| turn_hooks::TurnEnd {
+        frame_id: &frame_id,
+        project_id: &ap.id,
+        project_root: &ap.root,
+        stop_reason,
+        resume,
+        reviewer_session,
+        turn_start,
+    };
+    if let Ok(outcome) = &result {
         if !completion_delivery_ids.is_empty() {
             let _ = state
                 .store
                 .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
                 .await;
         }
-        if matches!(result, Ok(wisp_core::AgentLoopOutcome::Completed)) {
-            let is_reviewer = specialist
-                .as_ref()
-                .is_some_and(|specialist| specialist.id == "reviewer");
-            if !resume && !is_reviewer && load_auto_review_enabled(&state.store, &frame_id).await {
-                automatic_review(
-                    state,
-                    &app,
-                    &frame_id,
-                    &model_label,
-                    agent,
-                    &output,
-                    &rt.cancel,
-                    turn_start,
-                )
-                .await;
-            }
-        }
+        let mut driver = turn_hooks::TurnDriver::Native {
+            agent: &mut *agent,
+            output: &output,
+            model_label: &model_label,
+        };
+        turn_hooks::run_stop(
+            state,
+            &app,
+            &turn_end(outcome.stop_reason()),
+            &mut driver,
+            &rt.cancel,
+        )
+        .await;
     }
     // Keep the turn-start snapshot through a possible automatic correction;
     // clear it only after the whole visual turn reaches a terminal outcome.
@@ -1590,6 +1635,7 @@ pub(crate) async fn send_message_inner(
             )
             .await;
             emit_browser_tab_cleanup(state, &app, &browser_turn_id, &ap.id).await;
+            turn_hooks::spawn_after_turn(&app, &turn_end(outcome.stop_reason()));
             Ok(frame_id)
         }
         Err(e) => {
@@ -1807,6 +1853,49 @@ pub(crate) fn swap_queued_toward(q: &mut Vec<QueuedItem>, id: u64, up: bool) {
     }
 }
 
+/// Park exactly one user-authored follow-up. A second distinct draft is refused.
+/// Repeating the same id does not add another item. The queue driver drains
+/// this with `take_next_queued_turn` and stops when that returns nothing.
+pub(crate) fn queue_one_follow_up(
+    turn_running: bool,
+    rt: &SessionRuntime,
+    id: u64,
+    message: &str,
+    attachments: &[String],
+) -> Result<String, String> {
+    if !turn_running {
+        return Err("Queue a follow-up only while a turn is running".into());
+    }
+    let paths = attachments
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    let text = wisp_dto::native_conversations::message_with_attachments(message, &paths);
+    if text.trim().is_empty() {
+        return Err("A follow-up needs text".into());
+    }
+    let mut queued = rt.queued.lock().unwrap();
+    if let Some(existing) = queued.iter().find(|item| item.id == id) {
+        return Ok(existing.message.clone());
+    }
+    if !queued.is_empty() {
+        return Err("Only one follow-up can wait".into());
+    }
+    let cutins = rt.queued_cutins.lock().unwrap();
+    if !cutins.is_empty() {
+        return Err("Only one follow-up can wait".into());
+    }
+    drop(cutins);
+    queued.push(QueuedItem {
+        id,
+        message: text.clone(),
+        attachments: paths,
+        references: Vec::new(),
+    });
+    Ok(text)
+}
+
 /// Called only by the workflow-lock owner, before it starts any queued turn.
 /// Reconcile offered guidance here, not in a later mutex waiter: the FIFO
 /// driver may already be ahead of the cut-in command in the lock's wait list.
@@ -2007,6 +2096,38 @@ mod queue_tests {
         assert_eq!(parse_manual_compact_command("/compact2"), None);
         assert_eq!(parse_manual_compact_command("/compact --semantic2"), None);
         assert_eq!(parse_manual_compact_command("send /compact now"), None);
+    }
+
+    #[test]
+    fn one_user_follow_up_is_sent_and_the_queue_stops() {
+        let rt = SessionRuntime::new();
+        assert!(queue_one_follow_up(false, &rt, 1, "继续", &[]).is_err());
+        assert!(take_next_queued_turn(&rt).is_none());
+        let parked = queue_one_follow_up(
+            true,
+            &rt,
+            7,
+            "  继续检查对照  ",
+            &["uploads/notes.csv".into()],
+        )
+        .unwrap();
+        assert_eq!(parked, "继续检查对照\n\nUploaded files: uploads/notes.csv");
+        assert!(queue_one_follow_up(true, &rt, 8, "另一条", &[]).is_err());
+        let replay = queue_one_follow_up(
+            true,
+            &rt,
+            7,
+            "  继续检查对照  ",
+            &["uploads/notes.csv".into()],
+        )
+        .unwrap();
+        assert_eq!(replay, parked);
+        let next = take_next_queued_turn(&rt).unwrap();
+        assert_eq!(next.id, 7);
+        assert_eq!(next.message, parked);
+        assert_eq!(next.attachments, vec!["uploads/notes.csv".to_string()]);
+        assert!(take_next_queued_turn(&rt).is_none());
+        assert!(take_next_queued_turn(&rt).is_none());
     }
 
     #[test]

@@ -10,7 +10,8 @@ internal static class NativeSettingsContractTests
         var request = JsonSerializer.Deserialize<NativeSettingsRequest>(File.ReadAllText(Path.Combine(fixtures, "request.json")))!;
         Require(request.Schema == NativeSettingsProtocol.Schema && request.ProjectId == "research-1"
             && request.Arguments["prefs"]?["ui_font_size"]?.GetValue<int>() == 15, "Settings request drift");
-        Require(NativeSettingsProtocol.Sections.Count == 19, "Settings sections drift");
+        Require(NativeSettingsProtocol.Sections.Count == 20, "Settings sections drift");
+        Require(NativeSettingsProtocol.Sections[1] == "network", "Network section order drift");
         var response = NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "response.json")), "settings-1");
         Require(response?["theme"]?.GetValue<string>() == "dark", "Settings response drift");
         Require(NativeSettingsProtocol.DecodeResponse(File.ReadAllText(Path.Combine(fixtures, "void.json")), "settings-2") is null, "Void save rejected");

@@ -648,14 +648,6 @@ pub(super) fn RuntimeInterpreterOverlay(
 #[derive(Clone, Copy)]
 pub(crate) struct RunReviewModal(pub(crate) RwSignal<Option<String>>);
 
-/// Run ids whose foreground-monitored success is awaiting a review prompt.
-/// Cards push candidates here while the turn is still running; the root
-/// drains the queue once the owning session goes idle, asks the backend
-/// whether each Run has an unresolved product decision, and only then opens
-/// the modal — never mid-work (#897).
-#[derive(Clone, Copy)]
-pub(crate) struct PendingRunReviews(pub(crate) RwSignal<Vec<String>>);
-
 fn run_review_subtitle_label(title: Option<&str>, run_id: &str) -> (String, bool) {
     if let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) {
         (title.to_string(), false)

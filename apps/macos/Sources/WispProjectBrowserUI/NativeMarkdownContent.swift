@@ -1,0 +1,191 @@
+import AppKit
+import SwiftUI
+import WispProjectBrowser
+
+/// Foundation parses CommonMark/GFM; AppKit keeps the result in one selectable
+/// document, including table cells and code, so quote/save can span blocks.
+enum NativeMarkdownContent {
+    static let copyBlockID = NSAttributedString.Key("WispCopyBlockID")
+    static let codeCopy = NSAttributedString.Key("WispCodeCopy")
+    static let tableCopy = NSAttributedString.Key("WispTableCopy")
+
+    private struct Block {
+        var text: AttributedString
+        let intents: [PresentationIntent.IntentType]
+        var identity: Int? { intents.first?.identity }
+        var tableID: Int? { intents.first { if case .table = $0.kind { return true }; return false }?.identity }
+        var tableRow: Int { intents.compactMap { if case .tableRow(let row) = $0.kind { return row }; return nil }.first ?? 0 }
+    }
+
+    private static func fullWidthBlock() -> NSTextTableBlock {
+        let table = NSTextTable()
+        table.numberOfColumns = 1
+        table.layoutAlgorithm = .fixedLayoutAlgorithm
+        table.setValue(100, type: .percentageValueType, for: .width)
+        return NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)
+    }
+
+    static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme, width: CGFloat = 600) -> NSAttributedString {
+        let prepared = NativeMathContent.prepare(source)
+        guard let parsed = try? AttributedString(markdown: prepared.markdown, options: .init(interpretedSyntax: .full)) else {
+            return NativeSelectableMessage.content(AttributedString(source), saved: saved, scheme: scheme)
+        }
+        var blocks: [Block] = []
+        for run in parsed.runs {
+            let intents = run.presentationIntent?.components ?? []
+            let text = AttributedString(parsed[run.range])
+            if let last = blocks.last, last.identity == intents.first?.identity {
+                blocks[blocks.count - 1].text.append(text)
+            } else {
+                blocks.append(Block(text: text, intents: intents))
+            }
+        }
+        var tableText: [Int: String] = [:]
+        var lastRows: [Int: Int] = [:]
+        for block in blocks {
+            guard let id = block.tableID else { continue }
+            let separator = lastRows[id] == nil ? "" : lastRows[id] == block.tableRow ? "\t" : "\n"
+            var cellText = String(block.text.characters)
+            for formula in prepared.formulas { cellText = cellText.replacingOccurrences(of: formula.token, with: formula.source) }
+            tableText[id, default: ""] += separator + cellText
+            lastRows[id] = block.tableRow
+        }
+        let result = NSMutableAttributedString(string: "")
+        var tables: [Int: NSTextTable] = [:]
+        var seenListItems: Set<Int> = []
+        for block in blocks {
+            let code = block.intents.contains { if case .codeBlock = $0.kind { return true }; return false }
+            let value = NSMutableAttributedString(attributedString: NativeSelectableMessage.content(block.text, saved: [], scheme: scheme, monospaced: code))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 6
+            paragraph.paragraphSpacing = 16
+            paragraph.lineBreakMode = .byWordWrapping
+            var indent = 0
+            var listItem: PresentationIntent.IntentType?
+            var ordered = false
+            var header = false
+            for component in block.intents {
+                switch component.kind {
+                case .header(let level):
+                    let base = (value.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize ?? 14
+                    let size = base * [1.65, 1.4, 1.2, 1.1, 1, 1][min(5, max(0, level - 1))]
+                    value.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: NSRange(location: 0, length: value.length))
+                    paragraph.paragraphSpacingBefore = 18
+                case .listItem:
+                    if listItem == nil { listItem = component }
+                case .orderedList, .unorderedList:
+                    if indent == 0 { ordered = component.kind == .orderedList }
+                    indent += 1
+                case .blockQuote:
+                    let quote = fullWidthBlock()
+                    quote.setWidth(16, type: .absoluteValueType, for: .padding)
+                    quote.setWidth(3, type: .absoluteValueType, for: .border, edge: .minX)
+                    quote.setBorderColor(NSColor(WispDesign.color("clay", scheme)).withAlphaComponent(0.5))
+                    paragraph.textBlocks = [quote]
+                    value.addAttribute(.foregroundColor, value: NSColor(WispDesign.color("text-muted", scheme)), range: NSRange(location: 0, length: value.length))
+                case .tableHeaderRow: header = true
+                default: break
+                }
+            }
+            if let item = listItem, case .listItem(let ordinal) = item.kind {
+                if seenListItems.insert(item.identity).inserted {
+                    var prefix = ordered ? "\(ordinal). " : "• "
+                    var task: String?
+                    for marker in ["[x] ", "[X] ", "[ ] "] where value.string.hasPrefix(marker) {
+                        value.deleteCharacters(in: NSRange(location: 0, length: marker.count))
+                        task = marker
+                        prefix = " "
+                        break
+                    }
+                    let attrs = value.length > 0 ? value.attributes(at: 0, effectiveRange: nil) : [:]
+                    value.insert(NSAttributedString(string: prefix, attributes: attrs), at: 0)
+                    if let task {
+                        let attachment = NSTextAttachment(); attachment.attachmentCell = NativeTaskCell(checked: task != "[ ] ")
+                        let check = NSMutableAttributedString(attributedString: NSAttributedString(attachment: attachment))
+                        check.addAttribute(NativeMathContent.sourceKey, value: String(task.dropLast()), range: NSRange(location: 0, length: 1))
+                        value.insert(check, at: 0)
+                    }
+                }
+                paragraph.firstLineHeadIndent += CGFloat(max(0, indent - 1)) * 20
+                paragraph.headIndent += CGFloat(indent) * 20
+                paragraph.paragraphSpacing = 10
+            }
+            if code {
+                let language = block.intents.compactMap { if case .codeBlock(let language) = $0.kind { return language }; return nil }.first
+                NativeCodeHighlight.apply(to: value, language: language, scheme: scheme)
+                paragraph.paragraphSpacing = 0
+                value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters), .backgroundColor: NSColor(WispDesign.color("bg-sunken", scheme))], range: NSRange(location: 0, length: value.length))
+                let box = fullWidthBlock()
+                box.backgroundColor = NSColor(WispDesign.color("bg-sunken", scheme))
+                box.setWidth(12, type: .absoluteValueType, for: .padding)
+                box.setWidth(34, type: .absoluteValueType, for: .padding, edge: .minY)
+                box.setWidth(12, type: .absoluteValueType, for: .margin, edge: .maxY)
+                box.setWidth(0.5, type: .absoluteValueType, for: .border)
+                box.setBorderColor(NSColor(WispDesign.color("border", scheme)))
+                paragraph.textBlocks = [box]
+            }
+            if let id = block.tableID,
+               let columns = block.intents.compactMap({ if case .table(let columns) = $0.kind { return columns }; return nil }).first,
+               let column = block.intents.compactMap({ if case .tableCell(let column) = $0.kind { return column }; return nil }).first {
+                let table = tables[id] ?? NSTextTable()
+                table.numberOfColumns = columns.count
+                table.layoutAlgorithm = .fixedLayoutAlgorithm
+                table.collapsesBorders = true
+                table.setValue(100, type: .percentageValueType, for: .width)
+                tables[id] = table
+                let cell = NSTextTableBlock(table: table, startingRow: block.tableRow, rowSpan: 1, startingColumn: column, columnSpan: 1)
+                cell.setValue(100 / CGFloat(max(1, columns.count)), type: .percentageValueType, for: .width)
+                cell.setWidth(10, type: .absoluteValueType, for: .padding)
+                cell.setWidth(0.5, type: .absoluteValueType, for: .border)
+                cell.setBorderColor(NSColor(WispDesign.color("border", scheme)))
+                if header { cell.setWidth(32, type: .absoluteValueType, for: .padding, edge: .minY) }
+                if header { cell.backgroundColor = NSColor(WispDesign.color("bg-sunken", scheme)) }
+                paragraph.textBlocks = [cell]
+                paragraph.paragraphSpacing = 0
+                if columns.indices.contains(column) {
+                    switch columns[column].alignment {
+                    case .left: paragraph.alignment = .left
+                    case .center: paragraph.alignment = .center
+                    case .right: paragraph.alignment = .right
+                    @unknown default: paragraph.alignment = .left
+                    }
+                }
+                if header, value.length > 0, let font = value.attribute(.font, at: 0, effectiveRange: nil) as? NSFont {
+                    value.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask), range: NSRange(location: 0, length: value.length))
+                }
+                value.addAttributes([copyBlockID: "table-\(id)", tableCopy: tableText[id] ?? ""], range: NSRange(location: 0, length: value.length))
+            }
+            // A paragraph separator is essential: full Markdown parsing strips
+            // block delimiters. Preserve fenced-code line breaks exactly.
+            if !value.string.hasSuffix("\n") {
+                let attributes = value.length > 0 ? value.attributes(at: value.length - 1, effectiveRange: nil) : [:]
+                value.append(NSAttributedString(string: "\n", attributes: attributes))
+            }
+            // Empty cells still own a paragraph and belong to the table's
+            // single copy action. Apply identity after inserting its newline.
+            if let id = block.tableID {
+                value.addAttributes([copyBlockID: "table-\(id)", tableCopy: tableText[id] ?? ""], range: NSRange(location: 0, length: value.length))
+            } else if code {
+                value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters)], range: NSRange(location: 0, length: value.length))
+            }
+            value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))
+            result.append(value)
+        }
+        NativeMathContent.replace(in: result, formulas: prepared.formulas, scheme: scheme, width: width)
+        let plain = NativeMathContent.plainText(result)
+        func range(_ match: Range<Int>) -> NSRange {
+            let start = plain.index(plain.startIndex, offsetBy: match.lowerBound)
+            let end = plain.index(plain.startIndex, offsetBy: match.upperBound)
+            return NativeMathContent.renderedRange(NSRange(start..<end, in: plain), in: result)
+        }
+        for excerpt in Set(saved) {
+            for match in NativeSavedExcerpt.ranges(in: plain, excerpt: excerpt) {
+                result.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: NSColor(WispDesign.color("clay", scheme))], range: range(match))
+            }
+        }
+        if let revealed, let match = NativeSavedExcerpt.range(in: plain, excerpt: revealed) {
+            result.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.4), range: range(match))
+        }
+        return result
+    }
+}

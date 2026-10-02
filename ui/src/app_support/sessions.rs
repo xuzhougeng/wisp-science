@@ -50,13 +50,14 @@ pub(crate) fn refresh_sessions(
             let active_is_exploration = active
                 .as_ref()
                 .is_some_and(|id| exploration_frames.with_untracked(|frames| frames.contains(id)));
-            if !active_is_listed && !active_is_exploration {
+            if !active_is_listed && !active_is_exploration && active != page.shelved_active_id {
                 let id = active.expect("an unlisted active session has an id");
                 let draft = sessions
                     .with_untracked(|current| {
                         current.iter().find(|session| session.id == id).cloned()
                     })
                     .unwrap_or(SessionInfo {
+                        running: false,
                         id,
                         title: String::new(),
                         ts: js_sys::Date::now() as i64,
@@ -232,6 +233,7 @@ mod branch_nesting_tests {
 
     fn ses(id: &str, branched_from: Option<&str>, folder: Option<&str>) -> SessionInfo {
         SessionInfo {
+            running: false,
             id: id.into(),
             title: id.into(),
             ts: 0,

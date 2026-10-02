@@ -21,7 +21,7 @@ mod pheweb;
 #[cfg(test)]
 mod tests;
 
-use crate::http::Source;
+use crate::http::{path_segment, Source};
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use reqwest::{Method, StatusCode};
@@ -408,17 +408,6 @@ fn allele(value: &str) -> bool {
                 b'A' | b'C' | b'G' | b'T' | b'N' | b'a' | b'c' | b'g' | b't' | b'n'
             )
         })
-}
-
-pub(super) fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 pub(super) fn join_url(base: &str, path: &str) -> String {

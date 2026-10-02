@@ -6,7 +6,7 @@
 //! References reviewed 2026-09-06. JSON is requested with the `.json` suffix.
 //! Tests use invented records.
 
-use crate::http::Source;
+use crate::http::{path_segment, Source};
 use crate::NativeBio;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Method;
@@ -1033,19 +1033,6 @@ fn optional_smiles(value: Option<&str>) -> Result<Option<&str>> {
             Ok(Some(trimmed))
         }
     }
-}
-
-fn path_segment(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
 }
 
 fn text(value: &Value) -> Option<String> {

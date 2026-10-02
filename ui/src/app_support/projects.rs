@@ -4,12 +4,16 @@ use super::*;
 pub(crate) fn ProjectsScreen(
     locale: RwSignal<Locale>,
     calendar_open: RwSignal<bool>,
+    automation_open: RwSignal<bool>,
+    automation_form: RwSignal<bool>,
+    on_open_specialists: Callback<()>,
     dialog_open: RwSignal<bool>,
     running: RwSignal<HashSet<String>>,
     approval_pending: ReadSignal<HashSet<String>>,
     sync_actions_available: ReadSignal<bool>,
     open_error: RwSignal<Option<String>>,
     on_open: Callback<String>,
+    on_open_folder: Callback<String>,
     on_open_session: Callback<(String, String)>,
     on_open_journey: Callback<(String, i64)>,
     on_open_artifact: Callback<(String, String, String)>,
@@ -44,8 +48,6 @@ pub(crate) fn ProjectsScreen(
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
     let import_options_open = create_rw_signal(false);
-    let opening_in_place = create_rw_signal(false);
-    let workspace_projects = create_rw_signal(None::<Vec<ProjectSummary>>);
     let recovery_preview = create_rw_signal(None::<WorkspaceSessionRecoveryPreview>);
     let recovery_name = create_rw_signal(String::new());
     let recovery_busy = create_rw_signal(false);
@@ -68,6 +70,7 @@ pub(crate) fn ProjectsScreen(
     let settings_baseline = create_rw_signal(ProjectSettings::default());
     let settings_busy = create_rw_signal(false);
     let settings_confirm_context = create_rw_signal(false);
+    let folder_sync_error = create_rw_signal(None::<String>);
     let delete_data_countdown = create_rw_signal(0_u8);
     let delete_data_unlock_at = Rc::new(Cell::new(0_f64));
 
@@ -264,7 +267,6 @@ pub(crate) fn ProjectsScreen(
         }
         if pos == idx {
             search_open.set(false);
-            opening_in_place.set(false);
             creating.set(true);
         }
     });
@@ -323,13 +325,11 @@ pub(crate) fn ProjectsScreen(
                         new_ctx.set(String::new());
                         new_layout.set(false);
                         creating.set(false);
-                        opening_in_place.set(false);
                         on_open.call(project.id);
                     }
                 }
                 Err(error) => {
                     creating.set(false);
-                    opening_in_place.set(false);
                     open_error.set(Some(localize_backend(
                         locale.get_untracked(),
                         &js_error_text(error),
@@ -402,7 +402,33 @@ pub(crate) fn ProjectsScreen(
         });
     });
 
-    let import_archive = Callback::new(move |_: ()| {
+    let enable_folder_sync = Callback::new(move |_: ()| {
+        let Some(id) = settings_project_id.get_untracked() else {
+            return;
+        };
+        if settings_busy.get_untracked() {
+            return;
+        }
+        settings_busy.set(true);
+        folder_sync_error.set(None);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            match invoke_checked("enable_project_folder_sync", arg).await {
+                Ok(_) => {
+                    settings_form.update(|settings| settings.folder_sync = true);
+                    settings_baseline.update(|settings| settings.folder_sync = true);
+                    reload();
+                }
+                Err(error) => folder_sync_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
+            settings_busy.set(false);
+        });
+    });
+
+    let import_package = Callback::new(move |directory: bool| {
         import_options_open.set(false);
         if project_transfer
             .get_untracked()
@@ -413,16 +439,20 @@ pub(crate) fn ProjectsScreen(
         project_transfer.set(Some(ProjectTransferProgress::selecting("import", None)));
         open_error.set(None);
         spawn_local(async move {
-            match invoke_checked("import_project", JsValue::UNDEFINED).await {
+            let args = to_value(&serde_json::json!({ "directory": directory })).unwrap();
+            match invoke_checked("import_project", args).await {
                 Ok(value) => {
                     if let Ok(Some(project)) =
                         serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value)
                     {
                         project_transfer.set(Some(ProjectTransferProgress::complete(
                             "import",
-                            Some(project.id),
+                            Some(project.id.clone()),
                             Some(project.name.clone()),
                         )));
+                        if directory {
+                            on_open_folder.call(project.id);
+                        }
                     } else {
                         project_transfer.set(None);
                     }
@@ -434,47 +464,6 @@ pub(crate) fn ProjectsScreen(
                     )));
                 }
             }
-        });
-    });
-
-    let import_in_place = Callback::new(move |_: ()| {
-        import_options_open.set(false);
-        open_error.set(None);
-        spawn_local(async move {
-            let value = invoke("pick_directory", JsValue::UNDEFINED).await;
-            let Ok(Some(path)) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
-                return;
-            };
-            let args = to_value(&serde_json::json!({ "workspaceDir": path })).unwrap();
-            let matches = match invoke_checked("list_workspace_projects", args).await {
-                Ok(value) => serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(value)
-                    .map_err(|error| error.to_string()),
-                Err(error) => Err(js_error_text(error)),
-            };
-            match matches {
-                Ok(matches) if !matches.is_empty() => {
-                    workspace_projects.set(Some(matches));
-                    return;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    open_error.set(Some(localize_backend(locale.get_untracked(), &error)));
-                    return;
-                }
-            }
-            let name = path
-                .trim_end_matches(['/', '\\'])
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            new_name.set(name);
-            new_dir.set(path);
-            new_desc.set(String::new());
-            new_ctx.set(String::new());
-            new_layout.set(false);
-            opening_in_place.set(true);
-            creating.set(true);
         });
     });
 
@@ -610,7 +599,6 @@ pub(crate) fn ProjectsScreen(
             confirm_delete_data.get()
                 || settings_confirm_context.get()
                 || settings_project_id.get().is_some()
-                || workspace_projects.get().is_some()
                 || recovery_preview.get().is_some()
                 || import_options_open.get()
                 || pending_delete.get().is_some()
@@ -650,12 +638,6 @@ pub(crate) fn ProjectsScreen(
             settings_project_id.set(None);
             return;
         }
-        if workspace_projects.get().is_some() {
-            ev.prevent_default();
-            ev.stop_propagation();
-            workspace_projects.set(None);
-            return;
-        }
         if recovery_preview.get().is_some() {
             ev.prevent_default();
             if !recovery_busy.get() {
@@ -688,7 +670,6 @@ pub(crate) fn ProjectsScreen(
         if creating.get() {
             ev.prevent_default();
             creating.set(false);
-            opening_in_place.set(false);
         }
     });
     on_cleanup(move || escape_listener.remove());
@@ -700,7 +681,7 @@ pub(crate) fn ProjectsScreen(
             }
             ev.prevent_default();
         }>
-            <div class="projects-head" prop:inert=move ||calendar_open.get()>
+            <div class="projects-head" prop:inert=move ||calendar_open.get()||automation_open.get()>
                 <div class="projects-brand">
                     <h1 class="projects-title">
                         <span class="projects-brand-mark brand-wordmark" role="img" aria-label="Wisp Science"></span>
@@ -715,6 +696,10 @@ pub(crate) fn ProjectsScreen(
                         title=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
                         aria-label=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
                         on:click=move |_| calendar_open.set(true)>{compose_icon("calendar")}</button>
+                    <button type="button" class="projects-icon-btn" data-testid="open-automation"
+                        title=move || crate::research_journey::j(locale.get(), "Automation", "自动化")
+                        aria-label=move || crate::research_journey::j(locale.get(), "Automation", "自动化")
+                        on:click=move |_| automation_open.set(true)>{compose_icon("clock")}</button>
                     <button type="button" class="projects-icon-btn"
                         title=move || t(locale.get(), "sidebar.library")
                         aria-label=move || t(locale.get(), "sidebar.library")
@@ -733,6 +718,12 @@ pub(crate) fn ProjectsScreen(
                         on:click=move |_| on_open_settings.call(())>
                         {compose_icon("gear")}
                     </button>
+                    <button type="button" class="projects-icon-btn" data-testid="open-tutorials"
+                        title=move || t(locale.get(), "menu.docs")
+                        aria-label=move || t(locale.get(), "menu.docs")
+                        on:click=move |_| open_tutorials()>
+                        {compose_icon("doc")}
+                    </button>
                     <button type="button" class="btn-ghost projects-scratch"
                         on:click=move |_| on_open_scratch.call(())>
                         {move || t(locale.get(), "scratch.open")}
@@ -743,7 +734,6 @@ pub(crate) fn ProjectsScreen(
                         {compose_icon("upload")}<span>{move || t(locale.get(), "projects.import")}</span>
                     </button>
                     <button class="btn-primary" on:click=move |_| {
-                        opening_in_place.set(false);
                         creating.set(true);
                     }>
                         <span class="new-plus">"+"</span>{move || t(locale.get(), "projects.new")}
@@ -901,7 +891,6 @@ pub(crate) fn ProjectsScreen(
                             class:active=move || search_active.get() + 1 == search_count()
                             on:click=move |_| {
                                 search_open.set(false);
-                                opening_in_place.set(false);
                                 creating.set(true);
                             }>
                             {compose_icon("plus")}
@@ -926,12 +915,12 @@ pub(crate) fn ProjectsScreen(
                         </p>
                         <div class="project-import-options">
                             <button type="button" class="project-import-option"
-                                on:click=move |_| import_in_place.call(())>
+                                on:click=move |_| import_package.call(true)>
                                 <strong>{move || t(locale.get(), "projects.import_in_place")}</strong>
                                 <span>{move || t(locale.get(), "projects.import_in_place_hint")}</span>
                             </button>
                             <button type="button" class="project-import-option"
-                                on:click=move |_| import_archive.call(())>
+                                on:click=move |_| import_package.call(false)>
                                 <strong>{move || t(locale.get(), "projects.import_zip")}</strong>
                                 <span>{move || t(locale.get(), "projects.import_zip_hint")}</span>
                             </button>
@@ -1042,74 +1031,17 @@ pub(crate) fn ProjectsScreen(
                     </div>
                 }
             })}
-            {move || workspace_projects.get().map(|matches| view! {
-                <div class="overlay" data-testid="workspace-project-picker">
-                    <div class="modal proj-settings-modal" role="dialog" aria-modal="true"
-                        aria-label=move || t(locale.get(), "projects.existing_title")>
-                        <div class="ps-head">
-                            <h2>{move || t(locale.get(), "projects.existing_title")}</h2>
-                            <button type="button" class="ps-close"
-                                title=move || t(locale.get(), "projects.cancel")
-                                on:click=move |_| workspace_projects.set(None)>
-                                {compose_icon("close")}
-                            </button>
-                        </div>
-                        <p class="project-in-place-hint">
-                            {move || t(locale.get(), "projects.existing_hint")}
-                        </p>
-                        <div class="workspace-project-options">
-                            {matches.into_iter().filter(|project| !project_is_hidden(&project.id)).map(|project| {
-                                let id = project.id.clone();
-                                view! {
-                                    <button type="button" class="project-import-option"
-                                        data-project-id=project.id.clone()
-                                        on:click=move |_| {
-                                            workspace_projects.set(None);
-                                            on_open.call(id.clone());
-                                        }>
-                                        <strong>{project.name}</strong>
-                                        <span>{project.workspace_dir}</span>
-                                        <span class="workspace-project-id">{format!("ID: {}", project.id)}</span>
-                                        <span>{move || tf(locale.get(), "projects.sessions_n", &[("n", &project.session_count.to_string())])}</span>
-                                    </button>
-                                }
-                            }).collect_view()}
-                        </div>
-                        {move || privacy_mode_active.get().then(|| view! {
-                            <p class="ps-hint">{move || t(locale.get(), "projects.existing_privacy")}</p>
-                        })}
-                        <div class="row">
-                            <button type="button" on:click=move |_| workspace_projects.set(None)>
-                                {move || t(locale.get(), "projects.cancel")}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            })}
             {move || creating.get().then(|| view! {
                 <div class="overlay">
                     <div class="modal proj-settings-modal" role="dialog" aria-modal="true">
                         <div class="ps-head">
-                            <h2>{move || t(
-                                locale.get(),
-                                if opening_in_place.get() {
-                                    "projects.open_folder_title"
-                                } else {
-                                    "projects.new"
-                                },
-                            )}</h2>
+                            <h2>{move || t(locale.get(), "projects.new")}</h2>
                             <button type="button" class="ps-close"
                                 title=move || t(locale.get(), "projects.cancel")
                                 on:click=move |_| {
                                     creating.set(false);
-                                    opening_in_place.set(false);
                                 }>{compose_icon("close")}</button>
                         </div>
-                        {move || opening_in_place.get().then(|| view! {
-                            <p class="project-in-place-hint">
-                                {move || t(locale.get(), "projects.open_folder_hint")}
-                            </p>
-                        })}
                         <label>
                             {move || t(locale.get(), "proj_settings.name")}
                             <input id="new-project-name" autofocus=true
@@ -1132,19 +1064,17 @@ pub(crate) fn ProjectsScreen(
                                 prop:value=move || new_desc.get()
                                 on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
                         </label>
-                        {move || (!opening_in_place.get()).then(|| view! {
-                            <label class="pn-layout">
-                                <span class="toggle">
-                                    <input type="checkbox" prop:checked=move || new_layout.get()
-                                        on:change=move |ev| new_layout.set(event_target_checked(&ev)) />
-                                    <span class="toggle-track" aria-hidden="true"></span>
-                                </span>
-                                <span>
-                                    {move || t(locale.get(), "projects.standard_layout")}
-                                    <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
-                                </span>
-                            </label>
-                        })}
+                        <label class="pn-layout">
+                            <span class="toggle">
+                                <input type="checkbox" prop:checked=move || new_layout.get()
+                                    on:change=move |ev| new_layout.set(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </span>
+                            <span>
+                                {move || t(locale.get(), "projects.standard_layout")}
+                                <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
+                            </span>
+                        </label>
                         <label>
                             {move || t(locale.get(), "proj_settings.agent_context")}
                             <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
@@ -1155,19 +1085,11 @@ pub(crate) fn ProjectsScreen(
                         <div class="row">
                             <button type="button" on:click=move |_| {
                                 creating.set(false);
-                                opening_in_place.set(false);
                             }>
                                 {move || t(locale.get(), "projects.cancel")}</button>
                             <button type="button" class="primary"
                                 disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
-                                on:click=submit>{move || t(
-                                    locale.get(),
-                                    if opening_in_place.get() {
-                                        "projects.open_folder_action"
-                                    } else {
-                                        "projects.create"
-                                    },
-                                )}</button>
+                                on:click=submit>{move || t(locale.get(), "projects.create")}</button>
                         </div>
                     </div>
                 </div>
@@ -1215,6 +1137,28 @@ pub(crate) fn ProjectsScreen(
                                         settings_form.update(|s| s.agent_context = v);
                                     }></textarea>
                             </label>
+                            <div class="ps-folder-sync">
+                                <span class="ps-label">{move || t(locale.get(), "proj_settings.folder_sync")}</span>
+                                <span class="ps-hint">{move || t(locale.get(), "proj_settings.folder_sync_hint")}</span>
+                                {move || if settings_form.get().folder_sync {
+                                    view! {
+                                        <span class="ps-hint" data-testid="project-folder-sync-enabled">
+                                            {t(locale.get(), "proj_settings.folder_sync_enabled")}
+                                        </span>
+                                    }.into_view()
+                                } else {
+                                    view! {
+                                        <button type="button" data-testid="enable-project-folder-sync"
+                                            disabled=move || settings_busy.get()
+                                            on:click=move |_| enable_folder_sync.call(())>
+                                            {t(locale.get(), "proj_settings.folder_sync_enable")}
+                                        </button>
+                                    }.into_view()
+                                }}
+                                {move || folder_sync_error.get().map(|error| view! {
+                                    <span class="ps-error" role="alert">{error}</span>
+                                })}
+                            </div>
                             <div class="row">
                                 <button type="button" disabled=move || settings_busy.get()
                                     on:click=move |_| {
@@ -1247,6 +1191,15 @@ pub(crate) fn ProjectsScreen(
                     </div>
                 </div>
             })}
+            {move || automation_open.get().then(|| view! {<div class="home-calendar-page">
+            <crate::automation::AutomationPage
+                locale=locale
+                projects=Signal::derive(move || projects.get().into_iter().filter(|p| !project_is_hidden(&p.id)).collect())
+                form_open=automation_form
+                on_open_specialists=on_open_specialists
+                on_close=Callback::new(move |_| { automation_form.set(false); automation_open.set(false); })
+            />
+            </div>})}
             {move || calendar_open.get().then(|| view! {<div class="home-calendar-page">
             <crate::research_calendar::ResearchCalendar
                 locale=locale
@@ -1256,7 +1209,7 @@ pub(crate) fn ProjectsScreen(
                 project_transfer=project_transfer.read_only()
             />
             </div>})}
-            <div class="projects-cols" prop:inert=move ||calendar_open.get()>
+            <div class="projects-cols" prop:inert=move ||calendar_open.get()||automation_open.get()>
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.title")}</h2>
                     {move || {
@@ -1296,7 +1249,17 @@ pub(crate) fn ProjectsScreen(
                             let sync_when = p.last_synced_at
                                 .map(|timestamp| format_relative_time(timestamp, loc))
                                 .filter(|value| !value.is_empty());
-                            let sync_label = if p.sync_configured {
+                            let folder_mode = p.folder_sync.is_some();
+                            let sync_label = if let Some(status) = p.folder_sync.as_deref() {
+                                Some(match (status, sync_when.as_deref()) {
+                                    ("saved", Some(when)) => tf(loc, "projects.folder.saved_at", &[("when", when)]),
+                                    ("saved", None) => t(loc, "projects.folder.saved").into(),
+                                    ("unpublished", _) => t(loc, "projects.folder.unpublished").into(),
+                                    ("remote-newer", _) => t(loc, "projects.folder.remote_newer").into(),
+                                    ("waiting", _) => t(loc, "projects.folder.waiting").into(),
+                                    _ => t(loc, "projects.folder.conflict").into(),
+                                })
+                            } else if p.sync_configured {
                                 Some(sync_when.as_deref().map_or_else(
                                     || t(loc, "projects.sync.enabled").into(),
                                     |when| tf(loc, "projects.sync.last", &[("when", when)]),
@@ -1334,7 +1297,7 @@ pub(crate) fn ProjectsScreen(
                                         <div class="pc-meta-row">
                                             <span class="pc-meta">{meta}</span>
                                             <span class="pc-meta">{artifacts_meta}</span>
-                                            {sync_label.clone().map(|label| view! { <span class="pc-sync-state">{label}</span> })}
+                                            {sync_label.clone().map(|label| view! { <span class="pc-sync-state" data-folder-sync=p.folder_sync.clone()>{label}</span> })}
                                         </div>
                                     </div>
                                     </button>
@@ -1390,7 +1353,7 @@ pub(crate) fn ProjectsScreen(
                                                 }
                                             });
                                         }>{compose_icon("gear")}</button>
-                                    {show_sync_actions.then(|| view! {
+                                    {(show_sync_actions || folder_mode).then(|| view! {
                                         <button class="pc-sync" title=t(loc, "projects.sync.now")
                                             aria-label=t(loc, "projects.sync.now")
                                             disabled=move || syncing_projects.with(|ids| ids.contains(&id_sync_disabled))
@@ -1436,6 +1399,7 @@ pub(crate) fn ProjectsScreen(
                                                     syncing_projects.update(|ids| { ids.remove(&id); });
                                                 });
                                             }>{compose_icon("sync")}</button>
+                                        {(!folder_mode).then(|| view! {
                                         <button class="pc-sync-code" title=t(loc, "projects.sync.copy_code")
                                             aria-label=t(loc, "projects.sync.copy_code")
                                             on:click=move |e| {
@@ -1458,6 +1422,7 @@ pub(crate) fn ProjectsScreen(
                                                     }
                                                 });
                                             }>{compose_icon("link")}</button>
+                                        })}
                                     })}
                                     <button class="pc-export" title=t(loc, "projects.export")
                                         aria-label=t(loc, "projects.export")
@@ -1527,7 +1492,7 @@ pub(crate) fn ProjectsScreen(
                     }).collect_view()}
                 </div>
             </div>
-            <div class="projects-footer" prop:inert=move ||calendar_open.get()>
+            <div class="projects-footer" prop:inert=move ||calendar_open.get()||automation_open.get()>
                 <span>{move || t(locale.get(), "projects.star_hint")}</span>
                 <button type="button" class="projects-star-link"
                     on:click=move |_| open_external_url("https://github.com/xuzhougeng/wisp-science".into())>

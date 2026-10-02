@@ -35,6 +35,12 @@ pub async fn list_projects(
         let (running_count, needs_you_count) =
             project_status_counts(store, &id, running, awaiting).await;
         let sync_state = store.get_project_sync_state(&id).await.ok().flatten();
+        let folder_sync = store
+            .folder_snapshot_status(&id)
+            .await
+            .ok()
+            .flatten()
+            .map(str::to_owned);
         let sync_configured = sync_state
             .as_ref()
             .is_some_and(|state| state.base_revision.is_some());
@@ -51,6 +57,7 @@ pub async fn list_projects(
             needs_you_count,
             sync_configured,
             last_synced_at: sync_state.and_then(|state| state.last_synced_at),
+            folder_sync,
         });
     }
     Ok(projects)
@@ -85,7 +92,7 @@ pub async fn project_status_counts(
 }
 
 /// The home page uses the same five recent sessions as the WebView. A project
-/// scope returns its saved sidebar sessions, including named drafts.
+/// scope returns its saved sidebar sessions, including named and ACP-selected drafts.
 /// This read-only snapshot deliberately does not claim live runtime activity.
 pub async fn list_browser_sessions(
     store: &Store,
@@ -101,22 +108,31 @@ pub async fn list_browser_sessions(
             "Project not found"
         );
         let roles = store.list_session_last_roles(project_id).await?;
+        // This reader may open an older database without migrating it. Missing
+        // pin metadata must not hide otherwise readable history or claim false.
+        let pinned: Option<HashSet<_>> = store
+            .list_pinned_sessions(project_id)
+            .await
+            .ok()
+            .map(|rows| rows.into_iter().map(|row| row.0).collect());
         Ok(store
-            .list_sessions(project_id)
+            .list_sessions_page(project_id, None, usize::MAX)
             .await?
             .into_iter()
-            .map(|(id, title, ts, _, _)| {
+            .map(|(id, title, ts, folder_id, _)| {
                 let needs_you = roles.iter().any(|(sid, role, unseen)| {
                     sid == &id
                         && *unseen
                         && matches!(role.as_deref(), Some("assistant" | "internal"))
                 });
                 wisp_dto::RecentSession {
+                    pinned: pinned.as_ref().map(|pinned| pinned.contains(&id)),
                     id,
                     project_id: project_id.to_owned(),
                     title,
                     ts,
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
+                    folder_id,
                 }
             })
             .collect())
@@ -134,6 +150,8 @@ pub async fn list_browser_sessions(
                     title: row.title,
                     ts: row.created_at,
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
+                    folder_id: None,
+                    pinned: None,
                 }
             })
             .collect())

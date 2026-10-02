@@ -43,10 +43,10 @@ use crate::browser_url_filters::{self, BrowserUrlFilters};
 mod chat_site;
 mod errors;
 mod extension_manager;
+mod project_workspace;
 mod workspace;
 
 const BRIDGE_ADDR: &str = "127.0.0.1:18765";
-const WORKSPACE_ADDR: &str = "127.0.0.1:18766";
 const REQUIRED_PROTOCOL: i64 = 2;
 const EXTENSION_ID: &str = "gnkjgagleagkgdlkkcianolobfdoocnp";
 const EXTENSION_ORIGIN: &str = "chrome-extension://gnkjgagleagkgdlkkcianolobfdoocnp";
@@ -161,7 +161,7 @@ struct RefusedConnection {
 struct BridgeState {
     sessions: HashMap<String, SessionState>,
     startup_error: Option<String>,
-    workspace_pid: Option<u32>,
+    workspaces: HashMap<String, project_workspace::ProjectWorkspace>,
     last_refusal: Option<RefusedConnection>,
     extension_update_error: Option<String>,
 }
@@ -176,6 +176,7 @@ pub struct BrowserBridge {
     /// Production `start()` only. Tests must not spawn a real browser.
     can_launch: bool,
     launch_lock: Mutex<()>,
+    workspace_lifecycle: Mutex<()>,
     extension_update_lock: Mutex<()>,
     /// Tabs `web_open_tab` / tab-create commands opened, keyed by turn id.
     turn_ledgers: Mutex<HashMap<String, TurnTabLedger>>,
@@ -293,9 +294,13 @@ fn session_requires_update(meta: &SessionMeta, bundled_version: Option<&str>) ->
         || extension_version_outdated(&meta.extension_version, bundled_version)
 }
 
+fn workspace_path_matches(expected: Option<&str>, actual: &str) -> bool {
+    expected.is_none_or(|path| path == actual)
+}
+
 fn resolve_session_name(requested: Option<&str>) -> Result<String, String> {
     if let Some(name) = requested {
-        if name != "shared" && name != "workspace" {
+        if name != "shared" && name != "workspace" && !name.starts_with("workspace:") {
             return Err(errors::structured(
                 errors::SESSION_REQUIRED,
                 "session must be shared or workspace",
@@ -319,6 +324,7 @@ impl BrowserBridge {
             store,
             can_launch,
             launch_lock: Mutex::new(()),
+            workspace_lifecycle: Mutex::new(()),
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
@@ -387,6 +393,7 @@ impl BrowserBridge {
             store: Some(store),
             can_launch: true,
             launch_lock: Mutex::new(()),
+            workspace_lifecycle: Mutex::new(()),
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
@@ -407,19 +414,7 @@ impl BrowserBridge {
                 ));
             }
         }
-        match TcpListener::bind(WORKSPACE_ADDR).await {
-            Ok(listener) => {
-                let task_bridge = bridge.clone();
-                tokio::spawn(async move {
-                    task_bridge
-                        .accept_loop_on(listener, "workspace".into())
-                        .await
-                });
-            }
-            Err(error) => {
-                tracing::warn!(target: "wisp", "workspace bridge not listening on {WORKSPACE_ADDR}: {error}");
-            }
-        }
+
         bridge
     }
 
@@ -471,14 +466,13 @@ impl BrowserBridge {
         } else {
             "The running Wisp build has no verified bundled extension path. Do not invent a path or claim the extension exists."
         };
-        let connected_tabs = ["shared", "workspace"]
-            .into_iter()
-            .filter_map(|name| state.sessions.get(name))
-            .map(|session| session.tabs.len())
-            .sum::<usize>();
+        let connected_tabs = state
+            .sessions
+            .get("shared")
+            .map(|slot| slot.tabs.len())
+            .unwrap_or(0);
         let bundled_extension_version = bundled_manifest_version(&self.bundled_extension_dir);
         let shared = session_summary(&state, "shared", bundled_extension_version.as_deref());
-        let workspace = session_summary(&state, "workspace", bundled_extension_version.as_deref());
         let reload_required = shared["reload_required"] == Value::Bool(true);
         let assistant_instruction = match (live_retrieval, reload_required) {
             (true, false) => path_instruction.to_string(),
@@ -491,11 +485,6 @@ impl BrowserBridge {
             .map(|session| session.meta.extension_version.clone())
             .filter(|version| !version.is_empty())
             .or_else(|| bundled_extension_version.clone());
-        let workspace_running = state.workspace_pid.is_some();
-        let workspace_connected = workspace
-            .get("connected")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
 
         json!({
             "status": status,
@@ -504,15 +493,14 @@ impl BrowserBridge {
             "connected_tabs": connected_tabs,
             "extension_version": reported_extension_version,
             "bundled_extension_version": bundled_extension_version,
-            "workspace_endpoint": format!("ws://{WORKSPACE_ADDR}"),
+            "workspace_limit": project_workspace::MAX_WORKSPACES,
             "required_protocol": REQUIRED_PROTOCOL,
             "reload_required": reload_required,
             "update_required": reload_required,
-            "refused_connection": refusal_summary(state.last_refusal.as_ref()),
-            "workspace": workspace::status_json(workspace_connected, workspace_running),
+            "refused_connection": refusal_summary(state.last_refusal.as_ref().filter(|row| row.session == "shared")),
+
             "sessions": {
-                "shared": shared,
-                "workspace": workspace
+                "shared": shared
             },
             "runtime_os": std::env::consts::OS,
             "path_source": if self.managed_extension { "wisp_managed_app_data" } else { "wisp_tauri_resource_dir" },
@@ -581,6 +569,16 @@ impl BrowserBridge {
         stream: TcpStream,
         session: String,
     ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+        self.accept_connection_with_path(stream, session, None)
+            .await
+    }
+
+    async fn accept_connection_with_path(
+        self: Arc<Self>,
+        stream: TcpStream,
+        session: String,
+        connection_path: Option<String>,
+    ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
         // The handshake callback is synchronous, so the refused origin is parked
         // here and folded into bridge state once the await returns. Without it a
         // rejected extension is only a log line and the user is told nothing but
@@ -593,7 +591,9 @@ impl BrowserBridge {
                 .get("origin")
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
-            if allowed_extension_origin(origin.as_deref()) {
+            if allowed_extension_origin(origin.as_deref())
+                && workspace_path_matches(connection_path.as_deref(), request.uri().path())
+            {
                 Ok(response)
             } else {
                 if let Ok(mut slot) = seen.lock() {
@@ -669,6 +669,15 @@ impl BrowserBridge {
         session: &str,
     ) {
         let mut state = self.state.lock().await;
+        if session.starts_with("workspace:")
+            && !state
+                .workspaces
+                .values()
+                .any(|instance| instance.identity.lane == session)
+        {
+            let _ = tx.send(Message::Close(None));
+            return;
+        }
         let slot = session_slot(&mut state, session);
         fail_pending(slot, "browser extension connection was replaced");
         slot.client = Some(BridgeClient {
@@ -992,67 +1001,6 @@ impl BrowserBridge {
                 Err(_) => Err(chat_error),
             },
         }
-    }
-
-    async fn start_workspace(&self) -> Result<Value, String> {
-        let extension_path = self.verified_extension_path().ok_or_else(|| {
-            "bundled browser-extension path is not available; cannot materialize workspace copy"
-                .to_string()
-        })?;
-        let extension = workspace::materialize_extension(Path::new(&extension_path))?;
-        self.start_workspace_with(
-            workspace::resolve_browser()?,
-            &extension_path,
-            &extension,
-            WORKSPACE_CONNECT_WAIT,
-            |browser, profile, extension| {
-                let child = workspace::launch_browser(browser, profile, extension)?;
-                let pid = child.id();
-                std::mem::forget(child);
-                Ok(pid)
-            },
-            workspace::terminate,
-        )
-        .await
-    }
-
-    /// Launch the workspace browser and only report success once its extension
-    /// has actually connected. Chrome 137+ ignores `--load-extension`, so
-    /// reporting the spawned process as ready left the agent driving a blank
-    /// window that could never answer (#952).
-    async fn start_workspace_with<L, T>(
-        &self,
-        browser: workspace::WorkspaceBrowser,
-        extension_path: &str,
-        extension: &Path,
-        wait: Duration,
-        launch: L,
-        terminate: T,
-    ) -> Result<Value, String>
-    where
-        L: FnOnce(&workspace::WorkspaceBrowser, &Path, &Path) -> Result<u32, String>,
-        T: FnOnce(u32),
-    {
-        let pid = launch(&browser, &workspace::profile_dir(), extension)?;
-        self.state.lock().await.workspace_pid = Some(pid);
-        if self.wait_for_session("workspace", wait).await {
-            return Ok(workspace::status_json(true, true));
-        }
-        self.state.lock().await.workspace_pid = None;
-        terminate(pid);
-        Err(errors::structured(
-            errors::WORKSPACE_EXTENSION_BLOCKED,
-            &workspace::extension_blocked_message(&browser, extension_path, wait),
-            false,
-        ))
-    }
-
-    async fn stop_workspace(&self) -> Result<Value, String> {
-        let pid = self.state.lock().await.workspace_pid.take();
-        if let Some(pid) = pid {
-            workspace::terminate(pid);
-        }
-        Ok(workspace::status_json(false, false))
     }
 
     async fn wait_for_session(&self, session: &str, wait: Duration) -> bool {
@@ -1393,7 +1341,9 @@ impl BrowserBridge {
             return;
         };
         let mut pending = self.pending_cleanups.lock().await;
-        for row in rows {
+        for mut row in rows {
+            // Workspace tab ids belong to a previous process generation.
+            row.prompt.tabs.retain(|tab| tab.session == "shared");
             if !row.prompt.turn_id.is_empty() && !row.prompt.tabs.is_empty() {
                 pending.insert(row.prompt.turn_id.clone(), row);
             }
@@ -1572,7 +1522,7 @@ impl BrowserBridge {
         };
         let mut map = self.needs_human.lock().await;
         for tab in tabs {
-            if tab.tab_id != 0 && !tab.session.is_empty() {
+            if tab.tab_id != 0 && tab.session == "shared" {
                 map.insert((tab.session.clone(), tab.tab_id), tab);
             }
         }
@@ -2567,7 +2517,7 @@ impl Tool for BrowserSetupTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "description": "Usually omit this for shared Chrome status/auto-launch. update_extension verifies the managed shared extension and attempts automatic reload. start_workspace and stop_workspace are only for a user-explicit isolated workspace browser." },
+                    "action": { "type": "string", "description": "Usually omit this for shared Chrome status/auto-launch. update_extension verifies the managed shared extension and attempts automatic reload. start_workspace and stop_workspace start or stop only the current project's isolated workspace browser. Each project has its own profile; up to three workspaces can run at once." },
                     "url": { "type": "string", "description": "Optional target http(s) URL for automatically launching disconnected shared Chrome; otherwise opens the new-tab page. Connected Chrome is left untouched." }
                 },
                 "additionalProperties": false
@@ -2585,13 +2535,10 @@ impl Tool for BrowserSetupTool {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|action| !action.is_empty());
-        let lease_session = if matches!(action, Some("start_workspace" | "stop_workspace")) {
-            Some("workspace")
-        } else {
-            Some("shared")
-        };
-        if let Err(fail) = occupy_or_fail(&self.bridge, env, lease_session) {
-            return fail;
+        if !matches!(action, Some("start_workspace" | "stop_workspace")) {
+            if let Err(fail) = occupy_or_fail(&self.bridge, env, Some("shared")) {
+                return fail;
+            }
         }
         if let Some(action) = action {
             let result = match action {
@@ -2604,8 +2551,20 @@ impl Tool for BrowserSetupTool {
                         )),
                     };
                 }
-                "start_workspace" => self.bridge.start_workspace().await,
-                "stop_workspace" => self.bridge.stop_workspace().await,
+                "start_workspace" => {
+                    let result = self.bridge.start_workspace(env.project_id()).await;
+                    if let Ok(info) = &result {
+                        if let Err(fail) = occupy_or_fail(&self.bridge, env, info["lane"].as_str())
+                        {
+                            return fail;
+                        }
+                    }
+                    result
+                }
+                "stop_workspace" => match project_workspace::require_project(env.project_id()) {
+                    Ok(project_id) => Ok(self.bridge.stop_project_workspace(project_id).await),
+                    Err(error) => Err(error),
+                },
                 _ => Err(
                     "action must be update_extension, start_workspace, or stop_workspace".into(),
                 ),
@@ -2634,6 +2593,7 @@ impl Tool for BrowserSetupTool {
             .ensure_extension_with(None, || spawn_user_browser(url), AUTO_LAUNCH_WAIT)
             .await;
         let mut info = self.bridge.setup_info().await;
+        info["workspace"] = self.bridge.workspace_status(env.project_id()).await;
         info["url_filters"] = json!({
             "block": filters.block,
             "prefer": filters.prefer,
@@ -2695,7 +2655,7 @@ impl Tool for WebScanTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -2824,7 +2784,7 @@ impl Tool for WebExecuteJsTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -2953,7 +2913,7 @@ impl Tool for WebOpenTabTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3044,7 +3004,7 @@ impl Tool for WebScreenshotTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3214,7 +3174,7 @@ impl Tool for WebSaveAssetsTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3379,7 +3339,7 @@ impl Tool for WebAgentSendTool {
         )
     }
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3484,7 +3444,7 @@ impl Tool for WebAgentWaitTool {
         "wait for in-browser chat reply".into()
     }
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3568,7 +3528,7 @@ impl Tool for WebAgentReadTool {
         "read last in-browser chat answer".into()
     }
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let session = match session_arg(args) {
+        let session = match self.bridge.tool_session(args, env).await {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3914,7 +3874,12 @@ mod tests {
         let (shared_tx, _shared_rx) = mpsc::unbounded_channel();
         let (workspace_tx, _workspace_rx) = mpsc::unbounded_channel();
         bridge.install_client_on(1, shared_tx, "shared").await;
-        bridge.install_client_on(2, workspace_tx, "workspace").await;
+        let identity = project_workspace::tests::register_fake(&bridge, "proj-b")
+            .await
+            .0;
+        bridge
+            .install_client_on(2, workspace_tx, &identity.lane)
+            .await;
 
         let shared = WebScanTool::new(bridge.clone())
             .run(
@@ -4683,7 +4648,7 @@ mod tests {
         let info = bridge.setup_info().await;
         assert_eq!(info["status"], "extension_missing");
         assert_eq!(info["live_retrieval"], false);
-        assert_eq!(info["sessions"]["workspace"]["connected"], true);
+        assert!(info["sessions"]["workspace"].is_null());
         assert_eq!(info["sessions"]["shared"]["connected"], false);
         assert!(bridge.tabs_on(None).await.is_err());
         assert!(bridge.tabs_on(Some("workspace")).await.is_ok());
@@ -4734,7 +4699,7 @@ mod tests {
             .ensure_extension_with(None, launch, Duration::ZERO)
             .await;
         assert_eq!(launches.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(bridge.state.lock().await.workspace_pid.is_none());
+        assert!(bridge.state.lock().await.workspaces.is_empty());
         let _ = std::fs::remove_file(tmp);
     }
 
@@ -4878,64 +4843,6 @@ mod tests {
         assert_eq!(info["extension_path_verified"], false);
         assert_eq!(info["auto_launch_browser"], false);
         assert_eq!(info["auto_close_tabs"], false);
-    }
-
-    fn fake_browser(loads_unpacked_extensions: bool) -> workspace::WorkspaceBrowser {
-        workspace::WorkspaceBrowser {
-            name: "Google Chrome".into(),
-            path: PathBuf::from("/opt/chrome"),
-            loads_unpacked_extensions,
-        }
-    }
-
-    #[tokio::test]
-    async fn workspace_start_closes_a_window_whose_extension_never_connects() {
-        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
-        let terminated = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let recorder = terminated.clone();
-
-        let error = bridge
-            .start_workspace_with(
-                fake_browser(false),
-                "/opt/wisp/browser-extension",
-                Path::new("/tmp/workspace-extension"),
-                Duration::from_millis(10),
-                |_, _, _| Ok(4242),
-                move |pid| recorder.lock().unwrap().push(pid),
-            )
-            .await
-            .unwrap_err();
-
-        assert!(error.contains(errors::WORKSPACE_EXTENSION_BLOCKED));
-        assert!(error.contains("--load-extension"));
-        assert!(error.contains("chrome://extensions"));
-        // The doomed about:blank window is closed and forgotten, so a later
-        // stop_workspace cannot kill an unrelated process id.
-        assert_eq!(*terminated.lock().unwrap(), vec![4242]);
-        assert!(bridge.state.lock().await.workspace_pid.is_none());
-    }
-
-    #[tokio::test]
-    async fn workspace_start_reports_ready_only_after_the_extension_connects() {
-        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
-        let (tx, _rx) = mpsc::unbounded_channel();
-        bridge.install_client_on(1, tx, "workspace").await;
-
-        let status = bridge
-            .start_workspace_with(
-                fake_browser(true),
-                "/opt/wisp/browser-extension",
-                Path::new("/tmp/workspace-extension"),
-                Duration::from_millis(10),
-                |_, _, _| Ok(4242),
-                |pid| panic!("a connected workspace must not be terminated, got {pid}"),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(status["connected"], true);
-        assert_eq!(status["process_running"], true);
-        assert_eq!(bridge.state.lock().await.workspace_pid, Some(4242));
     }
 
     #[test]
@@ -5104,6 +5011,9 @@ mod tests {
 
     #[async_trait]
     impl ToolEnv for TurnEnv {
+        fn project_id(&self) -> Option<&str> {
+            Some("test-project")
+        }
         fn project_root(&self) -> &std::path::Path {
             &self.root
         }
@@ -5371,7 +5281,12 @@ mod tests {
         let (shared_tx, mut shared_rx) = mpsc::unbounded_channel();
         let (workspace_tx, mut workspace_rx) = mpsc::unbounded_channel();
         bridge.install_client_on(1, shared_tx, "shared").await;
-        bridge.install_client_on(2, workspace_tx, "workspace").await;
+        let identity = project_workspace::tests::register_fake(&bridge, "test-project")
+            .await
+            .0;
+        bridge
+            .install_client_on(2, workspace_tx, &identity.lane)
+            .await;
 
         let parent = TurnEnv {
             root: PathBuf::from("."),
@@ -5433,7 +5348,7 @@ mod tests {
         bridge
             .handle_text_on(
                 2,
-                "workspace",
+                &identity.lane,
                 &json!({
                     "type": "result",
                     "id": id,
@@ -5455,7 +5370,7 @@ mod tests {
             panic!("expected child prompt");
         };
         assert_eq!(child_prompt.tabs.len(), 1);
-        assert_eq!(child_prompt.tabs[0].session, "workspace");
+        assert_eq!(child_prompt.tabs[0].session, identity.lane);
         assert_eq!(child_prompt.tabs[0].tab_id, 31);
         let _ = std::fs::remove_file(tmp);
     }

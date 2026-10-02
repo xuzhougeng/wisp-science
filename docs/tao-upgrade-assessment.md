@@ -1,12 +1,20 @@
 # Tao 升级评估（2026-09-16）
 
-Windows 修复采用 **Tao 0.37.0 + 最小范围的 runtime 接入**。
-主工程已通过根目录 Cargo patch 接入 `vendor/tauri-runtime-wry`，其源码来自
-正式发布的 2.11.4，将 Tao 约束从 `0.35.0` 改为 `0.37.0`，并显式声明
-`common-controls-v6` 对 Windows Controls、Shell 和 WindowsAndMessaging 的依赖。
-Tao 升级后使用 `windows 0.62`，无法再为 runtime 的 `windows 0.61` 间接启用
-Controls；缺少该声明会导致 Windows 编译报 E0432。
-来源、许可证和退出条件见 [WISP-PATCH.md](../vendor/tauri-runtime-wry/WISP-PATCH.md)。
+**2026-09-29 更新**：正式发布的 Tauri 2.12.0 / tauri-runtime-wry 2.12.0 依赖
+Tao `^0.37.0`、Wry `0.57.0` 和 `windows 0.62`，其 `windows` 基础 feature 已含
+`Win32_UI_WindowsAndMessaging`，`common-controls-v6` 自带 `Win32_UI_Controls`
+与 `Win32_UI_Shell`。因此已移除 `vendor/tauri-runtime-wry` 及其根目录 patch，
+Tauri 整体升到 2.12.0；Tauri 2.12 要求 Rust 1.90，工作区 MSRV 同步提高。
+Tao 仍由 `vendor/tao`（0.37.0 + `handle_redraw` 防重入）提供：已发布的
+Tao 0.37.1 仍未包含该修复。下文保留 2.11.x 时期的评估与验证记录。
+
+原 Windows 修复采用 **Tao 0.37.0 + 最小范围的 runtime 接入**：通过根目录
+Cargo patch 接入正式发布的 runtime-wry 2.11.4 源码副本，将 Tao 约束从
+`0.35.0` 改为 `0.37.0`，并显式声明 `common-controls-v6` 对 Windows Controls、
+Shell 和 WindowsAndMessaging 的依赖（Tao 使用 `windows 0.62`，无法再为 runtime
+的 `windows 0.61` 间接启用 Controls，否则 Windows 编译报 E0432）。
+原来源与退出条件见
+[WISP-PATCH.md](https://github.com/xuzhougeng/wisp-science/blob/c932170e/vendor/tauri-runtime-wry/WISP-PATCH.md)。
 macOS #1250 仍需独立修复，不能把这次升级视为两个问题都已解决。
 
 ## 两个问题的覆盖情况
@@ -123,14 +131,16 @@ Chrome_WidgetWin_0 (1412)`；程序均正常 exit 0，功能断言已通过。�
 4. 完成 Windows/macOS 窗口功能检查、Linux 冒烟，以及至少覆盖此前报告时长的交互/空闲运行观察，再决定发布。
 
 曾评估将 tao#1215 固定到 0.35.x 上游提交的较窄方案；当前选择 0.37，
-同时获得任务栏重入、HDC 泄漏和事件投递修复。后续正式 runtime 支持新版 Tao 后，
-应移除临时覆盖。
+同时获得任务栏重入、HDC 泄漏和事件投递修复。runtime-wry 2.12.0 已正式支持
+Tao 0.37，临时 runtime 覆盖已于 2026-09-29 移除；升级带入 Wry 0.57，需重新完成
+第 4 条的窗口与 WebView 验收。
 
 ## 核验来源与产物
 
 - [Tao 0.37 CHANGELOG](https://github.com/tauri-apps/tao/blob/tao-v0.37.0/CHANGELOG.md)
 - [Tao 0.37 macOS app_state.rs](https://github.com/tauri-apps/tao/blob/tao-v0.37.0/src/platform_impl/macos/app_state.rs#L366)
-- [Tauri 正式版 runtime 清单](https://github.com/tauri-apps/tauri/blob/tauri-v2.11.5/crates/tauri-runtime-wry/Cargo.toml)
+- [Tauri 2.11.5 runtime 清单](https://github.com/tauri-apps/tauri/blob/tauri-v2.11.5/crates/tauri-runtime-wry/Cargo.toml)
+- [Tauri 2.12.0 runtime 清单](https://github.com/tauri-apps/tauri/blob/tauri-runtime-wry-v2.12.0/crates/tauri-runtime-wry/Cargo.toml)
 - [Tauri dev 接入状态](https://github.com/tauri-apps/tauri/blob/bca4ca58da02f182ef00ef1165e40e400a3cd8dd/crates/tauri-runtime-wry/Cargo.toml)
 - [Tauri 更新 Tao 0.36/Wry 0.56 的上游提交](https://github.com/tauri-apps/tauri/commit/7cc68e74ff6981f5c50a52a67d56c5eb2d227188)
 - 本机 `test-results/tao-upgrade-assessment/probe-037-build.txt`、`probe-037-results.json` 和逐轮日志。

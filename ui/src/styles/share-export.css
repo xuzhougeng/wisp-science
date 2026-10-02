@@ -50,16 +50,16 @@ html, body {
   padding: 0 0 14px; margin: 0 0 8px; border-bottom: 1px solid var(--border);
 }
 .share-head h1 {
-  margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.015em;
+  margin: 0; font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: -0.015em;
 }
 .share-date {
   margin: 3px 0 0; color: var(--text-faint);
-  font-family: var(--font-mono); font-size: 10.5px;
+  font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 .share-foot {
   margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--border);
-  color: var(--text-faint); font-size: 11px;
+  color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .thread {
@@ -70,7 +70,7 @@ html, body {
 }
 
 .msg { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
-.msg .role { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.msg .role { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; box-sizing: border-box; line-height: 1.55; font-size: calc(var(--ui-font-size, 14px) + 0.5px); font-family: var(--font-ui); }
 .msg.user { align-self: flex-end; width: auto; max-width: min(78%, 760px); min-width: 0; }
 .msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; min-width: 0; max-width: 100%; }
@@ -181,7 +181,7 @@ html, body {
 .md strong { font-weight: 600; color: var(--text); }
 .md code { font-family: var(--font-mono); font-size: 0.86em; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 5px; padding: 0.1em 0.35em; }
 .md pre { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 13px; overflow: auto; margin: 0 0 12px; }
-.md pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; display: block; white-space: pre; }
+.md pre code { background: none; border: none; padding: 0; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.55; display: block; white-space: pre; }
 .md blockquote {
   margin: 0.45em 0 0.7em;
   padding: 0.15em 0 0.15em 1em;

@@ -47,9 +47,22 @@ if (!encodedStar.GetProperty("starred").GetBoolean() || encodedStar.GetProperty(
     throw new InvalidOperationException("Project star serialization drift");
 
 await NativeSettingsContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-settings/v1")));
+await NativeProjectContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-projects/v1/create.json")));
+await NativeLibraryContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-library/v1/search.json")));
+await NativeCalendarContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-calendar/v1/month.json")));
+await NativePrivacyContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-privacy/v1/mode.json")));
+await NativeJourneyContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-journey/v1/range.json")));
+await NativePublicationContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-publication/v1/workspace.json")));
+await NativeScratchContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-scratch/v1/open.json")));
 await NativeConversationContractTests.Run(args[0]);
 
 NativePanelTabsTests.Run();
+NativeTranscriptTests.Run();
+await NativeWorkspaceActionsTests.RunAsync();
 await AppearanceSettingsTests.RunAsync();
 await WorkspaceActionTests.RunAsync();
 await WorkspaceConversationTests.RunAsync(args[0]);
+await NativeParityTests.RunAsync();
+await NativeSettingsEditorTests.RunAsync();
+await NativeModelSettingsTests.RunAsync();
+await NativeChannelSettingsTests.RunAsync();

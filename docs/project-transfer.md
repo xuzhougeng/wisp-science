@@ -1,78 +1,99 @@
 # Project transfer
 
-Wisp supports three deliberately different ways to bring a project onto a device:
-
 If a project reports that its SQLite database is unavailable, follow the
 [safe project-database recovery steps](project-database-recovery.zh-CN.md)
 before attempting to move or restore the workspace.
 
-- **Open a folder in place** registers an existing local folder as a project. The
-  folder remains where it is and Wisp does not copy its files. Use this after
-  copying a workspace yourself, checking out a repository, or placing it in a
-  cloud-drive folder.
-- **Import a ZIP archive** restores a complete Wisp transfer into a new folder.
-  The ZIP contains the workspace's regular files plus project-owned conversations,
-  artifacts, runs, plans, provenance, and research-graph records.
-- **Recover conversations from a workspace** scans `.wisp/history` in an
-  orphaned folder whose application database and Wisp project ZIP are no longer
-  available. It registers the folder in place and imports the recoverable message
-  timelines into a `Recovered` conversation folder.
+Wisp exports a complete project in two formats:
 
-Opening an unregistered folder in place creates a new local Wisp project record. Conversation
-history and other records that exist only in another device's Wisp database are
-not recovered from a plain folder copy; use ZIP export/import when those records
-must move too. Workspace conversation recovery is a best-effort disaster fallback,
-not an equivalent replacement for a complete project ZIP.
+- **Export directory** creates an uncompressed project package in a selected
+  parent directory. Existing directories are not overwritten; a numeric suffix
+  is added when the project name is already taken. Choose a location outside the
+  source workspace.
+- **Export ZIP** saves the same project files and database snapshot in a compressed
+  archive. ZIP import extracts the workspace into a new directory.
+
+Both contain regular workspace files, conversations, artifacts, runs, plans,
+provenance and research-graph records. Their shared layout is:
+
+```text
+project-package/
+  manifest.json
+  metadata/project.sqlite
+  workspace/
+```
+
+The metadata database contains only the exported project's records. It is a
+snapshot taken at export time. The live project database is now stored in the
+workspace at `.wisp/project.sqlite`, with identity metadata in `.wisp/project.json`.
+New projects and successfully migrated existing projects own their conversations,
+artifacts, runs and research records there. The application database retains
+device configuration and project locations. Removing a project from the list
+preserves its directory and database.
+
+**Import project folder** accepts either an export package or a live Wisp project
+directory with both metadata files. It validates their identity before registering
+the project. A fresh application profile can recover the project without the
+original application database. Stop work and close Wisp before copying a live
+directory; copy its entire `.wisp` directory too. Use export for a consistent
+snapshot while Wisp is running. Ordinary source folders without project metadata
+still belong under **New project**.
+
+Upgrading no longer moves old projects during application startup. Legacy
+conversations and research records remain readable and writable in the application
+database, avoiding a full database copy before the Windows window can respond.
+New projects get an independent database without copying existing history.
+
+Enabling folder snapshots explicitly migrates a legacy project using a verified,
+filtered database copy that preserves its local runtime state. Until then, use
+project export to transfer legacy records; copying its workspace folder alone
+does not include records still in the application database. If migration fails
+or is interrupted, the original records remain available on restart without
+automatically retrying the copy. An already committed migration can finish its
+metadata publication on restart. A missing database for an already migrated
+project is an error; Wisp never creates a blank replacement or uses stale
+exported metadata as a fallback.
 
 To move a project from Windows to macOS:
 
-1. Wait for the project's active conversations and jobs to finish.
-2. Open the project, then choose **File → Export current project**. The project
-   card's export action is also available as a shortcut. Wisp explains that you
-   can copy the project folder directly when you only need its files; choose
-   **Export ZIP** for the complete portable copy.
-3. Copy the ZIP to the Mac and choose **Import project → Import a ZIP archive**.
-4. Pick a parent folder. Wisp creates a new folder named after the project; it
-   appears on the Projects screen when the import finishes.
+1. Wait for active conversations and jobs to finish.
+2. Choose **File → Export current project**, or the project card's export action.
+3. Choose **Export directory** or **Export ZIP**, select a destination and wait for
+   the completion notice before moving the result.
+4. On the destination device, choose **Import project → Import project folder**
+   and select the package root containing `manifest.json`. Wisp validates the
+   manifest and metadata, restores project records, and opens `workspace/` in
+   place with its Files panel visible. No second workspace copy is made.
+   For ZIP, choose **Import a ZIP archive**, then select a parent directory for
+   extraction and open the imported project from the project list.
 
-During both operations, Wisp shows a non-modal progress card in the lower-right
-corner with the current stage, files, bytes, and path being processed. You can
-continue using the rest of the app. While an export is active, only its source
-project is read-only and cannot be opened in another editable view; unrelated
-projects remain available. An export is published as the selected ZIP only
-after its completed archive has been checked against its manifest; while it is
-running, do not use the temporary or still-empty archive file as a transfer
-copy.
+Folder import rejects ordinary folders, missing or corrupt metadata, unsupported
+manifest versions, mismatched project IDs, and linked metadata paths.
+It never falls back to registering an empty project. Archive record insertion is
+transactional, and invalid metadata never creates a project registration or
+rewrites the exported snapshot. If publishing project-owned storage fails after
+valid records have been imported, those records remain in the application database
+for migration recovery. Importing a project ID already on the
+current device is rejected; open that project from the project list instead.
+To start a new project using ordinary files, use **New project**.
 
-For a folder you copied yourself, choose **Import project → Open a folder in
-place** instead. Confirm its local name and path; Wisp registers that exact path
-without creating a duplicate workspace.
+The package's workspace remains editable after import. Manifest file totals
+record the original snapshot, so they are checked when exporting but do not
+prevent re-importing an edited workspace. After its first import, the workspace
+has a live project database. Re-importing that package uses the live database,
+including edits made since export; the original `metadata/project.sqlite`
+remains an unchanged export snapshot.
 
-If the folder is already registered, Wisp instead shows **Choose an existing
-project**, with the name, full project ID, workspace path, and conversation count
-for every matching project. Select the identity whose history you want to open.
-Older databases can contain several project IDs for the same directory, even
-with identical names. Each keeps its own conversations and groups. Opening one
-does not merge projects, reassign conversations, or import `.wisp/history` JSON.
-Cancelling leaves the active project unchanged. Projects hidden by Privacy mode
-remain hidden in this chooser.
-
-Folder matching uses the existing local filesystem path comparison, resolving
-existing aliases with canonical paths (including Windows junctions and symlinks).
-On Windows, canonical paths are compared without ASCII case differences. This
-lookup is read-only and does not infer that matching projects should be merged.
-
-When conversations appear missing after an update but remain in `wisp.sqlite`,
-try this existing-project chooser before archive recovery. Session visibility is
-scoped to project ID, not just the workspace path. A small `.wisp/history`
-directory does not establish that database conversations were deleted. The
-chooser provides access to existing identities; it does not diagnose which
-version or operation originally created duplicates or changed window restoration.
+Both formats share progress reporting and the same export guards: the source
+project stays read-only during export, while unrelated projects remain usable.
+Exports are staged and validated before publication. Directory export copies
+files directly without an intermediate ZIP. Source symlinks and special files
+are skipped and listed in the manifest, just as for ZIP export.
 
 ## Recovering conversations from an orphaned workspace
 
 Choose **Import project → Recover conversations from a workspace** only when the
-original Wisp application database, project ZIP, and sync revision are unavailable.
+original Wisp application database, exported project package, and sync revision are unavailable.
 After a folder is selected, Wisp scans regular JSON files under `.wisp/history`,
 accepts both plain message-array compaction snapshots and structured Exploration
 checkpoints, deduplicates exact message arrays by content hash, and keeps the
@@ -93,7 +114,7 @@ resource bindings, runs, undo indexes, branch relationships, or other project
 records. Plain message arrays do not identify their original frame, so exact
 copies can be deduplicated but distinct snapshots from one conversation may be
 recovered separately. Ordinary conversations that never produced a compaction or
-Exploration checkpoint may not appear in `.wisp/history` at all. Use project ZIP
+Exploration checkpoint may not appear in `.wisp/history` at all. Use project directory or ZIP
 export/import or manual project sync for complete, planned backup and migration.
 
 ## Path rules
@@ -131,8 +152,9 @@ workspace files.
 
 The delete action on a project card offers two distinct choices:
 
-- **Remove from Wisp only** deletes the project's Wisp metadata while keeping
-  its project directory and files on disk.
+- **Remove from Wisp only** removes the device's project registration while
+  keeping the project directory, identity metadata, and project database on disk.
+  Import the project folder to register it again.
 - **Delete project and local data** also permanently deletes the registered
   project directory. This choice opens a second warning that shows the exact
   directory; its final delete button stays disabled for five seconds. The data

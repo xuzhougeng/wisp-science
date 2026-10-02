@@ -716,8 +716,6 @@ dependencies = [
 [[package]]
 name = "leptos_reactive"
 version = "0.6.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4161acbf80f59219d8d14182371f57302bc7ff81ee41aba8ba1ff7295727f23"
 dependencies = [
  "base64",
  "cfg-if",
@@ -1690,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-dto"
-version = "1.14.0"
+version = "1.16.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1698,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-ui"
-version = "1.14.0"
+version = "1.16.0"
 dependencies = [
  "console_error_panic_hook",
  "futures-channel",

@@ -4,7 +4,7 @@ use crate::file_browser::mime_for_path;
 use base64::Engine;
 use tauri::{AppHandle, State};
 
-const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MAX_UPLOAD_BASE64_BYTES: usize = MAX_UPLOAD_BYTES.div_ceil(3) * 4;
 
 fn validate_upload_base64_len(len: usize) -> Result<(), String> {
@@ -28,7 +28,7 @@ fn decode_upload_data(data_base64: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 use uuid::Uuid;
 
-fn sanitize_upload_name(name: &str) -> Result<String, String> {
+pub(crate) fn sanitize_upload_name(name: &str) -> Result<String, String> {
     let base = std::path::Path::new(name)
         .file_name()
         .and_then(|n| n.to_str())
@@ -39,7 +39,11 @@ fn sanitize_upload_name(name: &str) -> Result<String, String> {
     Ok(base.to_string())
 }
 
-fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::path::PathBuf {
+pub(crate) fn unique_upload_path(
+    root: &std::path::Path,
+    dir: &str,
+    name: &str,
+) -> std::path::PathBuf {
     let mut path = root.join(dir).join(name);
     if !path.exists() {
         return path;
@@ -62,6 +66,37 @@ fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::pat
         }
     }
     root.join(dir).join(name)
+}
+
+/// Copy a local file into the project's `uploads/` directory. The returned
+/// path is relative to `root` and uses `/` separators. The source file stays
+/// in place.
+pub(crate) fn copy_local_file_into_uploads(
+    root: &std::path::Path,
+    source: &std::path::Path,
+) -> Result<(std::path::PathBuf, String, String), String> {
+    if !source.is_file() {
+        return Err("Attachment must be an existing file".into());
+    }
+    let len = std::fs::metadata(source)
+        .map_err(|error| error.to_string())?
+        .len();
+    if len > MAX_UPLOAD_BYTES as u64 {
+        return Err(format!("file exceeds {MAX_UPLOAD_BYTES} byte limit"));
+    }
+    let name = sanitize_upload_name(&source.to_string_lossy())?;
+    std::fs::create_dir_all(root.join("uploads")).map_err(|error| error.to_string())?;
+    let dest = unique_upload_path(root, "uploads", &name);
+    std::fs::copy(source, &dest).map_err(|error| format!("Failed to copy attachment: {error}"))?;
+    let relative = dest
+        .strip_prefix(root)
+        .map_err(|_| "Attachment landed outside the project".to_string())?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if !relative.starts_with("uploads/") {
+        let _ = std::fs::remove_file(&dest);
+        return Err("Attachment landed outside the uploads directory".into());
+    }
+    Ok((dest, relative, name))
 }
 
 fn existing_artifact_path(
@@ -450,7 +485,7 @@ pub(super) async fn search_artifacts(
 /// subset that can't be previewed: resolved against the project root and
 /// missing on disk, or outside the root. The UI drops these so a stale
 /// intermediate file doesn't linger as an artifact that 404s on click (#41).
-#[tauri::command]
+#[tauri::command(async)]
 pub(super) fn missing_files(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
@@ -465,6 +500,65 @@ pub(super) fn missing_files(
                 .unwrap_or(true)
         })
         .collect())
+}
+
+fn workspace_path_kind(root: &std::path::Path, path: &str) -> wisp_dto::WorkspacePathKind {
+    use wisp_dto::WorkspacePathKind;
+    let metadata = wisp_tools::safety::resolve_under_root(root, path)
+        .ok()
+        .and_then(|path| std::fs::metadata(path).ok());
+    match metadata {
+        Some(metadata) if metadata.is_file() => WorkspacePathKind::File,
+        Some(metadata) if metadata.is_dir() => WorkspacePathKind::Directory,
+        _ => WorkspacePathKind::Unavailable,
+    }
+}
+
+#[tauri::command(async)]
+pub(super) fn classify_workspace_paths(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    paths: Vec<String>,
+) -> Result<std::collections::HashMap<String, wisp_dto::WorkspacePathKind>, String> {
+    let ap = state.require_active(window.label())?;
+    Ok(paths
+        .into_iter()
+        .map(|path| {
+            let kind = workspace_path_kind(&ap.root, &path);
+            (path, kind)
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod workspace_path_tests {
+    use super::workspace_path_kind;
+    use wisp_dto::WorkspacePathKind::{Directory, File, Unavailable};
+
+    #[test]
+    fn classifies_existing_entries_and_rejects_missing_and_outside_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(root.join("docs/07.celltype_auto_annotation")).unwrap();
+        std::fs::write(root.join("README"), "hello").unwrap();
+        std::fs::write(temp.path().join("outside.txt"), "outside").unwrap();
+        assert_eq!(workspace_path_kind(&root, "README"), File);
+        assert_eq!(
+            workspace_path_kind(&root, "docs/07.celltype_auto_annotation"),
+            Directory
+        );
+        assert_eq!(workspace_path_kind(&root, "docs/"), Directory);
+        assert_eq!(
+            workspace_path_kind(&root, &root.join("docs").to_string_lossy()),
+            Directory
+        );
+        assert_eq!(workspace_path_kind(&root, "missing.txt"), Unavailable);
+        assert_eq!(workspace_path_kind(&root, "../outside.txt"), Unavailable);
+        assert_eq!(
+            workspace_path_kind(&root, &temp.path().to_string_lossy()),
+            Unavailable
+        );
+    }
 }
 
 #[tauri::command]

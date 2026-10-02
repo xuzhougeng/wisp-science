@@ -42,9 +42,9 @@ public struct NativeSideChatQuote: Equatable, Identifiable, Sendable {
 }
 
 /// Called only for Return/Enter. A composition confirmation always belongs to the IME.
-public enum NativeSideChatReturnAction: String, Sendable {
+public enum NativeMessageReturnAction: String, Sendable {
     case send, newline, composition
-    public static func resolve(shift: Bool, composing: Bool) -> Self {
-        composing ? .composition : shift ? .newline : .send
+    public static func resolve(shift: Bool, composing: Bool, sendWithModifier: Bool = false, modifier: Bool = false) -> Self {
+        composing ? .composition : (shift || (sendWithModifier && !modifier)) ? .newline : .send
     }
 }
