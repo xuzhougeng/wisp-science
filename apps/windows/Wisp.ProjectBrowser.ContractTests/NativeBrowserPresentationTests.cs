@@ -4,6 +4,15 @@ internal static class NativeBrowserPresentationTests
 {
     public static void Run()
     {
+        Check(NativeBrowserPresentation.SessionTitle("整理图片\nSelected skills: plot") == "整理图片", "metadata is separate from task title");
+        Check(NativeBrowserPresentation.SessionTitle("C:\\results\\final\\figure.pdf") == "figure.pdf", "Windows path titles emphasize filename");
+        Check(NativeBrowserPresentation.SessionTitle("C:\\My research\\figure one.pdf") == "figure one.pdf", "spaces inside a path are preserved");
+        Check(NativeBrowserPresentation.SessionTitle("/data/results/figure.pdf /data/script.R") == "figure.pdf", "remote path titles emphasize filename");
+        Check(NativeBrowserPresentation.SessionTitle("正常标题") == "正常标题", "authored titles stay intact");
+        Check(NativeBrowserPresentation.SessionTitle("/data/06.trajectory_analysis/result/p") == "06.trajectory_analysis/result/p", "truncated path keeps identifying directory context");
+        Check(NativeBrowserPresentation.SessionTitle("Uploaded files: a.pdf") == "未命名会话", "metadata-only titles have fallback");
+        Check(NativeBrowserPresentation.ConnectionError(new OperationCanceledException()).Contains("超时"), "deadline cancellation has actionable explanation");
+        Check(NativeBrowserPresentation.ConnectionError(new FileNotFoundException()).Contains("完整原生版本"), "missing host has installation guidance");
         var now = new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
         var seconds = now.ToUnixTimeSeconds();
         Check(NativeBrowserPresentation.Status("running") == "运行中", "running must not look complete");

@@ -137,13 +137,15 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             connected = await Discover().ConfigureAwait(false);
             if (connected is not null) return connected;
+            if (process.HasExited && process.ExitCode != 0)
+                throw new InvalidOperationException($"桌面服务启动失败（退出码 {process.ExitCode}）。请重新构建或安装完整的原生版本后重试。");
             // A compatible running desktop may take a moment to publish its descriptor.
             // Older desktops intercept the launch but never start the broker.
             if (process.HasExited && ++exitedChecks >= 6)
                 throw new InvalidOperationException("设置宿主已退出，未提供可用接口。若旧版 Wisp 正在运行，请先完成工作并退出旧版，再点击重试；无需关闭此设置窗口。");
             await Task.Delay(500, cancellationToken).ConfigureAwait(false);
         }
-        throw new TimeoutException("Settings host did not become ready for the selected database.");
+        throw new TimeoutException("桌面服务未能就绪。请检查版本与所选数据库后重试。");
     }
 
     public void Dispose() => http.Dispose();

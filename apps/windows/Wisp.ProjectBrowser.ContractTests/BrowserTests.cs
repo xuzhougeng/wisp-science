@@ -28,6 +28,20 @@ internal static class BrowserTests
         Check(!PreviewLayout.ForSize(1200, 800).StackHeader && !PreviewLayout.ForSize(1200, 800).CompactWorkspace,
             "wide windows retain full action strip");
         var mixed = new BrowserMessage(1, "assistant", "先检查数据。\nrun_in_context\n{\"command\":\"first\\n第二行\"}\n检查完成。", null);
+        var completion = new BrowserMessage(2, "assistant", "attempt_completion\n{\"result\":\"# 最终报告\\n已完成。\"}", null);
+        var echo = new BrowserMessage(3, "tool", "# 最终报告\n已完成。", "attempt_completion");
+        Check(TranscriptPresentation.Sections(completion).Single() is { ToolName: null, Text: "# 最终报告\n已完成。" }, "offline final report renders as Markdown body");
+        Check(TranscriptPresentation.ReadableMessages([completion, echo]).Count == 1, "adjacent identical completion echo is displayed once");
+        Check(TranscriptPresentation.ReadableMessages([completion with { Text = echo.Text }, echo]).Count == 2, "ordinary prose is not mistaken for a completion call");
+        Check(TranscriptPresentation.ReadableMessages([completion, echo with { Text = "Error: failed" }]).Count == 2, "different completion output is not lost");
+        Check(TranscriptPresentation.ReadableMessages([completion, mixed with { Role = "user" }, echo]).Count == 3, "completion echo never crosses user turn");
+        Check(TranscriptPresentation.Sections(echo).Single().ToolName == null, "standalone final result stays visible");
+        var toolCall = mixed with { Text = "read\n{\"path\":\"a.txt\"}" };
+        var groups = TranscriptPresentation.Groups([toolCall, toolCall with { Sequence = 2 }, completion, echo]);
+        Check(groups.Count == 2 && groups[0].IsProcess && groups[0].Messages.Count == 2 && !groups[1].IsProcess,
+            "offline consecutive tool calls fold while final answer remains outside");
+        Check(!TranscriptPresentation.Groups([echo with { Text = "Error: failed", ToolName = "read" }]).Single().IsProcess,
+            "unknown tool success is not buried in a completed group");
         var sections = TranscriptPresentation.Sections(mixed);
         Check(sections.Count == 3 && sections[0].Text.Contains("先检查数据") && sections[2].Text.Contains("检查完成")
             && sections[1].ToolName == "run_in_context" && sections[1].Text.Contains("first\n第二行"),

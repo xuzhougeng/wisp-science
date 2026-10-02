@@ -98,9 +98,6 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         this.slashCommand = slashCommand; this.openHosts = openHosts; this.pickAttachment = pickAttachment;
         this.openRun = openRun;
         design.BindTypography(status, 12); design.BindTypography(hint, 11);
-        model.Changed += Refresh;
-        model.Effort.Changed += Refresh;
-        design.TypographyChanged += Refresh;
         var root = new Grid();
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -266,6 +263,11 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         Grid.SetRow(composerBar, 3); root.Children.Add(composerBar);
         Content = root;
         Refresh();
+        // Subscribe only after the controls have been constructed successfully.
+        // A failed constructor must not leave a half-built page observing resets.
+        model.Changed += Refresh;
+        model.Effort.Changed += Refresh;
+        design.TypographyChanged += Refresh;
         _ = PollAsync();
     }
 

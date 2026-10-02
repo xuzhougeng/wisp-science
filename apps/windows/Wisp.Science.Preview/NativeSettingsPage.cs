@@ -34,6 +34,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private AppearanceSettingsModel? model;
     private bool closed;
     private bool working;
+    private bool saving;
     private bool confirmClose;
     private NativeSettingsSectionPage? capabilityPage;
     private readonly Dictionary<string, Button> navigationButtons = [];
@@ -45,22 +46,29 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private readonly ComboBox projectChoice = new() { Header = "项目作用域", HorizontalAlignment = HorizontalAlignment.Stretch };
     private bool changingProject;
     private readonly Func<bool, Task<string?>>? pickPath;
+    private readonly Func<Task<NativeSettingsClient?>>? connectHost;
+    private readonly StackPanel connectionContent = new() { Spacing = 16, Padding = new Thickness(28), Visibility = Visibility.Collapsed };
+    private readonly TextBlock connectionHeading = new() { FontSize = 24 };
+    private readonly TextBlock connectionStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly Button connectionRetry = new() { Content = "重新连接", Visibility = Visibility.Collapsed };
 
-    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close, string initialSection = "appearance", IReadOnlyList<ProjectSummary>? projects = null, Func<bool, Task<string?>>? pickPath = null, NativeTypography? typography = null)
+    public NativeSettingsPage(string database, string? projectId, Action<JsonObject> apply, Action close, string initialSection = "appearance", IReadOnlyList<ProjectSummary>? projects = null, Func<bool, Task<string?>>? pickPath = null, NativeTypography? typography = null, Func<Task<NativeSettingsClient?>>? connectHost = null)
     {
         this.database = database; this.projectId = projectId; this.apply = apply; this.close = close;
         design.Typography = typography ?? new(); design.BindTypography(this);
         settingsProject = projectId;
         this.pickPath = pickPath;
+        this.connectHost = connectHost;
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(210) });
         shell.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        var nav = new StackPanel { Spacing = 4, Padding = new Thickness(16, 24, 16, 24) };
+        var nav = new StackPanel { Spacing = 2, Padding = new Thickness(12, 12, 12, 12) };
         var backContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         backContent.Children.Add(design.Icon("arrow-left"));
         backContent.Children.Add(new TextBlock { Text = "返回" });
-        var back = new Button { Content = backContent, Margin = new Thickness(0, 0, 0, 16) };
+        var back = new Button { Content = backContent, Margin = new Thickness(0, 0, 0, 8) };
+        AutomationProperties.SetName(back, "返回工作区");
         back.Click += (_, _) => RequestClose(); nav.Children.Add(back);
-        var settingsHeading = design.Text("设置", 22); settingsHeading.Margin = new Thickness(12, 0, 0, 24); nav.Children.Add(settingsHeading);
+        var settingsHeading = design.Text("设置", 22); settingsHeading.Margin = new Thickness(12, 0, 0, 10); nav.Children.Add(settingsHeading);
         projectChoice.Items.Add(new ComboBoxItem { Content = "全局设置", Tag = "" });
         foreach (var project in projects ?? []) projectChoice.Items.Add(new ComboBoxItem { Content = project.Name, Tag = project.Id });
         projectChoice.SelectedItem = projectChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == (settingsProject ?? ""));
@@ -97,7 +105,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
             }
             var item = new Button { Content = entry.Value["zh"]!.GetValue<string>(),
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(12, 8, 12, 8), IsEnabled = entry.Key == "appearance" || NativeSettingsSectionPage.Titles.ContainsKey(entry.Key) };
+                Padding = new Thickness(12, 5, 12, 5), IsEnabled = entry.Key == "appearance" || NativeSettingsSectionPage.Titles.ContainsKey(entry.Key) };
             if (entry.Key == "appearance") item.Background = design.Brush("surface-hover");
             else if (!item.IsEnabled) ToolTipService.SetToolTip(item, "此设置页尚未接入 Windows");
             var key = entry.Key;
@@ -150,7 +158,13 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         appearance.Children.Add(scroll); Grid.SetRow(footer, 1); appearance.Children.Add(footer);
         Grid.SetColumn(appearance, 1); shell.Children.Add(appearance); shell.Background = design.Brush("bg-app");
         appearanceContent = appearance;
+        connectionContent.Children.Add(connectionHeading);
+        connectionContent.Children.Add(connectionStatus);
+        connectionContent.Children.Add(connectionRetry);
+        connectionRetry.Click += async (_, _) => await LoadAsync();
+        Grid.SetColumn(connectionContent, 1); shell.Children.Add(connectionContent);
         pendingSection = initialSection;
+        ShowConnectingSection(initialSection);
         Content = shell;
         shell.SizeChanged += (_, e) =>
         {
@@ -163,7 +177,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         reload.Click += async (_, _) => await LoadAsync();
         discard.Click += (_, _) => { model?.Discard(); confirmClose = false; RenderForm(); status.Text = "已取消修改。"; };
         save.Click += async (_, _) => await SaveAsync();
-        body.Loaded += async (_, _) => { if (!started) { started = true; await LoadAsync(); } };
+        Loaded += async (_, _) => { if (!started) { started = true; await LoadAsync(); } };
     }
 
     public void HandleEscape()
@@ -177,7 +191,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private void RequestClose()
     {
         if (capabilityPage != null) { capabilityPage.RequestLeave(close); return; }
-        if (working) return;
+        if (saving) return;
         if (model?.HasChanges == true && !confirmClose)
         {
             confirmClose = true;
@@ -189,8 +203,9 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
 
     private void SelectSection(string next)
     {
-        if (next == section || working || closed) return;
-        if (client == null) { pendingSection = next; _ = LoadAsync(); return; }
+        if (closed) return;
+        if (client == null) { pendingSection = next; ShowConnectingSection(next); if (!working) _ = LoadAsync(); return; }
+        if (next == section || working) return;
         if (capabilityPage != null) { capabilityPage.RequestLeave(() => MountSection(next)); return; }
         if (model?.HasChanges == true && pendingSection != next)
         {
@@ -200,6 +215,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     }
     private void MountSection(string next)
     {
+        connectionContent.Visibility = Visibility.Collapsed;
         if (capabilityPage != null) { shell.Children.Remove(capabilityPage); capabilityPage.Dispose(); capabilityPage = null; }
         section = next; pendingSection = null;
         if (appearanceContent != null) appearanceContent.Visibility = next == "appearance" ? Visibility.Visible : Visibility.Collapsed;
@@ -217,10 +233,24 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         }
     }
 
+    private void ShowConnectingSection(string next)
+    {
+        section = next;
+        connectionHeading.Text = next == "appearance" ? "外观" : NativeSettingsSectionPage.Titles.GetValueOrDefault(next, next);
+        connectionStatus.Text = "正在连接桌面服务…可以切换分类或返回。";
+        connectionContent.Visibility = Visibility.Visible;
+        if (appearanceContent != null) appearanceContent.Visibility = Visibility.Collapsed;
+        foreach (var (key, button) in navigationButtons)
+        {
+            if (key == next) button.Background = design.Brush("surface-hover");
+            else button.ClearValue(Control.BackgroundProperty);
+        }
+    }
+
     public void Dispose()
     {
         if (closed) return;
-        closed = true; capabilityPage?.Dispose(); lifetime.Cancel(); client?.Dispose(); lifetime.Dispose();
+        closed = true; capabilityPage?.Dispose(); lifetime.Cancel(); if (connectHost == null) client?.Dispose(); lifetime.Dispose();
     }
 
     private void SetBusy(bool value)
@@ -235,6 +265,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     {
         if (working) return;
         SetBusy(true); status.Text = "正在连接桌面设置…";
+        connectionRetry.Visibility = Visibility.Collapsed;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         try
@@ -247,24 +278,25 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
                     "science.wisp-science", "wisp-science", "wisp.sqlite");
                 if (!string.Equals(Path.GetFullPath(database), Path.GetFullPath(defaultDatabase), StringComparison.OrdinalIgnoreCase))
                     host = null; // Never start a default-database host on behalf of an alternate database.
-                var connected = await NativeSettingsClient.ConnectAsync(database, host, deadline.Token);
-                if (closed) { connected.Dispose(); return; }
+                var connected = connectHost != null ? await connectHost() : await NativeSettingsClient.ConnectAsync(database, host, deadline.Token);
+                if (closed) { if (connectHost == null) connected?.Dispose(); return; }
+                if (connected == null) throw new IOException("桌面服务不可用。请检查完整安装包后重新连接。");
                 client = connected;
                 model = new(client, projectId);
             }
+            deadline.CancelAfter(TimeSpan.FromSeconds(15));
             await model!.LoadAsync(deadline.Token);
             if (closed) return;
             if (!model.HasChanges && model.Draft is { } loaded) ApplyCommitted(loaded);
             RenderForm(); status.Text = "已读取设置。对话字体使用原生控件呈现；自定义 CSS 仅用于 WebView。";
         }
-        catch (OperationCanceledException) { if (!closed) status.Text = "连接超时，请检查桌面客户端版本后重新载入。可以随时返回。"; }
-        catch (Exception ex) { if (!closed) status.Text = "无法读取设置：" + ex.Message; }
+        catch (Exception ex) { if (!closed) { status.Text = NativeBrowserPresentation.ConnectionError(ex); connectionStatus.Text = status.Text; connectionRetry.Visibility = Visibility.Visible; } }
         finally
         {
             if (!closed)
             {
                 SetBusy(false);
-                if (client != null && pendingSection is { } next) { pendingSection = null; SelectSection(next); }
+                if (client != null && pendingSection is { } next) MountSection(next);
             }
         }
     }
@@ -272,6 +304,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
     private async Task SaveAsync()
     {
         if (working || model is null) return;
+        saving = true;
         SetBusy(true); status.Text = "正在保存…";
         try
         {
@@ -284,7 +317,7 @@ internal sealed class NativeSettingsPage : UserControl, IDisposable
         {
             if (!closed) status.Text = "保存未确认，草稿已保留；未自动重试。可在桌面客户端核实后再决定是否保存。" + ex.Message;
         }
-        finally { if (!closed) SetBusy(false); }
+        finally { saving = false; if (!closed) SetBusy(false); }
     }
 
     private void ApplyCommitted(JsonObject preferences)

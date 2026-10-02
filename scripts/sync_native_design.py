@@ -12,13 +12,20 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "apps/macos/Sources/WispProjectBrowserUI/Resources"
-ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more")
+ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more", "circle-alert", "server")
 # WebView-only settings sections the native preview has no page for yet.
 WEBVIEW_ONLY_SECTIONS = {"hooks"}
 COLORS = ("bg-app", "bg-elev", "bg-sunken", "surface-hover", "text", "text-muted", "text-faint", "border", "border-strong", "clay", "clay-strong")
 
 
 def exports():
+    # Fail the build before a missing asset can abort a WinUI page constructor.
+    native_icons = set()
+    for path in (ROOT / "apps/windows/Wisp.Science.Preview").glob("*.cs"):
+        native_icons.update(re.findall(r'\.Icon\("([^"]+)"', path.read_text(encoding="utf-8")))
+    missing = native_icons - set(ICONS)
+    if missing:
+        raise ValueError(f"WinUI icons missing from native exports: {sorted(missing)}")
     # Use the same pinned language grammars as WebView; JavaScriptCore produces
     # token ranges while AppKit keeps the text selectable and renders it natively.
     yield "highlight.min.js", (ROOT / "ui/vendor-src/highlight.min.js").read_bytes()

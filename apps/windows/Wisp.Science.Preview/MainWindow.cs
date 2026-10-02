@@ -186,7 +186,7 @@ internal sealed partial class MainWindow : Window
 
     private FrameworkElement Home()
     {
-        var page = new Grid { RowSpacing = 18 };
+        var page = new Grid { RowSpacing = layout.ShortWindow ? 10 : 18 };
         page.RowDefinitions.Add(new() { Height = GridLength.Auto });
         page.RowDefinitions.Add(new() { Height = GridLength.Auto });
         page.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -200,7 +200,7 @@ internal sealed partial class MainWindow : Window
         header.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var brand = Row(16);
         var mark = design.Wordmark();
-        mark.Width = layout.StackHomeColumns ? 90 : 120; mark.Height = layout.StackHomeColumns ? 60 : 80;
+        mark.Width = layout.StackHomeColumns || layout.ShortWindow ? 90 : 120; mark.Height = layout.StackHomeColumns || layout.ShortWindow ? 54 : 80;
         AutomationProperties.SetName(mark, "Wisp Science");
         brand.Children.Add(mark);
         var tagline = Stack(8); tagline.VerticalAlignment = VerticalAlignment.Center;
@@ -213,8 +213,8 @@ internal sealed partial class MainWindow : Window
         var quickActions = Row(6); quickActions.HorizontalAlignment = HorizontalAlignment.Right;
         quickActions.Children.Add(ActionButton("研究日历", "calendar", () => _ = OpenNativeAction("calendar")));
         quickActions.Children.Add(ActionButton("收藏", "star", () => _ = OpenNativeAction("library")));
-        quickActions.Children.Add(ActionButton("教程", "book", OpenTutorials));
-        quickActions.Children.Add(ActionButton("搜索", "search", OpenSearch));
+        quickActions.Children.Add(ActionButton("教程（在浏览器打开）", "book", OpenTutorials));
+        quickActions.Children.Add(ActionButton("搜索项目和最近会话", "search", OpenSearch));
         quickActions.Children.Add(ActionButton("设置", "gear", OpenSettings));
         var projectActions = Row(6); projectActions.HorizontalAlignment = HorizontalAlignment.Right;
         projectActions.Children.Add(ActionButton("导入项目", "upload", () => _ = OpenNativeAction("import"), showLabel: true));
@@ -225,7 +225,7 @@ internal sealed partial class MainWindow : Window
         page.Children.Add(header);
         if ((localError ?? model.Error) is { } error)
         {
-            var banner = Card(Text(error + (model.LastLoaded != null ? "\n当前显示上次成功读取的数据。" : ""), 13, "clay-strong"));
+            var banner = ErrorNotice(error, model.LastLoaded != null ? "当前显示上次读取的数据。" : null);
             Grid.SetRow(banner, 1); page.Children.Add(banner);
         }
         var columns = new Grid { ColumnSpacing = 24, RowSpacing = 18 };
@@ -270,7 +270,7 @@ internal sealed partial class MainWindow : Window
         var recent = Stack(8);
         foreach (var session in model.RecentSessions)
         {
-            var label = Stack(6); label.Children.Add(SingleLine(session.Title, 14));
+            var label = Stack(4); label.Children.Add(SessionTitle(session.Title, 14));
             label.Children.Add(SingleLine(model.Projects.FirstOrDefault(p => p.Id == session.ProjectId)?.Name ?? "项目", 11, "text-faint"));
             label.Children.Add(SessionMetadata(session));
             recent.Children.Add(Card(ContentButton(label, () => _ = model.OpenProjectAsync(session.ProjectId, session.Id), $"recent-{session.Id}", session.Title), 4));
@@ -311,7 +311,7 @@ internal sealed partial class MainWindow : Window
             Render();
         }));
         toolbar.Children.Add(navigation);
-        var title = Text(model.Sessions.FirstOrDefault(s => s.Id == model.ActiveSessionId)?.Title ?? project.Name, 14);
+        var title = SessionTitle(model.Sessions.FirstOrDefault(s => s.Id == model.ActiveSessionId)?.Title ?? project.Name, 14);
         title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap;
         title.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(title, 1); toolbar.Children.Add(title);
         var tools = Row(2);
@@ -336,23 +336,33 @@ internal sealed partial class MainWindow : Window
         else Grid.SetColumn(tools, 2);
         tools.HorizontalAlignment = HorizontalAlignment.Right;
         toolbar.Children.Add(tools); main.Children.Add(toolbar);
-        var messages = Stack(18); messages.MaxWidth = PreviewLayout.ConversationMaxWidth; messages.Margin = new Thickness(16);
+        var messages = Stack(8); messages.MaxWidth = PreviewLayout.ConversationMaxWidth; messages.Margin = new Thickness(16);
         if ((localError ?? model.SessionError ?? model.Error) is { } error)
         {
-            messages.Children.Add(Text(error, 13, "clay-strong"));
-            messages.Children.Add(ActionButton("重试", "refresh", () => _ = model.OpenProjectAsync(project.Id, model.ActiveSessionId), true));
+            messages.Children.Add(ErrorNotice(error));
+            messages.Children.Add(ActionButton("重新连接", "refresh", () => { localError = null; _ = EnsureConversationAsync(); }, true));
         }
         if (model.NextBeforeSeq != null)
         {
             var older = ActionButton("加载更早的消息", "clock", () => _ = model.OpenSessionAsync(model.ActiveSessionId!, older: true), true);
             older.IsEnabled = !model.TranscriptLoading; messages.Children.Add(older);
         }
-        foreach (var message in model.Messages)
+        foreach (var group in TranscriptPresentation.Groups(model.Messages))
         {
+            if (group.IsProcess)
+            {
+                var process = Stack(4);
+                foreach (var item in group.Messages) process.Children.Add(TranscriptView.Create(item, design, inlineTools: true));
+                messages.Children.Add(new Expander { Header = $"查看工具过程 · {group.Messages.Count} 条", Content = process,
+                    HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
+                continue;
+            }
+            var message = group.Messages[0];
             var entry = Stack(8);
-            entry.Children.Add(Text(message.Role == "user" ? "你" : message.Role == "tool" ? message.ToolName ?? "工具" : "Wisp Science", 12, "text-muted"));
+            if (message.Role != "tool" || message.ToolName == "attempt_completion")
+                entry.Children.Add(Text(message.Role == "user" ? "你" : "Wisp Science", 12, "text-muted"));
             entry.Children.Add(TranscriptView.Create(message, design));
-            var card = Card(entry); card.Background = design.Brush(message.Role == "user" ? "bg-sunken" : "bg-app");
+            var card = Card(entry, 10); card.Background = design.Brush(message.Role == "user" ? "bg-sunken" : "bg-app");
             card.BorderThickness = new Thickness(0); messages.Children.Add(card);
         }
         if (model.SessionsLoading || model.TranscriptLoading) messages.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 180 });
@@ -372,7 +382,7 @@ internal sealed partial class MainWindow : Window
             transcriptScroll = new ScrollViewer { Content = messages, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             Grid.SetRow(transcriptScroll, 1); main.Children.Add(transcriptScroll);
             var bottom = Stack(6); bottom.Margin = new Thickness(20, 0, 20, 8);
-            bottom.Children.Add(Text(localError ?? "正在连接桌面宿主以发送消息…", 12, "text-muted"));
+            bottom.Children.Add(Text(localError == null ? "正在连接桌面服务…连接后可继续对话。" : "当前为只读浏览，可查看历史消息。", 12, "text-muted"));
             Grid.SetRow(bottom, 3); main.Children.Add(bottom);
         }
         if (terminalVisible && model.ActiveSessionId != null && terminalPage != null)
@@ -393,9 +403,23 @@ internal sealed partial class MainWindow : Window
         Grid? panelHost = null;
         Button? backdrop = null;
         Thumb? resize = null;
-        if (panelVisible && model.ActiveSessionId != null && panelPage != null)
+        if (panelVisible && model.ActiveSessionId != null)
         {
-            if (panelPage.Parent is Panel previous) previous.Children.Remove(panelPage);
+            FrameworkElement panelContent;
+            if (panelPage != null)
+            {
+                if (panelPage.Parent is Panel previous) previous.Children.Remove(panelPage);
+                panelContent = panelPage;
+            }
+            else
+            {
+                var pending = Stack(12); pending.Margin = new Thickness(16);
+                pending.Children.Add(Text(settings.PanelTab == "files" ? "文件" : "工作区面板", 18));
+                pending.Children.Add(Text(localError ?? "正在连接桌面服务…", 13));
+                if (localError != null) pending.Children.Add(ActionButton("重新连接", "refresh", () => { localError = null; _ = EnsurePanelAndTerminalAsync(); }, true));
+                pending.Children.Add(ActionButton("关闭面板", "close", TogglePanel, true));
+                panelContent = pending;
+            }
             backdrop = new Button { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(48, 0, 0, 0)),
                 BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch, IsTabStop = false };
@@ -417,7 +441,7 @@ internal sealed partial class MainWindow : Window
                 SizeWorkspace(); SaveSettings(); e.Handled = true;
             };
             panelHost.Children.Add(resize);
-            Grid.SetColumn(panelPage, 1); panelHost.Children.Add(panelPage);
+            Grid.SetColumn(panelContent, 1); panelHost.Children.Add(panelContent);
             shell.Children.Add(panelHost);
         }
         shell.SizeChanged += (_, _) => SizeWorkspace();
@@ -589,6 +613,7 @@ internal sealed partial class MainWindow : Window
         inbox?.Reset();
         conversation?.Reset();
         if (model.ActiveProjectId != null) _ = EnsureConversationAsync();
+        if (panelVisible || terminalVisible) _ = EnsurePanelAndTerminalAsync();
     }
 
     private async Task EnsureConversationAsync()
@@ -634,6 +659,7 @@ internal sealed partial class MainWindow : Window
     private async Task EnsurePanelAndTerminalAsync()
     {
         if (model.ActiveProjectId is not { } project || model.ActiveSessionId is not { } session) return;
+        Render();
         var host = await ConnectHostAsync();
         if (host == null || windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != session) return;
         var panelClient = new NativePanelClient(host);
@@ -688,11 +714,15 @@ internal sealed partial class MainWindow : Window
     private async Task OpenSheet(string kind)
     {
         if (workspaceSheet != null || settingsPage != null) return;
-        var host = await ConnectHostAsync();
-        if (host == null || windowClosed) return;
         var project = model.ActiveProjectId;
         var session = model.ActiveSessionId;
         if (kind != "inbox" && (project is null || session is null)) return;
+        var loading = new NativeConnectionPage(design, kind switch { "outline" => "会话大纲", "share" => "分享", "trajectory" => "运行轨迹", "archive" => "研究归档", _ => "待查看" }, CloseSheet,
+            () => { CloseSheet(); _ = OpenSheet(kind); });
+        MountSheet(loading);
+        var host = await ConnectHostAsync();
+        if (windowClosed || !ReferenceEquals(workspaceSheet, loading) || project != model.ActiveProjectId || session != model.ActiveSessionId) return;
+        if (host == null) { loading.Failed(localError ?? "连接失败，请重试。"); return; }
         IWorkspaceSheet page = kind switch
         {
             "outline" => new NativeOutlinePage(new WorkspaceOutlineModel(new NativeConversationClient(host), project!, session!), design, CloseSheet),
@@ -707,9 +737,7 @@ internal sealed partial class MainWindow : Window
             }, CloseSheet),
             _ => CreateInboxPage(host, project ?? "")
         };
-        workspaceSheet = page;
-        if (pageContent != null) pageContent.IsHitTestVisible = false;
-        if (page is UserControl control) root.Children.Add(control);
+        CloseSheet(); MountSheet(page);
     }
 
     private NativeInboxPage CreateInboxPage(NativeSettingsClient host, string project)
@@ -768,12 +796,13 @@ internal sealed partial class MainWindow : Window
             var connected = await NativeSettingsClient.ConnectAsync(database, host, deadline.Token);
             if (windowClosed || database != model.DatabasePath) { connected.Dispose(); return null; }
             workspaceHost = connected;
+            localError = null;
             return connected;
         }
         catch (Exception ex)
         {
             if (windowClosed || database != model.DatabasePath) return null;
-            localError = "无法连接桌面宿主：" + ex.Message;
+            localError = NativeBrowserPresentation.ConnectionError(ex);
             Render();
             return null;
         }
@@ -793,7 +822,7 @@ internal sealed partial class MainWindow : Window
     }
 
     private void OpenSettings()
-        => OpenSettingsSection("appearance");
+        => OpenSettingsSection("general");
 
     private void OpenSettingsSection(string initialSection, string? projectId = null)
     {
@@ -811,7 +840,8 @@ internal sealed partial class MainWindow : Window
             SaveSettings();
             root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
             Render();
-        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"), design.Typography);
+        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"), design.Typography,
+            async () => await ConnectHostAsync() ?? throw new IOException(localError ?? "桌面服务不可用，请重新连接。"));
         if (pageContent != null) pageContent.Visibility = Visibility.Collapsed;
         root.Children.Add(settingsPage);
     }
@@ -848,6 +878,22 @@ internal sealed partial class MainWindow : Window
         var text = Text(value, size, color);
         text.TextWrapping = TextWrapping.NoWrap; text.TextTrimming = TextTrimming.CharacterEllipsis;
         ToolTipService.SetToolTip(text, value); return text;
+    }
+    private TextBlock SessionTitle(string value, double size)
+    {
+        var title = SingleLine(NativeBrowserPresentation.SessionTitle(value), size);
+        ToolTipService.SetToolTip(title, value); return title;
+    }
+    private FrameworkElement ErrorNotice(string error, string? detail = null)
+    {
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(design.Icon("circle-alert", 16));
+        var label = Text(error + (detail == null ? "" : "\n" + detail), 12, "text");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(label, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        Grid.SetColumn(label, 1); row.Children.Add(label);
+        return Card(row, 10);
     }
     private TextBlock SessionMetadata(BrowserSession session)
     {

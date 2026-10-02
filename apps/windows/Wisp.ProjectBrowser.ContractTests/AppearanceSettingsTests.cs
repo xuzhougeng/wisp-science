@@ -52,6 +52,20 @@ internal static class AppearanceSettingsTests
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("设置宿主已退出"))
         { Check(true, "incompatible exiting host fails promptly instead of waiting indefinitely"); }
+        var previousExit = Environment.GetEnvironmentVariable("WISP_TEST_HOST_EXIT_CODE");
+        try
+        {
+            Environment.SetEnvironmentVariable("WISP_TEST_HOST_EXIT_CODE", "17");
+            using var crashDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                using var unexpected = await NativeSettingsClient.ConnectAsync(missingDatabase, Environment.ProcessPath, crashDeadline.Token);
+                throw new Exception("Expected crashed host failure");
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("退出码 17"))
+            { Check(true, "crashed host reports its exit code before the discovery deadline"); }
+        }
+        finally { Environment.SetEnvironmentVariable("WISP_TEST_HOST_EXIT_CODE", previousExit); }
     }
 
     private static void Check(bool passed, string message)

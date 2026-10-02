@@ -54,10 +54,14 @@ internal sealed partial class MainWindow
         if (openingAction || nativePickerOpen || workspaceSheet != null || settingsPage != null || searchOverlay != null) return;
         openingAction = true;
         var project = model.ActiveProjectId; var session = model.ActiveSessionId; var database = model.DatabasePath;
+        var title = kind switch { "create" => "新建项目", "import" => "导入项目", "library" => "收藏", "calendar" => "研究日历", "journey" => "研究历程", "publication" => "论文证据", "capabilities" => "能力", _ => "工作区" };
+        var loading = new NativeConnectionPage(design, title, CloseSheet, () => { CloseSheet(); _ = OpenNativeAction(kind); });
+        MountSheet(loading);
         try
         {
             var host = await ConnectHostAsync();
-            if (host == null || windowClosed || database != model.DatabasePath || project != model.ActiveProjectId || session != model.ActiveSessionId) return;
+            if (windowClosed || !ReferenceEquals(workspaceSheet, loading) || database != model.DatabasePath || project != model.ActiveProjectId || session != model.ActiveSessionId) return;
+            if (host == null) { loading.Failed(localError ?? "连接失败，请重试。"); return; }
             async Task OpenCreated(ProjectSummary row)
             {
                 CloseSheet(); await model.RefreshAsync();
@@ -81,13 +85,14 @@ internal sealed partial class MainWindow
             };
             if (kind == "publication" && project != null)
             {
+                CloseSheet();
                 projectPage?.Dispose();
                 projectPage = new NativePublicationPage(new(new NativePublicationClient(host), project), design, CloseProjectPage);
                 Render(); return;
             }
-            if (page != null) MountSheet(page);
+            if (page != null) { CloseSheet(); MountSheet(page); }
         }
-        catch (Exception ex) { localError = ex.Message; Render(); }
+        catch (Exception ex) { if (ReferenceEquals(workspaceSheet, loading)) loading.Failed(ex.Message); }
         finally { openingAction = false; }
     }
     private void CloseProjectPage() { projectPage?.Dispose(); projectPage = null; Render(); }
@@ -204,7 +209,7 @@ internal sealed partial class MainWindow
                     var row = new Grid();
                     row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
                     row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                    var label = Stack(3); label.Children.Add(SingleLine(session.Title, 12)); label.Children.Add(SessionMetadata(session));
+                    var label = Stack(3); label.Children.Add(SessionTitle(session.Title, 12)); label.Children.Add(SessionMetadata(session));
                     var button = ContentButton(label, () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id,
                         session.Title + " · " + NativeBrowserPresentation.Status(session.Status));
                     button.Padding = new Thickness(8, 6, 8, 6);

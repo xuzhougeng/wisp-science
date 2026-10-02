@@ -2,7 +2,11 @@ using System.Text.Json;
 using Wisp.ProjectBrowser.Contracts;
 
 // Stand in for an incompatible desktop intercepting the settings-host launch.
-if (args.SequenceEqual(new[] { "--native-settings-host" })) return;
+if (args.SequenceEqual(new[] { "--native-settings-host" }))
+{
+    if (int.TryParse(Environment.GetEnvironmentVariable("WISP_TEST_HOST_EXIT_CODE"), out var exitCode)) Environment.ExitCode = exitCode;
+    return;
+}
 
 if (args.Length is 2 or 3 && args[0] == "--database")
 {

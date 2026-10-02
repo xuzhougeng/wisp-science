@@ -7,6 +7,7 @@ using Wisp.ProjectBrowser.Contracts;
 namespace Wisp.ProjectBrowser;
 
 public sealed record TranscriptSection(string Text, string? ToolName = null, bool IsResult = false);
+public sealed record TranscriptGroup(bool IsProcess, IReadOnlyList<BrowserMessage> Messages);
 
 public static partial class TranscriptPresentation
 {
@@ -14,6 +15,7 @@ public static partial class TranscriptPresentation
     // Only recognize that exact shape; leave ordinary prose and malformed data intact.
     public static IReadOnlyList<TranscriptSection> Sections(BrowserMessage message)
     {
+        if (message.Role == "tool" && message.ToolName == "attempt_completion") return [new(message.Text)];
         if (message.Role == "tool") return [new(ReadableArguments(message.Text), message.ToolName ?? "工具", true)];
         if (message.Role != "assistant") return [new(message.Text)];
         var sections = new List<TranscriptSection>();
@@ -25,13 +27,64 @@ public static partial class TranscriptPresentation
             {
                 if (text.ToString().Trim().Length > 0) sections.Add(new(text.ToString()));
                 text.Clear();
-                sections.Add(new(ReadableArguments(lines[i + 1]), lines[i]));
+                var completion = lines[i] == "attempt_completion" ? CompletionResult(lines[i + 1]) : null;
+                sections.Add(completion != null ? new(completion) : new(ReadableArguments(lines[i + 1]), lines[i]));
                 i++;
             }
             else text.AppendLine(lines[i]);
         }
         if (text.ToString().Trim().Length > 0) sections.Add(new(text.ToString()));
         return sections;
+    }
+
+    private static string? CompletionResult(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.String
+            ? result.GetString() : null;
+    }
+
+    public static IReadOnlyList<BrowserMessage> ReadableMessages(IReadOnlyList<BrowserMessage> messages)
+    {
+        var result = new List<BrowserMessage>();
+        foreach (var message in messages)
+        {
+            // Only suppress a successful-looking exact echo adjacent to its call.
+            // Different text (including errors) remains visible.
+            if (message is { Role: "tool", ToolName: "attempt_completion" } && result.LastOrDefault() is { Role: "assistant" } previous
+                && HasCompletionResult(previous.Text, message.Text)) continue;
+            result.Add(message);
+        }
+        return result;
+    }
+
+    private static bool HasCompletionResult(string text, string expected)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        for (var i = 0; i + 1 < lines.Length; i++)
+            if (lines[i] == "attempt_completion" && IsJsonObject(lines[i + 1])
+                && CompletionResult(lines[i + 1])?.Trim() == expected.Trim()) return true;
+        return false;
+    }
+
+    public static IReadOnlyList<TranscriptGroup> Groups(IReadOnlyList<BrowserMessage> messages)
+    {
+        var groups = new List<TranscriptGroup>();
+        var process = new List<BrowserMessage>();
+        foreach (var message in ReadableMessages(messages))
+        {
+            var sections = Sections(message);
+            // This persisted schema has no success flag. Keep ambiguous/error
+            // results visible rather than claiming that their work succeeded.
+            var activity = message.Role == "assistant" && sections.Count > 0 && sections.All(s => s.ToolName != null);
+            if (activity) process.Add(message);
+            else
+            {
+                Flush(); groups.Add(new(false, [message]));
+            }
+        }
+        Flush(); return groups;
+        void Flush() { if (process.Count > 0) { groups.Add(new(true, process.ToArray())); process.Clear(); } }
     }
 
     private static bool IsJsonObject(string value)

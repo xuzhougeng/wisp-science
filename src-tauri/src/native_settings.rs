@@ -374,6 +374,21 @@ pub(crate) async fn invoke_command(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn windows_host_bundle_uses_an_asset_directory_not_a_drive_url() {
+        let override_config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.native-windows.conf.json")).unwrap();
+        let build: tauri::utils::config::BuildConfig =
+            serde_json::from_value(override_config["build"].clone()).unwrap();
+        let Some(tauri::utils::config::FrontendDist::Directory(path)) = build.frontend_dist else {
+            panic!("native Windows assets must not be interpreted as a c: URL");
+        };
+        assert_eq!(
+            path,
+            std::path::Path::new("../target/native-windows-host-assets")
+        );
+    }
+
     use super::*;
     #[test]
     fn native_auth_rejects_browser_origins_and_missing_or_wrong_tokens() {

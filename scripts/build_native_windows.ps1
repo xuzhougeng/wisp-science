@@ -16,7 +16,10 @@ try {
     Copy-Item -LiteralPath (Join-Path $repo 'ui/native-host.html') -Destination (Join-Path $hostAssets 'index.html')
     $previousTauriConfig = $env:TAURI_CONFIG
     try {
-        $env:TAURI_CONFIG = @{ build = @{ frontendDist = $hostAssets } } | ConvertTo-Json -Compress
+        # Tauri tries URL parsing before filesystem parsing. An absolute Windows
+        # drive path becomes a `c:` URL and crashes when joining native-host.html.
+        # Resolve this relative path against src-tauri/tauri.conf.json instead.
+        $env:TAURI_CONFIG = Get-Content -LiteralPath (Join-Path $repo 'src-tauri/tauri.native-windows.conf.json') -Raw
         cargo build --locked -p wisp-tauri --features custom-protocol
         if ($LASTEXITCODE -ne 0) { throw 'Native settings host build failed.' }
     } finally { $env:TAURI_CONFIG = $previousTauriConfig }

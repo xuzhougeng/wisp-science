@@ -23,7 +23,7 @@ internal static class TranscriptView
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UsePipeTables().UseTaskLists().UseAutoLinks().UseMathematics().Build();
 
-    public static FrameworkElement Create(BrowserMessage message, WispDesign design)
+    public static FrameworkElement Create(BrowserMessage message, WispDesign design, bool inlineTools = false)
     {
         var sections = new StackPanel { Spacing = 12 };
         foreach (var section in TranscriptPresentation.Sections(message))
@@ -34,6 +34,12 @@ internal static class TranscriptView
                 header.Children.Add(design.Icon("terminal", 15));
                 header.Children.Add(new TextBlock { Text = (section.IsResult ? "工具结果 · " : "工具调用 · ") + tool,
                     FontSize = design.FontSize(12), FontFamily = design.Font(), Foreground = design.Brush("text-muted") });
+                if (inlineTools)
+                {
+                    sections.Children.Add(header);
+                    sections.Children.Add(Code(section.Text, design));
+                    continue;
+                }
                 var expander = new Expander { Header = header, HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = design.Brush("bg-sunken"),
                     BorderBrush = design.Brush("border"), Content = Code(section.Text, design), IsExpanded = false };
