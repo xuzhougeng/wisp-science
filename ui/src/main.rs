@@ -1084,6 +1084,7 @@ fn App() -> impl IntoView {
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
     provide_context(project_info.read_only());
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
+
     // The research assistant's one persistent conversation, shown as a
     // full-window overlay.
     let assistant_mode = create_rw_signal(false);
