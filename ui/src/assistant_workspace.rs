@@ -239,7 +239,7 @@ pub(crate) fn AssistantProjects(
                     view!{<button type="button" class="assistant-project" data-project-id=project.id
                         title=project.name.clone() aria-pressed=move || (state.selected.get().as_ref()==Some(&chosen)).to_string()
                         on:click=move |_| {state.selected.set(Some(id.clone())); if state.narrow.get_untracked(){state.left.set(false); focus_toggle(true);}}>
-                        {compose_icon("folder")}<span>{project.name}<small>{move || if locale.get()==Locale::Zh {format!("{} 个会话",project.session_count)} else {format!("{} conversations",project.session_count)}}</small></span>
+                        {compose_icon("folder")}<span><span class="assistant-project-name">{project.name}</span><small>{move || if locale.get()==Locale::Zh {format!("{} 个会话",project.session_count)} else {format!("{} conversations",project.session_count)}}</small></span>
                     </button>}
                 }/>
                 {move || (!state.loading.get() && state.error.get().is_none() && state.projects.get().is_empty()).then(|| view!{<p class="assistant-side-notice">{j(locale.get(), "No visible projects", "暂无可见项目")}</p>})}

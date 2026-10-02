@@ -9,8 +9,8 @@
 .assistant-panel-toggle[aria-expanded="true"] { background: var(--bg-sunken); color: var(--text); }
 .assistant-side { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; box-sizing: border-box; background: color-mix(in srgb, var(--bg-app) 62%, var(--bg-sunken)); color: var(--text); }
 .assistant-side[hidden], .assistant-side [hidden], .assistant-drawer-backdrop[hidden] { display: none !important; }
-.assistant-projects { width: clamp(204px, 17vw, 256px); border-right: 1px solid var(--border); padding: 0 12px; }
-.assistant-calendar { width: clamp(290px, 24vw, 350px); border-left: 1px solid var(--border); }
+.assistant-projects { width: clamp(184px, 17vw, 256px); border-right: 1px solid var(--border); padding: 0 12px; }
+.assistant-calendar { width: clamp(264px, 24vw, 350px); border-left: 1px solid var(--border); }
 .assistant-side-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; padding: 18px 8px 14px; }
 .assistant-side-heading h2 { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; margin: 0; }
 .assistant-side-heading button, .assistant-context button { display: inline-flex; justify-content: center; align-items: center; padding: 5px; border: 0; border-radius: 5px; color: var(--text-muted); background: transparent; cursor: pointer; }
@@ -21,10 +21,11 @@
 .assistant-project:hover { background: var(--bg-sunken); }
 .assistant-project[aria-pressed="true"] { background: color-mix(in srgb, var(--clay) 10%, var(--bg-elev)); }
 .assistant-project > svg { color: var(--text-muted); }
-.assistant-project > span { min-width: 0; overflow-wrap: anywhere; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
-.assistant-project small { display: block; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); margin-top: 3px; }
+.assistant-project > span { flex: 1; min-width: 0; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.assistant-project-name, .assistant-project small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-project small { color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); margin-top: 3px; }
 .assistant-project-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
-.assistant-side-footer { padding: 18px 10px; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
+.assistant-side-footer { padding: 12px 8px 14px; border-top: 1px solid var(--border); text-wrap: balance; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
 .assistant-side-notice { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); padding: 12px 8px; margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
 .assistant-side-notice[role="alert"] { color: var(--err); }
 .assistant-side-notice button { display: block; margin-top: 6px; background: transparent; border: 0; padding: 4px 0; color: var(--clay-strong); font: inherit; cursor: pointer; }
@@ -87,6 +88,11 @@
 .assistant-calendar-compact .calendar-footer { display: block; font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.8; }
 .assistant-calendar-compact .calendar-footer span { display: block; }
 .assistant-drawer-backdrop { display: none; }
+@media (max-width: 1199px) {
+  .app.assistant-mode .center { --chat-col-max: min(calc(100% - 40px), 900px); }
+  .assistant-calendar-body { padding-inline: 12px; }
+  .assistant-calendar .assistant-side-heading { padding-inline: 14px; }
+}
 @media (max-width: 959px) {
   .assistant-side { position: absolute; top: 56px; bottom: 0; z-index: 42; background: var(--bg-app); box-shadow: 0 8px 32px #0002; }
   .assistant-side.drawer-top { z-index: 43; }
