@@ -414,11 +414,22 @@
   outline: 2px solid var(--clay); outline-offset: 2px;
 }
 .transcript-view-toggle svg { width: 14px; height: 14px; flex: 0 0 auto; }
-/* Respond to the conversation pane, including space taken by side panels. */
-@container (max-width: 900px) {
-  .topbar .transcript-view-label { display: none; }
-  .topbar .transcript-view-toggle button { width: 30px; padding: 0; }
+/* In the toolbar the switch is two icon tabs beside the other actions; the
+   hover title carries the label. A hairline separates it from the actions. */
+.topbar .transcript-view-toggle {
+  margin-right: 7px; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent;
 }
+.topbar .transcript-view-toggle::before {
+  top: 0; bottom: 0; left: 0; width: calc(50% - 1px);
+  border-radius: var(--radius-xs); background: var(--clay-soft); box-shadow: none;
+}
+.topbar .transcript-view-toggle::after {
+  content: ""; position: absolute; top: 7px; bottom: 7px; right: -5px; width: 1px; background: var(--border);
+}
+.topbar .transcript-view-toggle button { width: 30px; height: 30px; padding: 0; border-radius: var(--radius-xs); }
+.topbar .transcript-view-toggle button.active { color: var(--clay); }
+.topbar .transcript-view-toggle svg { width: 16px; height: 16px; }
+.topbar .transcript-view-label { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .transcript-view-toggle::before, .transcript-view-toggle button { transition: none; }
 }
@@ -488,6 +499,41 @@
   display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
   padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--bg-elev) 70%, transparent);
+}
+.topbar-overflow { display: contents; }
+.topbar-action-label, .topbar .topbar-more-btn { display: none; }
+/* Narrow panes (side panels count) fold everything but the panel toggle into
+   "more"; the same buttons become labelled menu rows. */
+@container (max-width: 720px) {
+  .topbar-actions { position: relative; }
+  .topbar .topbar-more-btn { display: inline-flex; position: relative; }
+  .topbar-more-btn .topbar-more-dot { top: 4px; right: 4px; min-width: 7px; width: 7px; height: 7px; padding: 0; }
+  .topbar .topbar-overflow {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 91;
+    display: none; flex-direction: column; align-items: stretch; gap: 1px;
+    min-width: 200px; padding: 6px; background: var(--bg-elev); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14);
+    transform-origin: top right;
+    animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
+  }
+  .topbar .topbar-actions.more-open .topbar-overflow { display: flex; }
+  .topbar .topbar-overflow .icon-btn {
+    width: 100%; height: 34px; justify-content: flex-start; gap: 10px; padding: 0 10px;
+    font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap;
+  }
+  .topbar .topbar-overflow .icon-btn:hover:not(:disabled) { background: var(--bg-sunken); }
+  .topbar .topbar-overflow .icon-btn:disabled { opacity: .45; cursor: default; }
+  .topbar .topbar-overflow .icon-btn svg { flex: 0 0 auto; }
+  .topbar .topbar-overflow .topbar-action-label { display: inline; }
+  .topbar .topbar-overflow .conversation-outline-count,
+  .topbar .topbar-overflow .inbox-badge { display: inline; position: static; margin-left: auto; }
+  /* The inbox list opens under the whole menu, not over its rows. */
+  .topbar .topbar-overflow .inbox-wrap { position: static; display: flex; }
+  .topbar .topbar-overflow .inbox-wrap .icon-btn { position: static; }
+  .topbar .topbar-overflow .transcript-view-toggle { width: 100%; margin: 0 0 6px; }
+  .topbar .topbar-overflow .transcript-view-toggle::after { top: auto; bottom: -4px; left: 0; right: 0; width: auto; height: 1px; }
+  .topbar .topbar-overflow .transcript-view-toggle button { width: auto; padding: 0 10px; }
+  .topbar .topbar-overflow .transcript-view-label { display: inline; }
 }
 
 .icon-btn {
@@ -638,10 +684,6 @@
 .conversation-outline-count { font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; font-variant-numeric: tabular-nums; }
 .conversation-outline-toggle:focus-visible, .conversation-outline-item:focus-visible {
   outline: 2px solid var(--clay); outline-offset: 2px;
-}
-@container (max-width: 620px) {
-  .conversation-outline-toggle { width: 30px; padding: 0; }
-  .conversation-outline-count { display: none; }
 }
 .conversation-outline-panel {
   position: absolute; z-index: 13; top: 12px; right: 12px;

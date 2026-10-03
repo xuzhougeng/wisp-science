@@ -124,14 +124,29 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect(outline).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
 
+    // Compact panes fold the toolbar actions into More, as labelled rows.
     await page.setViewportSize({ width: 600, height: 600 });
-    await expect(count).toBeHidden();
-    await expect(toggle).toBeVisible();
+    await expect(toggle).toBeHidden();
+    const more = page.getByTestId("topbar-more");
     const toolbar = (await page.locator(".topbar-actions").boundingBox())!;
     expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(600);
+    await more.click();
+    // Escape right after opening closes only the menu.
+    await page.keyboard.press("Escape");
+    await expect(toggle).toBeHidden();
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await more.click();
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toContainText("Conversation outline");
+    await expect(count).toBeVisible();
+    const menu = (await page.getByTestId("topbar-overflow").boundingBox())!;
+    expect(menu.x).toBeGreaterThanOrEqual(0);
+    expect(menu.x + menu.width).toBeLessThanOrEqual(600);
+    await page.screenshot({ path: testInfo.outputPath("toolbar-more-open.png"), animations: "disabled" });
     await toggle.focus();
     await page.keyboard.press("Enter");
     await expect(outline).toBeVisible();
+    await expect(toggle).toBeHidden();
     await page.keyboard.press("Escape");
     await expect(outline).toHaveCount(0);
   });

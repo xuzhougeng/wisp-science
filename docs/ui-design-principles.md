@@ -101,8 +101,9 @@
 
 ## Topbar and inspector chrome
 
-- The conversation topbar keeps session tabs as the primary signal. Inbox, terminal, and inspector toggles live in `.topbar-actions`.
-- The conversation outline opens from a list icon and question count in the topbar, keeping navigation off the message canvas. Compact panes hide the count while retaining the labeled icon. The outline is a bounded, scrollable card with quieter numbers and timestamps; the selected question has an accent edge, and Escape closes the card before its parent surface.
+- The conversation topbar keeps session tabs as the primary signal. The Full transcript / Model view switch (two icon tabs, labelled by hover title), outline, share, trajectory, archive, inbox, terminal, and inspector toggles all live in one `.topbar-actions` group.
+- When the conversation pane is 720 px or narrower (side panels count), everything but the inspector toggle folds into a More (⋮) menu. The same buttons become labelled rows there, with the view switch on top; a dot on More stands in for the inbox badge, the inbox list opens below the menu, and Escape closes the inbox before the menu.
+- The conversation outline opens from a list icon and question count in the topbar, keeping navigation off the message canvas. The outline is a bounded, scrollable card with quieter numbers and timestamps; the selected question has an accent edge, and Escape closes the card before its parent surface.
 - Status text appears only when non-empty (or when an API-key action is required) and truncates with a `title` for the full value.
 - Specialist labels stay quiet text, not status pills.
 - Artifact type badges are neutral mono labels; only tabular data keeps a clay accent. Prefer `--ok` / `--err` / `--clay` over one-off HSL pill colors.

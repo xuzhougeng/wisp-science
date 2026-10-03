@@ -183,35 +183,26 @@ async function wireManualCompaction(page: Page, options: { checkpoint?: string; 
 }
 
 for (const locale of ["en", "zh"]) {
-  test(`transcript switch adapts to pane width and preserves keyboard and panel state (${locale})`, async ({ page }) => {
+  test(`transcript switch sits with the toolbar actions and folds into More (${locale})`, async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
     await openCompactedSession(page, compactionPayload(), locale);
     const toggle = page.getByTestId("transcript-view-toggle");
     const full = page.getByTestId("transcript-view-full");
     const model = page.getByTestId("transcript-view-model");
     const label = full.locator(".transcript-view-label");
-    await expect(label).toBeVisible();
-    await expect(full).toHaveAccessibleName(locale === "zh" ? "完整记录" : "Full transcript");
+    const more = page.getByTestId("topbar-more");
+    const fullName = locale === "zh" ? "完整记录" : "Full transcript";
+    // Wide panes: two icon tabs inside the action group, labelled on hover.
+    await expect(toggle).toBeVisible();
+    await expect(label).toBeHidden();
+    await expect(more).toBeHidden();
+    await expect(full).toHaveAccessibleName(fullName);
+    await expect(full).toHaveAttribute("title", fullName);
     await expect(model).toHaveAccessibleName(locale === "zh" ? "模型视角" : "Model view");
     await expect(full).toHaveAttribute("aria-pressed", "true");
-    await toggle.screenshot({ path: test.info().outputPath(`switch-${locale}-wide.png`) });
-
-    // The pane can shrink while the desktop window remains wide (e.g. a split).
-    await page.locator(".center").evaluate(el => { (el as HTMLElement).style.maxWidth = "680px"; });
-    await expect(label).toBeHidden();
     expect((await toggle.boundingBox())!.width).toBeLessThanOrEqual(72);
-    await page.locator(".center").evaluate(el => { (el as HTMLElement).style.removeProperty("max-width"); });
-    await expect(label).toBeVisible();
+    await page.locator(".topbar-actions").screenshot({ path: test.info().outputPath(`switch-${locale}-wide.png`) });
 
-    for (const width of [1100, 760]) {
-      await page.setViewportSize({ width, height: 900 });
-      await expect(label).toBeHidden();
-      await expect(full).toHaveAttribute("aria-pressed", "true");
-      const toolbar = await page.locator(".topbar").boundingBox();
-      const bounds = await toggle.boundingBox();
-      expect(bounds!.x).toBeGreaterThanOrEqual(toolbar!.x);
-      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(toolbar!.x + toolbar!.width);
-    }
     await full.focus();
     await page.keyboard.press("Tab");
     await expect(model).toBeFocused();
@@ -219,20 +210,40 @@ for (const locale of ["en", "zh"]) {
     await expect(model).toHaveAttribute("aria-pressed", "true");
     await expect(full).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "true");
-    await toggle.screenshot({ path: test.info().outputPath(`switch-${locale}-compact.png`) });
+
+    // The pane can shrink while the desktop window remains wide (e.g. a split).
+    await page.locator(".center").evaluate(el => { (el as HTMLElement).style.maxWidth = "680px"; });
+    await expect(toggle).toBeHidden();
+    await more.click();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await expect(label).toBeVisible();
+    const menu = page.getByTestId("topbar-overflow");
+    const pane = (await page.locator(".center").boundingBox())!;
+    const bounds = (await menu.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(pane.x);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x + pane.width);
+    await menu.screenshot({ path: test.info().outputPath(`switch-${locale}-menu.png`) });
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-    await toggle.screenshot({ path: test.info().outputPath(`switch-${locale}-compact-dark.png`) });
+    await menu.screenshot({ path: test.info().outputPath(`switch-${locale}-menu-dark.png`) });
+    // Picking a view switches it and closes the menu.
+    await full.click();
+    await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "false");
+    await expect(menu).toBeHidden();
+    await more.click();
+    await expect(full).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await page.locator(".center").evaluate(el => { (el as HTMLElement).style.removeProperty("max-width"); });
+    await expect(toggle).toBeVisible();
+    await expect(more).toBeHidden();
 
     await page.getByTestId("context-usage-trigger").click();
     const panelToggle = page.getByTestId("context-usage-view-toggle");
     await expect(panelToggle.locator(".transcript-view-label").first()).toBeVisible();
-    await expect(page.getByTestId("context-usage-view-model")).toHaveAttribute("aria-pressed", "true");
-    await page.getByTestId("context-usage-view-full").click();
-    await expect(full).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "false");
-    await page.setViewportSize({ width: 1600, height: 900 });
-    await expect(label).toBeVisible();
-    await expect(full).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("context-usage-view-model").click();
+    await expect(model).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".thread")).toHaveAttribute("data-model-view", "true");
   });
 }
 

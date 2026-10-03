@@ -232,6 +232,14 @@ pub(crate) fn window_capture_escape(mut close_topmost: impl FnMut() -> bool + 's
     });
 }
 
+/// The topbar "more" button only takes up space in the narrow (folded) layout.
+fn topbar_more_visible() -> bool {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector("[data-testid='topbar-more']").ok().flatten())
+        .is_some_and(|el| el.get_bounding_client_rect().width() > 0.0)
+}
+
 fn session_highlight_count(session: Option<String>, items: &[LibraryItemSummary]) -> usize {
     let Some(session) = session else { return 0 };
     items
@@ -8885,9 +8893,18 @@ fn App() -> impl IntoView {
     // Close on any click that bubbles to the window; the bell and the dropdown
     // stop propagation (same pattern as the titlebar menus — a fixed backdrop
     // would be clipped to the topbar, whose backdrop-filter contains it).
-    window_event_listener(ev::click, move |_| {
+    // Narrow panes fold the topbar actions into a "more" menu (same close rule).
+    let topbar_more_open = create_rw_signal(false);
+    window_event_listener(ev::click, move |ev| {
         if inbox_open.get_untracked() {
             inbox_open.set(false);
+        }
+        // Delegated `on:click` also runs on window, so stop_propagation can't
+        // shield the toggle; skip it (and the inbox nested in the menu) here.
+        if topbar_more_open.get_untracked()
+            && !event_inside_selector(&ev, ".topbar-more-btn, .topbar-overflow .inbox-wrap")
+        {
+            topbar_more_open.set(false);
         }
     });
     {
@@ -9797,6 +9814,14 @@ fn App() -> impl IntoView {
             ev.prevent_default();
             inbox_open.set(false);
             return;
+        }
+        if topbar_more_open.get() {
+            topbar_more_open.set(false);
+            // The pane may have widened since; an unseen menu must not eat Escape.
+            if topbar_more_visible() {
+                ev.prevent_default();
+                return;
+            }
         }
         if show_settings.get()
             && settings_section.get() == "workflows"
@@ -12011,7 +12036,11 @@ fn App() -> impl IntoView {
                     }
                 }}
                 <div class="spacer"></div>
-                <div class="topbar-actions">
+                <div class="topbar-actions" class:more-open=move || topbar_more_open.get()>
+                // Wide panes show these inline; narrow ones fold them into the
+                // "more" menu below, where the same buttons reveal their labels.
+                <div class="topbar-overflow" id="topbar-overflow" data-testid="topbar-overflow"
+                    on:click=move |_| topbar_more_open.set(false)>
                 {move || active_session.get().is_some().then(|| view! {
                     <TranscriptViewToggle />
                 })}
@@ -12029,6 +12058,7 @@ fn App() -> impl IntoView {
                             aria-controls="conversation-outline-panel"
                             on:click=move |_| conversation_outline_open.update(|open| *open = !*open)>
                             {compose_icon("list")}
+                            <span class="topbar-action-label">{move || t(locale.get(), "outline.title")}</span>
                             <span class="conversation-outline-count" aria-hidden="true">{count}</span>
                         </button>
                     })
@@ -12045,6 +12075,7 @@ fn App() -> impl IntoView {
                     disabled=move || demo_mode.get() || !can_share.get()
                     on:click=move |_| open_share.call(())>
                     {compose_icon("share")}
+                    <span class="topbar-action-label">{move || t(locale.get(), "share.topbar")}</span>
                 </button>
                 <button type="button" class="icon-btn" data-testid="trajectory-topbar"
                     title=move || t(locale.get(), "trajectory.topbar")
@@ -12052,12 +12083,16 @@ fn App() -> impl IntoView {
                     class:active=move || trajectory_open.get()
                     on:click=move |_| trajectory_open.set(true)>
                     {compose_icon("timeline")}
+                    <span class="topbar-action-label">{move || t(locale.get(), "trajectory.topbar")}</span>
                 </button>
                 <button type="button" class="icon-btn" data-testid="archive-topbar"
                     title=move ||research_journey::j(locale.get(),"Archive research","研究归档")
                     aria-label=move ||research_journey::j(locale.get(),"Archive research","研究归档")
                     disabled=move ||demo_mode.get() || busy.get() || active_session.get().is_none() || active_is_exploration.get()
-                    on:click=move |_|{archive_frame.set(active_session.get_untracked());archive_minimized.set(false);}>{compose_icon("archive")}</button>
+                    on:click=move |_|{archive_frame.set(active_session.get_untracked());archive_minimized.set(false);}>
+                    {compose_icon("archive")}
+                    <span class="topbar-action-label">{move ||research_journey::j(locale.get(),"Archive research","研究归档")}</span>
+                </button>
                 <div class="inbox-wrap">
                     <button class="icon-btn"
                         class:active=move || inbox_open.get()
@@ -12072,6 +12107,7 @@ fn App() -> impl IntoView {
                             inbox_open.set(opening);
                         }>
                         {compose_icon("bell")}
+                        <span class="topbar-action-label">{move || t(locale.get(), "sess_status.needs_you")}</span>
                         {move || {
                             let n = inbox_here_count.get();
                             (n > 0).then(|| view! { <span class="inbox-badge">{n}</span> })
@@ -12093,6 +12129,7 @@ fn App() -> impl IntoView {
                                         <button type="button" class="inbox-item"
                                             on:click=move |_| {
                                                 inbox_open.set(false);
+                                                topbar_more_open.set(false);
                                                 palette_open_session.call((project_id.clone(), session_id.clone()));
                                             }>
                                             <span class="inbox-item-project">{s.project_name.clone()}</span>
@@ -12130,7 +12167,23 @@ fn App() -> impl IntoView {
                             terminal_add_menu_open.set(false);
                             terminal_panel_open.set(should_open);
                         }
-                    }>{compose_icon("terminal")}</button>
+                    }>
+                    {compose_icon("terminal")}
+                    <span class="topbar-action-label">{move || t(locale.get(), "contexts.open_terminal")}</span>
+                </button>
+                </div>
+                <button type="button" class="icon-btn topbar-more-btn" data-testid="topbar-more"
+                    class:active=move || topbar_more_open.get()
+                    title=move || t(locale.get(), "queue.more")
+                    aria-label=move || t(locale.get(), "queue.more")
+                    aria-expanded=move || topbar_more_open.get().to_string()
+                    aria-controls="topbar-overflow"
+                    on:click=move |_| topbar_more_open.update(|open| *open = !*open)>
+                    {compose_icon("more")}
+                    {move || (inbox_here_count.get() > 0).then(|| view! {
+                        <span class="inbox-badge topbar-more-dot" aria-hidden="true"></span>
+                    })}
+                </button>
                 <button class="icon-btn" title=move || t(locale.get(), "center.toggle_panel")
                     class:active=move || show_right.get()
                     disabled=move || assistant_mode.get() || demo_mode.get()
