@@ -4192,6 +4192,7 @@ test("side chat answers in a temporary side panel and can switch model", async (
 });
 
 test("side chat composer matches the main input and keeps long drafts contained", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await enterApp(page);
   await composer(page).fill("/btw Check analysis progress");
   await composer(page).press("Enter");
@@ -4204,6 +4205,30 @@ test("side chat composer matches the main input and keeps long drafts contained"
   await expect(input).toHaveCSS("font-family", await composer(page).evaluate(el => getComputedStyle(el).fontFamily));
   await expect(frame).toHaveCSS("border-radius", await page.locator(".composer-inner").evaluate(el => getComputedStyle(el).borderRadius));
   await expect(frame.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+  const sideSend = frame.getByRole("button", { name: "Send", exact: true });
+  const mainSend = page.locator(".composer button.send");
+  await expect(sideSend).toHaveAttribute("title", "Send");
+  await expect(sideSend.locator("svg")).toHaveCount(1);
+  expect(await sideSend.locator("svg").innerHTML()).toBe(await mainSend.locator("svg").innerHTML());
+  await expect(sideSend).toHaveCSS("background-color", await mainSend.evaluate(el => getComputedStyle(el).backgroundColor));
+
+  const expectAlignedActions = async (compareMain = false) => {
+    // The drawer entrance animation can still be moving its bounding box.
+    await expect(async () => {
+      const model = (await panel.locator(".sidechat-model-btn").boundingBox())!;
+      const send = (await sideSend.boundingBox())!;
+      expect(send.width).toBe(send.height);
+      expect(send.height).toBe(model.height);
+      expect(Math.abs(model.y + model.height / 2 - send.y - send.height / 2)).toBeLessThanOrEqual(1);
+      expect(model.x + model.width).toBeLessThan(send.x);
+      if (compareMain) {
+        const main = (await mainSend.boundingBox())!;
+        expect(send.width).toBe(main.width);
+        expect(Math.abs(send.y + send.height / 2 - main.y - main.height / 2)).toBeLessThanOrEqual(1);
+      }
+    }).toPass({ timeout: 5000 });
+  };
+  await expectAlignedActions(true);
 
   // Escape must dismiss the menu immediately, while keeping the side panel open.
   await panel.locator(".sidechat-model-btn").click();
@@ -4217,10 +4242,14 @@ test("side chat composer matches the main input and keeps long drafts contained"
   expect((await input.boundingBox())!.height).toBeLessThanOrEqual(180);
   await expect(frame.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   await input.fill("Follow-up draft");
+  await expect(sideSend).toBeEnabled();
+  await expectAlignedActions(true);
+  await page.screenshot({ path: testInfo.outputPath("side-chat-composer-wide.png") });
   await expect.poll(async () => (await input.boundingBox())!.height).toBeLessThan(80);
   await input.press("Shift+Enter");
   await expect(input).toHaveValue("Follow-up draft\n");
   await page.setViewportSize({ width: 960, height: 720 });
+  await expectAlignedActions();
   expect(await frame.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({ path: testInfo.outputPath("side-chat-composer.png") });
   await input.press("Enter");
