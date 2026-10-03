@@ -5753,6 +5753,20 @@ async fn register_mcp_with_approval(
                 };
                 registry.add(Box::new(tool));
             }
+            // With a TypeSafe key, a Cua Driver connection also gets the
+            // Jev-driven autopilot; without one the agent drives Cua Driver.
+            if registry.get(wisp_mcp::desktop_autopilot::NAME).is_none() {
+                if let Some(tool) = wisp_mcp::desktop_autopilot::DesktopAutopilot::for_catalog(
+                    &catalog,
+                    client.clone(),
+                    &models::typesafe_api_key(),
+                    llm_proxy(),
+                    require_approval,
+                ) {
+                    names.push(wisp_mcp::desktop_autopilot::NAME.into());
+                    registry.add(Box::new(tool));
+                }
+            }
             Ok(names)
         }
         Err(e) => {

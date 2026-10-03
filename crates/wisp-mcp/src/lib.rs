@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod connection;
+pub mod desktop_autopilot;
 pub mod result;
 pub mod tool;
 

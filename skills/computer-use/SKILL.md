@@ -46,9 +46,9 @@ common names are:
 - `click`, `type_text`, `press_key`, `hotkey`, `scroll`, and `drag` for input;
 - window or session cleanup tools when the driver advertises them.
 
-Do not guess a selector, process ID, window ID, element index, or coordinate.
+Do not guess a selector, process ID, window ID, element token, or coordinate.
 Read the current state first. For input, prefer a window target with an exact
-`pid` and `window_id`; use the returned accessibility `element_index` when the
+`pid` and `window_id`; use the returned accessibility `element_token` when the
 control exposes a semantic action. Use window-local pixel coordinates only
 when the element is not actionable semantically. Use a desktop target only
 for deliberate foreground screen actions.
@@ -60,7 +60,7 @@ For every meaningful action:
 1. Discover the app and select one exact window. If several candidates match,
    stop and resolve the ambiguity instead of choosing by title alone.
 2. Call `get_window_state` and keep the resulting window identity and fresh
-   element references together. Treat element indexes as stale after a page
+   element references together. Treat element tokens as stale after a page
    navigation, dialog transition, window recreation, or material UI change.
 3. Perform one bounded action. Prefer background delivery when the target and
    platform support it. Request foreground delivery only for that action when
@@ -93,6 +93,43 @@ dialogs, or a page surface that the browser bridge cannot access.
 - If a target disappears, permissions change, or the driver returns a
   structured refusal, report the concrete reason and stop or re-observe as the
   refusal instructs.
+
+## System One and System Two
+
+Two paths exist, depending on whether a TypeSafe key is configured in
+Settings.
+
+**Key configured.** Wisp registers `desktop_autopilot` next to the Cua Driver
+tools; find it with `search_mcp_tools`. TypeSafe's Jev is the fast System One:
+it observes the window, picks each click from the window's labelled controls,
+and clicks by `element_token`. You are System Two. After selecting one exact
+window, hand routine navigation to it:
+
+```text
+desktop_autopilot({goal: "the Export dialog shows PNG selected",
+                   pid: 4242, window_id: 917})
+```
+
+It returns `done` or `handed back: <reason>` with the steps it took:
+
+- `done`: Jev judged the goal visible. Verify it yourself as in Observe → act
+  → verify before reporting success.
+- `needs_text`: type the text yourself (never secrets; the user enters those).
+- `needs_confirmation`: the next click looks irreversible. Ask the user, and
+  perform that one click yourself only after they agree.
+- `low_confidence`, `jev_hand_back`, `no_effect`, `no_controls`,
+  `step_limit`: reason about the window from a fresh `get_window_state`,
+  including the screenshot, and take the next step yourself.
+- `observe_failed`, `click_failed`, `jev_error`: read the error, re-observe,
+  and continue by hand; a background refusal may need foreground delivery
+  with the user's agreement.
+
+When the remaining steps are routine again, call `desktop_autopilot` once more
+with a `hint` naming what to do next. It refuses to run when the host requires
+approval for each Cua Driver `click`; drive the window directly then.
+
+**No key, or `desktop_autopilot` absent.** Drive Cua Driver directly with the
+workflow above.
 
 ## First smoke task
 

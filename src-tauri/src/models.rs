@@ -438,6 +438,11 @@ const CREDENTIALS: &[Credential] = &[
     },
 ];
 
+/// The TypeSafe key for in-process Jev callers; empty when unset.
+pub fn typesafe_api_key() -> String {
+    secret_get("typesafe_api_key")
+}
+
 fn credential(id: &str) -> Option<&'static Credential> {
     CREDENTIALS.iter().find(|c| c.id == id)
 }

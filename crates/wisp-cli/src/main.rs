@@ -705,8 +705,18 @@ async fn register_mcp_tools(
     match client.tools_list().await {
         Ok(tools) => {
             let n = tools.len();
+            let autopilot = wisp_mcp::desktop_autopilot::DesktopAutopilot::for_catalog(
+                &tools,
+                client.clone(),
+                &std::env::var("TYPESAFE_API_KEY").unwrap_or_default(),
+                None,
+                false,
+            );
             for t in tools {
                 agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
+            }
+            if let Some(tool) = autopilot {
+                agent.add_tool(Box::new(tool));
             }
             setup_message(
                 jsonl,
