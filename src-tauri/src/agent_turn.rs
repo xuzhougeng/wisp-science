@@ -534,6 +534,9 @@ pub(crate) async fn send_message_inner(
                     frame_id: &frame_id,
                 };
                 turn_hooks::run_stop(state, &app, &end, &mut driver, &runtime.cancel).await;
+                if let Ok(messages) = state.store.load_messages(&frame_id).await {
+                    channels::publish_turn_answer(&frame_id, &messages);
+                }
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
                 persist_and_emit_terminal_event(
@@ -1067,7 +1070,7 @@ pub(crate) async fn send_message_inner(
     // The singleton agent is reused by desktop and WeChat; dispatch policy must
     // follow this turn's origin, not whichever client first constructed it.
     if assistant {
-        agent.tools = research_assistant::tools(&app, origin);
+        agent.tools = research_assistant::tools(&app, origin, &message);
     }
     let (auto_continue, auto_continue_limit) = load_auto_continue_settings(&state.store).await;
     apply_live_agent_settings(
@@ -1262,6 +1265,7 @@ pub(crate) async fn send_message_inner(
     if !resume {
         if assistant {
             agent.ctx.inject_user(research_assistant::now_note());
+            agent.ctx.inject_user(research_assistant::DISPATCH_POLICY);
         }
         if let Some(context) = rt.mcp_app_context_injection() {
             agent.ctx.inject_user(context);
@@ -1656,6 +1660,9 @@ pub(crate) async fn send_message_inner(
     // The UI uses this marker so it keeps the optimistic user bubble instead of
     // rolling the draft back; the visual Error card stays prefix-free.
     let turn_started = resume || agent.ctx.messages.len() > turn_start;
+    if result.is_ok() {
+        channels::publish_turn_answer(&frame_id, &agent.ctx.messages);
+    }
     drop(guard);
     // After the persist flush so the seen snapshot covers the final messages.
     mark_seen_if_viewed(state, &frame_id).await;

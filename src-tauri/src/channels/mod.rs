@@ -58,6 +58,14 @@ fn weixin_keys(destination: WeixinDestination) -> WeixinKeys {
         },
     }
 }
+
+pub(crate) async fn assistant_notification_binding(store: &Store) -> Option<weixin::Binding> {
+    let destination = WeixinDestination::Assistant;
+    if get_setting(store, weixin_keys(destination).enabled).await != "true" {
+        return None;
+    }
+    load_weixin_binding_for(store, destination).await
+}
 #[derive(Clone, Copy)]
 struct WeixinKeys {
     enabled: &'static str,
@@ -328,13 +336,20 @@ pub(crate) async fn authorize_feishu_sender(
 pub(crate) enum ProgressEvent {
     AssistantDelta(String),
     Activity,
-    ToolStarted(String),
+    ToolStarted {
+        name: String,
+        preview: String,
+    },
     ToolFinished {
         name: String,
         ok: bool,
         duration_ms: u64,
     },
     ApprovalRequested(crate::ConfirmRequest),
+    TurnFinished {
+        stop_reason: Option<String>,
+    },
+    TurnAnswer(String),
 }
 
 type ProgressSubscribers =
@@ -351,12 +366,12 @@ pub(crate) struct ProgressSubscription {
     id: u64,
 }
 
-struct PendingProgress {
+pub(crate) struct PendingProgress {
     id: u64,
 }
 
 impl PendingProgress {
-    fn id(&self) -> u64 {
+    pub(crate) fn id(&self) -> u64 {
         self.id
     }
 }
@@ -369,7 +384,7 @@ impl Drop for PendingProgress {
     }
 }
 
-fn prepare_progress_observer(
+pub(crate) fn prepare_progress_observer(
     sender: tokio::sync::mpsc::UnboundedSender<ProgressEvent>,
 ) -> PendingProgress {
     let id = NEXT_PROGRESS_SUBSCRIBER.fetch_add(1, Ordering::Relaxed);
@@ -431,14 +446,33 @@ fn subscribe_agent_events(
 /// activity labels in `feishu_card`.
 pub(crate) fn publish_agent_event(event: &crate::AgentEvent) {
     let (frame_id, progress) = match event {
+        crate::AgentEvent::User { frame_id, .. } => (frame_id, ProgressEvent::Activity),
+        crate::AgentEvent::Done {
+            frame_id,
+            stop_reason,
+            ..
+        } => (
+            frame_id,
+            ProgressEvent::TurnFinished {
+                stop_reason: stop_reason.clone(),
+            },
+        ),
         crate::AgentEvent::Text { frame_id, delta } => {
             (frame_id, ProgressEvent::AssistantDelta(delta.clone()))
         }
         crate::AgentEvent::Reasoning { frame_id, .. }
         | crate::AgentEvent::Stdout { frame_id, .. } => (frame_id, ProgressEvent::Activity),
-        crate::AgentEvent::ToolCall { frame_id, name, .. } => {
-            (frame_id, ProgressEvent::ToolStarted(name.clone()))
-        }
+        crate::AgentEvent::ToolCall {
+            frame_id,
+            name,
+            preview,
+        } => (
+            frame_id,
+            ProgressEvent::ToolStarted {
+                name: name.clone(),
+                preview: preview.clone(),
+            },
+        ),
         crate::AgentEvent::ToolResult {
             frame_id,
             name,
@@ -463,6 +497,33 @@ pub(crate) fn publish_approval_request(request: &crate::ConfirmRequest) {
         &request.frame_id,
         ProgressEvent::ApprovalRequested(request.clone()),
     );
+}
+
+/// Snapshot the result under the workflow lock, before another turn can
+/// replace the latest answer. Never reuse an answer from before this user turn.
+pub(crate) fn publish_turn_answer(frame_id: &str, messages: &[wisp_llm::Message]) {
+    publish_progress_event(
+        frame_id,
+        ProgressEvent::TurnAnswer(current_turn_answer(messages)),
+    );
+}
+
+fn current_turn_answer(messages: &[wisp_llm::Message]) -> String {
+    messages
+        .iter()
+        .rev()
+        .take_while(|m| m.role != wisp_llm::Role::User)
+        .filter(|m| {
+            m.role == wisp_llm::Role::Assistant
+                || (m.role == wisp_llm::Role::Tool
+                    && m.tool_name.as_deref() == Some("attempt_completion"))
+        })
+        .map(|m| m.content.as_text())
+        .find(|text| !text.trim().is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(12000)
+        .collect()
 }
 
 fn publish_progress_event(frame_id: &str, progress: ProgressEvent) {
@@ -2186,6 +2247,20 @@ mod tests {
         assert!(rendered.contains("/approve ABCDEF12"));
         assert!(rendered.contains("/reject ABCDEF12 原因"));
         assert!(!rendered.contains(&"好".repeat(APPROVAL_PREVIEW_MAX_CHARS + 1)));
+    }
+
+    #[test]
+    fn dispatch_answer_snapshot_never_reuses_a_previous_turn() {
+        use wisp_llm::Message;
+        let mut messages = vec![
+            Message::user("old task"),
+            Message::assistant("old result"),
+            Message::user("new task"),
+        ];
+        assert!(current_turn_answer(&messages).is_empty());
+        messages.push(Message::assistant("working"));
+        messages.push(Message::tool("c1", "attempt_completion", "new results.tsv"));
+        assert_eq!(current_turn_answer(&messages), "new results.tsv");
     }
 
     #[test]

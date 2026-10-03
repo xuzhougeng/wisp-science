@@ -106,6 +106,8 @@ mod native_run_review;
 mod native_share;
 mod native_terminals;
 mod network;
+mod research_dispatch;
+mod research_dispatch_approval;
 mod runtime_commands;
 mod runtime_config_tool;
 mod runtime_launcher;
@@ -163,6 +165,7 @@ use skill_commands::{copy_dir_recursive, validate_skill_name};
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind")]
 enum AgentEvent {
+    BackgroundReply(wisp_dto::BackgroundReply),
     User {
         frame_id: String,
         text: String,
@@ -342,6 +345,7 @@ enum AgentEvent {
 impl AgentEvent {
     fn frame_id(&self) -> &str {
         match self {
+            Self::BackgroundReply(reply) => &reply.frame_id,
             Self::User { frame_id, .. }
             | Self::MessageBoundary { frame_id, .. }
             | Self::Resources { frame_id, .. }
@@ -1695,6 +1699,20 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                     };
                 }
             }
+            AgentEvent::BackgroundReply(reply) => items.push(UiItem {
+                role: "assistant".into(),
+                text: reply.text.clone(),
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+                resources: Vec::new(),
+            }),
             AgentEvent::Error { message, .. } => items.push(UiItem {
                 role: "assistant".into(),
                 text: format!("Error: {message}"),
@@ -3115,8 +3133,8 @@ struct TauriOutput {
     provenance_scope: String,
     /// Per-send_message id used to attribute real-browser tabs to this turn.
     turn_id: String,
-    /// IM turns force Ask on mutating tools and skip Full Permission
-    /// auto-approval so an unattended Feishu/WeChat message cannot write/shell.
+    /// IM turns force Ask unless the assistant's owner explicitly enables
+    /// its session Full Permission. Dispatched project turns still ask.
     force_ask_mutations: bool,
     /// Strategy label of the last compaction the agent loop reported during
     /// this turn (`auto` / `overflow`); read when the turn's context epoch is
@@ -3134,6 +3152,14 @@ impl TauriOutput {
             .read()
             .map(|sessions| sessions.contains(&self.frame_id))
             .unwrap_or(false)
+    }
+
+    fn requires_im_approval(&self) -> bool {
+        approval_commands::force_ask_for_turn(
+            self.force_ask_mutations,
+            &self.frame_id,
+            self.full_permission(),
+        )
     }
 
     fn emit(&self, event: AgentEvent) {
@@ -3163,7 +3189,7 @@ impl TauriOutput {
         allow_full_permission: bool,
     ) -> wisp_tools::ConfirmDecision {
         let _slot = workflow_approval::lock_frame(&self.frame_id).await;
-        if allow_full_permission && self.full_permission() && !self.force_ask_mutations {
+        if allow_full_permission && self.full_permission() && !self.requires_im_approval() {
             return wisp_tools::ConfirmDecision::Approved;
         }
         let (tool, preview) = parse_confirm_payload(message);
@@ -3180,22 +3206,31 @@ impl TauriOutput {
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         let request = ConfirmRequest::new(&self.frame_id, message.into(), tool, preview);
-        self.confirms.lock().unwrap().insert(
-            self.frame_id.clone(),
-            PendingConfirm {
-                tx,
-                grant,
-                project_id: self.project_id.clone(),
-                request: request.clone(),
-            },
-        );
-        self.awaiting_confirm
-            .lock()
-            .unwrap()
-            .insert(self.frame_id.clone());
-        self.device_hub
-            .mark_needs_user(&self.frame_id, Some(&self.project_id));
-        emit_confirm_request(&self.app, &request, Some(&self.project_id));
+        {
+            let mut confirms = self.confirms.lock().unwrap();
+            // Enabling Full Permission takes this same lock. Recheck while
+            // registering so a concurrent `full` cannot miss a new request
+            // and leave the running turn waiting despite its updated policy.
+            if allow_full_permission && self.full_permission() && !self.requires_im_approval() {
+                return wisp_tools::ConfirmDecision::Approved;
+            }
+            confirms.insert(
+                self.frame_id.clone(),
+                PendingConfirm {
+                    tx,
+                    grant,
+                    project_id: self.project_id.clone(),
+                    request: request.clone(),
+                },
+            );
+            self.awaiting_confirm
+                .lock()
+                .unwrap()
+                .insert(self.frame_id.clone());
+            self.device_hub
+                .mark_needs_user(&self.frame_id, Some(&self.project_id));
+            emit_confirm_request(&self.app, &request, Some(&self.project_id));
+        }
 
         // There is deliberately no timeout: lack of approval must never be
         // converted into a denial that lets the same agent turn continue.
@@ -3267,6 +3302,7 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
     matches!(
         event,
         AgentEvent::User { .. }
+            | AgentEvent::BackgroundReply(_)
             | AgentEvent::MessageBoundary { .. }
             | AgentEvent::Text { .. }
             | AgentEvent::Reasoning { .. }
@@ -3579,10 +3615,10 @@ impl Output for TauriOutput {
         })
     }
     fn approval_bypass(&self) -> bool {
-        self.full_permission() && !self.force_ask_mutations
+        self.full_permission() && !self.requires_im_approval()
     }
     fn danger_auto_approve(&self) -> bool {
-        if self.force_ask_mutations {
+        if self.requires_im_approval() {
             return false;
         }
         self.full_permission()
@@ -3593,7 +3629,7 @@ impl Output for TauriOutput {
                 .unwrap_or(false)
     }
     fn force_ask_mutations(&self) -> bool {
-        self.force_ask_mutations
+        self.requires_im_approval()
     }
     fn plan_mode(&self) -> bool {
         self.plan_mode

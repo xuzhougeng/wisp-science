@@ -3252,6 +3252,27 @@ fn App() -> impl IntoView {
                 }
                 refresh_transcript_projections(&frame_id);
             }
+            AgentEvent::BackgroundReply(reply) => {
+                flush_now();
+                route_items(
+                    active_cb,
+                    items_cb,
+                    transcripts_cb,
+                    &reply.frame_id,
+                    |items| {
+                        let index = process_item_insert_index(items);
+                        items.insert(
+                            index,
+                            ChatItem::Assistant {
+                                text: reply.text,
+                                model: None,
+                                resources: Vec::new(),
+                            },
+                        );
+                    },
+                );
+                refresh_transcript_projections(&reply.frame_id);
+            }
             AgentEvent::MessageBoundary { frame_id, seq } => {
                 let needs_seq = conversation_outlines_cb.with_untracked(|outlines| {
                     outlines

@@ -32,6 +32,40 @@ async function calls(page: Page, command: string) {
 }
 const composer = (page: Page) => page.locator(".composer textarea").first();
 
+test("background project result appears as a separate assistant reply without taking over the draft", async ({ page }) => {
+  await open(page);
+  await composer(page).fill("My next question");
+  const replies = page.locator(".msg.assistant .body");
+  const before = await replies.count();
+  const users = await page.locator(".msg.user").count();
+  await page.evaluate(() => {
+    const emit = (window as any).__tauriEmit;
+    const frame_id = "research-assistant";
+    emit("agent", { kind: "BackgroundReply", frame_id, text: "RNA QC finished on CPU2. Output: results.tsv. Two samples need review." });
+    emit("agent", { kind: "MessageBoundary", frame_id, seq: 3 });
+  });
+  await expect(replies).toHaveCount(before + 1);
+  await expect(replies.last()).toContainText("RNA QC finished on CPU2");
+  await expect(page.locator(".msg.user")).toHaveCount(users);
+  await expect(composer(page)).toHaveValue("My next question");
+  expect(await calls(page, "send_message")).toHaveLength(0);
+  expect(await calls(page, "open_project")).toHaveLength(0);
+});
+
+test("an uncertain project operation can be confirmed from the idle assistant", async ({ page }) => {
+  await open(page);
+  await composer(page).fill("Keep my next question");
+  await page.evaluate(() => (window as any).__tauriEmit("confirm-request", {
+    approval_id: "project-proxy", frame_id: "research-assistant", tool: "project_approval",
+    message: "Confirm a project operation", preview: "RNA · QC · CPU2\nRemove existing results\nReason: deletion was not requested",
+  }));
+  await expect(page.getByText(/deletion was not requested/)).toBeVisible();
+  await page.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect.poll(() => calls(page, "confirm_response")).toMatchObject([{ sessionId: "research-assistant", approved: true, scope: "once" }]);
+  await expect(composer(page)).toHaveValue("Keep my next question");
+  expect(await calls(page, "send_message")).toHaveLength(0);
+});
+
 test("sidebars collapse independently without losing draft, date, scroll or conversation", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 640 });
   await open(page);

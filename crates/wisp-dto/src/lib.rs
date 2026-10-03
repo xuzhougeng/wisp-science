@@ -231,9 +231,18 @@ pub struct MessageResource {
     pub error: Option<String>,
 }
 
+/// A complete reply delivered after the coordinating turn has ended.
+/// Shared by the native backend and the frontend event contract.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BackgroundReply {
+    pub frame_id: String,
+    pub text: String,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(tag = "kind")]
 pub enum AgentEvent {
+    BackgroundReply(BackgroundReply),
     User {
         frame_id: String,
         text: String,

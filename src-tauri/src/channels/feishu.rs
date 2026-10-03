@@ -689,14 +689,14 @@ async fn stream_progress_events(
                 match event {
                     super::ProgressEvent::AssistantDelta(delta) => state.assistant_delta(&delta),
                     super::ProgressEvent::Activity => state.reasoning_activity(),
-                    super::ProgressEvent::ToolStarted(name) => state.tool_started(&name),
+                    super::ProgressEvent::ToolStarted { name, .. } => state.tool_started(&name),
                     super::ProgressEvent::ToolFinished { name, ok, duration_ms } => {
                         state.tool_finished(&name, ok, duration_ms);
                     }
                     // Feishu interactive approvals remain a separate follow-up.
                     // Its current worker cannot receive a reply while a turn is
                     // blocked, so do not project a misleading non-actionable card.
-                    super::ProgressEvent::ApprovalRequested(_) => continue,
+                    super::ProgressEvent::ApprovalRequested(_) | super::ProgressEvent::TurnFinished { .. } | super::ProgressEvent::TurnAnswer(_) => continue,
                 }
                 dirty = true;
             }

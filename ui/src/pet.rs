@@ -135,7 +135,8 @@ impl DesktopPetActivity {
                     "failed"
                 },
             ),
-            AgentEvent::MessageBoundary { .. }
+            AgentEvent::BackgroundReply(_)
+            | AgentEvent::MessageBoundary { .. }
             | AgentEvent::Usage { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::AppContextUpdate { .. }

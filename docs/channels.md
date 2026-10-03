@@ -8,7 +8,22 @@ The **Research assistant → Remote access** entry is a separate, WeChat-only
 connection to the assistant's persistent conversation. It manages visible
 projects through natural-language requests and does not use the project route
 or project-switching commands described below. Bind and enable it separately;
-the same bot cannot be bound to both entries. See [Research assistant](research-assistant.md#微信远程接入).
+the same bot cannot be bound to both entries. Its approval replies are `yes`
+(approve once), `no` (reject), and `full` (approve and enable Full Permission
+for the assistant conversation until Wisp restarts or `full off` is sent).
+`/approval` repeats the assistant's pending request; `/status` shows permission
+state. Dispatched project work keeps its own approvals. See
+[Research assistant](research-assistant.md#微信远程接入).
+
+The assistant can list a project's conversations, continue a selected one, and
+bind a requested execution server before sending work. It acknowledges actual
+startup and ends its coordinating turn. When that project turn finishes, a
+background callback reviews the result and appends a summary to assistant history;
+WeChat-originated work also returns the summary to the original owner/bot binding.
+Project approvals are also supervised in the background: the assistant approves clear operations within the original user request once, and forwards uncertain requests with their details and reason to the assistant conversation and original WeChat binding. Reply yes/no to resolve the exact project request. Explicit project Full Permission is respected for ordinary confirmations; assistant Full Permission is not inherited. Keep Wisp running for these callbacks. If iLink's reply window has expired, the
+summary remains on the desktop and waits in the active connection until a fresh
+owner message permits delivery. Pending remote notices do not survive disconnect
+or restart. Failures and interrupted turns are reported without claiming success.
 
 Desktop, Feishu, and WeChat share one durable **IM target project**. Ordinary
 IM messages continue that project's current IM session. Starting work on the
@@ -42,7 +57,7 @@ Only plain text input is supported in v1 (WeChat voice messages arrive as
 transcripts and work too). Approval prompts still appear in the desktop app. A
 WeChat turn that reaches a native Wisp confirmation or an ACP permission request
 also receives a bounded plain-text summary and a one-time approval code; Feishu
-approvals still require the desktop app. IM turns additionally force Ask on
+approvals still require the desktop app. Project IM turns additionally force Ask on
 write/edit/shell and other mutating tools even when the desktop policy defaults
 to Allow, including Full Permission.
 
@@ -110,8 +125,9 @@ Notes:
   closed and that request must be handled in the desktop UI. ACP rejection
   options cannot carry free-form feedback; Wisp names that limitation in its
   acknowledgement instead of silently claiming the feedback was delivered.
-- Remote approval deliberately means **once**. Full Permission and persistent
-  session/project/global grants cannot be enabled from WeChat.
+- Project-bot remote approval means **once**. Its commands cannot enable Full
+  Permission or persistent session/project/global grants. The separate research
+  assistant binding supports `full` only for its own assistant conversation.
 
 ## Internals (for contributors)
 

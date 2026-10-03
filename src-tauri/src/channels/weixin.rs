@@ -20,6 +20,64 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, watch, RwLock};
 use tokio::task::JoinSet;
 
+#[derive(Clone)]
+struct AssistantNotification {
+    binding: Binding,
+    project_id: String,
+    text: String,
+    approval: Option<crate::ConfirmRequest>,
+}
+
+fn assistant_notifications() -> &'static tokio::sync::broadcast::Sender<AssistantNotification> {
+    static NOTIFICATIONS: std::sync::OnceLock<
+        tokio::sync::broadcast::Sender<AssistantNotification>,
+    > = std::sync::OnceLock::new();
+    NOTIFICATIONS.get_or_init(|| tokio::sync::broadcast::channel(64).0)
+}
+
+pub(crate) fn notify_assistant(binding: Binding, project_id: String, text: String) {
+    let _ = assistant_notifications().send(AssistantNotification {
+        binding,
+        project_id,
+        text,
+        approval: None,
+    });
+}
+
+pub(crate) fn notify_assistant_approval(
+    binding: Binding,
+    project_id: String,
+    request: crate::ConfirmRequest,
+) {
+    let text = super::assistant::approval_message(&request);
+    let _ = assistant_notifications().send(AssistantNotification {
+        binding,
+        project_id,
+        text,
+        approval: Some(request),
+    });
+}
+
+fn notification_matches(notification: &AssistantNotification, binding: &Binding) -> bool {
+    !binding.user_id.is_empty()
+        && notification.binding.user_id == binding.user_id
+        && notification.binding.account_id == binding.account_id
+}
+
+fn queue_notification(
+    outbox: &mut std::collections::VecDeque<AssistantNotification>,
+    binding: &Binding,
+    notification: AssistantNotification,
+) {
+    if notification_matches(&notification, binding) {
+        if notification.approval.is_some() {
+            outbox.push_front(notification);
+        } else {
+            outbox.push_back(notification);
+        }
+    }
+}
+
 pub const DEFAULT_BASE_URL: &str = "https://ilinkai.weixin.qq.com";
 const CHANNEL_VERSION: &str = "1.0.2";
 const BOT_TYPE: &str = "3";
@@ -279,8 +337,9 @@ struct InboundText {
     text: String,
 }
 
-fn is_control_text(text: &str) -> bool {
+fn is_control_text(text: &str, destination: WeixinDestination) -> bool {
     text.trim_start().starts_with('/')
+        || (destination == WeixinDestination::Assistant && super::assistant::is_control_text(text))
 }
 
 async fn send_with_latest_context(
@@ -334,10 +393,14 @@ async fn handle_agent_turn(
     );
     tokio::pin!(turn);
 
+    let mut answer = None;
     let reply = loop {
         tokio::select! {
             reply = &mut turn => break reply,
             Some(event) = progress_rx.recv() => {
+                if let super::ProgressEvent::TurnAnswer(text) = &event {
+                    answer = Some(text.clone());
+                }
                 if let super::ProgressEvent::ApprovalRequested(request) = event {
                     let text = approval_message(destination, &request);
                     if let Err(error) = send_with_latest_context(
@@ -353,6 +416,19 @@ async fn handle_agent_turn(
         }
     };
 
+    while let Ok(event) = progress_rx.try_recv() {
+        if let super::ProgressEvent::TurnAnswer(text) = event {
+            answer = Some(text);
+        }
+    }
+    // A fast background report can be persisted just after this turn ends.
+    // Send this turn's snapshot rather than reusing that later report as its
+    // startup acknowledgement.
+    let reply = answer
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| super::truncate_reply(&text, super::REPLY_MAX_CHARS))
+        .unwrap_or(reply);
+
     if reply.is_empty() {
         return;
     }
@@ -366,11 +442,7 @@ async fn handle_agent_turn(
 fn approval_message(destination: WeixinDestination, request: &crate::ConfirmRequest) -> String {
     match destination {
         WeixinDestination::Projects => super::render_approval_request(request),
-        WeixinDestination::Assistant => format!(
-            "科研助理等待审批。请在桌面科研助理对话中确认后继续。\n工具: {}\n{}",
-            request.tool,
-            super::approval_preview(request),
-        ),
+        WeixinDestination::Assistant => super::assistant::approval_message(request),
     }
 }
 
@@ -393,12 +465,18 @@ pub async fn run(
     let state = app.state::<crate::AppState>();
     let mut cursor = super::get_setting(&state.store, keys.cursor).await;
     let latest_context = Arc::new(RwLock::new(String::new()));
+    let mut notifications = assistant_notifications().subscribe();
+    let mut outbox = std::collections::VecDeque::<AssistantNotification>::new();
+    let turn_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let turn_idle = Arc::new(tokio::sync::Notify::new());
     let (turn_tx, mut turn_rx) = mpsc::channel::<InboundText>(32);
     let (turn_stop_tx, mut turn_stop_rx) = watch::channel(false);
     let turn_worker = {
         let app = app.clone();
         let client = client.clone();
         let latest_context = latest_context.clone();
+        let turn_busy = turn_busy.clone();
+        let turn_idle = turn_idle.clone();
         tokio::spawn(async move {
             loop {
                 if *turn_stop_rx.borrow() {
@@ -412,7 +490,10 @@ pub async fn run(
                 let Some(message) = message else {
                     break;
                 };
+                turn_busy.store(true, std::sync::atomic::Ordering::SeqCst);
                 handle_agent_turn(&app, &client, &latest_context, message, destination).await;
+                turn_busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                turn_idle.notify_one();
             }
         })
     };
@@ -421,8 +502,54 @@ pub async fn run(
     set_status(&status, "running", "已连接,等待消息");
 
     loop {
+        if destination == WeixinDestination::Assistant && !latest_context.read().await.is_empty() {
+            while let Some(notification) = outbox.front() {
+                if let Some(request) = &notification.approval {
+                    let pending = state
+                        .confirms
+                        .lock()
+                        .unwrap()
+                        .get(&request.frame_id)
+                        .is_some_and(|p| p.request.approval_id == request.approval_id);
+                    if !pending {
+                        outbox.pop_front();
+                        continue;
+                    }
+                } else if turn_busy.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                let visible = crate::research_assistant::visible_projects(&state.store)
+                    .await
+                    .is_ok_and(|projects| projects.iter().any(|p| p.0 == notification.project_id));
+                if !visible {
+                    outbox.pop_front();
+                    continue;
+                }
+                if let Err(error) = send_with_latest_context(
+                    &client,
+                    &latest_context,
+                    &binding.user_id,
+                    &super::truncate_reply(&notification.text, super::REPLY_MAX_CHARS),
+                )
+                .await
+                {
+                    // Keep the result until another owner message refreshes
+                    // iLink's reply window; it is already saved on the desktop.
+                    tracing::warn!(%error, "assistant notification waiting for a usable reply window");
+                    break;
+                }
+                outbox.pop_front();
+            }
+        }
         let updates = tokio::select! {
             r = client.get_updates(&cursor) => r,
+            _ = turn_idle.notified(), if !outbox.is_empty() => continue,
+            notification = notifications.recv(), if destination == WeixinDestination::Assistant => {
+                if let Ok(notification) = notification {
+                    queue_notification(&mut outbox, &binding, notification);
+                }
+                continue;
+            }
             _ = shutdown.changed() => break,
         };
         if *shutdown.borrow() {
@@ -485,7 +612,7 @@ pub async fn run(
                 from_user_id: msg.from_user_id.clone(),
                 text,
             };
-            if is_control_text(&message.text) {
+            if is_control_text(&message.text, destination) {
                 let app = app.clone();
                 let client = client.clone();
                 let latest_context = latest_context.clone();
@@ -515,6 +642,12 @@ pub async fn run(
         let pause = Duration::from_millis(updates.longpolling_timeout_ms.max(1000) as u64);
         tokio::select! {
             _ = tokio::time::sleep(pause) => {}
+            _ = turn_idle.notified(), if !outbox.is_empty() => {}
+            notification = notifications.recv(), if destination == WeixinDestination::Assistant => {
+                if let Ok(notification) = notification {
+                    queue_notification(&mut outbox, &binding, notification);
+                }
+            }
             _ = shutdown.changed() => break,
         }
     }
@@ -535,7 +668,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn assistant_approval_notice_does_not_offer_legacy_approval_commands() {
+    fn assistant_approval_notice_offers_replies_and_explains_full_permission_scope() {
         let request = crate::ConfirmRequest::new(
             "research-assistant",
             "Save a plan".into(),
@@ -543,9 +676,34 @@ mod tests {
             "add".into(),
         );
         let message = approval_message(WeixinDestination::Assistant, &request);
-        assert!(message.contains("桌面科研助理"));
+        for instruction in [
+            "yes",
+            "no",
+            "full",
+            "full off",
+            "仅限助理会话",
+            "重启 Wisp 后失效",
+        ] {
+            assert!(message.contains(instruction), "{instruction}");
+        }
+        assert!(!message.contains("请在桌面科研助理"));
         assert!(!message.contains("/approve"));
         assert!(approval_message(WeixinDestination::Projects, &request).contains("/approve"));
+    }
+
+    #[test]
+    fn supervised_project_notice_names_the_operation_and_requests_a_one_shot_answer() {
+        let request = crate::ConfirmRequest::new(
+            "research-assistant",
+            "Confirm project operation".into(),
+            "project_approval",
+            "Project RNA, CPU2: remove old output; deletion was not requested".into(),
+        );
+        let text = approval_message(WeixinDestination::Assistant, &request);
+        assert!(text.contains("CPU2"));
+        assert!(text.contains("yes"));
+        assert!(text.contains("no"));
+        assert!(!text.contains("full"));
     }
 
     fn binding() -> Binding {
@@ -575,6 +733,56 @@ mod tests {
         assert!(!should_handle(&msg("stranger", "bot", ""), &binding()));
         assert!(!should_handle(&msg("owner", "other-bot", ""), &binding()));
         assert!(!should_handle(&msg("", "bot", ""), &binding()));
+    }
+
+    #[test]
+    fn completion_notifications_never_follow_a_different_owner_or_bot() {
+        let notice = AssistantNotification {
+            binding: binding(),
+            project_id: "project".into(),
+            text: "result".into(),
+            approval: None,
+        };
+        assert!(notification_matches(&notice, &binding()));
+        let mut other = binding();
+        other.user_id = "stranger".into();
+        assert!(!notification_matches(&notice, &other));
+        other = binding();
+        other.account_id = "other-bot".into();
+        assert!(!notification_matches(&notice, &other));
+    }
+
+    #[test]
+    fn approval_notices_take_priority_over_reports_waiting_for_the_active_turn() {
+        let mut outbox = std::collections::VecDeque::new();
+        queue_notification(
+            &mut outbox,
+            &binding(),
+            AssistantNotification {
+                binding: binding(),
+                project_id: "p".into(),
+                text: "report".into(),
+                approval: None,
+            },
+        );
+        let request = crate::ConfirmRequest::new(
+            "research-assistant",
+            "confirm".into(),
+            "project_approval",
+            "operation".into(),
+        );
+        queue_notification(
+            &mut outbox,
+            &binding(),
+            AssistantNotification {
+                binding: binding(),
+                project_id: "p".into(),
+                text: "approval".into(),
+                approval: Some(request),
+            },
+        );
+        assert_eq!(outbox.pop_front().unwrap().text, "approval");
+        assert_eq!(outbox.pop_front().unwrap().text, "report");
     }
 
     #[test]
@@ -610,10 +818,26 @@ mod tests {
 
     #[test]
     fn slash_commands_use_the_non_blocking_control_lane() {
-        assert!(is_control_text("/approve ABCDEF12"));
-        assert!(is_control_text("  /reject ABCDEF12 not safe"));
-        assert!(is_control_text("/stop"));
-        assert!(!is_control_text("please run /status later"));
-        assert!(!is_control_text("analyze the dataset"));
+        for destination in [WeixinDestination::Projects, WeixinDestination::Assistant] {
+            assert!(is_control_text("/approve ABCDEF12", destination));
+            assert!(is_control_text("  /reject ABCDEF12 not safe", destination));
+            assert!(is_control_text("/stop", destination));
+            assert!(!is_control_text("please run /status later", destination));
+            assert!(!is_control_text("analyze the dataset", destination));
+        }
+    }
+
+    #[test]
+    fn assistant_approval_replies_bypass_the_blocked_turn_queue_only_for_assistant() {
+        for text in ["yes", " NO ", "Full", "full off"] {
+            assert!(
+                is_control_text(text, WeixinDestination::Assistant),
+                "{text}"
+            );
+            assert!(
+                !is_control_text(text, WeixinDestination::Projects),
+                "{text}"
+            );
+        }
     }
 }

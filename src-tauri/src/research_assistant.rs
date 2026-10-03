@@ -9,7 +9,7 @@
 //! paging and archive-first compaction. Plan items live in `assistant_tasks`,
 //! outside the context, so compaction never loses them.
 
-use crate::{create_session_frame, send_message_inner, AppState};
+use crate::{create_session_frame, AppState};
 use async_trait::async_trait;
 use chrono::{Local, NaiveDate};
 use serde_json::{json, Value};
@@ -25,6 +25,10 @@ const MAX_ACTIVITY_DAYS: i64 = 7;
 const MAX_ACTIVITY_CHARS: usize = 60_000;
 const MAX_RESULT_CHARS: usize = 6_000;
 
+// Restated for existing assistant histories whose saved system prompt predates
+// support for existing conversations and automatic completion delivery.
+pub(crate) const DISPATCH_POLICY: &str = "Current dispatch behavior: project_conversations lists existing conversations and execution servers. Use exact session_id/context_id with dispatch_to_project when the researcher selects a conversation/server. After startup is acknowledged, say the task has started and you will report the result, then end this turn. The background callback reviews and delivers completion automatically; do not poll project_session_result waiting for it.";
+
 pub(crate) const ASSISTANT_SYSTEM: &str = "\
 You are the researcher's research assistant in Wisp Science. This is one long-running conversation that \
 belongs to no project. You keep track of the research and organize it; you never do the research work \
@@ -36,9 +40,13 @@ Quiet days are simply quiet.\n\
 - Remember the plan: when the researcher says what they intend to do, save each item with `research_plan` \
 (add). Mark items done or dropped when told, or when the records clearly show it. Before planning or \
 reporting a day, list the plan — it also carries unfinished items forward.\n\
-- Dispatch: when asked to get something done in a project, find it with `research_projects`, then call \
-`dispatch_to_project` with a complete, self-contained instruction; that project's own agent does the work in \
-a new conversation there. Pass `plan_item_id` when the work comes from a plan item.\n\
+- Dispatch: use `project_conversations` to list a project's conversations and available servers. When the \
+researcher names an existing conversation, pass its exact `session_id` to `dispatch_to_project`; omit it only \
+when a new conversation is wanted. When a server is requested, pass its exact `context_id` (for example \
+ssh:CPU2), which binds that conversation before starting work. Never guess an ambiguous conversation or server. \
+Send a complete instruction and pass `plan_item_id` when appropriate. After the tool confirms startup, tell \
+the researcher the task has started and you will report its result, then end your turn. Completion is delivered \
+automatically: do not repeatedly poll or keep the assistant turn open waiting for project work.\n\
 - Follow up: `project_session_result` tells whether a dispatched conversation is still running and what it \
 answered.\n\n\
 Rules:\n\
@@ -55,7 +63,7 @@ pub(crate) fn now_note() -> String {
     format!("Local time: {}", Local::now().format("%Y-%m-%d %A %H:%M"))
 }
 
-pub(crate) fn tools(app: &AppHandle, origin: crate::TurnOrigin) -> Registry {
+pub(crate) fn tools(app: &AppHandle, origin: crate::TurnOrigin, authorization: &str) -> Registry {
     let store = app.state::<AppState>().store.clone();
     // No built-ins: the assistant has no files, shell or images to work with.
     let mut tools = Registry::builtins().filtered(&[]);
@@ -65,12 +73,16 @@ pub(crate) fn tools(app: &AppHandle, origin: crate::TurnOrigin) -> Registry {
     tools.add(Box::new(ActivityTool {
         store: store.clone(),
     }));
+    tools.add(Box::new(ConversationsTool {
+        store: store.clone(),
+    }));
     tools.add(Box::new(PlanTool {
         store: store.clone(),
     }));
     tools.add(Box::new(DispatchTool {
         app: app.clone(),
         origin,
+        authorization: authorization.into(),
     }));
     tools.add(Box::new(SessionResultTool { app: app.clone() }));
     tools
@@ -465,6 +477,83 @@ struct PlanTool {
     store: Store,
 }
 
+struct ConversationsTool {
+    store: Store,
+}
+
+async fn project_conversations(
+    store: &Store,
+    project_id: &str,
+    query: &str,
+) -> Result<String, String> {
+    if !visible_projects(store)
+        .await?
+        .iter()
+        .any(|p| p.0 == project_id)
+    {
+        return Err(format!("No visible project has id '{project_id}'."));
+    }
+    let sessions = store
+        .list_sessions_page_with_visibility(project_id, None, 50, Some(false), query)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut conversations = Vec::new();
+    for (id, title, activity_at, _, _) in sessions {
+        conversations.push(json!({
+            "session_id": id,
+            "title": title,
+            "activity_at": activity_at,
+            "context_id": crate::ssh_hosts::resolved_session_execution_context_id(store, &id).await,
+        }));
+    }
+    let contexts = store
+        .list_execution_contexts()
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|context| json!({"context_id": context.id, "label": context.label}))
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"conversations": conversations, "limit": 50, "execution_contexts": contexts})
+            .to_string(),
+    )
+}
+
+#[async_trait]
+impl Tool for ConversationsTool {
+    fn name(&self) -> &str {
+        "project_conversations"
+    }
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(self.name(), "List up to 50 recent conversations in a visible project and available execution contexts (servers). Use exact returned IDs to dispatch into an existing conversation and bind a requested server. Narrow by title with query if needed.", json!({
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "query": {"type": "string", "description": "Optional conversation-title search."}
+            },
+            "required": ["project_id"]
+        }))
+    }
+    fn read_only(&self) -> bool {
+        true
+    }
+    fn preview(&self, args: &Value) -> String {
+        args["project_id"].as_str().unwrap_or_default().into()
+    }
+    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+        match project_conversations(
+            &self.store,
+            args["project_id"].as_str().unwrap_or_default(),
+            args["query"].as_str().unwrap_or_default(),
+        )
+        .await
+        {
+            Ok(text) => ToolResult::ok(text),
+            Err(error) => ToolResult::fail(error),
+        }
+    }
+}
+
 async fn plan(store: &Store, args: &Value, today: NaiveDate) -> Result<String, String> {
     let err = |error: anyhow::Error| error.to_string();
     let now = chrono::Utc::now().timestamp();
@@ -624,31 +713,29 @@ async fn prepare_dispatch(
     title: Option<&str>,
     plan_item_id: Option<&str>,
     today: NaiveDate,
+    existing_session: Option<&str>,
 ) -> Result<(String, String), String> {
     let err = |error: anyhow::Error| error.to_string();
     if instruction.trim().is_empty() {
         return Err("'instruction' cannot be empty".into());
     }
-    if !visible_projects(store)
-        .await?
-        .iter()
-        .any(|p| p.0 == project_id)
-    {
-        return Err(format!(
-            "No visible project has id '{project_id}'. Call research_projects first."
-        ));
-    }
+    validate_dispatch_target(store, project_id, existing_session).await?;
     let title = title
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| clip(instruction.lines().next().unwrap_or_default(), 80));
-    let session_id = create_session_frame(store, project_id).await?;
-    // A title lists the conversation in its project before the first turn lands.
-    store
-        .rename_session(&session_id, project_id, &title)
-        .await
-        .map_err(err)?;
+    let session_id = if let Some(session) = existing_session {
+        session.to_string()
+    } else {
+        let session = create_session_frame(store, project_id).await?;
+        // Existing conversations keep their titles and transcript.
+        store
+            .rename_session(&session, project_id, &title)
+            .await
+            .map_err(err)?;
+        session
+    };
     let now = chrono::Utc::now().timestamp();
     if let Some(id) = plan_item_id.filter(|id| !id.trim().is_empty()) {
         if store
@@ -673,9 +760,41 @@ async fn prepare_dispatch(
     Ok((session_id, task.id))
 }
 
+async fn validate_dispatch_target(
+    store: &Store,
+    project_id: &str,
+    session: Option<&str>,
+) -> Result<(), String> {
+    if !visible_projects(store)
+        .await?
+        .iter()
+        .any(|p| p.0 == project_id)
+    {
+        return Err(format!(
+            "No visible project has id '{project_id}'. Call research_projects first."
+        ));
+    }
+    if let Some(session) = session {
+        store
+            .get_session_reference(session)
+            .await
+            .map_err(|e| e.to_string())?
+            .filter(|reference| reference.project_id == project_id)
+            .ok_or_else(|| {
+                "Conversation does not belong to the selected visible project.".to_string()
+            })?;
+        store
+            .require_unarchived_session(session)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 struct DispatchTool {
     app: AppHandle,
     origin: crate::TurnOrigin,
+    authorization: String,
 }
 
 #[async_trait]
@@ -687,11 +806,13 @@ impl Tool for DispatchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "dispatch_to_project",
-            "Start a new conversation in a project and send it an instruction; that project's agent does the work with its own tools, in the background. Returns the new session id. The work is added to today's plan (or linked to plan_item_id).",
+            "Send work to a project agent in the background. Supply session_id to continue an existing conversation, otherwise create a new one. context_id binds its default execution server before work starts. Returns after the agent accepts the instruction; completion is automatically summarized in the assistant conversation. Do not poll while waiting. Adds or links today's plan item.",
             json!({
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "From research_projects."},
+                    "session_id": {"type": "string", "description": "Existing conversation from project_conversations. Omit to create a new conversation."},
+                    "context_id": {"type": "string", "description": "Exact execution context ID from project_conversations, e.g. ssh:CPU2. Sets and enables this conversation's default server."},
                     "instruction": {"type": "string", "description": "Complete, self-contained task for the project agent: goal, inputs, expected output."},
                     "title": {"type": "string", "description": "Short conversation title. Default: the instruction's first line."},
                     "plan_item_id": {"type": "string", "description": "The plan item this work comes from."}
@@ -719,6 +840,31 @@ impl Tool for DispatchTool {
             .get("instruction")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let context_id = args.get("context_id").and_then(Value::as_str);
+        if let Some(id) = context_id {
+            match state.store.get_execution_context(id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    return ToolResult::fail(format!(
+                        "Unknown execution context '{id}'. Call project_conversations first."
+                    ))
+                }
+                Err(error) => return ToolResult::fail(error.to_string()),
+            }
+        }
+        // Do not change compute bindings or append work into a busy turn.
+        let existing = args.get("session_id").and_then(Value::as_str);
+        if let Err(error) = validate_dispatch_target(&state.store, project_id, existing).await {
+            return ToolResult::fail(error);
+        }
+        let reserved = if let Some(session) = existing {
+            match crate::research_dispatch::reserve(&state, session).await {
+                Ok(guard) => Some(guard),
+                Err(error) => return ToolResult::fail(error),
+            }
+        } else {
+            None
+        };
         let (session_id, item_id) = match prepare_dispatch(
             &state.store,
             project_id,
@@ -726,43 +872,17 @@ impl Tool for DispatchTool {
             args.get("title").and_then(Value::as_str),
             args.get("plan_item_id").and_then(Value::as_str),
             today(),
+            existing,
         )
         .await
         {
             Ok(ids) => ids,
             Err(error) => return ToolResult::fail(error),
         };
-        // Provenance for the user and the project agent: this turn was not typed.
-        let message = format!("[From the research assistant]\n\n{}", instruction.trim());
-        let app = self.app.clone();
-        let session = session_id.clone();
-        let origin = self.origin.for_dispatch();
-        tauri::async_runtime::spawn(async move {
-            let state = app.state::<AppState>();
-            if let Err(error) = send_message_inner(
-                state.inner(),
-                app.clone(),
-                "main",
-                Some(session.clone()),
-                message,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                origin,
-            )
-            .await
-            {
-                tracing::warn!(target: "wisp", %error, session_id = %session, "assistant dispatch failed");
-            }
-        });
-        ToolResult::ok(format!(
-            "Started session {session_id} in the project (plan item {item_id}). It runs in the background; check it with project_session_result."
-        ))
+        match crate::research_dispatch::start(&self.app, &session_id, instruction, context_id, self.origin.for_dispatch(), &self.authorization, reserved).await {
+            Ok(()) => ToolResult::ok(format!("Started session {session_id} in the project (plan item {item_id}). It runs in the background. Tell the researcher it has started and you will report the result, then finish this turn. Completion will be delivered automatically; do not poll.")),
+            Err(error) => ToolResult::fail(error),
+        }
     }
 }
 
@@ -1005,6 +1125,7 @@ mod tests {
             None,
             Some(&item),
             today,
+            None,
         )
         .await
         .unwrap();
@@ -1027,15 +1148,19 @@ mod tests {
         assert!(listed.contains(&session), "{listed}");
 
         // Neither a missing nor a privacy-hidden project can receive work.
-        assert!(prepare_dispatch(&f.store, "nope", "x", None, None, today)
-            .await
-            .is_err());
+        assert!(
+            prepare_dispatch(&f.store, "nope", "x", None, None, today, None)
+                .await
+                .is_err()
+        );
         crate::privacy_mode::save(&f.store, true, &["p1".into()])
             .await
             .unwrap();
-        assert!(prepare_dispatch(&f.store, "p1", "x", None, None, today)
-            .await
-            .is_err());
+        assert!(
+            prepare_dispatch(&f.store, "p1", "x", None, None, today, None)
+                .await
+                .is_err()
+        );
         assert!(session_result(&f.store, &session, false).await.is_err());
     }
 
@@ -1050,6 +1175,7 @@ mod tests {
             None,
             None,
             day("2026-10-02"),
+            None,
         )
         .await
         .unwrap();
@@ -1060,6 +1186,89 @@ mod tests {
         assert!(session_result(&f.store, ASSISTANT_FRAME_ID, false)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn dispatch_reuses_listed_conversation_preserving_its_title_and_history() {
+        let f = Fixture::open().await;
+        f.store.create_project("p1", "RNA", "").await.unwrap();
+        f.store.create_project("p2", "Other", "").await.unwrap();
+        f.store
+            .create_frame("existing", "p1", "OPERON", "m")
+            .await
+            .unwrap();
+        f.store
+            .rename_session("existing", "p1", "QC conversation")
+            .await
+            .unwrap();
+        f.store
+            .append_message("existing", 1, &wisp_llm::Message::user("Earlier work"))
+            .await
+            .unwrap();
+        f.store
+            .upsert_execution_context(
+                &wisp_store::ExecutionContext::new("ssh:CPU2", "CPU2").unwrap(),
+            )
+            .await
+            .unwrap();
+        let listing: Value =
+            serde_json::from_str(&project_conversations(&f.store, "p1", "QC").await.unwrap())
+                .unwrap();
+        assert_eq!(listing["conversations"][0]["session_id"], "existing");
+        assert!(listing["execution_contexts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["context_id"] == "ssh:CPU2"));
+        let (session, _) = prepare_dispatch(
+            &f.store,
+            "p1",
+            "Run on CPU2",
+            Some("Do not rename"),
+            None,
+            day("2026-10-03"),
+            Some("existing"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(session, "existing");
+        assert_eq!(
+            f.store
+                .get_session_reference("existing")
+                .await
+                .unwrap()
+                .unwrap()
+                .title,
+            "QC conversation"
+        );
+        assert_eq!(f.store.load_messages("existing").await.unwrap().len(), 1);
+        assert_eq!(f.store.list_sessions("p1").await.unwrap().len(), 1);
+        assert!(prepare_dispatch(
+            &f.store,
+            "p2",
+            "Wrong project",
+            None,
+            None,
+            day("2026-10-03"),
+            Some("existing")
+        )
+        .await
+        .is_err());
+        crate::privacy_mode::save(&f.store, true, &["p1".into()])
+            .await
+            .unwrap();
+        assert!(project_conversations(&f.store, "p1", "").await.is_err());
+        assert!(prepare_dispatch(
+            &f.store,
+            "p1",
+            "Hidden",
+            None,
+            None,
+            day("2026-10-03"),
+            Some("existing")
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]

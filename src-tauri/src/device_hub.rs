@@ -187,7 +187,8 @@ impl DeviceHub {
             | AgentEvent::FileChanged { .. }
             | AgentEvent::MemoryProposal { .. }
             | AgentEvent::FollowUps { .. }
-            | AgentEvent::HookFailed { .. } => return,
+            | AgentEvent::HookFailed { .. }
+            | AgentEvent::BackgroundReply(_) => return,
         };
         self.set_base(frame_id, project_id, state);
     }

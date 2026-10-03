@@ -177,30 +177,53 @@ pub(super) async fn set_session_full_permission(
 ) -> Result<bool, String> {
     let project = state.require_active(window.label())?;
     ensure_project_frame(&state, &project.id, &session_id).await?;
-    {
-        let mut sessions = state
-            .full_permission_sessions
-            .write()
-            .map_err(|_| "Full Permission state is unavailable.".to_string())?;
-        if enabled {
-            sessions.insert(session_id.clone());
-        } else {
-            sessions.remove(&session_id);
-        }
-    }
+    set_session_full_permission_inner(&state, &session_id, enabled)
+}
 
+pub(crate) fn set_session_full_permission_inner(
+    state: &AppState,
+    session_id: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    let pending = update_session_full_permission(
+        &mut state.confirms.lock().unwrap(),
+        &state.full_permission_sessions,
+        session_id,
+        enabled,
+    )?;
     // If the user enables the mode while an ordinary approval is already
     // waiting, settle that approval immediately. Later confirmation sites read
     // the shared mode live and never enqueue a card.
-    if enabled {
-        let pending = state.confirms.lock().unwrap().remove(&session_id);
-        if let Some(pending) = pending {
-            let _ = pending.tx.send(wisp_tools::ConfirmDecision::Approved);
-            state.awaiting_confirm.lock().unwrap().remove(&session_id);
-            state.device_hub.resolve_needs_user(&session_id);
-        }
+    if let Some(pending) = pending {
+        state.awaiting_confirm.lock().unwrap().remove(session_id);
+        state.device_hub.resolve_needs_user(session_id);
+        let _ = pending.tx.send(wisp_tools::ConfirmDecision::Approved);
     }
     Ok(enabled)
+}
+
+fn update_session_full_permission(
+    pending: &mut HashMap<String, PendingConfirm>,
+    full_permission_sessions: &std::sync::RwLock<std::collections::HashSet<String>>,
+    session_id: &str,
+    enabled: bool,
+) -> Result<Option<PendingConfirm>, String> {
+    let mut sessions = full_permission_sessions
+        .write()
+        .map_err(|_| "Full Permission state is unavailable.".to_string())?;
+    if enabled {
+        sessions.insert(session_id.into());
+        Ok(pending.remove(session_id))
+    } else {
+        sessions.remove(session_id);
+        Ok(None)
+    }
+}
+
+/// Only the assistant's explicit session grant overrides the IM default.
+/// Project turns (including work dispatched by the assistant) keep asking.
+pub(crate) fn force_ask_for_turn(im: bool, frame_id: &str, full_permission: bool) -> bool {
+    im && !(frame_id == crate::research_assistant::ASSISTANT_FRAME_ID && full_permission)
 }
 
 #[tauri::command]
@@ -392,6 +415,101 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(take_native_confirmation(&mut entries, "project", &request).is_ok());
         assert!(take_native_confirmation(&mut entries, "project", &request).is_err());
+    }
+
+    #[tokio::test]
+    async fn assistant_decisions_resolve_once_without_consuming_project_approvals() {
+        use crate::research_assistant::ASSISTANT_FRAME_ID;
+        for approved in [true, false] {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let mut assistant = pending("assistant-approval");
+            assistant.tx = tx;
+            assistant.project_id = wisp_store::ASSISTANT_PROJECT_ID.into();
+            assistant.request.frame_id = ASSISTANT_FRAME_ID.into();
+            let mut entries = HashMap::from([
+                (ASSISTANT_FRAME_ID.into(), assistant),
+                ("project-session".into(), pending("project-approval")),
+            ]);
+            let mut request = wisp_dto::native_conversations::ApprovalRequest {
+                session_id: ASSISTANT_FRAME_ID.into(),
+                approval_id: "project-approval".into(),
+                approved,
+                feedback: None,
+            };
+            assert!(take_native_confirmation(
+                &mut entries,
+                wisp_store::ASSISTANT_PROJECT_ID,
+                &request
+            )
+            .is_err());
+            request.approval_id = "assistant-approval".into();
+            let taken =
+                take_native_confirmation(&mut entries, wisp_store::ASSISTANT_PROJECT_ID, &request)
+                    .unwrap();
+            taken
+                .tx
+                .send(if approved {
+                    wisp_tools::ConfirmDecision::Approved
+                } else {
+                    wisp_tools::ConfirmDecision::Denied { feedback: None }
+                })
+                .unwrap();
+            assert_eq!(rx.await.unwrap().approved(), approved);
+            assert!(entries.contains_key("project-session"));
+            assert!(take_native_confirmation(
+                &mut entries,
+                wisp_store::ASSISTANT_PROJECT_ID,
+                &request
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn assistant_full_permission_is_live_scoped_and_revocable() {
+        use crate::research_assistant::ASSISTANT_FRAME_ID;
+        let sessions = std::sync::RwLock::new(std::collections::HashSet::new());
+        let mut entries = HashMap::from([
+            (ASSISTANT_FRAME_ID.into(), pending("assistant-approval")),
+            ("project-session".into(), pending("project-approval")),
+        ]);
+        assert!(force_ask_for_turn(true, ASSISTANT_FRAME_ID, false));
+        let taken =
+            update_session_full_permission(&mut entries, &sessions, ASSISTANT_FRAME_ID, true)
+                .unwrap()
+                .unwrap();
+        assert_eq!(taken.request.approval_id, "assistant-approval");
+        assert_eq!(
+            *sessions.read().unwrap(),
+            std::collections::HashSet::from([ASSISTANT_FRAME_ID.to_string()])
+        );
+        assert!(entries.contains_key("project-session"));
+        assert!(!force_ask_for_turn(
+            true,
+            ASSISTANT_FRAME_ID,
+            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID)
+        ));
+        // Desktop full permission must still not bypass project IM approval.
+        assert!(force_ask_for_turn(true, "project-session", true));
+        assert!(!force_ask_for_turn(false, "project-session", true));
+        assert!(
+            update_session_full_permission(&mut entries, &sessions, ASSISTANT_FRAME_ID, true)
+                .unwrap()
+                .is_none()
+        );
+        entries.insert(ASSISTANT_FRAME_ID.into(), pending("explicit-confirmation"));
+        assert!(
+            update_session_full_permission(&mut entries, &sessions, ASSISTANT_FRAME_ID, false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(sessions.read().unwrap().is_empty());
+        assert!(entries.contains_key(ASSISTANT_FRAME_ID));
+        assert!(force_ask_for_turn(
+            true,
+            ASSISTANT_FRAME_ID,
+            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID)
+        ));
     }
 
     #[test]
