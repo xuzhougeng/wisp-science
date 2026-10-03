@@ -1,5 +1,39 @@
 # Native conversation loop
 
+## Windows composer options
+
+The WinUI 3 conversation-options popover follows the WebView row order: plan
+first, full permission, delegation, completion policy, automatic review, tool
+failure analysis (with conditional thresholds), reviewer model, memory,
+specialist, and compute environment. Controls save through the existing desktop
+commands and reread confirmed values. Failed writes show a read-only recovery
+action and are never automatically retried. Navigation discards late replies.
+
+Plan, full permission, delegation, completion, auto-review, specialist and compute
+selection belong to the selected conversation. Failure-analysis settings, the
+reviewer profile and memory retain their existing global scope. Full permission
+requires a warning confirmation; cancelling or pressing Escape does not enable
+it. Completion is disabled until delegation is on, and background completion
+exposes auto-resume. Returning to inline clears auto-resume. Specialists lock
+after the first message. Archived/history views cannot edit options. ACP-owned
+plan mode remains under the agent's control.
+
+Reviewer choices include the default HTTP model, following the session, named
+HTTP chat models and ACP agents. Compute choices support session defaults,
+remote-context membership and environment
+management. Popovers are scrollable on short windows. Escape closes the child
+picker/confirmation first, then the options popover, before underlying panels.
+
+Checks: run the Windows contract-test executable and `cargo test -p wisp-dto`.
+For native smoke testing, open a conversation, immediately press Escape after
+opening options, and verify only the popover closes. Reopen, open a reviewer
+picker and immediately press Escape: the picker should close while options stay
+open. Check full-permission cancellation, disabled completion, background
+auto-resume, conditional failure thresholds, saved values after reopening, and
+switching conversations while a save/read is pending. Verify layout at 150%
+display scaling and in a short window. Mocked transport tests do not establish
+real-provider or SSH execution acceptance.
+
 The SwiftUI preview supports creating/opening HTTP-model and ACP conversations,
 selecting an HTTP conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved

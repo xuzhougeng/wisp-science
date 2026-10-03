@@ -74,6 +74,7 @@ await NativeTerminalStreamingTests.RunAsync();
 await WorkspaceJourneyTests.RunAsync();
 NativeBrowserPresentationTests.Run();
 await NativeComposerEffortTests.RunAsync();
+await NativeComposerOptionsTests.RunAsync(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-conversations/v1/composer-options.json")));
 NativeTranscriptTests.Run();
 await NativeWorkspaceActionsTests.RunAsync();
 await AppearanceSettingsTests.RunAsync();

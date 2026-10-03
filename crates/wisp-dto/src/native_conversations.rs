@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
+    "native_conversation_options",
+    "native_conversation_options_set",
     "native_conversation_panel_highlight_star",
     "native_conversation_panel_side_chat",
     "native_conversation_panel_side_chat_options",
@@ -70,6 +72,80 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_plan",
     "native_conversation_fast",
 ];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ComposerOptions {
+    pub session_id: String,
+    pub full_permission: bool,
+    pub delegation: bool,
+    pub completion: crate::AgentCompletionSettings,
+    pub auto_review: bool,
+    pub specialist: Option<crate::Specialist>,
+    pub specialist_locked: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComposerOptionRequest {
+    pub session_id: String,
+    pub change: ComposerOptionChange,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComposerOptionChange {
+    FullPermission {
+        enabled: bool,
+        confirmed: bool,
+    },
+    Delegation {
+        enabled: bool,
+    },
+    Completion {
+        policy: crate::AgentCompletionPolicy,
+        auto_resume: bool,
+    },
+    AutoReview {
+        enabled: bool,
+    },
+    Specialist {
+        id: String,
+    },
+}
+
+impl ComposerOptionChange {
+    pub fn command(&self, session: &str) -> Result<(&'static str, serde_json::Value), String> {
+        use serde_json::json;
+        Ok(match self {
+            Self::FullPermission {
+                enabled: true,
+                confirmed: false,
+            } => return Err("Full permission requires explicit confirmation".into()),
+            Self::FullPermission { enabled, .. } => (
+                "set_session_full_permission",
+                json!({"sessionId":session,"enabled":enabled}),
+            ),
+            Self::Delegation { enabled } => (
+                "set_session_delegation_enabled",
+                json!({"sessionId":session,"enabled":enabled}),
+            ),
+            Self::Completion {
+                policy,
+                auto_resume,
+            } => (
+                "set_session_agent_completion",
+                json!({"sessionId":session,"policy":policy,"autoResume":auto_resume}),
+            ),
+            Self::AutoReview { enabled } => (
+                "set_auto_review_enabled",
+                json!({"sessionId":session,"enabled":enabled}),
+            ),
+            Self::Specialist { id } => {
+                ("set_session_specialist", json!({"frameId":session,"id":id}))
+            }
+        })
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SideChatModelOption {
@@ -530,6 +606,47 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn composer_options_are_scoped_and_permission_requires_confirmation() {
+        let options: super::ComposerOptions = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/composer-options.json"
+        ))
+        .unwrap();
+        assert_eq!(options.session_id, "session-a");
+        assert!(!options.full_permission && !options.delegation && !options.specialist_locked);
+        assert_eq!(
+            options.completion.policy,
+            crate::AgentCompletionPolicy::Inline
+        );
+        let denied = super::ComposerOptionChange::FullPermission {
+            enabled: true,
+            confirmed: false,
+        };
+        assert!(denied.command("session-a").is_err());
+        let allowed = super::ComposerOptionChange::FullPermission {
+            enabled: true,
+            confirmed: true,
+        };
+        let (command, args) = allowed.command("session-a").unwrap();
+        assert_eq!(command, "set_session_full_permission");
+        assert_eq!(
+            args,
+            serde_json::json!({"sessionId":"session-a", "enabled":true})
+        );
+        let (_, args) = super::ComposerOptionChange::AutoReview { enabled: false }
+            .command("session-b")
+            .unwrap();
+        assert_eq!(args["sessionId"], "session-b");
+        for bad in [
+            serde_json::json!({"change":{"kind":"auto_review","enabled":true}}),
+            serde_json::json!({"session_id":"s","change":{"kind":"full_permission","enabled":true}}),
+            serde_json::json!({"session_id":"s","change":{"kind":"arbitrary_command","enabled":true}}),
+            serde_json::json!({"session_id":"s","change":{"kind":"auto_review","enabled":true,"sessionId":"other"}}),
+        ] {
+            assert!(serde_json::from_value::<super::ComposerOptionRequest>(bad).is_err());
+        }
+    }
+
     #[test]
     fn run_review_contract_requires_explicit_destructive_confirmation() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(

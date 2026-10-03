@@ -376,6 +376,76 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_options" | "native_conversation_options_set" => {
+            if request.command.ends_with("_set") {
+                let args: dto::ComposerOptionRequest = decode(&request.args)?;
+                let state = broker.app.state::<crate::AppState>();
+                state
+                    .store
+                    .require_unarchived_session(session)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let (_, scope) =
+                    crate::exploration_commands::working_project_for_frame(&state, session).await?;
+                crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+                let (command, payload) = args.change.command(session)?;
+                call(broker, project, command, payload).await?;
+            } else {
+                let _: dto::SessionRequest = decode(&request.args)?;
+            }
+            let session_args = json!({"sessionId":session});
+            let state = broker.app.state::<crate::AppState>();
+            let options = dto::ComposerOptions {
+                session_id: session.into(),
+                full_permission: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_full_permission",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                delegation: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_delegation_enabled",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                completion: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_agent_completion",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                auto_review: decode(
+                    &call(broker, project, "get_auto_review_enabled", session_args).await?,
+                )?,
+                specialist: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_session_specialist",
+                        json!({"frameId":session}),
+                    )
+                    .await?,
+                )?,
+                specialist_locked: state
+                    .store
+                    .load_messages(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .iter()
+                    .any(|m| m.role != wisp_llm::Role::System),
+            };
+            serde_json::to_value(options).map_err(|e| e.to_string())
+        }
         "native_conversation_delete" => {
             call(
                 broker,

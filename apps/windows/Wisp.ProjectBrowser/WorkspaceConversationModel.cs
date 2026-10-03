@@ -23,19 +23,20 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     private readonly Dictionary<string, string> queuedDrafts = [];
     private readonly HashSet<string> uncertainQueues = [];
     public bool CanAttach => Snapshot is { ReadOnly: false } && !Busy && !UncertainSend && !ShowingHistory && ConnectionError == null;
-    public bool CanQueue => CanAttach && Snapshot?.Running == true && (Draft.Trim().Length > 0 || Attachments.Length > 0)
+    public bool CanQueue => CanAttach && !Options.Busy && Snapshot?.Running == true && (Draft.Trim().Length > 0 || Attachments.Length > 0)
         && QueuedFollowUp == null && sessionId != null && !uncertainQueues.Contains(sessionId);
     public string? ConnectionError { get; private set; }
     public string? OperationError { get; private set; }
     public ConversationModelOption[] Models { get; private set; } = [];
     public NativeComposerEffortModel Effort { get; } = new(settings);
+    public NativeComposerOptionsModel Options { get; } = new(settings);
     private JsonObject[] profiles = [];
     public NativeHighlight[] SavedHighlights { get; private set; } = [];
     public string? RevealedExcerpt { get; private set; }
     public int? ScrollTarget { get; private set; }
     public int ScrollRevision { get; private set; }
     public bool CanSend =>
-        (Draft.Trim().Length > 0 || Attachments.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !Effort.Busy && !UncertainSend
+        (Draft.Trim().Length > 0 || Attachments.Length > 0) && Snapshot is { Running: false, ReadOnly: false } && !Busy && !Effort.Busy && !Options.Busy && !UncertainSend
         && ConnectionError == null && !ShowingHistory;
     private string? projectId, sessionId;
     private int generation;
@@ -53,6 +54,7 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
         Pause();
         profiles = []; Models = []; Effort.Reset();
         this.projectId = projectId; this.sessionId = sessionId;
+        Options.Bind(projectId, sessionId);
         active = true;
         Draft = drafts.GetValueOrDefault(sessionId, "");
         Attachments = stagedFiles.GetValueOrDefault(sessionId, []);
@@ -104,6 +106,7 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
         generation++;
         active = false;
         Effort.Reset();
+        Options.Reset();
     }
 
     public void Reset()
@@ -269,8 +272,8 @@ public sealed class WorkspaceConversationModel(INativeConversationClient client,
     public Task SelectModelAsync(string modelId, CancellationToken cancellationToken = default) =>
         ActAsync((project, session, token) => client.SetModelAsync(project, session, modelId, token), cancellationToken);
 
-    public bool CanChangePlanMode => CanAttach && !Effort.Busy && Snapshot is { Running: false, PlanMode: not null };
-    public bool CanChangeFastMode => CanAttach && !Effort.Busy && Snapshot is { Running: false, FastMode: not null };
+    public bool CanChangePlanMode => CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false, PlanMode: not null };
+    public bool CanChangeFastMode => CanAttach && !Effort.Busy && !Options.Busy && Snapshot is { Running: false, FastMode: not null };
     public Task SetFastModeAsync(bool enabled, CancellationToken cancellationToken = default)
     {
         if (!CanChangeFastMode || Snapshot is not { } snapshot || snapshot.FastMode?.Enabled == enabled) return Task.CompletedTask;

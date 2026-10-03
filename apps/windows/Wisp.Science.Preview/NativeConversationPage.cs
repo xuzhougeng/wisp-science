@@ -14,7 +14,7 @@ using Wisp.ProjectBrowser.Contracts;
 
 namespace Wisp.Science.Preview;
 
-internal sealed class NativeConversationPage : UserControl, IDisposable
+internal sealed partial class NativeConversationPage : UserControl, IDisposable
 {
     // Keep native Button focus/pressed states and accessible text.
     // Secondary actions remain present for touch and keyboard users at all times.
@@ -47,7 +47,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly ComboBox models = new() { MaxWidth = 230 };
     private readonly ComboBox efforts = new() { MaxWidth = 100, MinWidth = 72, Visibility = Visibility.Collapsed };
     private bool updatingEfforts;
-    private readonly Microsoft.UI.Xaml.Controls.Primitives.ToggleButton planMode = new() { Content = "Plan", Visibility = Visibility.Collapsed };
+    private readonly ToggleSwitch planMode = new();
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ToggleButton fastMode = new() { Content = "Fast", Visibility = Visibility.Collapsed };
     private readonly Button send = new() { Content = "发送" };
     private readonly Button stop = new() { Content = "停止" };
@@ -185,18 +185,10 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         AutomationProperties.SetName(attach, "添加附件"); ToolTipService.SetToolTip(attach, "添加附件");
         var options = new Button { Content = design.Icon("adjustments", 18) };
         AutomationProperties.SetName(options, "对话选项"); ToolTipService.SetToolTip(options, "对话选项");
-        var optionContent = new StackPanel { Spacing = 10, MinWidth = 220 };
-        optionContent.Children.Add(design.Text("对话选项", 15));
-        planMode.Content = "计划模式";
-        optionContent.Children.Add(planMode);
-        var optionHint = design.Text("先调查并提交计划，再决定是否执行。", 12);
-        optionHint.Foreground = design.Brush("text-muted"); optionContent.Children.Add(optionHint);
-        composerOptions.Content = optionContent;
-        composerOptions.Opened += (_, _) => composerOptionsOpen = true;
-        composerOptions.Closed += (_, _) => composerOptionsOpen = false;
+        BuildComposerOptions();
+        composerOptions.Opened += async (_, _) => { composerOptionsOpen = true; await model.Options.LoadAsync(lifetime.Token); };
+        composerOptions.Closed += (_, _) => { composerOptionsOpen = false; optionSubmenu.Hide(); };
         options.Flyout = composerOptions;
-        AutomationProperties.SetName(planMode, "计划模式");
-        planMode.Click += async (_, _) => await model.SetPlanModeAsync(planMode.IsChecked == true, lifetime.Token);
         fastMode.Content = design.Icon("bolt", 18);
         AutomationProperties.SetName(fastMode, "Fast 优先服务");
         fastMode.Click += async (_, _) => await model.SetFastModeAsync(fastMode.IsChecked == true, lifetime.Token);
@@ -303,6 +295,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         // A failed constructor must not leave a half-built page observing resets.
         model.Changed += Refresh;
         model.Effort.Changed += Refresh;
+        model.Options.Changed += Refresh;
         design.TypographyChanged += Refresh;
         _ = PollAsync();
     }
@@ -357,7 +350,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
 
     public bool HandleEscape()
     {
-        if (composerOptionsOpen) { composerOptions.Hide(); return true; }
+        if (HandleComposerOptionsEscape()) return true;
         if (efforts.IsDropDownOpen) { efforts.IsDropDownOpen = false; return true; }
         if (composing || compositionJustEnded) return false;
         if (models.IsDropDownOpen) { models.IsDropDownOpen = false; return true; }
@@ -395,7 +388,11 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     {
         if (disposed) return;
         var session = model.Snapshot is { } snapshot ? snapshot.ProjectId + "/" + snapshot.SessionId : null;
-        if (session != readingSession) { readingSession = session; followLatest = true; userScrollPending = false; }
+        if (session != readingSession)
+        {
+            optionSubmenu.Hide(); composerOptions.Hide();
+            readingSession = session; followLatest = true; userScrollPending = false;
+        }
         FontFamily = design.Font(); FontSize = design.FontSize(14);
         composer.FontFamily = design.Font(); composer.FontSize = design.FontSize(14);
         var error = model.ConnectionError ?? model.OperationError ?? model.Effort.Error ?? model.Snapshot?.Error;
@@ -458,9 +455,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         finally { updatingEfforts = false; }
         efforts.Visibility = model.Effort.Options.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         efforts.IsEnabled = models.IsEnabled && model.CanAttach;
-        planMode.Visibility = model.Snapshot?.PlanMode is null ? Visibility.Collapsed : Visibility.Visible;
-        planMode.IsChecked = model.Snapshot?.PlanMode == true;
-        planMode.IsEnabled = model.CanChangePlanMode;
+        RefreshComposerOptions();
         fastMode.Visibility = model.Snapshot?.FastMode is null ? Visibility.Collapsed : Visibility.Visible;
         fastMode.IsChecked = model.Snapshot?.FastMode?.Enabled == true;
         fastMode.IsEnabled = model.CanChangeFastMode;
@@ -725,6 +720,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     {
         if (disposed) return;
         composerOptions.Hide();
-        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Effort.Changed -= Refresh; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
+        optionSubmenu.Hide();
+        disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Effort.Changed -= Refresh; model.Options.Changed -= Refresh; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
     }
 }

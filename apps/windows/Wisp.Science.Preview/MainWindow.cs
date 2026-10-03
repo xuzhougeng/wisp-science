@@ -86,6 +86,7 @@ internal sealed partial class MainWindow : Window
             else if (searchOverlay != null) { CloseSearch(); e.Handled = true; }
             else if (workspaceSheet != null) { workspaceSheet.HandleEscape(); e.Handled = true; }
             else if (settingsPage != null) { settingsPage.HandleEscape(); e.Handled = true; }
+            else if (conversationPage?.HandleComposerOptionsEscape() == true) e.Handled = true;
             else if (panelVisible && panelPage?.HandleEscape() == true) e.Handled = true;
             else if (panelVisible && workspacePanelOverlay) { TogglePanel(); e.Handled = true; }
             else if (sidebarDrawerVisible) { sidebarDrawerVisible = false; Render(); e.Handled = true; }
