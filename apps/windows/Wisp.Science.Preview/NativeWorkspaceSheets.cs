@@ -28,17 +28,20 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        header = new Grid { Padding = new Thickness(20, 16, 20, 12), ColumnSpacing = 12 };
+        header = new Grid { Padding = new Thickness(28, 24, 28, 20), ColumnSpacing = 12, MaxWidth = 1040 };
         header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        heading = design.Text(title, 22); heading.Foreground = design.Brush("text"); header.Children.Add(heading);
-        var dismiss = new Button { Content = "关闭" };
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        heading = design.Text(title, 24); heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        heading.Foreground = design.Brush("text"); header.Children.Add(heading);
+        var dismiss = design.ToolButton("关闭" + title, "close");
         dismiss.Click += (_, _) => HandleEscape();
-        Grid.SetColumn(dismiss, 1); header.Children.Add(dismiss);
+        Grid.SetColumn(HeaderActions, 1); header.Children.Add(HeaderActions);
+        Grid.SetColumn(dismiss, 2); header.Children.Add(dismiss);
         root.Children.Add(header);
         Notices = new StackPanel { Spacing = 8, Padding = new Thickness(20, 0, 20, 12), Visibility = Visibility.Collapsed };
         Grid.SetRow(Notices, 1); root.Children.Add(Notices);
-        Body = new StackPanel { Spacing = 12, Padding = new Thickness(20, 0, 20, 20) };
+        Body = new StackPanel { Spacing = 20, Padding = new Thickness(28, 0, 28, 28), MaxWidth = 1040 };
         BodyScroll = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(BodyScroll, 2); root.Children.Add(BodyScroll);
         Footer = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
@@ -47,6 +50,7 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
         Loaded += (_, _) => Design.ApplyTypography(this);
     }
     protected StackPanel Body { get; }
+    protected NativeActionWrap HeaderActions { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
     protected ScrollViewer BodyScroll { get; }
     protected StackPanel Notices { get; }
     protected StackPanel Footer { get; }
@@ -62,7 +66,8 @@ internal abstract class WorkspaceSheet : UserControl, IWorkspaceSheet
     }
     public virtual void HandleEscape() { if (!closed) close(); }
     public virtual void Dispose() { closed = true; }
-    protected TextBlock Mute(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("text-muted"); return block; }
+    protected TextBlock Mute(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("text-muted");
+        block.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible; return block; }
     protected TextBlock Warn(string text) { var block = Design.Text(text, 13); block.Foreground = Design.Brush("clay-strong"); return block; }
 }
 
@@ -89,9 +94,9 @@ internal sealed class NativeOutlinePage : WorkspaceSheet
         if (!chrome)
         {
             chrome = true;
-            var refresh = new Button { Content = "刷新" };
+            var refresh = Design.ToolButton("刷新", "refresh");
             refresh.Click += async (_, _) => { await model.RefreshAsync(lifetime.Token); Render(); };
-            Body.Children.Add(refresh); Body.Children.Add(search); Body.Children.Add(list);
+            HeaderActions.Children.Add(refresh); Body.Children.Add(search); Body.Children.Add(list);
         }
         RenderList();
     }
@@ -108,10 +113,12 @@ internal sealed class NativeOutlinePage : WorkspaceSheet
             if (entry.SentAt is > 0 and var sent)
                 row.Children.Add(Mute(entry.ResponseAt is { } response && response >= sent ? $"{response - sent} 秒" : ""));
             var button = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            Design.QuietButton(button); button.Padding = new Thickness(14); button.Background = Design.Brush("bg-elev");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, entry.Text);
             button.Click += async (_, _) => { await model.OpenQuestionAsync(captured, lifetime.Token); Render(); };
             list.Children.Add(button);
         }
-        if (!model.Visible.Any() && !model.Loading && model.Error == null) list.Children.Add(Mute("暂无问题"));
+        if (!model.Visible.Any() && !model.Loading && model.Error == null) list.Children.Add(Design.EmptyState("list", "暂无匹配的问题", "会话中的问题会列在这里，可搜索并返回对应位置。"));
         if (model.History is { } history)
         {
             list.Children.Add(Mute("历史定位"));
@@ -140,14 +147,14 @@ internal sealed class NativeInboxPage : WorkspaceSheet
         : base(design, "待查看", close)
     {
         this.model = model; this.projectId = projectId; this.open = open;
-        var refresh = new Button { Content = "刷新" };
+        var refresh = Design.ToolButton("刷新", "refresh");
         refresh.Click += async (_, _) => { await model.RefreshAsync(projectId); RenderBody(); };
-        Body.Children.Add(refresh);
+        HeaderActions.Children.Add(refresh);
         RenderBody();
     }
     public void RenderBody()
     {
-        while (Body.Children.Count > 1) Body.Children.RemoveAt(Body.Children.Count - 1);
+        Body.Children.Clear();
         if (model.Error is { } error) Body.Children.Add(Warn(error));
         if (model.Loading) Body.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         foreach (var entry in model.Entries)
@@ -160,7 +167,7 @@ internal sealed class NativeInboxPage : WorkspaceSheet
             button.Click += async (_, _) => await open(captured);
             Body.Children.Add(button);
         }
-        if (model.Entries.Length == 0 && !model.Loading && model.Error == null) Body.Children.Add(Mute("暂无待查看的会话"));
+        if (model.Entries.Length == 0 && !model.Loading && model.Error == null) Body.Children.Add(Design.EmptyState("list", "暂无待查看的会话", "需要你查看的会话会集中显示在这里。"));
     }
 }
 
@@ -197,17 +204,17 @@ internal sealed class NativeTrajectoryPage : WorkspaceSheet
         if (!chrome)
         {
             chrome = true;
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            var refresh = new Button { Content = "刷新" };
+            var refresh = Design.ToolButton("刷新", "refresh");
             refresh.Click += async (_, _) => { await model.RefreshAsync(); Render(); };
             var export = new Button { Content = "导出 HTML" };
+            Design.ActionButton(export);
             export.Click += async (_, _) =>
             {
                 try { await saveHtml("wisp-trajectory.html", await model.ExportHtmlAsync()); }
                 catch (Exception ex) { status.Text = ex.Message; status.Foreground = Design.Brush("clay-strong"); }
             };
-            actions.Children.Add(refresh); actions.Children.Add(export);
-            Body.Children.Add(actions); Body.Children.Add(search); Body.Children.Add(axis); Body.Children.Add(status); Body.Children.Add(list);
+            HeaderActions.Children.Add(refresh); HeaderActions.Children.Add(export);
+            Body.Children.Add(search); Body.Children.Add(axis); Body.Children.Add(status); Body.Children.Add(list);
         }
         status.Text = model.Error ?? (model.Snapshot is { } snapshot
             ? $"{snapshot.Stats.Turns} 轮 · {snapshot.Stats.Steps} 步 · 模型 {snapshot.Stats.LlmMs} ms · 工具 {snapshot.Stats.ToolMs} ms"
@@ -314,10 +321,11 @@ internal sealed class NativeSharePage : WorkspaceSheet
     private void Render()
     {
         Body.Children.Clear();
-        Body.Children.Add(Mute("选择要导出的消息。思考内容默认不选中；编辑和脱敏只影响导出副本。PNG 导出仍是后续工作。"));
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        Body.Children.Add(Mute("选择要导出的消息。思考内容默认不选中；编辑和脱敏只影响导出的 HTML 副本。"));
+        var actions = new NativeActionWrap();
         var all = new Button { Content = "全选" }; all.Click += (_, _) => { model.SelectAll(true); Render(); };
         var none = new Button { Content = "全不选" }; none.Click += (_, _) => { model.SelectAll(false); Render(); };
+        Design.ActionButton(all); Design.ActionButton(none);
         actions.Children.Add(all); actions.Children.Add(none);
         actions.Children.Add(Mute($"已选 {model.Selected.Length}/{model.Rows.Length}"));
         Body.Children.Add(actions);
@@ -330,7 +338,8 @@ internal sealed class NativeSharePage : WorkspaceSheet
             box.Unchecked += (_, _) => model.SetSelected(captured, false);
             var editor = new TextBox { Text = row.Row.Text, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 80 };
             editor.TextChanged += (_, _) => model.Edit(captured, editor.Text);
-            Body.Children.Add(box); Body.Children.Add(editor);
+            var message = new StackPanel { Spacing = 8 }; message.Children.Add(box); message.Children.Add(editor);
+            Body.Children.Add(Design.Card(message));
         }
         var keywords = new TextBox { Header = "脱敏关键词，以逗号分隔", Text = model.Keywords };
         keywords.TextChanged += (_, _) => model.Keywords = keywords.Text;

@@ -44,7 +44,7 @@ internal sealed class NativeWorkspaceTerminal : UserControl, IDisposable
         grip.DragDelta += (_, e) => Resize(Height - e.VerticalChange);
         grip.KeyDown += (_, e) => { if (e.Key is Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Down) { Resize(Height + (e.Key == Windows.System.VirtualKey.Up ? 24 : -24)); e.Handled = true; } };
         root.Children.Add(grip);
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var toolbar = new NativeActionWrap();
         var refresh = new Button { Content = "刷新" };
         refresh.Click += async (_, _) => { await model.LoadAsync(lifetime.Token); Render(); };
         open.Click += async (_, _) => await OpenContextAsync("local");
@@ -55,8 +55,8 @@ internal sealed class NativeWorkspaceTerminal : UserControl, IDisposable
         selection.SelectionChanged += (_, _) => { if (!syncingSelection && selection.SelectedItem is ComboBoxItem row) { model.Select((string)row.Tag); Render(); } };
         AutomationProperties.SetName(selection, "当前终端");
         toolbar.Children.Add(selection); toolbar.Children.Add(refresh); toolbar.Children.Add(open); toolbar.Children.Add(interrupt); toolbar.Children.Add(close); toolbar.Children.Add(dismiss);
-        var toolbarScroll = new ScrollViewer { Content = toolbar, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(toolbarScroll, 1); root.Children.Add(toolbarScroll);
+        foreach (var button in toolbar.Children.OfType<Button>()) design.QuietButton(button);
+        Grid.SetRow(toolbar, 1); root.Children.Add(toolbar);
         Grid.SetRow(view, 2); root.Children.Add(view);
         Grid.SetRow(fallback, 2); root.Children.Add(fallback);
         var feedback = new StackPanel { Spacing = 4 };

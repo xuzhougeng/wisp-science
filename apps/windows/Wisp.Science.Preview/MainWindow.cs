@@ -69,6 +69,7 @@ internal sealed partial class MainWindow : Window
         root.ActualThemeChanged += (_, _) => Render();
         root.SizeChanged += (_, e) =>
         {
+            if (terminalPage != null) terminalPage.MaxHeight = PreviewLayout.TerminalMaxHeight(e.NewSize.Height);
             var next = PreviewLayout.ForSize(e.NewSize.Width, e.NewSize.Height);
             if (next != layout) { layout = next; Render(); }
         };
@@ -146,6 +147,7 @@ internal sealed partial class MainWindow : Window
         design.LightPalette = settings.LightPalette;
         design.DarkPalette = settings.DarkPalette;
         design.Dark = root.ActualTheme == ElementTheme.Dark;
+        design.RefreshPalette();
         root.Background = design.Brush("bg-app");
         // WinUI can report Parent=null while an unloaded subtree still owns a
         // reusable UserControl. Detach through the retained owner before remounting.
@@ -237,7 +239,8 @@ internal sealed partial class MainWindow : Window
         foreach (var project in model.Projects)
         {
             var content = Stack(4);
-            content.Children.Add(SingleLine(project.Name, 14));
+            var projectTitle = SingleLine(project.Name, 15); projectTitle.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            content.Children.Add(projectTitle);
             content.Children.Add(SingleLine(project.WorkspaceDirectory, 11, "text-faint"));
             content.Children.Add(Text($"{project.SessionCount} 会话 · {project.ArtifactCount} 产物" +
                 (project.RunningCount > 0 ? $" · {project.RunningCount} 运行中" : "") +
@@ -255,7 +258,8 @@ internal sealed partial class MainWindow : Window
             star.IsEnabled = !model.Loading; options.Children.Add(star);
             var more = ActionButton("项目操作", "more", () => { }, quiet: true); options.Children.Add(more);
             Grid.SetColumn(options, 1); cardRow.Children.Add(options);
-            var card = Card(cardRow, 4);
+            var card = Card(cardRow, 6);
+            card.BorderThickness = new Thickness(0);
             var menu = new MenuFlyout();
             var projectSettings = new MenuFlyoutItem { Text = "项目设置" };
             projectSettings.Click += (_, _) => OpenSettingsSection("project", project.Id);
@@ -273,7 +277,8 @@ internal sealed partial class MainWindow : Window
             var label = Stack(4); label.Children.Add(SessionTitle(session.Title, 14));
             label.Children.Add(SingleLine(model.Projects.FirstOrDefault(p => p.Id == session.ProjectId)?.Name ?? "项目", 11, "text-faint"));
             label.Children.Add(SessionMetadata(session));
-            recent.Children.Add(Card(ContentButton(label, () => _ = model.OpenProjectAsync(session.ProjectId, session.Id), $"recent-{session.Id}", session.Title), 4));
+            var recentCard = Card(ContentButton(label, () => _ = model.OpenProjectAsync(session.ProjectId, session.Id), $"recent-{session.Id}", session.Title), 6);
+            recentCard.BorderThickness = new Thickness(0); recent.Children.Add(recentCard);
         }
         if (model.RecentSessions.Count == 0) recent.Children.Add(Card(Text(model.Loading ? "正在读取最近会话…" : model.LastLoaded == null && model.Error != null ? "最近会话尚未读取成功，请刷新重试。" : "暂无最近会话", 14, "text-muted")));
         var recentSection = ListSection("最近会话", recent);
@@ -298,7 +303,7 @@ internal sealed partial class MainWindow : Window
         main.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         main.RowDefinitions.Add(new() { Height = GridLength.Auto });
         main.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var toolbar = new Grid { Padding = new Thickness(16), ColumnSpacing = 10 };
+        var toolbar = new Grid { Padding = new Thickness(20, 12, 16, 12), ColumnSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         toolbar.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -325,15 +330,26 @@ internal sealed partial class MainWindow : Window
         tools.Children.Add(ActionButton(inboxLabel, "bell", () => _ = OpenSheet("inbox"), quiet: true));
         tools.Children.Add(ActionButton("终端", "terminal", sessionReady ? ToggleTerminal : null, quiet: true));
         tools.Children.Add(ActionButton("切换侧面板", "panel", sessionReady ? TogglePanel : null, quiet: true));
-        // Wrap the complete strip to a second right-aligned row; never drop actions.
-        if (layout.CompactWorkspace)
+        var overflow = ActionButton("更多会话操作", "more", () => { }, quiet: true);
+        var overflowMenu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
+        foreach (var (label, action) in new (string, Action)[] {
+            ("会话大纲", () => _ = OpenSheet("outline")), ("分享", () => _ = OpenSheet("share")),
+            ("运行轨迹", () => _ = OpenSheet("trajectory")), ("研究归档", () => _ = OpenSheet("archive")),
+            (inboxLabel, () => _ = OpenSheet("inbox")), ("终端", ToggleTerminal) })
         {
-            toolbar.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            toolbar.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            toolbar.RowSpacing = 6;
-            Grid.SetColumn(tools, 0); Grid.SetColumnSpan(tools, 3); Grid.SetRow(tools, 1);
+            var item = new MenuFlyoutItem { Text = label, IsEnabled = label == inboxLabel || sessionReady };
+            item.Click += (_, _) => action(); overflowMenu.Items.Add(item);
         }
-        else Grid.SetColumn(tools, 2);
+        Register(overflowMenu); overflow.Flyout = overflowMenu; tools.Children.Add(overflow);
+        void FitToolbar(double width)
+        {
+            var compact = PreviewLayout.CompactConversationToolbar(width);
+            for (var i = 1; i <= 6; i++) tools.Children[i].Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+            overflow.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        }
+        FitToolbar(PreviewLayout.Workspace(root.ActualWidth, sidebarVisible, panelVisible, settings.PanelWidth).ContentWidth);
+        toolbar.SizeChanged += (_, e) => FitToolbar(e.NewSize.Width);
+        Grid.SetColumn(tools, 2);
         tools.HorizontalAlignment = HorizontalAlignment.Right;
         toolbar.Children.Add(tools); main.Children.Add(toolbar);
         var messages = Stack(8); messages.MaxWidth = PreviewLayout.ConversationMaxWidth; messages.Margin = new Thickness(16);
@@ -387,6 +403,7 @@ internal sealed partial class MainWindow : Window
         }
         if (terminalVisible && model.ActiveSessionId != null && terminalPage != null)
         {
+            terminalPage.MaxHeight = PreviewLayout.TerminalMaxHeight(root.ActualHeight);
             if (terminalPage.Parent is Panel previous) previous.Children.Remove(terminalPage);
             Grid.SetRow(terminalPage, 2); main.Children.Add(terminalPage);
         }
@@ -420,17 +437,23 @@ internal sealed partial class MainWindow : Window
                 pending.Children.Add(ActionButton("关闭面板", "close", TogglePanel, true));
                 panelContent = pending;
             }
-            backdrop = new Button { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(48, 0, 0, 0)),
+            backdrop = new Button { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(20, 0, 0, 0)),
                 BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch, IsTabStop = false };
+            // A dismiss surface must retain the same tint when the pointer moves over it.
+            backdrop.Resources["ButtonBackgroundPointerOver"] = backdrop.Background;
+            backdrop.Resources["ButtonBackgroundPressed"] = backdrop.Background;
+            backdrop.Resources["ButtonBorderBrushPointerOver"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            backdrop.Resources["ButtonBorderBrushPressed"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             AutomationProperties.SetName(backdrop, "关闭侧面板");
             backdrop.Click += (_, _) => TogglePanel();
             Grid.SetColumnSpan(backdrop, 3); shell.Children.Add(backdrop);
-            panelHost = new Grid { HorizontalAlignment = HorizontalAlignment.Right, Background = design.Brush("bg-sunken") };
+            panelHost = new Grid { HorizontalAlignment = HorizontalAlignment.Right, Background = design.Brush("bg-elev"),
+                BorderBrush = design.Brush("border"), BorderThickness = new Thickness(1, 0, 0, 0) };
             workspacePanelHost = panelHost;
             panelHost.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             panelHost.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            resize = new Thumb { Width = 8, Background = design.Brush("border"), IsTabStop = true };
+            resize = new Thumb { Width = 5, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), IsTabStop = true };
             AutomationProperties.SetName(resize, "调整侧面板宽度，左右方向键调整");
             resize.DragDelta += (_, e) => { settings.PanelWidth = PreviewLayout.ClampPanelWidth(settings.PanelWidth - e.HorizontalChange); SizeWorkspace(); };
             resize.DragCompleted += (_, _) => SaveSettings();
@@ -475,7 +498,7 @@ internal sealed partial class MainWindow : Window
 
     private FrameworkElement Sidebar(ProjectSummary project)
     {
-        var sidebar = new Grid { Width = layout.CompactWorkspace ? 218 : 244, Padding = new Thickness(12), Background = design.Brush("bg-sunken"), RowSpacing = 8 };
+        var sidebar = new Grid { Width = layout.CompactWorkspace ? 218 : 244, Padding = new Thickness(14, 12, 14, 12), Background = design.Brush("bg-sunken"), RowSpacing = 12 };
         sidebar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         sidebar.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         sidebar.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -501,14 +524,16 @@ internal sealed partial class MainWindow : Window
         top.Children.Add(heading);
         top.Children.Add(ActionButton("新建会话", "plus", () => _ = CreateSessionAsync(), showLabel: true, primary: true, quiet: true));
         top.Children.Add(ActionButton("搜索", "search", OpenSearch, true, quiet: true));
-        top.Children.Add(ActionButton("新建文件夹", "folder-plus", () => _ = EditGroup(), true, quiet: true));
         top.Children.Add(ActionButton("文件", "doc", model.ActiveSessionId == null ? null : ShowFiles, true, quiet: true));
-        top.Children.Add(ActionButton("研究历程", "research-trail", () => _ = OpenNativeAction("journey"), true, quiet: true));
-        top.Children.Add(ActionButton("论文证据", "book", () => _ = OpenNativeAction("publication"), true, quiet: true));
-        top.Children.Add(ActionButton("收藏", "star", () => _ = OpenNativeAction("library"), true, quiet: true));
-        // Bound the tools region on short windows so saved sessions always get space.
-        var topScroll = new ScrollViewer { Content = top, MaxHeight = layout.ShortWindow ? 225 : 300 };
-        sidebar.Children.Add(topScroll);
+        var research = ActionButton("研究工具", "research-trail", () => { }, true, quiet: true);
+        var researchMenu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        foreach (var (label, page) in new[] { ("研究历程", "journey"), ("论文证据", "publication"), ("收藏", "library") })
+        {
+            var entry = new MenuFlyoutItem { Text = label };
+            entry.Click += (_, _) => _ = OpenNativeAction(page); researchMenu.Items.Add(entry);
+        }
+        Register(researchMenu); research.Flyout = researchMenu; top.Children.Add(research);
+        sidebar.Children.Add(top);
         var sessionSection = SessionList();
         Grid.SetRow(sessionSection, 1); sidebar.Children.Add(sessionSection);
         var bottom = Stack(4);
@@ -525,7 +550,6 @@ internal sealed partial class MainWindow : Window
     private FrameworkElement Footer(bool workspace = false)
     {
         var footer = Stack(6);
-        if (!workspace) footer.Children.Add(Text("WinUI 3 原生预览 · 会话连接桌面宿主后可发送", 11, "text-faint"));
         var actions = Row(8);
         var refresh = ActionButton("刷新", "refresh", () => { localError = null; _ = model.RefreshAsync(); }, quiet: true); refresh.IsEnabled = !model.Loading;
         actions.Children.Add(refresh);
@@ -938,6 +962,12 @@ internal sealed partial class MainWindow : Window
             BorderThickness = new Thickness(quiet ? 0 : 1), BorderBrush = design.Brush("border"), CornerRadius = new CornerRadius(6),
             HorizontalContentAlignment = HorizontalAlignment.Left };
         if (action != null) button.Click += (_, _) => action();
+        if (quiet)
+        {
+            design.QuietButton(button);
+            if (showLabel) { button.HorizontalAlignment = HorizontalAlignment.Stretch; button.Padding = new Thickness(10, 7, 10, 7); }
+            if (primary) { button.Background = design.Brush("bg-elev"); button.BorderBrush = design.Brush("border"); button.BorderThickness = new Thickness(1); }
+        }
         AutomationProperties.SetName(button, label); ToolTipService.SetToolTip(button, action == null ? label + "（只读预览，尚未接入）" : label);
         return button;
     }

@@ -8,7 +8,7 @@ namespace Wisp.Science.Preview;
 internal sealed class NativeResearchCalendarPage : WorkspaceSheet
 {
     private readonly WorkspaceCalendarModel model;
-    private readonly StackPanel navigation = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
+    private readonly NativeActionWrap navigation = new();
     private readonly TextBlock month = new() { FontSize = 20, VerticalAlignment = VerticalAlignment.Center };
     private readonly ComboBox filter = new() { Header = "项目", MinWidth = 200 };
     private readonly Grid days = new() { ColumnSpacing = 5, RowSpacing = 5 };
@@ -23,7 +23,7 @@ internal sealed class NativeResearchCalendarPage : WorkspaceSheet
         design.BindTypography(month, 20);
         Button Action(string label, Func<Task> action)
         {
-            var button = new Button { Content = label }; button.Click += async (_, _) => await action(); return button;
+            var button = new Button { Content = label }; design.ActionButton(button); button.Click += async (_, _) => await action(); return button;
         }
         navigation.Children.Add(Action("上个月", () => model.ShiftMonthAsync(-1)));
         navigation.Children.Add(month);
@@ -33,7 +33,7 @@ internal sealed class NativeResearchCalendarPage : WorkspaceSheet
         Body.Children.Add(navigation); Body.Children.Add(filter); Body.Children.Add(error);
         for (int i = 0; i < 7; i++) days.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         for (int i = 0; i < 7; i++) days.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        Body.Children.Add(days); Body.Children.Add(entries);
+        Body.Children.Add(design.Card(days)); Body.Children.Add(entries);
         model.Changed += Render; Render(); _ = model.OpenAsync();
     }
     private void Render()
@@ -44,18 +44,26 @@ internal sealed class NativeResearchCalendarPage : WorkspaceSheet
         filter.IsEnabled = model.PrivacyReady && !model.Busy;
         month.Text = model.Month.ToString("yyyy 年 M 月");
         error.Text = model.Error ?? (model.Busy ? "正在读取…" : "");
+        error.Visibility = error.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         filter.Items.Clear(); filter.Items.Add(new ComboBoxItem { Content = "全部项目", IsSelected = model.ProjectFilter == null });
         foreach (var project in model.VisibleProjects) filter.Items.Add(new ComboBoxItem { Content = project.Name, Tag = project.Id, IsSelected = model.ProjectFilter == project.Id });
         days.Children.Clear();
         var labels = new[] { "日", "一", "二", "三", "四", "五", "六" };
-        for (int i = 0; i < 7; i++) { var label = Mute(labels[i]); Grid.SetColumn(label, i); days.Children.Add(label); }
+        for (int i = 0; i < 7; i++) { var label = Mute(labels[i]); label.HorizontalAlignment = HorizontalAlignment.Center;
+            label.Margin = new Thickness(0, 0, 0, 10); Grid.SetColumn(label, i); days.Children.Add(label); }
         var marked = model.Filter(model.MonthRows).SelectMany(p => p.History.Entries).Select(e => DateTimeOffset.FromUnixTimeSeconds(e.OccurredAt).LocalDateTime.Date).ToHashSet();
         for (int day = 1; day <= DateTime.DaysInMonth(model.Month.Year, model.Month.Month); day++)
         {
             var date = new DateTime(model.Month.Year, model.Month.Month, day);
             var position = (int)model.Month.DayOfWeek + day - 1;
-            var button = new Button { Content = day + (marked.Contains(date) ? " · 有记录" : ""), MinHeight = 48,
+            var dayContent = new StackPanel { Spacing = 5, HorizontalAlignment = HorizontalAlignment.Center };
+            dayContent.Children.Add(Design.Text(day.ToString(), 14));
+            dayContent.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 4, Height = 4,
+                Fill = Design.Brush("clay-strong"), Opacity = marked.Contains(date) ? 1 : 0 });
+            var button = new Button { Content = dayContent, MinHeight = 48,
                 HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = model.PrivacyReady && !model.Busy };
+            Design.QuietButton(button); button.MinHeight = 48;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, date.ToString("yyyy-MM-dd") + (marked.Contains(date) ? "，有研究记录" : ""));
             if (date == model.Day) button.Background = Design.Brush("surface-hover");
             button.Click += async (_, _) => await model.SelectDayAsync(date);
             Grid.SetColumn(button, position % 7); Grid.SetRow(button, position / 7 + 1); days.Children.Add(button);

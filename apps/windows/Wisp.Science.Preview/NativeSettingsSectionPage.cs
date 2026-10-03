@@ -21,6 +21,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private readonly Button cancelAuthorization = new() { Content = "取消 OAuth 授权", Visibility = Visibility.Collapsed };
     private readonly TextBlock saveFeedback = new() { TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel editorActions = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
+    private readonly List<StackPanel> settingCards = [];
     public bool HasChanges => model.HasChanges || model.Draft != null && invalidFields.Count > 0;
     public bool Busy => model.Busy || channelBinding?.Busy == true;
     private static string S(JsonNode? row, string key) => row?[key]?.GetValue<string>() ?? "";
@@ -93,7 +94,7 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         foreach (var button in editorActions.Children.OfType<Button>()) button.IsEnabled = !Busy && pendingConfirmation == null;
         saveFeedback.Text = model.Saving ? "正在保存…" : model.SaveConfirmed
             ? model.Error == null ? "已保存。" : "上次设置已保存。当前操作未确认，请查看页面中的错误详情。"
-            : model.Error ?? "修改后点击保存。离开前可以取消并保留当前草稿。";
+            : model.Error ?? "修改后点击保存。";
     }
     private void ClearConfirmation() { pendingConfirmation = null; confirmation.Children.Clear(); LockConfirmation(); }
     public override void Dispose()
@@ -134,9 +135,12 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         if (model.Closed) return;
         ClearDeviceToken();
         authTerminal?.Dispose(); authTerminal = null;
-        Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
+        Form.Children.Clear(); Results.Children.Clear(); choices.Clear(); settingCards.Clear();
         editorActions.Children.Clear();
-        Form.Children.Add(Button("刷新", Reload));
+        HeaderActions.Children.Clear();
+        var refresh = Design.ToolButton("刷新", "refresh");
+        refresh.Click += async (_, _) => await Reload();
+        HeaderActions.Children.Add(refresh);
         switch (section)
         {
             case "skills": Skills(); break;
@@ -160,14 +164,20 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             case "channels": Channels(); break;
             case "project": ProjectSettings(); break;
         }
+        foreach (var card in settingCards) NativeActionWrap.GroupButtons(card);
+        NativeActionWrap.GroupButtons(Form);
         Update();
         LockConfirmation();
     }
     private StackPanel Card(string title)
     {
-        var card = new StackPanel { Spacing = 8, Margin = new Thickness(0, 8, 0, 12) };
-        card.Children.Add(Design.Text(title, 18));
-        Results.Children.Add(card); return card;
+        var card = new StackPanel { Spacing = 10 };
+        var heading = Design.Text(title, 16); heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        card.Children.Add(heading);
+        var frame = Design.Card(card);
+        frame.SetBinding(UIElement.VisibilityProperty, new Microsoft.UI.Xaml.Data.Binding {
+            Source = card, Path = new PropertyPath("Visibility"), Mode = Microsoft.UI.Xaml.Data.BindingMode.OneWay });
+        Results.Children.Add(frame); settingCards.Add(card); return card;
     }
     private void Toggle(StackPanel card, string label, bool value, string command, JsonObject args)
     {
@@ -183,7 +193,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         authTerminal?.Dispose(); authTerminal = null;
         invalidFields.Clear();
         Form.Children.Clear(); Results.Children.Clear(); choices.Clear();
-        Form.Children.Add(Design.Text(title, 20));
+        HeaderActions.Children.Clear();
+        if (title != Titles[section]) Form.Children.Add(Design.Text(title, 20));
         fields(model.Draft);
         editorActions.Children.Clear();
         editorActions.Children.Add(Button("保存", async () =>
@@ -234,13 +245,17 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
         foreach (var file in Rows(view["files"]))
         {
             var name = S(file, "name");
-            card.Children.Add(Button(name + " · 编辑", async () =>
+            var fileRow = new StackPanel { Spacing = 8, IsHitTestVisible = projectScoped };
+            var edit = Button(name + " · 编辑", async () =>
             {
                 string? content = null;
                 if (await model.InvokeAsync("read_memory_file", new() { ["name"] = name }, v => content = v?.GetValue<string>()) && content != null)
                     EditFile(name, content);
-            }));
-            Action(card, "删除 " + name, "delete_memory_file", new() { ["name"] = name }, true);
+            });
+            edit.IsEnabled = projectScoped; fileRow.Children.Add(edit);
+            Action(fileRow, "删除 " + name, "delete_memory_file", new() { ["name"] = name }, true);
+            foreach (var button in fileRow.Children.OfType<Button>()) button.IsEnabled = projectScoped;
+            NativeActionWrap.GroupButtons(fileRow); card.Children.Add(fileRow);
         }
         if (!projectScoped) foreach (var button in card.Children.OfType<Button>()) button.IsEnabled = false;
         var global = Card("全局记忆");
@@ -281,7 +296,8 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             var name = S(skill, "name"); var card = Card(name);
             var tags = string.Join(" · ", (skill["tags"] as JsonArray ?? []).Select(n => n?.GetValue<string>()));
             cards.Add((card, name + " " + S(skill, "description") + " " + tags));
-            card.Children.Add(Mute(S(skill, "description"))); card.Children.Add(Mute(tags));
+            card.Children.Add(Mute(S(skill, "description")));
+            if (tags.Length > 0) card.Children.Add(Mute(tags));
             Toggle(card, "启用", B(skill, "enabled"), "set_skill_enabled", new() { ["name"] = name });
             card.Children.Add(Button("编辑标签", () => { Editor(name, new() { ["tags"] = skill["tags"]?.DeepClone() ?? new JsonArray() }, "set_skill_tags", null,
                 d => Lines(d, "tags", "标签"), new() { ["name"] = name }); return Task.CompletedTask; }));
@@ -312,8 +328,11 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
             var card = Card(S(row, "name")); card.Children.Add(Mute(S(row, "description_zh") is { Length: > 0 } zh ? zh : S(row, "description")));
             Toggle(card, "启用", B(row, "enabled"), "set_connector_enabled", new() { ["key"] = S(row, "key") });
             Toggle(card, "跳过连接器审批", B(row, "skip_approvals"), "set_connector_skip_approvals", new() { ["key"] = S(row, "key") });
-            foreach (var tool in Rows(row["tools"])) Choice(card, S(tool, "name"), S(tool, "mode"), [("allow", "允许"), ("ask", "询问"), ("deny", "禁止")],
+            var tools = Rows(row["tools"]).ToArray();
+            var permissions = new StackPanel { Spacing = 12 };
+            foreach (var tool in tools) Choice(permissions, S(tool, "name"), S(tool, "mode"), [("allow", "允许"), ("ask", "询问"), ("deny", "禁止")],
                 mode => _ = Run("set_tool_approval", new() { ["tool"] = S(tool, "name"), ["mode"] = mode }));
+            if (tools.Length > 0) card.Children.Add(Disclosure($"工具权限 · {tools.Length}", permissions));
         }
         foreach (var kind in new[] { "stdio", "http" }) Form.Children.Add(Button(kind == "stdio" ? "添加命令连接" : "添加 HTTP 连接", () =>
         {

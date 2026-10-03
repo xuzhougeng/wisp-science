@@ -30,7 +30,8 @@ internal sealed class NativeJourneyPage : NativeActionPage
         var first = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         var from = new CalendarDatePicker { Header = "开始日期", Date = new DateTimeOffset(day ?? first) };
         var until = new CalendarDatePicker { Header = "结束日期（含）", Date = new DateTimeOffset(day ?? first.AddMonths(1).AddDays(-1)) };
-        Form.Children.Add(from); Form.Children.Add(until);
+        from.Width = until.Width = 220;
+        var dates = new NativeActionWrap(); dates.Children.Add(from); dates.Children.Add(until); Form.Children.Add(dates);
         Field("搜索标题与摘要", "", text => { model.Query = text; RenderEntries(); });
         var kinds = new ComboBox { Header = "记录类型", HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var kind in new[] { "", "artifact", "run", "session", "archive", "finding", "decision", "progress", "next", "data", "paper" })

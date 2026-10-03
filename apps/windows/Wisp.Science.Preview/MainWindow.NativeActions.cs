@@ -151,12 +151,20 @@ internal sealed partial class MainWindow
         section.RowDefinitions.Add(new() { Height = GridLength.Auto });
         section.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         var controls = Stack(4);
-        controls.Children.Add(Text($"会话   {model.Sessions.Count}", 11, "text-faint"));
+        var sectionHeader = new Grid();
+        sectionHeader.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        sectionHeader.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var count = Text($"会话   {model.Sessions.Count}", 11, "text-faint");
+        count.VerticalAlignment = VerticalAlignment.Center;
+        sectionHeader.Children.Add(count); controls.Children.Add(sectionHeader);
         if (sessionGroups is { } groups)
         {
             var options = Row(4);
             var arrange = ActionButton("分组和排序", "list", () => { }, quiet: true);
             var menu = new MenuFlyout();
+            var createFolder = new MenuFlyoutItem { Text = "新建文件夹" };
+            createFolder.Click += (_, _) => _ = EditGroup(); menu.Items.Add(createFolder);
+            menu.Items.Add(new MenuFlyoutSeparator());
             foreach (var (label, value, sort) in new[] { ("最近更新", "newest", true), ("按名称排序", "name", true), ("不分组", "none", false), ("按文件夹分组", "folder", false), ("按日期分组", "date", false) })
             {
                 var choice = new ToggleMenuFlyoutItem { Text = label, IsChecked = (sort ? groups.Sort : groups.Group) == value };
@@ -164,7 +172,7 @@ internal sealed partial class MainWindow
                 menu.Items.Add(choice);
             }
             Register(menu); arrange.Flyout = menu; options.Children.Add(arrange);
-            options.Children.Add(ActionButton(groups.Selecting ? "取消选择" : "选择会话", "check", () => { groups.Selecting = !groups.Selecting; groups.Selected.Clear(); Render(); }, true, quiet: true));
+            options.Children.Add(ActionButton(groups.Selecting ? "取消选择" : "选择会话", "check", () => { groups.Selecting = !groups.Selecting; groups.Selected.Clear(); Render(); }, quiet: true));
             if (groups.Selecting)
             {
                 var move = ActionButton("移动", "folder", () => { }, quiet: true);
@@ -182,7 +190,7 @@ internal sealed partial class MainWindow
                 }
                 Register(destinations); move.Flyout = destinations; options.Children.Add(move);
             }
-            controls.Children.Add(options);
+            Grid.SetColumn(options, 1); sectionHeader.Children.Add(options);
             if (groups.Error != null) controls.Children.Add(Text(groups.Error, 11, "clay-strong"));
         }
         section.Children.Add(controls);
@@ -212,8 +220,14 @@ internal sealed partial class MainWindow
                     var label = Stack(3); label.Children.Add(SessionTitle(session.Title, 12)); label.Children.Add(SessionMetadata(session));
                     var button = ContentButton(label, () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id,
                         session.Title + " · " + NativeBrowserPresentation.Status(session.Status));
-                    button.Padding = new Thickness(8, 6, 8, 6);
-                    if (session.Id == model.ActiveSessionId) button.Background = design.Brush("surface-hover");
+                    design.QuietButton(button);
+                    button.Padding = new Thickness(10, 7, 10, 7);
+                    if (session.Id == model.ActiveSessionId)
+                    {
+                        button.Background = design.Brush("bg-elev");
+                        button.BorderBrush = design.Brush("border"); button.BorderThickness = new Thickness(1);
+                        label.Children.OfType<TextBlock>().First().FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                    }
                     row.Children.Add(button);
                     if (sessionGroups is { } mutationGroups)
                     {

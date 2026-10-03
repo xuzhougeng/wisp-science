@@ -10,6 +10,7 @@ internal sealed partial class NativeSettingsSectionPage
     private static string Display(JsonNode? value) => value switch
     {
         null => "", JsonValue v when v.TryGetValue<bool>(out var enabled) => enabled ? "是" : "否",
+        JsonValue v when v.TryGetValue<long>(out var number) => number.ToString("N0"),
         JsonArray a => $"{a.Count} 项", _ => value.ToString()
     };
     private void Summary(StackPanel parent, JsonNode? value)

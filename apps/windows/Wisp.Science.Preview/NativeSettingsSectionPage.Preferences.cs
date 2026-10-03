@@ -39,6 +39,18 @@ internal sealed partial class NativeSettingsSectionPage
     {
         var card = Card(title);
         if (model.Values[read] is not JsonObject prefs) { card.Children.Add(Mute("尚未读取，点击刷新重试。")); return; }
+        var description = title switch
+        {
+            "工作区与通知" => $"{(S(prefs, "locale") == "en" ? "English" : "简体中文")} · 桌面通知{(B(prefs, "notifications_enabled") ? "已开启" : "已关闭")} · {(B(prefs, "resume_last_session") ? "启动时恢复最近会话" : "启动时显示项目")}",
+            "输入与选择" => "配置消息发送快捷键和选中文本后的快捷菜单。",
+            "网络与软件源" => "分别配置模型、订阅登录和工具代理，以及 Python / Conda 软件源。",
+            "对话运行限制" => $"自动压缩上下文{(B(prefs, "auto_compact") ? "已开启" : "已关闭")} · 后续问题建议{(B(prefs, "follow_up_questions") ? "已开启" : "已关闭")}",
+            "桌宠" => B(prefs, "pet_enabled") ? "桌宠已开启，可调整资源目录。" : "桌宠已关闭，可在编辑中启用并选择资源目录。",
+            "URL 访问规则" => $"阻止访问 {(prefs["block"] as JsonArray)?.Count ?? 0} 项 · 优先访问 {(prefs["prefer"] as JsonArray)?.Count ?? 0} 项",
+            "项目保留策略" => "设置成功运行、失败运行和孤立文件的保留期限。",
+            _ => ""
+        };
+        if (description.Length > 0) card.Children.Add(Mute(description));
         card.Children.Add(Button("编辑" + title, () => { Editor(title, prefs, write, parameter, fields); return Task.CompletedTask; }));
     }
     private void Immediate(StackPanel card, string label, string read, string write)

@@ -43,9 +43,9 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly Func<Task> create;
     private readonly StackPanel transcript = new() { Spacing = 18, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16) };
     private readonly StackPanel approvals = new() { Spacing = 12, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16, 0, 16, 12) };
-    private readonly TextBox composer = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 58, PlaceholderText = "向 Wisp Science 提问…" };
+    private readonly TextBox composer = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, PlaceholderText = "向 Wisp Science 提问…" };
     private readonly ComboBox models = new() { MaxWidth = 230 };
-    private readonly ComboBox efforts = new() { MaxWidth = 140, MinWidth = 80, Visibility = Visibility.Collapsed };
+    private readonly ComboBox efforts = new() { MaxWidth = 100, MinWidth = 72, Visibility = Visibility.Collapsed };
     private bool updatingEfforts;
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ToggleButton planMode = new() { Content = "Plan", Visibility = Visibility.Collapsed };
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ToggleButton fastMode = new() { Content = "Fast", Visibility = Visibility.Collapsed };
@@ -53,6 +53,8 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     private readonly Button stop = new() { Content = "停止" };
     private readonly Button createSession = new() { Content = "新建会话" };
     private readonly Button attach = new() { Content = "对话附件" };
+    private readonly Flyout composerOptions = new();
+    private bool composerOptionsOpen;
     private readonly Button queue = new() { Content = "排队后续" };
     private readonly Button retry = new() { Content = "重新读取" };
     private readonly Button acknowledge = new() { Content = "已检查，允许再次发送或排队…" };
@@ -175,25 +177,57 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         attach.Click += async (_, _) => await DoAttachAsync();
         attach.Visibility = pickAttachment == null ? Visibility.Collapsed : Visibility.Visible;
         queue.Click += async (_, _) => await model.QueueAsync(lifetime.Token);
-        var hosts = new Button { Content = "环境" };
+        var hosts = design.ToolButton("执行环境", "server", showLabel: true);
         hosts.Click += (_, _) => openHosts?.Invoke();
         hosts.Visibility = openHosts == null ? Visibility.Collapsed : Visibility.Visible;
-        attach.Content = design.Icon("plus", 16); attach.MinWidth = 32;
+        hosts.HorizontalAlignment = HorizontalAlignment.Left;
+        attach.Content = design.Icon("plus", 18);
         AutomationProperties.SetName(attach, "添加附件"); ToolTipService.SetToolTip(attach, "添加附件");
-        hosts.Content = design.Icon("server", 16); hosts.MinWidth = 32;
-        AutomationProperties.SetName(hosts, "执行环境"); ToolTipService.SetToolTip(hosts, "执行环境");
-        var actions = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
-        actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var tools = new Grid { ColumnSpacing = 6 };
-        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        tools.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        tools.Children.Add(attach); Grid.SetColumn(models, 1); tools.Children.Add(models);
-        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        Grid.SetColumn(efforts, 2); tools.Children.Add(efforts);
+        var options = new Button { Content = design.Icon("adjustments", 18) };
+        AutomationProperties.SetName(options, "对话选项"); ToolTipService.SetToolTip(options, "对话选项");
+        var optionContent = new StackPanel { Spacing = 10, MinWidth = 220 };
+        optionContent.Children.Add(design.Text("对话选项", 15));
+        planMode.Content = "计划模式";
+        optionContent.Children.Add(planMode);
+        var optionHint = design.Text("先调查并提交计划，再决定是否执行。", 12);
+        optionHint.Foreground = design.Brush("text-muted"); optionContent.Children.Add(optionHint);
+        composerOptions.Content = optionContent;
+        composerOptions.Opened += (_, _) => composerOptionsOpen = true;
+        composerOptions.Closed += (_, _) => composerOptionsOpen = false;
+        options.Flyout = composerOptions;
+        AutomationProperties.SetName(planMode, "计划模式");
+        planMode.Click += async (_, _) => await model.SetPlanModeAsync(planMode.IsChecked == true, lifetime.Token);
+        fastMode.Content = design.Icon("bolt", 18);
+        AutomationProperties.SetName(fastMode, "Fast 优先服务");
+        fastMode.Click += async (_, _) => await model.SetFastModeAsync(fastMode.IsChecked == true, lifetime.Token);
+        send.Content = design.Icon("arrow-up", 18);
+        send.Opacity = send.IsEnabled ? 1 : 0.35;
+        send.RegisterPropertyChangedCallback(Control.IsEnabledProperty, (sender, _) =>
+        {
+            var button = (Button)sender;
+            button.Opacity = button.IsEnabled ? 1 : 0.35;
+        });
+        AutomationProperties.SetName(send, "发送"); ToolTipService.SetToolTip(send, "发送");
+        foreach (var button in new[] { attach, options, send })
+        {
+            design.QuietButton(button);
+            button.Width = button.Height = button.MinWidth = button.MinHeight = 32;
+            button.Padding = new Thickness(6); button.CornerRadius = new CornerRadius(16);
+            button.BorderThickness = new Thickness(1); button.BorderBrush = design.Brush("border");
+            button.VerticalAlignment = VerticalAlignment.Center;
+        }
+        send.Background = design.Brush("bg-sunken");
+        fastMode.Width = fastMode.Height = fastMode.MinWidth = fastMode.MinHeight = 32;
+        fastMode.Padding = new Thickness(6); fastMode.CornerRadius = new CornerRadius(16);
+        fastMode.VerticalAlignment = VerticalAlignment.Center;
+        foreach (var button in new[] { queue, stop }) { design.QuietButton(button); button.VerticalAlignment = VerticalAlignment.Center; }
+        models.HorizontalAlignment = HorizontalAlignment.Right; models.MinWidth = 144;
+        foreach (var picker in new[] { models, efforts })
+        {
+            picker.Height = picker.MinHeight = 32; picker.CornerRadius = new CornerRadius(16);
+            picker.VerticalAlignment = VerticalAlignment.Center;
+        }
+        AutomationProperties.SetName(models, "对话模型");
         AutomationProperties.SetName(efforts, "模型默认思考强度");
         ToolTipService.SetToolTip(efforts, "更改此模型的默认思考强度；没有会话覆盖时，在下一轮使用。");
         efforts.SelectionChanged += async (_, _) =>
@@ -201,54 +235,52 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             if (!updatingEfforts && efforts.SelectedItem is ComboBoxItem item && item.Tag is string value && value != model.Effort.Value)
                 await model.SelectEffortAsync(value, lifetime.Token);
         };
-        models.HorizontalAlignment = HorizontalAlignment.Stretch; models.MinWidth = 80;
-        Grid.SetColumn(hosts, 3); tools.Children.Add(hosts); actions.Children.Add(tools);
-        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        tools.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        tools.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var modes = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        modes.Children.Add(planMode); modes.Children.Add(fastMode);
-        Grid.SetColumn(modes, 4); tools.Children.Add(modes);
-        AutomationProperties.SetName(planMode, "计划模式");
-        ToolTipService.SetToolTip(planMode, "先调查并提交计划；计划模式下禁止执行写入和运行工具。");
-        planMode.Click += async (_, _) => await model.SetPlanModeAsync(planMode.IsChecked == true, lifetime.Token);
-        AutomationProperties.SetName(fastMode, "Fast 优先服务");
-        fastMode.Click += async (_, _) => await model.SetFastModeAsync(fastMode.IsChecked == true, lifetime.Token);
-        tools.SizeChanged += (_, e) =>
-        {
-            var narrow = e.NewSize.Width < 420;
-            tools.ColumnDefinitions[3].Width = narrow ? new GridLength(0) : GridLength.Auto;
-            tools.ColumnDefinitions[4].Width = narrow ? new GridLength(0) : GridLength.Auto;
-            Grid.SetRow(hosts, narrow ? 1 : 0); Grid.SetColumn(hosts, narrow ? 2 : 3);
-            Grid.SetRow(modes, narrow ? 1 : 0); Grid.SetColumn(modes, narrow ? 0 : 4);
-            Grid.SetColumnSpan(modes, narrow ? 2 : 1);
-            modes.HorizontalAlignment = HorizontalAlignment.Left;
-        };
-        var primary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        send.HorizontalAlignment = HorizontalAlignment.Right; stop.HorizontalAlignment = HorizontalAlignment.Right;
+        var actions = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
+        actions.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        actions.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var leading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        leading.Children.Add(attach); leading.Children.Add(options); actions.Children.Add(leading);
+        var tools = new Grid { ColumnSpacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        tools.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < 3; i++) tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        tools.Children.Add(models);
+        Grid.SetColumn(efforts, 1); tools.Children.Add(efforts);
+        Grid.SetColumn(fastMode, 2); tools.Children.Add(fastMode);
+        var primary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         primary.Children.Add(queue); primary.Children.Add(send); primary.Children.Add(stop);
-        Grid.SetColumn(primary, 1); actions.Children.Add(primary);
+        Grid.SetColumn(primary, 3); tools.Children.Add(primary);
+        Grid.SetColumn(tools, 1); actions.Children.Add(tools);
         actions.SizeChanged += (_, e) =>
         {
-            var narrow = e.NewSize.Width < 600;
-            Grid.SetColumnSpan(tools, narrow ? 2 : 1);
-            Grid.SetColumn(primary, narrow ? 0 : 1); Grid.SetColumnSpan(primary, narrow ? 2 : 1);
-            Grid.SetRow(primary, narrow ? 1 : 0); primary.HorizontalAlignment = HorizontalAlignment.Right;
+            var narrow = PreviewLayout.StackComposerSend(e.NewSize.Width);
+            Grid.SetColumn(tools, narrow ? 0 : 1); Grid.SetColumnSpan(tools, narrow ? 2 : 1);
+            Grid.SetRow(tools, narrow ? 1 : 0);
         };
-        var card = new StackPanel { Spacing = 8, Padding = new Thickness(12) };
+        var card = new StackPanel { Spacing = 8, Padding = new Thickness(14) };
+        composer.MinHeight = 56;
+        composer.BorderThickness = new Thickness(0);
+        composer.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        composer.Padding = new Thickness(0, 4, 0, 6);
+        composer.Resources["TextControlBackgroundFocused"] = design.Brush("bg-elev");
+        composer.Resources["TextControlBorderBrushFocused"] = design.Brush("clay");
         composer.MaxHeight = 240;
-        card.Children.Add(commandChoices); card.Children.Add(attachments); card.Children.Add(composer); card.Children.Add(actions);
+        card.Children.Add(commandChoices); card.Children.Add(attachments); card.Children.Add(composer);
         design.BindTypography(slashHint, 11);
         slashHint.Foreground = design.Brush("text-faint");
         slashHint.Text = "方向键选择 · Enter 填入 · Ctrl+Enter 执行";
         slashHint.Visibility = Visibility.Collapsed;
         follow.Click += (_, _) => { followLatest = true; userScrollPending = false; FollowAfterLayout(); UpdateFollowButton(); };
-        var footer = new Grid { Margin = new Thickness(16, 0, 16, 16), MaxWidth = PreviewLayout.ConversationMaxWidth };
+        var footer = new Grid { Margin = new Thickness(24, 0, 24, 10), MaxWidth = PreviewLayout.ConversationMaxWidth };
         footer.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var footerHints = new StackPanel { Spacing = 2 };
-        footerHints.Children.Add(hint); footerHints.Children.Add(slashHint);
+        footerHints.Children.Add(slashHint);
         hint.Text = "Ctrl+Enter 发送 · Enter 换行";
+        hint.Foreground = design.Brush("text-faint");
+        hint.HorizontalAlignment = HorizontalAlignment.Center; hint.TextAlignment = TextAlignment.Center;
+        card.Children.Add(hint); card.Children.Add(actions);
         footer.Children.Add(footerHints); Grid.SetColumn(follow, 1); footer.Children.Add(follow);
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
         composerBar.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -257,8 +289,12 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
         var emptyHeading = design.Text("开始新的研究对话", 22); emptyHeading.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(emptyHeading);
         empty.Children.Add(createSession);
         composerBar.Children.Add(empty);
-        var border = new Border { Child = card, CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Margin = new Thickness(16, 0, 16, 8), MaxWidth = PreviewLayout.ConversationMaxWidth };
-        Grid.SetRow(border, 1); composerBar.Children.Add(border);
+        var border = new Border { Child = card, CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1),
+            BorderBrush = design.Brush("border-strong"), Background = design.Brush("bg-elev"),
+            Margin = new Thickness(20, 0, 20, 8), MaxWidth = PreviewLayout.ConversationMaxWidth };
+        var inputArea = new StackPanel { Spacing = 4, MaxWidth = PreviewLayout.ConversationMaxWidth + 40 };
+        hosts.Margin = new Thickness(20, 0, 20, 0); inputArea.Children.Add(hosts); inputArea.Children.Add(border);
+        Grid.SetRow(inputArea, 1); composerBar.Children.Add(inputArea);
         Grid.SetRow(footer, 2); composerBar.Children.Add(footer);
         Grid.SetRow(composerBar, 3); root.Children.Add(composerBar);
         Content = root;
@@ -321,6 +357,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
 
     public bool HandleEscape()
     {
+        if (composerOptionsOpen) { composerOptions.Hide(); return true; }
         if (efforts.IsDropDownOpen) { efforts.IsDropDownOpen = false; return true; }
         if (composing || compositionJustEnded) return false;
         if (models.IsDropDownOpen) { models.IsDropDownOpen = false; return true; }
@@ -413,7 +450,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
             if (!efforts.Items.Cast<ComboBoxItem>().Select(item => (string)item.Tag).SequenceEqual(values))
             {
                 efforts.Items.Clear();
-                foreach (var value in values) efforts.Items.Add(new ComboBoxItem { Content = value.Length == 0 ? "强度：默认" : "强度：" + value, Tag = value });
+                foreach (var value in values) efforts.Items.Add(new ComboBoxItem { Content = value.Length == 0 ? "默认强度" : value, Tag = value });
             }
             efforts.SelectedItem = efforts.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == model.Effort.Value);
             efforts.PlaceholderText = model.Effort.Value;
@@ -687,6 +724,7 @@ internal sealed class NativeConversationPage : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return;
+        composerOptions.Hide();
         disposed = true; lifetime.Cancel(); model.Changed -= Refresh; model.Effort.Changed -= Refresh; design.TypographyChanged -= Refresh; model.Pause(); lifetime.Dispose();
     }
 }

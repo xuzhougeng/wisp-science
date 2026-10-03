@@ -9,7 +9,11 @@ public readonly record struct PreviewLayout(bool StackHomeColumns, bool StackHea
 
     public const double ConversationMaxWidth = 1280;
     public const double MinimumConversationWidth = 560;
+    public static bool CompactConversationToolbar(double contentWidth) => contentWidth < 760;
+    public static bool StackComposerSend(double actionWidth) => actionWidth < 480;
     public static double ClampPanelWidth(double width) => double.IsFinite(width) ? Math.Clamp(width, 320, 640) : 360;
+    // Retain space for the conversation header, composer and a short transcript.
+    public static double TerminalMaxHeight(double height) => double.IsFinite(height) ? Math.Clamp(height - 380, 180, 600) : 300;
 
     /// <summary>Budget columns in client DIPs. An inspector must never squeeze
     /// the conversation below its usable width; narrow windows use an overlay.</summary>

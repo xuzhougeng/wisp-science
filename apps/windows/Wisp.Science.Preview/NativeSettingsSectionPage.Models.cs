@@ -20,10 +20,10 @@ internal sealed partial class NativeSettingsSectionPage
         if (showAgents) { Agents(); return; }
         Form.Children.Add(Button("添加 API 接入", () => { EditModel(NativeModelDrafts.Create()); return Task.CompletedTask; }));
         var presets = Rows(JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "model-presets.json"))));
-        var presetButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var presetButtons = new NativeActionWrap();
         foreach (var preset in presets) presetButtons.Children.Add(Button(S(preset, "label"), () =>
         { EditModel(NativeModelDrafts.Create(S(preset, "url"), S(preset, "model"))); return Task.CompletedTask; }));
-        Form.Children.Add(new ScrollViewer { Content = presetButtons, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        Form.Children.Add(Disclosure("从服务商预设添加", presetButtons));
         var search = Field("搜索名称、服务商或模型", "", _ => { });
         var rows = Rows(model.Values["list_models"]).ToArray();
         var cards = new List<(StackPanel Card, string Text)>();

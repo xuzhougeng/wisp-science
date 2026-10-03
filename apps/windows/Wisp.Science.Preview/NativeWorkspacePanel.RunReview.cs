@@ -9,6 +9,9 @@ internal sealed partial class NativeWorkspacePanel
 {
     public bool HandleEscape()
     {
+        if (sideChatModelPicker?.IsDropDownOpen == true) { sideChatModelPicker.IsDropDownOpen = false; return true; }
+        if (openMenus.LastOrDefault() is { } menu) { menu.Hide(); return true; }
+        if (fileDialog != null) { fileDialog.Hide(); return true; }
         if (model.Tabs.Selected != "hosts" || runReview?.Visible != true) return false;
         if (runReview.Confirmation != null) runReview.CancelConfirmation();
         else _ = ReturnFromRunReviewAsync();
