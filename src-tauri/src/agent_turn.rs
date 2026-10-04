@@ -17,6 +17,12 @@ pub(crate) enum TurnOrigin {
     Desktop,
     Im,
     Queued(u64),
+    /// A subagent conversation's turn, sent by its parent conversation's agent
+    /// (#1061). `unattended` carries the parent's IM origin so a subagent
+    /// cannot run under a weaker approval floor than the turn that started it.
+    Subagent {
+        unattended: bool,
+    },
 }
 
 impl TurnOrigin {
@@ -28,14 +34,14 @@ impl TurnOrigin {
         }
     }
 
-    fn force_ask_mutations(self) -> bool {
-        matches!(self, Self::Im)
+    pub(crate) fn force_ask_mutations(self) -> bool {
+        matches!(self, Self::Im | Self::Subagent { unattended: true })
     }
 
     fn queue_id(self) -> Option<u64> {
         match self {
             Self::Queued(id) => Some(id),
-            Self::Desktop | Self::Im => None,
+            Self::Desktop | Self::Im | Self::Subagent { .. } => None,
         }
     }
 }
@@ -332,6 +338,7 @@ pub(crate) async fn send_message_inner(
                 "This conversation branch is frozen and cannot accept new messages.".into(),
             );
         }
+        subagent_tool::require_instruction_source(&state.store, id, origin, resume).await?;
         let (working_project, scope) =
             exploration_commands::working_project_for_frame(state, id).await?;
         ap = working_project;
@@ -956,9 +963,27 @@ pub(crate) async fn send_message_inner(
             state.app_data.clone(),
             ap.id.clone(),
         )));
-        // Always registered, not just in plan mode: a fork during execution
-        // deserves a question as much as one during planning.
-        agent.add_tool(Box::new(wisp_tools::ask_user::AskUserTool));
+        let subagent = state
+            .store
+            .session_dispatched_from(&frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some();
+        // A subagent (#1061) gets no ask_user: nobody answers in a watched
+        // conversation, so it ends its turn with the question, which returns
+        // to the conversation that started it.
+        if !subagent {
+            // Always registered, not just in plan mode: a fork during execution
+            // deserves a question as much as one during planning.
+            agent.add_tool(Box::new(wisp_tools::ask_user::AskUserTool));
+            // One level only: a subagent starts no subagents of its own, and
+            // an exploration's work stays inside its isolated scope.
+            if matches!(frame_scope, wisp_store::StateScope::Mainline { .. }) {
+                for tool in subagent_tool::tools(&app, &ap.id, &frame_id) {
+                    agent.add_tool(tool);
+                }
+            }
+        }
         if plan_mode_enabled {
             // Only while planning: outside plan mode there is nothing to approve,
             // and an always-present tool just invites plans nobody asked for.

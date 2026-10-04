@@ -243,6 +243,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           { id: "conversation-branch-b", title: "Method B", ts: 2080, running: false, branched_from: "conversation-main", branch_state: "active" },
           { id: "conversation-branch-c", title: "Method C", ts: 2070, running: false, branched_from: "conversation-main", branch_state: "active" },
         ]
+    : query.get("mockSubagent") === "1"
+      ? [
+          { id: "subagent-parent", title: "Main analysis", ts: 2100, running: false },
+          { id: "subagent-child", title: "Align the reads", ts: 2090, running: false, dispatched_from: "subagent-parent" },
+        ]
     : mockPlanFlow
     ? [{ id: "s1", title: "Plan mode regression", ts: 2000, running: false }]
     : mockPublication

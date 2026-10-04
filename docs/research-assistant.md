@@ -81,7 +81,7 @@ The top toolbar provides the project and calendar visibility toggles. Sidebar he
 - 微信状态命令：`assistant_weixin_status`；绑定、启用和解除绑定复用微信命令并传 `destination: "assistant"`，缺省仍为原项目入口。助理配置使用 `assistant_weixin_*` 设置键，token 单独存在系统 keyring；助理消息不写入原 IM 共享路由，也不改变桌面当前项目。
 - 微信审批复用原生确认通道和内存中的会话完全权限；`yes` / `no` 同时核验助理项目、固定会话和审批 ID，避免桌面先处理后误批下一条请求。`research_dispatch_approval.rs` 使用无工具模型调用判断项目审批；严格解析判断结果，失败默认转交用户。转交卡片复用助理确认槽位，并仅响应对应的原生或 ACP 一次性请求；取消和原请求失效时清理卡片。
 - `/model` 调用与桌面 `set_active_model` 相同的 `models::set_session_model`，写入助理会话的模型并使缓存的 Agent 失效。`/resume` 依据会话最近一次回合结束事件（`Store::last_turn_outcome`，`Done` / `Error`）判断是否有失败回合，再以 `resume` 方式调用 `send_message_inner`，与桌面错误卡片的「继续执行」是同一路径；回合开始前就失败的请求没有写入对话，其原文只保存在内存中，重启 Wisp 后不能再重跑。`/resume` 会启动回合，因此走微信的回合队列而不是即时控制通道。
-- `research_dispatch.rs` 管理启动确认和后台结果回传。结果在项目回合释放锁之前快照，避免后续对话覆盖；摘要通过无工具的模型调用生成，并在助理回合锁内写入消息和 UI 事件，供历史回放和后续对话使用。输出前重新检查项目隐私和微信绑定身份。
+- `dispatch.rs` 管理启动确认和后台结果回传，是与会话内子智能体（见 [Agent delegation](agent-delegation.md#subagent-conversations)）共用的派发抽象；助理一侧的策略（隐私可见性、审批复核、微信通知）由 `research_assistant.rs` 的 `AssistantDispatcher` 实现。结果在项目回合释放锁之前快照，避免后续对话覆盖；摘要通过无工具的模型调用生成，并在助理回合锁内写入消息和 UI 事件，供历史回放和后续对话使用。输出前重新检查项目隐私和微信绑定身份。
 
 ### 手动验证微信审批
 

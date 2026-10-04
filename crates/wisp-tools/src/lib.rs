@@ -58,7 +58,14 @@ const BUILT_IN_SCHEMA_NAMES: &[&str] = &[
     "search_memory",
 ];
 
-const SUBAGENT_SCHEMA_NAMES: &[&str] = &["explore", "delegate_tasks", "get_delegated_result"];
+const SUBAGENT_SCHEMA_NAMES: &[&str] = &[
+    "explore",
+    "delegate_tasks",
+    "get_delegated_result",
+    "dispatch_subagent",
+    "subagent_status",
+    "stop_subagent",
+];
 
 const SEARCH_MCP_TOOLS: &str = "search_mcp_tools";
 const USE_MCP_TOOL: &str = "use_mcp_tool";
