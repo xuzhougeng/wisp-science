@@ -338,8 +338,12 @@ struct InboundText {
 }
 
 fn is_control_text(text: &str, destination: WeixinDestination) -> bool {
-    text.trim_start().starts_with('/')
-        || (destination == WeixinDestination::Assistant && super::assistant::is_control_text(text))
+    match destination {
+        WeixinDestination::Projects => text.trim_start().starts_with('/'),
+        // Every assistant slash command is a control text except `/resume`,
+        // which runs a turn.
+        WeixinDestination::Assistant => super::assistant::is_control_text(text),
+    }
 }
 
 async fn send_with_latest_context(
@@ -825,6 +829,10 @@ mod tests {
             assert!(!is_control_text("please run /status later", destination));
             assert!(!is_control_text("analyze the dataset", destination));
         }
+        // The assistant's `/resume` reruns a turn, so it waits its turn.
+        assert!(is_control_text("/unknown", WeixinDestination::Assistant));
+        assert!(is_control_text("/model 2", WeixinDestination::Assistant));
+        assert!(!is_control_text("/resume", WeixinDestination::Assistant));
     }
 
     #[test]

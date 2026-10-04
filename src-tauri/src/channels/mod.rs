@@ -1260,6 +1260,22 @@ async fn send_inbound_turn(
     text: &str,
     progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
 ) -> String {
+    match run_inbound_turn(app, window_label, session_id, text, false, progress).await {
+        Ok(reply) => reply,
+        Err(e) => format!("处理失败:{e}"),
+    }
+}
+
+/// Run one IM turn and return its reply. `resume` continues the session's
+/// failed turn instead of sending `text` as a new message.
+async fn run_inbound_turn(
+    app: &AppHandle,
+    window_label: &str,
+    session_id: String,
+    text: &str,
+    resume: bool,
+    progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
+) -> Result<String, String> {
     let state = app.state::<AppState>();
     let progress = progress.map(prepare_progress_observer);
     let result = crate::send_message_inner(
@@ -1270,7 +1286,7 @@ async fn send_inbound_turn(
         text.to_string(),
         None,
         None,
-        None,
+        Some(resume),
         None,
         progress.as_ref().map(PendingProgress::id),
         None,
@@ -1279,13 +1295,11 @@ async fn send_inbound_turn(
         crate::TurnOrigin::Im,
     )
     .await;
-    match result {
-        Ok(frame_id) => match last_assistant_text(&state.store, &frame_id).await {
-            Some(text) => truncate_reply(&text, REPLY_MAX_CHARS),
-            None => "(本轮完成,但没有文本回复)".to_string(),
-        },
-        Err(e) => format!("处理失败:{e}"),
-    }
+    let frame_id = result?;
+    Ok(match last_assistant_text(&state.store, &frame_id).await {
+        Some(text) => truncate_reply(&text, REPLY_MAX_CHARS),
+        None => "(本轮完成,但没有文本回复)".to_string(),
+    })
 }
 
 // ------------------------------------------------------------------ commands

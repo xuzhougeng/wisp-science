@@ -1,5 +1,6 @@
 //! The assistant binding never reads or changes the project IM route.
 use super::*;
+use crate::models::ModelProfile;
 use crate::research_assistant::{ensure, ASSISTANT_FRAME_ID};
 
 enum Inbound {
@@ -9,8 +10,15 @@ enum Inbound {
     FullPermission(bool),
     Approvals,
     Status,
+    /// `/model` and its argument; an empty argument lists the models.
+    Model(String),
+    Resume,
     Message,
 }
+
+/// A request whose turn failed before the conversation accepted it. Nothing
+/// was persisted for it, so `/resume` has to send the text again.
+static UNSTARTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 fn classify(text: &str) -> Inbound {
     let normalized = text.trim().to_ascii_lowercase();
@@ -19,23 +27,154 @@ fn classify(text: &str) -> Inbound {
         "no" => return Inbound::Approve(false),
         "full" => return Inbound::FullPermission(true),
         "full off" => return Inbound::FullPermission(false),
+        "resume" => return Inbound::Resume,
         _ => {}
     }
     let command = normalized.split_whitespace().next().unwrap_or_default();
     match command {
-        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入和权限状态\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
+        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入、模型和权限状态\n/model — 查看可用模型；/model <编号或名称> 切换助理模型\n/resume — 重跑上一轮失败的请求\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
         "/status" => Inbound::Status,
         "/approval" | "/approvals" => Inbound::Approvals,
         "/stop" => Inbound::Stop,
+        // The command is ASCII, so its length also indexes the original text.
+        "/model" | "/models" => Inbound::Model(text.trim()[command.len()..].trim().into()),
+        "/resume" => Inbound::Resume,
         _ if command.starts_with('/') => Inbound::Reply("这里固定连接科研助理，不切换项目或新建助理会话。请直接说明项目和需求；发送 /help 查看帮助。".into()),
         _ => Inbound::Message,
     }
 }
 
 /// These replies must bypass the turn queue, whose current turn may be
-/// blocked on the very confirmation the owner is answering.
+/// blocked on the very confirmation the owner is answering. A resume runs a
+/// turn of its own, so it queues like a message.
 pub(super) fn is_control_text(text: &str) -> bool {
-    !matches!(classify(text), Inbound::Message)
+    !matches!(classify(text), Inbound::Message | Inbound::Resume)
+}
+
+fn model_name(profile: &ModelProfile) -> &str {
+    if profile.label.trim().is_empty() {
+        &profile.model
+    } else {
+        &profile.label
+    }
+}
+
+fn model_list(profiles: &[ModelProfile], current: &str) -> String {
+    if profiles.is_empty() {
+        return "还没有可用于对话的模型，请先在桌面端的模型设置中添加。".into();
+    }
+    let mut reply = String::from("科研助理可用的模型：\n");
+    for (index, profile) in profiles.iter().enumerate() {
+        let name = model_name(profile);
+        reply.push_str(&format!("{}. {name}", index + 1));
+        if name != profile.model {
+            reply.push_str(&format!(" · {}", profile.model));
+        }
+        if profile.id == current {
+            reply.push_str("（当前）");
+        }
+        reply.push('\n');
+    }
+    reply.push_str("发送 /model <编号或名称> 切换，只影响科研助理这条对话。");
+    reply
+}
+
+/// The profile `/model <argument>` names: its number in the list, else a
+/// case-insensitive label, id, or model name, matched whole before in part.
+fn pick_model<'a>(
+    profiles: &'a [ModelProfile],
+    argument: &str,
+) -> Result<&'a ModelProfile, String> {
+    if let Ok(number) = argument.parse::<usize>() {
+        return number
+            .checked_sub(1)
+            .and_then(|index| profiles.get(index))
+            .ok_or_else(|| format!("没有编号为 {number} 的模型；发送 /model 查看列表。"));
+    }
+    let wanted = argument.to_lowercase();
+    let is = |value: &str| value.to_lowercase() == wanted;
+    if let Some(profile) = profiles
+        .iter()
+        .find(|p| is(&p.label) || is(&p.id) || is(&p.model))
+    {
+        return Ok(profile);
+    }
+    let has = |value: &str| value.to_lowercase().contains(&wanted);
+    let partial: Vec<_> = profiles
+        .iter()
+        .filter(|p| has(&p.label) || has(&p.model))
+        .collect();
+    match partial.as_slice() {
+        [profile] => Ok(profile),
+        [] => Err(format!(
+            "没有名称包含“{argument}”的模型；发送 /model 查看列表。"
+        )),
+        several => Err(format!(
+            "“{argument}”匹配到多个模型：{}。请改用编号。",
+            several
+                .iter()
+                .map(|p| model_name(p))
+                .collect::<Vec<_>>()
+                .join("、")
+        )),
+    }
+}
+
+async fn current_model(state: &AppState) -> (Vec<ModelProfile>, String) {
+    (
+        crate::models::delegation_profiles(&state.store).await,
+        crate::models::session_profile_id(&state.store, ASSISTANT_FRAME_ID).await,
+    )
+}
+
+async fn model_reply(state: &AppState, argument: &str) -> String {
+    if let Err(error) = resolve_session(&state.store, &state.app_data).await {
+        return format!("打开科研助理失败: {error}");
+    }
+    let (profiles, current) = current_model(state).await;
+    if argument.is_empty() {
+        return model_list(&profiles, &current);
+    }
+    let profile = match pick_model(&profiles, argument) {
+        Ok(profile) => profile,
+        Err(reply) => return reply,
+    };
+    let name = model_name(profile);
+    if profile.id == current {
+        return format!("科研助理已在使用 {name}。");
+    }
+    match crate::models::set_session_model(state, ASSISTANT_FRAME_ID, &profile.id).await {
+        Ok(()) => {
+            format!("已将科研助理的模型切换为 {name}，下一轮回复起生效；只影响科研助理这条对话。")
+        }
+        Err(error) => format!("切换模型失败: {error}"),
+    }
+}
+
+/// What `/resume` runs again.
+#[derive(Debug, PartialEq)]
+enum Rerun {
+    /// The request never reached the conversation: send it again.
+    Resend(String),
+    /// The turn started and then failed: continue it without a new message.
+    Continue,
+}
+
+fn rerun(unstarted: Option<String>, last_outcome: Option<&str>) -> Option<Rerun> {
+    match unstarted {
+        Some(text) => Some(Rerun::Resend(text)),
+        None => (last_outcome == Some("Error")).then_some(Rerun::Continue),
+    }
+}
+
+/// The reply for a failed turn, and the request to remember when the turn
+/// never started and so left nothing in the conversation to continue from.
+fn turn_failure(text: &str, error: &str) -> (Option<String>, String) {
+    let (started, message) = crate::split_turn_error(error);
+    (
+        (!started && !text.is_empty()).then(|| text.to_string()),
+        format!("处理失败：{message}\n发送 /resume 重跑这一轮；模型不可用时可先用 /model 切换。"),
+    )
 }
 
 pub(super) fn approval_message(request: &crate::ConfirmRequest) -> String {
@@ -69,7 +208,9 @@ pub(super) async fn handle_inbound(
     progress: Option<tokio::sync::mpsc::UnboundedSender<ProgressEvent>>,
 ) -> String {
     let state = app.state::<AppState>();
-    match classify(text) {
+    let inbound = classify(text);
+    let resuming = matches!(inbound, Inbound::Resume);
+    match inbound {
         Inbound::Reply(reply) => return reply,
         Inbound::Status => {
             let permission =
@@ -78,8 +219,14 @@ pub(super) async fn handle_inbound(
                 } else {
                     "未开启（需要确认时回复 yes / no / full）"
                 };
-            return format!("已接入科研助理，与桌面科研助理共用同一条长期对话，可管理所有可见项目。\n完全权限：{permission}");
+            let (profiles, current) = current_model(&state).await;
+            let model = profiles
+                .iter()
+                .find(|profile| profile.id == current)
+                .map_or("未配置", model_name);
+            return format!("已接入科研助理，与桌面科研助理共用同一条长期对话，可管理所有可见项目。\n模型：{model}（/model 切换）\n完全权限：{permission}");
         }
+        Inbound::Model(argument) => return model_reply(&state, &argument).await,
         Inbound::Approvals => {
             return pending_approval(&state)
                 .map(|request| approval_message(&request))
@@ -129,7 +276,7 @@ pub(super) async fn handle_inbound(
                 Err(error) => format!("停止失败: {error}"),
             }
         }
-        Inbound::Message => {}
+        Inbound::Message | Inbound::Resume => {}
     }
     let Some(window) = app.workspace_surface("main") else {
         return "桌面端主窗口不可用,无法处理消息。".into();
@@ -138,7 +285,32 @@ pub(super) async fn handle_inbound(
         Ok(session) => session,
         Err(error) => return format!("打开科研助理失败: {error}"),
     };
-    send_inbound_turn(app, window.label(), session, text, progress).await
+    let (text, resume) = if resuming {
+        if state
+            .running_turns
+            .lock()
+            .await
+            .contains(ASSISTANT_FRAME_ID)
+        {
+            return "科研助理正在回复，等这一轮结束后再发送 /resume。".into();
+        }
+        let unstarted = UNSTARTED.lock().unwrap().take();
+        let outcome = state.store.last_turn_outcome(ASSISTANT_FRAME_ID).await;
+        match rerun(unstarted, outcome.ok().flatten().as_deref()) {
+            Some(Rerun::Resend(text)) => (text, false),
+            Some(Rerun::Continue) => (String::new(), true),
+            None => return "科研助理上一轮没有失败，没有需要重跑的请求。".into(),
+        }
+    } else {
+        (text.to_string(), false)
+    };
+    let result = run_inbound_turn(app, window.label(), session, &text, resume, progress).await;
+    let (unstarted, reply) = match result {
+        Ok(reply) => (None, reply),
+        Err(error) => turn_failure(&text, &error),
+    };
+    *UNSTARTED.lock().unwrap() = unstarted;
+    reply
 }
 
 #[cfg(test)]
@@ -162,6 +334,73 @@ mod tests {
         assert!(matches!(classify("/stop"), Inbound::Stop));
         assert!(matches!(classify("汇报所有项目的进展"), Inbound::Message));
         assert!(matches!(classify("/status"), Inbound::Status));
+    }
+
+    fn profile(id: &str, label: &str, model: &str) -> ModelProfile {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "label": label, "provider": "openai", "api_url": "", "model": model
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn model_command_lists_and_picks_by_number_or_name() {
+        assert!(matches!(classify("/model"), Inbound::Model(a) if a.is_empty()));
+        assert!(matches!(classify("/models"), Inbound::Model(a) if a.is_empty()));
+        assert!(
+            matches!(classify(" /MODEL  DeepSeek V4 "), Inbound::Model(a) if a == "DeepSeek V4")
+        );
+        assert!(is_control_text("/model 2"));
+
+        let profiles = [
+            profile("m1", "GPT-5.5", "gpt-5.5"),
+            profile("m2", "", "deepseek-v4-flash"),
+            profile("m3", "DeepSeek Pro", "deepseek-v4-pro"),
+        ];
+        let picked = |argument| pick_model(&profiles, argument).map(|p| p.id.as_str());
+        assert_eq!(picked("2"), Ok("m2"));
+        assert_eq!(picked("gpt-5.5"), Ok("m1"));
+        assert_eq!(picked("M3"), Ok("m3"));
+        assert_eq!(picked("flash"), Ok("m2"));
+        assert!(picked("deepseek").unwrap_err().contains("DeepSeek Pro"));
+        assert!(picked("0").is_err());
+        assert!(picked("4").is_err());
+        assert!(picked("claude").is_err());
+
+        assert_eq!(
+            model_list(&profiles, "m3"),
+            "科研助理可用的模型：\n1. GPT-5.5 · gpt-5.5\n2. deepseek-v4-flash\n\
+             3. DeepSeek Pro · deepseek-v4-pro（当前）\n\
+             发送 /model <编号或名称> 切换，只影响科研助理这条对话。"
+        );
+    }
+
+    #[test]
+    fn resume_queues_as_a_turn_and_reruns_only_a_failed_request() {
+        for text in ["/resume", " /Resume ", "resume", "RESUME"] {
+            assert!(matches!(classify(text), Inbound::Resume), "{text}");
+            assert!(!is_control_text(text), "{text}");
+        }
+        assert!(matches!(classify("resume the analysis"), Inbound::Message));
+
+        assert_eq!(rerun(None, Some("Error")), Some(Rerun::Continue));
+        assert_eq!(rerun(None, Some("Done")), None);
+        assert_eq!(rerun(None, None), None);
+        assert_eq!(
+            rerun(Some("汇报进展".into()), Some("Done")),
+            Some(Rerun::Resend("汇报进展".into()))
+        );
+
+        // A started turn left its request in the conversation; only a turn
+        // that never started needs the text kept for the rerun.
+        let (unstarted, reply) = turn_failure("汇报进展", "[turn-started] api: 504");
+        assert_eq!(unstarted, None);
+        assert!(reply.starts_with("处理失败：api: 504\n") && reply.contains("/resume"));
+        assert_eq!(
+            turn_failure("汇报进展", "No API key").0.as_deref(),
+            Some("汇报进展")
+        );
+        assert_eq!(turn_failure("", "project is busy").0, None);
     }
 
     #[test]

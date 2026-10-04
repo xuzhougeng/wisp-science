@@ -41,7 +41,10 @@
 
 此处与**设置 → 远程接入**中的项目机器人分别保存绑定、开关、连接状态和消息游标。原入口的 `/project`、`/session`、`/new` 工作方式保持不变。一个机器人不能同时绑定两个入口：可使用不同机器人，或先在原入口解除绑定，再绑定到科研助理。解除助理绑定不会删除助理对话、计划，也不会关闭原项目机器人。
 
-只处理扫码所有者的一对一文本消息（以及微信提供转写的语音）。助理入口的 `/help` 提供说明，`/status` 显示助理接入和完全权限状态，`/stop` 停止助理当前回复；这些命令不会修改项目机器人的目标。助理不会通过 `/new` 新建第二条对话。
+只处理扫码所有者的一对一文本消息（以及微信提供转写的语音）。助理入口的 `/help` 提供说明，`/status` 显示助理接入、当前模型和完全权限状态，`/stop` 停止助理当前回复；这些命令不会修改项目机器人的目标。助理不会通过 `/new` 新建第二条对话。
+
+- `/model`：列出可用于对话的模型并标出当前模型；`/model <编号或名称>` 切换。名称不区分大小写，可以是模型配置的名称、模型 ID 或其中唯一匹配的一段；匹配到多个时请改用编号。切换只影响科研助理这条对话（与桌面助理输入框里的模型选择是同一个设置），下一轮回复起生效，正在进行的回复仍用原模型。
+- `/resume`（或直接回复 `resume`）：重跑上一轮失败的请求。助理回复「处理失败」后发送即可，常与 `/model` 配合：模型或服务不可用时先切换模型，再 `/resume`。已经写入对话的请求会从失败处继续，不会重复发送；连对话都没进入的请求（例如模型没有配置密钥）会按原文重发。上一轮没有失败时只会提示，不会发给模型；助理正在回复时请等这一轮结束。
 
 保存计划、派活等需要确认的操作会同时显示在桌面助理对话和微信中。收到「科研助理等待审批」后，直接回复以下完整文本（不区分大小写，无需斜杠或编号）：
 
@@ -63,7 +66,7 @@
 
 The assistant page has independently collapsible project and calendar sidebars around its existing conversation. Selecting a project attaches context to future messages without navigating away. The calendar separates saved plans from recorded activity, retains its date when hidden, and refreshes after an assistant turn. Planning and activity buttons append questions to the draft for review before sending. Desktop sidebar preferences persist; narrow windows use drawers, with Escape dismissing the topmost surface first.
 
-**Remote access** in the assistant header connects WeChat directly to this same conversation and all visible projects. Scan to bind, then enable the connection; keep Wisp running. This binding, switch, credentials and cursor are independent from the project bots in Settings. Existing project slash commands keep their behavior. A bot can belong to only one entry at a time. Assistant messages use natural language; `/help`, `/status` and `/stop` stay within the assistant. Reply `yes` to approve the assistant's pending operation once, `no` to reject it, or `full` to approve it and enable Full Permission for subsequent ordinary tools in the assistant conversation. These exact replies ignore case and bypass the waiting turn queue. `full` also works without a pending request; `full off` revokes it, `/approval` repeats the pending request, and `/status` shows the permission state. Full Permission is shared with the desktop assistant, resets when Wisp restarts, and does not override explicit tool denials or extend to project sessions. For assistant-dispatched work, a tool-free reviewer compares each proposed operation with the researcher’s original request and approves sufficiently clear, authorized operations once. Uncertainty, incomplete details, or review failures produce a confirmation in the assistant and the original WeChat binding; yes/no forwards to the exact original project request. Requests resolved in the project are withdrawn automatically. ACP requests without one-shot choices still need the project permission UI. Unbinding preserves conversation history and plans. Escape dismisses the connection dialog before the assistant or its drawers.
+**Remote access** in the assistant header connects WeChat directly to this same conversation and all visible projects. Scan to bind, then enable the connection; keep Wisp running. This binding, switch, credentials and cursor are independent from the project bots in Settings. Existing project slash commands keep their behavior. A bot can belong to only one entry at a time. Assistant messages use natural language; `/help`, `/status` and `/stop` stay within the assistant. `/model` lists the chat models and `/model <number or name>` switches the assistant conversation's model from its next turn, the same setting as the desktop assistant's model picker. `/resume` (or the exact reply `resume`) reruns the last failed request: a turn that started continues without a duplicate message, and a request that never reached the conversation is sent again. It only replies when nothing failed, and waits in the turn queue like a message. Reply `yes` to approve the assistant's pending operation once, `no` to reject it, or `full` to approve it and enable Full Permission for subsequent ordinary tools in the assistant conversation. These exact replies ignore case and bypass the waiting turn queue. `full` also works without a pending request; `full off` revokes it, `/approval` repeats the pending request, and `/status` shows the permission state. Full Permission is shared with the desktop assistant, resets when Wisp restarts, and does not override explicit tool denials or extend to project sessions. For assistant-dispatched work, a tool-free reviewer compares each proposed operation with the researcher’s original request and approves sufficiently clear, authorized operations once. Uncertainty, incomplete details, or review failures produce a confirmation in the assistant and the original WeChat binding; yes/no forwards to the exact original project request. Requests resolved in the project are withdrawn automatically. ACP requests without one-shot choices still need the project permission UI. Unbinding preserves conversation history and plans. Escape dismisses the connection dialog before the assistant or its drawers.
 
 The top toolbar provides the project and calendar visibility toggles. Sidebar headings show only their titles, without duplicate collapse buttons.
 
@@ -75,6 +78,7 @@ The top toolbar provides the project and calendar visibility toggles. Sidebar he
 - 命令：`open_research_assistant`（绑定当前窗口，记住要恢复的项目）、`close_research_assistant`（恢复）；`get_research_assistant_projects` 和 `get_research_assistant_plan` 在服务端核验隐私设置后提供侧栏数据。为该项目新建会话、分支或开启探索的请求会被后端拒绝。
 - 微信状态命令：`assistant_weixin_status`；绑定、启用和解除绑定复用微信命令并传 `destination: "assistant"`，缺省仍为原项目入口。助理配置使用 `assistant_weixin_*` 设置键，token 单独存在系统 keyring；助理消息不写入原 IM 共享路由，也不改变桌面当前项目。
 - 微信审批复用原生确认通道和内存中的会话完全权限；`yes` / `no` 同时核验助理项目、固定会话和审批 ID，避免桌面先处理后误批下一条请求。`research_dispatch_approval.rs` 使用无工具模型调用判断项目审批；严格解析判断结果，失败默认转交用户。转交卡片复用助理确认槽位，并仅响应对应的原生或 ACP 一次性请求；取消和原请求失效时清理卡片。
+- `/model` 调用与桌面 `set_active_model` 相同的 `models::set_session_model`，写入助理会话的模型并使缓存的 Agent 失效。`/resume` 依据会话最近一次回合结束事件（`Store::last_turn_outcome`，`Done` / `Error`）判断是否有失败回合，再以 `resume` 方式调用 `send_message_inner`，与桌面错误卡片的「继续执行」是同一路径；回合开始前就失败的请求没有写入对话，其原文只保存在内存中，重启 Wisp 后不能再重跑。`/resume` 会启动回合，因此走微信的回合队列而不是即时控制通道。
 - `research_dispatch.rs` 管理启动确认和后台结果回传。结果在项目回合释放锁之前快照，避免后续对话覆盖；摘要通过无工具的模型调用生成，并在助理回合锁内写入消息和 UI 事件，供历史回放和后续对话使用。输出前重新检查项目隐私和微信绑定身份。
 
 ### 手动验证微信审批
@@ -85,6 +89,14 @@ The top toolbar provides the project and calendar visibility toggles. Sidebar he
 4. 回复 `full off`，确认下一次需要确认的操作重新请求审批。开启后重启 Wisp，也应恢复审批。
 5. 在未由助理派发的项目里留下待审批请求，确认助理的 `yes`、`no`、`full` 不处理这条无关请求。
 
+### 手动验证模型切换与重跑
+
+1. 微信发送 `/model`，确认列表与桌面模型设置中的对话模型一致，当前模型有标记；`/status` 显示同一个模型。
+2. 发送 `/model 2`（或名称的一部分），确认回复新模型；再提问一次，桌面助理这条回复的模型标记应为新模型。重新打开桌面助理，输入框的模型选择也应是新模型。
+3. 把助理切到一个不可用的模型（例如接口地址填错），微信提问，应收到「处理失败」及 `/resume` 提示。`/model` 切回可用模型后发送 `/resume`，确认助理回答的是刚才的问题，且对话里这条问题只出现一次。
+4. 没有失败回合时发送 `/resume`，应提示没有需要重跑的请求，不产生新的回复。
+5. 助理正在回复微信消息时发送 `/resume`，它应排在当前回合之后处理，不打断回复；当前回合成功时提示没有需要重跑的请求。桌面端发起的回复进行中时，应提示稍后再发。
+
 ### 手动验证派发与回报
 
 1. 让助理列出目标项目的对话，再指定已有对话发送任务并绑定 CPU2；确认项目对话标题和历史保留，默认执行环境变为 CPU2。
@@ -94,6 +106,9 @@ The top toolbar provides the project and calendar visibility toggles. Sidebar he
 5. 关闭项目完全权限，派发一个明确范围的任务。确认助理能放行详情充分的范围内操作；对不明确的删除或缺少内容的修改，应显示转交卡片。分别通过微信 `yes` / `no` 和原项目桌面按钮处理，确认只结算原请求，陈旧卡片随即关闭。
 
 ## 限制
+
+- 微信切换模型后，已打开的桌面助理页不会立即刷新输入框里的模型名称，重新打开助理后显示新模型；回合实际使用的模型以切换结果为准。
+- `/resume` 只重跑助理自己的回合，不重跑已派发到项目里的任务；项目任务失败后请让助理重新派发，或到对应项目处理。
 
 - 晨报仍需要你开口问；已派发工作的完成摘要会自动回报。
 - 自动回报依赖 Wisp 持续运行；应用退出会中断内存中的派发和通知等待，不自动重跑任务。已保存的摘要仍在助理历史中。

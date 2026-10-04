@@ -11,8 +11,10 @@ or project-switching commands described below. Bind and enable it separately;
 the same bot cannot be bound to both entries. Its approval replies are `yes`
 (approve once), `no` (reject), and `full` (approve and enable Full Permission
 for the assistant conversation until Wisp restarts or `full off` is sent).
-`/approval` repeats the assistant's pending request; `/status` shows permission
-state. Dispatched project work keeps its own approvals. See
+`/approval` repeats the assistant's pending request; `/status` shows the model
+and permission state. `/model` lists chat models or switches the assistant
+conversation's model, and `/resume` reruns its last failed request. Dispatched
+project work keeps its own approvals. See
 [Research assistant](research-assistant.md#微信远程接入).
 
 The assistant can list a project's conversations, continue a selected one, and
