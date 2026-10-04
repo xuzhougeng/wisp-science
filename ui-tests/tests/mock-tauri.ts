@@ -1964,6 +1964,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             automation.daily = {...automation.daily, last_run_at: Math.floor(Date.now() / 1000), drafted: 2, running: false};
             return {...automation.daily, running: true};
           case "list_all_schedules": return automation.schedules.map((s: any) => ({...s}));
+          case "list_schedules": return automation.schedules.map((s: any) => ({...s}));
+          case "list_schedule_runs": return [];
+          case "set_session_timer": {
+            if ((window as any).__timerError) throw new Error((window as any).__timerError);
+            const match = String(arg("expression")).trim().match(/^(\d+)([mhd])\s+([\s\S]+)$/)!;
+            const interval = Number(match[1]) * ({m:60,h:3600,d:86400} as any)[match[2]];
+            const now = Math.floor(Date.now()/1000), sid = arg("sessionId");
+            let s = automation.schedules.find((s: any) => s.frame_id === sid && s.replace_previous_turn);
+            if (!s) { s = {id:`timer-${sid}`,project_id:"default",frame_id:sid,replace_previous_turn:true,skill:null,enabled:true,last_run_at:null,created_at:now}; automation.schedules.push(s); }
+            Object.assign(s,{name:match[3],prompt:match[3],interval_secs:interval,next_run_at:now+interval,updated_at:now});
+            (window as any).__sessionTimer = {...s};
+            return {...s};
+          }
           case "create_schedule": {
             const interval = Math.max(60, Number(arg("intervalSecs"))), now = Math.floor(Date.now() / 1000);
             const prompt = String(arg("prompt") ?? "").trim();

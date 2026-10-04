@@ -1039,6 +1039,7 @@
   "官方“使用 ChatGPT 登录”：授权 Wisp Science 作为已连接的智能体，使用你的 ChatGPT 套餐额度。": "Official Sign in with ChatGPT: approve Wisp Science as a connected agent that uses your ChatGPT plan's usage.",
   "定义中提供的示例": "Examples from the schema",
   "定位到原文": "Show in conversation",
+  "定时发送提示词，只保留最新一轮：/timer 1h 当前进展如何": "Repeat a prompt; keep only the latest timer turn: /timer 1h prompt",
   "定稿检查": "Readiness",
   "定稿用于保留证据。能否重新生成结果需单独验证，检查通过不代表已复现。": "Finalization preserves evidence. Reproduction is verified separately and is not implied by a successful check.",
   "实体宠物 · 令牌认证状态轮询": "Physical pet · authenticated status polling",

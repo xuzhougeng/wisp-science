@@ -746,6 +746,10 @@ impl Store {
             .bind(frame_id)
             .execute(&mut *tx)
             .await?;
+        // Snapshot seqs can be reused after undo. Keep a sealed timer bounded
+        // by the rows that actually remain, so subsequent human turns survive.
+        sqlx::query("UPDATE session_timer_turns SET base_epoch=MIN(base_epoch,?2), start_seq=MIN(start_seq,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?1)), end_seq=MIN(end_seq,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?1)) WHERE frame_id=?1")
+            .bind(frame_id).bind(record.parent_epoch).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(head)
     }

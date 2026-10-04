@@ -3793,6 +3793,7 @@ async fn delete_project_clears_later_child_tables_and_ignores_orphan_schedules()
         .unwrap());
 
     let gone_schedule = ScheduleRecord {
+        replace_previous_turn: false,
         id: "gone-sched".into(),
         project_id: "gone".into(),
         frame_id: Some("gone-main".into()),
@@ -3915,6 +3916,7 @@ async fn delete_project_clears_later_child_tables_and_ignores_orphan_schedules()
         .unwrap();
     store
         .create_schedule(&ScheduleRecord {
+            replace_previous_turn: false,
             id: "keep-sched".into(),
             project_id: "keep".into(),
             frame_id: Some("keep-main".into()),
@@ -4142,6 +4144,7 @@ async fn delete_session_clears_later_frame_tables() {
     store
         .create_schedule(&ScheduleRecord {
             id: "sched-f".into(),
+            replace_previous_turn: false,
             project_id: "p".into(),
             frame_id: Some("f".into()),
             name: "After session".into(),
@@ -4941,6 +4944,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             ACP_AGENT_SELECTION_MIGRATION.to_string(),
             SESSION_SHELVED_MIGRATION.to_string(),
             SESSION_FILE_OPERATIONS_MIGRATION.to_string(),
+            SESSION_TIMERS_MIGRATION.to_string(),
         ]
     );
     let first_open_migrations = store.schema_migrations().await.unwrap();

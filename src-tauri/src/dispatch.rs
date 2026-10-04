@@ -124,7 +124,7 @@ pub(crate) async fn start(
             Some(observer.id()),
             None,
             None,
-            Some(guard),
+            Some(&guard),
             dispatcher.origin(),
         );
         let mut approvals = tokio::task::JoinSet::new();
@@ -138,6 +138,9 @@ pub(crate) async fn start(
                 });
             })
             .await;
+        // The dispatched turn is done. Release its conversation before
+        // reviewing/delivering the result under the parent's workflow lock.
+        drop(guard);
         approvals.abort_all();
         while approvals.join_next().await.is_some() {}
         drop(observer);

@@ -1509,6 +1509,7 @@ mod tests {
         run.remote_handle_json = Some("{\"pid\":123}".into());
         legacy.create_run(&run).await.unwrap();
         let schedule = crate::ScheduleRecord {
+            replace_previous_turn: false,
             id: "schedule".into(),
             project_id: "p".into(),
             frame_id: Some("f".into()),

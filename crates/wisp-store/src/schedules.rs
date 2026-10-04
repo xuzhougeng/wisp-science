@@ -27,6 +27,7 @@ fn schedule_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScheduleRecord> {
         id: row.try_get("id")?,
         project_id: row.try_get("project_id")?,
         frame_id: row.try_get("frame_id")?,
+        replace_previous_turn: row.try_get::<i64, _>("replace_previous_turn")? != 0,
         name: row.try_get("name")?,
         prompt: row.try_get("prompt")?,
         skill: row.try_get("skill")?,
@@ -40,7 +41,7 @@ fn schedule_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScheduleRecord> {
 }
 
 const SCHEDULE_COLUMNS: &str =
-    "id,project_id,frame_id,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at";
+    "id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at";
 
 impl Store {
     pub async fn create_schedule(&self, schedule: &ScheduleRecord) -> Result<()> {
@@ -49,12 +50,13 @@ impl Store {
         }
         sqlx::query(
             "INSERT INTO schedules(\
-             id,project_id,frame_id,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at) \
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+             id,project_id,frame_id,replace_previous_turn,name,prompt,skill,interval_secs,enabled,next_run_at,last_run_at,created_at,updated_at) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.project_id)
         .bind(schedule.frame_id.as_deref())
+        .bind(schedule.replace_previous_turn)
         .bind(&schedule.name)
         .bind(&schedule.prompt)
         .bind(schedule.skill.as_deref())
@@ -260,6 +262,7 @@ mod tests {
             id: id.into(),
             project_id: project_id.into(),
             frame_id: None,
+            replace_previous_turn: false,
             name: "Daily summary".into(),
             prompt: "Summarize today's progress.".into(),
             skill: Some("literature-review".into()),

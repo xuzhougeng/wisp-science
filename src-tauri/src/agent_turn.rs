@@ -16,6 +16,7 @@ pub(crate) enum TurnOrigin {
     #[default]
     Desktop,
     Im,
+    Timer,
     Queued(u64),
     /// A subagent conversation's turn, sent by its parent conversation's agent
     /// (#1061). `unattended` carries the parent's IM origin so a subagent
@@ -41,7 +42,7 @@ impl TurnOrigin {
     fn queue_id(self) -> Option<u64> {
         match self {
             Self::Queued(id) => Some(id),
-            Self::Desktop | Self::Im | Self::Subagent { .. } => None,
+            Self::Desktop | Self::Im | Self::Timer | Self::Subagent { .. } => None,
         }
     }
 }
@@ -150,7 +151,7 @@ pub(crate) async fn send_message(
         progress_observer_id,
         guide,
         replace,
-        workflow_guard,
+        workflow_guard.as_ref(),
         TurnOrigin::Desktop,
     )
     .await;
@@ -302,14 +303,14 @@ pub(crate) async fn send_message_inner(
     // Guide (#410): roll the model context back to where the interrupted turn
     // started before running this message ("replace the current task").
     replace: Option<bool>,
-    mut workflow_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    workflow_guard: Option<&tokio::sync::OwnedMutexGuard<()>>,
     origin: TurnOrigin,
 ) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
     // Automatic delegation resume carries an owned workflow guard and uses the
     // synthetic "main" route. It must preserve the window that launched the
     // parent task; every direct/queued user turn may claim its actual window.
-    let user_routed_turn = !resume || workflow_guard.is_none();
+    let user_routed_turn = origin != TurnOrigin::Timer && (!resume || workflow_guard.is_none());
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
@@ -421,9 +422,13 @@ pub(crate) async fn send_message_inner(
                 .or_insert_with(|| Arc::new(SessionRuntime::new()))
                 .clone()
         };
-        let _workflow = match workflow_guard.take() {
+        let owned_workflow;
+        let _workflow = match workflow_guard {
             Some(guard) => guard,
-            None => runtime.workflow.clone().lock_owned().await,
+            None => {
+                owned_workflow = runtime.workflow.clone().lock_owned().await;
+                &owned_workflow
+            }
         };
         runtime.cancel.store(false, Ordering::SeqCst);
         let refs = references.as_deref().unwrap_or_default();
@@ -619,9 +624,11 @@ pub(crate) async fn send_message_inner(
 
     // Record this project's last session on accepted send. Desktop traffic
     // must not steal the Feishu/WeChat IM project.
-    channels::record_last_message_session(&state.store, &frame_id)
-        .await
-        .map_err(|error| format!("Failed to update the shared last-message route: {error}"))?;
+    if origin != TurnOrigin::Timer {
+        channels::record_last_message_session(&state.store, &frame_id)
+            .await
+            .map_err(|error| format!("Failed to update the shared last-message route: {error}"))?;
+    }
 
     // Get or create this session's runtime. The map mutex is dropped here —
     // the per-session `agent` mutex (not this map) is what the turn holds,
@@ -637,25 +644,38 @@ pub(crate) async fn send_message_inner(
     // the workflow lock. Exactly one side takes each entry: either the loop
     // drains it into the running turn, or this call reclaims it below after
     // the lock is acquired and runs a normal turn with it.
-    let guidance_id = if guide.unwrap_or(false) && !resume {
-        let running = state.running_turns.lock().await.contains(&frame_id);
-        running.then(|| {
-            let id = rt
-                .guidance_seq
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            rt.pending_guidance
-                .lock()
-                .unwrap()
-                .push((id, message.clone()));
-            id
-        })
-    } else {
-        None
-    };
-    let _workflow = match workflow_guard.take() {
+    let guidance_id =
+        if guide.unwrap_or(false) && !resume && !rt.timer_running.load(Ordering::SeqCst) {
+            let running = state.running_turns.lock().await.contains(&frame_id);
+            running.then(|| {
+                let id = rt
+                    .guidance_seq
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                rt.pending_guidance
+                    .lock()
+                    .unwrap()
+                    .push((id, message.clone()));
+                id
+            })
+        } else {
+            None
+        };
+    let owned_workflow;
+    let _workflow = match workflow_guard {
         Some(guard) => guard,
-        None => rt.workflow.clone().lock_owned().await,
+        None => {
+            owned_workflow = rt.workflow.clone().lock_owned().await;
+            &owned_workflow
+        }
     };
+    if origin != TurnOrigin::Timer {
+        // Crash recovery: delimit an unfinished timer before human messages.
+        state
+            .store
+            .finish_session_timer_turn(&frame_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     rt.cancel.store(false, Ordering::SeqCst);
     if let Some(id) = guidance_id {
         let mut pending = rt.pending_guidance.lock().unwrap();
@@ -1561,10 +1581,11 @@ pub(crate) async fn send_message_inner(
     rt.effective_max_iter.store(max_iter, Ordering::SeqCst);
     rt.effective_max_iter_known.store(true, Ordering::SeqCst);
     state.running_turns.lock().await.insert(frame_id.clone());
+    // Even a Guide/cut-in racing the timer flag belongs to a subsequent human
+    // turn. Never let it enter the disposable timer's ownership range.
+    let guidance = (origin != TurnOrigin::Timer).then_some(&rt.pending_guidance);
     let mut result = if resume {
-        agent
-            .run_resume(&output, Some(&rt.cancel), Some(&rt.pending_guidance))
-            .await
+        agent.run_resume(&output, Some(&rt.cancel), guidance).await
     } else {
         agent
             .run_with_images(
@@ -1573,7 +1594,7 @@ pub(crate) async fn send_message_inner(
                 primary_supports_vision,
                 &output,
                 Some(&rt.cancel),
-                Some(&rt.pending_guidance),
+                guidance,
             )
             .await
     };
@@ -1626,13 +1647,15 @@ pub(crate) async fn send_message_inner(
     drop(output);
     // Drain the live coalescer before the direct Done/Error emit below so the
     // final buffered deltas cannot arrive after the turn boundary.
-    if tokio::time::timeout(std::time::Duration::from_secs(5), live_event_handle)
+    // A timed-out JoinHandle must be aborted and joined, not detached: a
+    // timer can replace this turn as soon as the workflow lock is released.
+    if wisp_store::join_or_abort_persist(live_event_handle, std::time::Duration::from_secs(5))
         .await
         .is_err()
     {
         tracing::warn!("live event coalescer did not finish cleanly");
     }
-    if tokio::time::timeout(std::time::Duration::from_secs(5), ui_event_handle)
+    if wisp_store::join_or_abort_persist(ui_event_handle, std::time::Duration::from_secs(5))
         .await
         .is_err()
     {
@@ -1647,7 +1670,8 @@ pub(crate) async fn send_message_inner(
     if let Err(error) = rt.sync_last_seq_from_store(&state.store, &frame_id).await {
         tracing::warn!("{error}");
     }
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), prov_handle).await;
+    let _ =
+        wisp_store::join_or_abort_persist(prov_handle, std::time::Duration::from_secs(10)).await;
     // The epoch must not open until the persist task has finished or been
     // aborted and joined — a late INSERT would land inside the new epoch's
     // seq range. Rows appended during this turn stay in the old epoch, where
@@ -1706,7 +1730,9 @@ pub(crate) async fn send_message_inner(
             )
             .await;
             emit_browser_tab_cleanup(state, &app, &browser_turn_id, &ap.id).await;
-            turn_hooks::spawn_after_turn(&app, &turn_end(outcome.stop_reason()));
+            if origin != TurnOrigin::Timer {
+                turn_hooks::spawn_after_turn(&app, &turn_end(outcome.stop_reason()));
+            }
             Ok(frame_id)
         }
         Err(e) => {
@@ -1818,7 +1844,7 @@ pub(crate) fn spawn_queue_driver(
                 None,
                 None,
                 None,
-                Some(guard),
+                Some(&guard),
                 TurnOrigin::Queued(item.id),
             )
             .await
@@ -1901,6 +1927,9 @@ pub(crate) async fn enqueue_turn(
 /// - `cutin`  → offer it to the current loop, retaining its payload for a
 ///   priority handoff if that loop has already ended (or has not started yet).
 pub(crate) fn begin_queued_cutin(rt: &SessionRuntime, id: u64) -> Option<u64> {
+    if rt.timer_running.load(Ordering::SeqCst) {
+        return None;
+    }
     // All transfers use the same lock order: queued → cut-ins → guidance.
     let mut queued = rt.queued.lock().unwrap();
     let index = queued.iter().position(|item| item.id == id)?;
@@ -2311,6 +2340,8 @@ mod queue_tests {
     fn queued_turn_origin_carries_the_backend_id() {
         assert_eq!(TurnOrigin::Queued(42).queue_id(), Some(42));
         assert_eq!(TurnOrigin::Desktop.queue_id(), None);
+        assert_eq!(TurnOrigin::Timer.queue_id(), None);
+        assert_eq!(TurnOrigin::Subagent { unattended: true }.queue_id(), None);
     }
 }
 

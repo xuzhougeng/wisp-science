@@ -1,0 +1,18 @@
+.session-timer-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 16px; padding: 5px 9px; background: transparent; color: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
+.session-timer-button svg { width: 16px; height: 16px; }
+.session-timer-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.session-timer-panel { width: 460px; max-width: 100%; max-height: 85vh; overflow: auto; border: 1px solid var(--border); border-radius: 14px; padding: 20px; background: var(--bg-elev); color: var(--text); box-shadow: 0 16px 60px #0003; }
+.session-timer-panel header, .session-timer-panel h3, .session-timer-panel footer { display: flex; align-items: center; gap: 8px; }
+.session-timer-panel header { justify-content: space-between; }
+.session-timer-panel h3 { margin: 0; }
+.session-timer-panel p { font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; }
+.session-timer-panel label { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.session-timer-panel input, .session-timer-panel textarea { width: 100%; box-sizing: border-box; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.session-timer-panel button { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.session-timer-panel button:not(.btn-primary) { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.session-timer-panel button:not(.btn-primary):hover { background: var(--bg-hover); }
+.session-timer-panel header button:not(.btn-primary) { padding: 6px; border: 0; }
+.session-timer-panel button:disabled { opacity: .5; cursor: default; }
+.session-timer-panel svg { width: 17px; height: 17px; }
+.session-timer-panel footer { justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+.session-timer-panel [role=alert] { color: var(--error, #b13d3d); }

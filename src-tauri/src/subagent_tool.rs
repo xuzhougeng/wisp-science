@@ -343,9 +343,14 @@ mod tests {
         assert!(require_owned(&store, "parent", "other").await.is_err());
         assert!(require_owned(&store, "parent", "missing").await.is_err());
 
-        // The researcher (desktop, IM, queue) cannot write to the subagent;
+        // The researcher (desktop, IM, queue, timer) cannot write to the subagent;
         // its parent's dispatch and a message-less resume can.
-        for origin in [TurnOrigin::Desktop, TurnOrigin::Im, TurnOrigin::Queued(1)] {
+        for origin in [
+            TurnOrigin::Desktop,
+            TurnOrigin::Im,
+            TurnOrigin::Queued(1),
+            TurnOrigin::Timer,
+        ] {
             assert!(require_instruction_source(&store, "sub", origin, false)
                 .await
                 .is_err());
