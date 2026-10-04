@@ -2,9 +2,7 @@ use super::Store;
 use anyhow::Result;
 use sqlx::Row;
 
-/// The global research assistant keeps its one conversation in this hidden
-/// project. It never appears in user-facing lists.
-pub const ASSISTANT_PROJECT_ID: &str = "assistant:research";
+pub use wisp_dto::ASSISTANT_PROJECT_ID;
 
 pub fn is_assistant_project_id(id: &str) -> bool {
     id == ASSISTANT_PROJECT_ID

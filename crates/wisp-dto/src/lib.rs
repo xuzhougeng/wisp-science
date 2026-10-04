@@ -3050,6 +3050,11 @@ pub struct ProjectInfo {
     pub memory_file_count: usize,
 }
 
+/// The global research assistant keeps its one conversation in this hidden
+/// project. It never appears in user-facing lists and is opened as the
+/// assistant, never as a workspace.
+pub const ASSISTANT_PROJECT_ID: &str = "assistant:research";
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSummary {
     #[serde(default)]

@@ -317,6 +317,11 @@ pub(super) async fn set_active_project(
     label: &str,
     id: &str,
 ) -> Result<(String, String), String> {
+    // Only `open_research_assistant` binds the assistant's hidden project. As
+    // a workspace it would also become this window's project on next launch.
+    if wisp_store::is_assistant_project_id(id) {
+        return Err("The research assistant is not a project workspace.".into());
+    }
     let recovery_projects = state
         .store
         .session_artifact_recovery_projects(id)
@@ -338,6 +343,8 @@ pub(super) async fn set_active_project(
     let root = ap.root.clone();
     state.set_active(label, ap);
     state.set_active_frame(label, None);
+    // The window left the assistant for this project; nothing to restore.
+    state.assistant_windows.write().unwrap().remove(label);
     remember_window_project(&state.store, label, id).await;
     // Extra windows must not steal the main window's restore mapping or the
     // startup workspace display. remember_window_project already skips home-*.
@@ -386,13 +393,16 @@ async fn remember_window_project(store: &Store, label: &str, id: &str) {
 /// project; falls back to the legacy global `active_project_id`.
 pub(crate) async fn startup_main_project_id(store: &Store) -> String {
     let windows = load_window_active_projects(store).await;
-    if let Some(id) = windows.get("main") {
+    // Builds before the `set_active_project` guard could persist the
+    // assistant's hidden project here; never start in it.
+    let restorable = |id: &str| !wisp_store::is_assistant_project_id(id);
+    if let Some(id) = windows.get("main").filter(|id| restorable(id)) {
         if store.get_project(id).await.ok().flatten().is_some() {
             return id.clone();
         }
     }
     match store.get_setting("active_project_id").await.ok().flatten() {
-        Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
+        Some(id) if restorable(&id) && store.get_project(&id).await.ok().flatten().is_some() => id,
         _ => "default".to_string(),
     }
 }
@@ -449,7 +459,10 @@ pub(super) async fn restored_window_projects(store: &Store) -> Vec<(String, Stri
     let mut restored = Vec::new();
     for original_id in persisted_windows(store).await {
         let label = project_window_label(&original_id);
-        let id = windows.get(&label).unwrap_or(&original_id);
+        let id = windows
+            .get(&label)
+            .filter(|id| !wisp_store::is_assistant_project_id(id))
+            .unwrap_or(&original_id);
         if store.get_project(id).await.ok().flatten().is_some() {
             restored.push((label, id.clone()));
         } else if store
@@ -1498,6 +1511,20 @@ mod tests {
 
         let _ = store
             .set_setting("active_project_id", "missing")
+            .await
+            .unwrap();
+        assert_eq!(startup_main_project_id(&store).await, "default");
+
+        // An earlier build could persist the assistant's hidden project as
+        // main's workspace; it is never restored.
+        let assistant = wisp_store::ASSISTANT_PROJECT_ID;
+        store
+            .create_project(assistant, "Assistant", "")
+            .await
+            .unwrap();
+        remember_window_project(&store, "main", assistant).await;
+        let _ = store
+            .set_setting("active_project_id", assistant)
             .await
             .unwrap();
         assert_eq!(startup_main_project_id(&store).await, "default");

@@ -6,6 +6,7 @@
 .assistant-workspace-header h1 { margin: 0; font-size: calc(15px * var(--ui-font-scale, 1)); font-weight: 600; }
 .assistant-topbar-note { color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .assistant-remote-toggle { margin-left: auto; }
+.assistant-remote-toggle + .assistant-remote-toggle { margin-left: 0; }
 .assistant-panel-toggle[aria-expanded="true"] { background: var(--bg-sunken); color: var(--text); }
 .assistant-side { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; box-sizing: border-box; background: color-mix(in srgb, var(--bg-app) 62%, var(--bg-sunken)); color: var(--text); }
 .assistant-side[hidden], .assistant-side [hidden], .assistant-drawer-backdrop[hidden] { display: none !important; }

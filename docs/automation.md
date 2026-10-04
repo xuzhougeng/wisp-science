@@ -1,6 +1,6 @@
 # 自动化 / Automation
 
-首页右上角、日历图标右侧的时钟图标打开「自动化」：按计划运行任务，或在需要时随时执行。点击「返回首页」或按 Escape 关闭；打开着「创建定时任务」表单时，Escape 先关闭表单。从这里打开的设置等上层界面会先消耗 Escape。
+自动化不属于某一个项目，入口在科研助理页面：顶栏「远程接入」左侧的「自动化」按钮。按计划运行任务，或在需要时随时执行。点击「返回科研助理」或按 Escape 关闭；打开着「创建定时任务」表单时，Escape 先关闭表单。从这里打开的设置等上层界面会先消耗 Escape。
 
 ## 内置：每日研究回顾
 
@@ -21,7 +21,8 @@
 
 ## Automation (English)
 
-The clock icon next to the calendar on the home screen opens **Automation**.
+Automation spans every project, so it opens from the research assistant: the
+**Automation** button in its header, next to Remote access.
 
 - **Daily research recap** (built-in, on by default): once a day after its time
   (09:00 by default), drafts a recap for each project's last three complete days
