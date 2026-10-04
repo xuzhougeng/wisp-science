@@ -1,6 +1,7 @@
-//! Home-level Automation page: the built-in daily recap plus every project's
-//! scheduled prompts, created from a template or from scratch. Schedules
-//! fire only while Wisp runs; a missed slot runs once on the next launch.
+//! Automation page, opened from the research assistant because it spans
+//! projects: the built-in daily recap plus every project's scheduled prompts,
+//! created from a template or from scratch. Schedules fire only while Wisp
+//! runs; a missed slot runs once on the next launch.
 use crate::app_support::compose_icon;
 use crate::dto::{DailyRecapAutomation, ProjectSummary, ScheduleRecord};
 use crate::i18n::Locale;
@@ -271,7 +272,7 @@ pub(crate) fn AutomationPage(
         move |id: &str| projects.with(|ps| ps.iter().find(|p| p.id == id).map(|p| p.name.clone()));
     view! {
         <section class="home-calendar home-automation" data-testid="home-automation" aria-label=move || j(locale.get(),"Automation","自动化")>
-            <button type="button" class="calendar-back" on:click=move |_| on_close.call(())>{compose_icon("arrow-left")}{move || j(locale.get(),"Back to home","返回首页")}</button>
+            <button type="button" class="calendar-back" on:click=move |_| on_close.call(())>{compose_icon("arrow-left")}{move || j(locale.get(),"Back to research assistant","返回科研助理")}</button>
             <header class="home-calendar-heading"><div><h2>{move || j(locale.get(),"Automation","自动化")}</h2><p>{move || j(locale.get(),"Run tasks on a schedule while Wisp is open, or any time you need them.","按计划运行任务，或在需要时随时执行。")}</p></div>
                 <div class="automation-heading-actions">
                     <button type="button" class="calendar-icon" aria-label=move || j(locale.get(),"Refresh automation","刷新自动化") on:click=move |_| refresh.update(|n| *n += 1)>{compose_icon("refresh")}</button>

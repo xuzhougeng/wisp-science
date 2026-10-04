@@ -1107,9 +1107,25 @@ fn App() -> impl IntoView {
             let _ = button.focus();
         }
     });
+    // Automation spans every project, so it opens from the assistant rather
+    // than from one project; the inline task form is its own Escape layer.
+    let assistant_automation_open = create_rw_signal(false);
+    let assistant_automation_form = create_rw_signal(false);
+    let close_assistant_automation = Callback::new(move |_: ()| {
+        assistant_automation_form.set(false);
+        assistant_automation_open.set(false);
+        if let Some(button) = document()
+            .get_element_by_id("assistant-automation-toggle")
+            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = button.focus();
+        }
+    });
     create_effect(move |_| {
         if !assistant_mode.get() {
             assistant_remote_open.set(false);
+            assistant_automation_open.set(false);
+            assistant_automation_form.set(false);
         }
     });
     let feedback_context = create_rw_signal::<Option<String>>(None);
@@ -1572,6 +1588,20 @@ fn App() -> impl IntoView {
             }
         }),
     );
+    // The assistant re-reads visible projects after every turn and its list is
+    // empty meanwhile. Automation keeps the last list, minus anything privacy
+    // mode has hidden since, so an open task form is not rebuilt mid-typing.
+    let automation_projects = create_memo(move |last: Option<&Vec<ProjectSummary>>| {
+        if !assistant_workspace.loading.get() {
+            return assistant_workspace.projects.get();
+        }
+        let hidden = privacy_mode_active
+            .get()
+            .then(|| privacy_hidden_project_ids.get())
+            .unwrap_or_default();
+        let kept = last.into_iter().flatten();
+        kept.filter(|p| !hidden.contains(&p.id)).cloned().collect()
+    });
     let privacy_mode_modal_open = create_rw_signal(false);
     // Top-nav project switcher dropdown + Project Settings modal.
     let show_proj_menu = create_rw_signal(false);
@@ -2069,8 +2099,6 @@ fn App() -> impl IntoView {
     let research_graph = create_rw_signal(ResearchGraph::default());
     let show_research_graph = create_rw_signal(false);
     let home_calendar_open = create_rw_signal(false);
-    let home_automation_open = create_rw_signal(false);
-    let home_automation_form = create_rw_signal(false);
     let home_dialog_open = create_rw_signal(false);
     let calendar_journey_request = create_rw_signal(None::<(String, i64)>);
     let journey_initial_day = create_rw_signal(None::<i64>);
@@ -9863,21 +9891,22 @@ fn App() -> impl IntoView {
             return;
         }
 
+        // The inline task form closes before its page.
+        if assistant_automation_form.get() {
+            ev.prevent_default();
+            assistant_automation_form.set(false);
+            return;
+        }
+        if assistant_automation_open.get() {
+            ev.prevent_default();
+            close_assistant_automation.call(());
+            return;
+        }
+
         if show_projects.get() && !assistant_mode.get() {
             if home_calendar_open.get() && !home_dialog_open.get() {
                 ev.prevent_default();
                 home_calendar_open.set(false);
-                return;
-            }
-            // The inline task form closes before its page.
-            if home_automation_form.get() && !home_dialog_open.get() {
-                ev.prevent_default();
-                home_automation_form.set(false);
-                return;
-            }
-            if home_automation_open.get() && !home_dialog_open.get() {
-                ev.prevent_default();
-                home_automation_open.set(false);
                 return;
             }
             if project_transfer
@@ -10342,6 +10371,15 @@ fn App() -> impl IntoView {
         let app_shell_entering = app_shell_entering;
         Callback::new(
             move |(project_id, session_id, show_files): (String, Option<String>, bool)| {
+                // The assistant's conversation lives in a hidden project. A
+                // notification or session target for it opens the assistant
+                // from home, as the home button does, never that project as a
+                // workspace.
+                if project_id == ASSISTANT_PROJECT_ID {
+                    show_projects.set(true);
+                    open_assistant.call(());
+                    return;
+                }
                 if project_transfer
                     .get_untracked()
                     .is_some_and(|transfer| transfer.is_exporting_project(&project_id))
@@ -10351,14 +10389,16 @@ fn App() -> impl IntoView {
                     status.set(message);
                     return;
                 }
+                // Opening a project from the assistant (a notification, the
+                // command palette) leaves the assistant rather than showing
+                // that project inside it.
+                assistant_mode.set(false);
                 let calendar_day = calendar_journey_request
                     .get_untracked()
                     .filter(|(id, _)| id == &project_id)
                     .map(|(_, day)| day);
                 calendar_journey_request.set(None);
                 home_calendar_open.set(false);
-                home_automation_open.set(false);
-                home_automation_form.set(false);
                 journey_initial_day.set(None);
                 let request_epoch = transition_epoch.get().wrapping_add(1);
                 transition_epoch.set(request_epoch);
@@ -11739,7 +11779,6 @@ fn App() -> impl IntoView {
                 sync_actions_available, command_palette_open, project_transfer,
                 privacy_mode_active, privacy_hidden_project_ids,
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
-                home_automation_open, home_automation_form,
             }
             open_project=switch_project
             open_project_folder=Callback::new(move |id| open_project_with_files.call((id, None, true)))
@@ -11933,10 +11972,19 @@ fn App() -> impl IntoView {
         {move || (assistant_mode.get() && assistant_remote_open.get()).then(|| view! {
             <assistant_remote::AssistantRemote locale=locale on_close=close_assistant_remote/>
         })}
+        {move || (assistant_mode.get() && assistant_automation_open.get()).then(|| view! {
+            <div class="home-calendar-page assistant-automation-page">
+            <automation::AutomationPage locale=locale projects=automation_projects.into()
+                form_open=assistant_automation_form
+                on_open_specialists=Callback::new(move |_| open_settings_fn(Some("specialists".into())))
+                on_close=close_assistant_automation/>
+            </div>
+        })}
         <div class="workspace-main">
         {move || assistant_mode.get().then(|| view! {
             <assistant_workspace::AssistantHeader locale=locale state=assistant_workspace on_close=close_assistant
                 on_remote=Callback::new(move |_| assistant_remote_open.set(true))
+                on_automation=Callback::new(move |_| assistant_automation_open.set(true))
                 on_toggle=Callback::new(move |left| {
                     compose_menu_open.set(false);
                     model_menu_open.set(false);
