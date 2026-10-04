@@ -43,6 +43,7 @@ mod schedules;
 pub mod secrets;
 mod session_artifacts;
 mod session_imports;
+mod session_timers;
 mod sessions;
 mod storage_prefs;
 mod turn_undo;
@@ -194,6 +195,7 @@ const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
 const SESSION_SHELVED_MIGRATION: &str = "0061_session_shelved";
 const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
 const SESSION_FILE_OPERATIONS_MIGRATION: &str = "0062_session_file_operations";
+const SESSION_TIMERS_MIGRATION: &str = "0063_session_timers";
 
 #[derive(Clone)]
 pub struct Store {
@@ -779,6 +781,17 @@ impl Store {
             .execute(pool)
             .await?;
             Self::record_migration(pool, SCHEDULES_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_TIMERS_MIGRATION).await? {
+            Self::add_columns_if_missing(
+                pool,
+                "schedules",
+                &[("replace_previous_turn", "INTEGER NOT NULL DEFAULT 0")],
+            )
+            .await?;
+            sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS ix_session_timer ON schedules(frame_id) WHERE replace_previous_turn=1").execute(pool).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS session_timer_turns(frame_id TEXT PRIMARY KEY REFERENCES frames(id) ON DELETE CASCADE, base_epoch INTEGER NOT NULL, start_seq INTEGER NOT NULL, end_seq INTEGER, start_ui_seq INTEGER NOT NULL, end_ui_seq INTEGER)").execute(pool).await?;
+            Self::record_migration(pool, SESSION_TIMERS_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, ARTIFACT_SOURCE_DISCARDED_MIGRATION).await? {
             Self::add_columns_if_missing(

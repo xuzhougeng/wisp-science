@@ -231,7 +231,9 @@ Wisp 的真实浏览器控制使用当前 Chrome/Chromium 用户资料，不启�
 
 ![在输入框中手动选择 Skill](assets/basic-configuration/17-manual-skill.png)
 
-选中的 Skill 会附加到下一条消息。它只约束这一轮，不会永久改写项目配置。普通 Wisp 会话和 ACP 会话都支持 `/` 引用；`/compact`、`/fork`、`/rewind` 只在普通会话中出现，因为 ACP 会话的上下文与历史由外部 Agent 管理。
+选中的 Skill 会附加到下一条消息。它只约束这一轮，不会永久改写项目配置。普通 Wisp 会话和 ACP 会话都支持 `/` 引用；`/compact`、`/fork`、`/rewind`、`/timer` 只在普通会话中出现，因为 ACP 会话的上下文与历史由外部 Agent 管理。
+
+`/timer 1h 当前进展如何` 会每小时在当前会话检查一次进展，并替换上一次 timer 的完整轮次。输入框旁的时钟可修改、暂停或取消任务，详见[会话定时任务](automation.md#当前会话的-timer)。
 
 示例：
 

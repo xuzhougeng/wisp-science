@@ -27,6 +27,7 @@ mod research_calendar;
 mod research_journey;
 mod runtime_views;
 mod session_modals;
+mod session_timer;
 mod settings_view;
 mod sidebar;
 mod skill_detail;
@@ -555,6 +556,54 @@ fn App() -> impl IntoView {
     // live cells for the in-flight turn. The Done/Error refetch reconciles the
     // live cells with exact backend data.
     let trajectory_open = create_rw_signal(false);
+    let timer_open = create_rw_signal(false);
+    let session_timer = create_rw_signal(None::<ScheduleRecord>);
+    let timer_refresh = create_rw_signal(0_u64);
+    let timer_session = create_rw_signal(None::<String>);
+    let timer_load_version = store_value(0_u64);
+    create_effect(move |_| {
+        let id = active_session.get();
+        timer_refresh.get();
+        timer_load_version.update_value(|n| *n = n.wrapping_add(1));
+        let version = timer_load_version.get_value();
+        if timer_session.get_untracked() != id {
+            timer_session.set(id.clone());
+            session_timer.set(None);
+            timer_open.set(false);
+        }
+        if let Some(id) = id {
+            spawn_local(async move {
+                if let Ok(list) = research_journey::call::<Vec<ScheduleRecord>>(
+                    "list_schedules",
+                    serde_json::json!({}),
+                )
+                .await
+                {
+                    if timer_load_version.try_get_value() == Some(version)
+                        && active_session.try_get_untracked().flatten().as_deref() == Some(&id)
+                    {
+                        session_timer.set(list.into_iter().find(|s| {
+                            s.replace_previous_turn && s.frame_id.as_deref() == Some(&id)
+                        }));
+                    }
+                }
+            });
+        }
+    });
+    if let Ok(handle) = set_interval_with_handle(
+        move || {
+            if active_session.get_untracked().is_some() {
+                timer_refresh.update(|n| *n = n.wrapping_add(1));
+            }
+        },
+        std::time::Duration::from_secs(30),
+    ) {
+        on_cleanup(move || handle.clear());
+    }
+    session_timer::listen(
+        "session-timer-updated",
+        Callback::new(move |_: String| timer_refresh.update(|n| *n = n.wrapping_add(1))),
+    );
     let trajectory_snapshot = create_rw_signal::<Option<TrajectorySnapshotDto>>(None);
     let trajectory_live = create_rw_signal::<Vec<TrajectoryCellDto>>(vec![]);
     let fetch_trajectory: Rc<dyn Fn(String)> = Rc::new(move |frame_id: String| {
@@ -2733,7 +2782,7 @@ fn App() -> impl IntoView {
                     active_branch_state.get().is_none() && !active_is_exploration.get();
                 let available = |name: &str| match name {
                     "archive" => has_items && !active_is_exploration.get(),
-                    "compact" => !acp,
+                    "compact" | "timer" => !acp,
                     "rewind" => !acp && has_items,
                     "fork" => !acp && branchable,
                     "review" | "remember" => has_items,
@@ -3160,6 +3209,67 @@ fn App() -> impl IntoView {
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
     let delta_buf: DeltaBuf = Rc::new(RefCell::new(HashMap::new()));
+    let timer_delta_buf = delta_buf.clone();
+    session_timer::listen(
+        "session-timer-replaced",
+        Callback::new(move |removal: TimerTurnRemoval| {
+            flush_delta_buf(
+                &timer_delta_buf,
+                active_session,
+                items,
+                transcripts,
+                models,
+                session_model_ids,
+            );
+            transcript_event_revisions.update(|all| {
+                let revision = all.entry(removal.frame_id.clone()).or_default();
+                *revision += 1;
+            });
+            let offset = transcript_pages
+                .with_untracked(|all| all.get(&removal.frame_id).map_or(0, |p| p.user_offset));
+            route_items(
+                active_session,
+                items,
+                transcripts,
+                &removal.frame_id,
+                |rows| session_timer::remove_turn(rows, offset, &removal),
+            );
+            let removed_before = |index: usize| {
+                index
+                    .saturating_sub(removal.first_user_index)
+                    .min(removal.user_count)
+            };
+            transcript_pages.update(|all| {
+                if let Some(page) = all.get_mut(&removal.frame_id) {
+                    // The render window is relative to this loaded page;
+                    // preserve both its anchor and the follow-latest sentinel.
+                    if page.window_user_start != usize::MAX {
+                        page.window_user_start -= removed_before(
+                            page.user_offset.saturating_add(page.window_user_start),
+                        ) - removed_before(page.user_offset);
+                    }
+                    page.user_offset -= removed_before(page.user_offset);
+                    page.loading_request = None;
+                }
+            });
+            conversation_outlines.update(|all| {
+                if let Some(outline) = all.get_mut(&removal.frame_id) {
+                    outline.retain(|entry| {
+                        entry.user_index < removal.first_user_index
+                            || entry.user_index >= removal.first_user_index + removal.user_count
+                    });
+                    for entry in outline {
+                        entry.user_index -= removed_before(entry.user_index);
+                    }
+                }
+            });
+            if active_session.get_untracked().as_deref() == Some(&removal.frame_id) {
+                model_view.set(false);
+                context_view_items.set(Vec::new());
+            }
+            refresh_context_state.call(removal.frame_id);
+        }),
+    );
     let flush_scheduled = Rc::new(Cell::new(false));
     let cb_buf = delta_buf.clone();
     let cb_scheduled = flush_scheduled.clone();
@@ -7277,6 +7387,32 @@ fn App() -> impl IntoView {
             return false;
         };
         match name {
+            "timer" => {
+                let Some(id) = active_session.get_untracked() else {
+                    status.set(research_journey::j(locale.get_untracked(), "Open a conversation before creating a timer.", "请先打开一个会话，再创建定时任务。").into());
+                    return true;
+                };
+                if payload.trim().is_empty() { input.set(String::new()); timer_open.set(true); return true; }
+                if parse_timer_expression(payload).is_err() {
+                    status.set(research_journey::j(locale.get_untracked(), "Usage: /timer 1h prompt (units: m, h, d).", "用法：/timer 1h 当前进展如何（单位：m、h、d）。").into());
+                    return true;
+                }
+                let expression = payload.to_string();
+                spawn_local(async move {
+                    match research_journey::call::<ScheduleRecord>("set_session_timer", serde_json::json!({"sessionId":id,"expression":expression})).await {
+                        Ok(timer) => {
+                            if active_session.get_untracked().as_deref() == Some(&id) {
+                                session_timer.set(Some(timer));
+                                timer_refresh.update(|n| *n = n.wrapping_add(1));
+                                if input.get_untracked() == text { input.set(String::new()); }
+                                status.set(research_journey::j(locale.get_untracked(), "Timer saved. Use the clock to manage it.", "定时任务已保存，点击时钟可以管理。").into());
+                            }
+                        },
+                        Err(error) => status.set(error),
+                    }
+                });
+                return true;
+            }
             "archive" => {
                 input.set(String::new());
                 archive_frame.set(active_session.get_untracked());
@@ -9734,6 +9870,11 @@ fn App() -> impl IntoView {
             trajectory_open.set(false);
             return;
         }
+        if timer_open.get() {
+            ev.prevent_default();
+            timer_open.set(false);
+            return;
+        }
         if archive_frame.get().is_some()
             && !archive_minimized.get()
             && modal_artifact.get().is_none()
@@ -11962,6 +12103,10 @@ fn App() -> impl IntoView {
             on_sidebar_resize_start=Callback::new(on_sidebar_resize_start)
         />
 
+        <style>{include_str!("styles/session_timer.css")}</style>
+        {move || timer_open.get().then(|| active_session.get().map(|id| view! {
+            <session_timer::SessionTimerPanel locale=locale session_id=id timer=session_timer active_session=active_session refresh=timer_refresh on_close=Callback::new(move |_| timer_open.set(false))/>
+        }))}
         <div class="workspace-area" class:publication-active=move || show_publication_workspace.get()>
         {move || show_publication_workspace.get().then(|| view! {
             <PublicationWorkspacePage
@@ -14720,6 +14865,9 @@ fn App() -> impl IntoView {
                     </div>
                     <div class="composer-actions">
                         <div class="composer-tools">
+                            {move || session_timer.get().map(|timer| view! {
+                                <button type="button" class="session-timer-button" data-testid="session-timer-button" on:click=move |_| timer_open.set(true)>{compose_icon("clock")}{session_timer::label(&timer,locale.get())}</button>
+                            })}
                             <button type="button" class="composer-plus"
                                 class:active=move || compose_menu_open.get()
                                 title=move || t(locale.get(), "composer.add")

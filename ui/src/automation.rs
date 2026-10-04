@@ -361,6 +361,7 @@ pub(crate) fn AutomationPage(
                             rows.into_iter().map(|(s, name)| {
                                 let (id, toggle_id, run_id, delete_id, confirm_id) = (s.id.clone(), s.id.clone(), s.id.clone(), s.id.clone(), s.id.clone());
                                 let enabled = s.enabled;
+                                let timer = s.replace_previous_turn;
                                 let next = if enabled { format!("{} {} {}", j(loc,"Next","下次"), day_key(s.next_run_at), clock(s.next_run_at)) } else { j(loc,"Paused","已暂停").into() };
                                 view! {<article class="automation-row" data-schedule-id=id class:paused=!enabled>
                                     <div class="automation-row-main"><strong>{s.name.clone()}</strong>
@@ -368,7 +369,7 @@ pub(crate) fn AutomationPage(
                                         <p class="automation-prompt">{s.prompt.clone()}</p></div>
                                     <div class="automation-row-actions">
                                         <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", j(loc,"Enable","启用"), s.name) prop:checked=enabled on:change=move |ev| act("set_schedule_enabled", serde_json::json!({"id":toggle_id,"enabled":event_target_checked(&ev)}))/></label>
-                                        <button type="button" class="calendar-icon" title=j(loc,"Run now","立即运行") aria-label=format!("{} {}", j(loc,"Run now","立即运行"), s.name) on:click=move |_| { act("run_schedule_now", serde_json::json!({"id":run_id})); notice.set(Some(j(locale.get_untracked(),"Started. The result appears in a new session of that project.","已触发，结果会出现在该项目的新会话中。").into())); }>{compose_icon("play")}</button>
+                                        <button type="button" class="calendar-icon" title=j(loc,"Run now","立即运行") aria-label=format!("{} {}", j(loc,"Run now","立即运行"), s.name) on:click=move |_| { act("run_schedule_now", serde_json::json!({"id":run_id})); notice.set(Some(if timer { j(locale.get_untracked(),"Requested a check in the bound conversation.","已请求在绑定会话中检查。") } else { j(locale.get_untracked(),"Started. The result appears in a new session of that project.","已触发，结果会出现在该项目的新会话中。") }.into())); }>{compose_icon("play")}</button>
                                         <button type="button" class="calendar-icon automation-delete" class:confirming=move || deleting.get().as_ref() == Some(&confirm_id)
                                             title=move || if deleting.get().as_ref() == Some(&delete_id) {j(locale.get(),"Click again to delete","再次点击确认删除")} else {j(locale.get(),"Delete","删除")}
                                             aria-label=format!("{} {}", j(loc,"Delete","删除"), s.name)

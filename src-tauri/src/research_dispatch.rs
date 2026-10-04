@@ -98,7 +98,7 @@ pub(crate) async fn start(
             Some(observer.id()),
             None,
             None,
-            Some(guard),
+            Some(&guard),
             origin,
         );
         let mut approvals = tokio::task::JoinSet::new();

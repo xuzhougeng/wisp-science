@@ -957,6 +957,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM acp_sessions WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM context_epochs WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        "DELETE FROM session_timer_turns WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM research_edges WHERE project_id=?",
         "DELETE FROM research_nodes WHERE project_id=?",

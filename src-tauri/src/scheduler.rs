@@ -9,6 +9,7 @@
 //! existing turn events.
 
 use crate::{create_session_frame, send_message_inner, AppState, ComposerReferenceArg};
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
@@ -60,6 +61,12 @@ async fn fire_due_schedules(app: &AppHandle) {
 /// cadence untouched.
 async fn fire_schedule(app: AppHandle, schedule: ScheduleRecord, now: i64, advance: bool) {
     let state = app.state::<AppState>();
+    if schedule.replace_previous_turn {
+        if let Err(error) = fire_session_timer(&app, &state, schedule, advance).await {
+            tracing::warn!(%error, "conversation timer failed");
+        }
+        return;
+    }
     if advance {
         let new_next = next_slot_after(schedule.next_run_at, schedule.interval_secs, now);
         match state
@@ -250,6 +257,7 @@ pub(crate) async fn create_schedule(
         id: Uuid::new_v4().to_string(),
         project_id,
         frame_id: args.frame_id,
+        replace_previous_turn: false,
         name: args.name,
         prompt: args.prompt,
         skill: args.skill,
@@ -265,6 +273,242 @@ pub(crate) async fn create_schedule(
         .create_schedule(&schedule)
         .await
         .map_err(|error| error.to_string())?;
+    Ok(schedule)
+}
+
+struct TimerRunning(Arc<crate::SessionRuntime>);
+impl Drop for TimerRunning {
+    fn drop(&mut self) {
+        self.0.timer_running.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Busy sessions remain due instead of accumulating queued hourly messages.
+async fn fire_session_timer(
+    app: &AppHandle,
+    state: &AppState,
+    scheduled: ScheduleRecord,
+    advance: bool,
+) -> Result<(), String> {
+    let Some(frame_id) = scheduled.frame_id.clone() else {
+        return Err("The timer has no target conversation.".into());
+    };
+    let rt = {
+        let mut sessions = state.sessions.lock().await;
+        sessions
+            .entry(frame_id.clone())
+            .or_insert_with(|| Arc::new(crate::SessionRuntime::new()))
+            .clone()
+    };
+    let Some(workflow) = timer_workflow(&rt) else {
+        return if advance {
+            Ok(())
+        } else {
+            Err("This conversation is busy. Try again when its current turn finishes.".into())
+        };
+    };
+    // Re-read after acquiring the workflow: pause/delete/edit can race a tick.
+    let schedule = load_schedule(state, &scheduled.id).await?;
+    if advance && (!schedule.enabled || schedule.next_run_at != scheduled.next_run_at) {
+        return Ok(());
+    }
+    let now = chrono::Utc::now().timestamp();
+    if advance
+        && !state
+            .store
+            .claim_schedule_fire(
+                &schedule.id,
+                schedule.next_run_at,
+                next_slot_after(schedule.next_run_at, schedule.interval_secs, now),
+                now,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+    {
+        return Ok(());
+    }
+    rt.timer_running.store(true, Ordering::SeqCst);
+    let _running = TimerRunning(rt.clone());
+    let result: Result<(), String> = async {
+        state
+            .store
+            .require_unarchived_session(&frame_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        ensure_native_timer(state, &frame_id).await?;
+        if let Some(removal) = state
+            .store
+            .clear_session_timer_turn(&frame_id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            rt.invalidate_cached_agent();
+            *rt.interrupted_turn_start.lock().unwrap() = None;
+            rt.sync_last_seq_from_store(&state.store, &frame_id).await?;
+            crate::emit_to_session_surfaces(
+                app,
+                &frame_id,
+                Some(&schedule.project_id),
+                "session-timer-replaced",
+                &removal,
+            );
+        }
+        state
+            .store
+            .begin_session_timer_turn(&frame_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let result = send_message_inner(
+            state,
+            app.clone(),
+            "main",
+            Some(frame_id.clone()),
+            format!("[Timer: {}]\n\n{}", schedule.name, schedule.prompt),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&workflow),
+            crate::TurnOrigin::Timer,
+        )
+        .await;
+        // Even errors before the first provider request must close the range.
+        state
+            .store
+            .finish_session_timer_turn(&frame_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        result.map(|_| ())
+    }
+    .await;
+    let run = ScheduleRunRecord {
+        id: Uuid::new_v4().to_string(),
+        schedule_id: schedule.id.clone(),
+        frame_id: Some(frame_id.clone()),
+        status: if result.is_ok() { "fired" } else { "failed" }.into(),
+        error: result.as_ref().err().cloned(),
+        fired_at: now,
+    };
+    if let Err(error) = state.store.record_schedule_run(&run).await {
+        tracing::warn!(%error, "failed to record timer run");
+    }
+    crate::emit_to_session_surfaces(
+        app,
+        &frame_id,
+        Some(&schedule.project_id),
+        "session-timer-updated",
+        &frame_id,
+    );
+    result
+}
+
+fn timer_workflow(rt: &Arc<crate::SessionRuntime>) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    let guard = rt.workflow.clone().try_lock_owned().ok()?;
+    if rt.draining.load(Ordering::SeqCst)
+        || rt.replacing.load(Ordering::SeqCst) > 0
+        || rt.deleted.load(Ordering::SeqCst)
+        || !rt.queued.lock().unwrap().is_empty()
+    {
+        return None;
+    }
+    Some(guard)
+}
+
+async fn ensure_native_timer(state: &AppState, frame_id: &str) -> Result<(), String> {
+    if state
+        .store
+        .get_acp_session(frame_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+        || state
+            .store
+            .frame_acp_agent_selection(frame_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some()
+    {
+        return Err(
+            "Timers require a native Wisp conversation; ACP agents own their remote history."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// One timer per conversation. Repeating /timer edits its cadence and prompt.
+#[tauri::command]
+pub(crate) async fn set_session_timer(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    session_id: String,
+    expression: String,
+) -> Result<ScheduleRecord, String> {
+    let (interval_secs, prompt) = wisp_dto::parse_timer_expression(&expression)?;
+    let project = state.require_active(window.label())?;
+    state
+        .store
+        .require_unarchived_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if state
+        .store
+        .frame_project_id(&session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(&project.id)
+    {
+        return Err("The target conversation belongs to a different project.".into());
+    }
+    ensure_native_timer(&state, &session_id).await?;
+    let now = chrono::Utc::now().timestamp();
+    let existing = state
+        .store
+        .list_schedules(&project.id)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|s| s.replace_previous_turn && s.frame_id.as_deref() == Some(&session_id));
+    if let Some(mut schedule) = existing {
+        let updated = state
+            .store
+            .update_session_timer(&schedule.id, &prompt, interval_secs, now)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !updated {
+            return Err("The timer was cancelled while it was being edited.".into());
+        }
+        schedule.prompt = prompt.clone();
+        schedule.name = prompt.chars().take(80).collect();
+        schedule.interval_secs = interval_secs;
+        schedule.next_run_at = now + interval_secs;
+        schedule.updated_at = now;
+        return Ok(schedule);
+    }
+    let schedule = ScheduleRecord {
+        id: Uuid::new_v4().to_string(),
+        project_id: project.id,
+        frame_id: Some(session_id),
+        replace_previous_turn: true,
+        name: prompt.chars().take(80).collect(),
+        prompt,
+        skill: None,
+        interval_secs,
+        enabled: true,
+        next_run_at: now + interval_secs,
+        last_run_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .store
+        .create_schedule(&schedule)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(schedule)
 }
 
@@ -354,6 +598,9 @@ pub(crate) async fn run_schedule_now(
     id: String,
 ) -> Result<(), String> {
     let schedule = load_schedule(&state, &id).await?;
+    if schedule.replace_previous_turn {
+        return fire_session_timer(&app, &state, schedule, false).await;
+    }
     let now = chrono::Utc::now().timestamp();
     tauri::async_runtime::spawn(async move {
         fire_schedule(app, schedule, now, false).await;
@@ -364,6 +611,21 @@ pub(crate) async fn run_schedule_now(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timer_waits_for_normal_workflows_and_never_stacks() {
+        let rt = Arc::new(crate::SessionRuntime::new());
+        let normal = rt.workflow.clone().lock_owned().await;
+        assert!(timer_workflow(&rt).is_none());
+        drop(normal);
+        let timer = timer_workflow(&rt).unwrap();
+        assert!(timer_workflow(&rt).is_none());
+        drop(timer);
+        rt.draining.store(true, Ordering::SeqCst);
+        assert!(timer_workflow(&rt).is_none());
+        rt.draining.store(false, Ordering::SeqCst);
+        assert!(timer_workflow(&rt).is_some());
+    }
 
     #[test]
     fn schedule_args_validate_and_default() {

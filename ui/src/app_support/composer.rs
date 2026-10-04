@@ -689,6 +689,7 @@ pub(crate) fn composer_picker_accepts_edit(
 /// payload (branch send / side-chat question); the rest run a UI action
 /// directly. CLI-only commands like `/quit` do not belong here.
 pub(crate) const SLASH_COMMANDS: &[&str] = &[
+    "timer",
     "archive",
     "compact",
     "fork",
@@ -728,6 +729,7 @@ pub(crate) fn slash_command_icon(name: &str) -> &'static str {
         "upload" => "upload",
         "share" => "share",
         "trajectory" => "timeline",
+        "timer" => "clock",
         _ => "terminal",
     }
 }
@@ -774,7 +776,7 @@ pub(crate) fn parse_slash_command(text: &str) -> Option<(&'static str, &str)> {
 /// payload. Action commands (`/rewind`, `/review`, …) run immediately on
 /// selection instead.
 pub(crate) fn slash_command_fills_text(name: &str) -> bool {
-    matches!(name, "compact" | "fork" | "btw" | "permission")
+    matches!(name, "compact" | "fork" | "btw" | "permission" | "timer")
 }
 
 /// How far to move `scrollTop` so the row spanning `item_top..item_bottom`

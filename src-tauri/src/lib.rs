@@ -7415,6 +7415,7 @@ pub fn run() {
             delegation_completion::get_session_agent_completion,
             delegation_completion::set_session_agent_completion,
             scheduler::create_schedule,
+            scheduler::set_session_timer,
             scheduler::list_schedules,
             scheduler::list_schedule_runs,
             scheduler::set_schedule_enabled,

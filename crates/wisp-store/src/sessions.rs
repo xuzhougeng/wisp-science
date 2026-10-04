@@ -471,6 +471,12 @@ async fn delete_session_rows(
     .bind(frame_id)
     .execute(&mut **tx)
     .await?;
+    sqlx::query("DELETE FROM schedule_runs WHERE schedule_id IN (SELECT id FROM schedules WHERE replace_previous_turn=1 AND frame_id IN (SELECT id FROM frames WHERE root_frame_id=?))")
+        .bind(frame_id).execute(&mut **tx).await?;
+    sqlx::query("DELETE FROM schedules WHERE replace_previous_turn=1 AND frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)")
+        .bind(frame_id).execute(&mut **tx).await?;
+    sqlx::query("DELETE FROM session_timer_turns WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)")
+        .bind(frame_id).execute(&mut **tx).await?;
     sqlx::query(
         "UPDATE schedules SET frame_id=NULL \
          WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
@@ -1239,6 +1245,11 @@ async fn replace_message_rows(
     frame_id: &str,
     msgs: &[Message],
 ) -> Result<()> {
+    // A wholesale rewrite gives every message a new seq identity.
+    sqlx::query("DELETE FROM session_timer_turns WHERE frame_id=?")
+        .bind(frame_id)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("DELETE FROM message_resource_links WHERE frame_id=?")
         .bind(frame_id)
         .execute(&mut **tx)
@@ -1388,6 +1399,15 @@ async fn truncate_message_rows(
     frame_id: &str,
     keep: i64,
 ) -> Result<()> {
+    // Rewind may remove the timer itself and later reuse its seq numbers.
+    // Never let an obsolete ownership range delete newly written human turns.
+    sqlx::query(
+        "DELETE FROM session_timer_turns WHERE frame_id=? AND COALESCE(end_seq,start_seq)>?",
+    )
+    .bind(frame_id)
+    .bind(keep)
+    .execute(&mut **tx)
+    .await?;
     sqlx::query("DELETE FROM message_resource_links WHERE frame_id=? AND message_seq>?")
         .bind(frame_id)
         .bind(keep)

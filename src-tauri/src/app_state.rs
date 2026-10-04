@@ -27,6 +27,8 @@ pub(crate) struct SessionRuntime {
     /// Serializes an entire user workflow (primary turn + automatic review +
     /// correction), not merely one model turn.
     pub(crate) workflow: Arc<tokio::sync::Mutex<()>>,
+    /// Timer turns never consume human cut-ins; those run as ordinary turns.
+    pub(crate) timer_running: AtomicBool,
     pub(crate) cancel: Arc<AtomicBool>,
     pub(crate) deleted: AtomicBool,
     /// Last persisted message seq (`COALESCE(MAX(seq),0)`), not a message count.
@@ -81,6 +83,7 @@ impl SessionRuntime {
             agent_config_generation: std::sync::atomic::AtomicU64::new(0),
             cached_agent_generation: std::sync::atomic::AtomicU64::new(0),
             workflow: Arc::new(tokio::sync::Mutex::new(())),
+            timer_running: AtomicBool::new(false),
             cancel: Arc::new(AtomicBool::new(false)),
             deleted: AtomicBool::new(false),
             last_seq: StdMutex::new(0),
