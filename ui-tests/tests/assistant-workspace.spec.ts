@@ -286,6 +286,33 @@ test("assistant WeChat binds, toggles and unbinds independently of project chann
   expect(await calls(page, "send_message")).toHaveLength(0);
 });
 
+test("a notification for the assistant conversation opens the assistant, never its hidden project", async ({ page }) => {
+  const target = { projectId: "assistant:research", sessionId: "research-assistant" };
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => Boolean((window as any).__tauriListenerReady?.("open-session")))).toBe(true);
+  await page.evaluate(target => (window as any).__tauriEmit("open-session", target), target);
+  await expect(page.getByTestId("assistant-header")).toBeVisible();
+  await expect(page.locator(".chat")).toContainText("The normalization comparison is complete.");
+  // Replayed on the next window focus while the assistant is already open.
+  await page.evaluate(target => (window as any).__tauriEmit("open-session", target), target);
+  await composer(page).fill("still here");
+  await expect(page.locator(".chat")).toContainText("The normalization comparison is complete.");
+  await page.locator(".assistant-close").click();
+  await expect(page.getByTestId("assistant-header")).toHaveCount(0);
+  await expect(page.locator(".proj-card-main").first()).toBeVisible();
+  await expect(page.locator(".app")).toHaveClass(/app-hidden/);
+  expect(await calls(page, "open_project")).toHaveLength(0);
+});
+
+test("a notification for a project conversation leaves the assistant for that project", async ({ page }) => {
+  await open(page);
+  await expect.poll(() => page.evaluate(() => Boolean((window as any).__tauriListenerReady?.("open-session")))).toBe(true);
+  await page.evaluate(() => (window as any).__tauriEmit("open-session", { projectId: "other", sessionId: "s-other" }));
+  await expect(page.getByTestId("assistant-header")).toHaveCount(0);
+  await expect(page.locator(".app")).not.toHaveClass(/assistant-mode|app-hidden/);
+  expect((await calls(page, "open_project")).at(-1)).toMatchObject({ id: "other" });
+});
+
 test("immediate Escape closes remote access before assistant and narrow drawers", async ({ page }) => {
   await page.setViewportSize({ width: 780, height: 880 });
   await open(page);

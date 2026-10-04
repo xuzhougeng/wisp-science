@@ -10371,6 +10371,15 @@ fn App() -> impl IntoView {
         let app_shell_entering = app_shell_entering;
         Callback::new(
             move |(project_id, session_id, show_files): (String, Option<String>, bool)| {
+                // The assistant's conversation lives in a hidden project. A
+                // notification or session target for it opens the assistant
+                // from home, as the home button does, never that project as a
+                // workspace.
+                if project_id == ASSISTANT_PROJECT_ID {
+                    show_projects.set(true);
+                    open_assistant.call(());
+                    return;
+                }
                 if project_transfer
                     .get_untracked()
                     .is_some_and(|transfer| transfer.is_exporting_project(&project_id))
@@ -10380,6 +10389,10 @@ fn App() -> impl IntoView {
                     status.set(message);
                     return;
                 }
+                // Opening a project from the assistant (a notification, the
+                // command palette) leaves the assistant rather than showing
+                // that project inside it.
+                assistant_mode.set(false);
                 let calendar_day = calendar_journey_request
                     .get_untracked()
                     .filter(|(id, _)| id == &project_id)
