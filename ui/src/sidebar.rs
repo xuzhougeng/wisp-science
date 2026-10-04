@@ -563,6 +563,7 @@ pub(super) fn Sidebar(
                     let has_folders = !folder_list.is_empty();
                     let item = move |s: &SessionInfo| {
                         let is_branch = s.branch_state.is_some();
+                        let is_subagent = s.dispatched_from.is_some();
                         let has_branch_family = branch_family_ids.contains(&s.id);
                         let has_exploration_round = exploration_source_ids.contains(&s.id);
                         let id = s.id.clone();
@@ -621,6 +622,7 @@ pub(super) fn Sidebar(
                                     data-session-pinned=if pinned { "true" } else { "false" }
                                     data-session-stale=if stale_prompt { "true" } else { "false" }
                                     data-session-branch=if is_branch { "true" } else { "false" }
+                                    data-session-subagent=if is_subagent { "true" } else { "false" }
                                     data-session-family=if has_branch_family { "true" } else { "false" }
                                     data-exploration-round=if has_exploration_round { "true" } else { "false" }
                                     data-branch-merged=if branch_merged { "true" } else { "false" }
@@ -674,6 +676,9 @@ pub(super) fn Sidebar(
                                     <span class="ses-initial" aria-hidden="true">{initial}</span>
                                     {is_branch.then(|| view! {
                                         <span class="session-branch-icon" aria-hidden="true">{compose_icon("branch")}</span>
+                                    })}
+                                    {is_subagent.then(|| view! {
+                                        <span class="session-branch-icon" aria-hidden="true">{compose_icon("eye")}</span>
                                     })}
                                     <span class="ses-title">{title}</span>
                                 </button>
@@ -745,14 +750,23 @@ pub(super) fn Sidebar(
                         }.into_view()
                     };
                     let make = move |s: &SessionInfo| {
-                        let kids = branch_kids.get(&s.id).cloned().unwrap_or_default();
+                        // Subagents (#1061) nest like branches but under their own heading.
+                        let (subagent_kids, kids): (Vec<SessionInfo>, Vec<SessionInfo>) = branch_kids
+                            .get(&s.id)
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .partition(|kid| kid.dispatched_from.is_some());
                         let exploration_kids = exploration_groups.get(&s.id).cloned().unwrap_or_default();
-                        if kids.is_empty() && exploration_kids.is_empty() {
+                        if kids.is_empty() && subagent_kids.is_empty() && exploration_kids.is_empty() {
                             return item(s);
                         }
                         let nests = collapsed_nests.get();
                         let exploration_key = format!("e:{}", s.id);
                         let branch_key = format!("b:{}", s.id);
+                        let subagent_key = format!("s:{}", s.id);
+                        let subagent_collapsed = nests.contains(&subagent_key);
+                        let subagent_count = subagent_kids.len();
                         let exploration_collapsed = nests.contains(&exploration_key);
                         let branch_collapsed = nests.contains(&branch_key);
                         let exploration_count = exploration_kids.len();
@@ -814,6 +828,34 @@ pub(super) fn Sidebar(
                                         {(!branch_collapsed).then(|| view! {
                                             <div class="side-nest-items">
                                                 {kids.iter().map(&item).collect_view()}
+                                            </div>
+                                        })}
+                                    </div>
+                                    }
+                                })}
+                                {(!subagent_kids.is_empty()).then(|| {
+                                    let subagent_key = subagent_key.clone();
+                                    view! {
+                                    <div class="side-branch-kids" data-testid="sidebar-subagents">
+                                        {nest_group_toggle(
+                                            loc,
+                                            "subagent.group",
+                                            "subagent.expand",
+                                            "subagent.collapse",
+                                            subagent_count,
+                                            subagent_collapsed,
+                                            "sidebar-subagent-toggle",
+                                            move |ev: web_sys::MouseEvent| {
+                                                ev.prevent_default();
+                                                ev.stop_propagation();
+                                                collapsed_nests.update(|set| {
+                                                    toggle_collapsed_key(set, subagent_key.clone());
+                                                });
+                                            },
+                                        )}
+                                        {(!subagent_collapsed).then(|| view! {
+                                            <div class="side-nest-items">
+                                                {subagent_kids.iter().map(&item).collect_view()}
                                             </div>
                                         })}
                                     </div>

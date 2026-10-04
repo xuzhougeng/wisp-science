@@ -2961,6 +2961,54 @@ impl Store {
         Ok(())
     }
 
+    /// Mark a conversation as a subagent of `parent_id` (#1061): that
+    /// conversation's agent started it and is the only one that instructs it.
+    pub async fn set_session_dispatched_from(&self, frame_id: &str, parent_id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.set_session_dispatched_from(frame_id, parent_id)).await;
+        }
+        sqlx::query("UPDATE frames SET dispatched_from=? WHERE id=?")
+            .bind(parent_id)
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// The conversation whose agent started this subagent conversation.
+    pub async fn session_dispatched_from(&self, frame_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.session_dispatched_from(frame_id)).await;
+        }
+        Ok(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT dispatched_from FROM frames WHERE id=?",
+            )
+            .bind(frame_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten(),
+        )
+    }
+
+    /// `subagent → parent` for every subagent conversation in a project.
+    pub async fn list_dispatched_sessions(
+        &self,
+        project_id: &str,
+    ) -> Result<HashMap<String, String>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_dispatched_sessions(project_id)).await;
+        }
+        Ok(sqlx::query_as::<_, (String, String)>(
+            "SELECT id,dispatched_from FROM frames WHERE project_id=? AND dispatched_from IS NOT NULL",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .collect())
+    }
+
     /// Mark a branch created by the current checkpoint-aware flow, inheriting
     /// its source's folder so the sidebar can nest it beneath that source.
     /// Legacy rows with only `branched_from` deliberately do not participate.

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS frames (
     exploration_id  TEXT,
     folder_id       TEXT REFERENCES folders(id) ON DELETE SET NULL,
     branched_from   TEXT,
+    dispatched_from TEXT,
     branch_point_user_index INTEGER,
     branch_point_kind TEXT,
     pinned          INTEGER NOT NULL DEFAULT 0,

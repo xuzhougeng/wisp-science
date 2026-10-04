@@ -755,8 +755,20 @@ fn App() -> impl IntoView {
             explorations.with(|rows| rows.iter().any(|row| row.exploration.frame_id == frame_id))
         })
     });
+    // A subagent conversation (#1061) is watched, not written to.
+    // ponytail: read from the loaded sidebar page; a subagent outside it keeps
+    // an editable composer, but the backend still refuses the send. Carry the
+    // flag on LoadedSessionPage if that ever shows up in practice.
+    let active_subagent = create_memo(move |_| {
+        active_session.get().is_some_and(|id| {
+            sessions.with(|rows| {
+                rows.iter()
+                    .any(|row| row.id == id && row.dispatched_from.is_some())
+            })
+        })
+    });
     let composer_scope_locked = create_memo(move |_| {
-        if active_archived.get() {
+        if active_archived.get() || active_subagent.get() {
             return true;
         }
         active_session.get().is_some_and(|frame_id| {
@@ -14762,6 +14774,9 @@ fn App() -> impl IntoView {
                             on:paste=on_paste
                             prop:placeholder=move || {
                                 if active_archived.get(){return research_journey::j(locale.get(),"Archived notebook. Continue research in a new conversation.","实验记录本已归档，请从归档节点继续研究。").to_string();}
+                                if active_subagent.get() {
+                                    return t(locale.get(), "subagent.read_only_placeholder").into();
+                                }
                                 if matches!(active_branch_state.get().as_deref(), Some("merged" | "orphaned")) {
                                     t(locale.get(), "branch.frozen_placeholder").into()
                                 } else if mainline_frozen.get() {

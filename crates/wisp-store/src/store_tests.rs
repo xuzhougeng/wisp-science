@@ -684,6 +684,55 @@ async fn token_usage_folds_usage_events_into_root_sessions() {
 }
 
 #[tokio::test]
+async fn subagent_conversations_stay_listed_and_remember_their_parent() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_subagent_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for id in ["parent", "sub"] {
+        store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        store
+            .append_message(id, 1, &Message::user("hello"))
+            .await
+            .unwrap();
+    }
+    assert_eq!(store.session_dispatched_from("sub").await.unwrap(), None);
+    store
+        .set_session_dispatched_from("sub", "parent")
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .session_dispatched_from("sub")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("parent")
+    );
+    assert_eq!(
+        store.list_dispatched_sessions("p").await.unwrap(),
+        std::collections::HashMap::from([("sub".to_string(), "parent".to_string())])
+    );
+    // Unlike a delegated child frame, a subagent is a conversation of its own.
+    assert_eq!(store.list_sessions("p").await.unwrap().len(), 2);
+    drop(store);
+    // Reopening re-runs the idempotent migrations and keeps the link.
+    let store = Store::open(&tmp).await.unwrap();
+    assert_eq!(
+        store
+            .session_dispatched_from("sub")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("parent")
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn child_agent_frames_stay_out_of_top_level_session_history() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_child_frames_{}.sqlite",
