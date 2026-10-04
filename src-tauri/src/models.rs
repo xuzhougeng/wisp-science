@@ -2057,6 +2057,48 @@ pub async fn reorder_models(
     Ok(decorated(&state.store).await)
 }
 
+async fn ensure_chat_profile(store: &wisp_store::Store, id: &str) -> Result<(), String> {
+    match ensure(store).await.iter().find(|p| p.id == id) {
+        None => Err("Unknown model.".into()),
+        Some(p) if !is_chat_model(p) => {
+            Err("Image or video generation models cannot be used for chat.".into())
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+/// Bind one conversation to chat profile `id`. Its next turn rebuilds the
+/// agent with that model; a turn already running keeps the one it started on.
+pub(crate) async fn set_session_model(
+    state: &crate::AppState,
+    session_id: &str,
+    id: &str,
+) -> Result<(), String> {
+    ensure_chat_profile(&state.store, id).await?;
+    if crate::acp::session_agent_id(&state.store, session_id)
+        .await?
+        .is_some()
+    {
+        return Err("Start a new conversation to switch away from this ACP Agent".into());
+    }
+    let (project, scope) =
+        crate::exploration_commands::working_project_for_frame(state, session_id).await?;
+    let _activity = state.begin_project_activity(&project.id)?;
+    let _project_write_locked = crate::exploration_commands::conversation_project_write_locked(
+        &state.store,
+        &scope,
+        Some(session_id),
+    )
+    .await?;
+    state
+        .store
+        .set_frame_model(session_id, &project.id, id)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::clear_session_agent(state, session_id).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_active_model(
     state: State<'_, crate::AppState>,
@@ -2064,40 +2106,10 @@ pub async fn set_active_model(
     id: String,
     session_id: Option<String>,
 ) -> Result<Vec<ModelProfile>, String> {
-    let profiles = ensure(&state.store).await;
-    if !profiles.iter().any(|p| p.id == id) {
-        return Err("Unknown model.".into());
-    }
-    if profiles
-        .iter()
-        .find(|p| p.id == id)
-        .is_some_and(|p| !is_chat_model(p))
-    {
-        return Err("Image or video generation models cannot be used for chat.".into());
-    }
     if let Some(session_id) = session_id.filter(|value| !value.is_empty()) {
-        if crate::acp::session_agent_id(&state.store, &session_id)
-            .await?
-            .is_some()
-        {
-            return Err("Start a new conversation to switch away from this ACP Agent".into());
-        }
-        let (project, scope) =
-            crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
-        let _activity = state.begin_project_activity(&project.id)?;
-        let _project_write_locked = crate::exploration_commands::conversation_project_write_locked(
-            &state.store,
-            &scope,
-            Some(&session_id),
-        )
-        .await?;
-        state
-            .store
-            .set_frame_model(&session_id, &project.id, &id)
-            .await
-            .map_err(|error| error.to_string())?;
-        crate::clear_session_agent(&state, &session_id).await;
+        set_session_model(&state, &session_id, &id).await?;
     } else {
+        ensure_chat_profile(&state.store, &id).await?;
         state
             .store
             .set_setting(ACTIVE_KEY, &id)

@@ -1739,6 +1739,15 @@ pub(crate) fn client_turn_error(turn_started: bool, message: &str) -> String {
     }
 }
 
+/// Inverse of [`client_turn_error`]: whether the turn had started, and the
+/// plain message.
+pub(crate) fn split_turn_error(error: &str) -> (bool, &str) {
+    match error.strip_prefix("[turn-started] ") {
+        Some(message) => (true, message),
+        None => (false, error),
+    }
+}
+
 /// Queue (#433): reconcile cut-ins, then drain ordinary follow-ups FIFO. Each
 /// acquires the workflow lock and runs as a fresh turn with the item's
 /// *current* text, so edits made while it waited take effect. The

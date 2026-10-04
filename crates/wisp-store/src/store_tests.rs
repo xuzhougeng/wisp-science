@@ -781,6 +781,47 @@ async fn frame_models_are_session_scoped() {
 }
 
 #[tokio::test]
+async fn last_turn_outcome_is_the_latest_turn_end_of_that_frame() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_turn_outcome_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for frame in ["first", "second"] {
+        store.create_frame(frame, "p", "OPERON", "").await.unwrap();
+    }
+    let event = |kind: &str| format!(r#"{{"kind":"{kind}","frame_id":"first"}}"#);
+    assert_eq!(store.last_turn_outcome("first").await.unwrap(), None);
+
+    for (seq, kind) in [(1, "User"), (2, "Done"), (3, "User"), (4, "Error")] {
+        store
+            .append_session_ui_event("first", seq, &event(kind))
+            .await
+            .unwrap();
+    }
+    // Events after the turn end, such as usage, do not hide it.
+    store
+        .append_session_ui_event("first", 5, &event("Usage"))
+        .await
+        .unwrap();
+    store
+        .append_session_ui_event("second", 1, &event("Done"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.last_turn_outcome("first").await.unwrap().as_deref(),
+        Some("Error")
+    );
+    assert_eq!(
+        store.last_turn_outcome("second").await.unwrap().as_deref(),
+        Some("Done")
+    );
+    store.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn frame_reasoning_effort_is_session_scoped_and_nullable() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_frame_reasoning_{}.sqlite",
