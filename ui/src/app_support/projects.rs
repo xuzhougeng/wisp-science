@@ -4,9 +4,6 @@ use super::*;
 pub(crate) fn ProjectsScreen(
     locale: RwSignal<Locale>,
     calendar_open: RwSignal<bool>,
-    automation_open: RwSignal<bool>,
-    automation_form: RwSignal<bool>,
-    on_open_specialists: Callback<()>,
     dialog_open: RwSignal<bool>,
     running: RwSignal<HashSet<String>>,
     approval_pending: ReadSignal<HashSet<String>>,
@@ -681,7 +678,7 @@ pub(crate) fn ProjectsScreen(
             }
             ev.prevent_default();
         }>
-            <div class="projects-head" prop:inert=move ||calendar_open.get()||automation_open.get()>
+            <div class="projects-head" prop:inert=move ||calendar_open.get()>
                 <div class="projects-brand">
                     <h1 class="projects-title">
                         <span class="projects-brand-mark brand-wordmark" role="img" aria-label="Wisp Science"></span>
@@ -697,10 +694,6 @@ pub(crate) fn ProjectsScreen(
                             title=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
                             aria-label=move || crate::research_journey::j(locale.get(), "Research calendar", "研究日历")
                             on:click=move |_| calendar_open.set(true)>{compose_icon("calendar")}</button>
-                        <button type="button" class="projects-icon-btn" data-testid="open-automation"
-                            title=move || crate::research_journey::j(locale.get(), "Automation", "自动化")
-                            aria-label=move || crate::research_journey::j(locale.get(), "Automation", "自动化")
-                            on:click=move |_| automation_open.set(true)>{compose_icon("clock")}</button>
                         <button type="button" class="projects-icon-btn"
                             title=move || t(locale.get(), "sidebar.library")
                             aria-label=move || t(locale.get(), "sidebar.library")
@@ -1195,15 +1188,6 @@ pub(crate) fn ProjectsScreen(
                     </div>
                 </div>
             })}
-            {move || automation_open.get().then(|| view! {<div class="home-calendar-page">
-            <crate::automation::AutomationPage
-                locale=locale
-                projects=Signal::derive(move || projects.get().into_iter().filter(|p| !project_is_hidden(&p.id)).collect())
-                form_open=automation_form
-                on_open_specialists=on_open_specialists
-                on_close=Callback::new(move |_| { automation_form.set(false); automation_open.set(false); })
-            />
-            </div>})}
             {move || calendar_open.get().then(|| view! {<div class="home-calendar-page">
             <crate::research_calendar::ResearchCalendar
                 locale=locale
@@ -1213,7 +1197,7 @@ pub(crate) fn ProjectsScreen(
                 project_transfer=project_transfer.read_only()
             />
             </div>})}
-            <div class="projects-cols" prop:inert=move ||calendar_open.get()||automation_open.get()>
+            <div class="projects-cols" prop:inert=move ||calendar_open.get()>
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.title")}</h2>
                     {move || {
@@ -1496,7 +1480,7 @@ pub(crate) fn ProjectsScreen(
                     }).collect_view()}
                 </div>
             </div>
-            <div class="projects-footer" prop:inert=move ||calendar_open.get()||automation_open.get()>
+            <div class="projects-footer" prop:inert=move ||calendar_open.get()>
                 <span>{move || t(locale.get(), "projects.star_hint")}</span>
                 <button type="button" class="projects-star-link"
                     on:click=move |_| open_external_url("https://github.com/xuzhougeng/wisp-science".into())>

@@ -1,4 +1,5 @@
-/* Home Automation page; shares the calendar page shell and its .home-calendar base. */
+/* Automation page over the research assistant; shares the calendar page shell and its .home-calendar base. */
+.assistant-automation-page { z-index: 50; }
 .home-automation { max-width: 1120px; display: flex; flex-direction: column; gap: 20px; }
 .home-automation .home-calendar-heading { margin-bottom: 0; }
 .automation-heading-actions { display: flex; align-items: center; gap: 8px; }
