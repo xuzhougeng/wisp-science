@@ -12,7 +12,9 @@
 //! confidence, clicks with no visible effect, and every Driver or Jev error
 //! stop the loop and return the reason, so the agent reasons about the window
 //! and may resume with a `hint`. Candidate rules follow Cua's jev-use
-//! reference (`libs/cua-driver/examples/jev-use`, `native.py`).
+//! reference (`libs/cua-driver/examples/jev-use`, `native.py`), except that a
+//! window with more controls than Jev is offered keeps the ones the goal or
+//! hint names and reports the rest, to Jev and to the agent.
 
 use crate::client::{McpClient, RemoteTool};
 use async_trait::async_trait;
@@ -186,14 +188,34 @@ const RISK_PHRASES: &[&str] = &[
     "不保存",
 ];
 
-fn risky(label: &str) -> bool {
-    let text = label.to_lowercase().replace('’', "'");
+/// Whether `phrase` occurs in `text` as whole words. Only ASCII letters and
+/// digits bound a word, so a CJK phrase matches wherever it appears.
+fn names(text: &str, phrase: &str) -> bool {
     let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
-    RISK_PHRASES.iter().any(|phrase| {
-        text.match_indices(phrase).any(|(at, _)| {
+    !phrase.is_empty()
+        && text.match_indices(phrase).any(|(at, _)| {
             !word(text[..at].chars().next_back()) && !word(text[at + phrase.len()..].chars().next())
         })
-    })
+}
+
+fn risky(label: &str) -> bool {
+    let text = label.to_lowercase().replace('’', "'");
+    RISK_PHRASES.iter().any(|phrase| names(&text, phrase))
+}
+
+/// How strongly the lowercased goal and hint name a control: 2 for its whole
+/// label, 1 for one word of it, 0 for neither.
+fn relevance(label: &str, wanted: &str) -> u8 {
+    let label = label.to_lowercase();
+    if names(wanted, &label) {
+        return 2;
+    }
+    // ponytail: a length floor instead of a stop-word list ("by", "to", "on");
+    // a stray match only reorders which controls fall past the cap.
+    let word_named = label.split(|c: char| !c.is_alphanumeric()).any(|word| {
+        word.chars().count() >= if word.is_ascii() { 3 } else { 2 } && names(wanted, word)
+    });
+    u8::from(word_named)
 }
 
 fn collapse(text: &str) -> String {
@@ -258,8 +280,15 @@ fn on_screen(frame: Option<(f64, f64, f64, f64)>, window: Option<(f64, f64, f64,
 }
 
 /// Windows' title bar and its System/Minimize/Maximize/Close children belong
-/// to the window manager, not the application.
-fn in_window_chrome(element: &Value, by_index: &HashMap<u64, &Value>, os: &str) -> bool {
+/// to the window manager, not the application. Packaged (UWP) apps report that
+/// bar as a nested `Window` whose value is the window title; a dialog or popup
+/// `Window` carries no value and stays application content.
+fn in_window_chrome(
+    element: &Value,
+    by_index: &HashMap<u64, &Value>,
+    os: &str,
+    title: &str,
+) -> bool {
     if os != "windows" {
         return false;
     }
@@ -268,7 +297,10 @@ fn in_window_chrome(element: &Value, by_index: &HashMap<u64, &Value>, os: &str) 
         let Some(node) = parent.and_then(|index| by_index.get(&index)) else {
             return false;
         };
-        if normalized_role(str_field(node, "role")) == "titlebar" {
+        let role = normalized_role(str_field(node, "role"));
+        if role == "titlebar"
+            || (role == "window" && !title.is_empty() && str_field(node, "value") == title)
+        {
             return true;
         }
         parent = node.get("parent_index").and_then(Value::as_u64);
@@ -310,12 +342,20 @@ struct Observation {
     app: String,
     title: String,
     candidates: Vec<Candidate>,
-    dropped: usize,
+    /// Labels of the controls past the candidate cap, in tree order.
+    omitted: Vec<String>,
     text: Vec<String>,
     signature: u64,
 }
 
-fn observation(state: &Value, pid: u64, window_id: u64, os: &str) -> Result<Observation, String> {
+/// `wanted` is the lowercased goal and hint, which decide what the cap keeps.
+fn observation(
+    state: &Value,
+    pid: u64,
+    window_id: u64,
+    os: &str,
+    wanted: &str,
+) -> Result<Observation, String> {
     if state.get("pid").and_then(Value::as_u64) != Some(pid)
         || state.get("window_id").and_then(Value::as_u64) != Some(window_id)
     {
@@ -331,6 +371,7 @@ fn observation(state: &Value, pid: u64, window_id: u64, os: &str) -> Result<Obse
         .filter_map(|e| Some((e.get("element_index")?.as_u64()?, e)))
         .collect();
     let window = rect(state.get("window_bounds"));
+    let title = str_field(state, "window_title");
     let mut candidates = Vec::new();
     let mut text: Vec<String> = Vec::new();
     for element in elements {
@@ -352,7 +393,7 @@ fn observation(state: &Value, pid: u64, window_id: u64, os: &str) -> Result<Obse
             continue;
         };
         let token = str_field(element, "element_token");
-        if in_window_chrome(element, &by_index, os)
+        if in_window_chrome(element, &by_index, os, title)
             || element.get("enabled") == Some(&Value::Bool(false))
             || !on_screen(rect(element.get("frame")), window)
             || label.is_empty()
@@ -382,10 +423,24 @@ fn observation(state: &Value, pid: u64, window_id: u64, os: &str) -> Result<Obse
             token: token.into(),
         });
     }
-    // ponytail: first 24 in tree order, like Cua's depth-first cap. Rank by
-    // relevance to the goal if real windows lose the needed control here.
-    let dropped = candidates.len().saturating_sub(MAX_CANDIDATES);
-    candidates.truncate(MAX_CANDIDATES);
+    // Past the cap, keep the controls the goal or hint names. The sort is
+    // stable, so with nothing named this is Cua's depth-first cap, and the
+    // kept controls stay in tree order either way.
+    let mut omitted = Vec::new();
+    if candidates.len() > MAX_CANDIDATES {
+        let mut kept: Vec<usize> = (0..candidates.len()).collect();
+        kept.sort_by_key(|&i| std::cmp::Reverse(relevance(&candidates[i].label, wanted)));
+        kept.truncate(MAX_CANDIDATES);
+        let mut index = 0;
+        candidates.retain(|candidate| {
+            let keep = kept.contains(&index);
+            index += 1;
+            if !keep {
+                omitted.push(candidate.label.clone());
+            }
+            keep
+        });
+    }
     let mut seen: HashMap<String, usize> = HashMap::new();
     for candidate in &mut candidates {
         let base = format!("{}:{}", candidate.class.name(), slug(&candidate.label));
@@ -400,9 +455,9 @@ fn observation(state: &Value, pid: u64, window_id: u64, os: &str) -> Result<Obse
     text.hash(&mut hasher);
     Ok(Observation {
         app: str_field(state, "app_name").into(),
-        title: str_field(state, "window_title").into(),
+        title: title.into(),
         candidates,
-        dropped,
+        omitted,
         text,
         signature: hasher.finish(),
     })
@@ -486,7 +541,8 @@ fn step_questions(obs: &Observation) -> BTreeMap<String, Question> {
         HAND_BACK.into(),
         Some(
             "Stop and hand the window back: no other option clearly advances the goal, \
-             the needed control is missing, or the step needs judgment."
+             the needed control is missing or only listed in `controls_not_offered`, or \
+             the step needs judgment."
                 .into(),
         ),
     );
@@ -609,8 +665,8 @@ struct Run<'a> {
     steps: Vec<String>,
     jev_calls: u32,
     model: String,
-    /// Controls past the candidate cap in the latest observation.
-    dropped: usize,
+    /// Labels of the controls past the candidate cap in the latest observation.
+    omitted: Vec<String>,
 }
 
 impl Run<'_> {
@@ -659,6 +715,8 @@ impl Run<'_> {
 
     async fn drive(&mut self, max_clicks: u64) -> Outcome {
         let os = std::env::consts::OS;
+        let wanted =
+            format!("{} {}", self.goal, self.hint.as_deref().unwrap_or_default()).to_lowercase();
         let mut clicks = 0;
         // Screen signature before the last click, to spot clicks with no effect.
         let mut before_click: Option<u64> = None;
@@ -673,12 +731,12 @@ impl Run<'_> {
                     json!({"pid": self.pid, "window_id": self.window_id, "include_screenshot": false}),
                 )
                 .await
-                .and_then(|state| observation(&state, self.pid, self.window_id, os));
+                .and_then(|state| observation(&state, self.pid, self.window_id, os, &wanted));
             let obs = match observed {
                 Ok(obs) => obs,
                 Err(e) => return Outcome::HandBack(format!("observe_failed: {e}")),
             };
-            self.dropped = obs.dropped;
+            self.omitted.clone_from(&obs.omitted);
             if before_click == Some(obs.signature) {
                 unchanged += 1;
                 if let Some(last) = self.steps.last_mut() {
@@ -711,6 +769,12 @@ impl Run<'_> {
             });
             if let Some(hint) = &self.hint {
                 state["hint"] = json!(hint);
+            }
+            // Jev must know its table is partial to hand back instead of
+            // settling for a visible control.
+            if !obs.omitted.is_empty() {
+                state["controls_not_offered"] =
+                    json!(obs.omitted.iter().take(MAX_TEXT_LINES).collect::<Vec<_>>());
             }
             let settled = match self.ask(state, step_questions(&obs)).await {
                 Ok(answers) => settle(&obs, &answers),
@@ -811,10 +875,24 @@ impl Run<'_> {
                 out.push_str(&format!("{}. {step}\n", n + 1));
             }
         }
-        if self.dropped > 0 {
+        if !self.omitted.is_empty() {
+            let shown: Vec<_> = self
+                .omitted
+                .iter()
+                .take(MAX_TEXT_LINES)
+                .map(|label| format!("\"{label}\""))
+                .collect();
+            let more = if self.omitted.len() > shown.len() {
+                ", …"
+            } else {
+                ""
+            };
             out.push_str(&format!(
-                "note: {} control(s) past the {MAX_CANDIDATES}-candidate cap were not offered to Jev\n",
-                self.dropped
+                "note: {} control(s) past the {MAX_CANDIDATES}-candidate cap were not offered to \
+                 Jev: {}{more}. Controls the goal or hint names are offered first: name the one \
+                 you need in `hint`, or click it yourself.\n",
+                self.omitted.len(),
+                shown.join(", ")
             ));
         }
         let model = if self.model.is_empty() {
@@ -838,14 +916,16 @@ impl Tool for DesktopAutopilot {
             "Drive one exact Cua Driver window toward a goal with TypeSafe Jev (fast System One). \
              Jev picks each click from the window's labelled controls and hands the window back \
              to you, with the reason, for text entry, risky or irreversible actions, low \
-             confidence, clicks with no effect, or errors. Verify a reported done yourself.",
+             confidence, clicks with no effect, or errors. Use it to navigate to a visible \
+             state, not to key in a sequence or to read content. Jev is offered at most 24 \
+             controls, those the goal or hint names first. Verify a reported done yourself.",
             json!({
                 "type": "object",
                 "properties": {
-                    "goal": {"type": "string", "description": "The finished state the window should show, in plain words."},
+                    "goal": {"type": "string", "description": "The finished state the window should show, in plain words and the application's own labels. No value you worked out yourself."},
                     "pid": {"type": "integer", "description": "Exact process id from list_windows."},
                     "window_id": {"type": "integer", "description": "Exact window id from list_windows."},
-                    "hint": {"type": "string", "description": "Your guidance after a hand-back, such as the control to use next."},
+                    "hint": {"type": "string", "description": "Your guidance, such as the label of the control to use next."},
                     "max_steps": {"type": "integer", "minimum": 1, "maximum": MAX_CLICKS, "description": "Clicks before handing back (default 12)."}
                 },
                 "required": ["goal", "pid", "window_id"]
@@ -902,7 +982,7 @@ impl Tool for DesktopAutopilot {
             steps: Vec::new(),
             jev_calls: 0,
             model: String::new(),
-            dropped: 0,
+            omitted: Vec::new(),
         };
         let outcome = run.drive(max_clicks).await;
         ToolResult::ok(run.report(&outcome))
@@ -953,7 +1033,7 @@ mod tests {
 
     #[test]
     fn window_state_becomes_application_candidates_and_screen_text() {
-        let obs = observation(&wpf_window(), 6544, 328014, "windows").unwrap();
+        let obs = observation(&wpf_window(), 6544, 328014, "windows", "").unwrap();
         let ids: Vec<_> = obs.candidates.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -979,7 +1059,7 @@ mod tests {
         assert_eq!(obs.text, ["Counter: 2"]);
         // Field values never reach what Jev sees.
         assert!(!format!("{obs:?}").contains("draft"));
-        assert!(observation(&wpf_window(), 6544, 1, "windows").is_err());
+        assert!(observation(&wpf_window(), 6544, 1, "windows", "").is_err());
         // The same raw role means different controls per platform.
         assert_eq!(role_class("Text", "windows"), None);
         assert_eq!(role_class("text", "linux"), Some(Class::TextInput));
@@ -987,6 +1067,125 @@ mod tests {
             role_class("AXSecureTextField", "macos"),
             Some(Class::TextInput)
         );
+    }
+
+    /// Windows 11 Calculator as Cua Driver reports it: a packaged-app title
+    /// bar (a `Window` valued with the title) and 30 application buttons.
+    fn calculator_window() -> Value {
+        let button = |index: usize, label: &str, parent: Option<u64>| {
+            let mut e = json!({
+                "element_index": index, "element_token": format!("s1:{index}"), "role": "Button",
+                "label": label, "enabled": true, "frame": {"x": 100.0, "y": 100.0, "w": 60.0, "h": 40.0}
+            });
+            if let Some(parent) = parent {
+                e["parent_index"] = json!(parent);
+            }
+            e
+        };
+        let mut elements = vec![
+            json!({"element_index": 0, "element_token": "s1:0", "role": "Window",
+                   "label": "Calculator", "value": "Calculator", "enabled": true}),
+            button(1, "最小化 Calculator", Some(0)),
+            button(2, "关闭 Calculator", Some(0)),
+            json!({"element_index": 3, "element_token": "s1:3", "role": "Text",
+                   "label": "Display is 0", "enabled": true}),
+        ];
+        for label in [
+            "Open Navigation",
+            "Open history flyout",
+            "Memory add",
+            "Memory subtract",
+            "Memory store",
+            "Percent",
+            "Clear entry",
+            "Clear",
+            "Backspace",
+            "Reciprocal",
+            "Square",
+            "Square root",
+            "Divide by",
+            "Multiply by",
+            "Minus",
+            "Plus",
+            "Equals",
+            "Zero",
+            "One",
+            "Two",
+            "Three",
+            "Four",
+            "Five",
+            "Six",
+            "Seven",
+            "Eight",
+            "Nine",
+            "Decimal separator",
+            "Positive negative",
+            "Keep on top",
+        ] {
+            elements.push(button(elements.len(), label, None));
+        }
+        json!({
+            "pid": 48972, "window_id": 45944114, "app_name": "ApplicationFrameHost.exe",
+            "window_title": "Calculator", "elements": elements,
+            "window_bounds": {"x": 68.0, "y": 48.0, "width": 484.0, "height": 801.0}
+        })
+    }
+
+    #[test]
+    fn a_busy_window_offers_what_the_goal_names_and_reports_the_rest() {
+        let observe =
+            |wanted| observation(&calculator_window(), 48972, 45944114, "windows", wanted).unwrap();
+        let labels = |obs: &Observation| -> Vec<String> {
+            obs.candidates.iter().map(|c| c.label.clone()).collect()
+        };
+
+        // Nothing named: tree order decides, and the caption buttons are
+        // window chrome rather than candidates.
+        let plain = observe("calculator shows 56");
+        assert_eq!(plain.candidates.len(), MAX_CANDIDATES);
+        assert!(!labels(&plain).iter().any(|l| l.contains("Calculator")));
+        assert_eq!(
+            plain.omitted,
+            [
+                "Seven",
+                "Eight",
+                "Nine",
+                "Decimal separator",
+                "Positive negative",
+                "Keep on top"
+            ]
+        );
+        assert_eq!(plain.text, ["Display is 0"]);
+
+        // Named controls displace unnamed ones and keep their tree position.
+        let hinted = observe("press seven, eight, then multiply by");
+        assert_eq!(labels(&hinted)[20..], ["Three", "Four", "Seven", "Eight"]);
+        assert_eq!(
+            hinted.omitted,
+            [
+                "Five",
+                "Six",
+                "Nine",
+                "Decimal separator",
+                "Positive negative",
+                "Keep on top"
+            ]
+        );
+
+        assert_eq!(relevance("One", "press one"), 2);
+        assert_eq!(relevance("One", "done"), 0);
+        assert_eq!(
+            relevance("Export as PNG…", "the export dialog shows png selected"),
+            1
+        );
+        assert_eq!(relevance("Divide by", "followed by two"), 0);
+        assert_eq!(relevance("通讯录", "打开通讯录"), 2);
+
+        // A dialog is a `Window` too, but its buttons are application content.
+        let dialog = json!({"element_index": 7, "role": "Window", "label": "Save As"});
+        let ok = json!({"role": "Button", "label": "OK", "parent_index": 7});
+        let by_index = HashMap::from([(7, &dialog)]);
+        assert!(!in_window_chrome(&ok, &by_index, "windows", "Save As"));
     }
 
     #[test]
@@ -1001,7 +1200,7 @@ mod tests {
 
     #[test]
     fn settle_acts_only_on_a_confident_safe_click() {
-        let obs = observation(&wpf_window(), 6544, 328014, "windows").unwrap();
+        let obs = observation(&wpf_window(), 6544, 328014, "windows", "").unwrap();
         let answers = |choice: &str, confidence: f64, done: f64| {
             BTreeMap::from([
                 ("goal_done".to_string(), Answer::Noul { noul: done }),
