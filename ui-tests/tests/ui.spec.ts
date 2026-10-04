@@ -15084,6 +15084,32 @@ test("session settings configure truncated-output auto-continue", async ({ page 
   });
 });
 
+test("usage tip shows on the empty conversation and can be closed or disabled", async ({ page }) => {
+  await enterApp(page, "/?mockShowTips=1");
+  const tip = page.getByTestId("usage-tip");
+  await expect(tip).toBeVisible();
+  await expect(tip.locator(".usage-tip-text")).not.toHaveText(/^tip\.|\{modifier\}|^$/);
+  await tip.getByRole("button", { name: "Hide tips" }).click();
+  await expect(tip).toHaveCount(0);
+  await newSessionButton(page).click();
+  await expect(tip).toHaveCount(0);
+
+  await openSettingsSection(page, "Session");
+  const toggle = page.getByTestId("show-tips-enabled");
+  await expect(toggle).toBeChecked();
+  await toggle.locator("..").click();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+    settings: { show_tips: false },
+  });
+});
+
+test("usage tips stay hidden when the setting is off", async ({ page }) => {
+  await enterApp(page);
+  await expect(page.locator(".empty")).toBeVisible();
+  await expect(page.getByTestId("usage-tip")).toHaveCount(0);
+});
+
 test("session settings enable follow-up question suggestions by default", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "Session");

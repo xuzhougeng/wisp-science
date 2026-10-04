@@ -2198,6 +2198,9 @@ struct Settings {
     /// Generate three suggested next questions after a completed turn.
     #[serde(default = "default_follow_up_questions")]
     follow_up_questions: bool,
+    /// Show a usage tip on the empty conversation screen.
+    #[serde(default = "default_show_tips")]
+    show_tips: bool,
     /// Restore the most recent conversation when a workspace opens.
     #[serde(default = "default_resume_last_session")]
     resume_last_session: bool,
@@ -2274,6 +2277,10 @@ const fn default_auto_continue_limit() -> u64 {
 }
 
 const fn default_follow_up_questions() -> bool {
+    true
+}
+
+const fn default_show_tips() -> bool {
     true
 }
 

@@ -767,6 +767,13 @@
 .empty-logo { width: min(208px, 100%); }
 .empty h1 { margin: var(--space-1) 0 0; font-family: var(--font-serif); font-size: var(--text-xl); font-weight: 500; letter-spacing: -0.02em; color: var(--text); }
 .empty p { margin: 0; font-size: var(--text-md); max-width: 420px; line-height: 1.55; font-weight: 400; }
+.usage-tip { display: flex; align-items: flex-start; gap: 8px; max-width: 460px; margin-top: var(--space-2); padding: 8px 8px 8px 12px; border: 1px solid var(--border); border-radius: 10px; text-align: left; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.usage-tip > span:first-child, .usage-tip-close { display: inline-flex; flex: none; }
+.usage-tip svg { width: 16px; height: 16px; margin-top: 2px; }
+.usage-tip strong { flex: none; font-weight: 600; color: var(--text); }
+.usage-tip-text { flex: 1; }
+.usage-tip-close { padding: 0 2px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
+.usage-tip-close:hover { color: var(--text); }
 
 .msg { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .msg .role { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }

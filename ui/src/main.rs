@@ -62,7 +62,7 @@ use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
 use i18n::{
     empty_subtitle, empty_title, localize_backend, send_failed, set_document_lang, t, tab_count,
-    tf, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT,
+    tf, usage_tip, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT, TIP_COUNT,
 };
 use leptos::{ev, window_event_listener, *};
 use library::{refresh_library, refresh_session_library, HighlightsPane, LibraryScreen};
@@ -401,8 +401,13 @@ fn App() -> impl IntoView {
         (js_sys::Math::random() * EMPTY_SUBTITLE_COUNT as f64).floor() as usize
             % EMPTY_SUBTITLE_COUNT,
     );
+    let tip_idx =
+        create_rw_signal((js_sys::Math::random() * TIP_COUNT as f64).floor() as usize % TIP_COUNT);
+    // Closing the tip card hides tips until the next launch; Settings turns them off for good.
+    let tips_dismissed = create_rw_signal(false);
     create_effect(move |_| {
         if items.with(Vec::is_empty) {
+            tip_idx.set((js_sys::Math::random() * TIP_COUNT as f64).floor() as usize % TIP_COUNT);
             empty_title_idx.set(
                 (js_sys::Math::random() * EMPTY_TITLE_COUNT as f64).floor() as usize
                     % EMPTY_TITLE_COUNT,
@@ -13054,6 +13059,19 @@ fn App() -> impl IntoView {
                             <span class="empty-logo brand-wordmark" role="img" aria-label="Wisp Science"></span>
                             <h1>{move || if assistant_mode.get() { t(locale.get(), "assistant.title").to_string() } else { empty_title(locale.get(), empty_title_idx.get()) }}</h1>
                             <p>{move || if assistant_mode.get() { t(locale.get(), "assistant.empty").to_string() } else { empty_subtitle(locale.get(), empty_subtitle_idx.get()) }}</p>
+                            {move || (!assistant_mode.get() && settings.with(|current| current.show_tips) && !tips_dismissed.get()).then(|| view! {
+                                <div class="usage-tip" data-testid="usage-tip">
+                                    <span aria-hidden="true">{compose_icon("lightbulb")}</span>
+                                    <strong>{move || t(locale.get(), "tips.title")}</strong>
+                                    <span class="usage-tip-text">{move || usage_tip(locale.get(), tip_idx.get(), if is_mac() { "Cmd" } else { "Ctrl" })}</span>
+                                    <button type="button" class="usage-tip-close"
+                                        title=move || t(locale.get(), "tips.close")
+                                        aria-label=move || t(locale.get(), "tips.close")
+                                        on:click=move |_| tips_dismissed.set(true)>
+                                        {compose_icon("close")}
+                                    </button>
+                                </div>
+                            })}
                         </div>
                     })}
                     // Keyed rows (#65): the key is a content fingerprint, so a

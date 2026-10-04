@@ -3003,6 +3003,18 @@ pub(super) fn SettingsView(
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                         </div>
+                        <div class="appearance-config-row">
+                            <div>
+                                <strong>{move || t(locale.get(), "settings.show_tips")}</strong>
+                                <span>{move || t(locale.get(), "settings.show_tips_hint")}</span>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="show-tips-enabled" aria-label=move || t(locale.get(), "settings.show_tips")
+                                    prop:checked=move || settings.get().show_tips
+                                    on:change=move |ev| settings.update(|current| current.show_tips = event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
                         </div>
                         {move || settings_message.get().map(|(ok, text)| view! {
                             <div class="settings-status"

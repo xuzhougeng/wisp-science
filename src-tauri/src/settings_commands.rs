@@ -178,6 +178,14 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .flatten()
         .map(|value| value == "true")
         .unwrap_or(true);
+    let show_tips = state
+        .store
+        .get_setting("show_tips")
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value == "true")
+        .unwrap_or(true);
     let resume_last_session = state
         .store
         .get_setting("resume_last_session")
@@ -202,6 +210,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         auto_continue,
         auto_continue_limit: auto_continue_limit as u64,
         follow_up_questions,
+        show_tips,
         resume_last_session,
         decentralized_project_storage: state
             .store
@@ -408,6 +417,11 @@ pub(super) async fn set_settings(
             "follow_up_questions",
             &settings.follow_up_questions.to_string(),
         )
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("show_tips", &settings.show_tips.to_string())
         .await
         .map_err(|e| e.to_string())?;
     state

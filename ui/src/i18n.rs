@@ -43,6 +43,7 @@ pub fn set_document_lang(locale: Locale) {
 
 pub const EMPTY_TITLE_COUNT: usize = 7;
 pub const EMPTY_SUBTITLE_COUNT: usize = 7;
+pub const TIP_COUNT: usize = 10;
 
 pub fn t(locale: Locale, key: &str) -> String {
     lookup(locale, key).unwrap_or(key).into()
@@ -68,6 +69,15 @@ pub fn empty_subtitle(locale: Locale, index: usize) -> String {
     t(
         locale,
         &format!("empty.subtitle.{}", index % EMPTY_SUBTITLE_COUNT),
+    )
+}
+
+/// Usage tip for the empty conversation screen; `modifier` is Cmd or Ctrl.
+pub fn usage_tip(locale: Locale, index: usize, modifier: &str) -> String {
+    tf(
+        locale,
+        &format!("tip.{}", index % TIP_COUNT),
+        &[("modifier", modifier)],
     )
 }
 
@@ -291,6 +301,18 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "empty.subtitle.4") => Some("Browse project files, attach data, and keep everything in one workspace."),
         (Locale::En, "empty.subtitle.5") => Some("Literature search, evidence review, and proposal skills — ready when you need them."),
         (Locale::En, "empty.subtitle.6") => Some("Connect SSH compute hosts and run jobs on your servers from here."),
+        (Locale::En, "tips.title") => Some("Tip"),
+        (Locale::En, "tips.close") => Some("Hide tips"),
+        (Locale::En, "tip.0") => Some("Type @ to attach artifacts, # to reference another session, and / to pick a skill or command."),
+        (Locale::En, "tip.1") => Some("Press {modifier}+K to open the command palette — search commands, or jump to projects, artifacts, and sessions."),
+        (Locale::En, "tip.2") => Some("Use /btw to open the side chat: ask about the current conversation without changing the main thread."),
+        (Locale::En, "tip.3") => Some("Use /plan for plan-first mode: the agent proposes a plan for you to review before it acts."),
+        (Locale::En, "tip.4") => Some("/rewind rolls back the last turn and puts your message back in the composer."),
+        (Locale::En, "tip.5") => Some("/fork sends your next message as a branch, so you can try another direction without losing this one."),
+        (Locale::En, "tip.6") => Some("No need to wait: messages sent while a task is running are queued, and \"Guide now\" steers the current task right away."),
+        (Locale::En, "tip.7") => Some("Select text in a reply to add it to the chat, explain it in the side chat, or save it as a highlight."),
+        (Locale::En, "tip.8") => Some("Star a code cell or figure to keep an immutable copy in the Library, across every project."),
+        (Locale::En, "tip.9") => Some("Add SSH or WSL environments in Settings → Environments, then pick one per conversation from the Compute menu."),
         (Locale::En, "composer.placeholder") => Some("Ask anything — @ for artifacts, # for sessions, / for skills, {modifier}+K to search…"),
         (Locale::En, "composer.hint") => Some("Enter to send · Shift+Enter for newline · Drag top edge to resize · Drop files to attach"),
         (Locale::En, "composer.hint_modifier") => Some("{modifier}+Enter to send · Enter for newline · Drag top edge to resize · Drop files to attach"),
@@ -2338,6 +2360,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.auto_continue_limit_hint") => Some("Default: 10. After this limit, Wisp offers the existing manual Resume action."),
         (Locale::En, "settings.follow_up_questions") => Some("Suggest follow-up questions"),
         (Locale::En, "settings.follow_up_questions_hint") => Some("Use the current conversation model to suggest three next questions after each reply."),
+        (Locale::En, "settings.show_tips") => Some("Show tips"),
+        (Locale::En, "settings.show_tips_hint") => Some("Show a usage tip on the empty conversation screen."),
         (Locale::En, "settings.decentralized_project_storage") => Some("Decentralized project storage"),
         (Locale::En, "settings.decentralized_project_storage_hint") => Some("Save new projects in their own folders. When off, new projects share the app database. Existing projects stay where they are. Off by default; upgrades from v1.15.0 keep it on."),
         (Locale::En, "settings.resume_last_session") => Some("Resume the last conversation when opening a workspace"),
@@ -3546,6 +3570,18 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "empty.subtitle.4") => Some("浏览项目文件、附加数据，一个工作区搞定科研流程。"),
         (Locale::Zh, "empty.subtitle.5") => Some("文献检索、正反证据、选题评估等技能，需要时一键启用。"),
         (Locale::Zh, "empty.subtitle.6") => Some("连接 SSH 计算主机，从这里提交服务器上的任务。"),
+        (Locale::Zh, "tips.title") => Some("小贴士"),
+        (Locale::Zh, "tips.close") => Some("关闭小贴士"),
+        (Locale::Zh, "tip.0") => Some("输入 @ 附加 artifact，# 引用其他会话，/ 选择技能或命令。"),
+        (Locale::Zh, "tip.1") => Some("按 {modifier}+K 打开命令面板：搜索命令，或跳转到项目、artifact 和会话。"),
+        (Locale::Zh, "tip.2") => Some("用 /btw 打开侧边问答：针对当前对话提问，不影响主线。"),
+        (Locale::Zh, "tip.3") => Some("用 /plan 开启先计划模式：Agent 先给出计划，你确认后再执行。"),
+        (Locale::Zh, "tip.4") => Some("/rewind 可回退最后一轮，并把那条消息放回输入框。"),
+        (Locale::Zh, "tip.5") => Some("/fork 把下一条消息作为分支发送，换个方向试试也不丢当前进度。"),
+        (Locale::Zh, "tip.6") => Some("任务运行时也可以继续发消息：消息会排队，点「立刻引导」可马上干预当前任务。"),
+        (Locale::Zh, "tip.7") => Some("选中回复里的文字，可以添加到对话、用侧边问答解释，或划线收藏。"),
+        (Locale::Zh, "tip.8") => Some("给代码单元或图片点星标，就能在收藏库里保存一份固定快照，所有项目通用。"),
+        (Locale::Zh, "tip.9") => Some("在「设置 → 环境」里添加 SSH 或 WSL 环境，再从「计算环境」菜单为每个对话单独选择。"),
         (Locale::Zh, "composer.placeholder") => Some("请输入问题 — @ 附加 artifact，# 附加会话，/ 选择技能，{modifier}+K 搜索…"),
         (Locale::Zh, "composer.hint") => Some("Enter 发送 · Shift+Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加"),
         (Locale::Zh, "composer.hint_modifier") => Some("{modifier}+Enter 发送 · Enter 换行 · 拖拽上边缘调整高度 · 拖放文件可附加"),
@@ -5363,6 +5399,8 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.auto_continue_limit_hint") => Some("默认 10 次；达到上限后恢复现有的手动「继续执行」操作。"),
         (Locale::Zh, "settings.follow_up_questions") => Some("生成后续问题"),
         (Locale::Zh, "settings.follow_up_questions_hint") => Some("每次回复后，使用当前对话模型生成 3 个后续问题。"),
+        (Locale::Zh, "settings.show_tips") => Some("显示小贴士"),
+        (Locale::Zh, "settings.show_tips_hint") => Some("在空白对话页显示一条使用小贴士。"),
         (Locale::Zh, "settings.decentralized_project_storage") => Some("项目去中心化存储"),
         (Locale::Zh, "settings.decentralized_project_storage_hint") => Some("开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"),
         (Locale::Zh, "settings.resume_last_session") => Some("打开工作区时继续上次对话"),
@@ -7165,6 +7203,18 @@ mod queue_label_tests {
         // Sent-message rewind keeps its own label.
         assert_eq!(t(Locale::Zh, "msg.edit"), "回溯");
         assert_eq!(t(Locale::En, "msg.edit"), "Rewind");
+    }
+
+    #[test]
+    fn every_usage_tip_exists_in_both_locales() {
+        for locale in [Locale::En, Locale::Zh] {
+            for index in 0..TIP_COUNT {
+                let tip = usage_tip(locale, index, "Ctrl");
+                assert!(!tip.starts_with("tip."), "missing tip.{index}");
+                assert!(!tip.contains("{modifier}"), "unfilled tip.{index}");
+            }
+            assert_eq!(t(locale, &format!("tip.{TIP_COUNT}")), format!("tip.{TIP_COUNT}"));
+        }
     }
 
     #[test]

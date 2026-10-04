@@ -217,6 +217,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   const mockBranchFlow = query.get("mockBranches") === "1";
   const mockHistoricalExploration = query.get("mockHistoricalExploration") === "1";
   let mockDecentralizedStorage = query.get("mockDecentralizedStorage") === "1";
+  // Tips are random text on the empty screen; keep them out of specs that did not ask for them.
+  const mockShowTips = query.get("mockShowTips") === "1";
   let mockLocale = query.get("mockLocale") === "zh" ? "zh" : "en";
   let mockNetworkSettings = {
     model_proxy_url: query.get("mockLegacyProxy") ?? "",
@@ -3116,6 +3118,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               auto_continue: false,
               auto_continue_limit: 10,
               follow_up_questions: true,
+              show_tips: mockShowTips,
               resume_last_session: true,
               decentralized_project_storage: mockDecentralizedStorage,
               max_tokens: 4096,
@@ -6775,6 +6778,7 @@ export function parallelMock(): void {
             locale: "en",
             auto_compact: true,
             follow_up_questions: true,
+            show_tips: false,
             resume_last_session: true,
             decentralized_project_storage: false,
             supports_vision: true,
