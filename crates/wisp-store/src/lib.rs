@@ -924,6 +924,7 @@ impl Store {
                 ("pinned", "INTEGER NOT NULL DEFAULT 0"),
                 ("shelved", "INTEGER NOT NULL DEFAULT 0"),
                 ("branched_from", "TEXT"),
+                ("dispatched_from", "TEXT"),
                 ("reasoning_effort", "TEXT"),
                 ("service_tier", "TEXT"),
                 ("acp_agent_selection", "TEXT"),

@@ -2448,6 +2448,10 @@ pub struct SessionInfo {
     /// Source session this one was branched from; nested under it in the sidebar.
     #[serde(default)]
     pub branched_from: Option<String>,
+    /// Conversation whose agent started this one as a subagent (#1061): nested
+    /// under it in the sidebar, and watched rather than written to.
+    #[serde(default)]
+    pub dispatched_from: Option<String>,
     #[serde(default)]
     pub pinned: bool,
     #[serde(default)]

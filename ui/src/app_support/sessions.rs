@@ -63,6 +63,7 @@ pub(crate) fn refresh_sessions(
                         ts: js_sys::Date::now() as i64,
                         folder_id: None,
                         branched_from: None,
+                        dispatched_from: None,
                         pinned: false,
                         branch_state: None,
                         stale_prompt: false,
@@ -201,7 +202,13 @@ pub(crate) fn nest_branch_sessions(
         let mut cur = s;
         let mut hops = 0;
         loop {
-            let Some(src) = cur.branched_from.as_deref().and_then(|id| by_id.get(id)) else {
+            // A subagent (#1061) nests under the conversation that started it.
+            let Some(src) = cur
+                .branched_from
+                .as_deref()
+                .or(cur.dispatched_from.as_deref())
+                .and_then(|id| by_id.get(id))
+            else {
                 break;
             };
             if src.folder_id != cur.folder_id {
@@ -239,10 +246,27 @@ mod branch_nesting_tests {
             ts: 0,
             folder_id: folder.map(Into::into),
             branched_from: branched_from.map(Into::into),
+            dispatched_from: None,
             pinned: false,
             branch_state: branched_from.map(|_| "active".into()),
             stale_prompt: false,
         }
+    }
+
+    #[test]
+    fn subagents_nest_under_the_conversation_that_started_them() {
+        let mut sub = ses("sub", None, None);
+        sub.dispatched_from = Some("main".into());
+        let mut stray = ses("stray", None, None);
+        stray.dispatched_from = Some("not-listed".into());
+        let list = vec![ses("main", None, None), sub, stray];
+        let (top, nested) = nest_branch_sessions(&list);
+        // A subagent whose parent is off this page stays visible at top level.
+        assert_eq!(
+            top.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["main", "stray"]
+        );
+        assert_eq!(nested["main"][0].id, "sub");
     }
 
     #[test]

@@ -462,6 +462,11 @@ pub(super) async fn list_sessions_page(
         .list_session_branch_states(&ap.id)
         .await
         .map_err(|error| error.to_string())?;
+    let dispatched = state
+        .store
+        .list_dispatched_sessions(&ap.id)
+        .await
+        .map_err(|error| error.to_string())?;
     let running = state.running_turns.lock().await.clone();
     let mut items: Vec<SessionInfo> = pinned_rows
         .into_iter()
@@ -475,6 +480,7 @@ pub(super) async fn list_sessions_page(
                 .is_some_and(|state| state != "orphaned")
                 .then_some(branched_from)
                 .flatten(),
+            dispatched_from: dispatched.get(&id).cloned(),
             stale_prompt: false,
             id,
             title,
@@ -493,6 +499,7 @@ pub(super) async fn list_sessions_page(
                     .is_some_and(|state| state != "orphaned")
                     .then_some(branched_from)
                     .flatten(),
+                dispatched_from: dispatched.get(&id).cloned(),
                 stale_prompt: false,
                 id,
                 title,

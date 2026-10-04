@@ -405,6 +405,41 @@ lookup survive application restart. Peer-to-peer sibling messaging is not part
 of this model; dependencies, persisted artifacts, and parent result rollup are
 the coordination paths.
 
+## Subagent conversations
+
+A conversation's Agent can also start a **subagent**: a conversation of its own
+for one focused task, such as "open a new conversation and do X there". Unlike
+the temporary sub-Agents above, a subagent is unbounded by a task plan, visible
+in the sidebar under the conversation that started it (**Subagents**), and
+watch-only for the researcher: opening it shows the live transcript, but the
+composer is locked and the backend refuses any message that does not come from
+the parent conversation. Tool approvals still appear in the subagent's own
+transcript.
+
+The parent conversation gets three tools:
+
+- `dispatch_subagent` starts a subagent with a self-contained instruction, or
+  sends a follow-up to an idle one it started (`session_id`). It returns once the
+  subagent accepts the instruction.
+- `subagent_status` reports whether a subagent is running and its latest
+  answer; without `session_id` it lists this conversation's subagents.
+- `stop_subagent` cancels a subagent's running turn.
+
+When a dispatched turn ends, including when it ends with a question, a
+background callback reviews the result with the parent's model and appends a
+separate summary to the parent conversation; no polling is needed. The parent
+is not resumed automatically. A subagent has no `ask_user` and cannot start
+subagents; exploration conversations cannot start them either. A subagent
+dispatched from a WeChat-originated turn keeps that turn's approval floor for
+mutating tools. The parent link is stored on the conversation
+(`frames.dispatched_from`) and survives restart; a turn that was running at
+shutdown is not resumed.
+
+Subagents share their mechanism with the research assistant's
+`dispatch_to_project`: both implement `Dispatcher` in
+`src-tauri/src/dispatch.rs`, which owns the startup acknowledgement, turn
+observation and result delivery.
+
 ## Persistence and safety
 
 - Wisp persists the resolved v2 plan before execution. Stored steps contain the
