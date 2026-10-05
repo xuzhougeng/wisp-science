@@ -27,6 +27,7 @@ public sealed record NativeComposerQuote(string SessionId, int UserIndex, string
 public sealed record NativeContextUsage(ulong Used, ulong Max, IReadOnlyList<(string Label, ulong Tokens)> Rows)
 {
     public string Label => Max == 0 ? "上下文 · 窗口未知" : $"上下文 · {Math.Round(100d * Used / Max):0}%";
+    public string CompactLabel => Max == 0 ? "?" : $"{Math.Round(100d * Used / Max):0}%";
     public string Total => Max == 0 ? $"约 {Used:N0} Tokens · 窗口未知" : $"约 {Used:N0} / {Max:N0} Tokens";
     public string Tone => Max > 0 && (double)Used / Max > .9 ? "clay-strong" : "text-muted";
     public static NativeContextUsage? Latest(IEnumerable<ConversationItem> items)

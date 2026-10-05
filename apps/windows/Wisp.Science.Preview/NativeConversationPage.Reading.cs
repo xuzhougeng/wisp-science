@@ -66,7 +66,9 @@ internal sealed partial class NativeConversationPage
     {
         contextUsage.Flyout = contextUsageFlyout;
         design.QuietButton(contextUsage);
-        contextUsage.HorizontalAlignment = HorizontalAlignment.Left;
+        contextUsage.MinWidth = 32; contextUsage.Height = contextUsage.MinHeight = 32;
+        contextUsage.Padding = new Thickness(4, 0, 4, 0);
+        contextUsage.VerticalAlignment = VerticalAlignment.Center;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(contextUsage, "查看上下文用量");
         contextUsageFlyout.Opened += (_, _) => contextUsageOpen = true;
         contextUsageFlyout.Closed += (_, _) => contextUsageOpen = false;
@@ -98,9 +100,13 @@ internal sealed partial class NativeConversationPage
         if (fingerprint == contextFingerprint) return;
         contextFingerprint = fingerprint;
         if (usage == null) { contextUsageFlyout.Hide(); return; }
-        contextUsage.Content = usage.Label;
+        var indicator = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        indicator.Children.Add(design.Icon("gauge", 14));
+        indicator.Children.Add(design.Text(usage.CompactLabel, 11));
+        contextUsage.Content = indicator;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(contextUsage, "查看" + usage.Label);
         contextUsage.Foreground = design.Brush(usage.Tone);
-        ToolTipService.SetToolTip(contextUsage, usage.Total);
+        ToolTipService.SetToolTip(contextUsage, usage.Label + "\n" + usage.Total);
         var content = new StackPanel { Spacing = 10, MinWidth = 240, MaxWidth = 400 };
         content.Children.Add(design.Text("上下文用量", 18));
         content.Children.Add(design.Text(usage.Total, 13));

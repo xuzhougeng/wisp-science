@@ -10,6 +10,8 @@ internal static class NativeComposerReadingTests
         var usage = Item("usage", """{"input":9999999,"ctx_tokens":500,"max_context":1000,"context_usage":{"system_prompt":100,"conversation":400}}""");
         var total = NativeContextUsage.Latest([usage])!;
         Check(total.Used == 500 && total.Label.Contains("50%") && total.Rows.Count == 2, "context uses the active window, not cumulative billing");
+        Check(total.CompactLabel == "50%" && new NativeContextUsage(10, 0, []).CompactLabel == "?",
+            "toolbar usage stays compact while unknown limits never claim zero usage");
         var compacted = Item("compaction", """{"after":100,"strategy":"manual","undone":false}""");
         Check(NativeContextUsage.Latest([usage, compacted]) is { Used: 100, Rows.Count: 1 }, "compaction discards stale buckets");
         Check(NativeContextUsage.Latest([usage, compacted with { Text = """{"after":100,"strategy":"auto_continue"}""" }])?.Used == 500,

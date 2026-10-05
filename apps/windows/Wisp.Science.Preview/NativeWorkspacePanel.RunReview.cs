@@ -13,6 +13,8 @@ internal sealed partial class NativeWorkspacePanel
         if (sideChatModelPicker?.IsDropDownOpen == true) { sideChatModelPicker.IsDropDownOpen = false; return true; }
         if (openMenus.LastOrDefault() is { } menu) { menu.Hide(); return true; }
         if (fileDialog != null) { fileDialog.Hide(); return true; }
+        if (model.Tabs.Selected == "artifacts" && transcriptTables.Selected != null)
+        { transcriptTables.Dismiss(); Render(); return true; }
         if (documentPreview?.DismissSelection() == true) return true;
         if (sourceSelectionEditor is { IsLoaded: true, SelectionLength: > 0 } sourceEditor) {
             sourceEditor.Select(sourceEditor.SelectionStart, 0); return true;

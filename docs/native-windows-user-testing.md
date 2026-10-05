@@ -271,3 +271,53 @@ options flyout and retained the composer before the final opacity adjustment.
 The user stopped computer-use before final-build draft and maximize/restore
 checks; those remain unverified on this build. Earlier draft/resize results
 above apply to their recorded builds, not this final alignment pass.
+
+## Conversation readability and table artifacts (2026-10-05)
+
+The WinUI/WebView audit used the same existing SCOTCH monitoring conversation.
+The native preview had no table artifacts while the WebView showed six, and
+review-needed Run output expanded raw JSON between separate process groups.
+The high-priority correction is available in
+`target/native-windows-high-priority-final/Wisp.Science.Preview.exe`, with the
+query service and full settings-host resources copied beside it.
+
+Computer Use on the final build verified a successful launch and these flows:
+
+- The latest completed turn has one **显示已完成过程 · 7 条** entry with its
+  final Markdown answer outside. **查看待审阅运行** opens the matching Run detail
+  in the environment panel. Expanding the process keeps terminal Run cards
+  collapsed; raw data sits behind **原始输入与输出**. An expanded Run disclosure
+  remains expanded after collapsing and reopening its enclosing process.
+- Artifacts contains six tables with dimensions, matching the audited WebView.
+  Opening the first table renders a native preview. **复制表格** was checked by
+  pasting its header and rows into an empty composer; the test draft was then
+  cleared without sending. Escape closes the preview first and the narrow
+  artifacts drawer second, without needing to focus inside the preview.
+- The approximately 801 x 567 window and maximized window keep compact context
+  usage directly beside the model picker. ACP and context no longer occupy
+  separate composer rows. The earlier candidate's options check opened the ACP
+  submenu; immediate Escape closed only that submenu, then the parent options.
+  The final build uses the same options implementation.
+
+No messages, Run cancellation/cleanup actions or provider-setting changes were
+submitted during these checks. Table collection covers the displayed transcript
+page, including successful completion output; it does not scan unloaded history.
+
+The final native publish, complete C# contract executable, Rust formatting and
+WASM UI check passed. Contract coverage includes conservative process grouping,
+completion duplication, exact Run ownership and external review actions, table
+projection/cache/selection/TSV, and compact context labels. Logs use the prefix
+`test-results/winui-high-priority-`.
+
+`npm ci --offline` and the complete Playwright run passed: 1,014 passed and two
+skipped. The runner waited during web-server teardown after the last test;
+stopping only its verified Trunk process on port 15425 let it report exit 0.
+The initial sandboxed Rust run failed the local Run wait test because its
+user-profile Run directory was not writable. That exact test passed outside
+the sandbox. The unrestricted `--no-fail-fast` workspace run completed with
+2,548 passed, nine failed and one ignored; its only failed target was
+`wisp-store --lib`. The desktop host's 1,107 tests all passed. All nine failures
+were in `wisp-store::session_artifacts` with the default Windows temporary path;
+all 11 tests in that module passed with `TEMP`/`TMP` set to a full, non-8.3
+temporary path outside the checkout. These are separate results, not a green
+full-suite claim.

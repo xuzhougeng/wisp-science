@@ -748,7 +748,7 @@ internal sealed partial class MainWindow : Window
             panelPage = new NativeWorkspacePanel(new WorkspacePanelModel(panelClient, project, session, tabs,
                 new NativeHighlightClient(host), new NativeNotebookClient(host), new NativeAgentPanelClient(host),
                 new NativeContextActivityClient(host)),
-                () => conversation?.VisibleItems ?? [],
+                conversation,
                 design, TogglePanel, sideChat, context => _ = OpenTerminalContextAsync(context),
                 (selected, saved) => { runNavigation++; settings.PanelTab = selected; settings.PanelTabs = saved; SaveSettings(); },
                 new WorkspaceRunReviewModel(new NativeRunReviewClient(host), project, session), () => settings.InputPreferences ?? new(),

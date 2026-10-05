@@ -30,6 +30,19 @@ internal static class NativeTranscriptActivityTests
         }
         Check(NativeTranscriptActivity.Groups([Row("assistant", "Answer"), Row("usage")], false).Count == 0, "ordinary answer is never process");
         Check(NativeTranscriptActivity.Groups([Row("tool", ok: true), Row("usage"), Row("compaction")], false).SequenceEqual([new NativeActivityGroup(0, 1)]), "trailing metadata stays outside");
+        var completion = Row("tool", "## Final report\n\nResult.", true, "attempt_completion");
+        ConversationItem[] completed = [Row("user"), Row("reasoning"), Row("tool", ok: true, tool: "python"),
+            Row("assistant", "Finished checking."), completion, Row("usage"), Row("assistant", completion.Text), Row("usage")];
+        Check(NativeTranscriptActivity.Groups(completed, false).SequenceEqual([new NativeActivityGroup(1, 5)]),
+            "promoted completion and preceding commentary fold into one process, final answer remains visible");
+        Check(NativeTranscriptActivity.Groups(completed, true).Count == 0, "completion in a running turn remains visible");
+        foreach (var following in new[] { Array.Empty<ConversationItem>(), new[] { Row("assistant", "Different answer") },
+            new[] { Row("user"), Row("assistant", completion.Text) }, new[] { Row("question"), Row("assistant", completion.Text) } })
+            Check(!NativeTranscriptActivity.RepeatedCompletion([completion, .. following], 0), "sole, changed or next-turn results are never hidden");
+        Check(!NativeTranscriptActivity.RepeatedCompletion([completion with { Ok = false }, Row("assistant", completion.Text)], 0),
+            "a failed completion remains visible even if an answer follows");
+        Check(NativeTranscriptActivity.RepeatedCompletion([completion, Row("assistant", completion.Text.Replace("\n", "\r\n"))], 0),
+            "Windows newline differences do not duplicate the final result");
         var run = new ConversationRun("run-a", "succeeded", 1, false);
         var submission = Row("tool", ok: true, tool: "run_in_context") with { Run = run };
         var monitor = Row("tool", ok: true, tool: "monitor_run") with { Input = " run-a ", Run = run };
@@ -62,6 +75,17 @@ internal static class NativeTranscriptActivityTests
         linked[3] = monitor;
         linked[1] = submission with { Run = run with { NeedsReview = true } };
         Check(NativeTranscriptActivity.Groups(linked, false).Count == 0, "actionable owner cannot hide its monitor");
+        linked[3] = monitor with { Run = run with { NeedsReview = true } };
+        var reviewedGroups = NativeTranscriptActivity.Groups(linked, false, reviewActionsAvailable: true);
+        Check(reviewedGroups.SequenceEqual([new NativeActivityGroup(1, 4)])
+            && NativeTranscriptActivity.ReviewRuns(linked, reviewedGroups.Single()).SequenceEqual(["run-a"]),
+            "successful reviewed Run and monitor share one process with one external review action");
+        Check(NativeTranscriptActivity.Groups(linked, true, true).Count == 0, "review actions cannot fold the running turn");
+        linked[3] = linked[3] with { Input = "foreign" };
+        Check(NativeTranscriptActivity.Groups(linked, false, true).SequenceEqual([new NativeActivityGroup(1, 2)]),
+            "review support does not relax monitor identity validation");
+        linked[1] = linked[1] with { Run = run with { NeedsReview = true, OwnerIndex = null } };
+        Check(NativeTranscriptActivity.Groups(linked, false, true).Count == 0, "unowned review-required Runs remain visible");
         Console.WriteLine("Native completed process grouping, final reports, running turns and actionable boundaries passed.");
     }
 

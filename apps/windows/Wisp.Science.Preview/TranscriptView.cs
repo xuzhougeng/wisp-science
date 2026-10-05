@@ -163,11 +163,10 @@ internal static class TranscriptView
         if (position < value.Length) inlines.Add(Plain(position, value.Length - position));
     }
 
-    private static FrameworkElement TableElement(Table table, WispDesign design)
+    internal static FrameworkElement TableElement(Table table, WispDesign design)
     {
         var rows = table.OfType<TableRow>().ToArray();
-        var columns = table.ColumnDefinitions.Count;
-        if (columns == 0) columns = rows.Length == 0 ? 1 : rows.Max(row => row.OfType<TableCell>().Sum(cell => Math.Max(1, cell.ColumnSpan)));
+        var columns = NativeTranscriptTables.ColumnCount(table);
         var grid = new Grid { Margin = new Thickness(0, 0, 0, 12) };
         for (var c = 0; c < columns; c++) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         for (var r = 0; r < rows.Length; r++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -197,7 +196,17 @@ internal static class TranscriptView
                 column += Math.Max(1, cell.ColumnSpan);
             }
         }
-        return grid;
+        var copy = new Button { Content = "复制表格", HorizontalAlignment = HorizontalAlignment.Right,
+            FontSize = design.FontSize(11), Padding = new Thickness(8, 4, 8, 4) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(copy, "复制表格");
+        copy.Click += (_, _) =>
+        {
+            try { var data = new DataPackage(); data.SetText(NativeTranscriptTables.Copy(table)); Clipboard.SetContent(data); }
+            catch { }
+        };
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(copy); panel.Children.Add(grid);
+        return panel;
     }
 
     private static XamlInline CellInline(TableCell cell, WispDesign design)
