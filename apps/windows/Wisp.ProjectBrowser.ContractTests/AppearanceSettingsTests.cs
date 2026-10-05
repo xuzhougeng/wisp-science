@@ -43,6 +43,24 @@ internal static class AppearanceSettingsTests
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { await model.LoadAsync(cancelled.Token); throw new Exception("Expected cancellation"); } catch (OperationCanceledException) { }
         Check(!model.Busy, "cancellation releases busy state");
+        var shared = new Fake { Stored = JsonNode.Parse("{\"theme\":\"light\",\"send_with_modifier\":true,\"selection_popup_enabled\":false,\"ui_font_size\":18,\"future_field\":{\"nested\":7}}")! };
+        var changed = await AppearanceSettingsModel.ChangeThemeAsync(shared, "dark");
+        var reopened = new AppearanceSettingsModel(shared, "another-project");
+        await reopened.LoadAsync();
+        Check(reopened.Draft!["theme"]!.GetValue<string>() == "dark", "footer theme persists when Settings reopens in another project");
+        Check(NativeInputPreferences.From(changed) == new NativeInputPreferences(true, false)
+            && changed["ui_font_size"]!.GetValue<int>() == 18 && changed["future_field"]!["nested"]!.GetValue<int>() == 7,
+            "footer theme preserves input, fonts and unknown preferences");
+        var writesBeforeInvalid = shared.Writes;
+        try { await AppearanceSettingsModel.ChangeThemeAsync(shared, "invalid"); throw new Exception("Expected invalid theme"); }
+        catch (ArgumentException) { }
+        Check(shared.Writes == writesBeforeInvalid, "invalid theme does not write");
+        shared.Fail = true;
+        try { await AppearanceSettingsModel.ChangeThemeAsync(shared, "light"); throw new Exception("Expected lost acknowledgement"); }
+        catch (IOException) { }
+        Check(shared.Writes == writesBeforeInvalid + 1, "footer failed save is never replayed");
+        await reopened.LoadAsync();
+        Check(reopened.Draft!["theme"]!.GetValue<string>() == "dark", "failed save is not presented as the saved appearance");
         var missingDatabase = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "wisp.sqlite");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
@@ -77,6 +95,7 @@ internal static class AppearanceSettingsTests
     private sealed class Fake : INativeSettingsClient
     {
         public bool Fail;
+        public JsonNode Stored = JsonNode.Parse("{\"theme\":\"light\",\"future_field\":{\"nested\":7}}")!;
         public int Writes;
         public string? Project;
         public JsonNode? Sent;
@@ -84,10 +103,13 @@ internal static class AppearanceSettingsTests
         public Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested(); Project = projectId;
-            if (command == "get_appearance_prefs") return Task.FromResult(JsonNode.Parse("{\"theme\":\"light\",\"future_field\":{\"nested\":7}}"));
+            if (command == "get_appearance_prefs") return Task.FromResult<JsonNode?>(Stored.DeepClone());
             if (command != "set_appearance_prefs") throw new Exception("Unexpected command");
             Writes++; Sent = arguments["prefs"]!.DeepClone();
-            return Fail ? Task.FromException<JsonNode?>(new IOException("lost response")) : Pending?.Task ?? Task.FromResult<JsonNode?>(Sent.DeepClone());
+            if (Fail) return Task.FromException<JsonNode?>(new IOException("lost response"));
+            if (Pending != null) return Pending.Task;
+            Stored = Sent.DeepClone();
+            return Task.FromResult<JsonNode?>(Stored.DeepClone());
         }
     }
 }

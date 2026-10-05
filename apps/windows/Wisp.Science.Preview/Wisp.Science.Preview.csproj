@@ -24,6 +24,21 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="Assets/Terminal/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../../ui/vendor-src/office-preview-runtime.mjs;../../../ui/vendor-src/docx-preview.*;../../../ui/vendor-src/pptx-preview.mjs;../../../ui/vendor-src/pptx-renderer.LICENSE;../../../ui/vendor-src/xlsx*;../../../ui/vendor-src/sheetjs.LICENSE;../../../ui/vendor-src/jszip.LICENSE;../../../ui/vendor-src/office-build.json;../../../ui/vendor-src/pdf*.mjs">
+      <Link>Assets/RichPreview/vendor-runtime/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../ui/vendor-src/office-chunks/*.mjs">
+      <Link>Assets/RichPreview/vendor-runtime/office-chunks/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../../ui/vendor-src/scientific-preview.*;../../../ui/vendor-src/structure-preview.*;../../../ui/vendor-src/alignment-preview.*;../../../ui/vendor-src/rdkit-worker.mjs;../../../ui/vendor-src/RDKit*;../../../ui/vendor-src/3Dmol*;../../../ui/vendor-src/nightingale*;../../../ui/vendor-src/rdkit.LICENSE;../../../ui/vendor-src/3dmol.LICENSE;../../../ui/vendor-src/vendor-BoUatD0H.js">
+      <Link>Assets/RichPreview/vendor-runtime/%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="../../../ui/vendor-src/xterm*">
       <Link>Assets/Terminal/%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

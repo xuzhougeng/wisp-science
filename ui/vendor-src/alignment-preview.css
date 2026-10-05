@@ -1,0 +1,5 @@
+html,body { margin:0; font:12px system-ui; background:white; color:#222; }
+nav { display:flex; align-items:center; gap:8px; padding:4px; }
+button { color:inherit; background:transparent; border:1px solid #aaa; border-radius:4px; padding:4px; }
+#status { white-space:pre-wrap; padding:4px; }
+nightingale-msa { display:block; }

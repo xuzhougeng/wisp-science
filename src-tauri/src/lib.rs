@@ -49,11 +49,15 @@ mod dispatch;
 mod dynamic_workflow;
 mod exploration_commands;
 mod native_calendar;
+mod native_composer;
 mod native_conversations;
+mod native_history;
 mod native_journey;
 mod native_library;
 mod native_projects;
 mod native_publication;
+mod native_queue;
+mod native_search;
 mod native_settings;
 mod privacy_mode;
 pub(crate) use wisp_runs::exploration_isolation;
@@ -703,32 +707,7 @@ struct SessionSearchInfo {
     status: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ComposerReferenceArg {
-    Artifact {
-        id: String,
-    },
-    Session {
-        id: String,
-    },
-    Project {
-        id: String,
-    },
-    Skill {
-        name: String,
-    },
-    Workflow {
-        id: String,
-    },
-    Context {
-        id: String,
-    },
-    Runtime {
-        context_id: String,
-        language: String,
-    },
-}
+use wisp_dto::ComposerReferenceArg;
 
 #[derive(Serialize, Clone)]
 struct ProjectInfo {
@@ -3300,6 +3279,9 @@ fn emit_agent_event_to_surfaces_in(app: &AppHandle, event: AgentEvent, project_i
 }
 
 pub(crate) fn emit_agent_event_in(app: &AppHandle, event: AgentEvent, project_id: Option<&str>) {
+    if let Some(conversations) = app.try_state::<Arc<native_conversations::Conversations>>() {
+        conversations.observe(&event);
+    }
     app.state::<AppState>()
         .device_hub
         .apply_agent_event(&event, project_id);

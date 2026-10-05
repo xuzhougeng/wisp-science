@@ -12,7 +12,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "apps/macos/Sources/WispProjectBrowserUI/Resources"
-ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more", "circle-alert", "server", "arrow-up", "bolt")
+ICONS = ("search", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more", "circle-alert", "server", "arrow-up", "bolt", "plan", "expand", "bubble", "sun", "moon", "monitor")
 # WebView-only settings sections the native preview has no page for yet.
 WEBVIEW_ONLY_SECTIONS = {"hooks"}
 COLORS = ("bg-app", "bg-elev", "bg-sunken", "surface-hover", "text", "text-muted", "text-faint", "border", "border-strong", "clay", "clay-strong")
@@ -23,6 +23,8 @@ def exports():
     native_icons = set()
     for path in (ROOT / "apps/windows/Wisp.Science.Preview").glob("*.cs"):
         native_icons.update(re.findall(r'\.Icon\("([^"]+)"', path.read_text(encoding="utf-8")))
+    palette = (ROOT / "apps/windows/Wisp.ProjectBrowser/NativePaletteActions.cs").read_text(encoding="utf-8")
+    native_icons.update(re.findall(r'new\("[^"]+",\s*"[^"]+",\s*"([^"]+)"', palette))
     missing = native_icons - set(ICONS)
     if missing:
         raise ValueError(f"WinUI icons missing from native exports: {sorted(missing)}")

@@ -20,20 +20,40 @@ public sealed class WorkspaceRunReviewModel(INativeRunReviewClient client, strin
     public bool Cleaned { get; private set; }
     public string? Error { get; private set; }
     public string? Status { get; private set; }
+    public string? DismissalError { get; private set; }
     public string? Confirmation { get; private set; }
     public string[] ConfirmedPaths { get; private set; } = [];
     public bool CanChange => Visible && Ready && !ReadOnly && !Cleaned && !Loading && !Mutating;
     private int generation, mutationRevision, offset;
+    private readonly HashSet<string> dismissed = new(StringComparer.Ordinal);
 
-    public Task OpenAsync(string runId, CancellationToken token = default)
+    public Task OpenAsync(string runId, CancellationToken token = default, bool readOnly = true)
     {
+        if (Visible) Close();
         generation++; Visible = true; RunId = runId; Path = ""; Filter = "";
-        Entries = []; Selection.Clear(); Status = null; Error = null; Confirmation = null;
-        ConfirmedPaths = []; Cleaned = false; Ready = false; ReadOnly = true;
+        Entries = []; Selection.Clear(); Status = null; Error = null; DismissalError = null; Confirmation = null;
+        ConfirmedPaths = []; Cleaned = false; Ready = false; ReadOnly = readOnly;
         return ReadAsync(false, token);
     }
-    public void Close()
-    { generation++; Visible = false; Loading = false; Ready = false; Confirmation = null; Selection.Clear(); Changed?.Invoke(); }
+    public void Close() => _ = CloseAsync();
+    public async Task CloseAsync()
+    {
+        if (!Visible) return;
+        var run = RunId;
+        var persist = Visible && !ReadOnly && dismissed.Add(run);
+        generation++; Visible = false; Loading = false; Ready = false; Confirmation = null; Selection.Clear();
+        var current = generation;
+        Changed?.Invoke();
+        if (!persist) return;
+        // Closing the view must not cancel this already authorized scoped write.
+        // A lost acknowledgement is reported, never replayed on a later close.
+        try { await client.InvokeAsync(project, session, run, new() { ["action"] = "dismiss" }); }
+        catch (Exception ex)
+        {
+            if (current == generation) DismissalError = "运行 " + run + " 的审阅关闭状态未确认，不会自动重试。" + ex.Message;
+        }
+        Changed?.Invoke();
+    }
     public bool HandleEscape()
     {
         if (!Visible) return false;

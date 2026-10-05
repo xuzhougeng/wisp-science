@@ -52,6 +52,7 @@ test("Escape closes the task form, then the page, and never a layer below Settin
 
 test("an assistant turn re-reading projects keeps the open task form and its project list", async ({ page }) => {
   await openAssistant(page);
+  await expect(page.getByTestId("assistant-projects").locator("[data-project-id]")).toHaveCount(2);
   await page.evaluate(() => { (window as any).__assistantProjectsDelay = 2000; });
   const composer = page.locator(".composer textarea").first();
   await composer.fill("Any news?");

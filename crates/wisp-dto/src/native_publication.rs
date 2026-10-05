@@ -3,7 +3,100 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-publication.v1";
 
-pub const COMMANDS: &[&str] = &["native_publication_workspace", "native_publication_create"];
+pub const COMMANDS: &[&str] = &[
+    "native_publication_workspace",
+    "native_publication_create",
+    "native_publication_sources",
+    "native_publication_mutate",
+];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourcesRequest {
+    pub kind: String,
+    pub query: String,
+    pub offset: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationRequest {
+    pub revision_id: String,
+    pub operation: Operation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Operation {
+    SaveItem {
+        id: Option<String>,
+        parent_item_id: Option<String>,
+        kind: String,
+        title: String,
+        content: String,
+        ordinal: i64,
+    },
+    BindEvidence {
+        item_id: Option<String>,
+        source_kind: String,
+        source_id: String,
+        purpose: String,
+        supported_claim_item_id: Option<String>,
+        selection_state: String,
+        visibility: String,
+    },
+    UpdateBinding {
+        binding_id: String,
+        selection_state: String,
+        visibility: String,
+    },
+    CloneRevision {
+        label: String,
+    },
+    SaveWaiver {
+        finding_code: String,
+        author: String,
+        reason: String,
+    },
+    Check {
+        policy: FreezePolicy,
+    },
+    Freeze {
+        policy: FreezePolicy,
+    },
+    Verify {
+        source_run_id: String,
+        #[serde(default)]
+        comparisons: Vec<Comparison>,
+    },
+    BuildCapsule {
+        destination: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreezePolicy {
+    pub target_visibility: String,
+    pub phi_pii_reviewed: bool,
+    pub redistribution_reviewed: bool,
+    pub snapshot_restricted_bytes: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Comparison {
+    pub output_id: String,
+    pub comparator: String,
+    pub absolute_tolerance: Option<f64>,
+    pub relative_tolerance: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MutationResult {
+    pub workspace: NativePublicationWorkspace,
+    pub readiness: Option<crate::PublicationReadinessInfo>,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +131,11 @@ pub struct NativePublicationRevision {
     pub revision_number: i64,
     pub label: String,
     pub state: String,
+    #[serde(default)]
+    pub capability_level: String,
+    pub parent_revision_id: Option<String>,
+    pub manifest_sha256: Option<String>,
+    pub frozen_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -54,7 +152,7 @@ pub struct NativePublicationItem {
     pub content: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct NativePublicationWorkspace {
     pub publications: Vec<NativePublication>,
     pub publication: Option<NativePublication>,
@@ -64,6 +162,26 @@ pub struct NativePublicationWorkspace {
     pub revisions: Vec<NativePublicationRevision>,
     #[serde(default)]
     pub bindings: Vec<crate::PublicationEvidenceBinding>,
+    #[serde(default)]
+    pub item_links: Vec<crate::PublicationItemLinkInfo>,
+    #[serde(default)]
+    pub reviews: Vec<crate::PublicationEvidenceReview>,
+    #[serde(default)]
+    pub supersessions: Vec<crate::PublicationEvidenceSupersession>,
+    #[serde(default)]
+    pub waivers: Vec<crate::PublicationWaiverInfo>,
+    pub readiness: Option<crate::PublicationReadinessInfo>,
+    #[serde(default)]
+    pub drift: Vec<crate::PublicationEvidenceDriftInfo>,
+    #[serde(default)]
+    pub lineage: Vec<crate::PublicationLineageInfo>,
+    #[serde(default)]
+    pub capsule_builds: Vec<crate::CapsuleBuildInfo>,
+    pub effective_capability_level: Option<String>,
+    #[serde(default)]
+    pub reproduction_runs: Vec<crate::ReproductionRunInfo>,
+    #[serde(default)]
+    pub reproduction_results: Vec<crate::ReproductionResultInfo>,
 }
 
 #[cfg(test)]

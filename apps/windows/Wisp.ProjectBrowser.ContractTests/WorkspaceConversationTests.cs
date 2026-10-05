@@ -93,6 +93,16 @@ internal static class WorkspaceConversationTests
         Check(!model.ShowingHistory && model.History == null && model.OperationError == null,
             "leaving outline history also discards its late failure");
 
+        using (var cancelledOutline = new CancellationTokenSource())
+        {
+            hold = client.Hold = new();
+            var cancelledRead = model.OpenQuestionAsync(new(0, "检查样本", 20, null, null), cancelledOutline.Token);
+            cancelledOutline.Cancel();
+            hold.SetResult(Fixture(snapshotPath) with { UserOffset = 0 });
+            Check(!await cancelledRead && model.History == null && !model.ShowingHistory,
+                "closing the outline rejects a late page even when the transport ignores cancellation");
+        }
+
         client = new Fake { Reads = [Fixture(snapshotPath)] };
         model = new WorkspaceConversationModel(client, client);
         await model.OpenAsync("project-a", "session-a"); model.Draft = "hello";

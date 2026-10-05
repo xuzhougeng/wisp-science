@@ -415,42 +415,7 @@ pub(crate) fn mention_compute_entries(
 }
 
 fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
-    if ctx.kind == "local" && language == "python" {
-        return true;
-    }
-    let config = serde_json::from_str::<serde_json::Value>(&ctx.config_json).unwrap_or_default();
-    let capabilities =
-        serde_json::from_str::<serde_json::Value>(&ctx.capabilities_json).unwrap_or_default();
-    let has_value = |value: &serde_json::Value, key: &str| {
-        value
-            .get(key)
-            .and_then(|value| value.as_str())
-            .is_some_and(|value| !value.trim().is_empty())
-    };
-    match language {
-        "python" => {
-            ["python_executable", "python_path"]
-                .iter()
-                .any(|key| has_value(&config, key))
-                || has_value(&capabilities, "python_executable")
-        }
-        "r" => {
-            if ["rscript_executable", "rscript_path"]
-                .iter()
-                .any(|key| has_value(&config, key))
-            {
-                return true;
-            }
-            if has_value(&capabilities, "rscript_executable") {
-                return capabilities
-                    .get("r_jsonlite")
-                    .and_then(|value| value.as_bool())
-                    != Some(false);
-            }
-            ctx.kind == "local" && ctx.last_probe_status.as_deref() != Some("ok")
-        }
-        _ => false,
-    }
+    crate::dto::native_conversations::runtime_reference_available(ctx, language)
 }
 
 #[cfg(test)]

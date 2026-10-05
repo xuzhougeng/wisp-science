@@ -9,6 +9,7 @@ internal sealed class PreviewSettings
     public string LightPalette { get; set; } = "paper";
     public string DarkPalette { get; set; } = "charcoal";
     public Wisp.ProjectBrowser.NativeTypography Typography { get; set; } = new();
+    public Wisp.ProjectBrowser.NativeInputPreferences InputPreferences { get; set; } = new();
     public bool PanelVisible { get; set; }
     public double PanelWidth { get; set; } = 360;
     public string PanelTab { get; set; } = "artifacts";

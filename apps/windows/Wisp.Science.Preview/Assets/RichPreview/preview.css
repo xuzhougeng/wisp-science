@@ -1,10 +1,20 @@
 html, body { margin: 0; padding: 0; font: 14px system-ui; }
 body { padding: 6px; box-sizing: border-box; }
-nav { position: sticky; top: 0; background: inherit; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; }
+nav { position: sticky; top: 0; z-index: 3; background: inherit; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; }
 nav[hidden] { display: none; }
 button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 4px; padding: 5px; cursor: pointer; }
 button:disabled { opacity: .4; cursor: default; }
 #content { overflow: auto; }
 #status { white-space: pre-wrap; overflow-wrap: anywhere; }
 canvas { display: block; background: white; }
+.pdf-page { position: relative; }
+.textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; text-align: initial; -webkit-text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; user-select: text; }
+.textLayer :is(span, br) { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0 0; user-select: text; }
+.textLayer span.markedContent { top: 0; height: 0; }
+.textLayer ::selection { background: rgba(90, 140, 255, .35); }
+.hiddenCanvasElement { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
+#quote-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#quote-actions[hidden] { display: none; }
+#pdf-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+#pdf-actions[hidden] { display: none; }
 .katex-display { margin: .4em 0; }

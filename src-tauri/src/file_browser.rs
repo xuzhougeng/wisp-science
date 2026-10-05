@@ -1281,6 +1281,30 @@ pub(super) fn read_file_bytes_at(
     Ok(bytes)
 }
 
+/// Opted-in native views render original PDF or validated Office document bytes.
+/// Keep legacy document extraction for clients without the Office capability.
+pub(super) fn read_native_preview_at(
+    root: &Path,
+    path: String,
+    render_pdf: bool,
+    render_office: bool,
+) -> Result<FileContent, String> {
+    let real = wisp_tools::safety::validate_file_path(root, &path)?;
+    let mime = mime_for_path(&real);
+    if !(render_pdf && mime == "application/pdf" || render_office && is_ooxml_path(&real)) {
+        return read_file_at(root, path, None);
+    }
+    let bytes = read_file_bytes_at(root, &path, Some(32 * 1024 * 1024))?;
+    let total = bytes.len() as u64;
+    Ok(file_content_from_bytes(
+        real.to_string_lossy().into_owned(),
+        mime,
+        bytes,
+        Some(total),
+        false,
+    ))
+}
+
 /// The shared text-vs-binary decision for previews, local or remote: named text
 /// mimes go out as text, unnamed extensions are sniffed, the rest is base64.
 fn file_content_from_bytes(

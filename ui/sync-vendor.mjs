@@ -18,6 +18,19 @@ const exactAllowlist = new Set([
   "RDKit_minimal-B7RkdM0_.js",
   "RDKit_minimal-tnscgqxm.wasm",
   "docx-preview.LICENSE",
+  "office-preview-runtime.mjs",
+  "scientific-preview.mjs",
+  "scientific-preview.css",
+  "structure-preview.mjs",
+  "structure-preview.css",
+  "structure-preview.html",
+  "alignment-preview.mjs",
+  "alignment-preview.css",
+  "alignment-preview.html",
+  "rdkit-worker.mjs",
+  "rdkit.LICENSE",
+  "3dmol.LICENSE",
+  "nightingale-msa.LICENSE",
   "echarts.LICENSE",
   "echarts.LICENSE-d3",
   "echarts.NOTICE",
@@ -45,6 +58,7 @@ const exactAllowlist = new Set([
 ]);
 const katexFont = /^KaTeX_[A-Za-z0-9_-]+\.(?:woff2?|ttf)$/;
 const required = [
+  "office-preview-runtime.mjs",
   "docx-preview.mjs",
   "pdf.min.mjs",
   "pdf.worker.min.mjs",

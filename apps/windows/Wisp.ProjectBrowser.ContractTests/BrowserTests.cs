@@ -95,6 +95,23 @@ internal static class BrowserTests
         fake.Fail = false;
         await model.OpenProjectAsync("p", "s2");
         Check(model.ActiveSessionId == "s2" && model.Messages.Single().Text == "s2", "recent link selects exact session");
+        var navigationEvents = 0;
+        model.Changed += () => navigationEvents++;
+        var messagesBeforeActivity = model.Messages;
+        var live = new ConversationSnapshot(ConversationSnapshot.SchemaId, "host", 1, "p", "s2", [], null,
+            true, false, false, "m", null, null, [], ActivityStatus: "running");
+        foreach (var status in new[] { "running", "needs_you", "complete" })
+        {
+            Check(model.ApplySessionActivity(live with { ActivityStatus = status })
+                && model.Sessions.Single(s => s.Id == "s2").Status == status, "live sidebar status follows authoritative runtime transitions");
+            Check(!model.ApplySessionActivity(live with { ActivityStatus = status }), "identical activity polls do not redraw the sidebar");
+        }
+        Check(navigationEvents == 0 && ReferenceEquals(messagesBeforeActivity, model.Messages) && model.ActiveSessionId == "s2",
+            "activity updates preserve transcript, focus and navigation rather than refreshing the root");
+        Check(!model.ApplySessionActivity(live with { ProjectId = "foreign" })
+            && !model.ApplySessionActivity(live with { SessionId = "s1" })
+            && !model.ApplySessionActivity(live with { ActivityStatus = null })
+            && !model.ApplySessionActivity(live with { ActivityStatus = "unknown" }), "foreign, stale and older-host activity cannot overwrite sidebar state");
         Check(model.Search("").All(s => s.ProjectId == "p" && s.SessionId != null), "workspace search stays in current project");
         await model.OpenSessionAsync("s1");
         await model.OpenSessionAsync("s1", older: true);

@@ -539,7 +539,7 @@ pub(crate) async fn create_publication(
     }
 }
 
-async fn bind_evidence(
+pub(crate) async fn bind_evidence(
     store: &Store,
     project_id: &str,
     input: &BindPublicationEvidenceInput,

@@ -23,7 +23,11 @@
       "publication_id": "pub-1",
       "revision_number": 1,
       "label": "v1",
-      "state": "draft"
+      "state": "draft",
+      "capability_level": "archived",
+      "parent_revision_id": null,
+      "manifest_sha256": null,
+      "frozen_at": null
     },
     "items": [
       {
@@ -51,7 +55,11 @@
         "publication_id": "pub-1",
         "revision_number": 1,
         "label": "v1",
-        "state": "draft"
+        "state": "draft",
+        "capability_level": "archived",
+        "parent_revision_id": null,
+        "manifest_sha256": null,
+        "frozen_at": null
       }
     ],
     "bindings": [
@@ -69,6 +77,32 @@
         "visibility": "private",
         "source_snapshot_json": "{\"title\": \"counts.csv\", \"version\": 17}"
       }
-    ]
+    ],
+    "item_links": [],
+    "reviews": [
+      {
+        "binding_id": "binding-1",
+        "reviewer": "Reviewer",
+        "method": "manual",
+        "verified_at": 1,
+        "result": "pass",
+        "report_json": "{}"
+      }
+    ],
+    "supersessions": [],
+    "waivers": [
+      {
+        "finding_code": "fixture-warning",
+        "author": "Reviewer",
+        "reason": "Retained limitation"
+      }
+    ],
+    "drift": [],
+    "lineage": [],
+    "capsule_builds": [],
+    "reproduction_runs": [],
+    "reproduction_results": [],
+    "readiness": null,
+    "effective_capability_level": "archived"
   }
 }

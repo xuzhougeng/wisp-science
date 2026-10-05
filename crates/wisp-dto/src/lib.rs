@@ -12,12 +12,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub mod codex_login;
+pub mod execution_plan;
 pub mod native_calendar;
 pub mod native_conversations;
+pub mod native_history;
 pub mod native_journey;
 pub mod native_library;
 pub mod native_projects;
 pub mod native_publication;
+pub mod native_queue;
+pub mod native_search;
+pub mod native_session_import;
 pub mod native_settings;
 pub mod project_browser;
 mod session_artifacts;
@@ -1594,7 +1599,7 @@ pub struct SessionSearchInfo {
     pub status: String,
 }
 
-#[derive(Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComposerReferenceArg {
     Artifact {
@@ -2631,7 +2636,7 @@ pub struct ExplorationPromotionResult {
 
 /// One Codex CLI or Claude Code conversation offered by the import modal.
 /// `state` is "new" | "imported" | "updatable".
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct ExternalSessionInfo {
     pub path: String,
     pub session_id: String,
@@ -2642,13 +2647,13 @@ pub struct ExternalSessionInfo {
     pub state: String,
 }
 
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct ExternalSessionPreviewLine {
     pub role: String,
     pub text: String,
 }
 
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq)]
 pub struct ExternalImportSummary {
     pub imported: usize,
     pub updated: usize,
@@ -4177,7 +4182,7 @@ pub struct ResearchGraph {
     pub edges: Vec<ResearchEdge>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationInfo {
     pub id: String,
     pub project_id: String,
@@ -4206,7 +4211,7 @@ pub struct PublicationSourcePage {
     pub has_more: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationRevisionInfo {
     pub id: String,
     pub publication_id: String,
@@ -4220,7 +4225,7 @@ pub struct PublicationRevisionInfo {
     pub published_at: Option<i64>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationItemInfo {
     pub id: String,
     pub revision_id: String,
@@ -4231,7 +4236,7 @@ pub struct PublicationItemInfo {
     pub ordinal: i64,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationItemLinkInfo {
     pub source_item_id: String,
     pub target_item_id: String,
@@ -4254,7 +4259,7 @@ pub struct PublicationEvidenceBinding {
     pub source_snapshot_json: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct PublicationEvidenceReview {
     pub binding_id: String,
     pub reviewer: String,
@@ -4264,21 +4269,21 @@ pub struct PublicationEvidenceReview {
     pub report_json: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationEvidenceSupersession {
     pub old_binding_id: String,
     pub new_binding_id: String,
     pub reason: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationWaiverInfo {
     pub finding_code: String,
     pub author: String,
     pub reason: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct PublicationReadinessFinding {
     pub code: String,
     pub message: String,
@@ -4290,7 +4295,7 @@ pub struct PublicationReadinessFinding {
     pub details: serde_json::Value,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct PublicationReadinessInfo {
     pub revision_id: String,
     pub target_visibility: String,
@@ -4305,7 +4310,7 @@ pub struct PublicationReadinessInfo {
     pub can_freeze: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationEvidenceDriftInfo {
     pub binding_id: String,
     pub bound_version_id: String,
@@ -4315,7 +4320,7 @@ pub struct PublicationEvidenceDriftInfo {
     pub has_drift: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicationLineageInfo {
     pub binding_id: String,
     pub source_label: String,
@@ -4339,7 +4344,7 @@ pub struct PublicationLineageInfo {
     pub environment_captured: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CapsuleBuildInfo {
     pub id: String,
     pub revision_id: String,
@@ -4354,7 +4359,7 @@ pub struct CapsuleBuildInfo {
     pub completed_at: Option<i64>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ReproductionRunInfo {
     pub id: String,
     pub source_run_id: String,
@@ -4371,7 +4376,7 @@ pub struct ReproductionRunInfo {
     pub completed_at: Option<i64>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct ReproductionResultInfo {
     pub reproduction_run_id: String,
     pub output_id: String,
@@ -4382,7 +4387,7 @@ pub struct ReproductionResultInfo {
     pub report_json: String,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct PublicationWorkspaceInfo {
     #[serde(default)]
     pub publications: Vec<PublicationInfo>,
@@ -4416,7 +4421,7 @@ pub struct PublicationWorkspaceInfo {
     pub reproduction_results: Vec<ReproductionResultInfo>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct PublicationFreezeOutcome {
     pub frozen: bool,
     pub revision: PublicationRevisionInfo,
@@ -5072,7 +5077,7 @@ pub struct RuntimeSlot {
 /// the always-NULL `script_path`). No blanket `allow(dead_code)`: an unread
 /// field here means the UI is dropping data again, and the warning is the
 /// whole point.
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct RunRecord {
     pub id: String,
     pub frame_id: Option<String>,

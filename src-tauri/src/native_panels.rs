@@ -604,7 +604,7 @@ pub(crate) async fn dispatch(
         }
         "native_conversation_panel_readfile" => {
             let path = args.path.ok_or("File path is required")?;
-            read(project.root, path).await
+            read(project.root, path, args.render_pdf, args.render_office).await
         }
         "native_conversation_panel_readartifact" => {
             let id = args.artifact_id.ok_or("Artifact ID is required")?;
@@ -622,7 +622,7 @@ pub(crate) async fn dispatch(
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("Artifact not found")?;
-            read(project.root, path).await
+            read(project.root, path, args.render_pdf, args.render_office).await
         }
         _ => Err("Unknown native panel command".into()),
     }
@@ -697,9 +697,18 @@ fn contract<T: serde::de::DeserializeOwned + serde::Serialize>(
     let parsed: T = serde_json::from_value(value).map_err(|e| e.to_string())?;
     serde_json::to_value(parsed).map_err(|e| e.to_string())
 }
-async fn read(root: std::path::PathBuf, path: String) -> Result<Value, String> {
+async fn read(
+    root: std::path::PathBuf,
+    path: String,
+    render_pdf: bool,
+    render_office: bool,
+) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || {
-        let content = crate::file_browser::read_file_at(&root, path, None)?;
+        let content = if render_pdf || render_office {
+            crate::file_browser::read_native_preview_at(&root, path, render_pdf, render_office)?
+        } else {
+            crate::file_browser::read_file_at(&root, path, None)?
+        };
         serde_json::to_value(content).map_err(|e| e.to_string())
     })
     .await
@@ -884,10 +893,111 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         std::fs::write(root.join("report.txt"), "result").unwrap();
         std::fs::write(temp.path().join("outside.txt"), "outside").unwrap();
-        let value = read(root.clone(), "report.txt".into()).await.unwrap();
+        let value = read(root.clone(), "report.txt".into(), true, false)
+            .await
+            .unwrap();
         let content: wisp_dto::FileContent = serde_json::from_value(value).unwrap();
         assert_eq!(content.text.as_deref(), Some("result"));
         assert!(!content.truncated);
-        assert!(read(root, "../outside.txt".into()).await.is_err());
+        assert!(read(root, "../outside.txt".into(), true, false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn native_pdf_preview_preserves_pages_instead_of_markdown_extraction() {
+        use base64::Engine;
+        let temp = tempfile::tempdir().unwrap();
+        let bytes = include_bytes!("../tests/fixtures/native-selection.pdf");
+        std::fs::write(temp.path().join("paper.pdf"), bytes).unwrap();
+        let extracted = read(temp.path().into(), "paper.pdf".into(), false, false)
+            .await
+            .unwrap();
+        assert!(extracted["text"]
+            .as_str()
+            .unwrap()
+            .contains("Alpha selection"));
+        let content: wisp_dto::FileContent = serde_json::from_value(
+            read(temp.path().into(), "paper.pdf".into(), true, false)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(content.mime, "application/pdf");
+        assert!(content.text.is_none());
+        assert!(!content.truncated);
+        assert_eq!(content.total_bytes, Some(bytes.len() as u64));
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(content.base64.unwrap())
+                .unwrap(),
+            bytes
+        );
+        let oversized = std::fs::File::create(temp.path().join("large.pdf")).unwrap();
+        oversized.set_len(32 * 1024 * 1024 + 1).unwrap();
+        assert!(read(temp.path().into(), "large.pdf".into(), true, false)
+            .await
+            .unwrap_err()
+            .contains("byte limit"));
+    }
+
+    #[tokio::test]
+    async fn native_office_preview_validates_bytes_and_preserves_legacy_extraction() {
+        use base64::Engine;
+        let temp = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            (
+                "paper.docx",
+                include_bytes!("../../ui-tests/fixtures/office-preview.docx").as_slice(),
+            ),
+            (
+                "table.xlsx",
+                include_bytes!("../../ui-tests/fixtures/office-preview.xlsx").as_slice(),
+            ),
+            (
+                "slides.pptx",
+                include_bytes!("../../ui-tests/fixtures/office-preview.pptx").as_slice(),
+            ),
+        ] {
+            std::fs::write(temp.path().join(name), bytes).unwrap();
+            let content: wisp_dto::FileContent = serde_json::from_value(
+                read(temp.path().into(), name.into(), false, true)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(content.text.is_none());
+            assert!(!content.truncated);
+            assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(content.base64.unwrap())
+                    .unwrap(),
+                bytes
+            );
+        }
+        for pdf_only in [false, true] {
+            let old = read(temp.path().into(), "paper.docx".into(), pdf_only, false)
+                .await
+                .unwrap();
+            assert!(old["text"]
+                .as_str()
+                .unwrap()
+                .contains("Native Office preview"));
+        }
+        std::fs::write(temp.path().join("broken.pptx"), b"not a zip").unwrap();
+        assert!(read(temp.path().into(), "broken.pptx".into(), false, true)
+            .await
+            .is_err());
+        let large = std::fs::File::create(temp.path().join("large.xlsx")).unwrap();
+        large.set_len(32 * 1024 * 1024 + 1).unwrap();
+        assert!(read(temp.path().into(), "large.xlsx".into(), false, true)
+            .await
+            .unwrap_err()
+            .contains("byte limit"));
+        assert!(
+            read(temp.path().into(), "../outside.docx".into(), false, true)
+                .await
+                .is_err()
+        );
     }
 }

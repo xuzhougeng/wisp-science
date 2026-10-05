@@ -615,7 +615,7 @@ pub(crate) async fn freeze_publication_revision_in_store(
     prepare_or_freeze_publication(store, revision_id, policy, false).await
 }
 
-async fn prepare_or_freeze_publication(
+pub(crate) async fn prepare_or_freeze_publication(
     store: &Store,
     revision_id: &str,
     policy: PublicationFreezePolicy,

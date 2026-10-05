@@ -7,11 +7,17 @@ namespace Wisp.Science.Preview;
 
 internal sealed partial class NativeWorkspacePanel
 {
+    public void CloseRunReview() { reviewNavigation++; runReview?.Close(); }
     public bool HandleEscape()
     {
         if (sideChatModelPicker?.IsDropDownOpen == true) { sideChatModelPicker.IsDropDownOpen = false; return true; }
         if (openMenus.LastOrDefault() is { } menu) { menu.Hide(); return true; }
         if (fileDialog != null) { fileDialog.Hide(); return true; }
+        if (documentPreview?.DismissSelection() == true) return true;
+        if (sourceSelectionEditor is { IsLoaded: true, SelectionLength: > 0 } sourceEditor) {
+            sourceEditor.Select(sourceEditor.SelectionStart, 0); return true;
+        }
+        if (model.Preview != null) { model.DismissPreview(); Render(); return true; }
         if (model.Tabs.Selected != "hosts" || runReview?.Visible != true) return false;
         if (runReview.Confirmation != null) runReview.CancelConfirmation();
         else _ = ReturnFromRunReviewAsync();
@@ -20,8 +26,9 @@ internal sealed partial class NativeWorkspacePanel
     private async Task ReturnFromRunReviewAsync()
     {
         var runId = runReview!.RunId;
-        runReview.Close();
+        var closing = runReview.CloseAsync();
         if (!runReview.Mutating) await PresentRunAsync(runId, true);
+        await closing;
     }
 
     private void RenderRunReview()

@@ -54,7 +54,7 @@ internal sealed partial class MainWindow
         if (openingAction || nativePickerOpen || workspaceSheet != null || settingsPage != null || searchOverlay != null) return;
         openingAction = true;
         var project = model.ActiveProjectId; var session = model.ActiveSessionId; var database = model.DatabasePath;
-        var title = kind switch { "create" => "新建项目", "import" => "导入项目", "library" => "收藏", "calendar" => "研究日历", "journey" => "研究历程", "publication" => "论文证据", "capabilities" => "能力", _ => "工作区" };
+        var title = kind switch { "create" => "新建项目", "import" => "导入项目", "import-session" => "导入会话归档", "library" => "收藏", "calendar" => "研究日历", "journey" => "研究历程", "publication" => "论文证据", "capabilities" => "能力", _ => "工作区" };
         var loading = new NativeConnectionPage(design, title, CloseSheet, () => { CloseSheet(); _ = OpenNativeAction(kind); });
         MountSheet(loading);
         try
@@ -69,8 +69,22 @@ internal sealed partial class MainWindow
             }
             IWorkspaceSheet? page = kind switch
             {
+                "import-cli" when project != null => new NativeExternalSessionImportPage(new(new NativeExternalImportClient(host), project), model.Projects,
+                    design, async (destination, imported) =>
+                    {
+                        if (windowClosed || database != model.DatabasePath || project != model.ActiveProjectId || session != model.ActiveSessionId) return;
+                        CloseSheet(); await model.OpenProjectAsync(destination, imported);
+                    }, CloseSheet),
                 "create" => new NativeNewProjectPage(new(new NativeProjectClient(host)), design, PickDirectory, OpenCreated, CloseSheet),
                 "import" => new NativeImportProjectPage(new(new NativeProjectClient(host)), design, () => PickFile(".zip"), OpenCreated, CloseSheet),
+                "import-session" when project != null => new NativeSessionArchiveImportPage(new(new NativeSessionImportClient(host), project), model.Projects,
+                    design, () => PickFile(".zip"), async (destination, imported) =>
+                    {
+                        if (windowClosed || database != model.DatabasePath || project != model.ActiveProjectId || session != model.ActiveSessionId) return;
+                        // Both destinations already came from the project list.
+                        // Open directly so a late refresh cannot override newer navigation.
+                        CloseSheet(); await model.OpenProjectAsync(destination, imported);
+                    }, CloseSheet),
                 "library" => new NativeLibraryPage(new(new NativeLibraryClient(host)), design,
                     session == null ? null : item => { if (conversation?.Prefill(WorkspaceLibraryModel.ComposerText(item), append: true) == true) CloseSheet(); },
                     async item => { CloseSheet(); await model.OpenProjectAsync(item.SourceProjectId, item.SourceSessionId); }, CloseSheet),
@@ -87,7 +101,7 @@ internal sealed partial class MainWindow
             {
                 CloseSheet();
                 projectPage?.Dispose();
-                projectPage = new NativePublicationPage(new(new NativePublicationClient(host), project), design, CloseProjectPage);
+                projectPage = new NativePublicationPage(new(new NativePublicationClient(host), project), design, PickDirectory, CloseProjectPage);
                 Render(); return;
             }
             if (page != null) { CloseSheet(); MountSheet(page); }
@@ -220,6 +234,7 @@ internal sealed partial class MainWindow
                     var label = Stack(3); label.Children.Add(SessionTitle(session.Title, 12)); label.Children.Add(SessionMetadata(session));
                     var button = ContentButton(label, () => { CloseProjectPage(); _ = model.OpenSessionAsync(session.Id); }, "session-" + session.Id,
                         session.Title + " · " + NativeBrowserPresentation.Status(session.Status));
+                    sessionActivityButtons.Add((session, button));
                     design.QuietButton(button);
                     button.Padding = new Thickness(10, 7, 10, 7);
                     if (session.Id == model.ActiveSessionId)
@@ -270,7 +285,7 @@ internal sealed partial class MainWindow
         Render();
     }
 
-    private async Task OpenRunAsync(string runId)
+    private async Task OpenRunAsync(string runId, bool review = false)
     {
         if (model.ActiveProjectId is not { } project || model.ActiveSessionId is not { } session) return;
         var navigation = ++runNavigation;
@@ -282,7 +297,7 @@ internal sealed partial class MainWindow
         if (windowClosed || navigation != runNavigation || !panelVisible
             || project != model.ActiveProjectId || session != model.ActiveSessionId || panelPage is null) return;
         Render();
-        await panelPage.ShowRunAsync(runId);
+        if (review) await panelPage.ShowRunReviewAsync(runId); else await panelPage.ShowRunAsync(runId);
     }
 
     /// <summary>Composer slash mapping. Only commands with a working native

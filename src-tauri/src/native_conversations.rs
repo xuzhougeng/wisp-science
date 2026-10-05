@@ -10,19 +10,24 @@ use tokio::sync::Mutex;
 use wisp_dto::{native_conversations as dto, native_settings::Request};
 
 pub(crate) struct Conversations {
+    pub(crate) queue_events: crate::native_queue::QueueEvents,
     epoch: String,
     sessions: Mutex<HashMap<String, Arc<Mutex<Record>>>>,
+    suggestions: std::sync::Mutex<HashMap<String, Vec<String>>>,
 }
 impl Default for Conversations {
     fn default() -> Self {
         Self {
+            queue_events: Default::default(),
             epoch: uuid::Uuid::new_v4().to_string(),
             sessions: Mutex::new(HashMap::new()),
+            suggestions: Default::default(),
         }
     }
 }
 #[derive(Default)]
 struct Record {
+    queued_requests: HashMap<String, [u8; 32]>,
     sequence: u64,
     running: bool,
     stopping: bool,
@@ -40,7 +45,13 @@ impl Record {
         if request.message.trim().is_empty() || request.message.len() > 128 * 1024 {
             return Err("Message must contain 1–131072 bytes".into());
         }
-        let digest: [u8; 32] = Sha256::digest(request.message.as_bytes()).into();
+        if request.references.len() > 64 {
+            return Err("Too many composer references".into());
+        }
+        let payload =
+            serde_json::to_vec(&(&request.message, &request.attachments, &request.references))
+                .map_err(|error| error.to_string())?;
+        let digest: [u8; 32] = Sha256::digest(payload).into();
         if let Some(previous) = self.accepted.get(&request.request_id) {
             return if previous == &digest {
                 Ok(false)
@@ -65,6 +76,42 @@ impl Record {
     }
 }
 impl Conversations {
+    // Same transient lifetime as WebView follow-ups. A new user turn invalidates
+    // the previous suggestions, including turns started from another surface.
+    pub(crate) fn observe(&self, event: &crate::AgentEvent) {
+        if let crate::AgentEvent::User {
+            frame_id,
+            queue_id: Some(id),
+            ..
+        } = event
+        {
+            self.queue_events.record(frame_id, *id, "started");
+        }
+        let mut suggestions = self.suggestions.lock().unwrap();
+        match event {
+            crate::AgentEvent::User { frame_id, .. } => {
+                suggestions.remove(frame_id);
+            }
+            crate::AgentEvent::FollowUps {
+                frame_id,
+                questions,
+            } => {
+                if suggestions.len() < 512 || suggestions.contains_key(frame_id) {
+                    suggestions.insert(
+                        frame_id.clone(),
+                        questions
+                            .iter()
+                            .filter(|text| !text.trim().is_empty() && text.len() <= 8192)
+                            .take(8)
+                            .cloned()
+                            .collect(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
     async fn session(&self, id: &str) -> Result<Arc<Mutex<Record>>, String> {
         let mut sessions = self.sessions.lock().await;
         if let Some(record) = sessions.get(id) {
@@ -85,6 +132,16 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
         Vec::new()
     };
     dto::Item {
+        proposal: (item.role == "plan")
+            .then(|| dto::PlanProposal::from_text(&item.text))
+            .flatten(),
+        plan_steps: (item.role == "tool"
+            && item.tool_name.as_deref() == Some("update_plan")
+            && item.ok == Some(true))
+        .then(|| wisp_dto::execution_plan::parse_plan_steps(&item.text)),
+        call_id: item.call_id,
+        kind: item.kind,
+        locations: item.locations,
         role: item.role,
         text: item.text,
         tool_name: item.tool_name,
@@ -244,8 +301,9 @@ fn turn_arguments(
     message: &str,
     attachments: &[String],
     agent: Option<&str>,
+    references: &[wisp_dto::ComposerReferenceArg],
 ) -> Value {
-    json!({"sessionId":session,"message":message,"attachments":attachments,"acpAgentId":agent})
+    json!({"sessionId":session,"message":message,"attachments":attachments,"acpAgentId":agent,"references":references})
 }
 
 pub(crate) async fn require_owner(
@@ -366,6 +424,15 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         session,
     )
     .await?;
+    if request.command == "native_conversation_references" {
+        return crate::native_composer::references(
+            broker,
+            project,
+            session,
+            decode(&request.args)?,
+        )
+        .await;
+    }
     if request.command.starts_with("native_conversation_terminal_") {
         return crate::native_terminals::dispatch(broker, request, project, session).await;
     }
@@ -376,6 +443,35 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_queue_action" => {
+            crate::native_queue::dispatch(
+                broker,
+                project,
+                decode(&request.args)?,
+                acp_agent_id.is_some(),
+            )
+            .await
+        }
+        "native_conversation_history_action" => {
+            let args: wisp_dto::native_history::HistoryRequest = decode(&request.args)?;
+            let guard = record.lock().await;
+            let native_running = guard.running;
+            // Model calls may take minutes. Snapshot polling and the source
+            // turn must remain live while a historical memory is proposed.
+            if matches!(
+                args.action,
+                wisp_dto::native_history::HistoryAction::ProposeMemory
+                    | wisp_dto::native_history::HistoryAction::Review
+            ) {
+                drop(guard);
+                crate::native_history::dispatch(broker, project, args, native_running).await
+            } else {
+                let result =
+                    crate::native_history::dispatch(broker, project, args, native_running).await;
+                drop(guard);
+                result
+            }
+        }
         "native_conversation_options" | "native_conversation_options_set" => {
             if request.command.ends_with("_set") {
                 let args: dto::ComposerOptionRequest = decode(&request.args)?;
@@ -627,6 +723,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 .await
                 .map_err(|e| e.to_string())?;
             timestamp_items(&mut items, user_offset, &outline);
+            let mut run_cards = Vec::new();
             if items.iter().any(|item| transcript_run_id(item).is_some()) {
                 let (run_project, scope) =
                     crate::exploration_commands::working_project_for_frame(&state, session).await?;
@@ -639,6 +736,45 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     .await
                     .map_err(|e| e.to_string())?;
                 annotate_runs(&mut items, &runs, session);
+                let ids: std::collections::HashSet<_> = items
+                    .iter()
+                    .filter_map(|item| item.run.as_ref().map(|run| run.id.clone()))
+                    .collect();
+                for id in ids {
+                    if let Some(run) = state.store.get_run(&id).await.map_err(|e| e.to_string())? {
+                        if run.frame_id.as_deref() != Some(session) {
+                            continue;
+                        }
+                        let mut card: wisp_dto::RunRecord = serde_json::from_value(
+                            serde_json::to_value(&run).map_err(|e| e.to_string())?,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        for text in [&mut card.stdout_tail, &mut card.stderr_tail] {
+                            if let Some(value) = text.as_mut() {
+                                *value = value
+                                    .chars()
+                                    .rev()
+                                    .take(16_384)
+                                    .collect::<String>()
+                                    .chars()
+                                    .rev()
+                                    .collect();
+                            }
+                        }
+                        // Summary and output must describe one lifecycle, even
+                        // when the run settles between the two database reads.
+                        for item in &mut items {
+                            if let Some(link) = item.run.as_mut().filter(|link| link.id == id) {
+                                link.status = card.status.clone();
+                                link.needs_review = run.status.is_terminal()
+                                    && run.kind == "ssh_direct"
+                                    && run.cleaned_at.is_none();
+                            }
+                        }
+                        run_cards.push(card);
+                    }
+                }
+                run_cards.sort_by(|a, b| a.id.cmp(&b.id));
             }
             let fast_mode = if frozen || binding.is_some() || acp_agent_id.is_some() {
                 None
@@ -661,7 +797,28 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             } else {
                 None
             };
+            let is_running = record.running || running(broker, session).await;
+            let activity_status = crate::session_runtime_status(
+                session,
+                None,
+                false,
+                &if is_running {
+                    [session.to_owned()].into()
+                } else {
+                    Default::default()
+                },
+                &state.awaiting_confirm.lock().unwrap(),
+            )
+            .to_owned();
             let snapshot = dto::Snapshot {
+                run_cards,
+                run_review_supported: Some(true),
+                queue: Some(
+                    crate::native_queue::snapshot(broker, session, acp_agent_id.is_some()).await,
+                ),
+                history_state: Some(
+                    crate::native_history::snapshot(&state, project, session, &outline).await?,
+                ),
                 schema: dto::SCHEMA.into(),
                 epoch: broker.conversations.epoch.clone(),
                 sequence: record.sequence,
@@ -670,15 +827,37 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 items,
                 next_before_seq,
                 user_offset,
-                running: record.running || running(broker, session).await,
+                running: is_running,
+                activity_status: Some(activity_status),
                 stopping: record.stopping,
                 read_only,
+                acp_state: if frozen || args.before_seq.is_some() {
+                    None
+                } else {
+                    crate::acp::native_session_state(&state, session).await?
+                },
                 acp: if frozen {
                     None
                 } else {
                     Some(crate::acp::native_interactions(&state, session).await)
                 },
                 model_id: model.as_str().unwrap_or_default().into(),
+                composer_references: Some(true),
+                follow_ups: if args.before_seq.is_some()
+                    || record.running
+                    || running(broker, session).await
+                {
+                    Vec::new()
+                } else {
+                    broker
+                        .conversations
+                        .suggestions
+                        .lock()
+                        .unwrap()
+                        .get(session)
+                        .cloned()
+                        .unwrap_or_default()
+                },
                 fast_mode,
                 plan_mode: if frozen || binding.is_some() || acp_agent_id.is_some() {
                     None
@@ -726,6 +905,49 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         }
         "native_conversation_enqueue" => {
             let args: dto::SendRequest = decode(&request.args)?;
+            let id = follow_up_id(&args.request_id)?;
+            let digest: [u8; 32] = Sha256::digest(
+                serde_json::to_vec(&(&args.message, &args.attachments, &args.references))
+                    .map_err(|e| e.to_string())?,
+            )
+            .into();
+            let mut guard = record.lock().await;
+            if let Some(previous) = guard.queued_requests.get(&args.request_id) {
+                return if previous == &digest {
+                    Ok(json!({"queued":true,"id":id.to_string()}))
+                } else {
+                    Err("Queued request ID was already used for another payload".into())
+                };
+            }
+            if args.message.len() > 128 * 1024
+                || args.attachments.len() > 64
+                || guard.queued_requests.len() >= 1024
+            {
+                return Err("Queue payload or request ledger limit exceeded".into());
+            }
+            let state = broker.app.state::<crate::AppState>();
+            state
+                .store
+                .require_unarchived_session(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            let scope = state
+                .store
+                .frame_state_scope(session)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("Session scope missing")?;
+            crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+            if matches!(
+                state
+                    .store
+                    .session_branch_state(session)
+                    .await
+                    .map_err(|e| e.to_string())?,
+                Some("merged" | "orphaned")
+            ) {
+                return Err("Frozen conversation queues cannot be changed".into());
+            }
             if acp_agent_id.is_some()
                 && broker
                     .app
@@ -740,11 +962,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     "Wait for the ACP session to connect before queuing a follow-up".into(),
                 );
             }
-            let turn_running = {
-                let guard = record.lock().await;
-                guard.running || running(broker, session).await
-            };
-            let state = broker.app.state::<crate::AppState>();
+            let turn_running = guard.running || running(broker, session).await;
             let runtime = {
                 let mut sessions = state.sessions.lock().await;
                 sessions
@@ -752,21 +970,25 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
                     .clone()
             };
-            let id = follow_up_id(&args.request_id)?;
-            let text = crate::agent_turn::queue_one_follow_up(
+            let text = crate::agent_turn::queue_follow_up_with_limit(
                 turn_running,
                 &runtime,
                 id,
                 &args.message,
                 &args.attachments,
+                &args.references,
+                64,
             )?;
+            guard
+                .queued_requests
+                .insert(args.request_id.clone(), digest);
             if !runtime
                 .draining
                 .swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 // The hidden label is not the WebView's main window. The
-                // existing driver sends this one parked draft after the
-                // current turn releases the workflow lock, then stops.
+                // shared driver drains the authoritative queue after each
+                // current turn releases the workflow lock.
                 crate::agent_turn::spawn_queue_driver(
                     broker.app.clone(),
                     runtime,
@@ -774,7 +996,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     "native-follow-up".into(),
                 );
             }
-            Ok(json!({"queued": true, "message": text}))
+            Ok(json!({"queued": true, "message": text, "id":id.to_string()}))
         }
         "native_conversation_send" => {
             let mut args: dto::SendRequest = decode(&request.args)?;
@@ -789,12 +1011,19 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let message = args.message.clone();
                 let attachments = args.attachments.clone();
                 let acp_agent_id = acp_agent_id.clone();
+                let references = args.references.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(call(
                         &broker,
                         &project,
                         "send_message",
-                        turn_arguments(&session, &message, &attachments, acp_agent_id.as_deref()),
+                        turn_arguments(
+                            &session,
+                            &message,
+                            &attachments,
+                            acp_agent_id.as_deref(),
+                            &references,
+                        ),
                     ));
                     // The Stop request can precede creation of SessionRuntime.
                     // Keep cancelling until the turn settles, without dropping
@@ -838,6 +1067,27 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             )
             .await?;
             Ok(Value::Null)
+        }
+        "native_conversation_acp_setting" => {
+            let args: dto::AcpSettingRequest = decode(&request.args)?;
+            let record = record.lock().await;
+            if record.running || running(broker, session).await {
+                return Err("Wait for the current turn before changing ACP settings".into());
+            }
+            let state = broker.app.state::<crate::AppState>();
+            state
+                .store
+                .require_unarchived_session(session)
+                .await
+                .map_err(|e| e.to_string())?;
+            let (_, scope) =
+                crate::exploration_commands::working_project_for_frame(&state, session).await?;
+            crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+            let current = crate::acp::native_session_state(&state, session)
+                .await?
+                .ok_or("This conversation has no bound ACP session")?;
+            let (command, payload) = args.change.command(&current)?;
+            call(broker, project, command, payload).await
         }
         "native_conversation_acp_permission" => {
             let args: dto::AcpPermissionResponse = decode(&request.args)?;
@@ -966,6 +1216,109 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
 #[cfg(test)]
 mod tests {
     #[test]
+    fn native_plan_proposal_projection_requires_plan_role_and_keeps_raw_fallback() {
+        let source = crate::UiItem {
+            role: "plan".into(),
+            text: r#"{"source":"native","entries":[{"content":"Inspect **samples**","priority":"high"}]}"#.into(),
+            tool_name: None, ok: None, duration_ms: None, input: None,
+            model_name: None, call_id: None, kind: None, status: None,
+            locations: None, resources: vec![],
+        };
+        let item = super::snapshot_item(source.clone());
+        let plan = item.proposal.unwrap();
+        assert_eq!(plan.source, wisp_dto::PlanSource::Native);
+        assert_eq!(plan.entries[0].content, "Inspect **samples**");
+        assert_eq!(plan.entries[0].status, wisp_dto::PlanStatus::Pending);
+        assert!(super::snapshot_item(crate::UiItem {
+            role: "assistant".into(),
+            ..source.clone()
+        })
+        .proposal
+        .is_none());
+        let invalid = super::snapshot_item(crate::UiItem {
+            text: "unparsed plan".into(),
+            ..source
+        });
+        assert!(invalid.proposal.is_none());
+        assert_eq!(invalid.text, "unparsed plan");
+    }
+
+    #[test]
+    fn native_structured_tool_projection_keeps_identity_and_only_accepted_plans() {
+        let source = crate::UiItem {
+            role: "tool".into(),
+            text: "[x] Inspect\n[~] Analyze".into(),
+            tool_name: Some("update_plan".into()),
+            ok: Some(true),
+            duration_ms: Some(42),
+            input: Some("1/2 steps done".into()),
+            model_name: None,
+            call_id: Some("call-1".into()),
+            kind: Some("execute".into()),
+            status: Some("completed".into()),
+            locations: Some("analysis.py:4".into()),
+            resources: vec![],
+        };
+        let projected = super::snapshot_item(source.clone());
+        assert_eq!(projected.call_id.as_deref(), Some("call-1"));
+        assert_eq!(projected.locations.as_deref(), Some("analysis.py:4"));
+        assert_eq!(
+            projected.plan_steps.unwrap()[1].status,
+            wisp_dto::execution_plan::PlanStatus::Running
+        );
+        for ok in [None, Some(false)] {
+            assert!(super::snapshot_item(crate::UiItem {
+                ok,
+                ..source.clone()
+            })
+            .plan_steps
+            .is_none());
+        }
+        let acp = super::snapshot_item(crate::UiItem {
+            role: "acp_tool".into(),
+            ..source
+        });
+        assert_eq!(acp.kind.as_deref(), Some("execute"));
+        assert!(acp.plan_steps.is_none());
+    }
+    #[test]
+    fn native_follow_ups_are_bounded_and_invalidated_by_the_owning_turn() {
+        let conversations = super::Conversations::default();
+        conversations.observe(&crate::AgentEvent::FollowUps {
+            frame_id: "a".into(),
+            questions: vec!["next".into(), "".into()],
+        });
+        conversations.observe(&crate::AgentEvent::FollowUps {
+            frame_id: "b".into(),
+            questions: vec!["other".into()],
+        });
+        assert_eq!(
+            conversations.suggestions.lock().unwrap().get("a").unwrap(),
+            &["next"]
+        );
+        conversations.observe(&crate::AgentEvent::User {
+            frame_id: "a".into(),
+            text: "new turn".into(),
+            queue_id: None,
+        });
+        assert!(!conversations.suggestions.lock().unwrap().contains_key("a"));
+        assert!(conversations.suggestions.lock().unwrap().contains_key("b"));
+        conversations.observe(&crate::AgentEvent::FollowUps {
+            frame_id: "a".into(),
+            questions: vec!["next".into(); 20],
+        });
+        assert_eq!(
+            conversations
+                .suggestions
+                .lock()
+                .unwrap()
+                .get("a")
+                .unwrap()
+                .len(),
+            8
+        );
+    }
+    #[test]
     fn transcript_run_projection_requires_exact_visible_session_owner() {
         use super::{annotate_runs, dto};
         let mut items: Vec<dto::Item> = serde_json::from_str(include_str!(
@@ -1080,12 +1433,13 @@ mod tests {
             "hello",
             &["uploads/a.csv".into()],
             Some("agent"),
+            &[],
         );
         assert_eq!(
             new,
-            json!({"sessionId":"new-session", "message":"hello", "attachments":["uploads/a.csv"], "acpAgentId":"agent"})
+            json!({"sessionId":"new-session", "message":"hello", "attachments":["uploads/a.csv"], "acpAgentId":"agent", "references":[]})
         );
-        let resume = turn_arguments("saved-session", "continue", &[], None);
+        let resume = turn_arguments("saved-session", "continue", &[], None, &[]);
         assert_eq!(resume["sessionId"], "saved-session");
         assert!(
             resume["acpAgentId"].is_null(),
@@ -1100,9 +1454,20 @@ mod tests {
             request_id: uuid::Uuid::new_v4().to_string(),
             message: "hello".into(),
             attachments: Vec::new(),
+            references: Vec::new(),
         };
         assert!(record.accept(&request, false).unwrap());
         assert!(!record.accept(&request, false).unwrap());
+        request
+            .references
+            .push(wisp_dto::ComposerReferenceArg::Artifact {
+                id: "artifact-a".into(),
+            });
+        assert!(
+            record.accept(&request, false).is_err(),
+            "an accepted request ID cannot acquire another reference"
+        );
+        request.references.clear();
         request.message = "different".into();
         assert!(record.accept(&request, false).is_err());
         request.request_id = uuid::Uuid::new_v4().to_string();
@@ -1110,6 +1475,19 @@ mod tests {
         record.running = false;
         assert!(record.accept(&request, true).is_err());
         assert!(record.accept(&request, false).unwrap());
+    }
+
+    #[test]
+    fn native_send_passes_references_to_the_shared_resolver() {
+        let references = vec![wisp_dto::ComposerReferenceArg::Project {
+            id: "source-project".into(),
+        }];
+        let args = turn_arguments("target-session", "inspect", &[], None, &references);
+        assert_eq!(args["sessionId"], "target-session");
+        assert_eq!(
+            args["references"],
+            json!([{"kind":"project", "id":"source-project"}])
+        );
     }
     #[tokio::test]
     async fn session_ownership_is_required_even_for_read_and_stop() {

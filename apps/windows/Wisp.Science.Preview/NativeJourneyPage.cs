@@ -118,7 +118,7 @@ internal sealed class NativeJourneyPage : NativeActionPage
             {
                 if (string.IsNullOrEmpty(value)) continue;
                 details.Children.Add(Design.Text(label, 16));
-                details.Children.Add(new TextBox { Text = value, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 320 });
+                details.Children.Add(new TextBox { AcceptsReturn = true, Text = value, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 320 });
             }
             Design.ApplyTypography(details);
             return;
@@ -162,7 +162,7 @@ internal sealed class NativeJourneyPage : NativeActionPage
             details.Children.Add(Mute(input.Role + " · " + input.Confidence));
         }
         if (artifact.ContentError != null) details.Children.Add(Warn("内容不可用：" + artifact.ContentError));
-        else if (artifact.Text != null) details.Children.Add(new TextBox { Text = artifact.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 420 });
+        else if (artifact.Text != null) details.Children.Add(new TextBox { AcceptsReturn = true, Text = artifact.Text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 420 });
         else if (artifact.Mime == "application/pdf" && artifact.Base64 != null && !artifact.Truncated)
         { pdf = new NativeRichPreview(Design, "pdf", artifact.Base64, artifact.Filename); details.Children.Add(pdf); }
         else details.Children.Add(Mute("内容类型 · " + artifact.Mime));

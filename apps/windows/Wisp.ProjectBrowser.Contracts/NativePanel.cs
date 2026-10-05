@@ -68,6 +68,6 @@ public sealed class NativePanelClient(INativeSettingsClient transport) : INative
         var result = await transport.InvokeAsync("native_conversation_panel_file_action", new() { ["session_id"] = session, ["file_action"] = name, ["path"] = path, ["new_path"] = newPath }, project, token).ConfigureAwait(false);
         if (result?.GetValue<bool>() != true) throw new InvalidDataException("File action was not confirmed");
     }
-    public Task<NativePanelFileContent> ReadFileAsync(string project, string session, string path, CancellationToken token = default) => Call<NativePanelFileContent>("readfile", project, session, new() { ["path"] = path }, token);
-    public Task<NativePanelFileContent> ReadArtifactAsync(string project, string session, string artifactId, CancellationToken token = default) => Call<NativePanelFileContent>("readartifact", project, session, new() { ["artifact_id"] = artifactId }, token);
+    public Task<NativePanelFileContent> ReadFileAsync(string project, string session, string path, CancellationToken token = default) => Call<NativePanelFileContent>("readfile", project, session, new() { ["path"] = path, ["render_pdf"] = true, ["render_office"] = true }, token);
+    public Task<NativePanelFileContent> ReadArtifactAsync(string project, string session, string artifactId, CancellationToken token = default) => Call<NativePanelFileContent>("readartifact", project, session, new() { ["artifact_id"] = artifactId, ["render_pdf"] = true, ["render_office"] = true }, token);
 }

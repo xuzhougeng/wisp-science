@@ -1274,14 +1274,16 @@ pub(crate) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
                 }
                 "structure" => (
                     "structure",
-                    serde_json::json!({ "text": fc.text, "format": "pdb" }).to_string(),
+                    serde_json::json!({ "text": fc.text, "format": match path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+                        "cif" => "cif", "mol2" => "mol2", _ => "pdb",
+                    }, "truncated": fc.truncated }).to_string(),
                 ),
                 "molecule" | "smiles" => (
                     "molecule",
-                    serde_json::json!({ "text": fc.text, "smiles": fc.text }).to_string(),
+                    serde_json::json!({ "text": fc.text, "smiles": fc.text, "truncated": fc.truncated }).to_string(),
                 ),
-                "fasta" => ("fasta", serde_json::json!({ "text": fc.text }).to_string()),
-                "msa" => ("msa", serde_json::json!({ "text": fc.text }).to_string()),
+                "fasta" => ("fasta", serde_json::json!({ "text": fc.text, "truncated": fc.truncated }).to_string()),
+                "msa" => ("msa", serde_json::json!({ "text": fc.text, "truncated": fc.truncated }).to_string()),
                 _ => ("text", serde_json::json!({ "text": fc.text }).to_string()),
             };
             let _ = mount_preview(mount_kind, &dom_id, &payload).await;
