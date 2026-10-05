@@ -172,22 +172,24 @@ public sealed class WorkspaceProjectCreation(INativeProjectClient client) : Work
     public Task<bool> ImportAsync(string path) => RunAsync(() => client.ImportAsync(path), row => Created = row);
 }
 
-public sealed class WorkspacePublicationModel(INativePublicationClient client, string projectId) : WorkspaceActionModel
+public sealed partial class WorkspacePublicationModel(INativePublicationClient client, string projectId) : WorkspaceActionModel
 {
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public string RevisionLabel { get; set; } = "";
     public NativePublicationWorkspace? Workspace { get; private set; }
     public bool CreationAvailable => Workspace is { Publications.Count: 0 };
-    public bool CanCreate => CreationAvailable && !Busy && !Closed
+    public bool CanCreate => CreationAvailable && !Busy && !Closed && !MutationUncertain
         && !string.IsNullOrWhiteSpace(Title) && !string.IsNullOrWhiteSpace(RevisionLabel);
-    public Task<bool> LoadAsync() => RunAsync(() => client.ReadAsync(projectId), value => Workspace = value);
+    public async Task<bool> LoadAsync() {
+        var ok = await RunAsync(() => client.SelectAsync(projectId, PublicationId, RevisionId), Apply);
+        if (ok) { Reconciled = true; Notify(); } return ok;
+    }
     public Task<bool> CreateAsync()
     {
-        if (!CreationAvailable || Busy || Closed) return Task.FromResult(false);
+        if (!CreationAvailable || Busy || Closed || MutationUncertain) return Task.FromResult(false);
         if (string.IsNullOrWhiteSpace(Title) || string.IsNullOrWhiteSpace(RevisionLabel))
         { Fail("请填写论文标题和版本标签。"); return Task.FromResult(false); }
-        return RunAsync(() => client.CreateAsync(projectId, Title.Trim(), Description, RevisionLabel.Trim()), value =>
-        { Workspace = value; Title = ""; Description = ""; RevisionLabel = ""; });
+        return CreateConfirmedAsync();
     }
 }

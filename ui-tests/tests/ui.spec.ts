@@ -5670,7 +5670,7 @@ test("center structure and FASTA previews fill the available height", async ({ p
 
   await openInCenter("model.pdb");
   await expect(page.locator('.center-file-preview[data-preview-kind="structure"] .rp-3dmol')).toBeVisible();
-  await expect(page.locator('.center-file-preview[data-preview-kind="structure"] .rp-3dmol canvas')).toBeVisible();
+  await expect(page.frameLocator('.center-file-preview iframe.rp-3dmol').locator('canvas')).toBeVisible();
   await expect.poll(() => heightRatio(".rp-3dmol")).toBeGreaterThan(0.75);
 
   await openInCenter("sequences.fasta");

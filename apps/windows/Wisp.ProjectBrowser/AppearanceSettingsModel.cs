@@ -6,6 +6,17 @@ namespace Wisp.ProjectBrowser;
 /// <summary>One database/project-bound editing session. Failed writes retain drafts and are never retried.</summary>
 public sealed class AppearanceSettingsModel(INativeSettingsClient client, string? projectId)
 {
+    /// <summary>Footer theme changes patch a fresh host snapshot, preserving every other preference.
+    /// A lost acknowledgement is surfaced to the caller; this method never retries the write.</summary>
+    public static async Task<JsonObject> ChangeThemeAsync(INativeSettingsClient client, string theme,
+        CancellationToken cancellationToken = default)
+    {
+        if (theme is not ("system" or "light" or "dark")) throw new ArgumentException("Invalid theme", nameof(theme));
+        var editor = new AppearanceSettingsModel(client, null);
+        await editor.LoadAsync(cancellationToken);
+        editor.Draft!["theme"] = theme;
+        return await editor.SaveAsync(cancellationToken) ?? throw new InvalidDataException("Theme save was not confirmed");
+    }
     private JsonObject? snapshot;
     public JsonObject? Draft { get; private set; }
     public bool Busy { get; private set; }

@@ -7229,7 +7229,10 @@ mod queue_label_tests {
                 assert!(!tip.starts_with("tip."), "missing tip.{index}");
                 assert!(!tip.contains("{modifier}"), "unfilled tip.{index}");
             }
-            assert_eq!(t(locale, &format!("tip.{TIP_COUNT}")), format!("tip.{TIP_COUNT}"));
+            assert_eq!(
+                t(locale, &format!("tip.{TIP_COUNT}")),
+                format!("tip.{TIP_COUNT}")
+            );
         }
     }
 

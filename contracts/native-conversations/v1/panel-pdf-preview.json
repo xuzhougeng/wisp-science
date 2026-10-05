@@ -1,0 +1,6 @@
+{
+  "session_id": "session-a",
+  "path": "literature/paper.pdf",
+  "render_pdf": true,
+  "render_office": true
+}

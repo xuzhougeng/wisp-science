@@ -3337,14 +3337,40 @@ impl Store {
         session_id: Option<&str>,
         preferred_project_id: Option<&str>,
     ) -> Result<Vec<SessionSearchResult>> {
+        self.search_sessions_excluding_projects(
+            project_id,
+            query,
+            limit,
+            session_id,
+            preferred_project_id,
+            &[],
+        )
+        .await
+    }
+
+    /// Apply project visibility before ranking/limiting, preserving the same
+    /// title/body and activity ordering across local and routed project stores.
+    pub async fn search_sessions_excluding_projects(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        session_id: Option<&str>,
+        preferred_project_id: Option<&str>,
+        excluded_project_ids: &[String],
+    ) -> Result<Vec<SessionSearchResult>> {
         if let Some(project_id) = project_id {
+            if excluded_project_ids.iter().any(|id| id == project_id) {
+                return Ok(Vec::new());
+            }
             if let Some(store) = self.route_project(project_id).await? {
-                return Box::pin(store.search_sessions(
+                return Box::pin(store.search_sessions_excluding_projects(
                     Some(project_id),
                     query,
                     limit,
                     session_id,
                     preferred_project_id,
+                    excluded_project_ids,
                 ))
                 .await;
             }
@@ -3353,12 +3379,13 @@ impl Store {
             let q = query.trim().to_lowercase();
             let pattern = format!("%{q}%");
             for store in stores {
-                let matches = Box::pin(store.search_sessions(
+                let matches = Box::pin(store.search_sessions_excluding_projects(
                     project_id,
                     query,
                     limit,
                     session_id,
                     preferred_project_id,
+                    excluded_project_ids,
                 ))
                 .await?;
                 for row in matches {
@@ -3395,6 +3422,7 @@ impl Store {
                 WHERE f.parent_frame_id=f.id \
                   AND f.exploration_id IS NULL \
                   AND f.project_id NOT LIKE 'assistant:%' \
+                  AND f.project_id NOT IN (SELECT value FROM json_each(?)) \
                   AND {listable} \
                   AND (? IS NULL OR f.project_id=?) \
                   AND (? IS NULL OR f.id=?) \
@@ -3410,6 +3438,7 @@ impl Store {
                 self.session_shelved_sql(session_id.is_none().then_some(false)).await?),
         );
         let rows = sqlx::query(&sql)
+            .bind(serde_json::to_string(excluded_project_ids)?)
             .bind(project_id)
             .bind(project_id)
             .bind(session_id)

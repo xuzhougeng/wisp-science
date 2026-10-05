@@ -11,8 +11,48 @@ internal static class NativeParityTests
     private static ProjectSummary Project(string id) => new(id, id, "", "C:/fixtures/" + id, false, 0, 0, 0, 0, 0, false, null);
     public static async Task RunAsync()
     {
-        await Calendar(); await Actions(); await Conversation();
+        await Calendar(); await Actions(); await Conversation(); await PdfPreview();
         Console.WriteLine($"{checks} WinUI native parity checks passed.");
+    }
+    private static async Task PdfPreview()
+    {
+        var transport = new Fake();
+        transport.Handler = (_, _, _) => Task.FromResult<JsonNode?>(JsonNode.Parse("{\"path\":\"paper.pdf\",\"mime\":\"application/pdf\",\"base64\":\"JVBERg==\",\"truncated\":false}"));
+        var panel = new NativePanelClient(transport);
+        var fixture = JsonNode.Parse(File.ReadAllText("contracts/native-conversations/v1/panel-pdf-preview.json"))!;
+        await panel.ReadFileAsync("project-a", "session-a", "literature/paper.pdf");
+        Check(JsonNode.DeepEquals(transport.Calls.Last().Args, fixture), "PDF file preview explicitly opts into the shared raw-page contract");
+        await panel.ReadArtifactAsync("project-a", "session-a", "artifact-a");
+        var call = transport.Calls.Last();
+        Check(call.Project == "project-a" && call.Args["session_id"]!.GetValue<string>() == "session-a"
+            && call.Args["artifact_id"]!.GetValue<string>() == "artifact-a" && call.Args["render_pdf"]!.GetValue<bool>()
+            && call.Args["render_office"]!.GetValue<bool>(),
+            "artifact preview preserves exact scope and opts into raw PDF and Office bytes");
+        Check(NativeDocumentPreview.Kind("application/pdf") == "pdf"
+            && NativeDocumentPreview.Kind("application/vnd.openxmlformats-officedocument.wordprocessingml.document") == "docx"
+            && NativeDocumentPreview.Kind("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") == "xlsx"
+            && NativeDocumentPreview.Kind("application/vnd.openxmlformats-officedocument.presentationml.presentation") == "pptx",
+            "supported document MIME types select the corresponding local renderer");
+        Check(NativeDocumentPreview.Kind("text/html") == null && NativeDocumentPreview.Kind(null) == null
+            && NativeDocumentPreview.Kind("application/vnd.ms-word.document.macroEnabled.12") == null,
+            "unadvertised HTML and macro-enabled formats cannot enter the document sandbox");
+        Check(NativeScientificPreview.Kind("C:/workspace/ligand.MOL2") == "structure"
+            && NativeScientificPreview.Format("protein.cif") == "cif"
+            && NativeScientificPreview.Format("ligand.mol2") == "mol2"
+            && NativeScientificPreview.Kind("molecule.smi") == "molecule"
+            && NativeScientificPreview.Format("alignment.sto") == "stockholm"
+            && NativeScientificPreview.Format("alignment.aln") == "clustal"
+            && NativeScientificPreview.Format("alignment.afa") == "fasta"
+            && NativeScientificPreview.Kind("sequence.faa") == "fasta"
+            && NativeScientificPreview.Kind("alignment.afa.html") == null,
+            "scientific files dispatch exact structure/alignment formats and reject disguised suffixes");
+        Check(NativePreviewResourcePolicy.Allows("https://wisp-preview.local/vendor-runtime/rdkit-worker.mjs")
+            && !NativePreviewResourcePolicy.Allows("https://wisp-preview.local.evil/worker.js")
+            && !NativePreviewResourcePolicy.Allows("https://wisp-preview.local:8080/worker.js")
+            && !NativePreviewResourcePolicy.Allows("https://user@wisp-preview.local/worker.js")
+            && !NativePreviewResourcePolicy.Allows("http://127.0.0.1/private")
+            && !NativePreviewResourcePolicy.Allows("file:///C:/private.txt"),
+            "all preview realms including workers can request only the packaged local origin");
     }
     private static async Task Calendar()
     {

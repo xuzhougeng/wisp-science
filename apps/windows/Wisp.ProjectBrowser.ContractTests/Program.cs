@@ -51,6 +51,15 @@ if (!encodedStar.GetProperty("starred").GetBoolean() || encodedStar.GetProperty(
     throw new InvalidOperationException("Project star serialization drift");
 
 await NativeSettingsContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-settings/v1")));
+await NativeAcpConversationTests.RunAsync();
+await NativeConversationHistoryTests.RunAsync();
+await NativeConversationQueueTests.RunAsync();
+await NativeExecutionReadingTests.RunAsync();
+await NativePlanProposalTests.RunAsync();
+await NativeHostReconnectTests.RunAsync();
+await NativeSearchTests.RunAsync(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-search/v1/search.json")));
+await NativeSessionImportTests.RunAsync(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-session-import/v1/archive.json")));
+await NativeExternalImportTests.RunAsync(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-session-import/v1/external.json")));
 await NativeProjectContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-projects/v1/create.json")));
 await NativeLibraryContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-library/v1/search.json")));
 await NativeCalendarContractTests.Run(Path.GetFullPath(Path.Combine(fixtureDirectory, "../../native-calendar/v1/month.json")));
@@ -68,6 +77,7 @@ await NativeSideChatPresentationTests.RunAsync();
 NativeToolPresentationTests.Run();
 NativeSettingsSearchTests.Run();
 NativeComposerCommandsTests.Run();
+await NativeComposerReferencesTests.RunAsync(args[0]);
 NativeTranscriptRowsTests.Run();
 NativeTranscriptActivityTests.Run();
 await NativeTerminalStreamingTests.RunAsync();

@@ -1,0 +1,13 @@
+{
+  "command": "native_workspace_search",
+  "project_id": "research-1",
+  "args": { "query": "needle" },
+  "result": {
+    "schema": "wisp.native-search.v1",
+    "query": "needle",
+    "preferred_project_id": "research-1",
+    "items": [
+      { "kind": "session", "id": "session-1", "project_id": "research-1", "project_name": "Research", "title": "Analysis", "detail": "Research", "session_id": "session-1" }
+    ]
+  }
+}

@@ -2,11 +2,11 @@
 //! Re-imports are idempotent via the existing `codex_imports` table; Claude
 //! session ids are namespaced so they cannot collide with Codex thread ids.
 
-use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use tauri::State;
+pub(super) use wisp_dto::{ExternalImportSummary, ExternalSessionInfo, ExternalSessionPreviewLine};
 use wisp_llm::{Content, FunctionCall, Message, Role, ToolCall};
 use wisp_store::{ExecutionContext, ExecutionContextKind, ExternalSessionCacheRecord, Store};
 
@@ -38,6 +38,13 @@ enum ImportProvider {
 }
 
 impl ImportProvider {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            _ => Err("Unknown external conversation provider".into()),
+        }
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Codex => "Codex",
@@ -1305,36 +1312,6 @@ fn read_context_preview_with_runner(
     Ok(String::from_utf8_lossy(payload).into_owned())
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub(super) struct ExternalSessionInfo {
-    pub path: String,
-    pub session_id: String,
-    pub title: String,
-    pub cwd: String,
-    pub message_count: usize,
-    /// Unix seconds of the last source activity.
-    pub last_active_at: i64,
-    /// "new" (never imported), "imported" (up to date), or "updatable"
-    /// (the source has messages the imported frame does not).
-    pub state: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub(super) struct ExternalSessionPreviewLine {
-    pub role: String,
-    pub text: String,
-}
-
-#[derive(Debug, Default, Serialize, PartialEq)]
-pub(super) struct ExternalImportSummary {
-    pub imported: usize,
-    pub updated: usize,
-    pub skipped: usize,
-    pub failed: usize,
-    /// Paths whose final state is known without rescanning the source.
-    pub synced_paths: Vec<String>,
-}
-
 fn preview_lines(provider: ImportProvider, jsonl: &str) -> Vec<ExternalSessionPreviewLine> {
     let mut lines = parse_jsonl(provider, jsonl)
         .messages
@@ -1368,14 +1345,18 @@ fn preview_lines(provider: ImportProvider, jsonl: &str) -> Vec<ExternalSessionPr
 async fn list_candidates(
     provider: ImportProvider,
     store: &Store,
+    project: &str,
     candidates: Vec<SessionCandidate>,
-) -> Vec<ExternalSessionInfo> {
+) -> Result<Vec<ExternalSessionInfo>, String> {
     let mut out = vec![];
     for candidate in candidates {
         let import_key = provider.import_key(&candidate.metadata.session_id);
-        let state = match store.find_codex_import(&import_key).await.ok().flatten() {
+        let state = match existing_import(store, project, &import_key).await? {
             Some(frame_id) => {
-                let stored = store.message_count(&frame_id).await.unwrap_or(0);
+                let stored = store
+                    .message_count(&frame_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if candidate.changed_since_import
                     || candidate.metadata.message_count as i64 > stored
                 {
@@ -1397,7 +1378,7 @@ async fn list_candidates(
         });
     }
     out.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1406,7 +1387,41 @@ async fn list_sessions_in(
     store: &Store,
     root: &Path,
 ) -> Vec<ExternalSessionInfo> {
-    list_candidates(provider, store, local_candidates(provider, root, &[])).await
+    list_candidates(provider, store, "p", local_candidates(provider, root, &[]))
+        .await
+        .unwrap()
+}
+
+fn scoped_import_key(project: &str, provider_key: &str) -> String {
+    format!("project:{}:{project}:{provider_key}", project.len())
+}
+
+async fn existing_import(
+    store: &Store,
+    project: &str,
+    provider_key: &str,
+) -> Result<Option<String>, String> {
+    for key in [
+        scoped_import_key(project, provider_key),
+        provider_key.to_owned(),
+    ] {
+        if let Some(frame) = store
+            .find_codex_import(&key)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            if store
+                .frame_project_id(&frame)
+                .await
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                == Some(project)
+            {
+                return Ok(Some(frame));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn to_wisp_messages(provider: ImportProvider, parsed: &ParsedSession) -> Vec<Message> {
@@ -1449,6 +1464,7 @@ async fn ensure_import_folder(
 }
 
 struct ImportResult {
+    frame_id: String,
     outcome: &'static str,
     message_count: i64,
     last_active_at_ms: i64,
@@ -1462,11 +1478,14 @@ async fn import_session_jsonl(
     source_path: &str,
     jsonl: &str,
 ) -> Result<ImportResult, String> {
+    static IMPORTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _import = IMPORTS.lock().await;
     let parsed = parse_jsonl(provider, jsonl);
     if parsed.session_id.is_empty() || parsed.messages.is_empty() {
         return Err(format!("{source_path}: no importable messages"));
     }
-    let result = |outcome| ImportResult {
+    let result = |frame_id: String, outcome| ImportResult {
+        frame_id,
         outcome,
         message_count: parsed.messages.len() as i64,
         last_active_at_ms: parsed.last_active_at_ms,
@@ -1484,11 +1503,7 @@ async fn import_session_jsonl(
     };
     let import_key = provider.import_key(&parsed.session_id);
 
-    if let Some(frame_id) = store
-        .find_codex_import(&import_key)
-        .await
-        .map_err(|e| e.to_string())?
-    {
+    if let Some(frame_id) = existing_import(store, project_id, &import_key).await? {
         let stored = store
             .message_count(&frame_id)
             .await
@@ -1497,7 +1512,7 @@ async fn import_session_jsonl(
         // it can hold more turns than the rollout; merging diverged histories
         // is out of scope, so leave it untouched.
         if (parsed.messages.len() as i64) <= stored {
-            return Ok(result("skipped"));
+            return Ok(result(frame_id, "skipped"));
         }
         store
             .replace_messages(&frame_id, &to_wisp_messages(provider, &parsed))
@@ -1507,7 +1522,15 @@ async fn import_session_jsonl(
             .set_frame_timestamps(&frame_id, created_at, updated_at)
             .await
             .map_err(|e| e.to_string())?;
-        return Ok(result("updated"));
+        store
+            .record_codex_import(
+                &scoped_import_key(project_id, &import_key),
+                &frame_id,
+                source_path,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(result(frame_id, "updated"));
     }
 
     let frame_id = uuid::Uuid::new_v4().to_string();
@@ -1531,10 +1554,14 @@ async fn import_session_jsonl(
         .await
         .map_err(|e| e.to_string())?;
     store
-        .record_codex_import(&import_key, &frame_id, source_path)
+        .record_codex_import(
+            &scoped_import_key(project_id, &import_key),
+            &frame_id,
+            source_path,
+        )
         .await
         .map_err(|e| e.to_string())?;
-    Ok(result("imported"))
+    Ok(result(frame_id, "imported"))
 }
 
 #[cfg(test)]
@@ -1560,6 +1587,7 @@ async fn import_session_file(
 
 async fn list_sessions(
     state: &AppState,
+    project: &str,
     context_id: Option<String>,
     refresh: Option<bool>,
     provider: ImportProvider,
@@ -1575,12 +1603,13 @@ async fn list_sessions(
     // the complete metadata scanner is available.
     let needs_cache_repair = cached.iter().any(cached_metadata_needs_repair);
     if !refresh.unwrap_or(false) && !cached.is_empty() && !needs_cache_repair {
-        return Ok(list_candidates(
+        return list_candidates(
             provider,
             &state.store,
+            project,
             cached.iter().map(candidate_from_cache).collect(),
         )
-        .await);
+        .await;
     }
     let candidates = if context_id == "local" {
         let Some(root) = provider.root().filter(|root| root.is_dir()) else {
@@ -1620,31 +1649,58 @@ async fn list_sessions(
         .replace_external_session_cache(&context_id, provider.cache_name(), &cache)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(list_candidates(provider, &state.store, candidates).await)
+    list_candidates(provider, &state.store, project, candidates).await
 }
 
 #[tauri::command]
 pub(super) async fn list_codex_sessions(
     state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
     context_id: Option<String>,
     refresh: Option<bool>,
 ) -> Result<Vec<ExternalSessionInfo>, String> {
-    list_sessions(&state, context_id, refresh, ImportProvider::Codex).await
+    let project = state.require_active(window.label())?;
+    list_sessions(
+        &state,
+        &project.id,
+        context_id,
+        refresh,
+        ImportProvider::Codex,
+    )
+    .await
 }
 
 #[tauri::command]
 pub(super) async fn list_claude_sessions(
     state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
     context_id: Option<String>,
     refresh: Option<bool>,
 ) -> Result<Vec<ExternalSessionInfo>, String> {
-    list_sessions(&state, context_id, refresh, ImportProvider::Claude).await
+    let project = state.require_active(window.label())?;
+    list_sessions(
+        &state,
+        &project.id,
+        context_id,
+        refresh,
+        ImportProvider::Claude,
+    )
+    .await
 }
 
 fn checked_local_session_path(provider: ImportProvider, path: &str) -> Result<PathBuf, String> {
     let root = provider
         .root()
-        .ok_or_else(|| "Home directory is unavailable".to_string())?
+        .ok_or_else(|| "Home directory is unavailable".to_string())?;
+    checked_local_session_path_in(provider, &root, path)
+}
+
+fn checked_local_session_path_in(
+    provider: ImportProvider,
+    root: &Path,
+    path: &str,
+) -> Result<PathBuf, String> {
+    let root = root
         .canonicalize()
         .map_err(|e| format!("Cannot open {} session root: {e}", provider.label()))?;
     let path = Path::new(path)
@@ -1811,6 +1867,279 @@ async fn import_sessions(
     Ok(summary)
 }
 
+async fn source_context(store: &Store, id: &str) -> Result<Option<ExecutionContext>, String> {
+    let kind = ExecutionContextKind::from_id(id).map_err(|e| e.to_string())?;
+    if id == "local" {
+        return Ok(None);
+    }
+    store
+        .get_execution_context(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .filter(|c| c.kind == kind)
+        .map(Some)
+        .ok_or_else(|| "Session source is no longer registered".into())
+}
+
+fn native_import_sources(
+    contexts: Vec<ExecutionContext>,
+) -> Vec<wisp_dto::native_session_import::ExternalSource> {
+    use wisp_dto::native_session_import::ExternalSource;
+    let mut sources: Vec<_> = contexts
+        .into_iter()
+        .filter(|c| ExecutionContextKind::from_id(&c.id).ok() == Some(c.kind))
+        .map(|c| ExternalSource {
+            label: if c.label.trim().is_empty() {
+                c.id.clone()
+            } else {
+                c.label
+            },
+            id: c.id,
+            kind: c.kind.as_str().into(),
+        })
+        .collect();
+    if !sources.iter().any(|s| s.id == "local") {
+        sources.insert(
+            0,
+            ExternalSource {
+                id: "local".into(),
+                label: "Local".into(),
+                kind: "local".into(),
+            },
+        );
+    }
+    sources
+}
+
+async fn read_native_source(
+    store: &Store,
+    provider: ImportProvider,
+    context_id: &str,
+    path: &str,
+) -> Result<String, String> {
+    let context = source_context(store, context_id).await?;
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || match context {
+        Some(context) => read_context_jsonl_with_runner(
+            provider,
+            &context,
+            &path,
+            &mut crate::context_probe::ProcessProbeRunner,
+        ),
+        None => read_local_session(provider, &path),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+async fn native_preview_from_jsonl(
+    store: &Store,
+    project: &str,
+    provider: ImportProvider,
+    context: &str,
+    path: &str,
+    jsonl: &str,
+) -> Result<wisp_dto::native_session_import::ExternalPreview, String> {
+    use wisp_dto::native_session_import::{ExternalPreview, SCHEMA};
+    let parsed = parse_jsonl(provider, jsonl);
+    if parsed.session_id.trim().is_empty() || parsed.messages.is_empty() {
+        return Err("The source contains no importable conversation messages".into());
+    }
+    Ok(ExternalPreview {
+        schema: SCHEMA.into(),
+        project_id: project.into(),
+        provider: provider.cache_name().into(),
+        context_id: context.into(),
+        path: path.into(),
+        existing_session_id: existing_import(
+            store,
+            project,
+            &provider.import_key(&parsed.session_id),
+        )
+        .await?,
+        source_session_id: parsed.session_id,
+        sha256: wisp_sync::sha256_hex(jsonl.as_bytes()),
+        message_count: parsed.messages.len(),
+        messages: preview_lines(provider, jsonl),
+    })
+}
+
+fn validate_native_review(
+    preview: &wisp_dto::native_session_import::ExternalPreview,
+    request: &wisp_dto::native_session_import::ExternalImportRequest,
+) -> Result<(), String> {
+    if preview.provider != request.provider
+        || preview.context_id != request.context_id
+        || preview.path != request.path
+        || preview.source_session_id != request.source_session_id
+        || preview.sha256 != request.sha256
+    {
+        return Err(
+            "The conversation source changed after preview. Review it again before importing."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Explicit project/source transport; no active WebView selection or implicit retargeting.
+pub(crate) async fn execute_native(
+    state: &AppState,
+    request: &wisp_dto::native_settings::Request,
+) -> Result<serde_json::Value, String> {
+    use wisp_dto::native_session_import::*;
+    let project = request
+        .project_id
+        .as_deref()
+        .filter(|p| !p.is_empty() && p.trim() == *p)
+        .ok_or("An explicit destination project is required")?;
+    if wisp_store::is_assistant_project_id(project) {
+        return Err("Choose a regular destination project".into());
+    }
+    state
+        .store
+        .get_project(project)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Destination project not found")?;
+    match request.command.as_str() {
+        "native_external_session_sources" => {
+            let sources = native_import_sources(
+                state
+                    .store
+                    .list_execution_contexts()
+                    .await
+                    .map_err(|e| e.to_string())?,
+            );
+            serde_json::to_value(ExternalSources {
+                schema: SCHEMA.into(),
+                project_id: project.into(),
+                sources,
+            })
+            .map_err(|e| e.to_string())
+        }
+        "native_external_session_list" => {
+            let input: ExternalListRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let provider = ImportProvider::parse(&input.provider)?;
+            source_context(&state.store, &input.context_id).await?;
+            let items = list_sessions(
+                state,
+                project,
+                Some(input.context_id.clone()),
+                Some(input.refresh),
+                provider,
+            )
+            .await?;
+            serde_json::to_value(ExternalList {
+                schema: SCHEMA.into(),
+                project_id: project.into(),
+                provider: input.provider,
+                context_id: input.context_id,
+                items,
+            })
+            .map_err(|e| e.to_string())
+        }
+        "native_external_session_preview" => {
+            let input: ExternalPreviewRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let provider = ImportProvider::parse(&input.provider)?;
+            let jsonl =
+                read_native_source(&state.store, provider, &input.context_id, &input.path).await?;
+            serde_json::to_value(
+                native_preview_from_jsonl(
+                    &state.store,
+                    project,
+                    provider,
+                    &input.context_id,
+                    &input.path,
+                    &jsonl,
+                )
+                .await?,
+            )
+            .map_err(|e| e.to_string())
+        }
+        "native_external_session_import" => {
+            let input: ExternalImportRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let provider = ImportProvider::parse(&input.provider)?;
+            let jsonl =
+                read_native_source(&state.store, provider, &input.context_id, &input.path).await?;
+            let reviewed = native_preview_from_jsonl(
+                &state.store,
+                project,
+                provider,
+                &input.context_id,
+                &input.path,
+                &jsonl,
+            )
+            .await?;
+            validate_native_review(&reviewed, &input)?;
+            let _project_guard = state.begin_project_exclusive_activity(project)?;
+            state
+                .store
+                .get_project(project)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("Destination project not found")?;
+            crate::exploration_commands::require_writable_scope(
+                &state.store,
+                &wisp_store::StateScope::mainline(project),
+            )
+            .await?;
+            let existing = existing_import(
+                &state.store,
+                project,
+                &provider.import_key(&input.source_session_id),
+            )
+            .await?;
+            let (runtime, _workflow) = crate::session_import::lock_native_import_target(
+                state,
+                project,
+                existing.as_deref(),
+            )
+            .await?;
+            let model = super::models::active_profile_id(&state.store).await;
+            let path = if input.context_id == "local" {
+                input.path.clone()
+            } else {
+                format!("{}:{}", input.context_id, input.path)
+            };
+            let result =
+                import_session_jsonl(provider, &state.store, project, &model, &path, &jsonl)
+                    .await?;
+            if let Some(rt) = runtime {
+                *rt.agent.lock().await = None;
+                rt.sync_last_seq_from_store(&state.store, &result.frame_id)
+                    .await?;
+            }
+            let _ = state
+                .store
+                .mark_external_session_cache_synced(
+                    &input.context_id,
+                    provider.cache_name(),
+                    &input.path,
+                    result.message_count,
+                    result.last_active_at_ms,
+                )
+                .await;
+            serde_json::to_value(ExternalResult {
+                schema: SCHEMA.into(),
+                project_id: project.into(),
+                provider: input.provider,
+                context_id: input.context_id,
+                path: input.path,
+                source_session_id: input.source_session_id,
+                frame_id: result.frame_id,
+                status: result.outcome.into(),
+                message_count: result.message_count as usize,
+            })
+            .map_err(|e| e.to_string())
+        }
+        _ => Err("Unsupported external conversation command".into()),
+    }
+}
+
 #[tauri::command]
 pub(super) async fn import_codex_sessions(
     state: State<'_, AppState>,
@@ -1835,6 +2164,238 @@ pub(super) async fn import_claude_sessions(
 mod tests {
     use super::*;
     use crate::context_probe::{ProbeCommand, ProbeCommandOutput, ProbeRunner};
+
+    #[test]
+    fn native_external_sources_only_offer_contexts_the_reader_accepts() {
+        let mut alias = ExecutionContext::new("local", "Display alias").unwrap();
+        alias.id = "display-only-local".into();
+        let mut mismatch = ExecutionContext::new("ssh:wrong-kind", "Wrong kind").unwrap();
+        mismatch.kind = ExecutionContextKind::Wsl;
+        let wsl = ExecutionContext::new("wsl:Ubuntu", "Ubuntu").unwrap();
+        let mut ssh = ExecutionContext::new("ssh:analysis", "Analysis").unwrap();
+        ssh.label.clear();
+        let sources = native_import_sources(vec![alias, mismatch, wsl, ssh]);
+        assert_eq!(
+            sources.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["local", "wsl:Ubuntu", "ssh:analysis"]
+        );
+        assert_eq!(sources[2].label, "ssh:analysis");
+        let local = ExecutionContext::new("local", "This computer").unwrap();
+        let sources = native_import_sources(vec![local]);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].label, "This computer");
+    }
+
+    #[tokio::test]
+    async fn native_external_preview_scopes_imports_and_rejects_changed_sources() {
+        use wisp_dto::native_session_import::ExternalImportRequest;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        for project in ["a", "b"] {
+            store.create_project(project, project, "").await.unwrap();
+        }
+        for (provider, jsonl) in [
+            (ImportProvider::Codex, CODEX_JSONL),
+            (ImportProvider::Claude, CLAUDE_JSONL),
+        ] {
+            let preview =
+                native_preview_from_jsonl(&store, "a", provider, "local", "synthetic.jsonl", jsonl)
+                    .await
+                    .unwrap();
+            assert!(preview.existing_session_id.is_none());
+            assert!(
+                store.list_project_frame_ids("a").await.unwrap().is_empty()
+                    || provider == ImportProvider::Claude
+            );
+            let input = ExternalImportRequest {
+                provider: provider.cache_name().into(),
+                context_id: "local".into(),
+                path: "synthetic.jsonl".into(),
+                source_session_id: preview.source_session_id.clone(),
+                sha256: preview.sha256.clone(),
+            };
+            validate_native_review(&preview, &input).unwrap();
+            let changed = native_preview_from_jsonl(
+                &store,
+                "a",
+                provider,
+                "local",
+                "synthetic.jsonl",
+                &format!("{jsonl}\n"),
+            )
+            .await
+            .unwrap();
+            assert!(validate_native_review(&changed, &input).is_err());
+            let wrong_source = native_preview_from_jsonl(
+                &store,
+                "a",
+                provider,
+                "ssh:analysis",
+                "synthetic.jsonl",
+                jsonl,
+            )
+            .await
+            .unwrap();
+            assert!(validate_native_review(&wrong_source, &input).is_err());
+            let first =
+                import_session_jsonl(provider, &store, "a", "fake", "synthetic.jsonl", jsonl)
+                    .await
+                    .unwrap();
+            let second =
+                import_session_jsonl(provider, &store, "b", "fake", "synthetic.jsonl", jsonl)
+                    .await
+                    .unwrap();
+            assert_eq!(first.outcome, "imported");
+            assert_eq!(second.outcome, "imported");
+            assert_ne!(first.frame_id, second.frame_id);
+            assert_eq!(
+                store
+                    .frame_project_id(&second.frame_id)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("b")
+            );
+            let again =
+                import_session_jsonl(provider, &store, "a", "fake", "synthetic.jsonl", jsonl)
+                    .await
+                    .unwrap();
+            assert_eq!(again.frame_id, first.frame_id);
+            assert_eq!(again.outcome, "skipped");
+        }
+        assert_eq!(store.list_project_frame_ids("a").await.unwrap().len(), 2);
+        assert_eq!(store.list_project_frame_ids("b").await.unwrap().len(), 2);
+        assert!(source_context(&store, "ssh:missing").await.is_err());
+        assert!(source_context(&store, " local").await.is_err());
+        assert!(source_context(&store, "local").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn native_external_legacy_mapping_and_cached_status_respect_project_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        for project in ["a", "b"] {
+            store.create_project(project, project, "").await.unwrap();
+        }
+        store
+            .create_frame("legacy", "a", "Codex", "fake")
+            .await
+            .unwrap();
+        store
+            .append_message("legacy", 1, &Message::user("Original legacy question"))
+            .await
+            .unwrap();
+        store
+            .record_codex_import("codex-abc", "legacy", "legacy.jsonl")
+            .await
+            .unwrap();
+        let stamp = FileStamp {
+            path: "/source/rollout-abc.jsonl".into(),
+            size: CODEX_JSONL.len() as i64,
+            modified_at_ms: 1,
+        };
+        let candidate = SessionCandidate {
+            path: stamp.path.clone(),
+            file_size: stamp.size,
+            modified_at_ms: stamp.modified_at_ms,
+            metadata: metadata_from_jsonl(ImportProvider::Codex, CODEX_JSONL, &stamp).unwrap(),
+            changed_since_import: false,
+        };
+        let cached = cache_record("wsl:Ubuntu", ImportProvider::Codex, &candidate);
+        store
+            .replace_external_session_cache("wsl:Ubuntu", "codex", &[cached.clone()])
+            .await
+            .unwrap();
+        let a = list_candidates(
+            ImportProvider::Codex,
+            &store,
+            "a",
+            vec![candidate_from_cache(&cached)],
+        )
+        .await
+        .unwrap();
+        let b = list_candidates(
+            ImportProvider::Codex,
+            &store,
+            "b",
+            vec![candidate_from_cache(&cached)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(a[0].state, "updatable");
+        assert_eq!(b[0].state, "new");
+        let other = import_session_jsonl(
+            ImportProvider::Codex,
+            &store,
+            "b",
+            "fake",
+            "new.jsonl",
+            CODEX_JSONL,
+        )
+        .await
+        .unwrap();
+        assert_ne!(other.frame_id, "legacy");
+        assert_eq!(store.message_count("legacy").await.unwrap(), 1);
+        let legacy = import_session_jsonl(
+            ImportProvider::Codex,
+            &store,
+            "a",
+            "fake",
+            "new.jsonl",
+            CODEX_JSONL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(legacy.frame_id, "legacy");
+        assert_eq!(legacy.outcome, "updated");
+        assert_eq!(store.message_count(&other.frame_id).await.unwrap(), 2);
+        let a = list_candidates(
+            ImportProvider::Codex,
+            &store,
+            "a",
+            vec![candidate_from_cache(&cached)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(a[0].state, "imported");
+    }
+
+    #[test]
+    fn native_external_local_preview_cannot_escape_the_provider_root_or_import_subagents() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("projects");
+        std::fs::create_dir_all(root.join("project/subagents")).unwrap();
+        let regular = root.join("project/chat.jsonl");
+        let subagent = root.join("project/subagents/agent.jsonl");
+        let outside = dir.path().join("rollout-outside.jsonl");
+        for path in [&regular, &subagent, &outside] {
+            std::fs::write(path, CLAUDE_JSONL).unwrap();
+        }
+        assert!(checked_local_session_path_in(
+            ImportProvider::Claude,
+            &root,
+            regular.to_str().unwrap()
+        )
+        .is_ok());
+        assert!(checked_local_session_path_in(
+            ImportProvider::Claude,
+            &root,
+            subagent.to_str().unwrap()
+        )
+        .is_err());
+        assert!(checked_local_session_path_in(
+            ImportProvider::Codex,
+            &root,
+            outside.to_str().unwrap()
+        )
+        .is_err());
+        assert!(checked_local_session_path_in(
+            ImportProvider::Codex,
+            &root,
+            regular.to_str().unwrap()
+        )
+        .is_err());
+    }
 
     const CODEX_JSONL: &str = concat!(
         r#"{"type":"session_meta","timestamp":"2026-05-31T10:00:00Z","payload":{"id":"codex-abc","cwd":"/home/me/project"}}"#,
@@ -2370,7 +2931,10 @@ mod tests {
                 .unwrap(),
             "imported"
         );
-        let frame_id = store.find_codex_import("codex-abc").await.unwrap().unwrap();
+        let frame_id = existing_import(&store, "p", "codex-abc")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(store.message_count(&frame_id).await.unwrap(), 2);
         let sessions = store.list_sessions("p").await.unwrap();
         assert_eq!(sessions.len(), 1);
@@ -2449,8 +3013,7 @@ mod tests {
                 .unwrap(),
             "imported"
         );
-        let frame_id = store
-            .find_codex_import("claude:claude-abc")
+        let frame_id = existing_import(&store, "p", "claude:claude-abc")
             .await
             .unwrap()
             .unwrap();

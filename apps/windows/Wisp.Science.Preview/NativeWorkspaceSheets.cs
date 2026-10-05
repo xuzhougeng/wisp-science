@@ -78,9 +78,13 @@ internal sealed class NativeOutlinePage : WorkspaceSheet
     private readonly TextBox search = new() { PlaceholderText = "搜索问题" };
     private readonly StackPanel list = new() { Spacing = 8 };
     private bool chrome;
-    public NativeOutlinePage(WorkspaceOutlineModel model, WispDesign design, Action close) : base(design, "会话大纲", close)
+    private readonly Func<ConversationOutlineEntry, CancellationToken, Task> navigate;
+    private readonly Action close;
+    private bool opening;
+    private string? navigationError;
+    public NativeOutlinePage(WorkspaceOutlineModel model, WispDesign design, Func<ConversationOutlineEntry, CancellationToken, Task> navigate, Action close) : base(design, "会话大纲", close)
     {
-        this.model = model;
+        this.model = model; this.navigate = navigate; this.close = close;
         search.TextChanged += (_, _) => { model.Query = search.Text; RenderList(); };
         _ = LoadAsync();
     }
@@ -105,6 +109,7 @@ internal sealed class NativeOutlinePage : WorkspaceSheet
         list.Children.Clear();
         if (model.Loading) list.Children.Add(new ProgressBar { IsIndeterminate = true, Height = 3 });
         if (model.Error is { } error) list.Children.Add(Warn(error));
+        if (navigationError is { } failed) list.Children.Add(Warn(failed));
         foreach (var entry in model.Visible)
         {
             var captured = entry;
@@ -112,28 +117,25 @@ internal sealed class NativeOutlinePage : WorkspaceSheet
             row.Children.Add(new TextBlock { Text = $"{entry.UserIndex + 1}. {entry.Text}", TextWrapping = TextWrapping.Wrap });
             if (entry.SentAt is > 0 and var sent)
                 row.Children.Add(Mute(entry.ResponseAt is { } response && response >= sent ? $"{response - sent} 秒" : ""));
-            var button = new Button { Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            var button = new Button { Content = row, IsEnabled = !opening, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
             Design.QuietButton(button); button.Padding = new Thickness(14); button.Background = Design.Brush("bg-elev");
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, entry.Text);
-            button.Click += async (_, _) => { await model.OpenQuestionAsync(captured, lifetime.Token); Render(); };
+            button.Click += async (_, _) =>
+            {
+                if (opening) return;
+                opening = true; navigationError = null; RenderList();
+                try
+                {
+                    await navigate(captured, lifetime.Token);
+                    if (!lifetime.IsCancellationRequested) close();
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { navigationError = ex.Message; }
+                finally { opening = false; if (!lifetime.IsCancellationRequested) RenderList(); }
+            };
             list.Children.Add(button);
         }
         if (!model.Visible.Any() && !model.Loading && model.Error == null) list.Children.Add(Design.EmptyState("list", "暂无匹配的问题", "会话中的问题会列在这里，可搜索并返回对应位置。"));
-        if (model.History is { } history)
-        {
-            list.Children.Add(Mute("历史定位"));
-            var index = 0;
-            foreach (var item in history.Items)
-            {
-                var block = new TextBlock { Text = item.Text, TextWrapping = TextWrapping.Wrap };
-                list.Children.Add(new Border
-                {
-                    Child = block, Padding = new Thickness(8), CornerRadius = new CornerRadius(8),
-                    Background = index == model.HistoryItemIndex ? Design.Brush("surface-hover") : Design.Brush("bg-elev")
-                });
-                index++;
-            }
-        }
     }
     public override void Dispose() { lifetime.Cancel(); model.Close(); lifetime.Dispose(); base.Dispose(); }
 }

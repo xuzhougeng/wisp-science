@@ -1,5 +1,69 @@
 # Native conversation loop
 
+## Windows input references and preferences (2026-10-05)
+
+The Windows input field follows the saved Enter/Ctrl+Enter preference, including
+Shift+Enter and IME composition protection. The footer theme selector now reads
+and updates the host's appearance preferences; entering Settings reuses the same
+saved theme. Theme writes preserve typography, input options and unknown fields.
+Failed writes are reported without automatic retries.
+
+On hosts advertising `composer_references`, `@` searches artifacts and execution
+environments/runtimes, `#` searches sessions and the current project, and `/`
+includes enabled skills and workflows alongside the existing native commands.
+Enter/Tab selects a candidate and Escape dismisses it, including while a read is
+pending. References are removable chips with stable IDs, kept with each session's
+draft. Sending or queueing passes the typed references to the shared desktop
+resolver and persists display labels. An uncertain/cancelled send retains text
+and chips until the host acknowledges the request. Old hosts keep their existing
+composer behavior without exposing unsupported reference writes.
+
+Source-aware conversation quotes, context-usage details, follow-up suggestions
+and historical actions are implemented below; local-file reference parity and
+the remaining real-window acceptance are tracked in
+[the October 5 parity ledger](superpowers/plans/2026-10-05-winui-complete-ui-parity.md).
+
+Focused automated coverage includes candidate identity, late responses after
+query changes/navigation/Escape, UTF-16 caret positions, duplicate chip IDs,
+draft restoration, typed send/queue payloads and uncertain sends. Real-window
+acceptance must additionally exercise caret placement, keyboard selection,
+immediate Escape, both send preferences, theme round trips and narrow layouts.
+
+## Windows queued messages (2026-10-05)
+
+Hosts advertising `queue` expose the shared in-memory turn queue above the
+Windows composer. Up to 64 messages can wait, including messages submitted by
+another window. Each row retains its own text, attachment paths and typed
+references. Expand/collapse and a bounded scroll area keep the composer usable.
+Older hosts keep the single-follow-up behavior.
+
+The row menu supports editing waiting text, cancelling, moving up/down,
+inserting at a safe boundary, and interrupting the current turn to prioritize
+the selected message. Editing uses a dialog and preserves attachments and
+references. ACP and timer turns cannot accept a cut-in. A pending cut-in is
+labelled as waiting for the current step and cannot be edited or cancelled.
+Escape dismisses the menu or editor immediately; navigation closes them.
+
+Actions bind project, session, exact queue ID and payload digest. Stale edits
+and already-started rows are rejected before any cancellation. Replacement
+reserves priority before Stop, including when the driver already acquired its
+workflow lock. Decimal-string IDs preserve all 64 bits through JSON.
+
+Unconfirmed writes are never replayed. A snapshot can confirm a lost enqueue
+response by its exact ID, without consuming a later draft. Failed dispatches
+and queued payloads lost across a host restart remain available for explicit
+draft recovery; recovery never sends automatically. Completed/cancelled items
+are retired. Queue storage is transient; pending rows are not restored by the
+host after a restart. Recovery payloads are retained only in the open native
+client, not across closing that client.
+
+Regression checks cover distinct attachment payloads with identical text,
+stale actions, sorting, ACP restrictions, response loss, navigation, completion
+before acknowledgement, host restart and replacement/driver exclusion. For a
+manual smoke, keep an isolated ACP turn running, queue two different messages,
+edit and reorder them, verify immediate Escape and disabled ACP cut-in, then
+verify priority execution and completed outcomes from the host snapshot.
+
 ## Windows composer options
 
 The WinUI 3 conversation-options popover follows the WebView row order: plan
@@ -223,9 +287,66 @@ Pass one fresh UUID for each intentional send, preserve the draft on ambiguous
 transport errors, and reconcile via the snapshot's `RequestId`. Cancellation tokens
 cancel the client request, **not** the agent; call `StopAsync` for that. Render
 `Approvals` with their IDs and call `ApproveAsync` with the matching ID and explicit
-user choice. Attachments, ACP composers and PNG share export remain follow-ups.
+user choice. The WinUI composer also supports attachments and configured ACP
+conversations. PNG share export remains a follow-up.
+
+The ACP composer exposes session-owned permission choices and question answers.
+Permission responses send the agent's exact option ID; cancellation sends null.
+Answers resolve the waiting request directly. The optional snapshot `acp_state`
+uses the shared camelCase `AcpSessionState` shape inside the snake_case native
+snapshot, including `frameId`, `modes` and `configOptions`. The client validates
+its owner before rendering. ACP session options render agent-provided mode IDs,
+select options (including grouped values), and booleans; unsupported kinds are
+not guessed. `native_conversation_acp_setting` validates the advertised option
+and rejects active turns and read-only or archived sessions before dispatch.
+Polling reconciles the result; failed/ambiguous changes are never automatically
+replayed. Current mode is retained for the live agent, while a restart returns
+cached available choices without pretending the old process's mode is current.
+
+Discovered WinUI clients reread the local host descriptor before each new
+request, validating its database, loopback endpoint and token together. Host
+restart therefore recovers on the next snapshot poll without resending a failed
+mutation. Keep ACP selector controls mounted when current values change, and
+leave their popup lifecycle to WinUI during selection; the model serializes
+pending writes. Escape closes the open child dropdown before its parent flyout.
+
+Quotes retain their source session and absolute user-turn index, including older
+pages, and are restored with the draft after an uncertain send. Follow-up
+suggestions append to the draft without sending. Native snapshots carry a
+bounded transient suggestion list which is cleared by a new user turn. The
+context button summarizes active context usage rather than accumulated billing
+totals. Main and auxiliary editors use the persisted send shortcut and preserve
+IME composition; selecting a reference with Enter does not submit a message.
 
 ## Verification and manual smoke
+
+WinUI message actions include branch checkpoints (before a user message or after
+its reply), whole-session review, rewind-and-edit, latest-turn undo preview, and
+editable project/global turn-memory proposals. These reuse the desktop commands
+through `native_conversation_history_action`; no action targets an implicit
+active session. Snapshot `history_state` carries durable user-row sequence IDs
+and content hashes alongside absolute user indexes. The host rejects replaced
+rows, cross-project requests and unsupported ACP rewind/undo. Destructive
+confirmations additionally bind the conversation revision and fail if new turns
+arrive while the dialog is open. Undo lists restored/removed files, artifacts,
+unsupported changes and conflicts before confirmation.
+
+Historical branch and memory actions remain usable during a later running turn.
+Memory proposal generation leaves Stop available. Review, rewind and undo wait
+for the session to finish. Branching does not stop the source turn; late results
+cannot navigate a different selected session. Existing composer drafts survive
+rewind/undo. An ambiguous mutation is never replayed, including on refresh; the
+user must inspect its result and explicitly acknowledge before another history
+mutation. Memory save errors retain the editor, with saving disabled while the
+outcome is uncertain. Escape closes a replacement dropdown before its dialog.
+
+History smoke: use an isolated 35-turn fixture, open both user and assistant
+menus on an older page, immediately press Escape, and verify the underlying
+conversation remains open. Branch from each checkpoint and inspect the source
+identity and copied messages. Open a rewind/undo confirmation and cancel it with
+Escape; verify the draft and transcript stay unchanged. During a later running
+turn, confirm historical memory/branch remain available while review/undo are
+disabled. Provider-backed review and memory generation need separate acceptance.
 
 The 2026-09-26 reliability acceptance run
 contains a reusable legacy 35-turn fixture, paired native/WebView screenshots,
@@ -259,6 +380,281 @@ long response, switch sessions/projects while another runs, and reopen the app t
 check saved history. Interrupt the host connection and verify the transcript stays
 visible and the draft is not automatically retransmitted. Check narrow windows,
 model-menu Escape, and the ambiguous-send confirmation's immediate Escape behavior.
+
+## WinUI execution reading (2026-10-05)
+
+The composer shows the latest accepted `update_plan` in the current user turn.
+Pending or rejected updates keep the previous accepted progress; a new actual
+user turn clears it. Idle sessions retain their factual unfinished count, and
+cancelled steps are distinct from completed steps. Expand the strip to read the
+checklist. Only fully completed plans can be dismissed; dismissal survives
+navigation within the current client model. The host projects `plan_steps` with
+the same parser used by WebView, including structured nested checklists and
+legacy continuation lines.
+
+ACP tool cards retain call identity, kind, state and locations. They separate
+literal text, before/after file changes, terminal IDs and resource descriptions
+from an expandable original input/output view. They do not fetch referenced
+resources. Failed and running tools remain readable. Multiline native text
+controls enable multiline mode before assigning content, preserving logs and
+diff bodies at initialization.
+
+Snapshots include bounded output tails for the exact session-owned Runs linked
+by transcript IDs. Active Runs appear inline; completed Runs move into their
+exact submission disclosure, initially folded. Historical records without a
+matching submission keep a standalone fallback. Cards show recorded progress,
+elapsed time, command, environment and stdout/stderr; no percentages are inferred
+when progress is indeterminate. Details, cancellation and result review use the
+same scoped host operations as the workspace panel. Uncertain cancellation is
+not replayed and does not disable the conversation's Stop control.
+
+Older-message and outline pages keep polling the exact Runs referenced by that
+page, including completed/cleaned records. These reads update only Run cards and
+their matching transcript links: the selected historical messages, page cursor,
+outline target and unsent draft stay in place. Duplicate links share one read,
+with at most four outstanding detail requests. Page/session changes, newer
+reads, cancellation and host-epoch changes discard late replies. A failed or
+foreign detail reply retains the last confirmed card with a stale-state notice
+and disables cancellation until a confirmed read recovers. Historical active
+Runs can be cancelled through the same scoped, no-replay path as current Runs.
+Standalone historical terminal cards can be dismissed even when their Run is
+absent from the latest page; dismissal remains scoped to that project/session.
+
+Selecting a question in the outline closes the outline and positions the actual
+conversation at that question after layout. It no longer appends a separate
+read-only transcript inside the outline. Closing the outline during its read
+rejects late navigation. Older-page navigation starts at the first message;
+returning to latest resumes following the conversation and restores the retained
+draft's editability. Background Run reads do not repeat the positioning action.
+
+Run-review nomination belongs to the conversation model, independent of mounted
+or folded cards. A linked SSH-direct Run transitioning to success is checked
+when the owning conversation is idle. The host decides whether a prompt is
+needed; cleaned, read-only and stale results cannot open one. WinUI opens the
+results browser directly. Immediate Escape leaves the browser for Run details;
+an inner deletion confirmation consumes the first Escape and retains the parent.
+Closing either a manual or automatic review persists dismissal through the host
+without retries, including closing while a writable listing is still loading.
+Existing dialogs and workspace overlays defer automatic opening.
+Historical reading also defers automatic opening. Returning to latest can
+nominate a Run observed completing on the older page; its exact record and host
+review eligibility are read again even if its submission is outside the latest
+transcript page. Subsequent polls do not reopen the consumed nomination.
+
+Plan proposals from built-in `propose_plan` and ACP use the shared plan parser,
+with Markdown entries, status and priority. Only the latest proposal in the
+current user turn exposes decisions while plan mode is active. Approve exits
+plan mode first, verifies the acknowledged mode and current proposal, then sends
+the existing draft (or the default approval instruction when empty). Save and
+exit preserves the draft without sending. ACP selects the advertised `default`
+mode or the first non-plan mode. Running, read-only, stale, changed-draft and
+uncertain outcomes cannot silently dispatch an execution turn.
+
+Live snapshots carry an optional `activity_status` computed by the host's shared
+session-status rules. The selected session's sidebar text and accessible name
+update in place without reopening the session, rebuilding the root or resetting
+composer focus. Older hosts can omit this field.
+
+This remains partial reading parity: additional rich tool renderers, live
+historical Run updates and packaged end-to-end acceptance remain open. Full
+acceptance is tracked in the
+[WinUI parity ledger](superpowers/plans/2026-10-05-winui-complete-ui-parity.md).
+
+The WinUI file/artifact PDF preview keeps the original page bytes (up to 32 MiB)
+and renders a selectable PDF.js text layer. The shared panel request's optional
+`render_pdf` flag selects this behavior; omitted/false retains extracted text
+for existing native clients. Select text, then use **加入聊天**
+to add a removable source card without replacing or sending the draft, or
+**加入聊天并跳转** to return to the composer. Cards retain the project, resolved
+file path and one-based page number through navigation, sending and queued turns.
+The native panel supplies the file identity; a document cannot choose a different
+project/session or path through its renderer message. Closing/replacing a preview
+rejects its late callbacks. Quotes are limited to 32,768 characters each, 16 cards
+and 65,536 characters in total. Escape clears an active selection before closing
+the preview; the panel stays open. Image-only pages remain readable and explicitly
+report that there is no selectable text. This does not add OCR.
+
+WinUI file and artifact previews also render DOCX, XLSX and PPTX offline using
+the same Office rendering module as the WebView. Word preserves page layout,
+tables, embedded images and supported Word equations; the renderer's existing
+partial support for WPS equations still applies. Excel provides sheet tabs,
+merged cells, a virtualized grid and the selected cell's existing formula. It
+shows cached values without calculating formulas or fetching linked workbooks.
+Large worksheets display a bounded-preview notice. PowerPoint uses lazy slide
+rendering and a width-constrained scroll surface.
+Opening a document brings its preview into view below the file list; ordinary
+refreshes preserve the reader's position.
+
+The optional `render_office` panel flag requests validated OOXML bytes with a
+32 MiB input limit. It defaults to false independently of `render_pdf`, retaining
+document extraction for older clients. The native sandbox ships the Office
+bundles, shared ZIP module, worker and licenses; it cannot navigate away, open
+new windows or load external document resources. Switching/closing a preview
+terminates workbook parsing and disposes slide resources, and late results cannot
+replace the new preview. Escape returns to the containing panel. Office previews
+are read-only; the PDF-specific add-to-chat toolbar does not appear for Office.
+
+WinUI and WebView share offline scientific renderers for SMILES/MOL/SDF molecule
+drawings, PDB/mmCIF/MOL2 structures, FASTA text and aligned FASTA/CLUSTAL/Stockholm
+sequences. The structure viewer supports drag rotation and wheel zoom. Alignment
+previews show named, colored residues with 50-position navigation; unequal-length
+rows, duplicate FASTA names and incomplete input produce explicit errors rather
+than an apparently complete scientific result. The shared Nightingale integration
+supplies sequence records after component initialization, so the actual alignment
+canvas is populated in both clients.
+
+The native preview places **查看源文本** and **关闭预览** above the scientific
+viewer. Source mode retains the existing text editor and **返回交互预览** returns
+to the visualization. This does not save the file or send a chat message.
+Scientific input is bounded to the existing 1 MiB text read, with additional
+limits of 512 aligned sequences, 20,000 positions, 50,000 structure atoms and
+10,000 FASTA lines. Multi-record SDF requires opening one molecule at a time.
+
+RDKit runs in a disposable worker with a 15-second parsing deadline. Structures
+and alignments use fixed bundled iframe documents; closing/replacing the preview
+removes the frame, message listeners and parsing resources. The native WebView2
+resource policy blocks external origins, including worker requests. Escape from
+a focused scientific iframe closes the preview while leaving Files open. These
+fixed viewers do not provide MCP Apps integration. Scientific source quoting,
+Office source quoting and the broader workbench acceptance gates remain separate.
+
+## Windows workspace search and command palette
+
+`Ctrl+K` searches visible projects, saved artifacts, session titles and message
+bodies through `wisp.native-search.v1`. Session results use the shared store's
+current-project preference, title-before-body ranking and activity ordering,
+including projects with their own databases. Hidden projects are excluded before
+the result limit and privacy is checked again before returning results. Failed
+reads show an error; a changed query or closed overlay cannot receive old rows.
+
+Click or Enter opens the exact owner project/session; an artifact opens its
+original preview. `Shift+Enter` attaches a session/artifact reference to the
+current editable draft without navigating or sending. `Ctrl+Enter` opens a
+project/session in a separate native window using the same database, leaving
+the original window and draft intact. Escape closes only the search overlay.
+
+`Ctrl+Shift+P` or **命令面板** opens searchable native commands. The 25 currently
+implemented routes include independent windows, settings, project navigation,
+library/calendar, workspace panels, terminal, theme selection and feedback
+drafting. Commands that need a project/session are absent when unavailable.
+English keywords also match Chinese labels. Mouse selection and Enter from the
+result list both execute the selected action. The build-time native asset check
+also verifies icons named by the command registry, preventing missing resources
+from breaking the palette.
+
+Export/setup/privacy/update/font commands and remaining WebView
+actions still need implementation. This search batch does not complete Research
+Assistant, publication editing, MCP Apps or final packaged/DPI acceptance.
+
+### Windows session ZIP import
+
+Use **导入会话归档…** in the project menu, or the command palette, to choose a
+Wisp session-export ZIP and an explicit destination project. Preview shows the
+message/artifact counts, first four user/assistant messages (600 characters each),
+artifact paths and whether the selected project already contains the import.
+Changing the path or destination clears the preview. Preview itself writes no
+conversation data; **确认导入到所选项目** imports the reviewed file. The result
+offers **打开导入的会话** and lists artifacts that could not be restored.
+
+`wisp.native-session-import.v1` carries the destination, source session ID and
+SHA-256 from preview. A changed file is rejected before any import, and artifacts
+are extracted from the same verified bytes. Repeat imports are scoped to the
+destination project; legacy mappings are used only if their frame belongs there.
+Existing imports update only when the archive contains more messages. Existing
+files are preserved, with collisions routed to `imports/<source-session>/` when
+available. Archives are bounded to 256 MiB compressed, 512 MiB expanded and 4096
+entries; manifest/message text is bounded to 64 MiB each.
+
+Frozen project mainlines and archived, branch, exploration, ACP-bound, running,
+reviewing or queued target conversations cannot be updated. An uncertain response
+retains the selected path and destination and disables further writes in that
+dialog; a fresh preview can locate an existing imported session for inspection.
+Escape closes the destination dropdown before the sheet; closing the sheet
+retains the original conversation draft. This route handles Wisp ZIP archives.
+
+### Windows Codex and Claude session import
+
+Use **导入 Codex / Claude 会话…** in the project menu or command palette. Choose
+the destination project, Codex CLI or Claude Code, and a local or registered
+WSL/SSH source. The initial list uses the metadata cache; **重新扫描来源** scans
+up to 500 recent source files. Filtering matches title, working directory,
+session ID and path, with 25 results per page. Source reads remain bounded to
+32 MiB per conversation; local paths must stay within the provider's session
+root and cannot select Claude subagent logs.
+
+**预览会话** reads the source without writing conversation data and shows the
+first four user/assistant messages, up to 600 characters each. A single import
+binds the selected project/provider/environment/path, source ID and SHA-256;
+source changes after preview are rejected. Changing a selector, filter or page
+clears the old preview. Existing-import status and updates are scoped to the
+destination project, including legacy mappings shared with the WebView client.
+
+**导入筛选结果中的待导入会话** processes all filtered new/updatable rows across
+pages, obtaining a fresh preview before each write. Progress separates created,
+updated, skipped and failed results. **停止后续导入** finishes the current write
+and starts no further one. Reads may fail independently; any unconfirmed write
+stops the batch and disables further writes in that sheet, even after a refresh.
+It is never replayed. Confirmed results can open their exact destination session.
+Busy/read-only target protections match ZIP imports. Escape closes an open
+selector before the sheet; closing the sheet retains the originating draft and
+prevents late replies from navigating the window.
+
+### Windows publication evidence workspace
+
+Open **研究工具 → 论文证据** inside a project. The workspace supports paper and
+revision selection, hierarchical section/claim/figure/table/method/supplement
+editing, multiline content and per-revision/item drafts. Returning from an editor
+or switching revisions retains unsaved text for the lifetime of the page.
+Missing titles and invalid ordering display validation feedback before writing.
+An unconfirmed new item remains reachable through **新增条目** with its original
+ID. If reconciliation finds it already saved, that entry starts a fresh draft;
+local corrections remain attached to the saved item rather than creating a copy.
+
+**添加证据** offers paged file versions, Runs and persisted message excerpts.
+Messages show their sequence and text so results from the same conversation are
+distinguishable. Selecting a source opens a separate binding step; **返回选择来源**
+returns without registering it. A message selection uses UTF-8 byte boundaries
+and the persisted content digest. **添加精确来源** also accepts message ranges,
+tool calls, execution logs, code cells and registered external resources. The
+host resolves exact identities inside the selected project before binding.
+Evidence retains its snapshot, lineage, drift, reviews and supersession details;
+draft versions can change selection to candidate, selected or rejected.
+
+**冻结检查** uses the shared WebView readiness service. A check enables freezing
+only for the same revision and policy; changes invalidate it. Freezing needs a
+second explicit click. Findings and recorded waiver reasons remain visible.
+Recorded waiver reasons also remain visible before a fresh check, with a reminder
+to recheck after editing evidence or explanations. Escape cancels the pending
+freeze confirmation and leaves the version editable.
+**版本与复现** can clone a revision, display reproduction reports and build a
+Capsule from a frozen manifest. Choose a directory with the system picker and a
+new ZIP filename; existing files are never overwritten. Eligible evidence offers
+the existing isolated reproduction verifier, with results read back from the host.
+
+Mutations bind the selected project/revision and are never automatically replayed.
+After an unconfirmed result, refresh, inspect the record and explicitly acknowledge
+the reconciliation before another write. Late source reads cannot replace a new
+filter, revision or closed page. Escape closes a dropdown first, then a freeze
+confirmation/editor/binding step, then the parent tab/page.
+
+Publication integration is still undergoing real-window acceptance; the overall
+WinUI parity ledger, final packaged/DPI comparison and full regression remain open.
+
+### Windows Office and scientific source quotes (acceptance pending)
+
+Office preview selection can stage source-labelled quotes in the current chat:
+DOCX uses rendered preview pages, PPTX uses slide numbers, and XLSX uses the
+selected sheet/cell (or merged range), including the formula when present.
+Scientific previews expose quoting through **查看源文本**: select text and use
+**加入聊天** or **加入聊天并跳转**. These quotes retain source line ranges and
+label unsaved draft text. Atom/residue selections on scientific canvases are
+not supported by this quote path.
+
+The native panel supplies the file and conversation identity; document markup
+cannot supply a different source path. Quotes retain the existing session-owned
+draft, deduplication and send/queue behavior. C# model/contract checks passed,
+but browser selection coverage, a build of this latest change and real-window
+acceptance remain pending at the PR submission checkpoint.
 
 ## Native UI alignment (2026-09-26)
 

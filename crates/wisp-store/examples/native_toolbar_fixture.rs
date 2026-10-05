@@ -18,7 +18,8 @@ async fn main() -> Result<()> {
     // Atomic refusal protects existing databases, including symlink targets.
     std::fs::create_dir(&root)
         .context("QA directory must not already exist; no files were replaced")?;
-    let root = root.canonicalize()?;
+    // SQLite URLs must not receive Windows' verbatim \\?\ path prefix.
+    let root = dunce::canonicalize(root)?;
     let database = root.join("wisp.sqlite");
     let store = Store::open(&database).await?;
     let now = chrono::Utc::now().timestamp();
@@ -109,6 +110,9 @@ async fn main() -> Result<()> {
         .await?;
     sqlx::query("UPDATE frames SET status='completed',completed_at=?,title=CASE WHEN id LIKE '%-empty' THEN '空会话验收' ELSE '35 轮工具栏验收' END")
         .bind(now).execute(&pool).await?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pool)
+        .await?;
     pool.close().await;
     println!("Synthetic database: {}", database.display());
     println!("Projects: toolbar-qa, toolbar-qa-other; 35 turns and an empty conversation each.");

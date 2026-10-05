@@ -86,7 +86,9 @@ for (const width of [390, 800, 900, 1000, 1100, 1600]) {
     expect(actionsBox.x).toBeGreaterThanOrEqual(0);
     expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(width);
     expect(actionsBox.x >= brandBox.x + brandBox.width || actionsBox.y >= brandBox.y + brandBox.height).toBe(true);
-    if (width === 1600 || width === 800) {
+    // Flex wrapping depends on the translated labels and available width.
+    // Verify both legitimate layouts, without prescribing a row at one width.
+    if (mainBox.x >= quickBox.x + quickBox.width - 1) {
       expect(Math.abs(quickBox.y + quickBox.height / 2 - mainBox.y - mainBox.height / 2)).toBeLessThan(2);
     } else {
       expect(mainBox.y).toBeGreaterThanOrEqual(quickBox.y + quickBox.height);
@@ -97,7 +99,8 @@ for (const width of [390, 800, 900, 1000, 1100, 1600]) {
       expect(actionsBox.x).toBeGreaterThanOrEqual(brandBox.x + brandBox.width);
     }
     const buttons = actions.getByRole("button");
-    await expect(buttons).toHaveCount(9);
+    await expect(buttons).toHaveCount(8);
+    await expect(actions.getByTestId("open-research-assistant")).toBeVisible();
     for (const button of await buttons.all()) {
       await expect(button).toBeInViewport();
       expect(await button.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

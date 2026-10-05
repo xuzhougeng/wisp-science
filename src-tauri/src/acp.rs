@@ -94,6 +94,8 @@ pub(crate) struct AcpRuntime {
     pub cwd: PathBuf,
     pub session_id: SessionId,
     pub session_state: Mutex<Option<wisp_acp::AcpSessionState>>,
+    // Unlike the one-shot notification above, snapshots retain live mode state.
+    pub modes: Mutex<Option<serde_json::Value>>,
     pub handle: Arc<AcpSessionHandle>,
 }
 
@@ -270,8 +272,8 @@ pub(crate) async fn get_acp_session_agent(
 /// the first turn, so after an app restart they would stay hidden until the user
 /// sent a message. Serve the cached list for the bound profile instead.
 ///
-/// `currentModeId` is deliberately left out: it belongs to a session whose agent
-/// process is gone, and the caller seeds this without overwriting a live one.
+/// `currentModeId` is returned only for a live runtime. After restart the cache
+/// carries available choices without claiming the old process's current mode.
 #[tauri::command]
 pub(crate) async fn get_acp_session_state(
     state: State<'_, AppState>,
@@ -289,25 +291,37 @@ pub(crate) async fn get_acp_session_state(
     {
         return Err("Session does not belong to the active project.".into());
     }
+    native_session_state(&state, &frame_id).await
+}
+
+pub(crate) async fn native_session_state(
+    state: &AppState,
+    frame_id: &str,
+) -> Result<Option<wisp_dto::AcpSessionState>, String> {
     let Some(binding) = state
         .store
-        .get_acp_session(&frame_id)
+        .get_acp_session(frame_id)
         .await
         .map_err(|error| error.to_string())?
     else {
         return Ok(None);
     };
-    let modes = state
+    let runtime = state.acp_sessions.lock().await.get(frame_id).cloned();
+    let live_modes = match runtime {
+        Some(runtime) => runtime.modes.lock().await.clone(),
+        None => None,
+    };
+    let modes = live_modes.or(state
         .store
         .get_setting(&available_modes_key(&binding.profile_fingerprint))
         .await
         .map_err(|error| error.to_string())?
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .map(|modes| serde_json::json!({ "availableModes": modes }));
+        .map(|modes| serde_json::json!({ "availableModes": modes })));
     let options =
-        cached_config_options(&state.store, &frame_id, &binding.profile_fingerprint).await?;
+        cached_config_options(&state.store, frame_id, &binding.profile_fingerprint).await?;
     Ok(Some(wisp_dto::AcpSessionState {
-        frame_id,
+        frame_id: frame_id.into(),
         modes,
         config_options: options.and_then(|value| value.as_array().cloned()),
     }))
@@ -791,6 +805,12 @@ async fn runtime_for(
         fingerprint: profile_fingerprint.clone(),
         cwd: cwd.clone(),
         session_id: session_id.clone(),
+        modes: Mutex::new(
+            session_state
+                .modes
+                .as_ref()
+                .and_then(|modes| serde_json::to_value(modes).ok()),
+        ),
         session_state: Mutex::new(Some(session_state)),
         handle,
     });
@@ -1283,7 +1303,7 @@ async fn run_acp_turn_inner(
             "acp-session-state",
             &serde_json::json!({
                 "frameId": frame_id,
-                "modes": session_state.modes,
+                "modes": runtime.modes.lock().await.clone(),
                 "configOptions": session_state.config_options,
             }),
         );
@@ -1345,6 +1365,9 @@ async fn run_acp_turn_inner(
             }
             event = runtime.handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, .. }) => {
+                    if kind == AcpUpdateKind::CurrentMode {
+                        merge_native_mode(&mut *runtime.modes.lock().await, &payload);
+                    }
                     if kind == AcpUpdateKind::ConfigOptions {
                         if let Some(options) = payload.get("configOptions") {
                             cache_config_options(&state.store, frame_id, &runtime.fingerprint, options).await?;
@@ -1430,6 +1453,9 @@ async fn run_acp_turn_inner(
         };
         match event {
             AcpSessionEvent::Update { kind, payload, .. } => {
+                if kind == AcpUpdateKind::CurrentMode {
+                    merge_native_mode(&mut *runtime.modes.lock().await, &payload);
+                }
                 if kind == AcpUpdateKind::ConfigOptions {
                     if let Some(options) = payload.get("configOptions") {
                         cache_config_options(&state.store, frame_id, &runtime.fingerprint, options)
@@ -1982,7 +2008,23 @@ pub(crate) async fn set_acp_session_mode(
         .set_mode(runtime.session_id.clone(), mode_id.clone())
         .await
         .map_err(|error| error.to_string())?;
+    merge_native_mode(
+        &mut *runtime.modes.lock().await,
+        &serde_json::json!({"currentModeId": mode_id}),
+    );
     Ok(mode_id)
+}
+
+fn merge_native_mode(modes: &mut Option<serde_json::Value>, payload: &serde_json::Value) {
+    if let Some(current) = payload
+        .get("currentModeId")
+        .and_then(serde_json::Value::as_str)
+    {
+        let value = modes.get_or_insert_with(|| serde_json::json!({}));
+        if let Some(object) = value.as_object_mut() {
+            object.insert("currentModeId".into(), current.into());
+        }
+    }
 }
 
 pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
@@ -2057,6 +2099,21 @@ async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_mode_updates_retain_choices_and_ignore_malformed_notifications() {
+        let mut modes = Some(
+            serde_json::json!({"currentModeId":"read","availableModes":[{"id":"agent","name":"Agent"}]}),
+        );
+        super::merge_native_mode(&mut modes, &serde_json::json!({"currentModeId":"agent"}));
+        assert_eq!(modes.as_ref().unwrap()["currentModeId"], "agent");
+        assert_eq!(modes.as_ref().unwrap()["availableModes"][0]["id"], "agent");
+        let previous = modes.clone();
+        super::merge_native_mode(&mut modes, &serde_json::json!({"currentModeId":17}));
+        assert_eq!(modes, previous);
+        let mut empty = None;
+        super::merge_native_mode(&mut empty, &serde_json::json!({"currentModeId":"agent"}));
+        assert_eq!(empty.unwrap()["currentModeId"], "agent");
+    }
     use super::*;
 
     #[test]

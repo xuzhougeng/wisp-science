@@ -4,7 +4,7 @@
 Configure a QA-only ACP profile with Python plus this script and
 --workspace /absolute/isolated/workspace --log /absolute/qa-events.jsonl.
 Messages containing 'permission' request a harmless choice; 'wait' waits for
-Stop; other messages stream a fixed synthetic answer. It never executes tools,
+Stop; plan mode emits a synthetic plan; other messages stream a fixed answer. It never executes tools,
 contacts a provider, or reads research data. The event log omits prompt content.
 """
 import argparse
@@ -24,6 +24,16 @@ def main():
     pending_prompt = None
     permission_id = None
     session = None
+    mode = "brief"
+    config_options = [{"id": "detail", "name": "Response detail", "type": "select", "currentValue": "short",
+                       "options": [{"group": "basic", "name": "Basic", "options": [{"value": "short", "name": "Short"}]},
+                                   {"group": "advanced", "name": "Advanced", "options": [{"value": "long", "name": "Long"}]}]}]
+
+    def session_state():
+        return {"modes": {"currentModeId": mode, "availableModes": [
+            {"id": "brief", "name": "Brief QA response"}, {"id": "detailed", "name": "Detailed QA response"},
+            {"id": "plan", "name": "Plan QA response"}]},
+            "configOptions": config_options}
 
     def send(value):
         print(json.dumps({"jsonrpc": "2.0", **value}), flush=True)
@@ -66,7 +76,21 @@ def main():
                 continue
             session = params.get("sessionId") or "qa-" + str(uuid.uuid4())
             record(method)
-            result(identifier, {"sessionId": session} if method == "session/new" else {})
+            result(identifier, {**session_state(), **({"sessionId": session} if method == "session/new" else {})})
+        elif method in ("session/set_mode", "session/set_config_option"):
+            if params.get("sessionId") != session:
+                send({"id": identifier, "error": {"code": -32602, "message": "Unknown QA session"}})
+                continue
+            if method == "session/set_mode" and params.get("modeId") in ("brief", "detailed", "plan"):
+                mode = params["modeId"]
+                record(method)
+                result(identifier, {})
+            elif method == "session/set_config_option" and params.get("configId") == "detail" and params.get("value") in ("short", "long"):
+                config_options[0]["currentValue"] = params["value"]
+                record(method)
+                result(identifier, {"configOptions": config_options})
+            else:
+                send({"id": identifier, "error": {"code": -32602, "message": "Unknown QA option"}})
         elif method == "session/prompt":
             if params.get("sessionId") != session:
                 send({"id": identifier, "error": {"code": -32602, "message": "Unknown QA session"}})
@@ -75,6 +99,13 @@ def main():
             pending_prompt = identifier
             text = " ".join(part.get("text", "") for part in params.get("prompt", []) if part.get("type") == "text").lower()
             chunk("Synthetic ACP response from the isolated QA peer.")
+            if mode == "plan":
+                record("plan_proposal")
+                send({"method": "session/update", "params": {"sessionId": session,
+                    "update": {"sessionUpdate": "plan", "entries": [
+                        {"content": "Inspect **synthetic samples**\n\n```python\nprint('fixture only')\n```", "status": "completed", "priority": "medium"},
+                        {"content": "Review the synthetic result. No command is executed.", "status": "pending", "priority": "high"}
+                    ]}}})
             if "permission" in text:
                 permission_id = "qa-permission-" + str(uuid.uuid4())
                 send({"id": permission_id, "method": "session/request_permission", "params": {

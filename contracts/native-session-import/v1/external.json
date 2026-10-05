@@ -1,0 +1,7 @@
+{
+  "sources": {"schema":"wisp.native-session-import.v1","project_id":"research-1","sources":[{"id":"local","label":"Local","kind":"local"},{"id":"wsl:Ubuntu","label":"Ubuntu","kind":"wsl"},{"id":"ssh:analysis","label":"Analysis","kind":"ssh"}]},
+  "list": {"schema":"wisp.native-session-import.v1","project_id":"research-1","provider":"codex","context_id":"wsl:Ubuntu","items":[{"path":"/home/me/.codex/sessions/rollout-source-1.jsonl","session_id":"source-1","title":"Compare sample counts","cwd":"/work/samples","message_count":2,"last_active_at":1791158400,"state":"new"}]},
+  "preview": {"schema":"wisp.native-session-import.v1","project_id":"research-1","provider":"codex","context_id":"wsl:Ubuntu","path":"/home/me/.codex/sessions/rollout-source-1.jsonl","source_session_id":"source-1","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","message_count":2,"messages":[{"role":"user","text":"Compare sample counts"},{"role":"assistant","text":"Counts ready"}],"existing_session_id":null},
+  "args": {"provider":"codex","context_id":"wsl:Ubuntu","path":"/home/me/.codex/sessions/rollout-source-1.jsonl","source_session_id":"source-1","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "result": {"schema":"wisp.native-session-import.v1","project_id":"research-1","provider":"codex","context_id":"wsl:Ubuntu","path":"/home/me/.codex/sessions/rollout-source-1.jsonl","source_session_id":"source-1","frame_id":"imported-1","status":"imported","message_count":2}
+}

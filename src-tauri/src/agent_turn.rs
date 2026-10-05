@@ -232,10 +232,10 @@ fn parse_manual_compact_command(message: &str) -> Option<ManualCompactCommand> {
     })
 }
 
-struct ReplacementReservation(Arc<SessionRuntime>);
+pub(crate) struct ReplacementReservation(Arc<SessionRuntime>);
 
 impl ReplacementReservation {
-    fn new(rt: Arc<SessionRuntime>) -> Self {
+    pub(crate) fn new(rt: Arc<SessionRuntime>) -> Self {
         rt.replacing.fetch_add(1, Ordering::SeqCst);
         Self(rt)
     }
@@ -1826,8 +1826,14 @@ pub(crate) fn spawn_queue_driver(
     tauri::async_runtime::spawn(async move {
         loop {
             let guard = queued_workflow_guard(&rt).await;
-            let Some(item) = take_next_queued_turn(&rt) else {
-                break;
+            let item = match try_take_next_queued_turn(&rt) {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(()) => {
+                    drop(guard);
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                    continue;
+                }
             };
             emit_queued_turn_state(&app, &session_id, item.id, "started");
             let state = app.state::<AppState>();
@@ -1851,12 +1857,18 @@ pub(crate) fn spawn_queue_driver(
             {
                 emit_queued_turn_state(&app, &session_id, item.id, "failed");
                 tracing::warn!("queued turn failed: {error}");
+            } else {
+                emit_queued_turn_state(&app, &session_id, item.id, "completed");
             }
         }
     });
 }
 
-fn emit_queued_turn_state(app: &AppHandle, session_id: &str, id: u64, state: &str) {
+pub(crate) fn emit_queued_turn_state(app: &AppHandle, session_id: &str, id: u64, state: &str) {
+    if let Some(conversations) = app.try_state::<Arc<crate::native_conversations::Conversations>>()
+    {
+        conversations.queue_events.record(session_id, id, state);
+    }
     emit_to_session_surfaces(
         app,
         session_id,
@@ -1965,6 +1977,7 @@ pub(crate) fn swap_queued_toward(q: &mut Vec<QueuedItem>, id: u64, up: bool) {
 /// Park exactly one user-authored follow-up. A second distinct draft is refused.
 /// Repeating the same id does not add another item. The queue driver drains
 /// this with `take_next_queued_turn` and stops when that returns nothing.
+#[cfg(test)]
 pub(crate) fn queue_one_follow_up(
     turn_running: bool,
     rt: &SessionRuntime,
@@ -1972,6 +1985,33 @@ pub(crate) fn queue_one_follow_up(
     message: &str,
     attachments: &[String],
 ) -> Result<String, String> {
+    queue_follow_up_with_references(turn_running, rt, id, message, attachments, &[])
+}
+
+#[cfg(test)]
+pub(crate) fn queue_follow_up_with_references(
+    turn_running: bool,
+    rt: &SessionRuntime,
+    id: u64,
+    message: &str,
+    attachments: &[String],
+    references: &[ComposerReferenceArg],
+) -> Result<String, String> {
+    queue_follow_up_with_limit(turn_running, rt, id, message, attachments, references, 1)
+}
+
+pub(crate) fn queue_follow_up_with_limit(
+    turn_running: bool,
+    rt: &SessionRuntime,
+    id: u64,
+    message: &str,
+    attachments: &[String],
+    references: &[ComposerReferenceArg],
+    limit: usize,
+) -> Result<String, String> {
+    if references.len() > 64 {
+        return Err("Too many composer references".into());
+    }
     if !turn_running {
         return Err("Queue a follow-up only while a turn is running".into());
     }
@@ -1986,21 +2026,33 @@ pub(crate) fn queue_one_follow_up(
     }
     let mut queued = rt.queued.lock().unwrap();
     if let Some(existing) = queued.iter().find(|item| item.id == id) {
+        if existing.message != text
+            || existing.attachments != paths
+            || existing.references != references
+        {
+            return Err("Queued request ID was already used for another message".into());
+        }
         return Ok(existing.message.clone());
     }
-    if !queued.is_empty() {
-        return Err("Only one follow-up can wait".into());
-    }
     let cutins = rt.queued_cutins.lock().unwrap();
-    if !cutins.is_empty() {
-        return Err("Only one follow-up can wait".into());
+    if let Some((_, existing)) = cutins.iter().find(|(_, item)| item.id == id) {
+        if existing.message == text
+            && existing.attachments == paths
+            && existing.references == references
+        {
+            return Ok(existing.message.clone());
+        }
+        return Err("Queued request ID was already used for another message".into());
+    }
+    if queued.len() + cutins.len() >= limit {
+        return Err(format!("At most {limit} follow-ups can wait"));
     }
     drop(cutins);
     queued.push(QueuedItem {
         id,
         message: text.clone(),
         attachments: paths,
-        references: Vec::new(),
+        references: references.to_vec(),
     });
     Ok(text)
 }
@@ -2008,8 +2060,19 @@ pub(crate) fn queue_one_follow_up(
 /// Called only by the workflow-lock owner, before it starts any queued turn.
 /// Reconcile offered guidance here, not in a later mutex waiter: the FIFO
 /// driver may already be ahead of the cut-in command in the lock's wait list.
+#[cfg(test)]
 pub(crate) fn take_next_queued_turn(rt: &SessionRuntime) -> Option<QueuedItem> {
+    try_take_next_queued_turn(rt).expect("no replacement reservation while draining")
+}
+
+fn try_take_next_queued_turn(rt: &SessionRuntime) -> Result<Option<QueuedItem>, ()> {
     let mut queued = rt.queued.lock().unwrap();
+    // A replacement can reserve priority after the driver acquired its workflow
+    // guard. Check again under the same lock used to reorder/remove the target:
+    // it must never start between validation and cancelling the previous turn.
+    if rt.replacing.load(Ordering::SeqCst) != 0 {
+        return Err(());
+    }
     let mut cutins = rt.queued_cutins.lock().unwrap();
     let mut pending = rt.pending_guidance.lock().unwrap();
     let mut unconsumed = Vec::new();
@@ -2022,9 +2085,9 @@ pub(crate) fn take_next_queued_turn(rt: &SessionRuntime) -> Option<QueuedItem> {
     queued.splice(0..0, unconsumed);
     if queued.is_empty() {
         rt.draining.store(false, Ordering::SeqCst);
-        None
+        Ok(None)
     } else {
-        Some(queued.remove(0))
+        Ok(Some(queued.remove(0)))
     }
 }
 
@@ -2240,6 +2303,19 @@ mod queue_tests {
     }
 
     #[test]
+    fn native_queued_references_survive_drain_and_reject_changed_request_ids() {
+        let rt = SessionRuntime::new();
+        let references = vec![ComposerReferenceArg::Skill {
+            name: "RNA-seq".into(),
+        }];
+        queue_follow_up_with_references(true, &rt, 42, "inspect", &[], &references).unwrap();
+        assert!(queue_follow_up_with_references(true, &rt, 42, "inspect", &[], &[]).is_err());
+        let next = take_next_queued_turn(&rt).unwrap();
+        assert_eq!(next.references, references);
+        assert_eq!(next.message, "inspect");
+    }
+
+    #[test]
     fn replacement_only_supersedes_identical_payloads_including_cutins() {
         let rt = SessionRuntime::new();
         let item = QueuedItem {
@@ -2294,6 +2370,23 @@ mod queue_tests {
         assert_eq!(rt.replacing.load(Ordering::SeqCst), 1);
         drop(second);
         assert_eq!(rt.replacing.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn replacement_after_workflow_acquisition_still_blocks_queue_removal() {
+        let rt = Arc::new(SessionRuntime::new());
+        queue_follow_up_with_limit(true, &rt, 41, "queued", &[], &[], 64).unwrap();
+        rt.draining.store(true, Ordering::SeqCst);
+        let guard = queued_workflow_guard(&rt).await;
+        let reservation = ReplacementReservation::new(rt.clone());
+        assert!(try_take_next_queued_turn(&rt).is_err());
+        assert_eq!(rt.queued.lock().unwrap()[0].id, 41);
+        assert!(rt.draining.load(Ordering::SeqCst));
+        drop(reservation);
+        assert_eq!(try_take_next_queued_turn(&rt).unwrap().unwrap().id, 41);
+        assert!(try_take_next_queued_turn(&rt).unwrap().is_none());
+        assert!(!rt.draining.load(Ordering::SeqCst));
+        drop(guard);
     }
 
     #[tokio::test]

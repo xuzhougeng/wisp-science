@@ -84,6 +84,7 @@ pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
         conversations: Arc::new(crate::native_conversations::Conversations::default()),
         contexts: Default::default(),
     };
+    app.manage(broker.conversations.clone());
     let router = Router::new()
         .route("/invoke", post(invoke))
         .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
@@ -114,6 +115,10 @@ pub(crate) fn capabilities() -> Value {
         "publication": wisp_dto::native_publication::COMMANDS,
         "publication_schema": wisp_dto::native_publication::SCHEMA,
         "privacy": ["get_privacy_mode"],
+        "search": wisp_dto::native_search::COMMANDS,
+        "search_schema": wisp_dto::native_search::SCHEMA,
+        "session_import": wisp_dto::native_session_import::COMMANDS,
+        "session_import_schema": wisp_dto::native_session_import::SCHEMA,
     })
 }
 
@@ -184,12 +189,28 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_calendar::execute(&state.store, request).await;
     }
+    if wisp_dto::native_search::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        return crate::native_search::execute(&state.store, request).await;
+    }
+    if wisp_dto::native_session_import::COMMANDS.contains(&request.command.as_str()) {
+        let state = broker.app.state::<crate::AppState>();
+        if request.command.starts_with("native_external_session_") {
+            return crate::codex_import::execute_native(&state, request).await;
+        }
+        return crate::session_import::execute_native(&state, request).await;
+    }
     if wisp_dto::native_journey::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_journey::execute(&state.store, request).await;
     }
     if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        let _activity = request
+            .project_id
+            .as_deref()
+            .map(|project| state.begin_project_activity(project))
+            .transpose()?;
         return crate::native_publication::execute(&state.store, request).await;
     }
     if wisp_dto::native_conversations::COMMANDS.contains(&request.command.as_str()) {
@@ -445,6 +466,16 @@ mod tests {
             wisp_dto::native_publication::SCHEMA
         );
         assert_eq!(advertised["privacy"][0], "get_privacy_mode");
+        assert_eq!(advertised["search"][0], "native_workspace_search");
+        assert_eq!(advertised["search_schema"], wisp_dto::native_search::SCHEMA);
+        assert_eq!(
+            advertised["session_import"][0],
+            "native_session_archive_preview"
+        );
+        assert_eq!(
+            advertised["session_import_schema"],
+            wisp_dto::native_session_import::SCHEMA
+        );
         assert!(advertised["conversations"]
             .as_array()
             .unwrap()
@@ -464,6 +495,7 @@ mod tests {
                     && command != "native_library_search"
                     && command != "native_library_delete"
                     && command != "native_research_calendar"
+                    && command != "native_workspace_search"
                     && command != "native_research_journey"
                     && command != "native_publication_workspace"
                     && command != "native_publication_create"

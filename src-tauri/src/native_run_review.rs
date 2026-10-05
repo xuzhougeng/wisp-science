@@ -52,6 +52,7 @@ pub(crate) async fn dispatch(
         return Err("Results review requires a finished SSH-direct Run".into());
     }
     let mut reply = RunReviewReply {
+        should_prompt: None,
         run_id: args.run_id.clone(),
         read_only: !writable,
         cleaned: run.cleaned_at.is_some(),
@@ -65,6 +66,24 @@ pub(crate) async fn dispatch(
         None
     };
     match args.operation {
+        Operation::CheckPrompt => {
+            reply.should_prompt = Some(
+                state
+                    .run_manager
+                    .should_prompt_run_review(&state.store, &args.run_id)
+                    .await?,
+            );
+        }
+        Operation::Dismiss => {
+            if !state
+                .store
+                .mark_run_review_dismissed(&args.run_id)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                return Err("Run review dismissal was not confirmed".into());
+            }
+        }
         Operation::List {
             path,
             name_filter,

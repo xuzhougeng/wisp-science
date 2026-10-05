@@ -1,0 +1,7 @@
+{
+  "command": "native_session_archive_import",
+  "project_id": "research-1",
+  "args": {"archive_path":"C:\\exports\\session.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_session_id":"source-1"},
+  "preview": {"schema":"wisp.native-session-import.v1","project_id":"research-1","archive_path":"C:\\exports\\session.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_session_id":"source-1","title":"Compare samples","message_count":2,"artifacts":["results/counts.csv"],"messages":[{"role":"user","text":"Compare samples"},{"role":"assistant","text":"Counts are ready."}],"existing_session_id":null,"state":"new"},
+  "result": {"schema":"wisp.native-session-import.v1","project_id":"research-1","source_session_id":"source-1","frame_id":"imported-1","status":"imported","message_count":2,"artifact_count":1,"missing_artifacts":[]}
+}

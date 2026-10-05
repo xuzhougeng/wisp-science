@@ -31,6 +31,13 @@ internal static class NativePublicationContractTests
         catch (IOException) { }
         if (fake.Calls != before + 1) throw new InvalidOperationException("Publication create was retried");
         fake.Fail = false;
+        var rich = JsonNode.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(fixturePath)!, "workspace-evidence.json")))!;
+        fake.Reply = rich["result"]!.DeepClone();
+        var evidence = await client.SelectAsync("research-1", "pub-1", "rev-1");
+        if (evidence.Bindings?.Single().SourceId != "artifact-version-17" || evidence.Reviews?.Single()["result"]?.GetValue<string>() != "pass"
+            || evidence.Waivers?.Single()["reason"]?.GetValue<string>() != "Retained limitation" || evidence.EffectiveCapabilityLevel != "archived")
+            throw new InvalidDataException("Expanded shared evidence fixture lost review, waiver or exact version");
+        fake.Reply = fixture["result"]!.DeepClone();
         using var model = new WorkspacePublicationModel(client, "research-1") { Title = "Paper", RevisionLabel = "v1" };
         before = fake.Calls;
         if (model.CanCreate || await model.CreateAsync() || fake.Calls != before)
@@ -39,23 +46,29 @@ internal static class NativePublicationContractTests
         if (model.CreationAvailable || await model.CreateAsync())
             throw new InvalidOperationException("Existing publication must replace the initial creation form");
         fake.Reply = JsonNode.Parse("{\"publications\":[],\"publication\":null,\"revision\":null,\"items\":[]}");
-        await model.LoadAsync();
-        if (!model.CanCreate) throw new InvalidOperationException("Empty workspace must enable a valid initial draft");
-        model.RevisionLabel = " "; before = fake.Calls;
-        if (model.CanCreate || await model.CreateAsync() || fake.Calls != before || model.Title != "Paper")
+        try { await client.SelectAsync("research-1", "pub-1", null); throw new Exception("Missing selected paper accepted"); }
+        catch (InvalidDataException) { }
+        if (await model.LoadAsync() || model.Workspace?.Publication?.Id != "pub-1")
+            throw new InvalidOperationException("Missing explicitly selected revision must not erase the current workspace");
+        using var initial = new WorkspacePublicationModel(client, "research-1") { Title = "Paper", RevisionLabel = "v1" };
+        await initial.LoadAsync();
+        if (!initial.CanCreate) throw new InvalidOperationException("Empty workspace must enable a valid initial draft");
+        initial.RevisionLabel = " "; before = fake.Calls;
+        if (initial.CanCreate || await initial.CreateAsync() || fake.Calls != before || initial.Title != "Paper")
             throw new InvalidOperationException("Invalid initial draft must remain intact without invoking the host");
-        model.RevisionLabel = "v1";
+        initial.RevisionLabel = "v1";
         fake.Pending = new();
-        var pending = model.CreateAsync(); before = fake.Calls;
-        if (await model.CreateAsync() || fake.Calls != before || model.CanCreate)
+        var pending = initial.CreateAsync(); before = fake.Calls;
+        if (await initial.CreateAsync() || fake.Calls != before || initial.CanCreate)
             throw new InvalidOperationException("Pending publication write must exclude duplicate creation");
         fake.Pending.SetResult(fixture["result"]!.DeepClone()); await pending; fake.Pending = null;
-        if (model.Title != "" || model.CreationAvailable || model.Workspace?.Publication?.Id != "pub-1")
+        if (initial.Title != "" || initial.CreationAvailable || initial.Workspace?.Publication?.Id != "pub-1")
             throw new InvalidOperationException("Confirmed creation must replace draft with returned publication");
-        fake.Pending = new(); var late = model.LoadAsync(); model.Dispose();
+        fake.Pending = new(); var late = initial.LoadAsync(); initial.Dispose();
         fake.Pending.SetResult(new JsonObject { ["publications"] = new JsonArray(), ["items"] = new JsonArray() }); await late;
-        if (model.Workspace?.Publication?.Id != "pub-1")
+        if (initial.Workspace?.Publication?.Id != "pub-1")
             throw new InvalidOperationException("Late publication read must not repopulate a closed page");
+        await NativePublicationEditorTests.RunAsync();
         Console.WriteLine("Native publication fixture, explicit project id and no-retry tests passed.");
         Console.WriteLine("Publication initial-create lifecycle, duplicate exclusion and closed-view checks passed.");
     }

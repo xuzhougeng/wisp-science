@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -53,8 +54,12 @@ internal sealed partial class MainWindow : Window
     private Grid? workspaceShell;
     private Grid? workspacePanelHost;
     private bool workspacePanelOverlay;
+    private bool changingAppearance;
+    private int appearanceGeneration;
+    private readonly List<(BrowserSession Session, TextBlock Label)> sessionActivityLabels = [];
+    private readonly List<(BrowserSession Session, Button Button)> sessionActivityButtons = [];
 
-    public MainWindow()
+    public MainWindow(string? database = null, string? initialProject = null, string? initialSession = null)
     {
         Title = "Wisp Science · WinUI 3 Preview";
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1220, 860));
@@ -64,7 +69,7 @@ internal sealed partial class MainWindow : Window
         root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
         panelVisible = settings.PanelVisible;
         model = new(new ProjectBrowserClient(Environment.GetEnvironmentVariable("WISP_SERVICE_PATH")
-            ?? Path.Combine(AppContext.BaseDirectory, "wisp-service.exe")), settings.ResolveDatabase());
+            ?? Path.Combine(AppContext.BaseDirectory, "wisp-service.exe")), database ?? settings.ResolveDatabase());
         model.Changed += Render;
         root.ActualThemeChanged += (_, _) => Render();
         root.SizeChanged += (_, e) =>
@@ -74,35 +79,51 @@ internal sealed partial class MainWindow : Window
             if (next != layout) { layout = next; Render(); }
         };
         Shortcut(VirtualKey.K, VirtualKeyModifiers.Control, OpenSearch);
+        Shortcut(VirtualKey.P, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => OpenSearch(true));
         Shortcut(VirtualKey.R, VirtualKeyModifiers.Control, () => _ = model.RefreshAsync());
         Shortcut(VirtualKey.O, VirtualKeyModifiers.Control, ChooseDatabase);
         // Window-root accelerator also works immediately after opening a surface.
         // Native text menus handle Escape first; registered app flyouts precede the dialog.
         var escape = new KeyboardAccelerator { Key = VirtualKey.Escape };
-        escape.Invoked += (_, e) =>
-        {
-            if (nativePickerOpen) return;
-            if (overlays.LastOrDefault() is { } flyout) { flyout.Hide(); e.Handled = true; }
-            else if (searchOverlay != null) { CloseSearch(); e.Handled = true; }
-            else if (workspaceSheet != null) { workspaceSheet.HandleEscape(); e.Handled = true; }
-            else if (settingsPage != null) { settingsPage.HandleEscape(); e.Handled = true; }
-            else if (conversationPage?.HandleComposerOptionsEscape() == true) e.Handled = true;
-            else if (panelVisible && panelPage?.HandleEscape() == true) e.Handled = true;
-            else if (panelVisible && workspacePanelOverlay) { TogglePanel(); e.Handled = true; }
-            else if (sidebarDrawerVisible) { sidebarDrawerVisible = false; Render(); e.Handled = true; }
-            else if (projectPage != null) { projectPage.HandleEscape(); e.Handled = true; }
-            else if (terminalVisible && terminalPage?.HandleEscape() == true) e.Handled = true;
-            else if (conversationPage?.HandleEscape() == true) e.Handled = true;
-        };
+        escape.Invoked += (_, e) => e.Handled = HandleWindowEscape();
         root.KeyboardAccelerators.Add(escape);
         Closed += (_, _) =>
         {
             windowClosed = true; model.Changed -= Render; model.Dispose();
             DisposeWorkspace(); conversationPage?.Dispose(); conversation?.Pause();
-            settingsPage?.Dispose(); workspaceHost?.Dispose();
+            settingsPage?.Dispose(); searchOverlay?.Dispose(); workspaceHost?.Dispose();
         };
-        root.Loaded += async (_, _) => await model.RefreshAsync();
+        root.Loaded += async (_, _) =>
+        {
+            var revision = model.NavigationRevision;
+            await model.RefreshAsync();
+            if (!windowClosed && revision == model.NavigationRevision && initialProject != null)
+                await model.OpenProjectAsync(initialProject, initialSession);
+            await ConnectHostAsync();
+        };
         Render();
+    }
+
+    // WebView2 owns keyboard focus inside local PDF previews. Forward its Escape
+    // into the same stack as the window accelerator, preserving topmost order.
+    private bool HandleWindowEscape()
+    {
+        if (nativePickerOpen || windowClosed) return false;
+        if (overlays.LastOrDefault() is { } flyout) { flyout.Hide(); return true; }
+        if (searchOverlay != null) { CloseSearch(); return true; }
+        if (workspaceSheet != null) { workspaceSheet.HandleEscape(); return true; }
+        if (settingsPage != null) { settingsPage.HandleEscape(); return true; }
+        if (conversationPage?.HandleQueueEscape() == true) return true;
+        if (conversationPage?.HandleHistoryEscape() == true) return true;
+        if (conversationPage?.HandleReadingEscape() == true) return true;
+        if (conversationPage?.HandleAcpEscape() == true) return true;
+        if (conversationPage?.HandleComposerOptionsEscape() == true) return true;
+        if (panelVisible && panelPage?.HandleEscape() == true) return true;
+        if (panelVisible && workspacePanelOverlay) { TogglePanel(); return true; }
+        if (sidebarDrawerVisible) { sidebarDrawerVisible = false; Render(); return true; }
+        if (projectPage != null) { projectPage.HandleEscape(); return true; }
+        if (terminalVisible && terminalPage?.HandleEscape() == true) return true;
+        return conversationPage?.HandleEscape() == true;
     }
 
     private void Shortcut(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
@@ -140,6 +161,7 @@ internal sealed partial class MainWindow : Window
     private void RenderCore()
     {
         if (settingsPage != null) return;
+        sessionActivityLabels.Clear(); sessionActivityButtons.Clear();
         SyncWorkspaceSession();
         var offset = transcriptScroll?.VerticalOffset ?? 0;
         var height = transcriptScroll?.ExtentHeight ?? 0;
@@ -217,7 +239,7 @@ internal sealed partial class MainWindow : Window
         quickActions.Children.Add(ActionButton("研究日历", "calendar", () => _ = OpenNativeAction("calendar")));
         quickActions.Children.Add(ActionButton("收藏", "star", () => _ = OpenNativeAction("library")));
         quickActions.Children.Add(ActionButton("教程（在浏览器打开）", "book", OpenTutorials));
-        quickActions.Children.Add(ActionButton("搜索项目和最近会话", "search", OpenSearch));
+        quickActions.Children.Add(ActionButton("搜索项目、产物与消息", "search", OpenSearch));
         quickActions.Children.Add(ActionButton("设置", "gear", OpenSettings));
         var projectActions = Row(6); projectActions.HorizontalAlignment = HorizontalAlignment.Right;
         projectActions.Children.Add(ActionButton("导入项目", "upload", () => _ = OpenNativeAction("import"), showLabel: true));
@@ -513,6 +535,12 @@ internal sealed partial class MainWindow : Window
         var projectSettings = new MenuFlyoutItem { Text = "项目设置" };
         projectSettings.Click += (_, _) => OpenSettingsSection("project", project.Id);
         menu.Items.Add(projectSettings);
+        var importSession = new MenuFlyoutItem { Text = "导入会话归档…" };
+        importSession.Click += (_, _) => _ = OpenNativeAction("import-session");
+        menu.Items.Add(importSession);
+        var importExternal = new MenuFlyoutItem { Text = "导入 Codex / Claude 会话…" };
+        importExternal.Click += (_, _) => _ = OpenNativeAction("import-cli");
+        menu.Items.Add(importExternal);
         menu.Items.Add(new MenuFlyoutSeparator());
         foreach (var item in model.Projects)
         {
@@ -525,6 +553,8 @@ internal sealed partial class MainWindow : Window
         top.Children.Add(heading);
         top.Children.Add(ActionButton("新建会话", "plus", () => _ = CreateSessionAsync(), showLabel: true, primary: true, quiet: true));
         top.Children.Add(ActionButton("搜索", "search", OpenSearch, true, quiet: true));
+        var palette = ActionButton("命令面板", "wrench", () => OpenSearch(true), true, quiet: true);
+        ToolTipService.SetToolTip(palette, "命令面板 · Ctrl+Shift+P"); top.Children.Add(palette);
         top.Children.Add(ActionButton("文件", "doc", model.ActiveSessionId == null ? null : ShowFiles, true, quiet: true));
         var research = ActionButton("研究工具", "research-trail", () => { }, true, quiet: true);
         var researchMenu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
@@ -555,18 +585,13 @@ internal sealed partial class MainWindow : Window
         var refresh = ActionButton("刷新", "refresh", () => { localError = null; _ = model.RefreshAsync(); }, quiet: true); refresh.IsEnabled = !model.Loading;
         actions.Children.Add(refresh);
         actions.Children.Add(ActionButton("选择数据库", "database", ChooseDatabase, !workspace, quiet: true));
-        var appearance = ActionButton("外观", null, () => { }, quiet: true);
+        var appearance = ActionButton(changingAppearance ? "正在保存外观…" : "外观", null, () => { }, quiet: true);
+        appearance.IsEnabled = !changingAppearance;
         var menu = new MenuFlyout();
         foreach (var (label, value) in new[] { ("跟随系统", "system"), ("浅色", "light"), ("深色", "dark") })
         {
             var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = settings.Appearance == value };
-            item.Click += (_, _) =>
-            {
-                settings.Appearance = value;
-                SaveSettings();
-                root.RequestedTheme = value switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
-                Render();
-            };
+            item.Click += async (_, _) => await ChangeAppearanceAsync(value);
             menu.Items.Add(item);
         }
         Register(menu); appearance.Flyout = menu; actions.Children.Add(appearance);
@@ -574,12 +599,23 @@ internal sealed partial class MainWindow : Window
         footer.Children.Add(actions); return footer;
     }
 
-    private void OpenSearch()
+    private void OpenSearch() => OpenSearch(false);
+    private void OpenSearch(bool commandsOnly)
     {
         if (searchOverlay != null || nativePickerOpen || settingsPage != null || workspaceSheet != null) return;
         searchPreviousFocus = FocusManager.GetFocusedElement(root.XamlRoot) as Control;
-        searchOverlay = new ProjectSearchOverlay(model, design, CloseSearch,
-            result => _ = model.OpenProjectAsync(result.ProjectId, result.SessionId), Register);
+        var database = model.DatabasePath;
+        var project = model.ActiveProjectId;
+        var session = model.ActiveSessionId;
+        var search = new WorkspaceSearchModel(async () =>
+        {
+            var host = await ConnectHostAsync();
+            return host == null || windowClosed || database != model.DatabasePath ? null : new NativeSearchClient(host);
+        }, project);
+        searchOverlay = new ProjectSearchOverlay(search, design, CloseSearch,
+            (result, attach, newWindow) => _ = OpenSearchResultAsync(result, attach, newWindow, database, project, session),
+            conversation?.CanAttach == true && conversation.Snapshot?.ComposerReferences == true, Register,
+            RunPaletteCommand, project != null, session != null, commandsOnly);
         if (pageContent != null) { pageContent.IsHitTestVisible = false; pageContent.Visibility = Visibility.Visible; }
         root.Children.Add(searchOverlay);
     }
@@ -587,14 +623,14 @@ internal sealed partial class MainWindow : Window
     private void CloseSearch()
     {
         if (searchOverlay == null) return;
-        root.Children.Remove(searchOverlay); searchOverlay = null;
+        searchOverlay.Dispose(); root.Children.Remove(searchOverlay); searchOverlay = null;
         if (pageContent != null) pageContent.IsHitTestVisible = true;
         searchPreviousFocus?.Focus(FocusState.Programmatic);
     }
 
     private async void ChooseDatabase()
     {
-        if (nativePickerOpen || searchOverlay != null || settingsPage != null || workspaceSheet != null) return;
+        if (changingAppearance || nativePickerOpen || searchOverlay != null || settingsPage != null || workspaceSheet != null) return;
         nativePickerOpen = true;
         try
         {
@@ -603,6 +639,7 @@ internal sealed partial class MainWindow : Window
             picker.FileTypeFilter.Add(".sqlite"); picker.FileTypeFilter.Add(".db"); picker.FileTypeFilter.Add("*");
             if (await picker.PickSingleFileAsync() is { } file)
             {
+                appearanceGeneration++;
                 settings.DatabasePath = file.Path; SaveSettings(); localError = null;
                 DisposeWorkspace(); conversation = null;
                 workspaceHost?.Dispose(); workspaceHost = null;
@@ -648,8 +685,13 @@ internal sealed partial class MainWindow : Window
         var host = await ConnectHostAsync();
         if (host == null || windowClosed || navigation != conversationNavigation || selectedProject != model.ActiveProjectId || selectedSession != model.ActiveSessionId) return;
         conversation ??= new WorkspaceConversationModel(new NativeConversationClient(host), host);
+        conversation.SnapshotAccepted -= UpdateSessionActivity;
+        conversation.SnapshotAccepted += UpdateSessionActivity;
+        conversation.ApplyInputPreferences(settings.InputPreferences ?? new());
         conversationPage ??= new NativeConversationPage(conversation, design, QuoteSelection, CreateSessionAsync, () => PickFile("*"),
-            RouteSlashCommand, () => ShowPanelTab("hosts"), id => _ = OpenRunAsync(id));
+            RouteSlashCommand, () => ShowPanelTab("hosts"), id => _ = OpenRunAsync(id), CreateAcpSessionAsync, OpenHistoryBranchAsync, id => OpenRunAsync(id, true),
+            () => !windowClosed && !nativePickerOpen && overlays.Count == 0 && searchOverlay == null && workspaceSheet == null
+                && settingsPage == null && !panelVisible && !sidebarDrawerVisible);
         if (model.ActiveProjectId is { } project && model.ActiveSessionId is { } session)
         {
             sideChat = new WorkspaceSideChatModel(new NativeSideChatClient(host), project, session);
@@ -669,14 +711,25 @@ internal sealed partial class MainWindow : Window
         else panelPage.Refresh();
     }
 
-    private async Task CreateSessionAsync()
+    private Task CreateSessionAsync() => CreateSessionWithAgentAsync(null);
+    private async Task OpenHistoryBranchAsync(string project, string source, string branch)
+    {
+        if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != source) return;
+        await model.RefreshAsync();
+        if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != source) return;
+        await model.OpenProjectAsync(project, branch);
+    }
+    private Task CreateAcpSessionAsync(string agentId) => CreateSessionWithAgentAsync(agentId);
+    private async Task CreateSessionWithAgentAsync(string? agentId)
     {
         if (model.ActiveProjectId is not { } project) return;
         var host = await ConnectHostAsync();
         if (host == null) return;
         conversation ??= new WorkspaceConversationModel(new NativeConversationClient(host), host);
-        var id = await conversation.CreateAsync(project);
+        if (windowClosed || model.ActiveProjectId != project) return;
+        var id = await conversation.CreateAsync(project, agentId: agentId);
         if (id is null) { conversationPage?.Refresh(); return; }
+        if (windowClosed || model.ActiveProjectId != project) return;
         await model.RefreshAsync();
         await model.OpenProjectAsync(project, id);
     }
@@ -698,7 +751,20 @@ internal sealed partial class MainWindow : Window
                 () => conversation?.VisibleItems ?? [],
                 design, TogglePanel, sideChat, context => _ = OpenTerminalContextAsync(context),
                 (selected, saved) => { runNavigation++; settings.PanelTab = selected; settings.PanelTabs = saved; SaveSettings(); },
-                new WorkspaceRunReviewModel(new NativeRunReviewClient(host), project, session));
+                new WorkspaceRunReviewModel(new NativeRunReviewClient(host), project, session), () => settings.InputPreferences ?? new(),
+                (path, selection) =>
+                {
+                    if (windowClosed || !panelVisible || model.ActiveProjectId != project || model.ActiveSessionId != session
+                        || conversation?.AddDocumentQuote(project, session, path, selection) != true) return false;
+                    if (selection.Jump)
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != session) return;
+                            if (panelVisible) TogglePanel();
+                            conversationPage?.FocusComposer();
+                        });
+                    return true;
+                }, HandleWindowEscape);
         }
         if (terminalVisible && terminalPage == null)
         {
@@ -714,6 +780,7 @@ internal sealed partial class MainWindow : Window
     {
         runNavigation++;
         panelVisible = !panelVisible;
+        if (!panelVisible) panelPage?.CloseRunReview();
         settings.PanelVisible = panelVisible; SaveSettings();
         if (panelVisible && panelPage == null) _ = EnsurePanelAndTerminalAsync();
         else Render();
@@ -750,7 +817,17 @@ internal sealed partial class MainWindow : Window
         if (host == null) { loading.Failed(localError ?? "连接失败，请重试。"); return; }
         IWorkspaceSheet page = kind switch
         {
-            "outline" => new NativeOutlinePage(new WorkspaceOutlineModel(new NativeConversationClient(host), project!, session!), design, CloseSheet),
+            "outline" => new NativeOutlinePage(new WorkspaceOutlineModel(new NativeConversationClient(host), project!, session!), design, async (entry, token) =>
+            {
+                if (windowClosed || model.ActiveProjectId != project || model.ActiveSessionId != session || token.IsCancellationRequested
+                    || conversation is not { } targetConversation)
+                    throw new OperationCanceledException();
+                if (!await targetConversation.OpenQuestionAsync(entry, token))
+                {
+                    token.ThrowIfCancellationRequested();
+                    throw new InvalidOperationException(targetConversation.OperationError ?? "问题位置已变化，请刷新大纲后重试。");
+                }
+            }, CloseSheet),
             "share" => new NativeSharePage(new WorkspaceShareModel(new NativeShareClient(host), project!, session!), design,
                 (name, html) => NativeWorkspaceFiles.SaveHtmlAsync(this, name, html), CloseSheet),
             "trajectory" => new NativeTrajectoryPage(new WorkspaceTrajectoryModel(new NativeConversationClient(host), project!, session!), design,
@@ -822,6 +899,7 @@ internal sealed partial class MainWindow : Window
             if (windowClosed || database != model.DatabasePath) { connected.Dispose(); return null; }
             workspaceHost = connected;
             localError = null;
+            await ReadAppearanceAsync(connected);
             return connected;
         }
         catch (Exception ex)
@@ -851,21 +929,12 @@ internal sealed partial class MainWindow : Window
 
     private void OpenSettingsSection(string initialSection, string? projectId = null)
     {
-        if (settingsPage != null) return;
+        if (settingsPage != null || changingAppearance) return;
+        appearanceGeneration++;
         runNavigation++;
         CloseSheet();
-        settingsPage = new NativeSettingsPage(model.DatabasePath, projectId ?? model.ActiveProjectId, prefs =>
-        {
-            if (windowClosed) return;
-            settings.Appearance = prefs["theme"]?.GetValue<string>() ?? "system";
-            settings.LightPalette = prefs["light_palette"]?.GetValue<string>() ?? "paper";
-            settings.DarkPalette = prefs["dark_palette"]?.GetValue<string>() ?? "charcoal";
-            settings.Typography = NativeTypography.From(prefs);
-            design.Typography = settings.Typography;
-            SaveSettings();
-            root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
-            Render();
-        }, CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"), design.Typography,
+        settingsPage = new NativeSettingsPage(model.DatabasePath, projectId ?? model.ActiveProjectId, ApplyAppearancePreferences,
+            CloseSettings, initialSection, model.Projects, folder => folder ? PickDirectory() : PickFile("*"), design.Typography,
             async () => await ConnectHostAsync() ?? throw new IOException(localError ?? "桌面服务不可用，请重新连接。"));
         if (pageContent != null) pageContent.Visibility = Visibility.Collapsed;
         root.Children.Add(settingsPage);
@@ -879,6 +948,64 @@ internal sealed partial class MainWindow : Window
         if (pageContent != null) pageContent.Visibility = Visibility.Visible;
         Render();
         _ = model.RefreshAsync();
+        if (workspaceHost != null) _ = ReadAppearanceAsync(workspaceHost);
+    }
+
+    private void ApplyAppearancePreferences(JsonObject prefs)
+    {
+        if (windowClosed) return;
+        settings.Appearance = prefs["theme"]?.GetValue<string>() ?? "system";
+        settings.LightPalette = prefs["light_palette"]?.GetValue<string>() ?? "paper";
+        settings.DarkPalette = prefs["dark_palette"]?.GetValue<string>() ?? "charcoal";
+        settings.Typography = NativeTypography.From(prefs);
+        settings.InputPreferences = NativeInputPreferences.From(prefs);
+        design.Typography = settings.Typography;
+        conversation?.ApplyInputPreferences(settings.InputPreferences);
+        SaveSettings();
+        root.RequestedTheme = settings.Appearance switch { "light" => ElementTheme.Light, "dark" => ElementTheme.Dark, _ => ElementTheme.Default };
+        Render();
+    }
+
+    private async Task ReadAppearanceAsync(NativeSettingsClient host)
+    {
+        var database = model.DatabasePath;
+        var request = ++appearanceGeneration;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            var editor = new AppearanceSettingsModel(host, null);
+            await editor.LoadAsync(deadline.Token);
+            if (!windowClosed && request == appearanceGeneration && host == workspaceHost && database == model.DatabasePath && settingsPage == null)
+                ApplyAppearancePreferences(editor.Draft!);
+        }
+        catch (Exception ex)
+        {
+            if (!windowClosed && request == appearanceGeneration && database == model.DatabasePath)
+            { localError = "未能读取外观设置：" + ex.Message; Render(); }
+        }
+    }
+
+    private async Task ChangeAppearanceAsync(string theme)
+    {
+        if (changingAppearance || settingsPage != null) return;
+        changingAppearance = true; appearanceGeneration++;
+        var database = model.DatabasePath;
+        Render();
+        try
+        {
+            var host = await ConnectHostAsync() ?? throw new IOException("桌面服务不可用，请重新连接。");
+            var request = ++appearanceGeneration;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var saved = await AppearanceSettingsModel.ChangeThemeAsync(host, theme, deadline.Token);
+            if (!windowClosed && request == appearanceGeneration && database == model.DatabasePath)
+            { localError = null; ApplyAppearancePreferences(saved); }
+        }
+        catch (Exception ex)
+        {
+            if (!windowClosed && database == model.DatabasePath)
+                localError = "外观保存结果尚未确认；不会自动重试。请打开设置核对。" + ex.Message;
+        }
+        finally { changingAppearance = false; if (!windowClosed) Render(); }
     }
 
     private void SaveSettings()
@@ -926,7 +1053,21 @@ internal sealed partial class MainWindow : Window
         var text = SingleLine(status + " · " + NativeBrowserPresentation.RelativeTime(session.Timestamp, DateTimeOffset.Now), 11,
             session.Status is "needs_you" or "running" ? "clay-strong" : "text-faint");
         ToolTipService.SetToolTip(text, status + " · " + NativeBrowserPresentation.ExactTime(session.Timestamp));
+        sessionActivityLabels.Add((session, text));
         return text;
+    }
+    private void UpdateSessionActivity(ConversationSnapshot snapshot)
+    {
+        if (windowClosed || !model.ApplySessionActivity(snapshot)) return;
+        var status = NativeBrowserPresentation.Status(snapshot.ActivityStatus);
+        foreach (var (session, label) in sessionActivityLabels.Where(row => row.Session.Id == snapshot.SessionId && row.Session.ProjectId == snapshot.ProjectId))
+        {
+            label.Text = status + " · " + NativeBrowserPresentation.RelativeTime(session.Timestamp, DateTimeOffset.Now);
+            label.Foreground = design.Brush(snapshot.ActivityStatus is "running" or "needs_you" ? "clay-strong" : "text-faint");
+            ToolTipService.SetToolTip(label, status + " · " + NativeBrowserPresentation.ExactTime(session.Timestamp));
+        }
+        foreach (var (session, button) in sessionActivityButtons.Where(row => row.Session.Id == snapshot.SessionId && row.Session.ProjectId == snapshot.ProjectId))
+            AutomationProperties.SetName(button, session.Title + " · " + status);
     }
     private FrameworkElement ListSection(string title, UIElement items)
     {

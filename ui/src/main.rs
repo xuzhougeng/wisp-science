@@ -237,7 +237,11 @@ pub(crate) fn window_capture_escape(mut close_topmost: impl FnMut() -> bool + 's
 fn topbar_more_visible() -> bool {
     web_sys::window()
         .and_then(|window| window.document())
-        .and_then(|doc| doc.query_selector("[data-testid='topbar-more']").ok().flatten())
+        .and_then(|doc| {
+            doc.query_selector("[data-testid='topbar-more']")
+                .ok()
+                .flatten()
+        })
         .is_some_and(|el| el.get_bounding_client_rect().width() > 0.0)
 }
 
@@ -1669,6 +1673,11 @@ fn App() -> impl IntoView {
             .unwrap_or_default();
         let kept = last.into_iter().flatten();
         kept.filter(|p| !hidden.contains(&p.id)).cloned().collect()
+    });
+    // Memos are lazy: retain completed reads even before Automation is opened.
+    // Otherwise its first mount during a refresh has no previous value to keep.
+    create_effect(move |_| {
+        let _ = automation_projects.get();
     });
     let privacy_mode_modal_open = create_rw_signal(false);
     // Top-nav project switcher dropdown + Project Settings modal.
@@ -3259,9 +3268,9 @@ fn App() -> impl IntoView {
                     // The render window is relative to this loaded page;
                     // preserve both its anchor and the follow-latest sentinel.
                     if page.window_user_start != usize::MAX {
-                        page.window_user_start -= removed_before(
-                            page.user_offset.saturating_add(page.window_user_start),
-                        ) - removed_before(page.user_offset);
+                        page.window_user_start -=
+                            removed_before(page.user_offset.saturating_add(page.window_user_start))
+                                - removed_before(page.user_offset);
                     }
                     page.user_offset -= removed_before(page.user_offset);
                     page.loading_request = None;

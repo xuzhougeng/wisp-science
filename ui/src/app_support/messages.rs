@@ -1386,73 +1386,13 @@ pub(crate) fn ToolBlock(
     }
 }
 
-/// Parse a rendered plan checklist line
-/// (`[x] text` / `[~] text` / `[ ] text` / `[-] text`)
-/// into (status_class, text). Mirrors `update_plan`'s render in wisp-tools.
-pub(crate) fn plan_step_line(line: &str) -> Option<(&'static str, &str)> {
-    for (prefix, cls) in [
-        ("[x] ", "done"),
-        ("[~] ", "running"),
-        ("[ ] ", "pending"),
-        ("[-] ", "cancelled"),
-    ] {
-        if let Some(rest) = line.strip_prefix(prefix) {
-            return Some((cls, rest));
-        }
-    }
-    None
-}
-
-fn plan_status_class(status: &str) -> &'static str {
-    match status {
-        "completed" | "done" => "done",
-        "in_progress" | "running" => "running",
-        "cancelled" => "cancelled",
-        _ => "pending",
-    }
-}
-
-/// New approvals carry structured steps so fenced code, blank lines, and
-/// task lists cannot be mistaken for top-level checklist rows. Old persisted
-/// approvals still parse the legacy marker format, including continuations.
+/// Shared with native hosts so accepted plans have identical step semantics.
 pub(crate) fn parse_plan_steps(preview: &str) -> Vec<(&'static str, String)> {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(preview) {
-        if value.get("v").and_then(serde_json::Value::as_u64) == Some(1) {
-            if let Some(steps) = value.get("steps").and_then(serde_json::Value::as_array) {
-                return steps
-                    .iter()
-                    .filter_map(|step| {
-                        let content = step.get("content")?.as_str()?.trim();
-                        (!content.is_empty()).then(|| {
-                            (
-                                plan_status_class(
-                                    step.get("status")
-                                        .and_then(serde_json::Value::as_str)
-                                        .unwrap_or("pending"),
-                                ),
-                                content.to_string(),
-                            )
-                        })
-                    })
-                    .collect();
-            }
-        }
-    }
-
-    let mut steps: Vec<(&'static str, String)> = vec![];
-    for line in preview.lines() {
-        if let Some((class, text)) = plan_step_line(line) {
-            steps.push((class, text.to_string()));
-        } else if let Some((_, text)) = steps.last_mut() {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(line);
-        }
-    }
-    steps
+    wisp_dto::execution_plan::parse_plan_steps(preview)
+        .into_iter()
+        .map(|step| (step.status.as_str(), step.content))
+        .collect()
 }
-
 pub(crate) fn approval_allow_label_key(scope: &str) -> &'static str {
     match scope {
         "session" => "approval.allow_session",

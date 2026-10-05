@@ -8,11 +8,14 @@ public static class NativeToolPresentation
     public static bool IsFailure(ConversationItem item) => item.Ok == false || item.Status is "failed" or "error"
         || item.Run?.Status is "failed" or "timed_out" or "lost";
     public static bool RequiresAttention(ConversationItem item) => IsFailure(item) || item.Run?.NeedsReview == true;
+    public static bool OwnsTerminalRun(ConversationItem item, int index) => item.Run is { } run
+        && run.OwnerIndex == index && WorkspaceConversationModel.RunTerminal(run.Status);
+    public static bool InitiallyExpanded(ConversationItem item, int index) => !OwnsTerminalRun(item, index) && RequiresAttention(item);
     public static string State(ConversationItem item) => item.Ok == false || item.Status is "failed" or "error"
         ? "失败"
         : item.Run is { } run ? RunState(run.Status) + (run.NeedsReview ? " · 待审阅" : "")
         : item.ToolName is "monitor_run" or "wisp_monitor_run" ? "运行状态未核实"
-        : item.Status is "running" or "pending" or "started" ? "执行中"
+        : item.Status is "running" or "pending" or "started" or "in_progress" ? "执行中"
         : item.Status is "cancelled" or "canceled" ? "已取消"
         : item.Status is "interrupted" ? "已中断"
         : item.Ok == true && item.Status is null or "" or "completed" or "done" or "success" or "succeeded" ? "已完成"

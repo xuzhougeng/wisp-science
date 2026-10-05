@@ -1,0 +1,11 @@
+.rp-molecule { max-width:100%; height:auto; background:white; }
+iframe.rp-3dmol { display:block; border:0; width:100%; height:420px; }
+iframe.rp-alignment { display:block; border:0; width:100%; height:420px; }
+.rp-msa-wrap { overflow:auto; width:100%; }
+.rp-msa-bar { padding:6px; font:12px system-ui; }
+.rp-fasta-wrap { overflow:auto; }
+.rp-fasta-table { border-collapse:collapse; font:12px/1.6 monospace; white-space:pre; }
+.rp-fasta-ln { padding-right:12px; color:#888; user-select:none; text-align:right; }
+.rp-fasta-hdr { color:#409b8a; font-weight:bold; }
+.scientific #content { height:100%; overflow:auto; }
+.scientific .rp-error { padding:12px; white-space:pre-wrap; }

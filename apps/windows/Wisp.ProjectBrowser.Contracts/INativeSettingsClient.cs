@@ -75,13 +75,14 @@ public static class NativeSettingsProtocol
 public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
 {
     private readonly HttpClient http;
-    private readonly Uri endpoint;
-    private readonly string token;
+    private readonly NativeSettingsHost initialHost;
+    private readonly string databasePath;
+    private readonly string? descriptorPath;
 
-    public NativeSettingsClient(NativeSettingsHost host, string databasePath, HttpMessageHandler? handler = null)
+    public NativeSettingsClient(NativeSettingsHost host, string databasePath, HttpMessageHandler? handler = null, string? descriptorPath = null)
     {
-        endpoint = NativeSettingsProtocol.ValidateHost(host, databasePath);
-        token = host.Token;
+        NativeSettingsProtocol.ValidateHost(host, databasePath);
+        initialHost = host; this.databasePath = databasePath; this.descriptorPath = descriptorPath;
         // Never forward the bearer token via a proxy or an HTTP redirect.
         http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false });
         http.Timeout = TimeSpan.FromSeconds(665);
@@ -90,9 +91,15 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
     public async Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null,
         CancellationToken cancellationToken = default)
     {
+        // Capture endpoint and token together for this one attempt. A host restart
+        // rotates both; the next poll can reconnect without replaying a mutation.
+        var host = descriptorPath == null ? initialHost
+            : JsonSerializer.Deserialize<NativeSettingsHost>(await File.ReadAllTextAsync(descriptorPath, cancellationToken).ConfigureAwait(false))
+                ?? throw new InvalidDataException("Missing native settings host.");
+        var endpoint = NativeSettingsProtocol.ValidateHost(host, databasePath);
         var id = Guid.NewGuid().ToString();
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", host.Token);
         request.Content = new StringContent(JsonSerializer.Serialize(new NativeSettingsRequest(
             NativeSettingsProtocol.Schema, id, projectId, command, arguments)), Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -116,7 +123,7 @@ public sealed class NativeSettingsClient : INativeSettingsClient, IDisposable
             try {
                 var descriptor = JsonSerializer.Deserialize<NativeSettingsHost>(await File.ReadAllTextAsync(descriptorPath, cancellationToken).ConfigureAwait(false));
                 if (descriptor is null) return null;
-                client = new NativeSettingsClient(descriptor, databasePath);
+                client = new NativeSettingsClient(descriptor, databasePath, descriptorPath: descriptorPath);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(TimeSpan.FromSeconds(2));
                 await client.InvokeAsync("native_settings_capabilities", new JsonObject(), cancellationToken: timeout.Token).ConfigureAwait(false);

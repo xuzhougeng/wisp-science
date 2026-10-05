@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
+    "native_conversation_queue_action",
+    "native_conversation_history_action",
+    "native_conversation_references",
     "native_conversation_options",
     "native_conversation_options_set",
     "native_conversation_panel_highlight_star",
@@ -68,6 +71,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_approve",
     "native_conversation_acp_permission",
     "native_conversation_acp_answer",
+    "native_conversation_acp_setting",
     "native_conversation_model",
     "native_conversation_plan",
     "native_conversation_fast",
@@ -201,6 +205,12 @@ pub enum PanelFileAction {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PanelRequest {
+    /// Opt in to bounded PDF page bytes instead of extracted document text.
+    #[serde(default)]
+    pub render_pdf: bool,
+    /// Opt in to validated OOXML bytes for local Office renderers.
+    #[serde(default)]
+    pub render_office: bool,
     #[serde(default)]
     pub file_action: Option<PanelFileAction>,
     #[serde(default)]
@@ -315,6 +325,8 @@ pub struct RunReviewRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunReviewOperation {
+    CheckPrompt,
+    Dismiss,
     List {
         path: String,
         name_filter: String,
@@ -334,7 +346,7 @@ pub enum RunReviewOperation {
 }
 impl RunReviewOperation {
     pub fn is_mutation(&self) -> bool {
-        !matches!(self, Self::List { .. })
+        !matches!(self, Self::List { .. } | Self::CheckPrompt)
     }
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
@@ -358,6 +370,8 @@ impl RunReviewOperation {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunReviewReply {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub should_prompt: Option<bool>,
     pub run_id: String,
     pub read_only: bool,
     pub cleaned: bool,
@@ -413,6 +427,75 @@ pub struct SendRequest {
     /// message the WebView persists.
     #[serde(default)]
     pub attachments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::ComposerReferenceArg>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    Artifact,
+    Session,
+    Skill,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceRequest {
+    pub session_id: String,
+    pub kind: ReferenceKind,
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReferenceOption {
+    pub reference: crate::ComposerReferenceArg,
+    pub label: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReferenceCatalog {
+    pub session_id: String,
+    pub options: Vec<ReferenceOption>,
+}
+
+/// Shared by native and WebView mention menus; listing a runtime never starts it.
+pub fn runtime_reference_available(context: &crate::ExecutionContext, language: &str) -> bool {
+    if context.kind == "local" && language == "python" {
+        return true;
+    }
+    let config =
+        serde_json::from_str::<serde_json::Value>(&context.config_json).unwrap_or_default();
+    let capabilities =
+        serde_json::from_str::<serde_json::Value>(&context.capabilities_json).unwrap_or_default();
+    let has = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.trim().is_empty())
+    };
+    match language {
+        "python" => {
+            ["python_executable", "python_path"]
+                .iter()
+                .any(|key| has(&config, key))
+                || has(&capabilities, "python_executable")
+        }
+        "r" => {
+            if ["rscript_executable", "rscript_path"]
+                .iter()
+                .any(|key| has(&config, key))
+            {
+                return true;
+            }
+            if has(&capabilities, "rscript_executable") {
+                return capabilities.get("r_jsonlite").and_then(|v| v.as_bool()) != Some(false);
+            }
+            context.kind == "local" && context.last_probe_status.as_deref() != Some("ok")
+        }
+        _ => false,
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -496,6 +579,96 @@ pub struct AcpInteractions {
     pub permissions: Vec<AcpPermission>,
     pub question_ids: Vec<String>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcpSettingRequest {
+    pub session_id: String,
+    pub change: AcpSettingChange,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AcpSettingChange {
+    Mode {
+        id: String,
+    },
+    Config {
+        id: String,
+        value: serde_json::Value,
+    },
+}
+
+impl AcpSettingChange {
+    /// Validate the exact advertised IDs and value types before starting or
+    /// resuming an agent. Display names must never stand in for protocol IDs.
+    pub fn command(
+        &self,
+        state: &super::AcpSessionState,
+    ) -> Result<(&'static str, serde_json::Value), String> {
+        use serde_json::{json, Value};
+        match self {
+            Self::Mode { id } => {
+                if !state
+                    .modes
+                    .as_ref()
+                    .and_then(|m| m.get("availableModes"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|rows| {
+                        rows.iter()
+                            .any(|row| row.get("id").and_then(Value::as_str) == Some(id))
+                    })
+                {
+                    return Err("ACP mode is no longer available; refresh the conversation".into());
+                }
+                Ok((
+                    "set_acp_session_mode",
+                    json!({"frameId":state.frame_id,"modeId":id}),
+                ))
+            }
+            Self::Config { id, value } => {
+                let option = state
+                    .config_options
+                    .as_ref()
+                    .and_then(|rows| {
+                        rows.iter()
+                            .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+                    })
+                    .ok_or("ACP configuration is no longer available; refresh the conversation")?;
+                let payload = match option.get("type").and_then(Value::as_str) {
+                    Some("boolean") if value.is_boolean() => {
+                        json!({"type":"boolean","value":value})
+                    }
+                    Some("select")
+                        if value.is_string()
+                            && option.get("options").and_then(Value::as_array).is_some_and(
+                                |rows| {
+                                    rows.iter().any(|row| {
+                                        row.get("value") == Some(value)
+                                            || row
+                                                .get("options")
+                                                .and_then(Value::as_array)
+                                                .is_some_and(|choices| {
+                                                    choices.iter().any(|choice| {
+                                                        choice.get("value") == Some(value)
+                                                    })
+                                                })
+                                    })
+                                },
+                            ) =>
+                    {
+                        json!({"value":value})
+                    }
+                    _ => return Err("Unsupported ACP configuration value".into()),
+                };
+                Ok((
+                    "set_acp_session_config",
+                    json!({"frameId":state.frame_id,"configId":id,"value":payload}),
+                ))
+            }
+        }
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelRequest {
@@ -550,6 +723,18 @@ pub struct TranscriptRun {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Item {
+    /// Shared interpretation of ACP and built-in plan-mode proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<PlanProposal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locations: Option<String>,
+    /// Accepted update_plan result; absent for failed and still-pending calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_steps: Option<Vec<crate::execution_plan::PlanStep>>,
     pub role: String,
     pub text: String,
     pub tool_name: Option<String>,
@@ -571,10 +756,31 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<TranscriptRun>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PlanProposal {
+    pub entries: Vec<crate::PlanEntry>,
+    pub source: crate::PlanSource,
+}
+impl PlanProposal {
+    pub fn from_text(text: &str) -> Option<Self> {
+        let payload = serde_json::from_str(text).ok()?;
+        let plan = crate::parse_plan_card(&payload);
+        Some(Self {
+            entries: plan.entries,
+            source: plan.source,
+        })
+    }
+}
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Snapshot {
+    /// Current records for exact session-owned runs linked by this transcript.
+    /// Tails are bounded; the detail command remains the full read interface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub run_cards: Vec<crate::RunRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_review_supported: Option<bool>,
     pub schema: String,
     pub epoch: String,
     pub sequence: u64,
@@ -586,8 +792,14 @@ pub struct Snapshot {
     pub user_offset: usize,
     pub running: bool,
     pub stopping: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_status: Option<String>,
     pub read_only: bool,
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composer_references: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub follow_ups: Vec<String>,
     /// Absent for older hosts and ACP sessions, which own their mode selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_mode: Option<bool>,
@@ -602,10 +814,160 @@ pub struct Snapshot {
     pub approvals: Vec<super::PendingToolApproval>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp: Option<AcpInteractions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_state: Option<super::AcpSessionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_state: Option<super::native_history::HistoryState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<super::native_queue::QueueSnapshot>,
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_plan_proposals_share_webview_defaults_and_preserve_markdown() {
+        for source in ["native", "acp"] {
+            let payload = serde_json::json!({"source":source,"entries":[
+                {"content":"Inspect **samples**\n\n```python\nprint(1)\n```", "status":"in_progress", "priority":"high"},
+                {"content":"Future state", "status":"blocked", "priority":"urgent"}
+            ]});
+            let expected = crate::parse_plan_card(&payload);
+            let proposal = super::PlanProposal::from_text(&payload.to_string()).unwrap();
+            assert_eq!(proposal.entries, expected.entries);
+            assert_eq!(proposal.source, expected.source);
+            assert_eq!(proposal.entries[1].status, crate::PlanStatus::Pending);
+            assert_eq!(proposal.entries[1].priority, crate::PlanPriority::Medium);
+            let wire = serde_json::to_value(&proposal).unwrap();
+            assert_eq!(wire["source"], source);
+            assert_eq!(wire["entries"][0]["status"], "in_progress");
+            assert_eq!(
+                wire["entries"][0]["content"],
+                payload["entries"][0]["content"]
+            );
+        }
+        assert!(super::PlanProposal::from_text("not JSON").is_none());
+        for text in ["null", "{}", r#"{"entries":"invalid"}"#] {
+            assert!(super::PlanProposal::from_text(text)
+                .unwrap()
+                .entries
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn acp_settings_validate_protocol_ids_types_and_grouped_choices() {
+        use super::AcpSettingChange;
+        use serde_json::json;
+        let state = crate::AcpSessionState {
+            frame_id: "owner".into(),
+            modes: Some(
+                json!({"currentModeId":"read", "availableModes":[{"id":"agent","name":"Agent"}]}),
+            ),
+            config_options: Some(vec![
+                json!({"id":"depth","type":"select","options":[{"value":"short"},{"name":"Group","options":[{"value":"deep","name":"Deep"}]}]}),
+                json!({"id":"confirm","type":"boolean"}),
+                json!({"id":"future","type":"unknown"}),
+            ]),
+        };
+        let mode = AcpSettingChange::Mode { id: "agent".into() }
+            .command(&state)
+            .unwrap();
+        assert_eq!(mode.0, "set_acp_session_mode");
+        assert_eq!(mode.1, json!({"frameId":"owner","modeId":"agent"}));
+        assert!(AcpSettingChange::Mode { id: "Agent".into() }
+            .command(&state)
+            .is_err());
+        let select = AcpSettingChange::Config {
+            id: "depth".into(),
+            value: json!("deep"),
+        }
+        .command(&state)
+        .unwrap();
+        assert_eq!(
+            select.1,
+            json!({"frameId":"owner","configId":"depth","value":{"value":"deep"}})
+        );
+        let boolean = AcpSettingChange::Config {
+            id: "confirm".into(),
+            value: json!(false),
+        }
+        .command(&state)
+        .unwrap();
+        assert_eq!(boolean.1["value"], json!({"type":"boolean","value":false}));
+        for (id, value) in [
+            ("depth", json!("Deep")),
+            ("confirm", json!("false")),
+            ("missing", json!(true)),
+            ("future", json!("x")),
+        ] {
+            assert!(AcpSettingChange::Config {
+                id: id.into(),
+                value
+            }
+            .command(&state)
+            .is_err());
+        }
+    }
+    #[test]
+    fn composer_references_preserve_typed_ids_and_old_send_compatibility() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/composer-references.json"
+        ))
+        .unwrap();
+        let request: super::ReferenceRequest =
+            serde_json::from_value(fixture["request"].clone()).unwrap();
+        assert_eq!(request.kind, super::ReferenceKind::Artifact);
+        let catalog: super::ReferenceCatalog =
+            serde_json::from_value(fixture["response"].clone()).unwrap();
+        assert_eq!(catalog.session_id, "session-a");
+        assert_eq!(catalog.options.len(), 7);
+        assert_eq!(serde_json::to_value(&catalog).unwrap(), fixture["response"]);
+        let send: super::SendRequest = serde_json::from_value(fixture["send"].clone()).unwrap();
+        assert_eq!(
+            send.references,
+            vec![
+                crate::ComposerReferenceArg::Artifact {
+                    id: "artifact-a".into()
+                },
+                crate::ComposerReferenceArg::Skill {
+                    name: "RNA-seq".into()
+                }
+            ]
+        );
+        let old: super::SendRequest = serde_json::from_value(fixture["old_send"].clone()).unwrap();
+        assert!(old.references.is_empty() && old.attachments.is_empty());
+        let mut invalid = fixture["request"].clone();
+        invalid["kind"] = "shell".into();
+        assert!(serde_json::from_value::<super::ReferenceRequest>(invalid).is_err());
+    }
+
+    #[test]
+    fn runtime_references_follow_shared_capability_rules() {
+        let mut context = crate::ExecutionContext {
+            id: "local".into(),
+            kind: "local".into(),
+            label: "Local".into(),
+            config_json: "{}".into(),
+            capabilities_json: "{}".into(),
+            last_probe_status: None,
+            last_probe_error: None,
+        };
+        assert!(super::runtime_reference_available(&context, "python"));
+        assert!(super::runtime_reference_available(&context, "r"));
+        context.last_probe_status = Some("ok".into());
+        assert!(!super::runtime_reference_available(&context, "r"));
+        context.kind = "ssh".into();
+        assert!(!super::runtime_reference_available(&context, "python"));
+        context.capabilities_json =
+            r#"{"rscript_executable":"/bin/Rscript","r_jsonlite":false}"#.into();
+        assert!(!super::runtime_reference_available(&context, "r"));
+        context.config_json =
+            r#"{"rscript_path":"/custom/Rscript","python_path":"/env/python"}"#.into();
+        assert!(super::runtime_reference_available(&context, "r"));
+        assert!(super::runtime_reference_available(&context, "python"));
+        assert!(!super::runtime_reference_available(&context, "bash"));
+    }
+
     #[test]
     fn composer_options_are_scoped_and_permission_requires_confirmation() {
         let options: super::ComposerOptions = serde_json::from_str(include_str!(
@@ -982,6 +1344,21 @@ mod tests {
     fn delegation_read_and_disabled_write_remain_distinct() {
         let read: PanelRequest =
             serde_json::from_value(serde_json::json!({"session_id":"s"})).unwrap();
+        assert!(
+            !read.render_pdf && !read.render_office,
+            "legacy clients retain extracted document text"
+        );
+        let preview: PanelRequest = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/panel-pdf-preview.json"
+        ))
+        .unwrap();
+        assert!(preview.render_pdf);
+        assert!(preview.render_office);
+        let pdf_only: PanelRequest =
+            serde_json::from_value(serde_json::json!({"session_id":"s", "render_pdf":true}))
+                .unwrap();
+        assert!(!pdf_only.render_office);
+        assert_eq!(preview.path.as_deref(), Some("literature/paper.pdf"));
         let write: PanelRequest =
             serde_json::from_value(serde_json::json!({"session_id":"s", "enabled":false})).unwrap();
         assert_eq!(read.enabled, None);

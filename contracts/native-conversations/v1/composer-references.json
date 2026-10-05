@@ -1,0 +1,21 @@
+{
+  "request": { "session_id": "session-a", "kind": "artifact", "query": "RNA" },
+  "response": {
+    "session_id": "session-a",
+    "options": [
+      { "reference": { "kind": "artifact", "id": "artifact-a" }, "label": "Counts", "detail": "Research A" },
+      { "reference": { "kind": "session", "id": "session-b" }, "label": "Analysis", "detail": "Research B" },
+      { "reference": { "kind": "project", "id": "project-a" }, "label": "Research A", "detail": "Project context" },
+      { "reference": { "kind": "skill", "name": "RNA-seq" }, "label": "RNA-seq", "detail": "Read counts" },
+      { "reference": { "kind": "workflow", "id": "workflow-a" }, "label": "QC", "detail": "Workflow" },
+      { "reference": { "kind": "context", "id": "context-a" }, "label": "Compute", "detail": "Environment" },
+      { "reference": { "kind": "runtime", "context_id": "context-a", "language": "r" }, "label": "Compute · R", "detail": "Runtime" }
+    ]
+  },
+  "send": {
+    "session_id": "session-a", "request_id": "00000000-0000-4000-8000-000000000001",
+    "message": "Inspect counts", "attachments": [],
+    "references": [{ "kind": "artifact", "id": "artifact-a" }, { "kind": "skill", "name": "RNA-seq" }]
+  },
+  "old_send": { "session_id": "session-a", "request_id": "00000000-0000-4000-8000-000000000002", "message": "Inspect" }
+}

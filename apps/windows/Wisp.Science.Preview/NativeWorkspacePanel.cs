@@ -15,6 +15,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private readonly WispDesign design;
     private readonly Func<ConversationItem[]> transcript;
     private readonly WorkspaceSideChatModel? sideChat;
+    private readonly Func<NativeInputPreferences> inputPreferences;
     private readonly Action<string>? openTerminal;
     private readonly Action close;
     private readonly WorkspaceRunReviewModel? runReview;
@@ -33,15 +34,30 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private readonly Border searchCard = new();
     private readonly Dictionary<string, FrameworkElement> previewImages = [];
     private readonly HashSet<string> previewLoading = [];
-    private NativeRichPreview? pdfPreview;
-    private NativePanelFileContent? pdfContent;
+    private NativeRichPreview? documentPreview;
+    private NativePanelFileContent? documentContent;
+    private NativePanelFileContent? scientificSource;
+    private TextBox? sourceSelectionEditor;
+    private readonly Func<string, NativeDocumentSelection, bool>? quoteDocument;
+    private readonly Func<bool>? windowEscape;
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed;
+    private int reviewNavigation;
     public async Task ShowFilesAsync() => await ShowTabAsync("files");
     public Task ShowRunAsync(string runId) => PresentRunAsync(runId, true);
+    public async Task ShowRunReviewAsync(string runId)
+    {
+        var loading = PresentRunAsync(runId, true);
+        var current = reviewNavigation;
+        await loading;
+        if (!disposed && current == reviewNavigation && model.Tabs.Selected == "hosts"
+            && model.SelectedRunId == runId && runReview != null && model.RunDetail is { Kind: "ssh_direct" } run
+            && WorkspaceConversationModel.RunTerminal(run.Status)) await runReview.OpenAsync(runId, lifetime.Token, model.Activity?.ReadOnly != false);
+    }
     private async Task PresentRunAsync(string runId, bool openHosts)
     {
         if (disposed) return;
+        reviewNavigation++;
         runReview?.Close();
         var read = openHosts ? model.OpenRunAsync(runId, lifetime.Token) : model.ReadRunAsync(runId, lifetime.Token);
         viewState.For("hosts").SetOffset(0);
@@ -52,6 +68,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     }
     public async Task ShowTabAsync(string tab)
     {
+        reviewNavigation++;
         runReview?.Close();
         try
         {
@@ -66,11 +83,15 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     public NativeWorkspacePanel(WorkspacePanelModel model, Func<ConversationItem[]> transcript, WispDesign design, Action close,
         WorkspaceSideChatModel? sideChat = null, Action<string>? openTerminal = null, Action<string, string>? tabChanged = null,
-        WorkspaceRunReviewModel? runReview = null)
+        WorkspaceRunReviewModel? runReview = null, Func<NativeInputPreferences>? inputPreferences = null,
+        Func<string, NativeDocumentSelection, bool>? quoteDocument = null, Func<bool>? windowEscape = null)
     {
+        this.quoteDocument = quoteDocument;
+        this.windowEscape = windowEscape;
         this.model = model; this.transcript = transcript; this.design = design; this.close = close;
         this.tabChanged = tabChanged;
         this.runReview = runReview;
+        this.inputPreferences = inputPreferences ?? (() => new());
         if (runReview != null) runReview.Changed += Render;
         design.BindTypography(this);
         this.sideChat = sideChat; this.openTerminal = openTerminal;
@@ -195,7 +216,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                 {
                     if (value.Length == 0) continue;
                     detail.Children.Add(Mute(label));
-                    detail.Children.Add(new TextBox { Text = value, IsReadOnly = true, AcceptsReturn = true,
+                    detail.Children.Add(new TextBox { AcceptsReturn = true, Text = value, IsReadOnly = true,
                         TextWrapping = TextWrapping.Wrap, MaxHeight = 240, FontFamily = design.Font(true), FontSize = design.FontSize(12, true) });
                 }
                 var disclosure = new Expander { Header = design.Text(row.Name, 13), Content = detail,
@@ -469,7 +490,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         if (model.Execution is { } execution)
         {
             if (execution.Text.Length > 0)
-                body.Children.Add(new TextBox { Text = execution.Text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                body.Children.Add(new TextBox { AcceptsReturn = true, Text = execution.Text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                     FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 220 });
             foreach (var plot in execution.Plots.Where(File.Exists))
             {
@@ -522,6 +543,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     {
         if (model.SelectedRunId is not { } selected) return;
         body.Children.Add(TextHeading("运行详情 · " + selected));
+        if (runReview?.DismissalError is { } dismissalError) body.Children.Add(Mute(dismissalError));
         if (runReview?.Mutating == true) body.Children.Add(Mute("审阅操作仍在处理，详情可能尚未更新。"));
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         var refresh = new Button { Content = "刷新详情", IsEnabled = !model.RunLoading };
@@ -542,7 +564,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                 && runDetail.Status is "succeeded" or "failed" or "cancelled" or "timed_out" or "lost")
             {
                 var review = new Button { Content = "结果与清理", IsEnabled = !model.ActivityBusy && !runReview.Mutating };
-                review.Click += async (_, _) => { viewState.For("hosts").SetOffset(0); await runReview.OpenAsync(runDetail.Id, lifetime.Token); };
+                review.Click += async (_, _) => { viewState.For("hosts").SetOffset(0); await runReview.OpenAsync(runDetail.Id, lifetime.Token, model.Activity.ReadOnly); };
                 card.Children.Add(review);
             }
             if (runDetail.ExitCode is { } exit) card.Children.Add(Mute($"退出码：{exit}"));
@@ -551,12 +573,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             if (!string.IsNullOrEmpty(runDetail.StdoutTail))
             {
                 card.Children.Add(Mute("标准输出（末尾片段）"));
-                card.Children.Add(new TextBox { Text = runDetail.StdoutTail, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 180 });
+                card.Children.Add(new TextBox { AcceptsReturn = true, Text = runDetail.StdoutTail, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 180 });
             }
             if (!string.IsNullOrEmpty(runDetail.StderrTail))
             {
                 card.Children.Add(Mute("标准错误（末尾片段）"));
-                card.Children.Add(new TextBox { Text = runDetail.StderrTail, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 120 });
+                card.Children.Add(new TextBox { AcceptsReturn = true, Text = runDetail.StderrTail, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 120 });
             }
             if (string.IsNullOrEmpty(runDetail.StdoutTail) && string.IsNullOrEmpty(runDetail.StderrTail))
                 card.Children.Add(Mute("本次读取暂无输出。"));
@@ -632,7 +654,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; card.Children.Add(heading);
             card.Children.Add(new TextBox
             {
-                Text = captured.Source, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                AcceptsReturn = true, Text = captured.Source, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                 FontFamily = design.Font(true), FontSize = design.FontSize(12, true), MaxHeight = 160,
                 BorderThickness = new Thickness(0), Background = design.Brush("bg-elev")
             });
@@ -642,7 +664,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
                     Header = new TextBlock { Text = "输出", FontSize = 11, Foreground = design.Brush("text-muted") },
                     Content = new TextBox
                     {
-                        Text = captured.Output, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                        AcceptsReturn = true, Text = captured.Output, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                         FontFamily = design.Font(true), FontSize = design.FontSize(11, true), MaxHeight = 220
                     },
                     IsExpanded = cell.OutputInitiallyExpanded
@@ -698,11 +720,20 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         var send = new Button { Content = "发送", IsEnabled = sideChat.CanSend };
         design.ActionButton(send, true);
         draft.TextChanged += (_, _) => { sideChat.Draft = draft.Text; send.IsEnabled = sideChat.CanSend; };
-        draft.KeyDown += async (_, e) =>
+        var composing = false;
+        var compositionJustEnded = false;
+        draft.TextCompositionStarted += (_, _) => composing = true;
+        draft.TextCompositionEnded += (_, _) =>
+        {
+            composing = false; compositionJustEnded = true;
+            DispatcherQueue.TryEnqueue(() => compositionJustEnded = false);
+        };
+        draft.PreviewKeyDown += async (_, e) =>
         {
             if (e.Key != Windows.System.VirtualKey.Enter) return;
-            var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift).HasFlag(Microsoft.UI.Input.VirtualKeyStates.Down);
-            if (NativeSideChatKeyboard.ResolveReturn(shift, false) != NativeSideChatReturnAction.Send) return;
+            var shift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            var control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if (NativeSideChatKeyboard.ResolveReturn(shift, composing || compositionJustEnded, control, inputPreferences().SendWithModifier) != NativeSideChatReturnAction.Send) return;
             e.Handled = true; await sideChat.SendAsync(lifetime.Token); Render();
         };
         send.Click += async (_, _) => { await sideChat.SendAsync(lifetime.Token); Render(); };
@@ -710,30 +741,98 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         if (sideChat.Error is { } error) body.Children.Add(new TextBlock { Text = error, TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("clay-strong") });
     }
 
+    public async Task OpenSearchArtifactAsync(string id)
+    {
+        if (disposed) return;
+        await model.ReadArtifactAsync(id, lifetime.Token);
+        if (!disposed) Render();
+    }
+
     private void RenderPreview()
     {
-        if (pdfContent != model.Preview) { pdfPreview?.Dispose(); pdfPreview = null; pdfContent = null; }
-        if (model.Preview is { Mime: "application/pdf" } pdf)
+        sourceSelectionEditor = null;
+        var openingDocument = documentContent != model.Preview;
+        if (documentContent != model.Preview) { documentPreview?.Dispose(); documentPreview = null; documentContent = null; }
+        if (!ReferenceEquals(scientificSource, model.Preview)) scientificSource = null;
+        var scientificKind = NativeScientificPreview.Kind(model.Preview?.Path);
+        if (model.Preview is { } preview && (NativeDocumentPreview.Kind(preview.Mime) ?? scientificKind) is { } kind
+            && !ReferenceEquals(scientificSource, preview))
         {
-            body.Children.Add(Mute(pdf.Path));
-            if (pdf.Truncated || string.IsNullOrEmpty(pdf.Base64)) body.Children.Add(Mute("PDF 内容不完整，无法预览。请在项目文件中打开原文件。"));
+            var sourceLabel = Mute(preview.Path);
+            body.Children.Add(sourceLabel);
+            var previewActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (scientificKind != null && preview.Text != null)
+            {
+                var source = new Button { Content = "查看源文本" };
+                source.Click += (_, _) => { scientificSource = preview; documentPreview?.Dispose(); documentPreview = null; Render(); };
+                previewActions.Children.Add(source);
+            }
+            var dismissDocument = new Button { Content = "关闭预览" };
+            dismissDocument.Click += (_, _) => { model.DismissPreview(); Render(); };
+            previewActions.Children.Add(dismissDocument);
+            body.Children.Add(previewActions);
+            var value = scientificKind != null ? preview.Text : preview.Base64;
+            if (preview.Truncated || string.IsNullOrEmpty(value)) body.Children.Add(Mute("文档内容不完整，无法预览。请在项目文件中打开原文件。"));
             else
             {
-                pdfContent = pdf;
-                pdfPreview ??= new NativeRichPreview(design, "pdf", pdf.Base64, pdf.Path);
-                body.Children.Add(pdfPreview);
+                documentContent = preview;
+                documentPreview ??= new NativeRichPreview(design, kind, value, preview.Path, quote: NativeDocumentPreview.Kind(preview.Mime) == null || quoteDocument == null ? null : selection =>
+                    !disposed && IsLoaded && ReferenceEquals(model.Preview, preview) && ReferenceEquals(documentContent, preview)
+                        && quoteDocument(preview.Path, selection), escape: () =>
+                        {
+                            if (!disposed && IsLoaded && ReferenceEquals(model.Preview, preview))
+                            {
+                                if (windowEscape != null) windowEscape(); else HandleEscape();
+                            }
+                        }, format: NativeScientificPreview.Format(preview.Path));
+                body.Children.Add(documentPreview);
             }
-            var dismissPdf = new Button { Content = "关闭预览" };
-            dismissPdf.Click += (_, _) => { model.DismissPreview(); Render(); };
-            body.Children.Add(dismissPdf);
+            // The file list can be taller than the panel. Reveal a newly opened
+            // document after layout, but never move the reader during refreshes.
+            if (openingDocument) DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (!disposed && IsLoaded && sourceLabel.IsLoaded && ReferenceEquals(model.Preview, preview))
+                    sourceLabel.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
+            });
             return;
         }
         if (model.Preview?.Text is { } text)
         {
+            var sourceContent = model.Preview;
             body.Children.Add(new TextBlock { Text = model.Preview.Path, FontSize = 12, Foreground = design.Brush("text-muted") });
-            var editor = new TextBox { Text = text, IsReadOnly = !model.PreviewEditable, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
+            var editor = new TextBox { AcceptsReturn = true, Text = text, IsReadOnly = !model.PreviewEditable, TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
+            sourceSelectionEditor = editor;
             body.Children.Add(editor);
+            if (quoteDocument != null) {
+                var quotes = new NativeActionWrap();
+                var status = Mute("选择源文本后可加入聊天；引用会保留文件路径和行号。");
+                var actions = new List<Button>();
+                foreach (var (label, jump) in new[] { ("加入聊天", false), ("加入聊天并跳转", true) }) {
+                    var action = new Button { Content = label, IsEnabled = false }; actions.Add(action);
+                    action.Click += (_, _) => {
+                        if (disposed || !IsLoaded || !editor.IsLoaded || !ReferenceEquals(model.Preview, sourceContent)) return;
+                        var selection = NativeDocumentSelection.FromSource(editor.Text, editor.SelectionStart, editor.SelectionLength, jump,
+                            editor.Text.Replace("\r\n", "\n").Replace('\r', '\n') != text.Replace("\r\n", "\n").Replace('\r', '\n'));
+                        if (selection == null) return;
+                        if (quoteDocument(sourceContent.Path, selection)) {
+                            editor.Select(editor.SelectionStart, 0); status.Text = "已加入聊天草稿。";
+                        } else status.Text = "未能加入聊天，请检查当前会话后重试。";
+                    };
+                    quotes.Children.Add(action);
+                }
+                editor.SelectionChanged += (_, _) => {
+                    var valid = NativeDocumentSelection.FromSource(editor.Text, editor.SelectionStart, editor.SelectionLength, false) != null;
+                    foreach (var action in actions) action.IsEnabled = valid;
+                };
+                body.Children.Add(quotes); body.Children.Add(status);
+            }
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (scientificKind != null)
+            {
+                var interactive = new Button { Content = "返回交互预览" };
+                interactive.Click += (_, _) => { scientificSource = null; documentContent = null; Render(); };
+                row.Children.Add(interactive);
+            }
             if (!model.PreviewEditable)
             {
                 var edit = new Button { Content = "编辑" }; edit.Click += (_, _) => { model.EditPreview(); Render(); };
@@ -835,6 +934,6 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         fileDialog?.Hide();
         scroll.LayoutUpdated -= RestoreScroll;
         if (runReview != null) { runReview.Changed -= Render; runReview.Close(); }
-        disposed = true; lifetime.Cancel(); pdfPreview?.Dispose(); model.Close(); lifetime.Dispose();
+        disposed = true; lifetime.Cancel(); documentPreview?.Dispose(); model.Close(); lifetime.Dispose();
     }
 }

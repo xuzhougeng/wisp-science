@@ -26,5 +26,6 @@ public static class NativeComposerCommands
     public static NativeComposerCommand? Exact(string draft) => All.FirstOrDefault(item =>
         item.Command.Equals(draft.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    public static bool ShouldSubmit(bool control, bool shift, bool composing) => control && !shift && !composing;
+    public static bool ShouldSubmit(bool control, bool shift, bool composing, bool sendWithModifier = true)
+        => (control || !sendWithModifier) && !shift && !composing;
 }

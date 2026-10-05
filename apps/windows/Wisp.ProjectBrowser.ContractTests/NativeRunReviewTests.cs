@@ -22,7 +22,8 @@ internal static class NativeRunReviewTests
         Check(model.BeginConfirmation("delete") && model.ConfirmedPaths.Length == 2, "delete freezes the exact file/directory selection");
         model.HandleEscape();
         Check(model.Visible && model.Confirmation == null && model.Selection.Count == 2 && transport.Calls.Count == 1, "first Escape cancels confirmation only, retaining parent and selection without mutation");
-        model.HandleEscape(); Check(!model.Visible && transport.Calls.Count == 1, "second Escape closes review without a write");
+        model.HandleEscape(); Check(!model.Visible && transport.Calls.Count == 2
+            && transport.Calls[^1].Args["operation"]!["action"]!.GetValue<string>() == "dismiss", "second Escape closes review and persists only its dismissal");
         await model.OpenAsync("run-a");
         model.Select(model.Entries[0], true); model.Select(model.Entries[1], true);
         transport.Handler = args =>
@@ -97,7 +98,51 @@ internal static class NativeRunReviewTests
         var downloadReply = (JsonObject)pagingTransport.Reply.DeepClone(); downloadReply["downloaded"] = 1;
         pendingWrite.SetResult(downloadReply); await pendingDownload;
         Check(paging.RunId == "new-run" && paging.Visible && !paging.Ready && !paging.Mutating && paging.Status == null, "late write completion cannot mark a reopened different run as downloaded");
+        await DismissalAsync((JsonObject)fixture["reply"]!.DeepClone());
         Console.WriteLine("Native Run review scope, confirmation, selection, uncertainty, readonly and lifecycle checks passed.");
+    }
+    private static async Task DismissalAsync(JsonObject reply)
+    {
+        var loadingReply = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loadingTransport = new Fake { Reply = (JsonObject)reply.DeepClone() };
+        loadingTransport.Handler = args => args["operation"]!["action"]!.GetValue<string>() == "list"
+            ? loadingReply.Task : Task.FromResult<JsonNode?>(reply.DeepClone());
+        var loadingModel = new WorkspaceRunReviewModel(new NativeRunReviewClient(loadingTransport), "project-a", "session-a");
+        var loading = loadingModel.OpenAsync("run-a", readOnly: false);
+        await loadingModel.CloseAsync(); await loadingModel.CloseAsync();
+        loadingReply.SetResult(reply.DeepClone()); await loading;
+        Check(!loadingModel.Visible && !loadingModel.Ready && loadingTransport.Calls.Count == 2,
+            "immediate Escape while the listing loads persists one dismissal and rejects the late listing");
+        foreach (var scenario in new[] { "confirmed", "lost", "navigation", "read-only" })
+        {
+            var transport = new Fake { Reply = (JsonObject)reply.DeepClone() };
+            transport.Reply["read_only"] = scenario == "read-only";
+            var model = new WorkspaceRunReviewModel(new NativeRunReviewClient(transport), "project-a", "session-a");
+            await model.OpenAsync("run-a");
+            var pending = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            transport.Handler = args => args["operation"]!["action"]!.GetValue<string>() == "dismiss" ? pending.Task
+                : Task.FromResult<JsonNode?>(transport.Reply.DeepClone());
+            var closing = model.CloseAsync();
+            Check(!model.Visible, "closing immediately releases the results browser even when persistence is pending");
+            if (scenario == "navigation")
+            {
+                transport.Reply["run_id"] = "run-b";
+                await model.OpenAsync("run-b");
+            }
+            if (scenario is "lost" or "navigation") pending.SetException(new IOException("lost dismissal"));
+            else pending.SetResult(reply.DeepClone());
+            await closing;
+            if (scenario == "navigation") Check(model.RunId == "run-b" && model.Visible && model.Ready && model.DismissalError == null, "late dismissal cannot contaminate a new run");
+            else if (scenario == "lost") Check(model.DismissalError?.Contains("未确认") == true, "uncertain dismissal is reported");
+            else Check(model.DismissalError == null, "successful and read-only closure produce no failure");
+            transport.Reply["run_id"] = "run-a";
+            if (scenario != "navigation")
+            {
+                await model.OpenAsync("run-a"); await model.CloseAsync();
+                var dismissals = transport.Calls.Where(call => call.Args["operation"]!["action"]!.GetValue<string>() == "dismiss").ToArray();
+                Check(dismissals.Length == (scenario == "read-only" ? 0 : 1), "reopening and closing never replay a confirmed or uncertain dismissal; readonly never writes");
+            }
+        }
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private sealed class Fake : INativeSettingsClient

@@ -9,13 +9,13 @@
 
 use super::{models, AppState};
 use crate::session_export::{to_workspace_rel, zip_component};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 use wisp_llm::Message;
 use wisp_store::Store;
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 struct ImportManifestArtifact {
     workspace_path: String,
     zip_path: String,
@@ -39,6 +39,25 @@ struct ParsedImport {
     artifacts: Vec<ImportManifestArtifact>,
 }
 
+const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
+
+fn read_archive_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("open archive: {e}"))?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_ARCHIVE_BYTES {
+        return Err("Session archive exceeds the 256 MiB input limit".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
+        return Err("Session archive grew beyond the input limit".into());
+    }
+    Ok(bytes)
+}
+
 #[derive(serde::Serialize)]
 pub(super) struct ImportSessionSummary {
     frame_id: String,
@@ -52,20 +71,43 @@ fn read_zip_string<R: Read + std::io::Seek>(
     zip: &mut zip::ZipArchive<R>,
     name: &str,
 ) -> Result<String, String> {
-    let mut entry = zip
+    let entry = zip
         .by_name(name)
         .map_err(|_| format!("not a wisp session export: {name} missing"))?;
+    if entry.size() > MAX_TEXT_BYTES {
+        return Err(format!("{name} exceeds the 64 MiB text limit"));
+    }
     let mut body = String::new();
     entry
+        .take(MAX_TEXT_BYTES + 1)
         .read_to_string(&mut body)
         .map_err(|e| format!("read {name}: {e}"))?;
+    if body.len() as u64 > MAX_TEXT_BYTES {
+        return Err(format!("{name} exceeds the 64 MiB text limit"));
+    }
     Ok(body)
 }
 
 /// Read and validate an export archive. CPU/IO-bound: call from spawn_blocking.
 fn parse_import_archive(path: &Path) -> Result<ParsedImport, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("open archive: {e}"))?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("open archive: {e}"))?;
+    parse_import_bytes(&read_archive_bytes(path)?)
+}
+
+fn parse_import_bytes(bytes: &[u8]) -> Result<ParsedImport, String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("open archive: {e}"))?;
+    if zip.len() > 4096 {
+        return Err("Session archive contains too many entries".into());
+    }
+    let mut total = 0u64;
+    for index in 0..zip.len() {
+        total = total
+            .checked_add(zip.by_index(index).map_err(|e| e.to_string())?.size())
+            .ok_or("Archive size overflow")?;
+        if total > MAX_EXPANDED_BYTES {
+            return Err("Session archive exceeds the 512 MiB expanded limit".into());
+        }
+    }
 
     let manifest: ImportManifest =
         serde_json::from_str(&read_zip_string(&mut zip, "manifest.json")?)
@@ -146,20 +188,27 @@ fn extract_artifacts(
     root: &Path,
     session_id: &str,
 ) -> (Vec<(String, PathBuf, String)>, Vec<String>) {
+    match std::fs::File::open(archive_path) {
+        Ok(file) => extract_artifacts_from(file, artifacts, root, session_id),
+        Err(error) => (
+            vec![],
+            artifacts
+                .iter()
+                .map(|a| format!("{}: {error}", a.workspace_path))
+                .collect(),
+        ),
+    }
+}
+
+fn extract_artifacts_from<R: Read + Seek>(
+    reader: R,
+    artifacts: &[ImportManifestArtifact],
+    root: &Path,
+    session_id: &str,
+) -> (Vec<(String, PathBuf, String)>, Vec<String>) {
     let mut extracted = vec![];
     let mut missing = vec![];
-    let file = match std::fs::File::open(archive_path) {
-        Ok(file) => file,
-        Err(e) => {
-            missing.extend(
-                artifacts
-                    .iter()
-                    .map(|a| format!("{}: {e}", a.workspace_path)),
-            );
-            return (extracted, missing);
-        }
-    };
-    let mut zip = match zip::ZipArchive::new(file) {
+    let mut zip = match zip::ZipArchive::new(reader) {
         Ok(zip) => zip,
         Err(e) => {
             missing.extend(
@@ -170,18 +219,60 @@ fn extract_artifacts(
             return (extracted, missing);
         }
     };
+    let mut remaining = MAX_EXPANDED_BYTES;
     for artifact in artifacts {
         let result = (|| -> Result<PathBuf, String> {
             let target = artifact_target(root, &artifact.workspace_path, session_id)
                 .ok_or_else(|| "target already exists".to_string())?;
-            let mut entry = zip
+            let entry = zip
                 .by_name(&artifact.zip_path)
                 .map_err(|e| format!("{e}"))?;
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+            if entry.size() > remaining {
+                return Err("Artifact extraction exceeds the expanded archive limit".into());
             }
-            let mut out = std::fs::File::create(&target).map_err(|e| format!("{e}"))?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| format!("{e}"))?;
+            if let Some(parent) = target.parent() {
+                // Check the nearest existing parent before creating directories;
+                // a workspace symlink must not redirect extraction outside it.
+                let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+                let mut ancestor = parent;
+                while !ancestor.exists() {
+                    ancestor = ancestor.parent().ok_or("Invalid artifact parent")?;
+                }
+                if !ancestor
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .starts_with(&canonical_root)
+                {
+                    return Err("Artifact parent leaves the destination workspace".into());
+                }
+                std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+                if !parent
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .starts_with(&canonical_root)
+                {
+                    return Err("Artifact parent leaves the destination workspace".into());
+                }
+            }
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .map_err(|e| format!("{e}"))?;
+            let copied = std::io::copy(&mut entry.take(remaining + 1), &mut out);
+            drop(out);
+            match copied {
+                Ok(bytes) if bytes <= remaining => remaining -= bytes,
+                outcome => {
+                    // Only this call's create_new file is removed on failed extraction.
+                    let _ = std::fs::remove_file(&target);
+                    remaining = 0;
+                    return Err(match outcome {
+                        Err(error) => error.to_string(),
+                        _ => "Artifact extraction exceeds the expanded archive limit".into(),
+                    });
+                }
+            }
             Ok(target)
         })();
         match result {
@@ -238,6 +329,41 @@ fn import_timestamps(parsed: &ParsedImport) -> (i64, i64) {
     (created.unwrap(), updated.unwrap())
 }
 
+fn project_import_key(project_id: &str, source_session_id: &str) -> String {
+    format!(
+        "project:{}:{project_id}:{source_session_id}",
+        project_id.len()
+    )
+}
+
+async fn existing_import(
+    store: &Store,
+    project_id: &str,
+    source_session_id: &str,
+) -> Result<Option<String>, String> {
+    for key in [
+        project_import_key(project_id, source_session_id),
+        source_session_id.to_owned(),
+    ] {
+        if let Some(frame) = store
+            .find_session_import(&key)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            if store
+                .frame_project_id(&frame)
+                .await
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                == Some(project_id)
+            {
+                return Ok(Some(frame));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Create or fast-forward the frame for a parsed archive. Returns the frame id
 /// and the outcome ("imported" / "updated" / "skipped").
 async fn import_parsed(
@@ -247,13 +373,12 @@ async fn import_parsed(
     source_path: &str,
     parsed: &ParsedImport,
 ) -> Result<(String, &'static str), String> {
+    // Imports from different windows must not race the initial lookup/insertion.
+    static IMPORTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _import = IMPORTS.lock().await;
     let (created_at, updated_at) = import_timestamps(parsed);
 
-    if let Some(frame_id) = store
-        .find_session_import(&parsed.session_id)
-        .await
-        .map_err(|e| e.to_string())?
-    {
+    if let Some(frame_id) = existing_import(store, project_id, &parsed.session_id).await? {
         let stored = store
             .message_count(&frame_id)
             .await
@@ -273,7 +398,11 @@ async fn import_parsed(
             .await
             .map_err(|e| e.to_string())?;
         store
-            .record_session_import(&parsed.session_id, &frame_id, source_path)
+            .record_session_import(
+                &project_import_key(project_id, &parsed.session_id),
+                &frame_id,
+                source_path,
+            )
             .await
             .map_err(|e| e.to_string())?;
         return Ok((frame_id, "updated"));
@@ -300,10 +429,330 @@ async fn import_parsed(
         .await
         .map_err(|e| e.to_string())?;
     store
-        .record_session_import(&parsed.session_id, &frame_id, source_path)
+        .record_session_import(
+            &project_import_key(project_id, &parsed.session_id),
+            &frame_id,
+            source_path,
+        )
         .await
         .map_err(|e| e.to_string())?;
     Ok((frame_id, "imported"))
+}
+
+struct PreparedArchive {
+    bytes: Vec<u8>,
+    parsed: ParsedImport,
+    sha256: String,
+}
+
+async fn prepare_archive(path: &str) -> Result<PreparedArchive, String> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("Choose an absolute session archive path".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let bytes = read_archive_bytes(&path)?;
+        let sha256 = wisp_sync::sha256_hex(&bytes);
+        let parsed = parse_import_bytes(&bytes)?;
+        Ok(PreparedArchive {
+            bytes,
+            parsed,
+            sha256,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+async fn preview_archive(
+    store: &Store,
+    project: &str,
+    path: &str,
+    prepared: &PreparedArchive,
+) -> Result<wisp_dto::native_session_import::ArchivePreview, String> {
+    use wisp_dto::native_session_import::{ArchivePreview, PreviewLine, SCHEMA};
+    let parsed = &prepared.parsed;
+    let existing = existing_import(store, project, &parsed.session_id).await?;
+    let state = if let Some(id) = &existing {
+        if store.message_count(id).await.map_err(|e| e.to_string())? < parsed.messages.len() as i64
+        {
+            "updatable"
+        } else {
+            "imported"
+        }
+    } else {
+        "new"
+    };
+    let messages = parsed
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let role = match m.role {
+                wisp_llm::Role::User => "user",
+                wisp_llm::Role::Assistant => "assistant",
+                _ => return None,
+            };
+            Some(PreviewLine {
+                role: role.into(),
+                text: m.content.as_text().chars().take(600).collect(),
+            })
+        })
+        .take(4)
+        .collect();
+    let title = parsed
+        .messages
+        .iter()
+        .find(|m| m.role == wisp_llm::Role::User)
+        .map(|m| m.content.as_text().chars().take(120).collect())
+        .unwrap_or_else(|| parsed.session_id.clone());
+    Ok(ArchivePreview {
+        schema: SCHEMA.into(),
+        project_id: project.into(),
+        archive_path: path.into(),
+        sha256: prepared.sha256.clone(),
+        source_session_id: parsed.session_id.clone(),
+        title,
+        message_count: parsed.messages.len(),
+        artifacts: parsed
+            .artifacts
+            .iter()
+            .map(|a| a.workspace_path.clone())
+            .collect(),
+        messages,
+        existing_session_id: existing,
+        state: state.into(),
+    })
+}
+
+fn validate_review(
+    prepared: &PreparedArchive,
+    request: &wisp_dto::native_session_import::ImportRequest,
+) -> Result<(), String> {
+    if prepared.sha256 != request.sha256 || prepared.parsed.session_id != request.source_session_id
+    {
+        return Err("The archive changed after preview. Preview it again before importing.".into());
+    }
+    Ok(())
+}
+
+async fn apply_prepared_archive(
+    store: &Store,
+    project: &str,
+    root: &Path,
+    model: &str,
+    source: &str,
+    prepared: PreparedArchive,
+) -> Result<wisp_dto::native_session_import::ImportResult, String> {
+    use wisp_dto::native_session_import::{ImportResult, SCHEMA};
+    let parsed = prepared.parsed;
+    let (frame_id, status) = import_parsed(store, project, model, source, &parsed).await?;
+    let mut artifact_count = 0;
+    let mut missing_artifacts = vec![];
+    if status == "imported" && !parsed.artifacts.is_empty() {
+        let destination = root.to_owned();
+        let source_id = parsed.session_id.clone();
+        let artifacts = parsed.artifacts.clone();
+        let (extracted, missing) = tokio::task::spawn_blocking(move || {
+            extract_artifacts_from(
+                std::io::Cursor::new(prepared.bytes),
+                &artifacts,
+                &destination,
+                &source_id,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        missing_artifacts = missing;
+        for (original, target, mime) in extracted {
+            let filename = target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("artifact");
+            match store
+                .save_artifact(
+                    &uuid::Uuid::new_v4().to_string(),
+                    project,
+                    &frame_id,
+                    filename,
+                    &mime,
+                    &to_workspace_rel(root, &target.to_string_lossy()),
+                )
+                .await
+            {
+                Ok(_) => artifact_count += 1,
+                Err(error) => {
+                    missing_artifacts.push(format!("{original}: registration failed: {error}"))
+                }
+            }
+        }
+    }
+    Ok(ImportResult {
+        schema: SCHEMA.into(),
+        project_id: project.into(),
+        source_session_id: parsed.session_id,
+        frame_id,
+        status: status.into(),
+        message_count: parsed.messages.len(),
+        artifact_count,
+        missing_artifacts,
+    })
+}
+
+/// Shared by native ZIP and CLI imports after acquiring the project write guard.
+pub(crate) async fn lock_native_import_target(
+    state: &AppState,
+    project: &str,
+    existing: Option<&str>,
+) -> Result<
+    (
+        Option<std::sync::Arc<crate::SessionRuntime>>,
+        Option<tokio::sync::OwnedMutexGuard<()>>,
+    ),
+    String,
+> {
+    let runtime = if let Some(id) = existing {
+        state
+            .store
+            .require_unarchived_session(id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !matches!(
+            state.store.frame_state_scope(id).await.map_err(|e| e.to_string())?,
+            Some(wisp_store::StateScope::Mainline { project_id }) if project_id == project
+        ) {
+            return Err(
+                "Session imports can only update mainline conversations in the selected project"
+                    .into(),
+            );
+        }
+        if state
+            .store
+            .get_acp_session(id)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some()
+            || state
+                .store
+                .session_branch_state(id)
+                .await
+                .map_err(|e| e.to_string())?
+                .is_some()
+        {
+            return Err(
+                "Bound ACP sessions and conversation branches cannot be updated by session import"
+                    .into(),
+            );
+        }
+        if state.running_turns.lock().await.contains(id)
+            || state.reviewing.lock().unwrap().contains(id)
+        {
+            return Err("Wait for the imported conversation to finish before updating it".into());
+        }
+        Some(
+            state
+                .sessions
+                .lock()
+                .await
+                .entry(id.to_owned())
+                .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
+                .clone(),
+        )
+    } else {
+        None
+    };
+    let workflow = match &runtime {
+        Some(rt) => {
+            let guard = rt
+                .workflow
+                .clone()
+                .try_lock_owned()
+                .map_err(|_| "The imported conversation is busy")?;
+            if !rt.queued.lock().unwrap().is_empty() {
+                return Err("Remove queued messages before updating this conversation".into());
+            }
+            Some(guard)
+        }
+        None => None,
+    };
+    Ok((runtime, workflow))
+}
+
+/// Native archive import uses explicit project identity, without selecting a WebView.
+pub(crate) async fn execute_native(
+    state: &AppState,
+    request: &wisp_dto::native_settings::Request,
+) -> Result<serde_json::Value, String> {
+    use wisp_dto::native_session_import::{ImportRequest, PreviewRequest};
+    let project = request
+        .project_id
+        .as_deref()
+        .filter(|id| !id.is_empty() && id.trim() == *id)
+        .ok_or("An explicit target project is required")?;
+    if wisp_store::is_assistant_project_id(project) {
+        return Err("Choose a regular destination project".into());
+    }
+    state
+        .store
+        .get_project(project)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Target project not found")?;
+    match request.command.as_str() {
+        "native_session_archive_preview" => {
+            let input: PreviewRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let prepared = prepare_archive(&input.archive_path).await?;
+            serde_json::to_value(
+                preview_archive(&state.store, project, &input.archive_path, &prepared).await?,
+            )
+            .map_err(|e| e.to_string())
+        }
+        "native_session_archive_import" => {
+            let input: ImportRequest =
+                serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
+            let prepared = prepare_archive(&input.archive_path).await?;
+            validate_review(&prepared, &input)?;
+            let _project_guard = state.begin_project_exclusive_activity(project)?;
+            // Resolve the current destination under its mutation guard: archive
+            // preparation may take long enough for another window to move it.
+            let (_, root) = state
+                .store
+                .get_project(project)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("Target project not found")?;
+            let root = PathBuf::from(root);
+            if !root.is_absolute() || !root.is_dir() {
+                return Err("The target workspace directory is unavailable".into());
+            }
+            crate::exploration_commands::require_writable_scope(
+                &state.store,
+                &wisp_store::StateScope::mainline(project),
+            )
+            .await?;
+            let existing =
+                existing_import(&state.store, project, &prepared.parsed.session_id).await?;
+            let (runtime, _workflow) =
+                lock_native_import_target(state, project, existing.as_deref()).await?;
+            let model = models::active_profile_id(&state.store).await;
+            let result = apply_prepared_archive(
+                &state.store,
+                project,
+                &root,
+                &model,
+                &input.archive_path,
+                prepared,
+            )
+            .await?;
+            if let Some(rt) = runtime {
+                *rt.agent.lock().await = None;
+                rt.sync_last_seq_from_store(&state.store, &result.frame_id)
+                    .await?;
+            }
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        _ => Err("Unsupported native session import command".into()),
+    }
 }
 
 /// Pick a session-export zip and import it into the active project. Returns
@@ -405,6 +854,220 @@ pub(super) async fn import_session_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_archive_preview_and_apply_use_reviewed_bytes_in_the_selected_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        store
+            .create_project("a", "A", a.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_project("b", "B", b.to_str().unwrap())
+            .await
+            .unwrap();
+        let messages = vec![
+            Message::user("Compare synthetic samples"),
+            Message::assistant("Counts ready"),
+        ];
+        let archive = build_archive(
+            dir.path(),
+            "source",
+            &messages,
+            &[(
+                "artifacts/counts.csv",
+                "results/counts.csv",
+                "sample,count\nA,12",
+            )],
+        );
+        let path = archive.to_str().unwrap();
+        let first = prepare_archive(path).await.unwrap();
+        let preview = preview_archive(&store, "a", path, &first).await.unwrap();
+        assert_eq!(preview.message_count, 2);
+        assert_eq!(preview.messages[0].text, "Compare synthetic samples");
+        assert!(store.list_project_frame_ids("a").await.unwrap().is_empty());
+        let review = wisp_dto::native_session_import::ImportRequest {
+            archive_path: path.into(),
+            sha256: preview.sha256,
+            source_session_id: preview.source_session_id,
+        };
+        validate_review(&first, &review).unwrap();
+        // The source is replaced after reading. Extraction must use the reviewed
+        // bytes, never reopen the changed filename after creating the session.
+        build_archive(
+            dir.path(),
+            "source",
+            &messages,
+            &[("artifacts/counts.csv", "results/counts.csv", "CHANGED")],
+        );
+        let changed = prepare_archive(path).await.unwrap();
+        assert!(validate_review(&changed, &review).is_err());
+        let imported_a = apply_prepared_archive(&store, "a", &a, "fake", path, first)
+            .await
+            .unwrap();
+        assert_eq!(imported_a.status, "imported");
+        assert_eq!(imported_a.artifact_count, 1);
+        assert_eq!(
+            std::fs::read_to_string(a.join("results/counts.csv")).unwrap(),
+            "sample,count\nA,12"
+        );
+        let imported_b = apply_prepared_archive(&store, "b", &b, "fake", path, changed)
+            .await
+            .unwrap();
+        assert_eq!(imported_b.status, "imported");
+        assert_ne!(imported_a.frame_id, imported_b.frame_id);
+        assert_eq!(
+            store
+                .frame_project_id(&imported_b.frame_id)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            std::fs::read_to_string(b.join("results/counts.csv")).unwrap(),
+            "CHANGED"
+        );
+        let again = apply_prepared_archive(
+            &store,
+            "a",
+            &a,
+            "fake",
+            path,
+            prepare_archive(path).await.unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.frame_id, imported_a.frame_id);
+        assert_eq!(again.status, "skipped");
+        assert_eq!(again.artifact_count, 0);
+        assert_eq!(store.list_project_frame_ids("a").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn native_archive_legacy_mapping_never_updates_another_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        for project in ["a", "b"] {
+            store.create_project(project, project, "").await.unwrap();
+        }
+        store
+            .create_frame("legacy", "a", "OPERON", "fake")
+            .await
+            .unwrap();
+        store
+            .append_message("legacy", 1, &Message::user("Original legacy question"))
+            .await
+            .unwrap();
+        store
+            .record_session_import("source", "legacy", "old.zip")
+            .await
+            .unwrap();
+        let archive = build_archive(
+            dir.path(),
+            "source",
+            &[
+                Message::user("Imported question"),
+                Message::assistant("Imported answer"),
+            ],
+            &[],
+        );
+        let parsed = parse_import_archive(&archive).unwrap();
+        let (other, status) = import_parsed(&store, "b", "fake", "new.zip", &parsed)
+            .await
+            .unwrap();
+        assert_eq!(status, "imported");
+        assert_ne!(other, "legacy");
+        assert_eq!(store.message_count("legacy").await.unwrap(), 1);
+        assert_eq!(
+            existing_import(&store, "a", "source")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("legacy")
+        );
+        let (same, status) = import_parsed(&store, "a", "fake", "new.zip", &parsed)
+            .await
+            .unwrap();
+        assert_eq!(same, "legacy");
+        assert_eq!(status, "updated");
+        assert_eq!(store.message_count(&other).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn native_archive_reports_artifact_failures_without_overwriting_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("blocked"), "keep").unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        store
+            .create_project("p", "P", root.to_str().unwrap())
+            .await
+            .unwrap();
+        let archive = build_archive(
+            dir.path(),
+            "source",
+            &[Message::user("Question")],
+            &[("artifacts/file.txt", "blocked/file.txt", "content")],
+        );
+        let result = apply_prepared_archive(
+            &store,
+            "p",
+            &root,
+            "fake",
+            archive.to_str().unwrap(),
+            prepare_archive(archive.to_str().unwrap()).await.unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.status, "imported");
+        assert_eq!(result.artifact_count, 0);
+        assert_eq!(result.missing_artifacts.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(root.join("blocked")).unwrap(),
+            "keep"
+        );
+    }
+
+    #[test]
+    fn native_archive_corrupt_artifact_does_not_leave_a_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = build_archive(
+            dir.path(),
+            "corrupt",
+            &[Message::user("Question")],
+            &[(
+                "artifacts/data.txt",
+                "results/data.txt",
+                "synthetic content for CRC validation",
+            )],
+        );
+        let mut bytes = std::fs::read(&archive).unwrap();
+        let offset = {
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+            let entry = zip.by_name("artifacts/data.txt").unwrap();
+            entry.data_start() + entry.compressed_size() / 2
+        };
+        bytes[offset as usize] ^= 0xff;
+        let parsed = parse_import_bytes(&bytes).unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        let (files, missing) = extract_artifacts_from(
+            std::io::Cursor::new(bytes),
+            &parsed.artifacts,
+            &root,
+            "corrupt",
+        );
+        assert!(files.is_empty());
+        assert_eq!(missing.len(), 1);
+        assert!(!root.join("results/data.txt").exists());
+    }
 
     fn build_archive(
         dir: &Path,

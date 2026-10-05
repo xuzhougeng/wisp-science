@@ -33,7 +33,7 @@ public static class NativeTranscriptActivity
         && (row.Run is null || row.Run is { Status: "succeeded", NeedsReview: false })
         && (row.Status is null or "" or "completed" or "done" or "success" or "succeeded");
 
-    private static bool Tool(ConversationItem row) => Safe(row) && row.Role == "tool" && row.Ok == true
+    private static bool Tool(ConversationItem row) => Safe(row) && row.Role is "tool" or "acp_tool" && row.Ok == true
         && row.ToolName is not ("attempt_completion" or "monitor_run" or "wisp_monitor_run" or "generate_image" or "generate_video");
 
     private static bool Glue(ConversationItem row) => Safe(row) && (row.Role is
