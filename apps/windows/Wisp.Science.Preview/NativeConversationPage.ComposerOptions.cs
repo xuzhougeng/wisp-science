@@ -86,6 +86,12 @@ internal sealed partial class NativeConversationPage
         body.Children.Add(new Border { Height = 1, Background = design.Brush("border"), Margin = new Thickness(0, 8, 0, 8) });
         body.Children.Add(specialistRow = OptionRow("专家", specialistChoice));
         body.Children.Add(OptionRow("计算环境", computeChoice));
+        foreach (var action in new[] { newAcp, acpSettings })
+        {
+            action.HorizontalAlignment = HorizontalAlignment.Stretch;
+            action.HorizontalContentAlignment = HorizontalAlignment.Left;
+            body.Children.Add(action);
+        }
         body.Children.Add(optionStatus); body.Children.Add(optionReload);
         composerOptions.Content = new ScrollViewer { Content = body, MaxHeight = 650,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };

@@ -54,7 +54,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     private readonly Func<Task> create;
     private readonly StackPanel transcript = new() { Spacing = 18, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16) };
     private readonly StackPanel approvals = new() { Spacing = 12, MaxWidth = PreviewLayout.ConversationMaxWidth, Margin = new Thickness(16, 0, 16, 12) };
-    private readonly TextBox composer = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, PlaceholderText = "向 Wisp Science 提问…" };
+    private readonly TextBox composer = new() { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, PlaceholderText = "请输入问题 — @ 附加产物，# 附加会话，/ 选择技能…" };
     private readonly ComboBox models = new() { MaxWidth = 230 };
     private readonly ComboBox efforts = new() { MaxWidth = 100, MinWidth = 72, Visibility = Visibility.Collapsed };
     private bool updatingEfforts;
@@ -88,7 +88,11 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
     private sealed class ActivityDisclosure
     {
         public Microsoft.UI.Xaml.Controls.Primitives.ToggleButton Button { get; } = new();
+        public StackPanel Header { get; } = new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Left };
+        public StackPanel Reviews { get; } = new() { Spacing = 4 };
+        public string[] ReviewIds { get; set; } = [];
         public List<FrameworkElement> Rows { get; } = [];
+        public ActivityDisclosure() { Header.Children.Add(Button); Header.Children.Add(Reviews); }
         public void Update()
         {
             var expanded = Button.IsChecked == true;
@@ -256,21 +260,26 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         actions.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var leading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         leading.Children.Add(attach); leading.Children.Add(options); actions.Children.Add(leading);
-        var tools = new Grid { ColumnSpacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var tools = new Grid { ColumnSpacing = 6, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         tools.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         for (var i = 0; i < 3; i++) tools.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        tools.Children.Add(models);
-        Grid.SetColumn(efforts, 1); tools.Children.Add(efforts);
-        Grid.SetColumn(fastMode, 2); tools.Children.Add(fastMode);
+        SetupReading(); SetupAcpSettings();
+        tools.Children.Add(contextUsage);
+        Grid.SetColumn(models, 1); tools.Children.Add(models);
+        Grid.SetColumn(efforts, 2); tools.Children.Add(efforts);
+        Grid.SetColumn(fastMode, 3); tools.Children.Add(fastMode);
         var primary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         primary.Children.Add(queue); primary.Children.Add(send); primary.Children.Add(stop);
-        Grid.SetColumn(primary, 3); tools.Children.Add(primary);
+        Grid.SetColumn(primary, 4); tools.Children.Add(primary);
         Grid.SetColumn(tools, 1); actions.Children.Add(tools);
         actions.SizeChanged += (_, e) =>
         {
             var narrow = PreviewLayout.StackComposerSend(e.NewSize.Width);
             Grid.SetColumn(tools, narrow ? 0 : 1); Grid.SetColumnSpan(tools, narrow ? 2 : 1);
             Grid.SetRow(tools, narrow ? 1 : 0);
+            tools.HorizontalAlignment = narrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            models.MinWidth = narrow ? 80 : 144;
         };
         var card = new StackPanel { Spacing = 8, Padding = new Thickness(14) };
         InitializeQueue();
@@ -293,7 +302,6 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var footerHints = new StackPanel { Spacing = 2 };
         footerHints.Children.Add(slashHint);
-        SetupReading(); SetupAcpSettings(); footerHints.Children.Add(contextUsage);
         hint.Text = model.InputPreferences.Hint;
         hint.Foreground = design.Brush("text-faint");
         hint.HorizontalAlignment = HorizontalAlignment.Center; hint.TextAlignment = TextAlignment.Center;
@@ -312,8 +320,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         var inputArea = new StackPanel { Spacing = 4, MaxWidth = PreviewLayout.ConversationMaxWidth + 40 };
         inputArea.Children.Add(planProgress);
         hosts.Margin = new Thickness(20, 0, 20, 0); inputArea.Children.Add(hosts);
-        var acpActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(20, 0, 20, 0) };
-        acpActions.Children.Add(newAcp); acpActions.Children.Add(acpSettings); inputArea.Children.Add(acpActions); inputArea.Children.Add(border);
+        inputArea.Children.Add(border);
         Grid.SetRow(inputArea, 1); composerBar.Children.Add(inputArea);
         Grid.SetRow(footer, 2); composerBar.Children.Add(footer);
         Grid.SetRow(composerBar, 3); root.Children.Add(composerBar);
@@ -619,7 +626,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             var captured = index;
             var key = keys[index];
             var runRecord = item.Run is { } link ? snapshot?.RunCards?.FirstOrDefault(run => run.Id == link.Id && run.FrameId == snapshot.SessionId && run.Status == link.Status) : null;
-            var terminalRun = NativeToolPresentation.OwnsTerminalRun(item, captured);
+            var terminalRun = item.Run is { } terminal && WorkspaceConversationModel.RunTerminal(terminal.Status);
             retained.Add(key);
             var fingerprint = JsonSerializer.Serialize(item) + JsonSerializer.Serialize(runRecord) + (runRecord == null ? "" : $"/{model.IsRunHidden(runRecord.Id)}/{model.RunBusy(runRecord.Id)}/{model.RunError(runRecord.Id)}/{model.RunReadError(runRecord.Id)}/{model.CanCancelRun(runRecord)}") + style + $"/{snapshot?.HistoryState != null}"
                 + (snapshot == null ? "" : JsonSerializer.Serialize(model.HistoryTarget(snapshot, captured)?.Turn))
@@ -650,7 +657,8 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                 continue;
             }
             var card = new StackPanel { Spacing = 8, Padding = new Thickness(16) };
-            var role = item.Role == "user" ? "你" : item.Role is "tool" or "acp_tool" ? item.ToolName ?? "工具" : item.Role == "reasoning" ? "思考" : "Wisp Science";
+            var role = item.Role == "user" ? "你" : NativeTranscriptActivity.Completion(item) ? "Wisp Science"
+                : item.Role is "tool" or "acp_tool" ? item.ToolName ?? "工具" : item.Role == "reasoning" ? "思考" : "Wisp Science";
             card.Children.Add(new TextBlock { Text = role, FontSize = 12, Foreground = design.Brush("text-muted") });
             foreach (var path in item.Attachments ?? []) card.Children.Add(new TextBlock { Text = "附件 · " + path, TextWrapping = TextWrapping.Wrap });
             if (item.Role == "question" && JsonNode.Parse(item.Text) is JsonObject question)
@@ -667,7 +675,8 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             }
             else if (RenderHistoryReview(card, item)) { }
             else if (RenderPlanProposal(card, item, captured) || RenderPlanTool(card, item) || RenderAcpTool(card, item)) { }
-            else if (item.Role == "tool")
+            else if (item.Role == "tool" && (!NativeTranscriptActivity.Completion(item)
+                || NativeTranscriptActivity.RepeatedCompletion(snapshot!.Items, captured)))
             {
                 var body = new StackPanel { Spacing = 8 };
                 if (runRecord != null && (item.Run?.OwnerIndex == null || item.Run.OwnerIndex == captured))
@@ -676,7 +685,6 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                     if (embedded) body.Children.Add(InlineRunCard(runRecord, true));
                     else if (!model.IsRunHidden(runRecord.Id)) card.Children.Add(InlineRunCard(runRecord, false));
                 }
-                if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(ToolText(item.Input));
                 if (TranscriptPresentation.ToolImagePath(item.Text) is { } imagePath && File.Exists(imagePath))
                 {
                     try
@@ -689,14 +697,19 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                     }
                     catch { }
                 }
-                body.Children.Add(ToolText(item.Text));
+                if (item.Run != null) body.Children.Add(RawToolDetails(item));
+                else
+                {
+                    if (!string.IsNullOrEmpty(item.Input)) body.Children.Add(ToolText(item.Input));
+                    body.Children.Add(ToolText(item.Text));
+                }
                 var heading = new StackPanel { Spacing = 4 };
                 heading.Children.Add(new TextBlock { Text = NativeToolPresentation.Heading(item),
                     Foreground = design.Brush(NativeToolPresentation.IsFailure(item) ? "clay-strong" : "text-muted") });
                 if (item.Run is { } run) heading.Children.Add(new TextBlock { Text = "Run · " + run.Id,
                     TextWrapping = TextWrapping.Wrap, Foreground = design.Brush("text-muted"), FontSize = design.FontSize(12) });
-                if (!string.IsNullOrWhiteSpace(item.Text)) heading.Children.Add(new TextBlock {
-                    Text = item.Text, MaxLines = 2, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis,
+                if (NativeToolPresentation.Preview(item) is { Length: > 0 } preview) heading.Children.Add(new TextBlock {
+                    Text = preview, MaxLines = 2, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis,
                     Foreground = design.Brush("text-muted"), FontSize = design.FontSize(12) });
                 card.Children.Add(new Expander { Header = heading, HorizontalAlignment = HorizontalAlignment.Stretch,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = body,
@@ -743,7 +756,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
         var retainedGroups = new HashSet<string>();
         if (snapshot != null)
         {
-            foreach (var group in NativeTranscriptActivity.Groups(snapshot.Items, snapshot.Running || snapshot.Stopping))
+            foreach (var group in NativeTranscriptActivity.Groups(snapshot.Items, snapshot.Running || snapshot.Stopping, openRun != null))
             {
                 var groupKey = keys[group.Start];
                 retainedGroups.Add(groupKey);
@@ -754,10 +767,24 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
                     disclosure.Button.Click += (_, _) => capturedDisclosure.Update();
                     activityDisclosures[groupKey] = disclosure;
                 }
+                var reviewIds = NativeTranscriptActivity.ReviewRuns(snapshot.Items, group);
+                if (!disclosure.ReviewIds.SequenceEqual(reviewIds))
+                {
+                    disclosure.ReviewIds = reviewIds;
+                    disclosure.Reviews.Children.Clear();
+                    foreach (var id in reviewIds)
+                    {
+                        var review = MessageAction("查看待审阅运行");
+                        ToolTipService.SetToolTip(review, "Run · " + id);
+                        review.Click += (_, _) => openRun?.Invoke(id);
+                        disclosure.Reviews.Children.Add(review);
+                    }
+                }
+                disclosure.Reviews.Visibility = reviewIds.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
                 disclosure.Rows.Clear();
                 for (var row = group.Start; row < group.End; row++) disclosure.Rows.Add(renderedRows[keys[row]].Element);
                 disclosure.Update();
-                desired.Insert(desired.IndexOf(disclosure.Rows[0]), disclosure.Button);
+                desired.Insert(desired.IndexOf(disclosure.Rows[0]), disclosure.Header);
             }
         }
         foreach (var key in activityDisclosures.Keys.Where(key => !retainedGroups.Contains(key)).ToArray()) activityDisclosures.Remove(key);

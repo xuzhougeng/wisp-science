@@ -75,12 +75,13 @@ now has an initial implementation in the working tree:
   discards late pages and errors from the abandoned request.
 - Completed process phases share a show/hide control while the final report
   and trailing usage stay visible. Toggling preserves mounted message controls
-  and nested tool disclosure states. Failed, pending, unknown and actionable
-  rows split groups; active turns remain visible. Run monitors remain separate
-  until the native protocol can establish their ownership and completion.
+  and nested tool disclosure states. Failed, pending, unknown and unresolved
+  actions split groups; active turns remain visible. Successful Run monitors
+  join their exact submission; a review-needed Run can join the group when its
+  ownership is verified and its review action remains outside the disclosure.
 - Tool disclosures show explicit completion, running, cancellation, failure or
-  unknown state plus the host's recorded elapsed time when present. Output is a
-  two-line wrapping preview rather than a fixed UTF-16 substring. Existing
+  unknown state plus the host's recorded elapsed time when present. Plain output
+  has a bounded, two-line preview; Run/JSON payloads stay in details. Existing
   optional duration/model/timestamp metadata now survives native decoding; old
   hosts do not acquire fabricated timing. Explicit error status expands a tool
   even when `ok` is absent and its previous successful view was collapsed.

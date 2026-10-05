@@ -656,6 +656,31 @@ draft, deduplication and send/queue behavior. C# model/contract checks passed,
 but browser selection coverage, a build of this latest change and real-window
 acceptance remain pending at the PR submission checkpoint.
 
+## Windows conversation readability (2026-10-05)
+
+Completed tool phases also include a successful `attempt_completion` when the
+same final answer follows in an assistant message. Successful Runs and their
+exact monitors join the same process; a **查看待审阅运行** action remains outside
+the fold for each Run needing review. Monitors and review-needed Runs with
+unverified ownership stay visible. The sole final answer, failed tools and
+active turns remain visible. Terminal Run monitor details start collapsed;
+raw Run input/output is behind **原始输入与输出**, so a
+review-needed status no longer expands a JSON record across the conversation.
+
+The Windows artifacts panel projects Markdown tables from assistant messages and
+successful completion output in the displayed transcript page, alongside the
+registered files. Each table has dimensions, a native preview and **复制表格**
+(tab-separated visible text, including headers). Collection follows streaming
+updates and history navigation without creating files or database records.
+Escape closes a table preview before its parent panel. CSV/formula extraction
+and scanning unloaded history are outside this table projection.
+
+The composer keeps execution environments above the input, attachment/options
+on the lower left, and compact context usage beside model/effort/Fast/Send on
+the lower right. **新建 ACP 对话** and **ACP 会话选项** now live inside **对话选项**.
+The context button retains its accessible label, tooltip and detailed breakdown.
+ACP submenus and context details still close before their parent on Escape.
+
 ## Native UI alignment (2026-09-26)
 
 The macOS workspace uses regular navigation rows and a session-actions menu for

@@ -10,7 +10,20 @@ public static class NativeToolPresentation
     public static bool RequiresAttention(ConversationItem item) => IsFailure(item) || item.Run?.NeedsReview == true;
     public static bool OwnsTerminalRun(ConversationItem item, int index) => item.Run is { } run
         && run.OwnerIndex == index && WorkspaceConversationModel.RunTerminal(run.Status);
-    public static bool InitiallyExpanded(ConversationItem item, int index) => !OwnsTerminalRun(item, index) && RequiresAttention(item);
+    public static bool InitiallyExpanded(ConversationItem item, int index) =>
+        !(item.Run is { } run && WorkspaceConversationModel.RunTerminal(run.Status)) && RequiresAttention(item);
+
+    /// <summary>Raw Run records belong in details, not the summary header.</summary>
+    public static string Preview(ConversationItem item)
+    {
+        if (item.Run != null) return "";
+        var text = item.Text.Trim();
+        if (text.StartsWith('{') || text.StartsWith('[')) return "";
+        var line = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (line.Length <= 160) return line;
+        var limit = char.IsHighSurrogate(line[159]) ? 159 : 160;
+        return line[..limit] + "…";
+    }
     public static string State(ConversationItem item) => item.Ok == false || item.Status is "failed" or "error"
         ? "失败"
         : item.Run is { } run ? RunState(run.Status) + (run.NeedsReview ? " · 待审阅" : "")

@@ -80,6 +80,7 @@ NativeComposerCommandsTests.Run();
 await NativeComposerReferencesTests.RunAsync(args[0]);
 NativeTranscriptRowsTests.Run();
 NativeTranscriptActivityTests.Run();
+NativeTranscriptTablesTests.Run();
 await NativeTerminalStreamingTests.RunAsync();
 await WorkspaceJourneyTests.RunAsync();
 NativeBrowserPresentationTests.Run();

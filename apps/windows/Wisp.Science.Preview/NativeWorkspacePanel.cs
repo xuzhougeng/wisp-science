@@ -13,7 +13,8 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 {
     private readonly WorkspacePanelModel model;
     private readonly WispDesign design;
-    private readonly Func<ConversationItem[]> transcript;
+    private readonly WorkspaceConversationModel? conversation;
+    private readonly NativeTranscriptTables transcriptTables = new();
     private readonly WorkspaceSideChatModel? sideChat;
     private readonly Func<NativeInputPreferences> inputPreferences;
     private readonly Action<string>? openTerminal;
@@ -81,14 +82,15 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         catch (OperationCanceledException) { }
     }
 
-    public NativeWorkspacePanel(WorkspacePanelModel model, Func<ConversationItem[]> transcript, WispDesign design, Action close,
+    public NativeWorkspacePanel(WorkspacePanelModel model, WorkspaceConversationModel? conversation, WispDesign design, Action close,
         WorkspaceSideChatModel? sideChat = null, Action<string>? openTerminal = null, Action<string, string>? tabChanged = null,
         WorkspaceRunReviewModel? runReview = null, Func<NativeInputPreferences>? inputPreferences = null,
         Func<string, NativeDocumentSelection, bool>? quoteDocument = null, Func<bool>? windowEscape = null)
     {
         this.quoteDocument = quoteDocument;
         this.windowEscape = windowEscape;
-        this.model = model; this.transcript = transcript; this.design = design; this.close = close;
+        this.model = model; this.conversation = conversation; this.design = design; this.close = close;
+        if (conversation != null) conversation.Changed += RefreshTranscript;
         this.tabChanged = tabChanged;
         this.runReview = runReview;
         this.inputPreferences = inputPreferences ?? (() => new());
@@ -169,6 +171,12 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     public void Refresh() { if (!disposed) Render(); }
 
+    private ConversationSnapshot? Transcript => conversation?.ShowingHistory == true ? conversation.History : conversation?.Snapshot;
+    private void RefreshTranscript()
+    {
+        if (!disposed && transcriptTables.Update(Transcript) && model.Tabs.Selected == "artifacts") Render();
+    }
+
     private void RestoreScroll(object? sender, object e)
     {
         if (disposed || !restoreScroll || model.Loading || readingState is null) return;
@@ -209,7 +217,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         else if (model.Tabs.Selected == "highlights") RenderHighlights(query);
         else if (model.Tabs.Selected == "provenance")
         {
-            foreach (var row in NativeProvenanceRow.Collect(transcript()).Where(item => item.Matches(query)))
+            foreach (var row in NativeProvenanceRow.Collect(Transcript?.Items ?? []).Where(item => item.Matches(query)))
             {
                 var detail = new StackPanel { Spacing = 8 };
                 foreach (var (label, value) in new[] { ("输入", row.Input), ("输出", row.Output) })
@@ -234,6 +242,31 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderArtifacts(string query)
     {
+        transcriptTables.Update(Transcript);
+        if (transcriptTables.Selected is { } selected)
+        {
+            var heading = new Grid();
+            heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            heading.Children.Add(TextHeading(selected.Name));
+            var dismiss = design.ToolButton("关闭表格预览", "close");
+            dismiss.Click += (_, _) => { transcriptTables.Dismiss(); Render(); };
+            Grid.SetColumn(dismiss, 1); heading.Children.Add(dismiss);
+            body.Children.Add(heading);
+            body.Children.Add(TranscriptView.TableElement(selected.Content, design));
+        }
+        var tables = transcriptTables.Items.Where(item => item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+        if (tables.Length > 0) body.Children.Add(TextHeading($"表格 · {tables.Length}"));
+        foreach (var table in tables)
+        {
+            var button = Row(table.Name, $"{table.Rows} 行 × {table.Columns} 列", "grid");
+            button.Click += (_, _) =>
+            {
+                if (!transcriptTables.Select(table.Id)) return;
+                model.DismissPreview(); readingState?.SetOffset(0); Render();
+            };
+            body.Children.Add(button);
+        }
         var groups = NativeArtifactGroups.Collect(model.Artifacts, query);
         foreach (var group in groups)
         {
@@ -245,12 +278,13 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             {
                 var captured = artifact;
                 var button = Row(captured.Name, (captured.LogicalPath ?? captured.Path), "doc");
-                button.Click += async (_, _) => { await model.ReadArtifactAsync(captured.Id, lifetime.Token); Render(); };
+                button.Click += async (_, _) => { transcriptTables.Dismiss(); await model.ReadArtifactAsync(captured.Id, lifetime.Token); Render(); };
                 body.Children.Add(button);
             }
         }
-        if (model.Artifacts.Length == 0 && !model.Loading) body.Children.Add(design.EmptyState("doc", "暂无产物", "会话生成的文件、图片和报告会集中显示在这里。"));
-        else if (groups.Count == 0 && !model.Loading) body.Children.Add(Mute("没有匹配的产物"));
+        if (model.Artifacts.Length == 0 && transcriptTables.Items.Count == 0 && !model.Loading)
+            body.Children.Add(design.EmptyState("doc", "暂无产物", "会话中的表格和生成的文件、图片、报告会集中显示在这里。"));
+        else if (groups.Count == 0 && tables.Length == 0 && !model.Loading) body.Children.Add(Mute("没有匹配的产物"));
     }
 
     private void RenderFiles(string query)
@@ -646,7 +680,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
 
     private void RenderNotebook(string query)
     {
-        foreach (var cell in NativeNotebookCell.Collect(transcript()).Where(cell => query.Length == 0 || cell.Source.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        foreach (var cell in NativeNotebookCell.Collect(Transcript?.Items ?? []).Where(cell => query.Length == 0 || cell.Source.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
         {
             var captured = cell;
             var card = new StackPanel { Spacing = 10, Padding = new Thickness(12), Background = design.Brush("bg-sunken"), CornerRadius = new CornerRadius(10) };
@@ -674,7 +708,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
             star.Click += async (_, _) => { await model.ToggleNotebookStarAsync(captured, lifetime.Token); Render(); };
             card.Children.Add(star); body.Children.Add(card);
         }
-        if (!NativeNotebookCell.Collect(transcript()).Any()) body.Children.Add(design.EmptyState("book", "暂无代码单元", "对话中的代码及运行输出会自动整理到笔记本。"));
+        if (!NativeNotebookCell.Collect(Transcript?.Items ?? []).Any()) body.Children.Add(design.EmptyState("book", "暂无代码单元", "对话中的代码及运行输出会自动整理到笔记本。"));
     }
 
     private static string StatusLabel(NativeNotebookCell cell) => cell.Status switch
@@ -934,6 +968,7 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
         fileDialog?.Hide();
         scroll.LayoutUpdated -= RestoreScroll;
         if (runReview != null) { runReview.Changed -= Render; runReview.Close(); }
+        if (conversation != null) conversation.Changed -= RefreshTranscript;
         disposed = true; lifetime.Cancel(); documentPreview?.Dispose(); model.Close(); lifetime.Dispose();
     }
 }
