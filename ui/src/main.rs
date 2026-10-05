@@ -1327,6 +1327,8 @@ fn App() -> impl IntoView {
     // it without overwriting text the user has already edited.
     let side_chat_input = create_rw_signal(String::new());
     let side_chat_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
+    // The Run (`(id, title)`) the side chat is pointed at from a run card.
+    let side_chat_run = create_rw_signal::<Option<(String, String)>>(None);
     let side_chat_items = create_rw_signal::<Vec<SideChatItem>>(vec![]);
     let side_chat_busy = create_rw_signal(false);
     let side_chat_model_menu_open = create_rw_signal(false);
@@ -2367,6 +2369,7 @@ fn App() -> impl IntoView {
         side_chat_items.set(restored.unwrap_or_default());
         side_chat_input.set(String::new());
         side_chat_quotes.set(vec![]);
+        side_chat_run.set(None);
         side_chat_model_menu_open.set(false);
         // ponytail: busy is a global flag, so we clear it on switch to drop a
         // stale spinner. Trade-off: returning to a session whose request is
@@ -5137,6 +5140,7 @@ fn App() -> impl IntoView {
         side_chat_items.update(|v| v.push(SideChatItem::User(question.clone())));
         side_chat_busy.set(true);
         let sid = active_session.get();
+        let run_id = side_chat_run.get_untracked().map(|(id, _)| id);
         let acp_agent = side_chat_acp_agent.get();
         let model = match acp_agent.as_ref() {
             Some(id) => acp_agents
@@ -5152,6 +5156,7 @@ fn App() -> impl IntoView {
                 "sessionId": sid.clone(),
                 "question": question,
                 "acpAgentId": acp_agent,
+                "runId": run_id,
             }))
             .unwrap();
             let reply = match invoke_checked("side_chat", arg).await {
@@ -5198,6 +5203,22 @@ fn App() -> impl IntoView {
             }
         });
     };
+
+    // A run card's ask button: point the side chat at that Run and ask the
+    // obvious question right away. The scope chip stays for follow-ups.
+    provide_context(chat_render::SideChatRun(Callback::new(
+        move |(run_id, title): (String, String)| {
+            let question = tf(
+                locale.get_untracked(),
+                "sidechat.run_progress_question",
+                &[("title", &title)],
+            );
+            side_chat_run.set(Some((run_id, title)));
+            ensure_right_tab(RightTab::SideChat, show_right, open_right_tabs, right_tab);
+            send_side_chat((question, vec![], false));
+            focus_element_soon(SIDE_CHAT_INPUT_ID);
+        },
+    )));
 
     let on_send = move |ev: web_sys::KeyboardEvent| {
         if (ev.ctrl_key() || ev.meta_key())
@@ -17452,6 +17473,22 @@ fn App() -> impl IntoView {
                                                         </div>
                                                     }
                                                 }).collect_view()}
+                                            </div>
+                                        })}
+                                        {move || side_chat_run.get().map(|(run_id, title)| view! {
+                                            <div class="composer-attachments composer-reference-chips sidechat-quotes">
+                                                <div class="composer-attachment-row composer-reference-card"
+                                                    data-testid="sidechat-run" title=run_id>
+                                                    <span class="composer-attachment-icon">{compose_icon("terminal")}</span>
+                                                    <span class="composer-attachment-copy">
+                                                        <span class="composer-attachment ready">{title}</span>
+                                                        <span class="composer-attachment-meta">{move || t(locale.get(), "sidechat.run_scope")}</span>
+                                                    </span>
+                                                    <button type="button" class="composer-attachment-remove"
+                                                        title=move || t(locale.get(), "composer.remove_attachment")
+                                                        aria-label=move || t(locale.get(), "composer.remove_attachment")
+                                                        on:click=move |_| side_chat_run.set(None)>{compose_icon("close")}</button>
+                                                </div>
                                             </div>
                                         })}
                                         <textarea

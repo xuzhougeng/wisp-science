@@ -252,6 +252,11 @@ pub(crate) struct CompletedRunCards {
     pub dismissed: RwSignal<HashSet<String>>,
 }
 
+/// Root-owned entry into the side chat for one Run (`(run id, title)`), shared
+/// through the Leptos context so a run card anywhere can ask about itself.
+#[derive(Clone, Copy)]
+pub(crate) struct SideChatRun(pub(crate) Callback<(String, String)>);
+
 /// True for items whose `render_item` produces an empty view, so the thread
 /// loop can drop their wrapper `<div>` and avoid a dangling `.thread` gap (#19).
 pub(crate) fn renders_nothing(item: &ChatItem) -> bool {
@@ -2239,6 +2244,7 @@ pub(crate) fn RunMonitorCard(
     // Manual entry point: the review button on the card opens the modal
     // directly, for any card.
     let review_modal = use_context::<crate::overlays::RunReviewModal>().map(|modal| modal.0);
+    let side_chat_run = use_context::<SideChatRun>().map(|ask| ask.0);
     view! {
         {move || {
             if !embedded
@@ -2274,6 +2280,7 @@ pub(crate) fn RunMonitorCard(
                 }.into_view();
             };
             let title = run_title(&run);
+            let ask_run = (run.id.clone(), title.clone());
             let status = run.status.clone();
             let status_class = format!("run-status {status}");
             let active = matches!(status.as_str(), "submitted" | "running" | "cancelling");
@@ -2293,6 +2300,7 @@ pub(crate) fn RunMonitorCard(
             let meta_kind = run.kind.clone();
             let ended_at = run.ended_at;
             let last_heartbeat = run.last_polled_at;
+            let heartbeat_id = run.id.clone();
             let timeout_secs = run.timeout_secs;
             let settled_now = js_sys::Date::now() as i64 / 1000;
             let progress = run_progress(&run);
@@ -2354,6 +2362,17 @@ pub(crate) fn RunMonitorCard(
                                 <span class=status_class>{run_status_label(locale.get(), &status)}</span>
                             }.into_view()
                         }}
+                        {side_chat_run.map(|ask| {
+                            let tip = t(locale.get(), "runs.ask_side_chat");
+                            view! {
+                                <button type="button" class="icon-btn run-monitor-ask"
+                                    data-testid="run-monitor-ask"
+                                    title=tip.clone()
+                                    aria-label=tip
+                                    on:click=move |_| ask.call(ask_run.clone())
+                                >{compose_icon("chat")}</button>
+                            }
+                        })}
                         {cancellable.then(|| {
                             let run_id = cancel_id.clone();
                             let tip = cancel_label.clone();
@@ -2399,6 +2418,17 @@ pub(crate) fn RunMonitorCard(
                     </div>
                     <div class="run-monitor-meta">{move || {
                         let now = if active { clock.get() } else { settled_now };
+                        // Heartbeat-only polls land in `runs` untracked (see
+                        // `refresh_runs`); this closure already re-runs on
+                        // every clock tick, so the freshest value is read here.
+                        let last_heartbeat = runs
+                            .with_untracked(|records| {
+                                records
+                                    .iter()
+                                    .find(|record| record.id == heartbeat_id)
+                                    .and_then(|record| record.last_polled_at)
+                            })
+                            .or(last_heartbeat);
                         run_monitor_meta(
                             locale.get(),
                             &meta_context,

@@ -1206,6 +1206,125 @@ pub(super) async fn list_run_workspace_files(
     parse_workspace_listing(&output.stdout, subpath, limit)
 }
 
+/// Directories the inspection scans besides the run workspace.
+const INSPECT_DIR_CAP: usize = 3;
+
+/// Absolute paths the command names: a Run that `cd`s out of its workspace
+/// writes there, and nothing else in the handle records where.
+// ponytail: token scan, not a shell parser — paths with spaces or built from
+// variables are missed. If that bites, let the asking model name the paths.
+fn command_dirs(command: &str) -> Vec<String> {
+    let mut dirs = Vec::<String>::new();
+    for token in command.split(|c: char| c.is_whitespace() || ";&|()<>='\"".contains(c)) {
+        let path = token.trim_end_matches('/');
+        if path.starts_with('/')
+            && path.matches('/').count() >= 2
+            && !path.contains(['$', '*', '?', '`', '\\'])
+            && !dirs.iter().any(|dir| dir == path)
+        {
+            dirs.push(path.to_string());
+            if dirs.len() == INSPECT_DIR_CAP {
+                break;
+            }
+        }
+    }
+    dirs
+}
+
+/// Read-only: the server clock, the Run's live process group, and the files
+/// written since it was launched, under its workspace and `dirs`. Each `find` is bounded so the
+/// whole script stays inside `REMOTE_RPC_TIMEOUT` on a huge tree; non-writable
+/// directories (`/usr/bin`, `/dev`) cannot hold outputs and are skipped.
+fn inspect_payload(workdir: &str, token: &str, pgid: Option<i64>, dirs: &[String]) -> String {
+    let processes = match pgid {
+        Some(pgid) => format!(
+            r#"procs=$(ps -A -o pgid=,pid=,etime=,pcpu=,rss=,comm= 2>/dev/null | awk '$1 == {pgid} {{ print $2, $3, $4, $5, $6 }}' | head -n 15)
+if [ -n "$procs" ]; then
+  printf 'processes in the Run process group (pid elapsed %%cpu rss_kb command):\n%s\n' "$procs"
+else
+  printf 'processes in the Run process group: none running\n'
+fi
+"#
+        ),
+        None => String::new(),
+    };
+    let dirs = dirs
+        .iter()
+        .map(|dir| super::shell_single_quote(dir))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        r#"set -u
+LC_ALL=C
+export LC_ALL
+workdir="$HOME/{workdir}"
+[ -f "$workdir/token" ] && [ "$(cat "$workdir/token")" = "{token}" ] || {{ echo 'wisp token mismatch' >&2; exit 73; }}
+marker="$workdir/_submitted"
+[ -f "$marker" ] || marker="$workdir/token"
+printf '__WISP_INSPECT__\n'
+printf 'server time now: %s\n' "$(date)"
+{processes}files=$(
+  for dir in "$workdir/inputs" {dirs}; do
+    [ -d "$dir" ] || dir=$(dirname -- "$dir")
+    [ -d "$dir" ] && [ -w "$dir" ] || continue
+    timeout 4 find "$dir" -xdev -maxdepth 6 -type f -newer "$marker" 2>/dev/null | head -n 400
+  done | sort -u
+)
+if [ -n "$files" ]; then
+  printf 'files written since the Run started: %s found (ls -l, newest first, at most 40 shown)\n' "$(printf '%s\n' "$files" | wc -l | tr -d ' ')"
+  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -ltd -- 2>/dev/null | head -n 40
+else
+  printf 'files written since the Run started: none found\n'
+fi
+printf '__WISP_INSPECT_DONE__\n'
+"#
+    )
+}
+
+/// One read-only look at a Run on its server, as plain text for a reader.
+/// Ephemeral: nothing about it is persisted.
+pub(super) async fn inspect_run_server(
+    runner: &dyn RunCommandRunner,
+    remote: &RemoteRun,
+) -> Result<String, String> {
+    let RemoteRunHandle::SshDirect {
+        connection,
+        workdir,
+        token,
+        pgid,
+        ..
+    } = &remote.handle
+    else {
+        return Err("server inspection requires an SSH-direct Run".into());
+    };
+    let dirs = command_dirs(&remote.command);
+    let output = checked_output(
+        "inspect run server",
+        runner
+            .run(
+                ssh_script_command(
+                    connection,
+                    "inspect run server",
+                    inspect_payload(workdir, token, *pgid, &dirs),
+                )?,
+                REMOTE_RPC_TIMEOUT,
+            )
+            .await,
+    )?;
+    let report = output
+        .stdout
+        .split_once("__WISP_INSPECT__\n")
+        .and_then(|(_, rest)| rest.split_once("__WISP_INSPECT_DONE__"))
+        .map(|(report, _)| report.trim())
+        .ok_or_else(|| "server inspection did not complete".to_string())?;
+    let mut searched = vec![format!("~/{workdir}/inputs")];
+    searched.extend(dirs);
+    Ok(format!(
+        "looked for new files under (writable directories only): {}\n{report}",
+        searched.join(", ")
+    ))
+}
+
 fn delete_payload(workdir: &str, token: &str, paths: &[String]) -> String {
     let mut script = format!(
         r#"set -eu
@@ -1551,5 +1670,118 @@ mod tests {
         assert!(require_owned_finish(false, "harvest transfer")
             .unwrap_err()
             .contains("harvest transfer"));
+    }
+
+    #[test]
+    fn command_dirs_keeps_only_literal_absolute_paths() {
+        assert_eq!(
+            command_dirs("cd /data2/proj/out/ && run --ref=\"/data2/ref/a.gtf\" $HOME/x /tmp/*.log /x > /dev/null; ls /a/b /c/d"),
+            ["/data2/proj/out", "/data2/ref/a.gtf", "/dev/null"]
+        );
+        assert!(command_dirs("make outputs").is_empty());
+    }
+
+    // The remote side of an SSH-direct Run is a Linux host with coreutils
+    // `timeout`; run the real script there rather than only syntax-checking it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inspect_payload_reports_processes_and_files_written_since_launch() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        use std::time::SystemTime;
+
+        let home = std::env::temp_dir().join(format!("wisp_inspect_{}", uuid::Uuid::new_v4()));
+        let workdir = home.join(".wisp-science/runs/r1");
+        let results = home.join("project dir/results");
+        std::fs::create_dir_all(workdir.join("inputs")).unwrap();
+        std::fs::create_dir_all(results.join("deep")).unwrap();
+        let aged = |path: PathBuf, text: &str, secs: u64| {
+            std::fs::write(&path, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(secs))
+                .unwrap();
+        };
+        std::fs::write(workdir.join("token"), "tok\n").unwrap();
+        aged(workdir.join("_submitted"), "1", 50);
+        aged(workdir.join("inputs/staged.fa"), "input", 100);
+        aged(results.join("before.txt"), "old", 100);
+        aged(workdir.join("inputs/out.tsv"), "first", 20);
+        aged(results.join("deep/it's new.bed"), "latest!", 0);
+
+        let run = |script: String| {
+            let mut child = Command::new("sh")
+                .arg("-s")
+                .env("HOME", &home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(script.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+            )
+        };
+        let pgid = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        let pgid: i64 = String::from_utf8_lossy(&pgid.stdout)
+            .trim()
+            .parse()
+            .unwrap();
+        let dirs = [
+            results.to_string_lossy().into_owned(),
+            "/dev/null".to_string(),
+        ];
+
+        let (code, stdout) = run(inspect_payload(
+            ".wisp-science/runs/r1",
+            "tok",
+            Some(pgid),
+            &dirs,
+        ));
+        assert_eq!(code, Some(0), "{stdout}");
+        assert!(stdout.contains("__WISP_INSPECT_DONE__"), "{stdout}");
+        // File times are only meaningful against the server's own clock.
+        assert!(stdout.contains("server time now: "), "{stdout}");
+        assert!(
+            stdout
+                .contains("processes in the Run process group (pid elapsed %cpu rss_kb command):"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("files written since the Run started: 2 found"),
+            "{stdout}"
+        );
+        // Newest first, names with quotes and spaces intact, older files left out.
+        let newest = stdout.find("it's new.bed").expect("new file listed");
+        let older = stdout.find("out.tsv").expect("workspace output listed");
+        assert!(newest < older, "{stdout}");
+        assert!(!stdout.contains("staged.fa") && !stdout.contains("before.txt"));
+
+        let (_, stdout) = run(inspect_payload(
+            ".wisp-science/runs/r1",
+            "tok",
+            Some(-7),
+            &[],
+        ));
+        assert!(stdout.contains("none running"), "{stdout}");
+        // A reused run directory with another token is never inspected.
+        let (code, stdout) = run(inspect_payload(".wisp-science/runs/r1", "other", None, &[]));
+        assert_eq!(code, Some(73));
+        assert!(!stdout.contains("__WISP_INSPECT__"));
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

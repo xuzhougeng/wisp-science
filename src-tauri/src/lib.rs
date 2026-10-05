@@ -6438,6 +6438,7 @@ async fn side_chat(
     session_id: Option<String>,
     question: String,
     acp_agent_id: Option<String>,
+    run_id: Option<String>,
 ) -> Result<side_chat::SideChatResponse, String> {
     let question = question.trim();
     if question.is_empty() {
@@ -6483,10 +6484,37 @@ async fn side_chat(
         snapshot_version = messages.last().map(|(seq, _)| *seq).unwrap_or_default();
         history = side_chat::history_from_messages(&messages);
     }
+    // Asked from a Run card: read that Run's live record instead of relying
+    // on what the conversation log happens to say about it.
+    let run = match run_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(run_id) => {
+            let (_, scope) =
+                exploration_commands::working_project_for_frame(&state, frame_id).await?;
+            if !state
+                .store
+                .run_visible_in_scope(run_id, &scope)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                return Err("Run is not visible in the active state scope".into());
+            }
+            Some(
+                state
+                    .store
+                    .get_run(run_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "Run not found".to_string())?,
+            )
+        }
+        None => None,
+    };
     let http_llm = side_chat_http_provider(&state, frame_id).await;
-    let intent = match &http_llm {
-        Ok(llm) => side_chat::classify_intent(llm.as_ref(), question).await,
-        Err(error) => {
+    let intent = match (&run, &http_llm) {
+        // The card already fixed the scope; no classifier call is needed.
+        (Some(_), _) => side_chat::SideChatIntent::run(),
+        (None, Ok(llm)) => side_chat::classify_intent(llm.as_ref(), question).await,
+        (None, Err(error)) => {
             if acp_agent_id.as_deref().is_some_and(|id| !id.is_empty()) {
                 side_chat::SideChatIntent::session_fallback(question)
             } else {
@@ -6494,7 +6522,19 @@ async fn side_chat(
             }
         }
     };
-    let evidence = side_chat::retrieve_evidence(question, &history, &intent);
+    let mut evidence = side_chat::retrieve_evidence(question, &history, &intent);
+    if let Some(run) = &run {
+        evidence.push(side_chat::run_evidence(run, chrono::Utc::now().timestamp()));
+        // The Run lives on a server: look there too, over its own connection,
+        // so the answer covers what the outputs look like on that machine.
+        if run.kind == "ssh_direct" && run.cleaned_at.is_none() {
+            let report = state
+                .run_manager
+                .inspect_run_server(&state.store, &run.id)
+                .await;
+            evidence.push(side_chat::run_server_evidence(&run.id, report));
+        }
+    }
     if evidence.is_empty() {
         return Ok(side_chat::SideChatResponse {
             answer: String::new(),

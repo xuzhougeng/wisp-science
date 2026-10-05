@@ -8009,6 +8009,61 @@ test("active Run elapsed time advances without waiting for a backend refresh (#6
   expect(await card.evaluate((element) => (element as any).__clockStableProbe === true)).toBe(true);
 });
 
+test("active Run heartbeat follows heartbeat-only polls without rebuilding the card", async ({ page }) => {
+  await page.goto("/?mockLiveRunClock=1");
+  await page.getByTestId("recent-session-card").nth(1).click();
+
+  const card = page.getByTestId("auto-run-monitor").locator(".run-monitor-card");
+  const meta = card.locator(".run-monitor-meta");
+  await expect(meta).toContainText("Heartbeat");
+  await card.evaluate((element) => ((element as any).__heartbeatStableProbe = true));
+  // Nothing but the heartbeat moves, as on every poll of a quiet Run.
+  await page.evaluate(() => {
+    const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
+    run.last_polled_at = Math.floor(Date.now() / 1000) - 125;
+  });
+  await expect(meta).toContainText(/Heartbeat 2m/, { timeout: 8_000 });
+  expect(await card.evaluate((element) => (element as any).__heartbeatStableProbe === true)).toBe(true);
+});
+
+test("a Run card asks about its own progress in the side chat", async ({ page }) => {
+  await page.goto("/?mockLiveRunClock=1");
+  await page.getByTestId("recent-session-card").nth(1).click();
+
+  const card = page.getByTestId("auto-run-monitor").locator(".run-monitor-card");
+  const title = (await card.locator(".run-monitor-title strong").textContent())!;
+  await card.getByTestId("run-monitor-ask").click();
+
+  // One click opens the side chat, asks, and scopes it to this Run.
+  const panel = page.locator(".rightpane");
+  await expect(panel.locator(".sidechat-in-pane")).toBeVisible();
+  await expect(panel.locator(".sidechat-row.user")).toContainText(title);
+  await expect.poll(() => lastInvokeArgs(page, "side_chat")).toMatchObject({
+    runId: "run-local-002",
+    question: expect.stringContaining(title),
+  });
+  const chip = panel.getByTestId("sidechat-run");
+  await expect(chip).toContainText(title);
+
+  // Follow-ups stay on the Run until the chip is removed.
+  const input = panel.locator("#side-chat-input");
+  await expect(panel.locator(".sidechat-row.assistant")).toHaveCount(1);
+  await input.fill("any errors?");
+  await input.press("Enter");
+  await expect.poll(() => lastInvokeArgs(page, "side_chat")).toMatchObject({
+    runId: "run-local-002",
+    question: "any errors?",
+  });
+  await expect(panel.locator(".sidechat-row.assistant")).toHaveCount(2);
+  await chip.getByRole("button", { name: "Remove attachment" }).click();
+  await expect(chip).toHaveCount(0);
+  await input.fill("back to the conversation");
+  await input.press("Enter");
+  await expect.poll(async () => (await lastInvokeArgs(page, "side_chat")).question)
+    .toBe("back to the conversation");
+  expect((await lastInvokeArgs(page, "side_chat")).runId ?? null).toBeNull();
+});
+
 test("image generation shows a placeholder and replaces it with the PNG", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("IMAGEGENPLACEHOLDER");

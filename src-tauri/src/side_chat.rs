@@ -59,6 +59,10 @@ pub(crate) enum SideChatScope {
     Lookup,
     #[serde(skip)]
     Fallback,
+    /// Host-selected: the question was asked from a Run card. Never produced
+    /// by the classifier.
+    #[serde(skip)]
+    Run,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +79,15 @@ impl SideChatIntent {
             scope: SideChatScope::Fallback,
             prefer_recent: true,
             query_terms: search_terms(question),
+        }
+    }
+
+    /// A question asked from a Run card: recent context plus the Run snapshot.
+    pub(crate) fn run() -> Self {
+        Self {
+            scope: SideChatScope::Run,
+            prefer_recent: true,
+            query_terms: Vec::new(),
         }
     }
 }
@@ -604,7 +617,7 @@ pub(crate) fn retrieve_evidence(
     let mut latest = HashSet::<usize>::new();
 
     match intent.scope {
-        SideChatScope::Session | SideChatScope::Fallback => {
+        SideChatScope::Session | SideChatScope::Fallback | SideChatScope::Run => {
             for index in recent_context(entries, RECENT_CONTEXT) {
                 latest.insert(index);
                 push_index(&mut selected, index);
@@ -701,6 +714,85 @@ pub(crate) fn retrieve_evidence(
         .collect()
 }
 
+/// The live Run snapshot offered as the newest source of a Run-scoped question.
+/// The whole stored tail is included: unlike conversation excerpts, it is the
+/// evidence the question is about.
+pub(crate) fn run_evidence(run: &wisp_store::RunRecord, now: i64) -> SideChatEvidence {
+    let ago = |at: i64| format!("{}s ago", now.saturating_sub(at));
+    let mut text = format!(
+        "Run {} \"{}\"\nstatus: {}\ncontext: {} ({})\n",
+        run.id,
+        run.title,
+        run.status.as_str(),
+        run.context_id,
+        run.kind
+    );
+    let started = run.started_at.unwrap_or(run.created_at);
+    match run.ended_at {
+        Some(ended) => text.push_str(&format!(
+            "ran for: {}s, ended {}\n",
+            ended.saturating_sub(started),
+            ago(ended)
+        )),
+        None => text.push_str(&format!("running for: {}s\n", now.saturating_sub(started))),
+    }
+    if let Some(code) = run.exit_code {
+        text.push_str(&format!("exit code: {code}\n"));
+    }
+    if let Some(limit) = run.timeout_secs.filter(|seconds| *seconds > 0) {
+        text.push_str(&format!("time limit: {limit}s\n"));
+    }
+    if let Some(polled) = run.last_polled_at {
+        text.push_str(&format!("last successful status poll: {}\n", ago(polled)));
+    }
+    let mut section = |label: &str, value: Option<&str>| {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            text.push_str(&format!("{label}:\n{value}\n"));
+        }
+    };
+    section("last poll error", run.last_poll_error.as_deref());
+    section("command", run.command.as_deref());
+    if run.progress_json != "{}" {
+        section("progress", Some(&run.progress_json));
+    }
+    section("stdout tail", run.stdout_tail.as_deref());
+    section("stderr tail", run.stderr_tail.as_deref());
+    SideChatEvidence {
+        source_id: format!("run-{}", run.id),
+        event_seq: None,
+        message_seq: None,
+        turn: 0,
+        role: "run".into(),
+        excerpt: text.trim_end().to_string(),
+        relevance: "Live Run snapshot".into(),
+    }
+}
+
+/// What the Run's own server said when asked just now. A failed inspection is
+/// still evidence: the answer must say the server was not reachable instead of
+/// implying the outputs were checked.
+pub(crate) fn run_server_evidence(
+    run_id: &str,
+    report: Result<String, String>,
+) -> SideChatEvidence {
+    let (excerpt, relevance) = match report {
+        Ok(report) => (report, "Live server inspection"),
+        Err(error) => (
+            format!("The server could not be inspected just now: {error}"),
+            "Server inspection failed",
+        ),
+    };
+    SideChatEvidence {
+        source_id: format!("run-{run_id}-server"),
+        event_seq: None,
+        message_seq: None,
+        turn: 0,
+        role: "server".into(),
+        excerpt,
+        relevance: relevance.into(),
+    }
+}
+
 fn scope_instruction(scope: SideChatScope) -> &'static str {
     match scope {
         SideChatScope::Session => {
@@ -711,6 +803,9 @@ fn scope_instruction(scope: SideChatScope) -> &'static str {
         }
         SideChatScope::Lookup => {
             "Classified scope: lookup. Answer only if the evidence actually covers the asked content. If it does not, say that the current conversation does not contain enough information."
+        }
+        SideChatScope::Run => {
+            "Host-selected scope: one Run. The last sources are live readings taken just now: a control-plane snapshot of that Run (status, timings, heartbeat, and the tails of its stdout/stderr) and, when the Run executes on an SSH server, a read-only inspection of that server (the Run's live processes, and the files written since it started under its workspace and the directories its command names, with sizes and modification times). Answer about that Run from these: what stage the logs show, whether it still looks alive, which outputs exist on the server and how recently they changed, and any warnings or errors. The earlier sources are recent conversation context that only explains what the Run is for. Log tails and file lists are truncated, so do not claim a stage or a file the sources do not show, and say so when the logs have been quiet or the server could not be inspected."
         }
         SideChatScope::Fallback => {
             "Intent classification was unavailable. The sources are best-effort recent conversation context plus question-term matches, not proof that the question is about progress. Interpret the original question yourself and answer only if these sources support it. For comparisons, do not assume the full history is present. If the evidence is insufficient, say that the current conversation does not contain enough information."
@@ -1138,5 +1233,72 @@ mod tests {
             .content
             .as_text()
             .contains("目前这件事做到哪一步了？"));
+    }
+
+    #[test]
+    fn run_scope_appends_the_live_snapshot_as_the_newest_source() {
+        let run = wisp_store::RunRecord {
+            id: "abc".into(),
+            project_id: "p".into(),
+            frame_id: Some("frame-1".into()),
+            context_id: "ssh:gpu".into(),
+            title: "SCOTCH pilot".into(),
+            kind: "ssh_direct".into(),
+            status: wisp_store::RunStatus::Running,
+            command: Some("bash run.sh".into()),
+            script_path: None,
+            input_refs_json: "[]".into(),
+            output_specs_json: "[]".into(),
+            created_at: 100,
+            started_at: Some(100),
+            ended_at: None,
+            exit_code: None,
+            stdout_tail: Some("INFO - use the existing gtf file".into()),
+            stderr_tail: Some("   ".into()),
+            remote_workdir: None,
+            remote_handle_json: None,
+            timeout_secs: Some(86_400),
+            last_polled_at: Some(1_195),
+            last_poll_error: None,
+            progress_json: "{}".into(),
+            env_snapshot_json: "{}".into(),
+            harvested_at: None,
+            cleaned_at: None,
+            cleanup_error: None,
+            logs_path: None,
+        };
+        let history = vec![entry(1, 1, "assistant", "Resubmitted the smoke test.")];
+        let intent = SideChatIntent::run();
+        let mut evidence = retrieve_evidence("进展如何", &history, &intent);
+        evidence.push(run_evidence(&run, 1_200));
+
+        let snapshot = evidence.last().unwrap();
+        assert_eq!(snapshot.source_id, "run-abc");
+        assert!(snapshot.excerpt.contains("status: running"));
+        assert!(snapshot.excerpt.contains("running for: 1100s"));
+        assert!(snapshot
+            .excerpt
+            .contains("last successful status poll: 5s ago"));
+        assert!(snapshot.excerpt.contains("use the existing gtf file"));
+        assert!(
+            !snapshot.excerpt.contains("stderr tail"),
+            "blank tails are omitted"
+        );
+
+        evidence.push(run_server_evidence(
+            &run.id,
+            Ok("files written since the Run started: 1 found\n-rw-r--r-- 1 u g 42 Oct  4 21:19 /data/out.tsv".into()),
+        ));
+        let prompt = answer_prompt("frame-1", 1, "进展如何", &evidence, &intent);
+        assert!(prompt.contains("Host-selected scope: one Run"));
+        assert!(prompt.contains("[S2] source=run-abc "));
+        assert!(prompt.contains("[S3] source=run-abc-server "));
+        assert!(prompt.contains("/data/out.tsv"));
+        // An unreachable server is stated, not silently dropped.
+        let failed = run_server_evidence(&run.id, Err("ssh: connection timed out".into()));
+        assert!(failed.excerpt.contains("could not be inspected"));
+        assert!(failed.excerpt.contains("connection timed out"));
+        // Only the host picks this scope; the classifier cannot.
+        assert!(parse_side_chat_intent(r#"{"scope":"run"}"#).is_err());
     }
 }

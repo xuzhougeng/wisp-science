@@ -4744,6 +4744,76 @@ async fn download_run_files_registers_one_row_per_selection() {
 }
 
 #[tokio::test]
+async fn server_inspection_reads_a_running_ssh_run_without_changing_it() {
+    let tmp = std::env::temp_dir().join(format!("wisp_inspect_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "proj", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    store
+        .upsert_execution_context(&harvest_test_context())
+        .await
+        .unwrap();
+    let mut run = wisp_store::RunRecord::new("run-open", "p", "ssh:gpu", "Remote", "ssh_direct");
+    run.frame_id = Some("f".into());
+    run.status = wisp_store::RunStatus::Running;
+    run.command = Some(
+        "set -e; cd /data2/proj/scotch-quant && python run.py --gtf='/data2/ref/it's.gtf' --out $OUT/x > /dev/null".into(),
+    );
+    let handle = RemoteRunHandle::SshDirect {
+        connection:
+            crate::ssh_hosts::SshConnection::from_execution_context(&harvest_test_context())
+                .unwrap(),
+        workdir: ".wisp-science/runs/run-open".into(),
+        token: "cleanup-token".into(),
+        inputs_staged: true,
+        pgid: Some(4242),
+        start_time: Some(99),
+    };
+    run.remote_workdir = Some(handle.display_workdir());
+    run.remote_handle_json = Some(serde_json::to_string(&handle).unwrap());
+    store.create_run(&run).await.unwrap();
+    let runner = Arc::new(ScriptedRunRunner::new(vec![ok_output(
+        "motd\n__WISP_INSPECT__\nprocesses in the Run process group: none running\n\
+         files written since the Run started: none found\n__WISP_INSPECT_DONE__\n",
+    )]));
+    let manager = RunManager::with_runner(runner.clone());
+
+    let report = manager
+        .inspect_run_server(&store, "run-open")
+        .await
+        .unwrap();
+    assert!(report.starts_with(
+        "looked for new files under (writable directories only): \
+         ~/.wisp-science/runs/run-open/inputs, /data2/proj/scotch-quant, /data2/ref/it, /dev/null\n"
+    ));
+    assert!(report.contains("none running"));
+    assert!(!report.contains("motd") && !report.contains("__WISP_"));
+
+    let commands = runner.commands.lock().unwrap();
+    let payload = commands[0].stdin.as_deref().unwrap();
+    // Read-only, scoped to this Run, and safe against quotes in the command.
+    assert!(payload.contains("cleanup-token"));
+    assert!(payload.contains("awk '$1 == 4242 "));
+    assert!(payload.contains(
+        r#"for dir in "$workdir/inputs" '/data2/proj/scotch-quant' '/data2/ref/it' '/dev/null'; do"#
+    ));
+    assert!(!payload.contains("$OUT"));
+    assert!(!payload.contains("rm ") && !payload.contains("kill"));
+    assert_eq!(
+        store.get_run("run-open").await.unwrap().unwrap().status,
+        wisp_store::RunStatus::Running
+    );
+    drop(commands);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
 async fn run_review_browse_and_delete_require_a_terminal_ssh_run() {
     let tmp = std::env::temp_dir().join(format!("wisp_review_guard_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();

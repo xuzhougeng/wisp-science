@@ -205,6 +205,12 @@ pub(crate) fn refresh_runs(into: RwSignal<Vec<RunSummary>>, locale: RwSignal<Loc
             if into.with_untracked(|current| !run_lists_render_eq(current, &list)) {
                 into.set(list);
                 schedule_run_output_follow();
+            } else {
+                // Keep the heartbeat itself current without notifying: the
+                // card's meta line re-reads it on its own clock tick. Dropping
+                // it here froze "Heartbeat … ago" at the last output change,
+                // so a quiet but healthy Run looked disconnected.
+                into.set_untracked(list);
             }
             RUN_REFRESH_INITIALIZED.with(|ready| ready.set(true));
             if should_toast {

@@ -1574,6 +1574,27 @@ impl RunManager {
         .await
     }
 
+    /// One read-only look at an SSH Run on its server, running or finished:
+    /// its live processes and the files written since it started.
+    pub async fn inspect_run_server(
+        &self,
+        store: &wisp_store::Store,
+        run_id: &str,
+    ) -> Result<String, String> {
+        let run = store
+            .get_run(run_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Run not found: {run_id}"))?;
+        if run.cleaned_at.is_some() {
+            return Err("Run workspace was already cleaned".into());
+        }
+        let remote = remote_run_from_record(store, &run)
+            .await?
+            .ok_or_else(|| "Run has no server workspace".to_string())?;
+        harvest_remote::inspect_run_server(self.runner.as_ref(), &remote).await
+    }
+
     /// Download the user's explicit selection from a finished Run's workspace
     /// and register it (files individually, directories as one archive each).
     pub async fn download_run_files(
