@@ -108,7 +108,8 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   as production does.
 - All 12 artifact-operation tests passed, including a new workspace-alias test
   and existing move/delete, collision, shared-snapshot and recovery tests.
-  Formatting passed; the full workspace gate must run again after this repair.
+  Formatting passed; the full workspace gate passed after this repair. New
+  context/compaction changes subsequently require their own regression gate.
 
 ### Increment 4: file-aware turn undo
 
@@ -128,7 +129,31 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   map_items article; updated directory/navigation expectations passed all 29
   tutorial tests. This test-only prerequisite is committed separately.
 
-Conversation controls and search remain incomplete: context/compaction,
+### Increment 5: model context and compaction
+
+- Added an optional `context_view` capability, shared DTOs and an owner-checked
+  native read of the persisted head working set, context details and compaction
+  metadata. Older hosts and ACP sessions hide this built-in-only entry.
+- Added regular/semantic compaction through the existing turn request ledger.
+  The operation preserves staged drafts, attachments and references; it never
+  turns those inputs into a compaction prompt. Unknown acknowledgements reconcile
+  only through the exact request ID and are never replayed.
+- Added compaction cards, checkpoint inspection, latest-epoch undo and nested
+  confirmations. The shared undo command accepts an optional inspected epoch
+  and compares it under the existing workflow lock before changing the store.
+  The response explicitly identifies the removed epoch rather than the parent.
+- Nine targeted Swift tests passed. Shared context DTO and native projection
+  checks passed; the new stale-epoch backend test caught an incorrect expectation
+  about the existing undo return value. After repair, all five compaction-undo
+  backend tests passed. The full Swift suite passed 423 tests without failures.
+  Twenty-six WebView compaction/context checks and wasm compilation passed.
+  Chinese/English, light/dark context pages, history and semantic confirmation
+  were rendered at 419 points and inspected; a cramped picker was corrected.
+- The pre-context workspace gate passed 2634 tests, with no failures. Formatting
+  and generated native-resource checks passed. The new context changes still
+  need the final full workspace run with subsequent conversation increments.
+
+Conversation controls and search remain incomplete:
 scoped per-tool approval, remaining global composer helpers and session
 transfer/import/export and project-file search still need implementation and
 verification. Later outcome groups remain open.

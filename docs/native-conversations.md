@@ -61,6 +61,25 @@ Older turns, ACP, running, queued and read-only conversations cannot undo.
 Escape during the preview read closes only the preview; late reads are discarded.
 Unconfirmed undo writes block further history changes without automatic replay.
 
+Hosts advertising `context_view` expose **Model context** beside the composer
+footer. The view reads the persisted head working set, including system and
+checkpoint messages, the shared system/tool/rule/skill breakdown, and compaction
+history. Built-in conversations can start regular or semantic `/compact` through
+the existing turn pipeline. This sends no staged attachments/references and
+retains the current draft. Semantic compaction accepts an optional retention
+instruction. Completion refreshes the open context view; failures stay visible.
+Compaction transcript cards show recorded before/after counts and checkpoints.
+
+An eligible latest compaction offers undo before the conversation continues.
+The confirmation binds the inspected epoch. The host compares that epoch while
+holding the workflow lock, so another window's newer compaction cannot be undone
+by an old confirmation. Undo preserves the transcript and draft. Archived,
+frozen, running, queued, uncertain and ACP conversations cannot compact or undo;
+ACP and older hosts do not offer this built-in context view. Immediate Escape
+closes the compaction/undo confirmation before the context view, without writing.
+Reads closed or superseded by navigation do not update a later view, and unknown
+mutation results are never automatically replayed.
+
 Cmd+K now uses `native_workspace_search` to read persisted cross-project projects,
 artifacts and conversations, including message-body matches beyond the five home
 recents. Privacy and ranking remain in the shared host. Response query, preferred

@@ -22,6 +22,7 @@ struct NativeConversationView: View {
     @State private var feedbackApproval: ConversationApproval?
     @State private var historyAction: NativeHistoryTarget?
     @State private var undoAction: NativeHistoryTarget?
+    @State private var modelContext = false
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -104,7 +105,8 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false; modelContext = false }
+        .onChange(of: projectID) { _ in modelContext = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
         .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
             await conversation.bindComposer()
@@ -131,6 +133,9 @@ struct NativeConversationView: View {
             if let projectID, let sessionID { NativeComposerOptionsSheet(conversation: conversation, project: projectID, session: sessionID) { composerOptions = false } }
         }
         .sheet(item: $undoAction) { target in NativeTurnUndoSheet(conversation: conversation, target: target) { undoAction = nil } }
+        .sheet(isPresented: $modelContext) {
+            if let projectID, let sessionID { NativeConversationContextSheet(conversation: conversation, project: projectID, session: sessionID) { modelContext = false } }
+        }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
             Button("取消", role: .cancel) {}
@@ -154,6 +159,8 @@ struct NativeConversationView: View {
     @ViewBuilder private func message(_ item: ConversationItem, index: Int) -> some View {
         if item.role == "usage" {
             if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
+        } else if let compaction = NativeTranscriptCompaction(item) {
+            NativeCompactionCard(record: compaction, openContext: conversation.canReadContext ? { modelContext = true } : nil)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -325,6 +332,11 @@ struct NativeConversationView: View {
             HStack {
                 Text(localized(conversation.snapshot?.running == true ? (sendWithModifier ? "⌘Enter 排队 · Enter 换行" : "Enter 排队 · Shift+Enter 换行") : (sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行"))).font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
+                if conversation.snapshot?.context_view == true {
+                    Button { modelContext = true } label: { WispIcon(name: "gauge", size: 12) }
+                        .buttonStyle(.plain).disabled(!conversation.canReadContext).help(localized("模型上下文"))
+                        .accessibilityLabel(localized("模型上下文"))
+                }
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
         }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)

@@ -6,6 +6,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_image",
     "native_conversation_queue_action",
     "native_conversation_history_action",
+    "native_conversation_context",
+    "native_conversation_context_undo",
     "native_conversation_references",
     "native_conversation_options",
     "native_conversation_options_set",
@@ -89,6 +91,31 @@ pub struct ComposerOptions {
     pub auto_review: bool,
     pub specialist: Option<crate::Specialist>,
     pub specialist_locked: bool,
+}
+
+/// The persisted head working set and the shared model-context breakdown.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ContextView {
+    pub project_id: String,
+    pub session_id: String,
+    pub items: Vec<Item>,
+    pub details: crate::ContextUsageDetails,
+    pub state: crate::SessionContextState,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextUndoRequest {
+    pub session_id: String,
+    pub head_epoch: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ContextUndoResponse {
+    pub project_id: String,
+    pub session_id: String,
+    /// The removed epoch, matching the shared CompactionUndone event.
+    pub undone_epoch: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -823,6 +850,8 @@ pub struct Snapshot {
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer_references: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_view: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub follow_ups: Vec<String>,
     /// Absent for older hosts and ACP sessions, which own their mode selection.
@@ -849,6 +878,27 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn context_fixture_preserves_shared_head_and_model_details() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/context.json"
+        ))
+        .unwrap();
+        let context: super::ContextView = serde_json::from_value(fixture).unwrap();
+        assert_eq!(context.project_id, "project-a");
+        assert_eq!(context.session_id, "session-a");
+        assert_eq!(context.items[0].role, "system");
+        assert_eq!(context.state.head_epoch, 2);
+        assert!(context.state.compactions[0].can_undo);
+        assert_eq!(context.details.tool_definitions[0].name, "read");
+        let roundtrip = serde_json::to_value(&context).unwrap();
+        assert_eq!(roundtrip["state"]["head_epoch"], 2);
+        assert_eq!(roundtrip["details"]["rules"], "Preserve sample IDs.");
+        assert!(serde_json::from_value::<super::ContextUndoRequest>(
+            serde_json::json!({"session_id":"s","head_epoch":2,"project_id":"p"})
+        )
+        .is_err());
+    }
     #[test]
     fn native_plan_proposals_share_webview_defaults_and_preserve_markdown() {
         for source in ["native", "acp"] {

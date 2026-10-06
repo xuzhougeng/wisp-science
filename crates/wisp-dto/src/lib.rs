@@ -101,13 +101,13 @@ pub struct ContextUsageSnapshot {
     pub estimated: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContextToolDetail {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContextUsageDetails {
     #[serde(default)]
     pub system_prompt: String,

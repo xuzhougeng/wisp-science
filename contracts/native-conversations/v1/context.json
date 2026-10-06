@@ -1,0 +1,63 @@
+{
+  "project_id": "project-a",
+  "session_id": "session-a",
+  "items": [
+    {
+      "role": "system",
+      "text": "You are Wisp Science."
+    },
+    {
+      "role": "user",
+      "text": "[context summary checkpoint]\n\nKeep sample identifiers and QC decisions."
+    },
+    {
+      "role": "assistant",
+      "text": "Verify **samples** before continuing."
+    }
+  ],
+  "details": {
+    "system_prompt": "You are Wisp Science.",
+    "tool_definitions": [
+      {
+        "name": "read",
+        "description": "Read a bounded file region."
+      }
+    ],
+    "rules": "Preserve sample IDs.",
+    "skills": "RNA-seq QC",
+    "mcp_dynamic_tools": [],
+    "subagent_definitions": []
+  },
+  "state": {
+    "head_epoch": 2,
+    "context_epochs": [
+      {
+        "epoch": 2,
+        "parent_epoch": 1,
+        "strategy": "manual",
+        "kind": "semantic",
+        "before_tokens": 12000,
+        "after_tokens": 2800,
+        "initial_head_seq": 20,
+        "first_kept_seq": 16,
+        "checkpoint_seq": 21,
+        "ui_event_seq": 22,
+        "has_new_turns": false
+      }
+    ],
+    "in_context_from_user_index": 3,
+    "compactions": [
+      {
+        "epoch": 2,
+        "before": 12000,
+        "after": 2800,
+        "strategy": "manual",
+        "checkpoint": "Keep sample identifiers and QC decisions.",
+        "kept_from_user_index": 3,
+        "can_undo": true,
+        "undo_reason": null
+      }
+    ],
+    "undone_epochs": []
+  }
+}

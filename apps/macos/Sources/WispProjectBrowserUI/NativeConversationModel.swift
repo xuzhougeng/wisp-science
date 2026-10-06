@@ -227,6 +227,59 @@ final class NativeConversationModel: ObservableObject {
         guard value["session_id"].string == target.session, value["target"] == turn else { throw ProjectBrowserError.invalidResponse }
         return try JSONDecoder().decode(NativeTurnUndoPreview.self, from: JSONEncoder().encode(value["result"]))
     }
+    var canReadContext: Bool { snapshot?.context_view == true && !isAcp && connectionError == nil }
+    var canCompact: Bool {
+        canReadContext && canChangeConversationSettings && !visibleItems.isEmpty
+            && queuedTurns.isEmpty && legacyQueuedFollowUp == nil && snapshot?.history_state?.reviewing != true
+    }
+    func readContext(project: String, session: String) async throws -> NativeConversationContext? {
+        guard canReadContext, projectID == project, sessionID == session else { return nil }
+        let current = generation
+        let value = try await client.invoke("native_conversation_context", args: ["session_id": .string(session)], projectID: project)
+        guard generation == current, !Task.isCancelled else { return nil }
+        return try NativeConversationContext.decode(value, project: project, session: session)
+    }
+    /// `/compact` uses the shared turn pipeline, but never consumes the draft,
+    /// attachments or references. The request ledger still reconciles a lost ack.
+    func compact(project: String, session: String, semantic: Bool, instruction: String) async -> Bool {
+        guard canCompact, projectID == project, sessionID == session, instruction.utf8.count <= 16_384 else { return false }
+        let current = generation, id = UUID().uuidString
+        let text = semantic ? "/compact --semantic" + (instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : " " + instruction.trimmingCharacters(in: .whitespacesAndNewlines)) : "/compact"
+        busy = true; operationError = nil; pending = (id, ""); pendingSends[session] = pending
+        defer { if generation == current { busy = false } }
+        do {
+            let reply = try await client.invoke("native_conversation_send", args: ["session_id": .string(session), "request_id": .string(id), "message": .string(text)], projectID: project)
+            guard reply["session_id"].string == session, reply["request_id"].string == id, !reply["epoch"].string.isEmpty else { throw ProjectBrowserError.invalidResponse }
+            pendingSends[session] = nil
+            guard generation == current else { return false }
+            pending = nil; uncertainSend = false
+            await refresh()
+            return true
+        } catch {
+            guard generation == current else { return false }
+            uncertainSend = true
+            operationError = localized("压缩请求未确认，请核对上下文和最新消息；不会自动重试。") + "\n" + error.localizedDescription
+            await refresh()
+            return false
+        }
+    }
+    func undoCompaction(project: String, session: String, epoch: UInt64) async -> Bool {
+        guard canCompact, projectID == project, sessionID == session, epoch > 0, epoch <= UInt64(Int64.max) else { return false }
+        let current = generation
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            let reply = try await client.invoke("native_conversation_context_undo", args: ["session_id": .string(session), "head_epoch": .integer(Int64(clamping: epoch))], projectID: project)
+            guard reply["project_id"].string == project, reply["session_id"].string == session,
+                  case .integer(let undone) = reply["undone_epoch"], undone > 0, UInt64(undone) == epoch else { throw ProjectBrowserError.invalidResponse }
+            guard generation == current else { return false }
+            await refresh(); return true
+        } catch {
+            uncertainHistory.insert(session)
+            if generation == current { operationError = localized("撤销压缩未确认，请重新读取上下文后核对；不会自动重试。") + "\n" + error.localizedDescription }
+            return false
+        }
+    }
     func acknowledgeHistoryResult() {
         guard !busy, connectionError == nil, let sessionID else { return }
         uncertainHistory.remove(sessionID); operationError = nil

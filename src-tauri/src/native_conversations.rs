@@ -160,6 +160,32 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
     }
 }
 
+#[cfg(test)]
+mod context_contract_tests {
+    #[test]
+    fn context_ui_items_decode_into_the_shared_native_item_contract() {
+        let source = crate::UiItem {
+            role: "system".into(),
+            text: "Prompt with **literal markup**".into(),
+            tool_name: None,
+            input: None,
+            ok: None,
+            status: None,
+            duration_ms: None,
+            model_name: None,
+            call_id: None,
+            kind: None,
+            locations: None,
+            resources: Vec::new(),
+        };
+        let items: Vec<wisp_dto::native_conversations::Item> =
+            serde_json::from_value(serde_json::to_value(vec![source]).unwrap()).unwrap();
+        assert_eq!(items[0].role, "system");
+        assert_eq!(items[0].text, "Prompt with **literal markup**");
+        assert!(items[0].attachments.is_empty());
+    }
+}
+
 fn submitted_run_id(item: &dto::Item) -> Option<String> {
     if item.role != "tool"
         || item.ok != Some(true)
@@ -497,6 +523,68 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_context" => {
+            let args: dto::SessionRequest = decode(&request.args)?;
+            if args.before_seq.is_some() || acp_agent_id.is_some() {
+                return Err(
+                    "Model context is available only for a built-in conversation's head".into(),
+                );
+            }
+            let session_args = json!({"sessionId":session});
+            let items: Vec<dto::Item> = decode(
+                &call(
+                    broker,
+                    project,
+                    "load_session_context_view",
+                    session_args.clone(),
+                )
+                .await?,
+            )?;
+            let view = dto::ContextView {
+                project_id: project.into(),
+                session_id: session.into(),
+                items,
+                details: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_context_usage_details",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                state: decode(
+                    &call(broker, project, "load_session_context_state", session_args).await?,
+                )?,
+            };
+            serde_json::to_value(view).map_err(|e| e.to_string())
+        }
+        "native_conversation_context_undo" => {
+            let args: dto::ContextUndoRequest = decode(&request.args)?;
+            if args.head_epoch == 0 || acp_agent_id.is_some() {
+                return Err("A persisted built-in compaction epoch is required".into());
+            }
+            let guard = record.lock().await;
+            if guard.running || running(broker, session).await {
+                return Err("Wait for the conversation to finish before undoing compaction".into());
+            }
+            require_mutable_session(&broker.app.state::<crate::AppState>().store, session).await?;
+            let epoch: u64 = decode(
+                &call(
+                    broker,
+                    project,
+                    "undo_compaction",
+                    json!({"sessionId":session,"expectedHeadEpoch":args.head_epoch}),
+                )
+                .await?,
+            )?;
+            serde_json::to_value(dto::ContextUndoResponse {
+                project_id: project.into(),
+                session_id: session.into(),
+                undone_epoch: epoch,
+            })
+            .map_err(|e| e.to_string())
+        }
         "native_conversation_queue_action" => {
             crate::native_queue::dispatch(
                 broker,
@@ -904,6 +992,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 },
                 model_id: model.as_str().unwrap_or_default().into(),
                 composer_references: Some(true),
+                context_view: Some(binding.is_none() && acp_agent_id.is_none()),
                 follow_ups: if args.before_seq.is_some() || is_running {
                     Vec::new()
                 } else {
