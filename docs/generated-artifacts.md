@@ -27,6 +27,13 @@ other outputs. Its zoom, provenance tab, and unsent code edits are preserved;
 image navigation updates as new images become available. Selecting another image
 loads that image and its provenance.
 
+Session artifact move/delete previews resolve absolute references through the
+registered workspace root, including macOS `/var` and `/tmp` aliases. Files are
+validated under the physical root while preserving their relative suffix;
+symlinks inside the workspace, external paths and project-state files remain
+ineligible. This also keeps shared snapshot ownership and crash recovery tied
+to the exact physical workspace.
+
 Manual smoke: open a figure while analysis continues, zoom in, switch provenance
 tabs or edit the recorded code, and let tools save more outputs. Check that the
 preview does not flash or reset, new images are reachable with the navigation

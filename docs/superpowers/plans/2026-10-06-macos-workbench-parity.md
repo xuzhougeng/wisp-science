@@ -97,6 +97,19 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   and permission confirmation were rendered and inspected. The full Swift suite
   passed 408 tests after the final render adjustment, with no failures.
 
+### Prerequisite repair: artifact workspace aliases
+
+- The full workspace gate reproduced eight existing macOS artifact-operation
+  failures. Absolute stored references used `/var`, while validation used the
+  physical `/private/var` root, so preview incorrectly retained eligible files.
+- Added registered-root suffix resolution before the existing physical-path
+  validation, including transfer record rewriting. Inner links and external
+  paths remain rejected. Synthetic recovery journals now use the physical root
+  as production does.
+- All 12 artifact-operation tests passed, including a new workspace-alias test
+  and existing move/delete, collision, shared-snapshot and recovery tests.
+  Formatting passed; the full workspace gate must run again after this repair.
+
 Conversation controls and search remain incomplete: context/compaction,
 file-aware undo, scoped per-tool approval, remaining global composer helpers and session
 transfer/import/export and project-file search still need implementation and

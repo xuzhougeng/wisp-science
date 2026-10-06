@@ -90,6 +90,8 @@ pub(super) struct ArtifactPlan {
     artifacts: Vec<Artifact>,
     files: Vec<FileChange>,
     source: PathBuf,
+    #[serde(skip)]
+    source_alias: PathBuf,
     target: Option<PathBuf>,
 }
 impl ArtifactPlan {
@@ -218,6 +220,23 @@ fn safe_path(root: &Path, value: &str) -> Result<(String, PathBuf)> {
     Ok((name, path))
 }
 
+/// Keep the suffix under the registered workspace before validating it against
+/// the physical root. macOS /var and /tmp aliases must not make regular files
+/// unavailable, but links inside a workspace must still be rejected.
+fn safe_source_path(root: &Path, alias: &Path, value: &str) -> Result<(String, PathBuf)> {
+    let normalized = value.replace('\\', "/");
+    let input = Path::new(&normalized);
+    if input.is_absolute() && !input.starts_with(root) {
+        if dunce::canonicalize(alias)? != root {
+            bail!("Project workspace changed");
+        }
+        let relative = input.strip_prefix(alias)?;
+        safe_path(root, &relative.to_string_lossy())
+    } else {
+        safe_path(root, value)
+    }
+}
+
 impl Store {
     pub async fn preview_session_artifacts(
         &self,
@@ -241,12 +260,14 @@ impl Store {
             .route_project(project)
             .await?
             .unwrap_or_else(|| self.clone());
-        let source = dunce::canonicalize(
+        let source_alias = PathBuf::from(
             self.get_project(project)
                 .await?
                 .context("Project not found")?
                 .1,
-        )?;
+        );
+        let source = dunce::canonicalize(&source_alias)?;
+        let source_path = |value: &str| safe_source_path(&source, &source_alias, value);
         let target_root = match target {
             Some(id) if id == project => bail!("Source and target projects must be different"),
             Some(id) => Some(dunce::canonicalize(
@@ -285,7 +306,7 @@ impl Store {
             for path in std::iter::once(path.as_str())
                 .chain(key.as_deref().and_then(|k| k.strip_prefix("path:")))
             {
-                if let Ok((relative, _)) = safe_path(&source, path) {
+                if let Ok((relative, _)) = source_path(path) {
                     path_owners.entry(relative).or_default().insert(id.clone());
                 }
             }
@@ -334,7 +355,7 @@ impl Store {
                 .and_then(|k| k.strip_prefix("path:"));
             let upload = logical
                 .is_some_and(|p| p.replace('\\', "/").to_lowercase().starts_with("uploads/"))
-                || safe_path(&source, &artifact.storage_path)
+                || source_path(&artifact.storage_path)
                     .is_ok_and(|(p, _)| p.to_lowercase().starts_with("uploads/"));
             let mut reason = if upload {
                 Some("upload")
@@ -346,7 +367,7 @@ impl Store {
             let mut candidates = BTreeMap::new();
             if reason.is_none() {
                 for version in &artifact.versions {
-                    let Ok((relative, path)) = safe_path(&source, &version.storage_path) else {
+                    let Ok((relative, path)) = source_path(&version.storage_path) else {
                         reason = Some("unavailable");
                         break;
                     };
@@ -376,14 +397,14 @@ impl Store {
                     );
                 }
                 if !candidates.contains_key(
-                    &safe_path(&source, &artifact.storage_path)
+                    &source_path(&artifact.storage_path)
                         .map(|p| p.0)
                         .unwrap_or_default(),
                 ) {
                     reason = Some("unavailable");
                 }
                 if let Some(logical) = logical {
-                    match safe_path(&source, logical) {
+                    match source_path(logical) {
                         Ok((relative, path)) if path.exists() => {
                             let latest = artifact
                                 .versions
@@ -492,7 +513,7 @@ impl Store {
                         .and_then(|k| k.strip_prefix("path:")),
                 )
             })
-            .filter_map(|p| safe_path(&source, p).ok().map(|p| p.0))
+            .filter_map(|p| source_path(p).ok().map(|p| p.0))
             .collect();
         files.retain(|path, _| used_paths.contains(path));
         preview.files.retain(|path| used_paths.contains(path));
@@ -507,6 +528,7 @@ impl Store {
             artifacts,
             files: files.into_values().collect(),
             source,
+            source_alias,
             target: target_root,
         };
         plan.preview.fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&plan)?));
@@ -719,7 +741,7 @@ impl ArtifactTransfer {
             }
         }
         let storage = |path: &str| -> Result<String> {
-            let relative = safe_path(&self.plan.source, path)?.0;
+            let relative = safe_source_path(&self.plan.source, &self.plan.source_alias, path)?.0;
             Ok(self
                 .paths
                 .get(&relative)
@@ -1522,7 +1544,7 @@ mod tests {
                 .await
                 .unwrap();
             let operation = uuid::Uuid::new_v4().to_string();
-            let directory = journal_directory(&source, &operation).unwrap();
+            let directory = journal_directory(&plan.source, &operation).unwrap();
             plan.operation_id = Some(operation.clone());
             let journal = Journal {
                 operation,
@@ -1530,7 +1552,7 @@ mod tests {
                 project: "source".into(),
                 target_project: None,
                 target_frame: None,
-                source: source.clone(),
+                source: plan.source.clone(),
                 target: None,
                 files: plan.files.clone(),
                 destinations: BTreeMap::new(),
@@ -1560,14 +1582,14 @@ mod tests {
             .await
             .unwrap();
         let operation = uuid::Uuid::new_v4().to_string();
-        let directory = journal_directory(&source, &operation).unwrap();
+        let directory = journal_directory(&plan.source, &operation).unwrap();
         let journal = Journal {
             operation,
             frame: "session".into(),
             project: "source".into(),
             target_project: None,
             target_frame: None,
-            source: source.clone(),
+            source: plan.source.clone(),
             target: None,
             files: plan.files,
             destinations: BTreeMap::new(),
@@ -1704,6 +1726,41 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_workspace_aliases_preserve_the_suffix_without_following_inner_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        fs::create_dir_all(root.join("results")).unwrap();
+        fs::write(root.join("results/plot.svg"), "plot").unwrap();
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let physical = dunce::canonicalize(&root).unwrap();
+        let (relative, path) = safe_source_path(
+            &physical,
+            &alias,
+            alias.join("results/plot.svg").to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(relative, "results/plot.svg");
+        assert_eq!(path, physical.join("results/plot.svg"));
+        std::os::unix::fs::symlink(root.join("results/plot.svg"), root.join("results/link.svg"))
+            .unwrap();
+        assert!(safe_source_path(
+            &physical,
+            &alias,
+            alias.join("results/link.svg").to_str().unwrap(),
+        )
+        .is_err());
+        assert!(safe_source_path(&physical, &alias, "../outside.svg").is_err());
+        assert!(safe_source_path(
+            &physical,
+            temp.path(),
+            temp.path().join("outside.svg").to_str().unwrap(),
+        )
+        .is_err());
     }
 
     #[cfg(unix)]
