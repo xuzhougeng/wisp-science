@@ -1582,8 +1582,10 @@ pub(crate) async fn send_message_inner(
     rt.effective_max_iter_known.store(true, Ordering::SeqCst);
     state.running_turns.lock().await.insert(frame_id.clone());
     // Even a Guide/cut-in racing the timer flag belongs to a subsequent human
-    // turn. Never let it enter the disposable timer's ownership range.
-    let guidance = (origin != TurnOrigin::Timer).then_some(&rt.pending_guidance);
+    // turn. Never let it enter the disposable timer's ownership range, nor a
+    // subagent turn, which only takes its parent conversation's instructions.
+    let guidance = (!matches!(origin, TurnOrigin::Timer | TurnOrigin::Subagent { .. }))
+        .then_some(&rt.pending_guidance);
     let mut result = if resume {
         agent.run_resume(&output, Some(&rt.cancel), guidance).await
     } else {
@@ -1898,6 +1900,15 @@ pub(crate) async fn enqueue_turn(
     if session_id.is_empty() {
         return Err("queue requires a session id".into());
     }
+    // A queued item can be cut into the running turn, so it is checked here
+    // rather than only when the queue driver sends it.
+    subagent_tool::require_instruction_source(
+        &state.store,
+        &session_id,
+        TurnOrigin::Queued(id),
+        false,
+    )
+    .await?;
     let (project, scope) =
         exploration_commands::working_project_for_frame(&state, &session_id).await?;
     let _project_activity = state.begin_project_activity(&project.id)?;
