@@ -35,8 +35,9 @@ pub use tools::{
     MonitorRunTool, RemoveRemoteFilesTool, RunInContextTool,
 };
 pub use transfer::{
-    load_trust_edges, persist_transfer_handle, revoke_trust_edge, submit_local_uploads_to_context,
-    RevokeTrustResponse, SshTrustEdge, TransferHandle, UploadToContextItem,
+    join_remote_upload_destination, load_trust_edges, persist_transfer_handle, revoke_trust_edge,
+    submit_local_uploads_to_context, RevokeTrustResponse, SshTrustEdge, TransferHandle,
+    UploadToContextItem,
 };
 pub use transfer::{ConfigureSshTrustTool, TransferBetweenContextsTool};
 
@@ -871,6 +872,69 @@ impl RunManager {
         remote_path: &str,
         destination: &std::path::Path,
     ) -> Result<String, String> {
+        let (run_id, task) = self
+            .start_ssh_file_download(
+                store,
+                project_id,
+                frame_id,
+                context,
+                remote_path,
+                destination,
+                None,
+            )
+            .await?;
+        let result = task.await;
+        self.active.lock().await.remove(&run_id);
+        match result {
+            Ok(result) => result.map(|_| run_id),
+            Err(error) if error.is_cancelled() => Err("download cancelled".into()),
+            Err(error) => Err(format!("download task failed: {error}")),
+        }
+    }
+
+    /// Submit a user-chosen export without holding a UI request for the transfer.
+    /// Download privately and replace only an unchanged destination on success.
+    pub async fn submit_ssh_file_download(
+        &self,
+        store: &wisp_store::Store,
+        project_id: &str,
+        frame_id: Option<&str>,
+        context: &wisp_store::ExecutionContext,
+        remote_path: &str,
+        destination: &std::path::Path,
+    ) -> Result<String, String> {
+        let target = ChosenDownloadTarget::new(destination)?;
+        let (run_id, task) = self
+            .start_ssh_file_download(
+                store,
+                project_id,
+                frame_id,
+                context,
+                remote_path,
+                destination,
+                Some(target),
+            )
+            .await?;
+        let active = self.active.clone();
+        let cleanup_id = run_id.clone();
+        tokio::spawn(async move {
+            let _ = task.await;
+            active.lock().await.remove(&cleanup_id);
+        });
+        Ok(run_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_ssh_file_download(
+        &self,
+        store: &wisp_store::Store,
+        project_id: &str,
+        frame_id: Option<&str>,
+        context: &wisp_store::ExecutionContext,
+        remote_path: &str,
+        destination: &std::path::Path,
+        target: Option<ChosenDownloadTarget>,
+    ) -> Result<(String, tokio::task::JoinHandle<Result<(), String>>), String> {
         if remote_path.is_empty() || remote_path.contains(['\0', '\n', '\r']) {
             return Err("Invalid remote file path".into());
         }
@@ -904,7 +968,12 @@ impl RunManager {
             "file_transfer",
         );
         run.frame_id = frame_id.map(Into::into);
-        run.command = Some(format!("download {remote_path}"));
+        run.command = Some(if let Some(target) = &target {
+            format!("download {remote_path} -> {}", target.destination.display())
+        } else {
+            format!("download {remote_path}")
+        });
+        run.timeout_secs = Some(4 * 60 * 60);
         run.progress_json = serde_json::to_string(&initial_progress).map_err(|e| e.to_string())?;
         store.create_run(&run).await.map_err(|e| e.to_string())?;
         if !store
@@ -921,7 +990,11 @@ impl RunManager {
         }
         let mut args = connection.scp_option_args()?;
         args.push(format!("{}:{remote_path}", connection.target()?));
-        args.push(destination.to_string_lossy().into_owned());
+        let copy_destination = target
+            .as_ref()
+            .map(|target| target.temporary.as_path())
+            .unwrap_or(destination);
+        args.push(copy_destination.to_string_lossy().into_owned());
         let command = RunCommand {
             context_id: context.id.clone(),
             program: "scp".into(),
@@ -935,7 +1008,7 @@ impl RunManager {
         let task_store = store.clone();
         let owner_id = self.owner_id.clone();
         let task_run_id = run_id.clone();
-        let destination = destination.to_path_buf();
+        let destination = copy_destination.to_path_buf();
         let task = tokio::spawn(async move {
             download_lifecycle(
                 &task_store,
@@ -947,6 +1020,7 @@ impl RunManager {
                 size,
                 file_name,
                 started,
+                target,
             )
             .await
         });
@@ -955,13 +1029,7 @@ impl RunManager {
             .lock()
             .await
             .insert(run_id.clone(), ActiveRun { abort });
-        let result = task.await;
-        self.active.lock().await.remove(&run_id);
-        match result {
-            Ok(result) => result.map(|_| run_id),
-            Err(error) if error.is_cancelled() => Err("download cancelled".into()),
-            Err(error) => Err(format!("download task failed: {error}")),
-        }
+        Ok((run_id, task))
     }
 
     pub async fn recover(&self, store: &wisp_store::Store) -> Result<u64, String> {
@@ -1912,6 +1980,93 @@ async fn remote_file_size(
         .map_err(|_| "SSH download size response was invalid".to_string())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DownloadFingerprint {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    identity: (u64, u64),
+}
+
+fn download_fingerprint(path: &Path) -> Result<Option<DownloadFingerprint>, String> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.is_file() {
+        return Err("Download destination must be a regular file or a new filename".into());
+    }
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    Ok(Some(DownloadFingerprint {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        identity: (metadata.dev(), metadata.ino()),
+    }))
+}
+
+struct ChosenDownloadTarget {
+    directory: PathBuf,
+    temporary: PathBuf,
+    destination: PathBuf,
+    before: Option<DownloadFingerprint>,
+}
+impl ChosenDownloadTarget {
+    fn new(destination: &Path) -> Result<Self, String> {
+        if !destination.is_absolute() {
+            return Err("Download destination must be absolute".into());
+        }
+        let name = destination
+            .file_name()
+            .ok_or("Choose a download filename")?;
+        let parent = destination
+            .parent()
+            .ok_or("Choose a download directory")?
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let destination = parent.join(name);
+        let before = download_fingerprint(&destination)?;
+        let directory = parent.join(format!(".wisp-download-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(error) =
+                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+            {
+                let _ = std::fs::remove_dir(&directory);
+                return Err(error.to_string());
+            }
+        }
+        Ok(Self {
+            temporary: directory.join("payload"),
+            directory,
+            destination,
+            before,
+        })
+    }
+    fn finish(&self, expected_bytes: u64) -> Result<(), String> {
+        let downloaded =
+            download_fingerprint(&self.temporary)?.ok_or("Downloaded file is missing")?;
+        if downloaded.length != expected_bytes {
+            return Err("Downloaded file size changed; destination was not replaced".into());
+        }
+        if download_fingerprint(&self.destination)? != self.before {
+            return Err(
+                "Download destination changed during transfer and was not overwritten".into(),
+            );
+        }
+        std::fs::rename(&self.temporary, &self.destination).map_err(|error| error.to_string())
+    }
+}
+impl Drop for ChosenDownloadTarget {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
 async fn download_lifecycle(
     store: &wisp_store::Store,
     owner_id: &str,
@@ -1922,6 +2077,7 @@ async fn download_lifecycle(
     total_bytes: u64,
     file_name: String,
     started: Instant,
+    target: Option<ChosenDownloadTarget>,
 ) -> Result<(), String> {
     let transfer = runner.run(command, Duration::from_secs(4 * 60 * 60));
     tokio::pin!(transfer);
@@ -1951,6 +2107,17 @@ async fn download_lifecycle(
                 }
             }
         }
+    };
+    let output = match output {
+        Ok(output) if output.exit_code == 0 => match target
+            .as_ref()
+            .map(|target| target.finish(total_bytes))
+            .transpose()
+        {
+            Ok(_) => Ok(output),
+            Err(error) => Err(error),
+        },
+        other => other,
     };
     let (status, exit_code, stdout, stderr, result) = match output {
         Ok(output) if output.exit_code == 0 => (

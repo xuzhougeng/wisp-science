@@ -79,15 +79,28 @@ enum WispDesign {
         if name.hasPrefix("icon-") { image.isTemplate = true }
         return image
     }
+
+    // SwiftUI's AppKit Menu bridge can rasterize a custom label without its
+    // foreground style. Preserve the shared SVG shape and paint its palette
+    // color before handing that label to the bridge.
+    static func menuIcon(_ name: String, size: CGFloat, scheme: ColorScheme) -> NSImage {
+        let source = image("icon-" + name)
+        return NSImage(size: NSSize(width: size, height: size), flipped: false) { bounds in
+            NSColor(color("text", scheme)).setFill(); bounds.fill()
+            source.draw(in: bounds, from: .zero, operation: .destinationIn, fraction: 1)
+            return true
+        }
+    }
 }
 
 struct WispIcon: View {
     let name: String
     var size: CGFloat = 18
+    var menuScheme: ColorScheme? = nil
 
     var body: some View {
-        Image(nsImage: WispDesign.image("icon-\(name)"))
-            .renderingMode(.template).resizable().frame(width: size, height: size)
+        Image(nsImage: menuScheme.map { WispDesign.menuIcon(name, size: size, scheme: $0) } ?? WispDesign.image("icon-\(name)"))
+            .renderingMode(menuScheme == nil ? .template : .original).resizable().frame(width: size, height: size)
             .accessibilityHidden(true)
     }
 }

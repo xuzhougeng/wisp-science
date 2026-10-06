@@ -8,16 +8,21 @@ struct NativeConversationView: View {
     var sessionID: String?
     var createAcpConversation: ((String) -> Void)?
     var executeComposerCommand: ((NativeComposerCommand, String) -> Void)?
+    var openHistoryBranch: ((String) -> Void)?
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
     @State private var referencePicker = false
+    @State private var composerOptions = false
     @State private var runtimeActivity: NativeContextActivitySelection?
     @State private var confirmResend = false
     @State private var confirmRequeue = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
     @State private var feedbackApproval: ConversationApproval?
+    @State private var historyAction: NativeHistoryTarget?
+    @State private var undoAction: NativeHistoryTarget?
+    @State private var modelContext = false
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -28,6 +33,7 @@ struct NativeConversationView: View {
                     Button("重新读取") { Task { await conversation.refresh() } }
                     if conversation.uncertainSend { Button("已检查，允许再次发送…") { confirmResend = true } }
                     if conversation.uncertainQueue { Button(localized("已核对队列，允许继续…")) { confirmRequeue = true } }
+                    if conversation.historyUncertain { Button(localized("已核对历史操作结果")) { conversation.acknowledgeHistoryResult() } }
                 }.padding(12).foregroundStyle(.orange)
             }
             ScrollViewReader { scroll in
@@ -69,25 +75,7 @@ struct NativeConversationView: View {
                     }.frame(maxHeight: 260).padding(.bottom, 12)
                 }
                 ForEach(conversation.snapshot?.approvals ?? []) { approval in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("需要确认 · \(approval.tool)").font(WispDesign.font(size: 13, weight: .semibold))
-                        Text(approval.message).font(WispDesign.font(size: 13)).textSelection(.enabled)
-                        if !approval.preview.isEmpty {
-                            ViewThatFits(in: .vertical) {
-                                Text(approval.preview).fixedSize(horizontal: false, vertical: true)
-                                ScrollView { Text(approval.preview).frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 130)
-                            }.font(WispDesign.font(size: 12, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, maxHeight: 130, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        HStack {
-                            Button("修改意见…") { feedbackApproval = approval }
-                            Spacer()
-                            Button("拒绝") { Task { await conversation.approve(approval, allowed: false) } }
-                            Button("允许这一次") { Task { await conversation.approve(approval, allowed: true) } }.buttonStyle(WispButtonStyle(primary: true))
-                        }.disabled(!conversation.canApprove(approval))
-                    }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color("clay")))
+                    NativeToolApprovalCard(conversation: conversation, approval: approval, feedback: { feedbackApproval = approval }).id(approval.id)
                         .frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 12)
                 }
             }
@@ -99,7 +87,8 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false; modelContext = false }
+        .onChange(of: projectID) { _ in modelContext = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
         .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
             await conversation.bindComposer()
@@ -118,6 +107,16 @@ struct NativeConversationView: View {
         }
         .sheet(item: $feedbackApproval) { approval in
             NativeApprovalFeedback(approval: approval, conversation: conversation) { feedbackApproval = nil }
+        }
+        .sheet(item: $historyAction) { target in
+            NativeHistoryActionSheet(conversation: conversation, target: target, close: { historyAction = nil }, openBranch: { openHistoryBranch?($0) })
+        }
+        .sheet(isPresented: $composerOptions) {
+            if let projectID, let sessionID { NativeComposerOptionsSheet(conversation: conversation, project: projectID, session: sessionID) { composerOptions = false } }
+        }
+        .sheet(item: $undoAction) { target in NativeTurnUndoSheet(conversation: conversation, target: target) { undoAction = nil } }
+        .sheet(isPresented: $modelContext) {
+            if let projectID, let sessionID { NativeConversationContextSheet(conversation: conversation, project: projectID, session: sessionID) { modelContext = false } }
         }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
@@ -142,6 +141,8 @@ struct NativeConversationView: View {
     @ViewBuilder private func message(_ item: ConversationItem, index: Int) -> some View {
         if item.role == "usage" {
             if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
+        } else if let compaction = NativeTranscriptCompaction(item) {
+            NativeCompactionCard(record: compaction, openContext: conversation.canReadContext ? { modelContext = true } : nil)
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -173,6 +174,8 @@ struct NativeConversationView: View {
                 } else if item.role == "question", let question = NativeQuestion(item.text) {
                     NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
                         .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
+                } else if item.role == "plan" {
+                    NativePlanProposalCard(conversation: conversation, item: item, target: !conversation.showingHistory && conversation.snapshot?.items.lastIndex(where: { $0.role == "plan" }) == index ? conversation.latestProposal : nil)
                 } else {
                     selectableMessage(item, index: index)
                     if item.role == "user" {
@@ -187,11 +190,26 @@ struct NativeConversationView: View {
                     }
                 }
                 if ["user", "assistant", "reasoning"].contains(item.role), !item.text.isEmpty {
+                    HStack(spacing: 14) {
                     NativeMessageActions(source: item.role == "user" ? SavedAttachments.body(in: item.text) : item.text, quote: quoteSelection, save: { _ in
                         guard let projectID, let sessionID else { return }
                         let selection = NativeConversationModel.renderedText(item)
                         Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
                     })
+                    if let target = conversation.historyTarget(row: index, kind: "branch", checkpoint: item.role == "user" ? "before_user" : "after_response"), openHistoryBranch != nil {
+                        Menu {
+                            Button(localized(target.title)) { historyAction = target }.disabled(!conversation.canHistoryAction(target))
+                            if item.role == "user", let rewind = conversation.historyTarget(row: index, kind: "rewind") {
+                                Button(localized("回退到这条消息")) { historyAction = rewind }.disabled(!conversation.canHistoryAction(rewind))
+                            }
+                            if item.role == "assistant", let undo = conversation.historyTarget(row: index, kind: "undo") {
+                                Button(localized("撤销本轮")) { undoAction = undo }.disabled(!conversation.canHistoryAction(undo))
+                            }
+                        } label: { WispIcon(name: "more", size: 14) }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                            .accessibilityLabel(localized("历史消息操作"))
+                    }
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, item.role == "user" ? 12 : 4).padding(.vertical, item.role == "user" ? 8 : 4)
@@ -215,9 +233,11 @@ struct NativeConversationView: View {
                 Text("该会话已归档或冻结，请新建会话继续。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 8) {
-                NativeComposerEnvironment(model: conversation.composer, writable: composerWritable) {
+                NativeComposerModes(conversation: conversation)
+                NativeAcpSettings(conversation: conversation)
+                NativeComposerEnvironment(model: conversation.composer, writable: composerWritable, openRuntime: {
                     runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
-                }
+                }, openOptions: projectID != nil && sessionID != nil ? { composerOptions = true } : nil)
                 if !conversation.queuedTurns.isEmpty, let sessionID {
                     NativeConversationQueueView(conversation: conversation, session: sessionID).id((projectID ?? "") + ":" + sessionID)
                 } else if let queued = conversation.queuedFollowUp {
@@ -294,6 +314,11 @@ struct NativeConversationView: View {
             HStack {
                 Text(localized(conversation.snapshot?.running == true ? (sendWithModifier ? "⌘Enter 排队 · Enter 换行" : "Enter 排队 · Shift+Enter 换行") : (sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行"))).font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
+                if conversation.snapshot?.context_view == true {
+                    Button { modelContext = true } label: { WispIcon(name: "gauge", size: 12) }
+                        .buttonStyle(.plain).disabled(!conversation.canReadContext).help(localized("模型上下文"))
+                        .accessibilityLabel(localized("模型上下文"))
+                }
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
         }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)

@@ -11,6 +11,7 @@ public struct ConversationItem: Codable, Equatable, Sendable {
     public let model_name: String?
     public let timestamp: Int64?
     public let resources: [ConversationMessageResource]?
+    public let proposal: ConversationPlanProposal?
 }
 
 /// Shared wisp-dto MessageResource uses camelCase on the wire.
@@ -52,17 +53,53 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let request_id: String?
     public let error: String?
     public let approvals: [ConversationApproval]
+    public let approval_scopes: [String: [String]]?
     public let acp: ConversationAcpInteractions?
     public let composer_references: Bool?
+    public let context_view: Bool?
+    public let file_browser: Bool?
+    public let file_transfers: Bool?
     public let queue: ConversationQueueSnapshot?
+    public let plan_mode: Bool?
+    public let fast_mode: ConversationFastMode?
+    public let history_state: ConversationHistoryState?
+    public let acp_state: ConversationAcpState?
 
     public static func decode(_ value: SettingsValue, projectID: String, sessionID: String) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
         guard snapshot.schema == schemaID, !snapshot.epoch.isEmpty, snapshot.sequence > 0,
               snapshot.project_id == projectID, snapshot.session_id == sessionID,
-              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.queue?.valid != false,
+              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.validApprovalScopes, snapshot.queue?.valid != false, snapshot.history_state?.valid != false,
+              snapshot.acp_state == nil || (snapshot.acp_state?.frameID == sessionID && snapshot.acp_state?.valid == true),
               (snapshot.acp?.permissions ?? []).allSatisfy({ $0.frame_id == sessionID && !$0.request_id.isEmpty }) else { throw ProjectBrowserError.invalidResponse }
         return snapshot
+    }
+    private var validApprovalScopes: Bool {
+        (approval_scopes ?? [:]).allSatisfy { id, scopes in
+            approvals.contains { $0.approval_id == id } && scopes.contains("once")
+                && Set(scopes).count == scopes.count && scopes.allSatisfy { ["once", "session", "project", "global"].contains($0) }
+        }
+    }
+}
+
+/// Shared native_conversations FastMode and native_history state.
+public struct ConversationFastMode: Codable, Equatable, Sendable {
+    public let enabled: Bool
+    public let inherited: Bool
+}
+public struct ConversationTurnIdentity: Codable, Equatable, Sendable {
+    public let user_index: Int
+    public let user_seq: Int64
+    public let digest: String
+}
+public struct ConversationHistoryState: Codable, Sendable {
+    public let revision: String
+    public let can_branch: Bool
+    public let reviewing: Bool
+    public let turns: [ConversationTurnIdentity]
+    public var valid: Bool {
+        !revision.isEmpty && Set(turns.map(\.user_seq)).count == turns.count
+            && turns.enumerated().allSatisfy { $0.offset == $0.element.user_index && $0.element.user_seq > 0 && !$0.element.digest.isEmpty }
     }
 }
 

@@ -1,0 +1,29 @@
+{
+  "memory": {
+    "enabled": true,
+    "project_id": "project-a",
+    "project_name": "Synthetic project",
+    "today_file": "2026-10-06.md",
+    "files": [],
+    "global_memories": []
+  },
+  "analysis": { "enabled": true, "failure_rate_threshold": 30, "minimum_failures": 2 },
+  "specialists": [
+    {
+      "id": "reviewer", "name": "Reviewer", "icon": "plan", "color": "clay",
+      "description": "Synthetic reviewer", "instructions": "Preserve these instructions.",
+      "model_id": "chat-a", "review_backend": { "kind": "http_model", "profile_id": "chat-a" },
+      "skills": ["synthetic-skill"], "connectors": ["synthetic-connector"], "builtin": true
+    },
+    { "id": "scientist", "name": "Scientist", "instructions": "Synthetic specialist", "builtin": false }
+  ],
+  "models": [
+    { "id": "chat-a", "label": "Chat model", "model": "synthetic-chat" },
+    { "id": "image-a", "label": "Image model", "model": "vendor/gpt-image-2" },
+    { "id": "video-a", "label": "Video model", "model": "xai/grok-imagine-video-1.5-preview" },
+    { "id": "custom-image", "label": "Custom image", "model": "synthetic-image", "image_generation_capable": true },
+    { "id": "selected-image", "label": "Selected image", "model": "synthetic-image", "use_for_image_generation": true },
+    { "id": "sibling", "label": "Distinct model", "model": "grok-imagine-video-1.5-preview-longer" }
+  ],
+  "agents": [ { "id": "agent-a", "label": "Synthetic agent", "command": "synthetic-agent", "args": [] } ]
+}

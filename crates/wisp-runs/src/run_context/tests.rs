@@ -1885,6 +1885,159 @@ async fn scripted_input_progress_does_not_consume_transfer_responses() {
 }
 
 #[tokio::test]
+async fn chosen_ssh_download_returns_before_transfer_and_preserves_conflicts_failures_and_cancellation(
+) {
+    struct HeldDownload {
+        mode: String,
+        started: tokio::sync::Notify,
+        gate: tokio::sync::Semaphore,
+        temporary: StdMutex<Option<PathBuf>>,
+    }
+    #[async_trait::async_trait]
+    impl RunCommandRunner for HeldDownload {
+        async fn run(&self, command: RunCommand, _: Duration) -> Result<RunCommandOutput, String> {
+            if command.script == "measure SSH download" {
+                return ok_output("__WISP_TRANSFER_SIZE__:12\n");
+            }
+            assert_eq!(command.program, "scp");
+            let destination = PathBuf::from(command.args.last().unwrap());
+            *self.temporary.lock().unwrap() = Some(destination.clone());
+            std::fs::write(&destination, b"partial").unwrap();
+            self.started.notify_one();
+            self.gate.acquire().await.unwrap().forget();
+            if self.mode == "failure" {
+                return Err("connection lost".into());
+            }
+            std::fs::write(
+                &destination,
+                if self.mode == "short" {
+                    &b"short"[..]
+                } else {
+                    &b"hello world\n"[..]
+                },
+            )
+            .unwrap();
+            ok_output("")
+        }
+    }
+    for mode in [
+        "success", "new", "conflict", "appeared", "failure", "short", "cancel",
+    ] {
+        let root =
+            std::env::temp_dir().join(format!("wisp-chosen-download-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let store = wisp_store::Store::open(&root.join("store.sqlite"))
+            .await
+            .unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+        let runner = Arc::new(HeldDownload {
+            mode: mode.into(),
+            started: tokio::sync::Notify::new(),
+            gate: tokio::sync::Semaphore::new(0),
+            temporary: StdMutex::new(None),
+        });
+        let manager = RunManager::with_runner(runner.clone());
+        let mut context = wisp_store::ExecutionContext::new("ssh:CPU", "CPU").unwrap();
+        context.config_json = serde_json::json!({"alias":"fake.example"}).to_string();
+        context.last_probe_status = Some("ok".into());
+        let destination = root.join("results.csv");
+        if !matches!(mode, "new" | "appeared") {
+            std::fs::write(&destination, b"original").unwrap();
+        }
+        let run_id = manager
+            .submit_ssh_file_download(
+                &store,
+                "p",
+                Some("f"),
+                &context,
+                "/data/results.csv",
+                &destination,
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), runner.started.notified())
+            .await
+            .unwrap();
+        let run = store.get_run(&run_id).await.unwrap().unwrap();
+        assert_eq!(run.frame_id.as_deref(), Some("f"));
+        assert_eq!(run.context_id, "ssh:CPU");
+        assert!(run.command.as_deref().unwrap().contains("results.csv ->"));
+        assert_eq!(run.timeout_secs, Some(4 * 60 * 60));
+        assert_eq!(run.status, wisp_store::RunStatus::Running);
+        let temporary = runner.temporary.lock().unwrap().clone().unwrap();
+        assert_ne!(temporary, destination);
+        if matches!(mode, "new" | "appeared") {
+            assert!(!destination.exists());
+        } else {
+            assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        }
+        if matches!(mode, "conflict" | "appeared") {
+            std::fs::write(&destination, b"user's newer content").unwrap();
+        }
+        if mode == "cancel" {
+            manager.cancel(&store, &run_id).await.unwrap();
+        } else {
+            runner.gate.add_permits(1);
+        }
+        let expected_status = if mode == "cancel" {
+            wisp_store::RunStatus::Cancelled
+        } else if matches!(mode, "success" | "new") {
+            wisp_store::RunStatus::Succeeded
+        } else {
+            wisp_store::RunStatus::Failed
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if store.get_run(&run_id).await.unwrap().unwrap().status == expected_status
+                    && !temporary.parent().unwrap().exists()
+                    && !manager.has_in_flight_project(&store, "p").await.unwrap()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let expected = if matches!(mode, "success" | "new") {
+            &b"hello world\n"[..]
+        } else if matches!(mode, "conflict" | "appeared") {
+            &b"user's newer content"[..]
+        } else {
+            &b"original"[..]
+        };
+        assert_eq!(std::fs::read(&destination).unwrap(), expected, "{mode}");
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn chosen_ssh_download_rejects_relative_directory_and_symlink_destinations() {
+    let root = std::env::temp_dir().join(format!("wisp-download-target-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    assert!(ChosenDownloadTarget::new(Path::new("relative.csv")).is_err());
+    assert!(ChosenDownloadTarget::new(&root).is_err());
+    #[cfg(unix)]
+    {
+        std::fs::write(root.join("original.csv"), b"original").unwrap();
+        std::os::unix::fs::symlink(root.join("original.csv"), root.join("link.csv")).unwrap();
+        assert!(ChosenDownloadTarget::new(&root.join("link.csv")).is_err());
+        assert_eq!(
+            std::fs::read(root.join("original.csv")).unwrap(),
+            b"original"
+        );
+    }
+    assert!(!std::fs::read_dir(&root).unwrap().any(|item| item
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".wisp-download-")));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn ssh_download_uses_context_connection_options() {
     let tmp = std::env::temp_dir().join(format!("wisp-run-download-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();

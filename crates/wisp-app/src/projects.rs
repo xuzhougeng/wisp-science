@@ -115,11 +115,15 @@ pub async fn list_browser_sessions(
             .await
             .ok()
             .map(|rows| rows.into_iter().map(|row| row.0).collect());
+        // Relationships are optional when an older read-only database lacks
+        // their columns. Do not turn missing metadata into invented links.
+        let branches = store.list_session_branch_states(project_id).await.ok();
+        let dispatched = store.list_dispatched_sessions(project_id).await.ok();
         Ok(store
             .list_sessions_page(project_id, None, usize::MAX)
             .await?
             .into_iter()
-            .map(|(id, title, ts, folder_id, _)| {
+            .map(|(id, title, ts, folder_id, branched_from)| {
                 let needs_you = roles.iter().any(|(sid, role, unseen)| {
                     sid == &id
                         && *unseen
@@ -127,6 +131,20 @@ pub async fn list_browser_sessions(
                 });
                 wisp_dto::RecentSession {
                     pinned: pinned.as_ref().map(|pinned| pinned.contains(&id)),
+                    branch_state: branches
+                        .as_ref()
+                        .and_then(|states| states.get(&id))
+                        .cloned(),
+                    branched_from: branches
+                        .as_ref()
+                        .and_then(|states| states.get(&id))
+                        .is_some_and(|state| state != "orphaned")
+                        .then_some(branched_from)
+                        .flatten(),
+                    dispatched_from: dispatched
+                        .as_ref()
+                        .and_then(|parents| parents.get(&id))
+                        .cloned(),
                     id,
                     project_id: project_id.to_owned(),
                     title,
@@ -152,6 +170,9 @@ pub async fn list_browser_sessions(
                     status: if needs_you { "needs_you" } else { "complete" }.into(),
                     folder_id: None,
                     pinned: None,
+                    branched_from: None,
+                    branch_state: None,
+                    dispatched_from: None,
                 }
             })
             .collect())

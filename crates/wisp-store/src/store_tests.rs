@@ -8014,8 +8014,17 @@ async fn deleting_a_session_keeps_artifact_versions_owned_by_run_lineage() {
         .await
         .unwrap();
 
+    assert_eq!(
+        store.live_frame_project_id("f").await.unwrap().as_deref(),
+        Some("p")
+    );
     store.delete_session("f", "p").await.unwrap();
 
+    assert_eq!(
+        store.frame_project_id("f").await.unwrap().as_deref(),
+        Some("p")
+    );
+    assert!(store.live_frame_project_id("f").await.unwrap().is_none());
     assert!(store.get_run("run").await.unwrap().is_some());
     assert!(store
         .get_artifact_version(&version_id)
@@ -8029,6 +8038,25 @@ async fn deleting_a_session_keeps_artifact_versions_owned_by_run_lineage() {
     assert!(store.list_sessions("p").await.unwrap().is_empty());
 
     let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn live_frame_lookup_excludes_deleted_frames_without_lineage() {
+    let store = Store::open(std::path::Path::new(":memory:")).await.unwrap();
+    store.create_project("p", "Project", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    assert_eq!(
+        store.live_frame_project_id("f").await.unwrap().as_deref(),
+        Some("p")
+    );
+    assert!(store
+        .live_frame_project_id("missing")
+        .await
+        .unwrap()
+        .is_none());
+    store.delete_session("f", "p").await.unwrap();
+    assert!(store.frame_project_id("f").await.unwrap().is_none());
+    assert!(store.live_frame_project_id("f").await.unwrap().is_none());
 }
 
 #[tokio::test]

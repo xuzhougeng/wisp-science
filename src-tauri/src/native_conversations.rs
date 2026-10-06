@@ -160,6 +160,32 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
     }
 }
 
+#[cfg(test)]
+mod context_contract_tests {
+    #[test]
+    fn context_ui_items_decode_into_the_shared_native_item_contract() {
+        let source = crate::UiItem {
+            role: "system".into(),
+            text: "Prompt with **literal markup**".into(),
+            tool_name: None,
+            input: None,
+            ok: None,
+            status: None,
+            duration_ms: None,
+            model_name: None,
+            call_id: None,
+            kind: None,
+            locations: None,
+            resources: Vec::new(),
+        };
+        let items: Vec<wisp_dto::native_conversations::Item> =
+            serde_json::from_value(serde_json::to_value(vec![source]).unwrap()).unwrap();
+        assert_eq!(items[0].role, "system");
+        assert_eq!(items[0].text, "Prompt with **literal markup**");
+        assert!(items[0].attachments.is_empty());
+    }
+}
+
 fn submitted_run_id(item: &dto::Item) -> Option<String> {
     if item.role != "tool"
         || item.ok != Some(true)
@@ -317,7 +343,7 @@ pub(crate) async fn require_owner(
 ) -> Result<(), String> {
     if session.is_empty()
         || store
-            .frame_project_id(session)
+            .live_frame_project_id(session)
             .await
             .map_err(|e| e.to_string())?
             .as_deref()
@@ -334,6 +360,14 @@ pub(crate) async fn require_mutable_session(
     store: &wisp_store::Store,
     session: &str,
 ) -> Result<(), String> {
+    if store
+        .live_frame_project_id(session)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_none()
+    {
+        return Err("Conversation no longer exists".into());
+    }
     store
         .require_unarchived_session(session)
         .await
@@ -365,7 +399,7 @@ async fn owned_session_exists(
         return Err("A conversation is required".into());
     }
     match store
-        .frame_project_id(session)
+        .live_frame_project_id(session)
         .await
         .map_err(|error| error.to_string())?
     {
@@ -497,6 +531,108 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_export_preview" => {
+            let guard = record.lock().await;
+            crate::native_session_export::preview(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_export" => {
+            let guard = record.lock().await;
+            crate::native_session_export::export(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_transfer_preview" => {
+            let guard = record.lock().await;
+            crate::native_session_transfer::preview(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_transfer" => {
+            let guard = record.lock().await;
+            crate::native_session_transfer::transfer(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_context" => {
+            let args: dto::SessionRequest = decode(&request.args)?;
+            if args.before_seq.is_some() || acp_agent_id.is_some() {
+                return Err(
+                    "Model context is available only for a built-in conversation's head".into(),
+                );
+            }
+            let session_args = json!({"sessionId":session});
+            let items: Vec<dto::Item> = decode(
+                &call(
+                    broker,
+                    project,
+                    "load_session_context_view",
+                    session_args.clone(),
+                )
+                .await?,
+            )?;
+            let view = dto::ContextView {
+                project_id: project.into(),
+                session_id: session.into(),
+                items,
+                details: decode(
+                    &call(
+                        broker,
+                        project,
+                        "get_context_usage_details",
+                        session_args.clone(),
+                    )
+                    .await?,
+                )?,
+                state: decode(
+                    &call(broker, project, "load_session_context_state", session_args).await?,
+                )?,
+            };
+            serde_json::to_value(view).map_err(|e| e.to_string())
+        }
+        "native_conversation_context_undo" => {
+            let args: dto::ContextUndoRequest = decode(&request.args)?;
+            if args.head_epoch == 0 || acp_agent_id.is_some() {
+                return Err("A persisted built-in compaction epoch is required".into());
+            }
+            let guard = record.lock().await;
+            if guard.running || running(broker, session).await {
+                return Err("Wait for the conversation to finish before undoing compaction".into());
+            }
+            require_mutable_session(&broker.app.state::<crate::AppState>().store, session).await?;
+            let epoch: u64 = decode(
+                &call(
+                    broker,
+                    project,
+                    "undo_compaction",
+                    json!({"sessionId":session,"expectedHeadEpoch":args.head_epoch}),
+                )
+                .await?,
+            )?;
+            serde_json::to_value(dto::ContextUndoResponse {
+                project_id: project.into(),
+                session_id: session.into(),
+                undone_epoch: epoch,
+            })
+            .map_err(|e| e.to_string())
+        }
         "native_conversation_queue_action" => {
             crate::native_queue::dispatch(
                 broker,
@@ -871,7 +1007,38 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 &state.awaiting_confirm.lock().unwrap(),
             )
             .to_owned();
+            let (approvals, approval_scopes) = {
+                let entries = state.confirms.lock().unwrap();
+                let pending = entries
+                    .get(session)
+                    .filter(|pending| pending.project_id == project);
+                let approvals = pending
+                    .map(|pending| wisp_dto::PendingToolApproval {
+                        approval_id: pending.request.approval_id.clone(),
+                        frame_id: session.into(),
+                        message: pending.request.message.clone(),
+                        tool: pending.request.tool.clone(),
+                        preview: pending.request.preview.clone(),
+                    })
+                    .into_iter()
+                    .collect();
+                let scopes = pending
+                    .map(|pending| {
+                        (
+                            pending.request.approval_id.clone(),
+                            crate::approval_commands::native_approval_scopes(
+                                pending.grant.is_some(),
+                                &pending.request.tool,
+                                &pending.request.message,
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                (approvals, scopes)
+            };
             let snapshot = dto::Snapshot {
+                approval_scopes,
                 run_cards,
                 run_review_supported: Some(true),
                 queue: Some(
@@ -904,6 +1071,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 },
                 model_id: model.as_str().unwrap_or_default().into(),
                 composer_references: Some(true),
+                context_view: Some(binding.is_none() && acp_agent_id.is_none()),
+                file_browser: Some(true),
+                file_transfers: Some(true),
                 follow_ups: if args.before_seq.is_some() || is_running {
                     Vec::new()
                 } else {
@@ -925,20 +1095,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 acp_agent_id: binding.map(|binding| binding.agent_profile_id),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
-                approvals: state
-                    .confirms
-                    .lock()
-                    .unwrap()
-                    .get(session)
-                    .map(|pending| wisp_dto::PendingToolApproval {
-                        approval_id: pending.request.approval_id.clone(),
-                        frame_id: session.into(),
-                        message: pending.request.message.clone(),
-                        tool: pending.request.tool.clone(),
-                        preview: pending.request.preview.clone(),
-                    })
-                    .into_iter()
-                    .collect(),
+                approvals,
             };
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
@@ -1544,6 +1701,77 @@ mod tests {
         assert!(owned_session_exists(&store, "a", "").await.is_err());
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn moved_conversation_tombstone_cannot_be_read_mutated_or_revived() {
+        let store = wisp_store::Store::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        store.create_project("a", "A", "").await.unwrap();
+        store.create_project("b", "B", "").await.unwrap();
+        store
+            .create_frame("s", "a", "OPERON", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("s", 0, &wisp_llm::Message::user("Research"))
+            .await
+            .unwrap();
+        store
+            .save_artifact(
+                "artifact",
+                "a",
+                "s",
+                "result.csv",
+                "text/csv",
+                "results/result.csv",
+            )
+            .await
+            .unwrap();
+        store
+            .create_run(&wisp_store::RunRecord::new(
+                "run", "a", "local", "Analysis", "command",
+            ))
+            .await
+            .unwrap();
+        store
+            .save_run_artifact_link("link", "run", "artifact", "table")
+            .await
+            .unwrap();
+        crate::agent_turn::require_live_turn_frame(&store, "s", false)
+            .await
+            .unwrap();
+        assert!(
+            crate::agent_turn::require_live_turn_frame(&store, "s", true)
+                .await
+                .is_err()
+        );
+        store
+            .move_session_to_project("s", "a", "b", "moved")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.frame_project_id("s").await.unwrap().as_deref(),
+            Some("a")
+        );
+        assert!(store.live_frame_project_id("s").await.unwrap().is_none());
+        assert_eq!(store.list_artifacts("s").await.unwrap().len(), 1);
+        assert!(require_owner(&store, "a", "s").await.is_err());
+        assert!(!owned_session_exists(&store, "a", "s").await.unwrap());
+        assert!(require_mutable_session(&store, "s").await.is_err());
+        // A newly allocated runtime has not seen the original deletion flag.
+        assert!(
+            crate::agent_turn::require_live_turn_frame(&store, "s", false)
+                .await
+                .is_err()
+        );
+        require_owner(&store, "b", "moved").await.unwrap();
+        require_mutable_session(&store, "moved").await.unwrap();
+        crate::agent_turn::require_live_turn_frame(&store, "moved", false)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

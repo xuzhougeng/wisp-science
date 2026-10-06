@@ -124,7 +124,7 @@ struct NativeMessageImageSheet: View {
                 Button(action: close) { WispIcon(name: "close", size: 16) }.buttonStyle(.plain).accessibilityLabel(localized("关闭图片预览"))
             }
             Image(nsImage: preview.image).resizable().scaledToFit().accessibilityLabel(localized("消息图片"))
-        }.padding(20).frame(minWidth: 360, idealWidth: 760, maxWidth: 1000, minHeight: 300, idealHeight: 560, maxHeight: 760)
+        }.padding(20).frame(minWidth: 320, idealWidth: 760, maxWidth: 1000, minHeight: 300, idealHeight: 560, maxHeight: 760)
             .background(NativeSettingsEscape(close: close))
     }
 }

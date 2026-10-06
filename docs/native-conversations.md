@@ -1,5 +1,317 @@
 # Native conversation loop
 
+## macOS conversation ZIP export (2026-10-06)
+
+Use **会话操作 → 导出会话 ZIP** or `>export session zip` in Cmd+K. The preview
+shows the saved conversation title, current-context message count, tool calls,
+terminal events and registered artifact paths/sizes. Artifact inclusion defaults
+on. Turning it off rereads the preview and excludes artifact bytes and provenance.
+Unavailable files appear with their reasons in the manifest. The format matches
+the existing WebView export/import: `manifest.json`, `messages.json`,
+`transcript.md`, `tool-calls.json`, `terminal-events.json` and optional artifact/
+provenance entries. It contains the current model context; messages in earlier
+compaction epochs are not exported. Importing it does not restore execution-log
+rows or pre-compaction history.
+
+The native host binds the preview to the exact project/session, saved source
+revision, artifact choice and file contents. A changed conversation or artifact
+requires another preview. Export waits for an idle conversation without queued
+messages, approvals or review; archived/read-only conversations can export.
+The native save panel selects an absolute ZIP destination. Cancelling the panel
+writes nothing and retains the preview. Escape in the panel closes only the
+panel; Escape in the idle export sheet closes only that sheet. An in-flight save
+holds the sheet. Navigation or closing discards late responses and retains the
+conversation draft.
+
+Both clients stage the archive beside the destination before replacing it. A
+failed read/compression preserves an existing destination and removes the
+temporary file. Files that grow or shrink during export are rejected instead of
+silently truncating; native exports also reject same-size content changes.
+Workspace-root aliases such as macOS `/var` and `/private/var` produce relative
+manifest paths, keeping artifact restoration compatible with the importer.
+An export cannot overwrite an included source artifact or its hardlink alias.
+A confirmed save displays its exact path, byte count and SHA-256, with an explicit
+**在 Finder 中显示** action. Lost/malformed/wrong-scope replies and cancellation
+after dispatch retain the attempted save path and prevent another write in that
+sheet, including after a fresh preview or artifact-choice change. Copy/move and
+ZIP import also block replay after cancellation of a dispatched mutation.
+
+Manual smoke: open an idle saved conversation, inspect the counts and missing
+files, toggle artifact inclusion and save a ZIP. Import it into a different
+synthetic project and check messages and artifact bytes. Repeat after compaction
+to verify that the preview and archive contain the current context only. Change
+a file after preview and check rejection; keep an existing ZIP at the destination
+and verify a failed write preserves it. Cancel the save panel immediately with
+Escape and verify the export sheet remains; the next Escape closes the sheet.
+Check archived conversations, busy/queued/reviewing guards, unchanged drafts,
+both locales/schemes and narrow windows. Packaged save-panel interaction remains
+part of the final native acceptance gate.
+
+## macOS search references (2026-10-06)
+
+Cmd+K supports **Shift+Enter** and the result context menu's **引用到当前草稿**
+for saved conversations and registered artifacts. If a command/project is
+selected, Shift+Enter uses the first referenceable result, matching the WebView.
+Selection rereads the current conversation's existing reference catalog and
+stages only the exact advertised kind/ID, using its fresh label. Removed or hidden
+results, self-session references and unavailable/read-only composers cannot stage
+a reference. Source reads are bounded to a 512-byte query at a Unicode scalar
+boundary. Reference selection never sends a message, navigates to another
+conversation or replaces typed text; the existing composer deduplicates chips.
+
+A failed read leaves the search open with an error. Query changes, cancellation,
+closing, database/project/session navigation or loss of composer eligibility
+discard late selections. A successful stage closes the search and returns focus
+to the original editable composer after the sheet dismisses. This is a one-time
+request: navigation (including leaving and returning), reopening search, opening
+settings, another key window, another attached sheet, a detached/hidden/read-only
+editor or active IME composition cancels focus restoration. It does not activate
+a window, replace text, move the caret or send a message. Enter retains
+normal navigation; IME candidate confirmation stays with AppKit. Search now
+fits narrow windows, including its translated reference shortcut. Project file
+search already exists in the Files panel, as in the WebView; this change does not
+add a new file category to Cmd+K.
+
+Manual smoke: keep unsent text in an editable conversation, search for another
+conversation and an artifact, then use Shift+Enter or the context menu. Verify
+the exact chip, unchanged text, original input focus and absence of a send/navigation.
+Continue typing immediately after the sheet closes. Repeat the same
+selection to check deduplication. Hide/remove a result or change conversation
+while its reference read is pending; it must not stage into the new draft.
+Press Enter while an IME candidate is active to confirm text only. Press Escape
+immediately while reading; it closes the search and a late response has no effect.
+Switch to another window during dismissal; that window must retain its focus.
+Check both locales/schemes and narrow windows.
+
+## macOS independent workspace windows (2026-10-06)
+
+Cmd+K opens project/session results in an independent window with **Cmd+Enter**,
+**Ctrl+Enter**, or the result context menu's **在新窗口打开**. Shift+Enter keeps
+reference selection priority, including when Command/Control is also held.
+Artifact results keep the WebView behavior and open their preview in the original
+window. The File menu's **新建窗口** (Cmd+N) and `>new window` command open the
+project landing in another window using the current window's database.
+
+Each scene has its own browser, conversation drafts, navigation, search/settings,
+library/calendar and session-panel models. Opening, navigating or closing it does
+not replace the original window's draft/selection or stop its run. The descriptor
+transport is shared for the captured database, including when the primary window
+later chooses another database; window scene values contain only identity,
+database and target IDs. They contain no drafts or host tokens. Menu settings,
+database selection, search and refresh use the focused scene's model.
+
+The new window rereads the project list and exact requested session before showing
+the workspace. Missing, hidden, foreign-owner and unavailable targets show an error
+with a read-only retry; they never fall back to a recent conversation. Cancelled
+initial reads cannot show a late target. Dock/Finder reopening after all windows
+close still restores the primary scene through the existing delegate.
+
+Manual smoke: keep an unsent draft in the primary window, use Cmd+K/Cmd+Enter to
+open a different session, and type a different draft there. Navigate/close the new
+window and confirm the primary draft and selection persist. Open two windows on
+the same session and check that local drafts remain independent. Focus each window
+in turn and use Cmd+K, Cmd+comma and Cmd+R; only that window may change. Use immediate
+Escape in one window's search/settings and verify the other remains open. Delete
+or hide a target after searching and confirm a new window shows an error instead
+of opening another session. Check Cmd+N, `>new window`, IME confirmation and both
+locales/schemes at narrow widths. Final packaged multi-window acceptance remains
+part of the complete parity goal.
+
+## macOS conversation controls and workspace search (2026-10-06)
+
+The composer environment row opens session options. Full permission, delegation,
+inline/background completion, automatic resume, automatic review and specialist
+selection use `native_conversation_options` / `native_conversation_options_set`.
+The full-permission switch requires an explicit confirmation explaining its
+session scope and effect on waiting operations. Completion settings require
+delegation; inline completion clears automatic resume. Specialists use the
+advertised catalog and are locked after a conversation begins. Confirmed replies
+must echo the session and requested setting; failures disable editing until a
+fresh read and are never retried automatically. Read-only/history/disconnected
+states cannot save, while a live conversation can change options for its tools
+and delegation. Reading may be cancelled with Escape; saving keeps the sheet
+open. Immediate Escape closes only the permission confirmation before options.
+
+The same sheet has a separate **Global settings** section for memory, automatic
+failure analysis and the reviewer backend. These settings affect all projects
+and conversations. Failure analysis preserves its other values and bounds the
+failure-rate threshold and minimum-failure count to 1–100. Memory replies must
+identify the selected project and confirm the requested global preference;
+memory file contents are not displayed in the composer.
+
+Reviewer choices match the WebView: default HTTP model, follow the current
+conversation, configured chat models, or a configured ACP agent. Known media
+model IDs and explicit image profiles are excluded using the shared contract's
+exact model rules. Switching rereads the complete reviewer persona before
+saving and preserves its instructions, skills and connectors. A changed backend
+selection in another window requires a fresh read; unconfirmed replies disable
+further changes until explicit reconciliation. Saves are never replayed.
+The reviewer picker participates in the window Escape stack and closes before
+the options sheet. The options body scrolls in short/narrow windows.
+
+Manual smoke: open conversation options, scroll to Global settings in a narrow
+window, toggle memory, adjust failure thresholds and select each reviewer kind.
+Reopen the sheet in a second project to check the global preference. Open the
+reviewer picker and press Escape immediately; options must remain open. A second
+press closes options. Verify both locales and schemes. Concurrent full-persona
+writes still use the existing shared specialist command; its pre-save reread
+reduces stale updates but is not an atomic compare-and-swap across windows.
+
+Bound ACP conversations also expose their declared modes and configuration.
+The native decoder preserves the protocol's `frameId`, `configOptions`,
+`currentModeId` and `currentValue` keys. Select options include grouped choices;
+boolean values remain booleans. Changes use the exact advertised IDs, run only
+while the conversation is writable and idle, and preserve the draft. ACP agents
+that expose mode through configuration have one mode selector. Unbound or older
+hosts offer no unsupported settings controls; unknown configuration types are
+shown without an editor.
+
+Plan proposals render their shared entries with Markdown, status and priority.
+Only the latest proposal after its owning user turn can offer decisions.
+“Approve and execute” confirms leaving Plan through a fresh snapshot before
+sending the current draft (or an explicit approval instruction for an empty
+draft). “Save and exit” changes mode without sending. Built-in proposals use
+`native_conversation_plan`; ACP proposals use an advertised non-plan mode.
+Changed plans, drafts, attachments, references, read-only/running state or
+navigation prevent execution. An uncertain mode or send is never replayed;
+the user can inspect the mode and acknowledge an uncertain plan decision.
+
+SwiftUI reads the shared snapshot's optional `plan_mode`, `fast_mode` and
+`history_state`. Built-in conversations expose Agent/Plan and supported models
+expose Fast; unavailable fields on an older host hide those controls. Running,
+read-only and ACP conversations cannot change these built-in modes. Fast writes
+the displayed model ID and keeps the model-default/session-override distinction.
+An unconfirmed mode write blocks sending until an authoritative refresh; writes
+are never replayed. The controls have a separate row to keep the send/model row
+usable in narrow windows.
+
+Historical user/assistant messages have a menu for editing into a branch,
+branching after a response, and rewinding before a user message. The confirmation
+captures the persisted sequence, digest and revision of the selected global turn,
+including paginated history. Rewind removes conversation records, not file
+changes. Existing source drafts survive, edited branch questions remain drafts,
+and running latest turns cannot be branched. An unconfirmed history mutation
+blocks another attempt and sending until the user explicitly checks its result.
+
+The latest completed built-in turn also offers **Undo this turn**. Its read-only
+preview lists text files to restore, created files to remove, artifact records,
+unsupported files and conflicts. Conflicts disable confirmation, and the shared
+host checks the file state again before applying undo. Binary and unrecorded
+changes cannot be restored. The action binds the exact turn/revision, preserves
+an existing draft and restores the original question only into empty input.
+Older turns, ACP, running, queued and read-only conversations cannot undo.
+Escape during the preview read closes only the preview; late reads are discarded.
+Unconfirmed undo writes block further history changes without automatic replay.
+
+Hosts advertising `context_view` expose **Model context** beside the composer
+footer. The view reads the persisted head working set, including system and
+checkpoint messages, the shared system/tool/rule/skill breakdown, and compaction
+history. Built-in conversations can start regular or semantic `/compact` through
+the existing turn pipeline. This sends no staged attachments/references and
+retains the current draft. Semantic compaction accepts an optional retention
+instruction. Completion refreshes the open context view; failures stay visible.
+Compaction transcript cards show recorded before/after counts and checkpoints.
+
+An eligible latest compaction offers undo before the conversation continues.
+The confirmation binds the inspected epoch. The host compares that epoch while
+holding the workflow lock, so another window's newer compaction cannot be undone
+by an old confirmation. Undo preserves the transcript and draft. Archived,
+frozen, running, queued, uncertain and ACP conversations cannot compact or undo;
+ACP and older hosts do not offer this built-in context view. Immediate Escape
+closes the compaction/undo confirmation before the context view, without writing.
+Reads closed or superseded by navigation do not update a later view, and unknown
+mutation results are never automatically replayed.
+
+Native tool approvals default to **Once**. The snapshot now advertises scopes
+for each exact pending approval ID. Ordinary grantable requests can select this
+conversation, this project or all projects; project/global grants use the
+existing persisted permission registry and can be revoked in Settings. Plans,
+workflow-node decisions, image resizing and resource conflicts remain once-only.
+Older hosts keep their existing once-only controls. Selecting a scope does not
+write; the labelled Allow button submits the decision for the exact request.
+
+The host validates ownership, request identity and grant eligibility before
+consuming a pending request. Denial cannot create a broader grant. The Swift
+client blocks another submission after an unconfirmed reply. **Recheck pending
+request** performs a read only; if a fresh owned snapshot confirms that the exact
+request is still pending, the user can explicitly decide again. Stale requests
+and malformed scope maps are rejected. Escape closes the scope picker before
+underlying surfaces, and narrow approval cards move long actions to another row.
+
+Cmd+K now uses `native_workspace_search` to read persisted cross-project projects,
+artifacts and conversations, including message-body matches beyond the five home
+recents. Privacy and ranking remain in the shared host. Response query, preferred
+project, ownership and duplicate identities are checked before display. Selecting
+an artifact opens its exact ID in its owning conversation. Editing or closing the
+search discards late results. Type `>` for native navigation/panel commands;
+arrows and Enter select a result, and immediate Escape closes only the search.
+
+Manual smoke: with an isolated fixture, find a conversation older than the home
+recents by a message-body term, open an artifact in another project, use
+`>terminal` and `>settings`, and press Escape immediately after opening search.
+For an idle built-in conversation, save Plan/Fast, keep a draft, then open an
+older message's branch/rewind confirmation and cancel with Escape. Verify the
+parent and draft remain; confirm a branch and check its edited draft. Repeat in
+light/dark and a narrow window. Remaining macOS scope is tracked in
+[the complete workbench plan](superpowers/plans/2026-10-06-macos-workbench-parity.md).
+
+The conversation action menu and scoped Cmd+K commands now offer **Copy to
+another project** and **Move to another project**. The reviewed preview binds the
+source conversation, destination project, transfer mode and saved transcript
+revision, including all context epochs and persisted events. Confirmation checks
+that revision under the shared workflow/agent lock. Running turns, approvals,
+reviews, unconsumed queued messages and exploration conversations cannot transfer;
+archived conversations may be copied but cannot be moved. Moving a mainline with
+branches or an active exploration still follows the existing host restrictions.
+
+Copy transfers saved conversation records; local files and Runs remain in the
+source project. Move optionally uses the existing artifact fingerprint, collision
+checks and recoverable file operation. The preview lists transferable artifacts
+and files plus retained shared/uploaded/changed/unavailable items. If file preview
+fails, the transcript alone may still move. File selection defaults off and
+resets after rereading or changing destination. Confirmation revalidates file
+state before changing it. Runs are retained in the source project.
+Retained artifact or Run lineage may keep a deleted source frame internally;
+conversation reads, mutations and queued sends reject that frame, including when
+an old client would otherwise allocate a fresh runtime.
+
+A move retains the current text draft for the new destination conversation
+without sending it. Staged attachments and references must be cleared first
+because they belong to the source project. Copy leaves the original draft in
+place. A confirmed result can explicitly open the exact new frame. Closing a
+confirmed move removes the source row; opening also navigates to the destination.
+Unconfirmed replies block further submissions in that sheet, even after a new
+preview or target selection. Closed/cancelled/superseded reads and late writes
+cannot navigate another view. Saving holds the sheet open, and immediate Escape
+closes the destination picker before the transfer sheet.
+
+Manual smoke: create two temporary projects and an idle conversation with a text
+draft and local generated artifacts. Copy it and inspect the destination records
+while the original draft/files remain. Move another conversation with files off,
+then with files on; inspect paths and retained uploads/shared artifacts. Change a
+source file or transcript after preview and verify confirmation refuses stale
+state. Add a destination collision and verify files remain unchanged. Check
+queued/running/archived restrictions, draft retention, both locales/schemes and
+immediate Escape with the destination picker open. Use only fixture projects.
+
+The action menu and scoped Cmd+K command **Conversation relationships** show the
+source conversation, sibling branches, direct branches and subagent conversations
+from the saved project sidebar. Active, merged and orphaned branch states are
+identified. Sidebar rows also identify branches and subagent conversations.
+Opening a relationship uses its exact advertised session ID in the same project
+and preserves each conversation's text draft. Missing, deleted or foreign
+sources do not become navigation targets; the dialog explains an unavailable
+source. Orphaned checkpoints carry an explicit explanation and do not advertise
+a source or sibling link. Navigation remains available for inspecting frozen records; the host's
+existing read-only controls govern any subsequent mutation.
+
+Manual smoke: create a source, two branches and a branch from a branch. Open
+**Conversation relationships** from each record and inspect the source, siblings
+and direct children. Keep unsent text in two conversations and switch between
+them. Inspect merged/orphaned branches and subagent records. Check both locales,
+light/dark, a narrow window and immediate Escape without moving focus.
+
+
 ## Windows input references and preferences (2026-10-05)
 
 The Windows input field follows the saved Enter/Ctrl+Enter preference, including
@@ -655,14 +967,16 @@ Export/setup/privacy/update/font commands and remaining WebView
 actions still need implementation. This search batch does not complete Research
 Assistant, publication editing, MCP Apps or final packaged/DPI acceptance.
 
-### Windows session ZIP import
+### Windows and macOS session ZIP import
 
-Use **导入会话归档…** in the project menu, or the command palette, to choose a
-Wisp session-export ZIP and an explicit destination project. Preview shows the
+On Windows use **导入会话归档…** in the project menu or command palette. On macOS
+use **导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
+the command palette. Choose a Wisp session-export ZIP and an explicit
+destination project. Preview shows the
 message/artifact counts, first four user/assistant messages (600 characters each),
 artifact paths and whether the selected project already contains the import.
 Changing the path or destination clears the preview. Preview itself writes no
-conversation data; **确认导入到所选项目** imports the reviewed file. The result
+conversation data; explicit confirmation imports the reviewed file. The result
 offers **打开导入的会话** and lists artifacts that could not be restored.
 
 `wisp.native-session-import.v1` carries the destination, source session ID and
@@ -680,10 +994,23 @@ retains the selected path and destination and disables further writes in that
 dialog; a fresh preview can locate an existing imported session for inspection.
 Escape closes the destination dropdown before the sheet; closing the sheet
 retains the original conversation draft. This route handles Wisp ZIP archives.
+macOS also discards cancelled/closed/superseded previews and prevents a late
+import result from navigating another conversation. Changing file/destination
+or rereading after an uncertain write cannot enable another import in that sheet.
 
-### Windows Codex and Claude session import
+macOS smoke: import a synthetic session ZIP into two different projects, verify
+the counts/first-message previews, reopen an existing import and update it with
+a longer archive. Check the result's missing-artifact list and open its exact
+destination. Keep a draft in the originating conversation and verify it remains
+when returning. Open the destination picker and press Escape immediately; only
+the picker closes. A second Escape closes the import sheet. Check narrow windows,
+both locales/schemes, frozen destinations and an archive changed after preview.
 
-Use **导入 Codex / Claude 会话…** in the project menu or command palette. Choose
+### Windows and macOS Codex and Claude session import
+
+On Windows use **导入 Codex / Claude 会话…** in the project menu or command
+palette. On macOS use **导入 Codex / Claude 会话** in the project sidebar or
+`>import codex` / `>import claude` in the command palette. Choose
 the destination project, Codex CLI or Claude Code, and a local or registered
 WSL/SSH source. The initial list uses the metadata cache; **重新扫描来源** scans
 up to 500 recent source files. Filtering matches title, working directory,
@@ -707,6 +1034,17 @@ It is never replayed. Confirmed results can open their exact destination session
 Busy/read-only target protections match ZIP imports. Escape closes an open
 selector before the sheet; closing the sheet retains the originating draft and
 prevents late replies from navigating the window.
+
+macOS smoke: with synthetic local provider logs, compare cached listing and
+rescan, filter by title/cwd/session ID/path, and inspect a result on the second
+page. Single import must use the selected project/provider/environment and the
+reviewed file hash. Batch import includes all filtered pages, skips imported
+rows and reads a fresh preview for each candidate. Stop during a preview to
+verify no write starts; stop during a write to verify it finishes only that one.
+Simulate a lost write acknowledgement and check that reload/selection cannot
+enable another import in the same sheet. Source/destination pickers and the
+preview must each consume immediate Escape before the parent sheet. Check
+narrow windows, both locales/schemes and originating draft retention.
 
 ### Windows publication evidence workspace
 
@@ -818,3 +1156,119 @@ badges. General settings group workspace interaction and notifications, offer an
 explicit send-shortcut choice, and place local environments before network
 settings. See the [alignment implementation record](superpowers/plans/2026-09-26-swiftui-webview-ui-alignment-implementation.md)
 for verification and remaining work.
+
+## macOS Files locations, sorting and selection
+
+Hosts advertising the optional `file_browser` snapshot capability provide the
+scoped `wisp.native-files.v1` browser. Older hosts retain the existing local Files
+panel. The location selector lists the current project and every configured SSH
+context, matching WebView; opening a location does not attach or probe it. Local
+paths use the displayed conversation's actual working directory, including an
+exploration branch, rather than the sidebar's mainline workspace path.
+
+Directories stay first. Name sorts case-insensitively ascending; size and
+modification time sort descending, with name as the tie-breaker and missing times
+treated as zero. The choice persists between openings. Modification-time sorting
+shows dates where available, including directories. Local search continues to
+search all project directories, with the existing 200-result bound and traversal
+order, independently of directory sorting.
+
+**Select files** toggles rows without opening them. Sorting preserves selection;
+changing query, directory or location clears it. **Copy relative paths** and
+**Copy absolute paths** copy the selected paths in sorted, deduplicated order. A
+row's menu copies the whole selection only when that row is selected; otherwise
+it copies that row. The host resolves existing files/directories under the actual
+working root. Outside links and missing paths fail without replacing the
+clipboard. Changed selection/navigation or closed panels discard late responses.
+Switching database also recreates the pane's models when a database copy retains
+the same project and conversation IDs.
+
+SSH supports directory navigation, an editable remote path, bounded previews,
+source quotes, a read retry and a shortcut to environment settings. Remote text
+is read-only. Quote sources retain the exact SSH context and file path. Binary
+previews use a private temporary copy of the returned bytes, cleaned up on
+dismissal; a remote URI is never opened as a local path. Local creation, rename,
+deletion, optimistic text editing and original-byte **Save a copy** remain
+available, with host-side read-only/conflict checks. Unconfirmed file writes or
+saves cannot be replayed from the same sheet; close and reread before making a
+new decision. Sorting and file-action Escape handling preserves the parent panel
+without moving focus.
+
+Hosts advertising `file_transfers` also support **Upload to this folder** and
+Finder file-URL drops. Local uploads accept regular files, copy into the captured
+working directory and use collision suffixes without overwriting existing files.
+Each result reports its saved path or failure. SSH uploads accept files and
+directories and submit the existing persisted transfer Runs to the displayed
+directory; no session attachment is required, but the host must be ready.
+
+Remote file rows provide **Save a copy** with a window-owned save panel. A download
+returns a Run immediately after preflight, copies to a private temporary directory
+and replaces the chosen destination only after successful complete bytes and an
+unchanged destination metadata fingerprint. New destinations appearing during
+transfer, changed existing destinations, truncated bytes, cancellation and failures
+leave the destination untouched and clean temporary files. Run details include the
+chosen destination. Export remains available for read-only source sessions.
+
+File pickers and delayed drop providers retain the originating window, model and
+location. Before dispatch, navigation (including leaving and returning), query
+changes, a different database, closure, revoked capability or write permission
+prevents a late upload. After dispatch, a confirmed reply updates the transfer
+result even if the search query changes; the current query and directory remain
+selected.
+Busy submissions cannot dispatch a second transfer. Lost/malformed/foreign replies
+are not retried; reread before another decision, and inspect the captured SSH
+context's Runs if its acknowledgement was lost. Confirmed remote transfers show
+scoped live status/progress and link to the existing task list, details and cancel
+controls. Missing/foreign Runs cannot claim completion. Pickers have a temporary
+window Escape listener, removed on dismissal/cleanup; it cancels the picker before
+its parent and leaves native menus, nested confirmations and IME precedence intact.
+
+Markdown (`.md`, `.markdown`, `.Rmd`, `.qmd`) and CSV/TSV now open in a dedicated
+reading view in Files and artifact previews, including search results. **Read** /
+**Source** changes presentation without modifying the file. Source copy and the
+existing local editor retain the original text, including YAML front matter,
+quoting and line endings. Completed leading YAML front matter is hidden only in
+Markdown reading; ordinary thematic breaks and incomplete metadata remain visible.
+Headings, lists, quotes, code, formulas and Markdown tables share the selectable
+message renderer and its code/table/formula copy actions. Rendered selections can
+be quoted with the exact local or SSH source; foreign text and closed previews are
+rejected. Selection and block-copy menus follow the current language.
+
+CSV and TSV use their actual delimiter, accept quoted delimiters, doubled quotes,
+multiline fields, BOM and CRLF, and preserve empty/ragged cells. Cell strings remain
+literal. The table scrolls horizontally/vertically and shows at most 500 rows and
+128 columns, while **Copy table TSV** includes all complete records read. TSV copy
+normalizes cell whitespace as WebView does; selected rows can be copied with
+Cmd+C or quoted through their context menu. Double-click a cell to select and
+quote part of its text through the standard selection menu. Multiline cells have a one-line label
+and their complete value in the tooltip. Malformed tables retain Source; a
+truncated final record is omitted with a notice instead of invented complete data.
+Reading is capped at 1 MiB. Markdown and source display additionally cap at 8,000
+lines; table copying is not limited by that source-display cap.
+
+Markdown images resolve relative to the document's directory, within the current
+project/conversation or selected SSH host. Remote home paths never expand locally.
+File reads retain the existing ownership/path boundary; external URLs are shown
+as unavailable. Image decoding bounds bytes and pixel dimensions and produces a
+preview up to 1024 pixels per side. Failed or missing images keep readable alt
+text. Changing/closing/saving the document or cancelling its read discards late
+images. Clicking a loaded image opens a native sheet; immediate Escape closes
+that image before its document, then the document before Files.
+
+The richer HTML/scientific/Office/PDF interactions remain tracked in the
+[active macOS parity ledger](superpowers/plans/2026-10-06-macos-workbench-parity.md).
+Manual smoke: use an isolated exploration fixture, compare copied absolute paths
+with its working root, sort/select/search across directories, open configured SSH
+locations, quote a remote text selection and press Escape immediately after
+opening sort/file-action surfaces. Check both locales/schemes and narrow panels.
+Also upload colliding/missing files, drop from Finder, cancel upload/save pickers
+with Escape immediately without moving focus, change directory while a drop URL is
+resolving, and verify only the originating window can accept its result. For SSH,
+inspect/cancel a transfer Run and change a chosen destination during download;
+verify its newer bytes survive. Use fake/probed fixtures for automated checks.
+For rich text, compare a Markdown report with YAML, code, tables and a relative
+figure against Source, then edit/save and verify the original source baseline.
+Open CSV/TSV containing quoted delimiters, blank cells and multiline fields;
+scroll, select separated rows, copy TSV and quote with its source. Try a truncated
+or malformed record, and switch/close previews while an image read is pending.
+Compare both locales/schemes at 320, 419 and normal window widths.

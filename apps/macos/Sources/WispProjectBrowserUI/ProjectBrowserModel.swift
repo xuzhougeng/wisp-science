@@ -5,7 +5,13 @@ import WispProjectBrowser
 
 @MainActor
 public final class ProjectBrowserModel: ObservableObject {
-    @Published public var searchPresented = false
+    @Published public var searchPresented = false {
+        didSet { if searchPresented { searchFocusGeneration = UUID(); searchComposerFocus = nil } }
+    }
+    private var searchFocusGeneration = UUID()
+    private var searchComposerFocus: NativeSearchComposerFocus?
+    @Published var searchArtifact: NativeSearchItem?
+    @Published var workspaceCommand: NativeWorkspaceCommand?
     @Published public var createPresented = false
     @Published public var createDraft = NewProjectDraft()
     @Published private(set) var createBusy = false
@@ -27,6 +33,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
+    public func openEnvironmentSettings() { projectSettingsID = nil; settingsSectionID = "environments"; settingsPresented = true }
     @Published public var projectSettingsID: String?
     public func openProjectSettings(_ id: String) { projectSettingsID = id; settingsSectionID = nil; settingsPresented = true }
     @Published private(set) var projects: [ProjectSummary] = []
@@ -42,6 +49,8 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var sessionError: String?
     private var navigationGeneration = UUID()
     @Published public private(set) var isLoading = false
+    @Published public private(set) var windowReady = true
+    @Published private(set) var windowOpening = false
     @Published private(set) var error: String?
     @Published private(set) var listRefreshFailed = false
     @Published private(set) var savingProjectID: String?
@@ -69,7 +78,7 @@ public final class ProjectBrowserModel: ObservableObject {
     }
     func nativeConversation() -> NativeConversationModel {
         if let existing = nativeModels[databaseURL] { return existing }
-        let model = NativeConversationModel(client: NativeConversationClient(transport: NativeSettingsClient(databaseURL: databaseURL, executableURL: nativeDesktopHostURL())))
+        let model = NativeConversationModel(client: NativeConversationClient(transport: projectTransport()))
         nativeModels[databaseURL] = model
         return model
     }
@@ -82,8 +91,7 @@ public final class ProjectBrowserModel: ObservableObject {
         await openSession(id)
     }
     private let client: any ProjectBrowserQuerying
-    private let projectTransportOverride: (any NativeSettingsQuerying)?
-    private var projectHosts: [URL: NativeSettingsClient] = [:]
+    private let transports: NativeWorkspaceTransports
 
     public init() {
         let environment = ProcessInfo.processInfo.environment
@@ -95,13 +103,50 @@ public final class ProjectBrowserModel: ObservableObject {
             ?? Bundle.main.url(forAuxiliaryExecutable: "wisp-service")
             ?? Bundle.main.bundleURL.appendingPathComponent("wisp-service")
         client = ProjectBrowserClient(executableURL: executable)
-        projectTransportOverride = nil
+        transports = NativeWorkspaceTransports()
     }
 
     init(client: any ProjectBrowserQuerying, databaseURL: URL, projectTransport: (any NativeSettingsQuerying)? = nil) {
         self.client = client
         self.databaseURL = databaseURL
-        self.projectTransportOverride = projectTransport
+        transports = NativeWorkspaceTransports(override: projectTransport)
+    }
+    private init(client: any ProjectBrowserQuerying, databaseURL: URL, transports: NativeWorkspaceTransports) {
+        self.client = client; self.databaseURL = databaseURL; self.transports = transports
+    }
+
+    public func newWindowRequest() -> NativeWorkspaceWindowRequest { NativeWorkspaceWindowRequest(databaseURL: databaseURL) }
+    func windowRequest(for item: NativeSearchItem) -> NativeWorkspaceWindowRequest? {
+        guard item.valid, item.kind == "project" || item.kind == "session" else { return nil }
+        return NativeWorkspaceWindowRequest(databaseURL: databaseURL, projectID: item.project_id, sessionID: item.session_id)
+    }
+    public func makeIndependentWorkspace(databaseURL: URL) -> ProjectBrowserModel {
+        let model = ProjectBrowserModel(client: client, databaseURL: databaseURL, transports: transports)
+        model.windowReady = false
+        return model
+    }
+    public func loadWindow(_ request: NativeWorkspaceWindowRequest) async -> Bool {
+        guard !windowOpening else { return false }
+        windowReady = false
+        guard request.valid, request.databaseURL == databaseURL, !isLoading else {
+            error = localized("窗口请求无效或数据库已改变，请重新打开。")
+            return false
+        }
+        windowOpening = true
+        defer { windowOpening = false }
+        await refresh()
+        guard !Task.isCancelled, request.databaseURL == databaseURL, !listRefreshFailed else { return false }
+        guard let project = request.projectID else { windowReady = true; return true }
+        guard projects.contains(where: { $0.id == project }) else {
+            error = localized("请求的项目已不存在或不可见，请重新搜索。")
+            return false
+        }
+        await openProject(project, sessionID: request.sessionID)
+        windowReady = !Task.isCancelled && request.databaseURL == databaseURL && activeProjectID == project
+            && (request.sessionID == nil || activeSessionID == request.sessionID) && sessionError == nil
+            && sessions.allSatisfy { $0.projectID == project }
+        if !windowReady && error == nil && sessionError == nil { error = localized("请求的会话不属于此项目，请重新搜索。") }
+        return windowReady
     }
 
     public func refresh() async {
@@ -164,6 +209,8 @@ public final class ProjectBrowserModel: ObservableObject {
 
     func goHome() {
         searchPresented = false
+        searchArtifact = nil
+        workspaceCommand = nil
         calendar.invalidate()
         journey.invalidate()
         publication.invalidate()
@@ -179,6 +226,61 @@ public final class ProjectBrowserModel: ObservableObject {
         sessions = []
         sessionError = nil
         sessionsLoading = false
+    }
+
+    func openSearchResult(_ item: NativeSearchItem) async {
+        guard item.valid else { return }
+        let database = databaseURL
+        await openProject(item.project_id, sessionID: item.session_id)
+        guard databaseURL == database, activeProjectID == item.project_id,
+              activeSessionID == item.session_id, sessionError == nil else { return }
+        if item.kind == "artifact" { searchArtifact = item }
+    }
+    func stageSearchReference(_ reference: NativeComposerReference, conversation: NativeConversationModel, database: URL, project: String?, session: String?) -> Bool {
+        guard let project, let session, databaseURL == database, activeProjectID == project, activeSessionID == session,
+              conversation.snapshot?.project_id == project, conversation.snapshot?.session_id == session,
+              conversation.canReference, conversation.addReference(reference) else { return false }
+        let navigation = navigationGeneration, search = searchFocusGeneration
+        searchComposerFocus = NativeSearchComposerFocus(editor: conversation.completions.editor) { [weak self, weak conversation] in
+            guard let self, let conversation else { return false }
+            return self.databaseURL == database && self.activeProjectID == project && self.activeSessionID == session
+                && self.navigationGeneration == navigation && self.searchFocusGeneration == search
+                && conversation.snapshot?.project_id == project && conversation.snapshot?.session_id == session
+                && !self.searchPresented && !self.settingsPresented && conversation.canReference
+        }
+        return true
+    }
+    func consumeSearchComposerFocus() -> NativeSearchComposerFocus? {
+        let focus = searchComposerFocus
+        searchComposerFocus = nil
+        return focus
+    }
+    func searchDidDismiss() {
+        let focus = consumeSearchComposerFocus()
+        // SwiftUI calls onDismiss after its sheet transition; give AppKit the
+        // current event turn to finish restoring the parent key window.
+        Task { @MainActor in
+            await Task.yield()
+            focus?.restore(keyWindow: NSApp.keyWindow)
+        }
+    }
+    func executeSearchCommand(_ command: NativeSearchCommand) {
+        guard (!command.project || activeProjectID != nil), (!command.session || activeSessionID != nil) else { return }
+        switch command.id {
+        case "new-project": createPresented = true
+        case "settings": projectSettingsID = nil; settingsSectionID = nil; settingsPresented = true
+        case "project-settings": if let activeProjectID { openProjectSettings(activeProjectID) }
+        case "skills": projectSettingsID = nil; settingsSectionID = "skills"; settingsPresented = true
+        case "workflows": openWorkflowSettings()
+        case "projects": goHome()
+        case "library": library.presented = true
+        case "calendar": calendar.presented = true
+        case "journey": if let activeProjectID { publication.dismiss(); journey.open(projectID: activeProjectID, day: nil) }
+        case "publication": if let activeProjectID { journey.dismiss(); publication.open(projectID: activeProjectID) }
+        case "import-project": importOptionsPresented = true
+        default:
+            if let activeProjectID { workspaceCommand = NativeWorkspaceCommand(action: command.id, project: activeProjectID, session: activeSessionID) }
+        }
     }
 
     func openProject(_ id: String, sessionID: String? = nil) async {
@@ -494,11 +596,7 @@ public final class ProjectBrowserModel: ObservableObject {
     func calendarClient() -> any NativeSettingsQuerying { projectTransport() }
 
     private func projectTransport() -> any NativeSettingsQuerying {
-        if let projectTransportOverride { return projectTransportOverride }
-        if let host = projectHosts[databaseURL] { return host }
-        let host = NativeSettingsClient(databaseURL: databaseURL, executableURL: nativeDesktopHostURL())
-        projectHosts[databaseURL] = host
-        return host
+        transports.client(database: databaseURL)
     }
 
     func reveal(_ project: ProjectSummary) {

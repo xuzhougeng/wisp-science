@@ -1,7 +1,7 @@
 import AppKit
 
 /// Launch Services sends reopen when Finder/Dock activates an already running
-/// app. SwiftUI owns window construction; the delegate only requests its single
+/// app. SwiftUI owns window construction; the delegate reopens the primary
 /// workspace scene and never creates another model or desktop host.
 @MainActor
 public final class NativeApplicationDelegate: NSObject, NSApplicationDelegate {

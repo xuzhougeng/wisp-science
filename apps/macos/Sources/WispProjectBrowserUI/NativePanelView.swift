@@ -2,6 +2,14 @@ import AppKit
 import SwiftUI
 import WispProjectBrowser
 
+/// Database clones may retain project/session IDs. Recreate all pane models
+/// when their transport's database changes, even when those IDs stay equal.
+struct NativePanelScopeIdentity: Hashable {
+    let databaseURL: URL
+    let projectID: String
+    let sessionID: String
+}
+
 struct NativePanelView: View {
     @StateObject private var model: NativePanelModel
     @AppStorage("native.workspace.panel.tab") private var tab = "artifacts"
@@ -26,19 +34,23 @@ struct NativePanelView: View {
     let openTerminal: (String) -> Void
     let manageWorkflows: () -> Void
     let readOnly: Bool
+    var fileBrowserSupported = false
+    var fileTransfersSupported = false
+    var environments: () -> Void = {}
     let close: () -> Void
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
         self.projectRoot = projectRoot
-        _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.close = close
+        _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.fileBrowserSupported = fileBrowserSupported; self.environments = environments; self.close = close
+        self.fileTransfersSupported = fileTransfersSupported
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 tabStrip
-                if !["provenance", "sidechat"].contains(tab) { Button { Task { await model.refresh(tab) } } label: { WispIcon(name: "refresh") }.buttonStyle(.plain).help("刷新") }
+                if !["provenance", "sidechat"].contains(tab) && !(tab == "files" && fileBrowserSupported) { Button { Task { await model.refresh(tab) } } label: { WispIcon(name: "refresh") }.buttonStyle(.plain).help("刷新") }
                 Button(action: close) { WispIcon(name: "close", size: 16) }.buttonStyle(.plain).help("关闭面板").accessibilityLabel("关闭面板")
             }
-            if tab != "sidechat" {
+            if tab != "sidechat" && !(tab == "files" && fileBrowserSupported) {
             HStack(spacing: 6) {
                 TextField(tab == "files" ? "搜索当前项目全部目录" : tab == "artifacts" ? "搜索本会话产物名称或路径" : tab == "provenance" ? "搜索工具、输入或输出" : tab == "notebook" ? "搜索代码或输出" : "筛选名称", text: $query)
                     .accessibilityLabel(tab == "files" ? "搜索项目文件" : "搜索面板")
@@ -47,7 +59,7 @@ struct NativePanelView: View {
             if model.loading || model.searchLoading { ProgressView().controlSize(.small) }
             if let error = exportError ?? model.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             }
-            if tab == "files" {
+            if tab == "files" && !fileBrowserSupported {
                 HStack {
                     Button { navigate(model.parent) } label: { WispIcon(name: "arrow-up", size: 16).frame(width: 30, height: 30) }.buttonStyle(.plain).disabled(model.path == ".").accessibilityLabel("上级目录")
                     Text(query.isEmpty ? model.path == "." ? "当前项目 /" : model.path : "当前项目 · 最多 200 项").font(.caption).lineLimit(1).truncationMode(.head).help(model.path)
@@ -60,7 +72,13 @@ struct NativePanelView: View {
                         .disabled(readOnly || model.loading || model.fileActionBusy || !query.isEmpty)
                 }
             }
-            if tab == "sidechat", let sideChat {
+            if tab == "files" && fileBrowserSupported {
+                NativeFilesView(client: model.client, projectID: model.projectID, sessionID: model.sessionID, readOnly: readOnly, quote: sideChat == nil ? nil : { quote in
+                    guard let sideChat, sideChat.projectID == model.projectID, sideChat.sessionID == model.sessionID else { return }
+                    sideChat.quotes.append(quote)
+                    var value = layout; value.show("sidechat"); store(value)
+                }, environments: environments, runs: { context in activity = .init(context: context, runtimes: false) }, transfersSupported: fileTransfersSupported)
+            } else if tab == "sidechat", let sideChat {
                 NativeSideChatView(model: sideChat)
             } else {
             ScrollView {
@@ -101,11 +119,12 @@ struct NativePanelView: View {
             .background(NativeSettingsEscape(close: close))
             .onAppear { var value = layout; value.reopen(); store(value) }
             .onChange(of: tab) { _ in query = ""; exportError = nil; model.clearFileSearch() }
-            .task(id: tab + "\n" + query) {
-                if tab == "files" { await model.searchFiles(query) }
+            .task(id: tab + "\n" + query + "\n" + String(fileBrowserSupported)) {
+                if tab == "files" && !fileBrowserSupported { await model.searchFiles(query) }
             }
-            .task(id: tab) {
+            .task(id: tab + "\n" + String(fileBrowserSupported)) {
                 if !availableTabs.contains(tab) { tab = "artifacts" }
+                if tab == "files" && fileBrowserSupported { return }
                 await model.refresh(tab)
                 while tab == "agents" && !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -120,7 +139,7 @@ struct NativePanelView: View {
                         sideChat.quotes.append(quote)
                         model.dismissPreview()
                         var value = layout; value.show("sidechat"); store(value)
-                    })
+                    }, loadImage: { try await model.readPreviewImage($0, original: content) })
                 }
             }
             .sheet(item: $transcriptPreview) { artifact in
@@ -269,8 +288,8 @@ struct NativePanelDisplayControls: View {
         Button { grid = value } label: {
             WispIcon(name: icon, size: 16).frame(width: 30, height: 30)
                 .background(grid == value ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 5))
-        }.buttonStyle(.plain).help(label).accessibilityLabel(label)
-            .accessibilityValue(grid == value ? "已选择" : "未选择")
+        }.buttonStyle(.plain).help(localized(label)).accessibilityLabel(localized(label))
+            .accessibilityValue(localized(grid == value ? "已选择" : "未选择"))
     }
 }
 
@@ -300,48 +319,73 @@ struct NativePanelFilePreview: View {
     let close: () -> Void
     var save: ((String) async throws -> Void)? = nil
     var quote: ((String) -> Void)? = nil
+    var loadImage: NativeFileImageLoader? = nil
+    @State private var sourceMode = false
     @State private var editing = false
     @State private var draft = ""
     @State private var saving = false
     @State private var saveError: String?
+    @State private var saveUnconfirmed = false
     @State private var confirmDiscard = false
     private var dirty: Bool { editing && draft != content.text }
+    private var document: NativeFileTextDocument { NativeFileTextDocument(content) }
     private func requestClose() { if dirty { confirmDiscard = true } else { close() } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text((content.path as NSString).lastPathComponent).font(.headline)
+                Text((content.path as NSString).lastPathComponent).font(.headline).lineLimit(1).truncationMode(.middle)
                 Spacer()
                 if let save, content.text != nil, !content.truncated {
                     if editing {
-                        Button(saving ? "正在保存…" : "保存") {
+                        Button(localized(saving ? "正在保存…" : "保存")) {
                             saving = true; saveError = nil
                             let text = draft
                             Task {
                                 do { try await save(text); editing = false }
-                                catch { saveError = "保存未确认成功，请核对文件后再操作。" + error.localizedDescription }
+                                catch { saveUnconfirmed = true; saveError = localized("保存未确认成功，请关闭并重新读取文件后再操作。") + error.localizedDescription }
                                 saving = false
                             }
-                        }.disabled(!dirty || saving)
+                        }.disabled(!dirty || saving || saveUnconfirmed)
                     } else {
-                        Button("编辑") { draft = content.text ?? ""; editing = true; saveError = nil }
+                        Button(localized("编辑")) { draft = content.text ?? ""; editing = true; saveError = nil }
                     }
                 }
-                Button("关闭预览", action: requestClose).disabled(saving)
+                Button(localized("关闭预览"), action: requestClose).disabled(saving)
+            }
+            Text(content.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(content.path).textSelection(.enabled)
+            if content.text != nil, !editing, document.kind != .text {
+                HStack {
+                    Picker(localized("文件显示方式"), selection: $sourceMode) {
+                        Text(localized("阅读")).tag(false)
+                        Text(localized("源文本")).tag(true)
+                    }.pickerStyle(.segmented).labelsHidden().accessibilityLabel(localized("文件显示方式")).frame(maxWidth: 220)
+                    Spacer(minLength: 0)
+                    Button(localized("复制源文本")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(content.text ?? "", forType: .string) }
+                }
             }
             if let saveError { Text(saveError).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
-            if content.truncated { Text("仅展示文件开头；完整文件大小 \(content.total_bytes ?? 0) bytes。").font(.caption).foregroundStyle(.orange) }
+            if content.truncated || document.clipped || sourceMode && document.rawDisplayClipped { Text(localized("仅展示文件开头；完整文件大小") + " \(content.total_bytes ?? UInt64(content.text?.utf8.count ?? 0)) bytes").font(.caption).foregroundStyle(.orange) }
             if editing {
                 TextEditor(text: $draft).font(.system(size: 12, design: .monospaced)).disabled(saving).accessibilityLabel("文件内容")
-            } else if let text = content.text {
-                ScrollView { NativeSelectableMessage(text: AttributedString(text), saved: [], quote: quote, save: nil, monospaced: true).frame(maxWidth: .infinity, alignment: .topLeading) }
-            } else { NativeQuickLookPreview(url: URL(fileURLWithPath: content.path)) }
-        }.padding(16).frame(minWidth: 560, idealWidth: 850, minHeight: 420, idealHeight: 650)
+            } else if content.text != nil {
+                if !sourceMode, document.kind == .markdown {
+                    NativeMarkdownFilePreview(markdown: document.markdown, quote: quote, loadImage: loadImage).id(content.path)
+                } else if !sourceMode, document.kind == .delimited {
+                    if let table = document.table { NativeDelimitedFilePreview(table: table, quote: quote) }
+                    else { Text(document.tableError ?? "").foregroundStyle(.orange); Spacer() }
+                } else {
+                    GeometryReader { geometry in
+                        ScrollView { NativeSelectableMessage(text: AttributedString(document.rawDisplaySource), saved: [], quote: quote, save: nil, monospaced: true).frame(width: max(1, geometry.size.width), alignment: .topLeading) }
+                    }
+                }
+            } else if content.base64 != nil { NativeFileBytesPreview(content: content) }
+            else { Text(localized("无法预览文件。")) }
+        }.padding(16).frame(minWidth: 320, idealWidth: 850, minHeight: 420, idealHeight: 650)
             .interactiveDismissDisabled(dirty || saving)
             .background(NativeSettingsEscape(enabled: !saving, close: requestClose))
-            .confirmationDialog("放弃未保存的修改？", isPresented: $confirmDiscard) {
-                Button("放弃修改", role: .destructive, action: close)
-                Button("继续编辑", role: .cancel) {}
+            .confirmationDialog(localized("放弃未保存的修改？"), isPresented: $confirmDiscard) {
+                Button(localized("放弃修改"), role: .destructive, action: close)
+                Button(localized("继续编辑"), role: .cancel) {}
             }
     }
 }

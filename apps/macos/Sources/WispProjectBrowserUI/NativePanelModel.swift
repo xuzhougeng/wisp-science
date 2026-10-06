@@ -37,6 +37,7 @@ final class NativePanelModel: ObservableObject {
     let sessionID: String
     private var generation = UUID()
     private var previewGeneration = UUID()
+    private var closed = false
     init(client: any NativeConversationQuerying, projectID: String, sessionID: String) {
         self.client = client; self.projectID = projectID; self.sessionID = sessionID
     }
@@ -100,6 +101,7 @@ final class NativePanelModel: ObservableObject {
         } catch { if searchGeneration == current, !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func exportSource(path: String? = nil, artifactID: String? = nil) async throws -> NativePanelExport {
+        guard !closed else { throw ProjectBrowserError.unavailable("面板已关闭。") }
         var args: [String: SettingsValue] = [:]
         if let path { args["path"] = .string(path) }
         if let artifactID { args["artifact_id"] = .string(artifactID) }
@@ -110,7 +112,7 @@ final class NativePanelModel: ObservableObject {
         return source
     }
     func performFileAction(_ action: NativePanelFileAction, path target: String, newPath: String? = nil) async throws {
-        guard !fileActionBusy else { throw ProjectBrowserError.unavailable("文件操作正在进行。") }
+        guard !closed, !fileActionBusy else { throw ProjectBrowserError.unavailable("文件操作正在进行或面板已关闭。") }
         let epoch = agentEpoch; let directory = path
         fileActionBusy = true
         defer { if epoch == agentEpoch { fileActionBusy = false } }
@@ -238,12 +240,22 @@ final class NativePanelModel: ObservableObject {
         preview = try decode(value, as: NativePanelFileContent.self)
     }
     func selectedPreviewQuote(_ text: String, path: String) -> NativeSideChatQuote? {
-        guard let preview, preview.path == path, let source = preview.text,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              source.contains(text) else { return nil }
+        guard !closed, !savingPreview, let preview, preview.path == path, preview.text != nil,
+              NativeFileTextDocument(preview).containsSelection(text) else { return nil }
         return NativeSideChatQuote(text: text, source: path)
+    }
+    func readPreviewImage(_ reference: String, original: NativePanelFileContent) async throws -> NativePanelFileContent {
+        guard !closed, !Task.isCancelled, preview?.path == original.path, preview?.text == original.text,
+              let path = NativeFileImagePath.resolve(reference, document: original.path, remote: false) else { throw ProjectBrowserError.invalidResponse }
+        let current = previewGeneration
+        let value = try await client.invoke("native_conversation_image", args: ["session_id": .string(sessionID), "path": .string(path)], projectID: projectID)
+        guard !closed, !Task.isCancelled, previewGeneration == current, preview?.text == original.text else { throw CancellationError() }
+        let image = try decode(value, as: NativePanelFileContent.self)
+        guard image.path == path, image.mime == "image/png", image.text == nil, image.base64 != nil, !image.truncated else { throw ProjectBrowserError.invalidResponse }
+        return image
     }
     func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
     func close() {
+        closed = true
         clearFileSearch(); agentEpoch = UUID(); notebookBusy = []; highlightRemoving = []; agentDelegationBusy = false; agentLaunching = []; agentActions = []; generation = UUID(); dismissPreview() }
 }

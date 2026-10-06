@@ -65,6 +65,7 @@ final class NativeConversationModel: ObservableObject {
     private var drafts: [String: String] = [:]
     private var questionDrafts: [String: (target: NativeQuestionTarget, text: String, prefix: String)] = [:]
     private var submittedAcpRequests: Set<String> = []
+    private var submittedApprovals: Set<String> = []
     private var projectID: String?
     private var sessionID: String?
     private var generation = UUID()
@@ -73,6 +74,10 @@ final class NativeConversationModel: ObservableObject {
     private var pendingSends: [String: (id: String, text: String)] = [:]
     private var submittedDrafts: [String: (id: String, text: String)] = [:]
     private var retiredEpochs: Set<String> = []
+    @Published private var uncertainModes: Set<String> = []
+    @Published private var uncertainHistory: Set<String> = []
+    @Published private var uncertainPlanDecisions: Set<String> = []
+    var historyUncertain: Bool { sessionID.map { uncertainHistory.contains($0) } ?? false }
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
@@ -84,17 +89,242 @@ final class NativeConversationModel: ObservableObject {
         }
         return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
     }
+    private var canChangeConversationSettings: Bool {
+        snapshot?.read_only == false && snapshot?.running == false && snapshot?.stopping == false
+            && !busy && !composer.busy && !showingHistory && !uncertainSend && !uncertainQueue && !historyUncertain
+            && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
+    }
+    var canChangeMode: Bool { canChangeConversationSettings && !isAcp }
+    var canEditComposerOptions: Bool {
+        canAttach && snapshot?.read_only == false && !composer.busy && !uncertainSend && !uncertainQueue && !historyUncertain
+            && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
+    }
+    var canChangeAcpSettings: Bool { canChangeConversationSettings && isAcp && snapshot?.acp_state?.frameID == sessionID && snapshot?.acp_state != nil }
+    func setAcpMode(_ id: String) async {
+        guard canChangeAcpSettings, let state = snapshot?.acp_state, state.currentMode != id, state.modeChoices.contains(where: { $0.id == id }) else { return }
+        await changeMode("native_conversation_acp_setting", args: ["change": .object(["kind": .string("mode"), "id": .string(id)])])
+    }
+    func setAcpConfig(_ id: String, value: SettingsValue) async {
+        guard canChangeAcpSettings, let state = snapshot?.acp_state, state.allows(id, value: value), state.configurations.first(where: { $0.id == id })?.current != value else { return }
+        await changeMode("native_conversation_acp_setting", args: ["change": .object(["kind": .string("config"), "id": .string(id), "value": value])])
+    }
+    var latestProposal: NativePlanTarget? {
+        guard let page = snapshot, let user = page.items.lastIndex(where: { $0.role == "user" }),
+              let plan = page.items.lastIndex(where: { $0.role == "plan" }), plan > user,
+              let proposal = page.items[plan].proposal, proposal.valid else { return nil }
+        let index = (page.user_offset ?? 0) + page.items.filter { $0.role == "user" }.count - 1
+        return .init(project: page.project_id, session: page.session_id, userIndex: index,
+                     turn: page.history_state?.turns.first { $0.user_index == index }, proposal: proposal)
+    }
+    func planDecisionUncertain(_ target: NativePlanTarget) -> Bool { uncertainPlanDecisions.contains(target.id) }
+    func proposalModeActive(_ target: NativePlanTarget) -> Bool {
+        guard latestProposal == target, target.project == projectID, target.session == sessionID else { return false }
+        return target.proposal.source == "native" ? !isAcp && snapshot?.acp_state == nil && snapshot?.plan_mode == true : isAcp && snapshot?.acp_state?.exitPlanMode != nil
+    }
+    func canDecidePlan(_ target: NativePlanTarget) -> Bool {
+        canChangeConversationSettings && proposalModeActive(target) && !planDecisionUncertain(target)
+    }
+    func acknowledgePlanDecision(_ target: NativePlanTarget) {
+        guard !busy, connectionError == nil, latestProposal == target else { return }
+        uncertainPlanDecisions.remove(target.id); operationError = nil
+    }
+    /// Leaving Plan is confirmed by a fresh snapshot before dispatching execution.
+    func decidePlan(_ target: NativePlanTarget, execute: Bool) async {
+        guard canDecidePlan(target) else { return }
+        let current = generation, originalDraft = draft, files = attachments, refs = references
+        let exitMode = target.proposal.source == "acp" ? snapshot?.acp_state?.exitPlanMode : nil
+        var confirmed = false
+        busy = true; operationError = nil
+        do {
+            var args: [String: SettingsValue] = ["session_id": .string(target.session)]
+            if let exitMode { args["change"] = .object(["kind": .string("mode"), "id": .string(exitMode)]) }
+            else { args["enabled"] = .bool(false) }
+            _ = try await client.invoke(exitMode == nil ? "native_conversation_plan" : "native_conversation_acp_setting", args: args, projectID: target.project)
+            guard generation == current else { return }
+            await refresh()
+            guard generation == current else { return }
+            confirmed = connectionError == nil && snapshot?.running == false && snapshot?.stopping == false && snapshot?.read_only == false
+                && (exitMode == nil ? snapshot?.plan_mode == false : snapshot?.acp_state?.currentMode == exitMode)
+            guard confirmed else { throw ProjectBrowserError.unavailable(localized("尚未确认退出计划模式。")) }
+            if latestProposal != target {
+                confirmed = false; operationError = localized("计划内容已变化；已退出计划模式，请核对后再发送。")
+            } else if execute && (draft != originalDraft || attachments != files || references != refs) {
+                confirmed = false; operationError = localized("输入内容已变化；已退出计划模式，当前草稿已保留，请核对后再发送。")
+            }
+        } catch {
+            uncertainPlanDecisions.insert(target.id)
+            uncertainModes.insert(target.session)
+            if generation == current { operationError = localized("计划模式切换未确认，不会自动重试或启动执行。") + "\n" + error.localizedDescription }
+        }
+        guard generation == current else { return }
+        busy = false
+        guard confirmed, execute else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft = localized("批准并执行") }
+        await send()
+    }
+    func setPlanMode(_ enabled: Bool) async {
+        guard canChangeMode, snapshot?.plan_mode != nil, snapshot?.plan_mode != enabled else { return }
+        await changeMode("native_conversation_plan", args: ["enabled": .bool(enabled)])
+    }
+    func setFastMode(_ enabled: Bool) async {
+        guard canChangeMode, let mode = snapshot?.fast_mode, mode.enabled != enabled, let model = snapshot?.model_id else { return }
+        await changeMode("native_conversation_fast", args: ["enabled": .bool(enabled), "model_id": .string(model)])
+    }
+    private func changeMode(_ command: String, args: [String: SettingsValue]) async {
+        guard let project = projectID, let session = sessionID else { return }
+        let current = generation
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            var args = args; args["session_id"] = .string(session)
+            _ = try await client.invoke(command, args: args, projectID: project)
+            if generation == current { await refresh() }
+        } catch {
+            uncertainModes.insert(session)
+            if generation == current { operationError = localized("模式未确认保存，请重新读取会话后核对。") + "\n" + error.localizedDescription }
+        }
+    }
+    func historyTarget(row: Int, kind: String, checkpoint: String? = nil) -> NativeHistoryTarget? {
+        guard let page = showingHistory ? history : snapshot, let state = page.history_state,
+              row >= 0, row < page.items.count, ["user", "assistant"].contains(page.items[row].role),
+              let currentRevision = snapshot?.history_state?.revision else { return nil }
+        var user = (page.user_offset ?? 0) - 1
+        var userRow: Int?
+        for index in 0...row where page.items[index].role == "user" { user += 1; userRow = index }
+        guard let userRow, user >= 0, user < state.turns.count else { return nil }
+        return NativeHistoryTarget(project: page.project_id, session: page.session_id, turn: state.turns[user],
+                                   revision: currentRevision, kind: kind, checkpoint: checkpoint,
+                                   draft: Self.historyDraft(page.items[userRow].text))
+    }
+    static func historyDraft(_ text: String) -> String {
+        let markers = ["Uploaded files: ", "Attached artifacts: ", "Attached sessions: ", "Project context: ", "Selected skills: ", "Selected workflows: ", "Target environments: ", "Target runtimes: ", "AI source-edit instruction: ", "Feedback context: "]
+        let ends = markers.compactMap { text.range(of: "\n\n" + $0)?.lowerBound }
+        return ends.min().map { String(text[..<$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? text
+    }
+    func canHistoryAction(_ target: NativeHistoryTarget) -> Bool {
+        guard let page = snapshot, let state = page.history_state, page.read_only == false,
+              projectID == target.project, sessionID == target.session, !busy, !uncertainSend, !uncertainQueue,
+              !historyUncertain, connectionError == nil, target.turn.user_index >= 0,
+              target.turn.user_index < state.turns.count, state.turns[target.turn.user_index] == target.turn else { return false }
+        switch target.kind {
+        case "branch":
+            return state.can_branch && ["before_user", "after_response"].contains(target.checkpoint ?? "")
+                && (!(page.running || page.stopping) || target.turn.user_index < state.turns.count - 1)
+        case "rewind", "undo":
+            return !page.running && !page.stopping && !state.reviewing && !isAcp && state.revision == target.revision
+                && queuedTurns.isEmpty && legacyQueuedFollowUp == nil
+                && (target.kind != "undo" || target.turn.user_index == state.turns.count - 1)
+        default: return false
+        }
+    }
+    func previewUndo(_ target: NativeHistoryTarget) async throws -> NativeTurnUndoPreview? {
+        guard target.kind == "undo", canHistoryAction(target) else { return nil }
+        let current = generation
+        let turn = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(target.turn))
+        let value = try await client.invoke("native_conversation_history_action", args: [
+            "session_id": .string(target.session), "target": turn, "revision": .string(target.revision), "action": .object(["kind": .string("undo_preview")])
+        ], projectID: target.project)
+        guard generation == current, !Task.isCancelled else { return nil }
+        guard value["session_id"].string == target.session, value["target"] == turn else { throw ProjectBrowserError.invalidResponse }
+        return try JSONDecoder().decode(NativeTurnUndoPreview.self, from: JSONEncoder().encode(value["result"]))
+    }
+    var canReadContext: Bool { snapshot?.context_view == true && !isAcp && connectionError == nil }
+    var canCompact: Bool {
+        canReadContext && canChangeConversationSettings && !visibleItems.isEmpty
+            && queuedTurns.isEmpty && legacyQueuedFollowUp == nil && snapshot?.history_state?.reviewing != true
+    }
+    func readContext(project: String, session: String) async throws -> NativeConversationContext? {
+        guard canReadContext, projectID == project, sessionID == session else { return nil }
+        let current = generation
+        let value = try await client.invoke("native_conversation_context", args: ["session_id": .string(session)], projectID: project)
+        guard generation == current, !Task.isCancelled else { return nil }
+        return try NativeConversationContext.decode(value, project: project, session: session)
+    }
+    /// `/compact` uses the shared turn pipeline, but never consumes the draft,
+    /// attachments or references. The request ledger still reconciles a lost ack.
+    func compact(project: String, session: String, semantic: Bool, instruction: String) async -> Bool {
+        guard canCompact, projectID == project, sessionID == session, instruction.utf8.count <= 16_384 else { return false }
+        let current = generation, id = UUID().uuidString
+        let text = semantic ? "/compact --semantic" + (instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : " " + instruction.trimmingCharacters(in: .whitespacesAndNewlines)) : "/compact"
+        busy = true; operationError = nil; pending = (id, ""); pendingSends[session] = pending
+        defer { if generation == current { busy = false } }
+        do {
+            let reply = try await client.invoke("native_conversation_send", args: ["session_id": .string(session), "request_id": .string(id), "message": .string(text)], projectID: project)
+            guard reply["session_id"].string == session, reply["request_id"].string == id, !reply["epoch"].string.isEmpty else { throw ProjectBrowserError.invalidResponse }
+            pendingSends[session] = nil
+            guard generation == current else { return false }
+            pending = nil; uncertainSend = false
+            await refresh()
+            return true
+        } catch {
+            guard generation == current else { return false }
+            uncertainSend = true
+            operationError = localized("压缩请求未确认，请核对上下文和最新消息；不会自动重试。") + "\n" + error.localizedDescription
+            await refresh()
+            return false
+        }
+    }
+    func undoCompaction(project: String, session: String, epoch: UInt64) async -> Bool {
+        guard canCompact, projectID == project, sessionID == session, epoch > 0, epoch <= UInt64(Int64.max) else { return false }
+        let current = generation
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            let reply = try await client.invoke("native_conversation_context_undo", args: ["session_id": .string(session), "head_epoch": .integer(Int64(clamping: epoch))], projectID: project)
+            guard reply["project_id"].string == project, reply["session_id"].string == session,
+                  case .integer(let undone) = reply["undone_epoch"], undone > 0, UInt64(undone) == epoch else { throw ProjectBrowserError.invalidResponse }
+            guard generation == current else { return false }
+            await refresh(); return true
+        } catch {
+            uncertainHistory.insert(session)
+            if generation == current { operationError = localized("撤销压缩未确认，请重新读取上下文后核对；不会自动重试。") + "\n" + error.localizedDescription }
+            return false
+        }
+    }
+    func acknowledgeHistoryResult() {
+        guard !busy, connectionError == nil, let sessionID else { return }
+        uncertainHistory.remove(sessionID); operationError = nil
+    }
+    /// The confirmation retains the exact turn/revision originally inspected.
+    func performHistoryAction(_ target: NativeHistoryTarget, editedDraft: String) async -> String? {
+        guard canHistoryAction(target) else { return nil }
+        let current = generation; let originalDraft = draft
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            let turn = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(target.turn))
+            let value = try await client.invoke("native_conversation_history_action", args: [
+                "session_id": .string(target.session), "target": turn, "revision": .string(target.revision), "action": target.action
+            ], projectID: target.project)
+            guard value["session_id"].string == target.session, value["target"] == turn else { throw ProjectBrowserError.invalidResponse }
+            if target.kind == "branch" {
+                guard case .string(let id) = value["result"], !id.isEmpty else { throw ProjectBrowserError.invalidResponse }
+                drafts[id] = target.checkpoint == "before_user" ? editedDraft : ""
+                guard generation == current else { return nil }
+                return id
+            }
+            guard generation == current else { return nil }
+            latest()
+            if draft == originalDraft && originalDraft.isEmpty { draft = target.draft }
+            await refresh()
+            return ""
+        } catch {
+            uncertainHistory.insert(target.session)
+            if generation == current { operationError = localized("历史操作未确认，请重新读取并核对会话后再继续；不会自动重试。") + "\n" + error.localizedDescription }
+            return nil
+        }
+    }
     var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
     var canReference: Bool { canAttach && snapshot?.composer_references == true && connectionError == nil && !uncertainSend }
     var canQueueFollowUp: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
+        return (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && !historyUncertain && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
     }
     var queuedTurns: [ConversationQueueItem] { snapshot?.queue?.items ?? [] }
     var queuedFollowUp: String? { snapshot?.queue == nil ? legacyQueuedFollowUp : queuedTurns.first?.message }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
+        return (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && !historyUncertain && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
     }
 
     func open(project: String, session: String) async {
@@ -106,6 +336,7 @@ final class NativeConversationModel: ObservableObject {
         references = stagedReferences[session] ?? []
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending != nil ? "上次发送结果尚未确认。请核对最新消息；不会自动重发。" : uncertainQueue ? "后续未能确认排队，不会自动重试。" : nil
+        if historyUncertain { operationError = localized("历史操作未确认，请重新读取并核对会话后再继续；不会自动重试。") }
         models = []; acpAgents = []
         connectionError = nil; loading = true; busy = false
         let current = generation
@@ -142,6 +373,15 @@ final class NativeConversationModel: ObservableObject {
             }
         }
     }
+    /// Only text can follow a confirmed move: staged files and references still
+    /// belong to the source project, so the move entry point requires clearing
+    /// them first. Keep the source draft too; never dispatch it automatically.
+    func retainDraftForTransferredSession(_ result: NativeSessionTransferResult) {
+        guard result.mode == .move, result.project_id == projectID, result.session_id == sessionID,
+              result.frame_id != sessionID, attachments.isEmpty, references.isEmpty else { return }
+        drafts[result.frame_id] = draft
+        pause()
+    }
     func pause() {
         if let sessionID {
             drafts[sessionID] = draft
@@ -164,6 +404,7 @@ final class NativeConversationModel: ObservableObject {
                 if previous.epoch != value.epoch { retiredEpochs.insert(previous.epoch) }
             }
             snapshot = value; connectionError = nil
+            uncertainModes.remove(session)
             if value.queue != nil || !value.running { legacyQueuedFollowUp = nil; queuedBySession[session] = nil }
             if let pending, value.request_id == pending.id {
                 if draft == pending.text { draft = "" }
@@ -427,13 +668,26 @@ final class NativeConversationModel: ObservableObject {
     func stop() async { await action("native_conversation_stop", [:]) }
     func canApprove(_ approval: ConversationApproval) -> Bool {
         !busy && !showingHistory && connectionError == nil && snapshot?.read_only == false
-            && approval.frame_id == sessionID && snapshot?.approvals.contains(where: { $0.approval_id == approval.approval_id }) == true
+            && !submittedApprovals.contains(approval.id) && approval.frame_id == sessionID
+            && snapshot?.approvals.contains(approval) == true
+    }
+    func approvalScopes(_ approval: ConversationApproval) -> [String] { snapshot?.approval_scopes?[approval.id] ?? ["once"] }
+    func approvalSubmitted(_ approval: ConversationApproval) -> Bool { submittedApprovals.contains(approval.id) && snapshot?.approvals.contains(approval) == true }
+    func reconcileApproval(_ approval: ConversationApproval) async {
+        guard !busy, approvalSubmitted(approval), let previous = snapshot, previous.session_id == approval.frame_id else { return }
+        await refresh()
+        guard let current = snapshot, current.project_id == previous.project_id, current.session_id == previous.session_id,
+              current.epoch != previous.epoch || current.sequence > previous.sequence,
+              current.approvals.contains(approval), connectionError == nil else { return }
+        submittedApprovals.remove(approval.id); operationError = nil
     }
     @discardableResult
-    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil) async -> Bool {
-        guard canApprove(approval) else { return false }
+    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil, scope: String = "once") async -> Bool {
+        guard canApprove(approval), approvalScopes(approval).contains(scope), allowed || scope == "once" else { return false }
         var args: [String: SettingsValue] = ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)]
+        if scope != "once" { args["scope"] = .string(scope) }
         if !allowed, let feedback = feedback?.trimmingCharacters(in: .whitespacesAndNewlines), !feedback.isEmpty { args["feedback"] = .string(feedback) }
+        submittedApprovals.insert(approval.id)
         return await action("native_conversation_approve", args)
     }
     func selectModel(_ id: String) async { guard !isAcp else { return }; await action("native_conversation_model", ["model_id": .string(id)]) }

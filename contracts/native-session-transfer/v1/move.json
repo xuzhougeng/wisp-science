@@ -1,0 +1,36 @@
+{
+  "preview": {
+    "schema": "wisp.native-session-transfer.v1",
+    "project_id": "research-1",
+    "session_id": "source-1",
+    "target_project_id": "research-2",
+    "mode": "move",
+    "title": "RNA-seq comparison",
+    "message_count": 4,
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "artifacts": {
+      "fingerprint": "reviewed-files-sha256",
+      "artifacts": ["Differential expression table", "Volcano plot"],
+      "files": ["results/genes.csv", "figures/volcano.png"],
+      "retained": [{"name": "data/counts.csv", "reason": "upload"}, {"name": "Shared reference", "reason": "shared"}]
+    },
+    "artifact_error": null
+  },
+  "args": {
+    "session_id": "source-1",
+    "target_project_id": "research-2",
+    "mode": "move",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "include_artifacts": true,
+    "artifact_fingerprint": "reviewed-files-sha256"
+  },
+  "result": {
+    "schema": "wisp.native-session-transfer.v1",
+    "project_id": "research-1",
+    "session_id": "source-1",
+    "target_project_id": "research-2",
+    "mode": "move",
+    "include_artifacts": true,
+    "frame_id": "moved-1"
+  }
+}

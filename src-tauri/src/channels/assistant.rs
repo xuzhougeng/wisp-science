@@ -243,6 +243,7 @@ pub(super) async fn handle_inbound(
                 approval_id: pending.approval_id,
                 approved,
                 feedback: None,
+                scope: Default::default(),
             };
             let project_approval = pending.tool == "project_approval";
             return match crate::approval_commands::respond_native_confirmation(

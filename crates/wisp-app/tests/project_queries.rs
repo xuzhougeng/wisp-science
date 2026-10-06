@@ -7,6 +7,97 @@ use wisp_app::projects::{list_projects, project_status_counts};
 use wisp_llm::Message;
 use wisp_store::{ProjectSyncState, Store};
 
+#[tokio::test]
+async fn browser_relationships_preserve_checkpoint_states_and_subagent_parents() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    db.project("other").await;
+    for id in ["main", "active", "merged", "orphaned", "legacy", "child"] {
+        db.session(id, "p").await;
+    }
+    db.session("foreign", "other").await;
+    for id in ["active", "merged", "orphaned"] {
+        db.store
+            .set_session_branch_point(id, "main", 0, "after_response")
+            .await
+            .unwrap();
+    }
+    db.store
+        .append_message("merged", 2, &Message::assistant("Branch findings"))
+        .await
+        .unwrap();
+    let preview = db
+        .store
+        .preview_session_branch_merge("merged", "p")
+        .await
+        .unwrap();
+    db.store
+        .merge_session_branch_summary("merged", "p", &preview.guard_hash, "Merged findings")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE frames SET branch_point_kind='orphaned' WHERE id='orphaned'")
+        .execute(&db.sql)
+        .await
+        .unwrap();
+    db.store
+        .set_session_branched_from("legacy", "main")
+        .await
+        .unwrap();
+    db.store
+        .set_session_dispatched_from("child", "main")
+        .await
+        .unwrap();
+    let sessions = wisp_app::projects::list_browser_sessions(&db.store, Some("p"))
+        .await
+        .unwrap();
+    let row = |id| sessions.iter().find(|row| row.id == id).unwrap();
+    assert_eq!(row("active").branched_from.as_deref(), Some("main"));
+    assert_eq!(row("active").branch_state.as_deref(), Some("active"));
+    assert_eq!(row("merged").branch_state.as_deref(), Some("merged"));
+    assert_eq!(row("orphaned").branch_state.as_deref(), Some("orphaned"));
+    assert!(row("orphaned").branched_from.is_none());
+    assert!(row("legacy").branched_from.is_none());
+    assert_eq!(row("child").dispatched_from.as_deref(), Some("main"));
+    assert!(sessions.iter().all(|row| row.project_id == "p"));
+    assert!(wisp_app::projects::list_browser_sessions(&db.store, None)
+        .await
+        .unwrap()
+        .iter()
+        .all(|row| row.branched_from.is_none() && row.dispatched_from.is_none()));
+}
+
+#[tokio::test]
+async fn browser_relationships_do_not_hide_history_in_older_read_only_databases() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    db.session("main", "p").await;
+    db.session("branch", "p").await;
+    db.store
+        .set_session_branch_point("branch", "main", 0, "after_response")
+        .await
+        .unwrap();
+    for column in [
+        "branch_point_user_index",
+        "branch_point_kind",
+        "dispatched_from",
+    ] {
+        sqlx::query(&format!("ALTER TABLE frames DROP COLUMN {column}"))
+            .execute(&db.sql)
+            .await
+            .unwrap();
+    }
+    let reader = Store::open_read_only(&db._directory.path().join("queries.sqlite"))
+        .await
+        .unwrap();
+    let rows = wisp_app::projects::list_browser_sessions(&reader, Some("p"))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.branched_from.is_none()
+        && row.branch_state.is_none()
+        && row.dispatched_from.is_none()));
+}
+
 struct TestDb {
     store: Store,
     sql: SqlitePool,

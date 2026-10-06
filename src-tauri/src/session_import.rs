@@ -761,7 +761,91 @@ pub(super) async fn import_session_archive(
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    #[tokio::test]
+    async fn shared_session_export_is_readable_by_the_existing_archive_import() {
+        let root = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        store
+            .create_project("p", "Project", root.path().to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("s", "p", "OPERON", "fake")
+            .await
+            .unwrap();
+        store
+            .append_message("s", 0, &wisp_llm::Message::user("Compatible question"))
+            .await
+            .unwrap();
+        std::fs::write(root.path().join("data.csv"), b"A,B\n1,2\n").unwrap();
+        let (export, _) = crate::session_export::prepare_session_export(
+            &store,
+            root.path(),
+            "s",
+            vec!["data.csv".into()],
+            true,
+        )
+        .await
+        .unwrap()
+        .reviewed("saved revision".into())
+        .await
+        .unwrap();
+        let destination = root.path().join("export.zip");
+        let (bytes, checksum) =
+            crate::session_export::write_session_export(export, destination.clone())
+                .await
+                .unwrap();
+        let archive = prepare_archive(destination.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(archive.parsed.session_id, "s");
+        assert_eq!(
+            archive.parsed.messages[0].content.as_text(),
+            "Compatible question"
+        );
+        assert_eq!(archive.parsed.artifacts.len(), 1);
+        assert_eq!(archive.parsed.artifacts[0].workspace_path, "data.csv");
+        assert_eq!(bytes, std::fs::metadata(&destination).unwrap().len());
+        assert_eq!(
+            checksum,
+            wisp_sync::sha256_hex(&std::fs::read(&destination).unwrap())
+        );
+        let preview = preview_archive(&store, "p", destination.to_str().unwrap(), &archive)
+            .await
+            .unwrap();
+        assert_eq!(preview.message_count, 1);
+        assert_eq!(preview.artifacts.len(), 1);
+        let imported_root = tempfile::tempdir().unwrap();
+        store
+            .create_project("target", "Target", imported_root.path().to_str().unwrap())
+            .await
+            .unwrap();
+        let imported = apply_prepared_archive(
+            &store,
+            "target",
+            imported_root.path(),
+            "fake",
+            destination.to_str().unwrap(),
+            archive,
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.status, "imported");
+        assert_eq!(imported.artifact_count, 1);
+        assert!(imported.missing_artifacts.is_empty());
+        assert_eq!(
+            std::fs::read(imported_root.path().join("data.csv")).unwrap(),
+            b"A,B\n1,2\n"
+        );
+        assert_eq!(
+            store.load_messages(&imported.frame_id).await.unwrap()[0]
+                .content
+                .as_text(),
+            "Compatible question"
+        );
+    }
     #[tokio::test]
     async fn native_archive_preview_and_apply_use_reviewed_bytes_in_the_selected_project() {
         let dir = tempfile::tempdir().unwrap();

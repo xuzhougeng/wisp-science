@@ -736,6 +736,7 @@ pub(super) async fn transfer_session_to_project(
     mode: String,
     include_artifacts: Option<bool>,
     artifact_fingerprint: Option<String>,
+    expected_revision: Option<String>,
 ) -> Result<String, String> {
     let source = state.require_active(window.label())?;
     if target_project_id == source.id {
@@ -752,7 +753,7 @@ pub(super) async fn transfer_session_to_project(
     }
     let owner = state
         .store
-        .frame_project_id(&id)
+        .live_frame_project_id(&id)
         .await
         .map_err(|error| error.to_string())?;
     if owner.as_deref() != Some(source.id.as_str()) {
@@ -833,6 +834,25 @@ pub(super) async fn transfer_session_to_project(
             "Wait for the session to finish its turn, approval, or review before transferring it."
                 .into(),
         );
+    }
+
+    if let Some(runtime) = runtime.as_deref() {
+        crate::native_session_transfer::require_no_queue(runtime)?;
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    if state
+        .store
+        .live_frame_project_id(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(source.id.as_str())
+    {
+        return Err("Conversation no longer exists in the source project".into());
+    }
+    if let Some(expected) = expected_revision {
+        crate::native_session_transfer::require_revision(&state.store, &source.id, &id, &expected)
+            .await?;
     }
 
     let new_id = Uuid::new_v4().to_string();
@@ -1229,6 +1249,7 @@ pub(super) async fn undo_compaction(
     app: AppHandle,
     window: crate::workspace_surface::WorkspaceSurface,
     session_id: Option<String>,
+    expected_head_epoch: Option<u64>,
 ) -> Result<u64, String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
@@ -1290,11 +1311,7 @@ pub(super) async fn undo_compaction(
         .clone()
         .try_lock_owned()
         .map_err(|_| "Stop the running turn before undoing compaction.")?;
-    let epoch = state
-        .store
-        .undo_context_epoch(&frame_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let epoch = undo_inspected_compaction(&state.store, &frame_id, expected_head_epoch).await?;
     if let Some(rt) = state.sessions.lock().await.get(&frame_id).cloned() {
         *rt.agent.lock().await = None;
         rt.sync_last_seq_from_store(&state.store, &frame_id).await?;
@@ -1311,6 +1328,29 @@ pub(super) async fn undo_compaction(
     )
     .await;
     Ok(u64::try_from(epoch).unwrap_or(0))
+}
+
+// Caller holds the session workflow lock through the comparison and mutation.
+async fn undo_inspected_compaction(
+    store: &Store,
+    frame_id: &str,
+    expected: Option<u64>,
+) -> Result<i64, String> {
+    if let Some(expected) = expected {
+        let current = store
+            .frame_head_epoch(frame_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if expected == 0 || u64::try_from(current).ok() != Some(expected) {
+            return Err(
+                "The model context changed; inspect it again before undoing compaction.".into(),
+            );
+        }
+    }
+    store
+        .undo_context_epoch(frame_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn last_user_index(store: &Store, frame_id: &str) -> Result<usize, String> {
@@ -2054,7 +2094,7 @@ async fn read_session_transcript_page(
     Ok(page)
 }
 
-async fn flush_session_events(
+pub(crate) async fn flush_session_events(
     writer: &StdMutex<Option<tokio::sync::mpsc::WeakUnboundedSender<SessionUiMessage>>>,
 ) -> Result<(), String> {
     let writer = writer
@@ -2339,6 +2379,30 @@ async fn store_with_compacted_frame() -> Store {
 #[cfg(test)]
 mod compaction_undo_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn inspected_compaction_rejects_a_different_head_without_mutating_messages() {
+        let store = store_with_compacted_frame().await;
+        let before = store.load_messages("f").await.unwrap();
+        for expected in [0, 2] {
+            assert!(undo_inspected_compaction(&store, "f", Some(expected))
+                .await
+                .unwrap_err()
+                .contains("changed"));
+            assert_eq!(store.frame_head_epoch("f").await.unwrap(), 1);
+            assert_eq!(
+                serde_json::to_value(store.load_messages("f").await.unwrap()).unwrap(),
+                serde_json::to_value(&before).unwrap()
+            );
+        }
+        assert_eq!(
+            undo_inspected_compaction(&store, "f", Some(1))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.frame_head_epoch("f").await.unwrap(), 0);
+    }
 
     #[tokio::test]
     async fn context_state_restores_parent_and_does_not_reuse_undone_identity() {

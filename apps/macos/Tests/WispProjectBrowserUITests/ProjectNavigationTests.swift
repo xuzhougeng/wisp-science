@@ -50,6 +50,32 @@ private actor DraftExistenceClient: NativeSettingsQuerying {
 }
 
 final class ProjectNavigationTests: XCTestCase {
+    @MainActor func testSearchRoutesExactArtifactAndCommandsRespectAvailableContext() async throws {
+        let client = NavigationClient(); let model = ProjectBrowserModel(client: client, databaseURL: URL(fileURLWithPath: "/unused"))
+        let value = SettingsValue.object(["schema": .string(NativeSearchResponse.schemaID), "query": .string("x"), "preferred_project_id": .null, "items": .array([.object(["kind": .string("artifact"), "id": .string("artifact-exact"), "project_id": .string("p"), "project_name": .string("P"), "title": .string("QC"), "detail": .string("P"), "session_id": .string("s2")])])])
+        let item = try NativeSearchResponse.decode(value, query: "x", projectID: nil).items[0]
+        await model.openSearchResult(item)
+        XCTAssertEqual(model.activeProjectID, "p"); XCTAssertEqual(model.activeSessionID, "s2")
+        XCTAssertEqual(model.searchArtifact?.objectID, "artifact-exact")
+        let files = try XCTUnwrap(NativeSearchCommand.all.first { $0.id == "files" })
+        model.executeSearchCommand(files)
+        XCTAssertEqual(model.workspaceCommand?.project, "p"); XCTAssertEqual(model.workspaceCommand?.session, "s2")
+        model.goHome(); XCTAssertNil(model.searchArtifact)
+        let oldID = model.workspaceCommand?.id
+        model.executeSearchCommand(files); XCTAssertEqual(model.workspaceCommand?.id, oldID)
+        let settings = try XCTUnwrap(NativeSearchCommand.all.first { $0.id == "settings" })
+        model.executeSearchCommand(settings); XCTAssertTrue(model.settingsPresented); XCTAssertNil(model.projectSettingsID)
+    }
+    @MainActor func testClosedNavigationCannotOpenLateSearchArtifact() async throws {
+        let client = NavigationClient(); let model = ProjectBrowserModel(client: client, databaseURL: URL(fileURLWithPath: "/unused"))
+        let value = SettingsValue.object(["schema": .string(NativeSearchResponse.schemaID), "query": .string("x"), "preferred_project_id": .null, "items": .array([.object(["kind": .string("artifact"), "id": .string("artifact-exact"), "project_id": .string("p"), "project_name": .string("P"), "title": .string("QC"), "detail": .string("P"), "session_id": .string("s2")])])])
+        let item = try NativeSearchResponse.decode(value, query: "x", projectID: nil).items[0]
+        await client.setSuspended()
+        let opening = Task { await model.openSearchResult(item) }
+        while !(await client.isWaiting()) { await Task.yield() }
+        model.goHome(); await client.finish(); await opening.value
+        XCTAssertNil(model.searchArtifact); XCTAssertNil(model.activeProjectID)
+    }
     @MainActor func testUncertainDraftDeletionReconcilesByReadWithoutRepeatingTheDelete() async {
         for exists in [true, false] {
             let database = URL(fileURLWithPath: "/unused")

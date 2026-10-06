@@ -32,11 +32,15 @@ struct NativeSelectableMessage: NSViewRepresentable {
         view.quote = quote; view.save = save
         view.openImage = openImage
         view.linkTextAttributes = [.foregroundColor: NSColor(WispDesign.color("clay", scheme)), .underlineStyle: NSUnderlineStyle.single.rawValue]
-        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme, width: view.bounds.width > 0 ? view.bounds.width : 600, images: images, unavailableImages: unavailableImages) }
+        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme, width: view.bounds.width.isFinite && view.bounds.width > 0 ? view.bounds.width : 600, images: images, unavailableImages: unavailableImages) }
                    ?? Self.content(text, saved: saved, scheme: scheme, monospaced: monospaced))
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeMessageTextView, context: Context) -> CGSize? {
-        let width = max(1, proposal.width ?? 400)
+        // SwiftUI probes an unbounded width before placing a ScrollView child.
+        // Passing infinity to AppKit poisons table/code layout even after resize.
+        let proposed = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        let current = nsView.bounds.width.isFinite && nsView.bounds.width > 0 ? nsView.bounds.width : 400
+        let width = max(1, proposed ?? current)
         if nsView.frame.size.width != width { nsView.frame.size.width = width; configure(nsView) }
         guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
         container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
@@ -212,7 +216,7 @@ class NativeMessageTextView: NSTextView {
         return [("引用到侧聊", "chat", quote), ("收藏划线", "star", save)].compactMap { title, icon, callback in
             guard let callback else { return nil }
             let action = NativeSelectionAction { callback(selected) }
-            let item = NSMenuItem(title: title, action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: localized(title), action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")
             item.target = action; item.representedObject = action
             let image = WispDesign.image("icon-" + icon); image.size = NSSize(width: 16, height: 16); item.image = image
             return item
@@ -232,7 +236,7 @@ class NativeMessageTextView: NSTextView {
         return [("复制代码", NativeMarkdownContent.codeCopy), ("复制表格", NativeMarkdownContent.tableCopy), ("复制公式", NativeMathContent.formulaCopy)].compactMap { title, key in
             guard let text = storage.attribute(key, at: index, effectiveRange: nil) as? String else { return nil }
             let action = NativeSelectionAction { copy(text) }
-            let item = NSMenuItem(title: title, action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: localized(title), action: #selector(NativeSelectionAction.invoke(_:)), keyEquivalent: "")
             item.target = action; item.representedObject = action
             return item
         }

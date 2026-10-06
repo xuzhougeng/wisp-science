@@ -1,0 +1,14 @@
+{
+  "schema": "wisp.project-browser.v1",
+  "id": "projects-1",
+  "type": "sessions",
+  "activity_source": "persisted_only",
+  "sessions": [
+    {"id":"main","project_id":"research-1","title":"RNA-seq comparison","ts":1,"status":"complete"},
+    {"id":"active","project_id":"research-1","title":"Alternative normalization","ts":4,"status":"complete","branched_from":"main","branch_state":"active"},
+    {"id":"merged","project_id":"research-1","title":"Merged findings","ts":3,"status":"complete","branched_from":"main","branch_state":"merged"},
+    {"id":"orphaned","project_id":"research-1","title":"Earlier checkpoint","ts":2,"status":"complete","branch_state":"orphaned"},
+    {"id":"child","project_id":"research-1","title":"Inspect read quality","ts":5,"status":"complete","dispatched_from":"main"},
+    {"id":"nested","project_id":"research-1","title":"Alternative count filter","ts":6,"status":"complete","branched_from":"active","branch_state":"active"}
+  ]
+}

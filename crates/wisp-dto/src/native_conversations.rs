@@ -1,11 +1,14 @@
 //! Native conversation protocol, independent of either platform's UI toolkit.
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
     "native_conversation_image",
     "native_conversation_queue_action",
     "native_conversation_history_action",
+    "native_conversation_context",
+    "native_conversation_context_undo",
     "native_conversation_references",
     "native_conversation_options",
     "native_conversation_options_set",
@@ -37,6 +40,12 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_context_default",
     "native_conversation_panel_artifacts",
     "native_conversation_panel_files",
+    "native_conversation_panel_file_locations",
+    "native_conversation_panel_file_directory",
+    "native_conversation_panel_file_paths",
+    "native_conversation_panel_file_read",
+    "native_conversation_panel_file_upload",
+    "native_conversation_panel_file_download",
     "native_conversation_panel_searchfiles",
     "native_conversation_panel_export",
     "native_conversation_panel_readfile",
@@ -63,6 +72,10 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_outline",
     "native_conversation_create",
     "native_conversation_rename",
+    "native_conversation_transfer_preview",
+    "native_conversation_transfer",
+    "native_conversation_export_preview",
+    "native_conversation_export",
     "native_conversation_pin",
     "native_conversation_delete",
     "native_conversation_exists",
@@ -89,6 +102,31 @@ pub struct ComposerOptions {
     pub auto_review: bool,
     pub specialist: Option<crate::Specialist>,
     pub specialist_locked: bool,
+}
+
+/// The persisted head working set and the shared model-context breakdown.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ContextView {
+    pub project_id: String,
+    pub session_id: String,
+    pub items: Vec<Item>,
+    pub details: crate::ContextUsageDetails,
+    pub state: crate::SessionContextState,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextUndoRequest {
+    pub session_id: String,
+    pub head_epoch: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ContextUndoResponse {
+    pub project_id: String,
+    pub session_id: String,
+    /// The removed epoch, matching the shared CompactionUndone event.
+    pub undone_epoch: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -568,6 +606,28 @@ pub struct ApprovalRequest {
     pub approved: bool,
     #[serde(default)]
     pub feedback: Option<String>,
+    #[serde(default)]
+    pub scope: ApprovalScope,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalScope {
+    #[default]
+    Once,
+    Session,
+    Project,
+    Global,
+}
+impl ApprovalScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Session => "session",
+            Self::Project => "project",
+            Self::Global => "global",
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -823,6 +883,12 @@ pub struct Snapshot {
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer_references: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_view: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_browser: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_transfers: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub follow_ups: Vec<String>,
     /// Absent for older hosts and ACP sessions, which own their mode selection.
@@ -837,6 +903,9 @@ pub struct Snapshot {
     pub request_id: Option<String>,
     pub error: Option<String>,
     pub approvals: Vec<super::PendingToolApproval>,
+    /// Exact pending IDs and the scopes each request can actually grant.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub approval_scopes: HashMap<String, Vec<ApprovalScope>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp: Option<AcpInteractions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -849,6 +918,27 @@ pub struct Snapshot {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn context_fixture_preserves_shared_head_and_model_details() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/context.json"
+        ))
+        .unwrap();
+        let context: super::ContextView = serde_json::from_value(fixture).unwrap();
+        assert_eq!(context.project_id, "project-a");
+        assert_eq!(context.session_id, "session-a");
+        assert_eq!(context.items[0].role, "system");
+        assert_eq!(context.state.head_epoch, 2);
+        assert!(context.state.compactions[0].can_undo);
+        assert_eq!(context.details.tool_definitions[0].name, "read");
+        let roundtrip = serde_json::to_value(&context).unwrap();
+        assert_eq!(roundtrip["state"]["head_epoch"], 2);
+        assert_eq!(roundtrip["details"]["rules"], "Preserve sample IDs.");
+        assert!(serde_json::from_value::<super::ContextUndoRequest>(
+            serde_json::json!({"session_id":"s","head_epoch":2,"project_id":"p"})
+        )
+        .is_err());
+    }
     #[test]
     fn native_plan_proposals_share_webview_defaults_and_preserve_markdown() {
         for source in ["native", "acp"] {
@@ -1032,6 +1122,50 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<super::ComposerOptionRequest>(bad).is_err());
         }
+    }
+
+    #[test]
+    fn composer_helpers_reuse_global_preferences_and_full_specialist_contracts() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/composer-helpers.json"
+        ))
+        .unwrap();
+        let memory: crate::MemoryView = serde_json::from_value(fixture["memory"].clone()).unwrap();
+        assert_eq!(memory.project_id, "project-a");
+        assert!(memory.enabled);
+        let analysis: crate::AutoFailureAnalysisSettings =
+            serde_json::from_value(fixture["analysis"].clone()).unwrap();
+        assert_eq!(
+            analysis,
+            crate::AutoFailureAnalysisSettings {
+                enabled: true,
+                ..Default::default()
+            }
+        );
+        let specialists: Vec<crate::Specialist> =
+            serde_json::from_value(fixture["specialists"].clone()).unwrap();
+        assert_eq!(specialists[0].id, "reviewer");
+        assert_eq!(
+            specialists[0].skills.as_deref(),
+            Some(["synthetic-skill".into()].as_slice())
+        );
+        assert_eq!(
+            specialists[0].review_backend,
+            Some(crate::ReviewBackendConfig::http("chat-a"))
+        );
+        let models: Vec<crate::ModelProfile> =
+            serde_json::from_value(fixture["models"].clone()).unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .filter(|model| model.is_chat_model())
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["chat-a", "sibling"]
+        );
+        let agents: Vec<crate::AcpAgentProfile> =
+            serde_json::from_value(fixture["agents"].clone()).unwrap();
+        assert_eq!(agents[0].id, "agent-a");
     }
 
     #[test]
@@ -1513,11 +1647,23 @@ mod tests {
             serde_json::from_str::<SendRequest>(r#"{"message":"hello","request_id":"x"}"#).is_err()
         );
         assert!(serde_json::from_str::<ApprovalRequest>(
-            r#"{"session_id":"s","approval_id":"a","approved":true,"scope":"global"}"#
+            r#"{"session_id":"s","approval_id":"a","approved":true,"scope":"everything"}"#
         )
         .is_err());
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(COMMANDS.contains(&"native_conversation_attach"));
+    }
+    #[test]
+    fn native_approval_scope_defaults_once_and_accepts_only_the_shared_names() {
+        for scope in ["once", "session", "project", "global"] {
+            let request: ApprovalRequest = serde_json::from_value(serde_json::json!({"session_id":"s","approval_id":"a","approved":true,"scope":scope})).unwrap();
+            assert_eq!(request.scope.as_str(), scope);
+        }
+        let old: ApprovalRequest = serde_json::from_value(
+            serde_json::json!({"session_id":"s","approval_id":"a","approved":true}),
+        )
+        .unwrap();
+        assert_eq!(old.scope, ApprovalScope::Once);
     }
     #[test]
     fn saved_snapshot_keeps_composer_attachments() {

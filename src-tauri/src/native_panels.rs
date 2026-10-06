@@ -12,6 +12,9 @@ pub(crate) async fn dispatch(
     project_id: &str,
     session: &str,
 ) -> Result<Value, String> {
+    if wisp_dto::native_files::COMMANDS.contains(&request.command.as_str()) {
+        return crate::native_files::dispatch(broker, request, project_id, session).await;
+    }
     if request.command == "native_conversation_panel_run_review" {
         return crate::native_run_review::dispatch(broker, request, project_id, session).await;
     }

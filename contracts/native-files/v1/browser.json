@@ -1,0 +1,59 @@
+{
+  "locations": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "local_root": "/work/research/branches/exploration-1", "read_only": false,
+    "locations": [
+      {"context_id": "local", "label": "", "kind": "local"},
+      {"context_id": "ssh:lab", "label": "Lab compute", "kind": "ssh"}
+    ]
+  },
+  "local_directory": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "context_id": "local", "path": "results",
+    "entries": [
+      {"name": "figures", "is_dir": true, "size": 0, "modified_unix_millis": 1700000002000},
+      {"name": "QC.csv", "is_dir": false, "size": 18, "modified_unix_millis": 1700000001000},
+      {"name": "notes.md", "is_dir": false, "size": 64}
+    ]
+  },
+  "remote_directory": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "context_id": "ssh:lab", "path": "/home/research/results",
+    "entries": [
+      {"name": "figures", "is_dir": true, "size": 0, "modified_unix_millis": 1700000002000},
+      {"name": "QC.csv", "is_dir": false, "size": 18, "modified_unix_millis": 1700000001000}
+    ]
+  },
+  "paths": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "paths": [
+      {"requested_path": "results/QC.csv", "relative_path": "results/QC.csv", "absolute_path": "/work/research/branches/exploration-1/results/QC.csv"},
+      {"requested_path": "results/figures", "relative_path": "results/figures", "absolute_path": "/work/research/branches/exploration-1/results/figures"}
+    ]
+  },
+  "local_preview": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "context_id": "local", "requested_path": "results/QC.csv",
+    "content": {"path": "/work/research/branches/exploration-1/results/QC.csv", "mime": "text/csv", "text": "sample,QC\nA,pass\n", "base64": null, "truncated": false, "total_bytes": 17}
+  },
+  "local_upload": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1", "context_id": "local", "path": "results",
+    "items": [
+      {"source_path": "/incoming/QC.csv", "destination_path": "results/QC_1.csv", "run_id": null, "status": "succeeded", "error": null},
+      {"source_path": "/incoming/missing.csv", "destination_path": null, "run_id": null, "status": "failed", "error": "File no longer exists"}
+    ]
+  },
+  "remote_upload": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1", "context_id": "ssh:lab", "path": "/home/research/results",
+    "items": [{"source_path": "/incoming/QC.csv", "destination_path": "/home/research/results/QC.csv", "run_id": "upload-1", "status": "submitted", "error": null}]
+  },
+  "remote_download": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1", "context_id": "ssh:lab", "path": "/home/research/results/QC.csv",
+    "items": [{"source_path": "/home/research/results/QC.csv", "destination_path": "/exports/QC.csv", "run_id": "download-1", "status": "running", "error": null}]
+  },
+  "remote_preview": {
+    "schema": "wisp.native-files.v1", "project_id": "research-1", "session_id": "session-1",
+    "context_id": "ssh:lab", "requested_path": "/home/research/results/QC.csv",
+    "content": {"path": "ssh://lab/home/research/results/QC.csv", "mime": "text/csv", "text": "sample,QC\nA,pass\n", "base64": null, "truncated": false, "total_bytes": 17}
+  }
+}

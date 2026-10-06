@@ -589,6 +589,20 @@ impl Store {
         Ok(row.map(|value| value.0))
     }
 
+    /// Conversation operations must not revive ownership tombstones retained
+    /// for artifacts or Runs. Lineage readers still use `frame_project_id`.
+    pub async fn live_frame_project_id(&self, frame_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.live_frame_project_id(frame_id)).await;
+        }
+        Ok(
+            sqlx::query_scalar("SELECT project_id FROM frames WHERE id=? AND status<>'deleted'")
+                .bind(frame_id)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
     /// The root conversation that most recently accepted a user message,
     /// across every project. Assistant/tool messages do not move this pointer:
     /// callers use it as a deterministic cold-start fallback for cross-surface

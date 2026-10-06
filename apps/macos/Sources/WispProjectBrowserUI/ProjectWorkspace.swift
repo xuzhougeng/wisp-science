@@ -20,6 +20,11 @@ struct ProjectWorkspace: View {
     @State private var trajectoryPresented = false
     @State private var archivePresented = false
     @State private var sharePresented = false
+    @State private var sessionImportPresented = false
+    @State private var externalImportPresented = false
+    @State private var sessionTransfer: NativeSessionTransferTarget?
+    @State private var sessionRelations: BrowserSession?
+    @State private var sessionExport: BrowserSession?
     @State private var terminalVisible = false
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
@@ -89,6 +94,14 @@ struct ProjectWorkspace: View {
                     Button { if let session = selectedSession { sessionDelete.begin([session]) } } label: { Label { Text("删除会话") } icon: { WispIcon(name: "trash", size: 14) } }
                         .buttonStyle(.plain).help("删除会话").accessibilityLabel("删除会话")
                         .disabled(selectedSession == nil || sessionDelete.busy || conversation.snapshot?.read_only == true)
+                    Button { beginTransfer(.copy) } label: { Label { Text(localized("复制到其他项目…")) } icon: { WispIcon(name: "copy", size: 14) } }
+                        .disabled(!canTransfer(.copy))
+                    Button { beginTransfer(.move) } label: { Label { Text(localized("移动到其他项目…")) } icon: { WispIcon(name: "conversation-move", size: 14) } }
+                        .disabled(!canTransfer(.move)).help(localized("移动前请清空输入中的附件和引用；文字草稿会保留。"))
+                    Button { sessionRelations = selectedSession } label: { Label { Text(localized("会话关系")) } icon: { WispIcon(name: "fork", size: 14) } }
+                        .disabled(selectedSession == nil || model.sessionsLoading)
+                    Button { if canExport { sessionExport = selectedSession } } label: { Label { Text(localized("导出会话 ZIP")) } icon: { WispIcon(name: "archive-export", size: 14) } }
+                        .disabled(!canExport)
                     } label: { WispIcon(name: "more", size: 16) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted")).accessibilityLabel("会话操作")
                     Spacer()
@@ -190,6 +203,9 @@ struct ProjectWorkspace: View {
                                 }
                             }
                         }
+                    }, openHistoryBranch: { branchID in
+                        guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                        Task { await model.openProject(project.id, sessionID: branchID) }
                     }) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(.init(text: selection, source: "会话摘录"))
@@ -224,12 +240,37 @@ struct ProjectWorkspace: View {
                         if panelDragStart == nil { panelDragStart = panelWidth }
                         panelWidth = min(600, max(280, (panelDragStart ?? 380) - value.translation.width))
                     }.onEnded { _ in panelDragStart = nil })
-                NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
+                NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, fileBrowserSupported: conversation.snapshot?.file_browser == true, fileTransfersSupported: conversation.snapshot?.file_transfers == true, environments: {
+                    guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                    model.openEnvironmentSettings()
+                }, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.nativeTerminal(projectID: project.id, sessionID: session).requestOpen(context)
                     terminalVisible = true
                 }) { panelVisible = false }
-                    .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar)).id(project.id + ":" + session)
+                    .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar))
+                    .id(NativePanelScopeIdentity(databaseURL: model.databaseURL.standardizedFileURL, projectID: project.id, sessionID: session))
+            }
+        }
+        .onChange(of: model.workspaceCommand?.id) { _ in
+            guard let command = model.workspaceCommand, command.project == project.id,
+                  command.session == model.activeSessionID else { return }
+            switch command.action {
+            case "new-session": if !conversation.busy { createSession() }
+            case "import-session-archive": sessionImportPresented = true
+            case "import-external-session": externalImportPresented = true
+            case "copy-session-project": beginTransfer(.copy)
+            case "move-session-project": beginTransfer(.move)
+            case "session-relations": sessionRelations = selectedSession
+            case "export-session": if canExport { sessionExport = selectedSession }
+            case "toggle-sidebar": sidebarVisible.toggle()
+            case "terminal": terminalVisible.toggle()
+            case "close-panel": panelVisible = false
+            default:
+                guard NativePanelTabs.all.contains(command.action), model.activeSessionID != nil else { return }
+                model.returnToConversation()
+                var tabs = NativePanelTabs(saved: panelTabs, selected: panelTab, available: NativePanelTabs.all)
+                tabs.show(command.action); panelTabs = tabs.saved; panelTab = tabs.selected; panelVisible = true
             }
         }
         }
@@ -237,6 +278,71 @@ struct ProjectWorkspace: View {
             if let session = model.activeSessionID {
                 NativeShareView(client: conversation.client, projectID: project.id, sessionID: session) { sharePresented = false }.id(project.id + ":" + session)
             }
+        }
+        .sheet(isPresented: $sessionImportPresented) {
+            let database = model.databaseURL; let sourceSession = model.activeSessionID
+            NativeSessionArchiveImportSheet(client: conversation.client, project: project.id, projects: model.projects, writable: {
+                model.databaseURL == database && model.activeProjectID == project.id && model.activeSessionID == sourceSession
+            }, close: { sessionImportPresented = false }, open: { destination, session in
+                guard model.databaseURL == database, model.activeProjectID == project.id, model.activeSessionID == sourceSession else { return }
+                sessionImportPresented = false; model.returnToConversation()
+                Task { await model.openProject(destination, sessionID: session) }
+            }).id(database.path + ":" + project.id)
+        }
+        .sheet(isPresented: $externalImportPresented) {
+            let database = model.databaseURL; let sourceSession = model.activeSessionID
+            NativeExternalSessionImportSheet(client: conversation.client, project: project.id, projects: model.projects, writable: {
+                model.databaseURL == database && model.activeProjectID == project.id && model.activeSessionID == sourceSession
+            }, close: { externalImportPresented = false }, open: { destination, session in
+                guard model.databaseURL == database, model.activeProjectID == project.id, model.activeSessionID == sourceSession else { return }
+                externalImportPresented = false; model.returnToConversation()
+                Task { await model.openProject(destination, sessionID: session) }
+            }).id(database.path + ":" + project.id)
+        }
+        .sheet(item: $sessionRelations) { selected in
+            let database = model.databaseURL
+            NativeSessionRelationsSheet(selected: selected, sessions: model.sessions, close: { sessionRelations = nil }, open: { id in
+                guard model.databaseURL == database, model.activeProjectID == selected.projectID,
+                      model.activeSessionID == selected.id,
+                      NativeSessionRelations(selected: selected, sessions: model.sessions).canOpen(id) else { return }
+                sessionRelations = nil
+                model.returnToConversation()
+                Task {
+                    guard model.databaseURL == database, model.activeProjectID == selected.projectID,
+                          model.activeSessionID == selected.id,
+                          NativeSessionRelations(selected: selected, sessions: model.sessions).canOpen(id) else { return }
+                    await model.openSession(id)
+                }
+            }).id(database.path + ":" + selected.projectID + ":" + selected.id)
+        }
+        .sheet(item: $sessionExport) { source in
+            let database = model.databaseURL
+            NativeSessionExportSheet(client: conversation.client, source: source, writable: {
+                model.databaseURL == database && model.activeProjectID == source.projectID
+                    && model.activeSessionID == source.id && canExport
+            }, close: { sessionExport = nil }).id(database.path + ":" + source.projectID + ":" + source.id)
+        }
+        .sheet(item: $sessionTransfer) { target in
+            let database = model.databaseURL
+            NativeSessionTransferSheet(client: conversation.client, source: target.source, mode: target.mode, projects: model.projects, writable: {
+                model.databaseURL == database && model.activeProjectID == target.source.projectID
+                    && model.activeSessionID == target.source.id && canTransfer(target.mode)
+            }, close: { result in
+                guard model.databaseURL == database, model.activeProjectID == target.source.projectID,
+                      model.activeSessionID == target.source.id else { return }
+                sessionTransfer = nil
+                if let result, result.mode == .move { model.removeConfirmedSessions([result.session_id], projectID: result.project_id, database: database) }
+            }, open: { result in
+                guard model.databaseURL == database, model.activeProjectID == target.source.projectID,
+                      model.activeSessionID == target.source.id else { return }
+                sessionTransfer = nil
+                if result.mode == .move { model.removeConfirmedSessions([result.session_id], projectID: result.project_id, database: database) }
+                model.returnToConversation(); Task { await model.openProject(result.target_project_id, sessionID: result.frame_id) }
+            }, transferred: { result in
+                guard model.databaseURL == database, model.activeProjectID == target.source.projectID,
+                      model.activeSessionID == target.source.id else { return }
+                conversation.retainDraftForTransferredSession(result)
+            }).id(database.path + ":" + target.id.uuidString)
         }
         .sheet(isPresented: $archivePresented) {
             if let session = model.activeSessionID {
@@ -257,9 +363,9 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset() }
-        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
-        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
+        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
         .onChange(of: conversation.snapshot?.running) { running in
             guard running == false, !model.sessionsLoading, !sessionPin.busy,
                   let session = conversation.snapshot?.session_id else { return }
@@ -327,6 +433,21 @@ struct ProjectWorkspace: View {
 
     private func refreshInbox() { Task { await inbox.refresh(client: conversation.client, projectID: project.id) } }
 
+    private var canExport: Bool {
+        guard let source = selectedSession, !model.sessionsLoading else { return false }
+        return NativeSessionExportModel.eligible(source: source, snapshot: conversation.snapshot, busy: conversation.busy, queued: !conversation.queuedTurns.isEmpty || conversation.queuedFollowUp != nil)
+    }
+
+    private func canTransfer(_ mode: NativeSessionTransferMode) -> Bool {
+        guard let session = selectedSession, let snapshot = conversation.snapshot,
+              snapshot.project_id == session.projectID, snapshot.session_id == session.id,
+              !snapshot.running, !conversation.busy, !session.projectID.hasPrefix("assistant:") else { return false }
+        return mode == .copy || !snapshot.read_only && conversation.attachments.isEmpty && conversation.references.isEmpty
+    }
+    private func beginTransfer(_ mode: NativeSessionTransferMode) {
+        guard canTransfer(mode), let source = selectedSession else { return }
+        sessionTransfer = NativeSessionTransferTarget(source: source, mode: mode)
+    }
     private func deleteSessions() {
         let database = model.databaseURL; let session = model.activeSessionID
         Task {
@@ -378,6 +499,12 @@ struct ProjectWorkspace: View {
             }
             VStack(spacing: 0) {
                 Button { createSession() } label: { HStack { WispIcon(name: "plus", size: 16); Text("新建会话"); Spacer() } }.buttonStyle(WispSidebarButtonStyle()).disabled(conversation.busy)
+                Button { sessionImportPresented = true } label: {
+                    HStack { WispIcon(name: "archive-import", size: 16); Text(localized("导入会话 ZIP 归档")); Spacer() }
+                }.buttonStyle(WispSidebarButtonStyle()).accessibilityIdentifier("import-session-archive")
+                Button { externalImportPresented = true } label: {
+                    HStack { WispIcon(name: "conversation-import", size: 16); Text(localized("导入 Codex / Claude 会话")); Spacer() }
+                }.buttonStyle(WispSidebarButtonStyle()).accessibilityIdentifier("import-external-session")
                 Button { model.searchPresented = true } label: {
                     HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer(); Text("⌘K").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint")) }
                 }.buttonStyle(WispSidebarButtonStyle())
@@ -486,6 +613,8 @@ struct ProjectWorkspace: View {
                                 }
                             } label: {
                                 HStack {
+                                    if session.branchState != nil { WispIcon(name: "fork", size: 12).help(localized(NativeSessionRelations.stateLabel(session) ?? "分支")) }
+                                    else if session.dispatchedFrom != nil { WispIcon(name: "chat", size: 12).help(localized("子代理会话")) }
                                     Text(session.title).font(WispDesign.font(size: 14)).lineLimit(1)
                                     Spacer()
                                 }
@@ -493,6 +622,7 @@ struct ProjectWorkspace: View {
                                 .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("bg-elev") : .clear), in: RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
+                            .accessibilityLabel(session.title + (NativeSessionRelations.stateLabel(session).map { " · " + localized($0) } ?? ""))
                             .accessibilityAddTraits(groups.isSelected(session.id, activeSessionID: model.activeSessionID) ? [.isSelected] : [])
                         }
                     }

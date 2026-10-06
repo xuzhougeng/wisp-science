@@ -15,6 +15,7 @@ pub mod codex_login;
 pub mod execution_plan;
 pub mod native_calendar;
 pub mod native_conversations;
+pub mod native_files;
 pub mod native_history;
 pub mod native_journey;
 pub mod native_library;
@@ -22,7 +23,9 @@ pub mod native_projects;
 pub mod native_publication;
 pub mod native_queue;
 pub mod native_search;
+pub mod native_session_export;
 pub mod native_session_import;
+pub mod native_session_transfer;
 pub mod native_settings;
 pub mod project_browser;
 mod session_artifacts;
@@ -101,13 +104,13 @@ pub struct ContextUsageSnapshot {
     pub estimated: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContextToolDetail {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContextUsageDetails {
     #[serde(default)]
     pub system_prompt: String,
@@ -3014,7 +3017,7 @@ pub struct Artifact {
     pub source_discarded: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FileContent {
     pub path: String,
     pub mime: String,
@@ -3024,20 +3027,20 @@ pub struct FileContent {
     #[serde(default)]
     pub truncated: bool,
     /// Full on-disk size (bytes), present when known.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified_unix_millis: Option<u64>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct DirectoryListing {
     pub path: String,
     pub entries: Vec<DirEntry>,
@@ -3390,6 +3393,13 @@ pub struct RecentSession {
     /// Project sidebar pin state. Global recent-session queries do not fetch it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
+    /// Persisted conversation relationships, fetched only for project sidebars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branched_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched_from: Option<String>,
 }
 
 #[derive(Clone, serde::Deserialize, PartialEq)]
