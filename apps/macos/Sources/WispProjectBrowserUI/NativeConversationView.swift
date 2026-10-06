@@ -21,6 +21,7 @@ struct NativeConversationView: View {
     @State private var expandedTools: Set<Int> = []
     @State private var feedbackApproval: ConversationApproval?
     @State private var historyAction: NativeHistoryTarget?
+    @State private var undoAction: NativeHistoryTarget?
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -103,7 +104,7 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; composerOptions = false }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
         .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
             await conversation.bindComposer()
@@ -129,6 +130,7 @@ struct NativeConversationView: View {
         .sheet(isPresented: $composerOptions) {
             if let projectID, let sessionID { NativeComposerOptionsSheet(conversation: conversation, project: projectID, session: sessionID) { composerOptions = false } }
         }
+        .sheet(item: $undoAction) { target in NativeTurnUndoSheet(conversation: conversation, target: target) { undoAction = nil } }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
             Button("取消", role: .cancel) {}
@@ -210,6 +212,9 @@ struct NativeConversationView: View {
                             Button(localized(target.title)) { historyAction = target }.disabled(!conversation.canHistoryAction(target))
                             if item.role == "user", let rewind = conversation.historyTarget(row: index, kind: "rewind") {
                                 Button(localized("回退到这条消息")) { historyAction = rewind }.disabled(!conversation.canHistoryAction(rewind))
+                            }
+                            if item.role == "assistant", let undo = conversation.historyTarget(row: index, kind: "undo") {
+                                Button(localized("撤销本轮")) { undoAction = undo }.disabled(!conversation.canHistoryAction(undo))
                             }
                         } label: { WispIcon(name: "more", size: 14) }
                             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()

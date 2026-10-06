@@ -51,6 +51,16 @@ changes. Existing source drafts survive, edited branch questions remain drafts,
 and running latest turns cannot be branched. An unconfirmed history mutation
 blocks another attempt and sending until the user explicitly checks its result.
 
+The latest completed built-in turn also offers **Undo this turn**. Its read-only
+preview lists text files to restore, created files to remove, artifact records,
+unsupported files and conflicts. Conflicts disable confirmation, and the shared
+host checks the file state again before applying undo. Binary and unrecorded
+changes cannot be restored. The action binds the exact turn/revision, preserves
+an existing draft and restores the original question only into empty input.
+Older turns, ACP, running, queued and read-only conversations cannot undo.
+Escape during the preview read closes only the preview; late reads are discarded.
+Unconfirmed undo writes block further history changes without automatic replay.
+
 Cmd+K now uses `native_workspace_search` to read persisted cross-project projects,
 artifacts and conversations, including message-body matches beyond the five home
 recents. Privacy and ranking remain in the shared host. Response query, preferred

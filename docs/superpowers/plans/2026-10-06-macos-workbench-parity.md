@@ -110,7 +110,25 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   and existing move/delete, collision, shared-snapshot and recovery tests.
   Formatting passed; the full workspace gate must run again after this repair.
 
+### Increment 4: file-aware turn undo
+
+- Added the shared turn-undo preview to the latest completed built-in response.
+  Restoration/deletion, artifact records, unsupported files and conflicts are
+  listed before confirmation. Conflicts prevent confirmation; the existing host
+  rechecks files when applying the exact turn/revision.
+- Preserved drafts, global turn identities, read-only/ACP/running/queue guards
+  and uncertain-write handling. Preview reads never lock the conversation or
+  become uncertain mutations; closing or navigating discards late replies.
+- Thirteen targeted control checks passed, including six new undo contract,
+  model, immediate-Escape and render checks. Chinese/English, light/dark at
+  419 points were rendered and representative screenshots inspected.
+- The full Swift suite passed 414 tests after this increment, without failures.
+- The WebView gate's three transient failures passed isolated reruns. The two
+  reproducible tutorial failures were stale expectations after baseline's new
+  map_items article; updated directory/navigation expectations passed all 29
+  tutorial tests. This test-only prerequisite is committed separately.
+
 Conversation controls and search remain incomplete: context/compaction,
-file-aware undo, scoped per-tool approval, remaining global composer helpers and session
+scoped per-tool approval, remaining global composer helpers and session
 transfer/import/export and project-file search still need implementation and
 verification. Later outcome groups remain open.

@@ -209,11 +209,23 @@ final class NativeConversationModel: ObservableObject {
         case "branch":
             return state.can_branch && ["before_user", "after_response"].contains(target.checkpoint ?? "")
                 && (!(page.running || page.stopping) || target.turn.user_index < state.turns.count - 1)
-        case "rewind":
+        case "rewind", "undo":
             return !page.running && !page.stopping && !state.reviewing && !isAcp && state.revision == target.revision
                 && queuedTurns.isEmpty && legacyQueuedFollowUp == nil
+                && (target.kind != "undo" || target.turn.user_index == state.turns.count - 1)
         default: return false
         }
+    }
+    func previewUndo(_ target: NativeHistoryTarget) async throws -> NativeTurnUndoPreview? {
+        guard target.kind == "undo", canHistoryAction(target) else { return nil }
+        let current = generation
+        let turn = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(target.turn))
+        let value = try await client.invoke("native_conversation_history_action", args: [
+            "session_id": .string(target.session), "target": turn, "revision": .string(target.revision), "action": .object(["kind": .string("undo_preview")])
+        ], projectID: target.project)
+        guard generation == current, !Task.isCancelled else { return nil }
+        guard value["session_id"].string == target.session, value["target"] == turn else { throw ProjectBrowserError.invalidResponse }
+        return try JSONDecoder().decode(NativeTurnUndoPreview.self, from: JSONEncoder().encode(value["result"]))
     }
     func acknowledgeHistoryResult() {
         guard !busy, connectionError == nil, let sessionID else { return }

@@ -487,5 +487,17 @@
   "会话已开始，专家选择已锁定。": "This conversation has started. Its specialist selection is locked.",
   "无法读取对话选项，请重试。": "Conversation options could not be loaded. Try again.",
   "选项未确认保存，请重新读取后核对；不会自动重试。": "The option change was not confirmed. Reload and check it. It will not be retried automatically.",
-  "开启后，当前会话中的工具调用、危险命令和 ACP 权限请求会自动批准，直到手动关闭或重启应用。项目路径限制和明确禁用的工具规则仍然有效。当前等待中的操作也会获准执行。": "Enabling this automatically approves tool calls, dangerous commands, and ACP permission requests in this conversation until you disable it or restart the app. Project path limits and explicitly disabled tool rules still apply. Currently waiting operations will also be allowed."
+  "开启后，当前会话中的工具调用、危险命令和 ACP 权限请求会自动批准，直到手动关闭或重启应用。项目路径限制和明确禁用的工具规则仍然有效。当前等待中的操作也会获准执行。": "Enabling this automatically approves tool calls, dangerous commands, and ACP permission requests in this conversation until you disable it or restart the app. Project path limits and explicitly disabled tool rules still apply. Currently waiting operations will also be allowed.",
+  "撤销本轮": "Undo this turn",
+  "撤销最新一轮的对话和已记录的文本文件更改。现有草稿会保留，原始问题会恢复到空输入区。": "Undo the latest conversation turn and its recorded text-file changes. Keep the current draft, or restore the original question if the input is empty.",
+  "二进制文件和未记录的更改无法恢复；下方列出了实际处理范围。": "Binary files and unrecorded changes cannot be restored. The lists below show what will be affected.",
+  "正在检查文件更改…": "Checking file changes…",
+  "恢复文本文件": "Restore text files",
+  "删除新建文件": "Delete created files",
+  "移除产物记录": "Remove artifact records",
+  "无法恢复的文件": "Files that cannot be restored",
+  "冲突：请先处理这些文件": "Conflicts: resolve these files first",
+  "没有可撤销的文本文件更改。": "No text-file changes can be undone.",
+  "确认撤销": "Confirm undo",
+  "无法读取撤销预览，请重新检查。": "Could not read the undo preview. Check again."
 }
