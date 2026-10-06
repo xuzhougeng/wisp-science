@@ -60,6 +60,7 @@ const BUILT_IN_SCHEMA_NAMES: &[&str] = &[
 
 const SUBAGENT_SCHEMA_NAMES: &[&str] = &[
     "explore",
+    "map_items",
     "delegate_tasks",
     "get_delegated_result",
     "dispatch_subagent",

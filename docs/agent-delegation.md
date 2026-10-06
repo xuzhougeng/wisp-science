@@ -405,6 +405,13 @@ lookup survive application restart. Peer-to-peer sibling messaging is not part
 of this model; dependencies, persisted artifacts, and parent result rollup are
 the coordination paths.
 
+## Batch map over many items
+
+When the *same* task repeats over N items (screening 100 papers, extracting one
+table from 50 PDFs) use `map_items` instead of `delegate_tasks`: one approval,
+a frozen item list, bounded concurrency, resumable rows, and an optional Jev
+pass/reject decision. See [map-items.md](map-items.md).
+
 ## Subagent conversations
 
 A conversation's Agent can also start a **subagent**: a conversation of its own

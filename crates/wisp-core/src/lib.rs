@@ -7,6 +7,7 @@ pub mod context;
 pub mod delegation;
 pub mod delegation_policy;
 pub mod execution;
+pub mod map_items;
 pub mod memory;
 pub mod method_search;
 pub mod orchestration;
@@ -44,6 +45,7 @@ pub use execution::{
     DelegationExecutor, DelegationStepExecution, NoopDelegationObserver, WorkflowRunActivityDriver,
     WorkflowRunActivityRequest,
 };
+pub use map_items::MapItemsTool;
 pub use memory::{
     MemoryManager, MemorySearchQuery, MemorySearchRequest, MemorySearchResponse, MemorySearchResult,
 };

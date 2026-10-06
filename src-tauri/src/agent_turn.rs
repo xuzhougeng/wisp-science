@@ -996,6 +996,11 @@ pub(crate) async fn send_message_inner(
             // Always registered, not just in plan mode: a fork during execution
             // deserves a question as much as one during planning.
             agent.add_tool(Box::new(wisp_tools::ask_user::AskUserTool));
+            // Batch map over many items; `decide` (Jev) appears only with a TypeSafe key.
+            agent.add_tool(Box::new(
+                wisp_core::MapItemsTool::from_config(cfg.clone(), max_context)
+                    .with_typesafe_key(&models::typesafe_api_key(), llm_proxy()),
+            ));
             // One level only: a subagent starts no subagents of its own, and
             // an exploration's work stays inside its isolated scope.
             if matches!(frame_scope, wisp_store::StateScope::Mainline { .. }) {
