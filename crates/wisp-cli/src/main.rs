@@ -1339,6 +1339,12 @@ async fn main() -> Result<()> {
         true,
         vision_cfg.clone(),
     );
+    agent.add_tool(Box::new(
+        wisp_core::MapItemsTool::from_config(cfg.clone(), max_context).with_typesafe_key(
+            &std::env::var("TYPESAFE_API_KEY").unwrap_or_default(),
+            cfg.proxy.clone(),
+        ),
+    ));
     agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_VISION);
     if let Some(vision) = &vision_cfg {

@@ -193,6 +193,10 @@ struct EvalCase {
     vision_script: Vec<ScriptedCompletion>,
     #[serde(default)]
     explore_script: Vec<ScriptedCompletion>,
+    /// One completion per `map_items` worker call (run with concurrency 1 so
+    /// the order is deterministic).
+    #[serde(default)]
+    map_script: Vec<ScriptedCompletion>,
     #[serde(default)]
     fixture_runtimes: bool,
     #[serde(default)]
@@ -1412,6 +1416,16 @@ fn build_agent(
             case.explore_script.clone(),
         ));
         registry.add(Box::new(ExploreTool::new(provider, max_context)));
+    }
+    if !case.map_script.is_empty() {
+        let provider = Arc::new(ScriptedProvider::new(
+            "scripted-map-v1",
+            case.map_script.clone(),
+        ));
+        registry.add(Box::new(wisp_core::MapItemsTool::new(
+            provider,
+            max_context,
+        )));
     }
     if case.fixture_runtimes {
         let manager = wisp_runtime::RuntimeManager::new(Arc::new(EvalRuntimeLauncher));
@@ -2725,6 +2739,7 @@ mod tests {
             script: vec![ScriptedCompletion::default()],
             vision_script: vec![],
             explore_script: vec![],
+            map_script: vec![],
             fixture_runtimes: false,
             fixture_mcp: BTreeMap::new(),
             memory_enabled: false,

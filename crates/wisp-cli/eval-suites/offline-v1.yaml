@@ -229,6 +229,39 @@ cases:
       required_tools: [explore, attempt_completion]
       tool_order: [explore, attempt_completion]
 
+  - id: map-items-batch
+    description: Run one instruction over a batch of files and read back only the structured table.
+    tags: [delegation, batch, filesystem]
+    prompt: Extract the study design from every file in papers/ and report them.
+    files:
+      papers/a.txt: "A randomized controlled trial of drug A.\n"
+      papers/b.txt: "A cohort study of drug B.\n"
+    allowed_tools: [map_items, attempt_completion]
+    approval:
+      decisions: [true]
+    map_script:
+      - content: '{"design": "rct"}'
+        finish_reason: stop
+      - content: '{"design": "cohort"}'
+        finish_reason: stop
+    script:
+      - tool_calls:
+          - id: map-1
+            name: map_items
+            arguments:
+              items: {glob: "papers/*.txt"}
+              worker:
+                instruction: Report the study design.
+                output_schema: {type: object, required: [design]}
+              concurrency: 1
+      - tool_calls:
+          - {id: done-1, name: attempt_completion, arguments: {result: "rct, cohort"}}
+    expect:
+      completion_contains: [rct, cohort]
+      request_contains: ["2 ok, 0 failed, 0 not yet processed"]
+      required_tools: [map_items, attempt_completion]
+      tool_order: [map_items, attempt_completion]
+
   - id: resume-without-tool-replay
     description: Resume a failed turn without replaying a completed mutation.
     tags: [resume, session]
