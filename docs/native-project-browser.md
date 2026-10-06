@@ -101,6 +101,8 @@ WebView; refresh its home list to see the change (and vice versa).
 ## Build and run on Windows
 
 Requires Windows 10 1809+ (x64), .NET 8+ SDK, Python 3, and the Rust toolchain.
+MSVC Build Tools supplies the app-local x64 VC runtime; use
+`-VCRedistDirectory C:/path/to/Microsoft.VC143.CRT` for a custom toolchain.
 Native settings also require the Microsoft Edge WebView2 Evergreen Runtime.
 The Windows App SDK and SDK build tools are restored from pinned NuGet packages;
 Visual Studio's packaging workload is not required. From the repository root:
@@ -117,11 +119,17 @@ Use the script's `-Python C:/path/to/python.exe` if Python is not on PATH. The d
 `cargo run build-win --release` builds the UI and both Rust helpers in release
 mode under `target/native-windows-release`. Calling the PowerShell script
 without `-Configuration` retains its Release default; CI explicitly selects
-Release and uploads that separate directory.
+Release and packages that separate directory as an unsigned NSIS CI artifact.
+CI uses `-RuntimeMode Both` to also publish a framework-dependent variant under
+`target/native-windows-release-framework-dependent`; its installer detects and
+downloads missing .NET 8 and Windows App Runtime dependencies. The default local
+build stays self-contained. The two installers share the preview installation.
 The directory includes the .NET and Windows App SDK runtimes, `wisp-service.exe`,
 and a full desktop settings host under `settings-host/`;
 copy the entire directory, not just the executable. This is an unsigned local x64
 preview, not an installer or an update to the installed Tauri application.
+For downloadable WinUI Preview installers, size limits and the separate release
+workflow, see [WinUI Preview releases](app-updates.md#winui-3-preview-alongside-the-windows-release).
 
 The default database is `%APPDATA%/science.wisp-science/wisp-science/wisp.sqlite`.
 The preview caches its database selection, theme and palette in

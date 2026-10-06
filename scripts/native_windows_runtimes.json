@@ -1,0 +1,10 @@
+{
+  "dotnetChannel": "8.0",
+  "dotnetMinimumVersion": "8.0.0",
+  "windowsAppSdkVersion": "1.6.250228001",
+  "windowsAppRuntimeMinimumVersion": "6000.424.1611.0",
+  "windowsAppRuntimePackageName": "Microsoft.WindowsAppRuntime.1.6",
+  "windowsAppRuntimeMainPackageName": "MicrosoftCorporationII.WinAppRuntime.Main.1.6",
+  "windowsAppRuntimeSingletonPackageName": "MicrosoftCorporationII.WinAppRuntime.Singleton",
+  "windowsAppRuntimeInstallerUrl": "https://aka.ms/windowsappsdk/1.6/1.6.250228001/windowsappruntimeinstall-x64.exe"
+}

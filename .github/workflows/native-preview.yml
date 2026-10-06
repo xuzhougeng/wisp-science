@@ -39,11 +39,28 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: python scripts/test_sync_native_settings_contract.py
       - run: powershell -NoProfile -File scripts/test_build_native_windows.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s scripts -p 'test_package_native_windows.py'
+      - run: powershell -NoProfile -File scripts/test_ensure_native_windows_runtimes.ps1
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: dotnet run --project apps/windows/Wisp.ProjectBrowser.ContractTests -- contracts/project-browser/v1/projects.json
-      - run: pwsh -File scripts/build_native_windows.ps1 -Configuration Release
+      - run: pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode Both
+      - name: Install NSIS and exercise preview packaging
+        run: |
+          choco install nsis --version=3.11 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed.' }
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Version lookup failed.' }
+          foreach ($variant in @('self-contained', 'framework-dependent')) {
+            $app = if ($variant -eq 'self-contained') { 'target/native-windows-release' } else { 'target/native-windows-release-framework-dependent' }
+            python scripts/package_native_windows.py $app --variant $variant --tag "v$version" --output "$env:RUNNER_TEMP/winui-release" --makensis "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
+            if ($LASTEXITCODE -ne 0) { throw "Preview packaging failed: $variant" }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: Wisp-Science-WinUI-Preview-x64
-          path: target/native-windows-release/
+          path: ${{ runner.temp }}/winui-release/*
           if-no-files-found: error
+          compression-level: 0

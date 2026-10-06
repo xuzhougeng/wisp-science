@@ -151,6 +151,105 @@ launchable. Actual Developer ID notarization and downloaded-app Gatekeeper
 behavior require this release CI/manual validation; local ad-hoc builds and
 mocked packaging tests do not establish them.
 
+## WinUI 3 Preview alongside the Windows release
+
+**Windows WinUI Preview Release** (`release-winui-preview.yml`) builds a separate
+x64 preview on `v*` tag pushes. It attaches both installer variants to the existing release:
+
+- `Wisp-Science-WinUI-Preview_<version>_x64-framework-dependent-setup.exe`: lightweight; checks and installs missing runtimes.
+- `Wisp-Science-WinUI-Preview_<version>_x64-self-contained-setup.exe`: includes .NET and Windows App SDK runtimes.
+- A matching `.exe.sha256` checksum for each, calculated **after** signing.
+- A `.size.json` report for each, with compressed/installed bytes and the largest files.
+
+The NSIS installer uses a per-user location under
+`%LOCALAPPDATA%/Programs/Wisp Science WinUI Preview` and a distinct Start menu
+shortcut/uninstall entry. It can coexist with the stable Tauri application.
+Windows 10 1809+ x64 and the WebView2 Evergreen Runtime are required. Both variants
+include app-local MSVC DLLs and require no .NET SDK. The self-contained variant
+includes .NET 8 and Windows App SDK, so those runtimes need no download at install
+time. The lightweight variant checks compatible .NET 8 x64 and Windows App Runtime
+1.6 packages for the current user, including Main, Singleton and DDLM dependencies.
+Missing or outdated runtimes are downloaded from Microsoft; .NET uses the latest
+8.0 runtime metadata and SHA-512, and both downloads require a valid Microsoft
+Authenticode signature. .NET installation may prompt for administrator permission;
+Windows App Runtime registration keeps the installing user's identity. Network,
+signature, UAC or installer failures stop setup before removing an existing app.
+The installer rechecks dependencies after installation and preserves a reboot
+request. Shared runtimes remain installed when Wisp is uninstalled.
+
+The two variants share one installation directory and can replace each other;
+they are alternatives, not separate side-by-side apps. WebView2 is not bundled
+in either variant. This preview shares the existing desktop
+database/settings/keyring; its installation directory does not isolate user
+data. Uninstall removes packaged files and its shortcut/registration, preserving
+user data. Exit the preview and its helpers before installing an update.
+
+Updates are manual. The workflow only uploads assets, without creating releases,
+rewriting their title/notes or changing `latest.json`. It uses the existing
+SignPath `nsis-installer` configuration, `SIGNPATH_API_TOKEN`, and
+`SKIP_WINDOWS_SIGNING` opt-out. SignPath must accept the WinUI payload in that
+artifact configuration before signing can succeed. A signing failure blocks
+publication; with the explicit unsigned opt-out, SmartScreen may warn.
+
+The build explicitly selects Release for both Rust helpers and .NET, x64,
+separate .NET/Windows App SDK deployment modes, and fresh publish directories.
+`-RuntimeMode Both` compiles Rust once and publishes both .NET variants. Rust uses
+`opt-level=s`, LTO, one codegen unit, stripped symbols and no debug information.
+.NET disables ReadyToRun and debug symbols. Trimming, single-file publishing
+and NativeAOT are not enabled because this WinUI/XAML/reflection application has
+not been validated for them. The installer uses solid LZMA compression, excludes
+symbol files/Python caches, and enforces separate ceilings:
+
+| Variant | Installer | Installed app payload |
+| --- | ---: | ---: |
+| Framework-dependent | 40 MiB | 150 MiB |
+| Self-contained | 100 MiB | 350 MiB |
+
+Shared runtime downloads/installations are additional to the lightweight package
+sizes. These are regression ceilings, not expected download sizes.
+Review the size report before changing the budgets. Both PR CI and release CI
+exercise the actual installer build and size gates.
+
+To rebuild an existing supported tag, dispatch the new workflow **from main**:
+
+```powershell
+# Signing dry-run: artifacts only; does not modify the GitHub release.
+gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f signing_policy=test-signing -f publish=false
+# Attach to an existing release after validation.
+gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f signing_policy=release-signing -f publish=true
+```
+
+The build locates the x64 MSVC CRT redistributable folder using Visual Studio's
+`vswhere`; a custom toolchain can pass `-VCRedistDirectory` to the build script.
+The small DLL set is copied beside both Rust executables, avoiding a separate
+VC++ runtime installer or administrator requirement.
+
+Older tags without `scripts/package_native_windows.py` are skipped. The workflow
+checks out the requested tag; it does not package current-main binaries under an
+older version. A local package requires Python 3.11+ and NSIS 3:
+
+```powershell
+pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode Both
+python scripts/package_native_windows.py target/native-windows-release --variant self-contained --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe'
+python scripts/package_native_windows.py target/native-windows-release-framework-dependent --variant framework-dependent --tag vX.Y.Z --makensis 'C:/Program Files (x86)/NSIS/makensis.exe'
+```
+
+The default build remains `SelfContained`; `-RuntimeMode FrameworkDependent`
+builds only the lightweight app. The runtime policy is checked against the pinned
+Windows App SDK NuGet version. Update `scripts/native_windows_runtimes.json` when
+upgrading that dependency, using Microsoft's [runtime download archive](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads-archive)
+and the NuGet `WindowsAppSDK-VersionInfo.h` version/package identities.
+
+Before shipping the first installer, test on a clean x64 Windows account with
+WebView2 but without .NET/Windows App SDK development tools: verify the downloaded
+SHA-256/signature, install, launch from Start, load projects/settings, open a rich
+preview, exit and switch between variants, then uninstall. For the lightweight
+variant also test already-installed runtimes, missing/old/x86-only runtimes,
+offline download failure and UAC cancellation; for the self-contained variant,
+test without .NET/Windows App Runtime installed. Confirm the stable app and user data
+remain available. Mocked packaging tests and successful NSIS compilation do not
+prove clean-machine launch or SignPath service acceptance.
+
 ## Manual smoke test
 
 1. Publish the next tagged release from an updater-capable build with both
