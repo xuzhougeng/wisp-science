@@ -2,6 +2,25 @@
 
 ## macOS conversation controls and workspace search (2026-10-06)
 
+Bound ACP conversations also expose their declared modes and configuration.
+The native decoder preserves the protocol's `frameId`, `configOptions`,
+`currentModeId` and `currentValue` keys. Select options include grouped choices;
+boolean values remain booleans. Changes use the exact advertised IDs, run only
+while the conversation is writable and idle, and preserve the draft. ACP agents
+that expose mode through configuration have one mode selector. Unbound or older
+hosts offer no unsupported settings controls; unknown configuration types are
+shown without an editor.
+
+Plan proposals render their shared entries with Markdown, status and priority.
+Only the latest proposal after its owning user turn can offer decisions.
+“Approve and execute” confirms leaving Plan through a fresh snapshot before
+sending the current draft (or an explicit approval instruction for an empty
+draft). “Save and exit” changes mode without sending. Built-in proposals use
+`native_conversation_plan`; ACP proposals use an advertised non-plan mode.
+Changed plans, drafts, attachments, references, read-only/running state or
+navigation prevent execution. An uncertain mode or send is never replayed;
+the user can inspect the mode and acknowledge an uncertain plan decision.
+
 SwiftUI reads the shared snapshot's optional `plan_mode`, `fast_mode` and
 `history_state`. Built-in conversations expose Agent/Plan and supported models
 expose Fast; unavailable fields on an older host hide those controls. Running,

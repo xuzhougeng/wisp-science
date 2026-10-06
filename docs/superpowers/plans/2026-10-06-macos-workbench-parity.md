@@ -67,7 +67,22 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   Rust tests and the full Playwright suite are running; record their final result
   before committing this increment.
 
-Conversation controls and search remain incomplete: ACP settings and Plan
-decisions, composer options, context/compaction, file-aware undo, session
+### Increment 2: ACP settings and Plan decisions
+
+- Decoded the shared ACP session state, including grouped select choices and
+  boolean configuration. The interface uses advertised IDs, hides a duplicate
+  mode selector when configuration owns it, and bounds expanded configuration
+  height. Unbound, running and read-only states cannot write.
+- Rendered structured native/ACP plan proposals with Markdown, status and
+  priority. Approve confirms the exact exit mode by reading a fresh snapshot
+  before dispatch. Save exits without sending. Stale proposals, changed input,
+  unknown mode/send results and navigation never trigger a replay.
+- Added successful/failed/stale/read-only/duplicate-write tests. Rendered both
+  native and ACP plans in Chinese/English, light/dark at 419 points and inspected
+  representative results. Targeted checks passed; the subsequent full Swift
+  suite passed with no failures.
+
+Conversation controls and search remain incomplete: composer options,
+context/compaction, file-aware undo, session
 transfer/import/export and project-file search still need implementation and
 verification. Later outcome groups remain open.

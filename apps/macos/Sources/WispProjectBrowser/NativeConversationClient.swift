@@ -11,6 +11,7 @@ public struct ConversationItem: Codable, Equatable, Sendable {
     public let model_name: String?
     public let timestamp: Int64?
     public let resources: [ConversationMessageResource]?
+    public let proposal: ConversationPlanProposal?
 }
 
 /// Shared wisp-dto MessageResource uses camelCase on the wire.
@@ -58,12 +59,14 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let plan_mode: Bool?
     public let fast_mode: ConversationFastMode?
     public let history_state: ConversationHistoryState?
+    public let acp_state: ConversationAcpState?
 
     public static func decode(_ value: SettingsValue, projectID: String, sessionID: String) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
         guard snapshot.schema == schemaID, !snapshot.epoch.isEmpty, snapshot.sequence > 0,
               snapshot.project_id == projectID, snapshot.session_id == sessionID,
               snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.queue?.valid != false, snapshot.history_state?.valid != false,
+              snapshot.acp_state == nil || (snapshot.acp_state?.frameID == sessionID && snapshot.acp_state?.valid == true),
               (snapshot.acp?.permissions ?? []).allSatisfy({ $0.frame_id == sessionID && !$0.request_id.isEmpty }) else { throw ProjectBrowserError.invalidResponse }
         return snapshot
     }

@@ -75,6 +75,7 @@ final class NativeConversationModel: ObservableObject {
     private var retiredEpochs: Set<String> = []
     @Published private var uncertainModes: Set<String> = []
     @Published private var uncertainHistory: Set<String> = []
+    @Published private var uncertainPlanDecisions: Set<String> = []
     var historyUncertain: Bool { sessionID.map { uncertainHistory.contains($0) } ?? false }
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
@@ -87,10 +88,74 @@ final class NativeConversationModel: ObservableObject {
         }
         return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
     }
-    var canChangeMode: Bool {
-        snapshot?.read_only == false && snapshot?.running == false && snapshot?.stopping == false && !isAcp
+    private var canChangeConversationSettings: Bool {
+        snapshot?.read_only == false && snapshot?.running == false && snapshot?.stopping == false
             && !busy && !composer.busy && !showingHistory && !uncertainSend && !uncertainQueue && !historyUncertain
             && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
+    }
+    var canChangeMode: Bool { canChangeConversationSettings && !isAcp }
+    var canChangeAcpSettings: Bool { canChangeConversationSettings && isAcp && snapshot?.acp_state?.frameID == sessionID && snapshot?.acp_state != nil }
+    func setAcpMode(_ id: String) async {
+        guard canChangeAcpSettings, let state = snapshot?.acp_state, state.currentMode != id, state.modeChoices.contains(where: { $0.id == id }) else { return }
+        await changeMode("native_conversation_acp_setting", args: ["change": .object(["kind": .string("mode"), "id": .string(id)])])
+    }
+    func setAcpConfig(_ id: String, value: SettingsValue) async {
+        guard canChangeAcpSettings, let state = snapshot?.acp_state, state.allows(id, value: value), state.configurations.first(where: { $0.id == id })?.current != value else { return }
+        await changeMode("native_conversation_acp_setting", args: ["change": .object(["kind": .string("config"), "id": .string(id), "value": value])])
+    }
+    var latestProposal: NativePlanTarget? {
+        guard let page = snapshot, let user = page.items.lastIndex(where: { $0.role == "user" }),
+              let plan = page.items.lastIndex(where: { $0.role == "plan" }), plan > user,
+              let proposal = page.items[plan].proposal, proposal.valid else { return nil }
+        let index = (page.user_offset ?? 0) + page.items.filter { $0.role == "user" }.count - 1
+        return .init(project: page.project_id, session: page.session_id, userIndex: index,
+                     turn: page.history_state?.turns.first { $0.user_index == index }, proposal: proposal)
+    }
+    func planDecisionUncertain(_ target: NativePlanTarget) -> Bool { uncertainPlanDecisions.contains(target.id) }
+    func proposalModeActive(_ target: NativePlanTarget) -> Bool {
+        guard latestProposal == target, target.project == projectID, target.session == sessionID else { return false }
+        return target.proposal.source == "native" ? !isAcp && snapshot?.acp_state == nil && snapshot?.plan_mode == true : isAcp && snapshot?.acp_state?.exitPlanMode != nil
+    }
+    func canDecidePlan(_ target: NativePlanTarget) -> Bool {
+        canChangeConversationSettings && proposalModeActive(target) && !planDecisionUncertain(target)
+    }
+    func acknowledgePlanDecision(_ target: NativePlanTarget) {
+        guard !busy, connectionError == nil, latestProposal == target else { return }
+        uncertainPlanDecisions.remove(target.id); operationError = nil
+    }
+    /// Leaving Plan is confirmed by a fresh snapshot before dispatching execution.
+    func decidePlan(_ target: NativePlanTarget, execute: Bool) async {
+        guard canDecidePlan(target) else { return }
+        let current = generation, originalDraft = draft, files = attachments, refs = references
+        let exitMode = target.proposal.source == "acp" ? snapshot?.acp_state?.exitPlanMode : nil
+        var confirmed = false
+        busy = true; operationError = nil
+        do {
+            var args: [String: SettingsValue] = ["session_id": .string(target.session)]
+            if let exitMode { args["change"] = .object(["kind": .string("mode"), "id": .string(exitMode)]) }
+            else { args["enabled"] = .bool(false) }
+            _ = try await client.invoke(exitMode == nil ? "native_conversation_plan" : "native_conversation_acp_setting", args: args, projectID: target.project)
+            guard generation == current else { return }
+            await refresh()
+            guard generation == current else { return }
+            confirmed = connectionError == nil && snapshot?.running == false && snapshot?.stopping == false && snapshot?.read_only == false
+                && (exitMode == nil ? snapshot?.plan_mode == false : snapshot?.acp_state?.currentMode == exitMode)
+            guard confirmed else { throw ProjectBrowserError.unavailable(localized("尚未确认退出计划模式。")) }
+            if latestProposal != target {
+                confirmed = false; operationError = localized("计划内容已变化；已退出计划模式，请核对后再发送。")
+            } else if execute && (draft != originalDraft || attachments != files || references != refs) {
+                confirmed = false; operationError = localized("输入内容已变化；已退出计划模式，当前草稿已保留，请核对后再发送。")
+            }
+        } catch {
+            uncertainPlanDecisions.insert(target.id)
+            uncertainModes.insert(target.session)
+            if generation == current { operationError = localized("计划模式切换未确认，不会自动重试或启动执行。") + "\n" + error.localizedDescription }
+        }
+        guard generation == current else { return }
+        busy = false
+        guard confirmed, execute else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { draft = localized("批准并执行") }
+        await send()
     }
     func setPlanMode(_ enabled: Bool) async {
         guard canChangeMode, snapshot?.plan_mode != nil, snapshot?.plan_mode != enabled else { return }

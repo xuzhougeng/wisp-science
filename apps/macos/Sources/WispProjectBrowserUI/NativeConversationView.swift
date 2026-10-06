@@ -179,6 +179,8 @@ struct NativeConversationView: View {
                 } else if item.role == "question", let question = NativeQuestion(item.text) {
                     NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
                         .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
+                } else if item.role == "plan" {
+                    NativePlanProposalCard(conversation: conversation, item: item, target: !conversation.showingHistory && conversation.snapshot?.items.lastIndex(where: { $0.role == "plan" }) == index ? conversation.latestProposal : nil)
                 } else {
                     selectableMessage(item, index: index)
                     if item.role == "user" {
@@ -234,6 +236,7 @@ struct NativeConversationView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 NativeComposerModes(conversation: conversation)
+                NativeAcpSettings(conversation: conversation)
                 NativeComposerEnvironment(model: conversation.composer, writable: composerWritable) {
                     runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
                 }

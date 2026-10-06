@@ -459,5 +459,20 @@
   "模式未确认保存，请重新读取会话后核对。": "The mode change was not confirmed. Reload the conversation and check it.",
   "历史操作未确认，请重新读取并核对会话后再继续；不会自动重试。": "The historical action was not confirmed. Reload and check the conversation before continuing. It will not be retried automatically.",
   "搜索关键词过长，请缩短后重试。": "The search query is too long. Shorten it and try again.",
-  "搜索未能读取，请重试。": "Search could not be loaded. Try again."
+  "搜索未能读取，请重试。": "Search could not be loaded. Try again.",
+  "ACP 模式": "ACP mode",
+  "ACP 配置": "ACP configuration",
+  "此配置类型暂不可编辑": "This configuration type cannot be edited yet",
+  "执行方案": "Execution plan",
+  "待执行": "Pending",
+  "进行中": "In progress",
+  "高优先级": "High priority",
+  "批准并执行": "Approve and execute",
+  "保存并退出": "Save and exit",
+  "修改计划时，请在输入框说明调整要求。批准后会先退出计划模式，再发送当前草稿；保存并退出不会启动执行。": "Describe plan changes in the composer. Approval exits Plan mode before sending your current draft. Save and exit does not start execution.",
+  "已核对计划模式": "I have checked the plan mode",
+  "尚未确认退出计划模式。": "Leaving Plan mode has not been confirmed.",
+  "计划内容已变化；已退出计划模式，请核对后再发送。": "The plan changed. Plan mode has been exited; check it before sending.",
+  "输入内容已变化；已退出计划模式，当前草稿已保留，请核对后再发送。": "The input changed. Plan mode has been exited and your draft preserved. Check it before sending.",
+  "计划模式切换未确认，不会自动重试或启动执行。": "The plan mode change was not confirmed. It will not be retried and execution will not start automatically."
 }
