@@ -5,6 +5,7 @@ struct NativeComposerEnvironment: View {
     @ObservedObject var model: NativeComposerModel
     let writable: Bool
     let openRuntime: () -> Void
+    var openOptions: (() -> Void)?
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
@@ -24,6 +25,10 @@ struct NativeComposerEnvironment: View {
             }.buttonStyle(.plain).disabled(model.contexts == nil).accessibilityLabel("查看运行时")
             Spacer(minLength: 0)
             if model.busy { ProgressView().controlSize(.small) }
+            if let openOptions {
+                Button(action: openOptions) { WispIcon(name: "adjustments", size: 16) }.buttonStyle(.plain)
+                    .accessibilityLabel(localized("会话选项")).help(localized("会话选项"))
+            }
         }.font(WispDesign.font(size: 11)).foregroundStyle(.secondary).frame(height: 32)
         if let error = model.error {
             HStack(alignment: .top) {

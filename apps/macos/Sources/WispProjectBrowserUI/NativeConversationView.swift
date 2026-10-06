@@ -13,6 +13,7 @@ struct NativeConversationView: View {
     @Environment(\.colorScheme) private var scheme
     @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
     @State private var referencePicker = false
+    @State private var composerOptions = false
     @State private var runtimeActivity: NativeContextActivitySelection?
     @State private var confirmResend = false
     @State private var confirmRequeue = false
@@ -102,7 +103,7 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; composerOptions = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
         .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
             await conversation.bindComposer()
@@ -124,6 +125,9 @@ struct NativeConversationView: View {
         }
         .sheet(item: $historyAction) { target in
             NativeHistoryActionSheet(conversation: conversation, target: target, close: { historyAction = nil }, openBranch: { openHistoryBranch?($0) })
+        }
+        .sheet(isPresented: $composerOptions) {
+            if let projectID, let sessionID { NativeComposerOptionsSheet(conversation: conversation, project: projectID, session: sessionID) { composerOptions = false } }
         }
         .confirmationDialog("先核对最新消息，避免重复执行同一个任务。确认仍需再次发送？", isPresented: $confirmResend) {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
@@ -237,9 +241,9 @@ struct NativeConversationView: View {
             VStack(alignment: .leading, spacing: 8) {
                 NativeComposerModes(conversation: conversation)
                 NativeAcpSettings(conversation: conversation)
-                NativeComposerEnvironment(model: conversation.composer, writable: composerWritable) {
+                NativeComposerEnvironment(model: conversation.composer, writable: composerWritable, openRuntime: {
                     runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
-                }
+                }, openOptions: projectID != nil && sessionID != nil ? { composerOptions = true } : nil)
                 if !conversation.queuedTurns.isEmpty, let sessionID {
                     NativeConversationQueueView(conversation: conversation, session: sessionID).id((projectID ?? "") + ":" + sessionID)
                 } else if let queued = conversation.queuedFollowUp {

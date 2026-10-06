@@ -474,5 +474,18 @@
   "尚未确认退出计划模式。": "Leaving Plan mode has not been confirmed.",
   "计划内容已变化；已退出计划模式，请核对后再发送。": "The plan changed. Plan mode has been exited; check it before sending.",
   "输入内容已变化；已退出计划模式，当前草稿已保留，请核对后再发送。": "The input changed. Plan mode has been exited and your draft preserved. Check it before sending.",
-  "计划模式切换未确认，不会自动重试或启动执行。": "The plan mode change was not confirmed. It will not be retried and execution will not start automatically."
+  "计划模式切换未确认，不会自动重试或启动执行。": "The plan mode change was not confirmed. It will not be retried and execution will not start automatically.",
+  "会话选项": "Conversation options",
+  "完全权限": "Full permission",
+  "开启完全权限": "Enable full permission",
+  "子代理委派": "Subagent delegation",
+  "结果返回方式": "Result delivery",
+  "当前轮内返回": "Return within this turn",
+  "后台返回": "Return in the background",
+  "自动续接": "Resume automatically",
+  "自动审查": "Automatic review",
+  "会话已开始，专家选择已锁定。": "This conversation has started. Its specialist selection is locked.",
+  "无法读取对话选项，请重试。": "Conversation options could not be loaded. Try again.",
+  "选项未确认保存，请重新读取后核对；不会自动重试。": "The option change was not confirmed. Reload and check it. It will not be retried automatically.",
+  "开启后，当前会话中的工具调用、危险命令和 ACP 权限请求会自动批准，直到手动关闭或重启应用。项目路径限制和明确禁用的工具规则仍然有效。当前等待中的操作也会获准执行。": "Enabling this automatically approves tool calls, dangerous commands, and ACP permission requests in this conversation until you disable it or restart the app. Project path limits and explicitly disabled tool rules still apply. Currently waiting operations will also be allowed."
 }

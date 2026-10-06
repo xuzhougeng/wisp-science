@@ -94,6 +94,10 @@ final class NativeConversationModel: ObservableObject {
             && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
     }
     var canChangeMode: Bool { canChangeConversationSettings && !isAcp }
+    var canEditComposerOptions: Bool {
+        canAttach && snapshot?.read_only == false && !composer.busy && !uncertainSend && !uncertainQueue && !historyUncertain
+            && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
+    }
     var canChangeAcpSettings: Bool { canChangeConversationSettings && isAcp && snapshot?.acp_state?.frameID == sessionID && snapshot?.acp_state != nil }
     func setAcpMode(_ id: String) async {
         guard canChangeAcpSettings, let state = snapshot?.acp_state, state.currentMode != id, state.modeChoices.contains(where: { $0.id == id }) else { return }

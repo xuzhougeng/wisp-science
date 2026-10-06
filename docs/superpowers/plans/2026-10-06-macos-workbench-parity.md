@@ -63,9 +63,11 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   Swift suite passed 394 tests; subsequent targeted checks cover the additional
   uncertainty-on-reopen case and rendered composer updates. Light/dark and
   419-point-wide fixtures were inspected.
-- Native design resource check, Rust formatting and wasm check passed. Workspace
-  Rust tests and the full Playwright suite are running; record their final result
-  before committing this increment.
+- Native design resource check, Rust formatting and wasm check passed. The
+  workspace Rust suite exposed eight macOS artifact-operation failures from
+  workspace-root aliases; the defect also reproduced in an isolated test and is
+  being repaired separately. The full Playwright suite is running and its five
+  failures require isolated reruns.
 
 ### Increment 2: ACP settings and Plan decisions
 
@@ -82,7 +84,20 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   representative results. Targeted checks passed; the subsequent full Swift
   suite passed with no failures.
 
-Conversation controls and search remain incomplete: composer options,
-context/compaction, file-aware undo, session
+### Increment 3: scoped session options
+
+- Added session full permission with explicit nested confirmation, delegation,
+  inline/background completion, automatic resume/review and pre-conversation
+  specialist selection. Responses must confirm both ownership and the requested
+  value; wrong-owner, unknown and unconfirmed writes cannot be replayed.
+- Options reads can be cancelled; saves retain the sheet. Immediate Escape tests
+  caught and fixed a read/save dismissal mix-up. A permission confirmation closes
+  before options without moving focus or writing.
+- Targeted model/contract/native interaction checks passed. English dark options
+  and permission confirmation were rendered and inspected. The full Swift suite
+  passed 408 tests after the final render adjustment, with no failures.
+
+Conversation controls and search remain incomplete: context/compaction,
+file-aware undo, scoped per-tool approval, remaining global composer helpers and session
 transfer/import/export and project-file search still need implementation and
 verification. Later outcome groups remain open.

@@ -2,6 +2,19 @@
 
 ## macOS conversation controls and workspace search (2026-10-06)
 
+The composer environment row opens session options. Full permission, delegation,
+inline/background completion, automatic resume, automatic review and specialist
+selection use `native_conversation_options` / `native_conversation_options_set`.
+The full-permission switch requires an explicit confirmation explaining its
+session scope and effect on waiting operations. Completion settings require
+delegation; inline completion clears automatic resume. Specialists use the
+advertised catalog and are locked after a conversation begins. Confirmed replies
+must echo the session and requested setting; failures disable editing until a
+fresh read and are never retried automatically. Read-only/history/disconnected
+states cannot save, while a live conversation can change options for its tools
+and delegation. Reading may be cancelled with Escape; saving keeps the sheet
+open. Immediate Escape closes only the permission confirmation before options.
+
 Bound ACP conversations also expose their declared modes and configuration.
 The native decoder preserves the protocol's `frameId`, `configOptions`,
 `currentModeId` and `currentValue` keys. Select options include grouped choices;
