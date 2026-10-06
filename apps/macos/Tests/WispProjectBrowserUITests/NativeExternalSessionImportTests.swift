@@ -105,7 +105,25 @@ final class NativeExternalSessionImportTests: XCTestCase {
         XCTAssertEqual(writes.count, 1); XCTAssertEqual(writes[0].0, "research-2")
         XCTAssertEqual(writes[0].2, ["provider": .string("claude"), "context_id": .string("wsl:Ubuntu"), "path": .string("/synthetic/session-31.jsonl"), "source_session_id": .string("source-31"), "sha256": .string(String(repeating: "b", count: 64))])
         XCTAssertEqual(model.results["/synthetic/session-31.jsonl"]?.frame_id, "frame-source-31")
-        XCTAssertTrue(calls.contains { $0.1 == "native_external_session_list" && $0.2["refresh"] == .bool(true) })
+        let lists = calls.filter { $0.1 == "native_external_session_list" }
+        XCTAssertEqual(lists.count, 2)
+        XCTAssertEqual(lists[0].0, "research-1")
+        XCTAssertEqual(lists[0].2, ["provider": .string("codex"), "context_id": .string("local"), "refresh": .bool(false)])
+        XCTAssertEqual(lists[1].0, "research-2")
+        XCTAssertEqual(lists[1].2, ["provider": .string("claude"), "context_id": .string("wsl:Ubuntu"), "refresh": .bool(true)])
+    }
+    @MainActor func testListingRequiresTheSelectedContextToBeDiscovered() async throws {
+        var fixture = try externalImportFixture()
+        fixture["sources"]["sources"] = .array(fixture["sources"]["sources"].array.filter { $0["id"] != .string("local") })
+        let fake = ExternalSessionImportFake(fixture)
+        let model = NativeExternalSessionImportModel(client: fake, project: "research-1", projects: ["research-1"], writable: { true })
+        await model.load(refresh: true)
+        await model.initialize()
+        await model.load(refresh: true)
+        let calls = await fake.recorded()
+        XCTAssertEqual(calls.map { $0.1 }, ["native_external_session_sources"])
+        XCTAssertTrue(model.items.isEmpty)
+        XCTAssertFalse(model.loading)
     }
     @MainActor func testFilteredBatchProcessesAllPagesWithFreshPreviewsAndKeepsIndependentReadFailuresSeparate() async throws {
         let (fake, model) = try await ready()
