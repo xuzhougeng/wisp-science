@@ -1,11 +1,11 @@
 use super::*;
 
-pub(crate) fn native_drop_remote_target_value(payload: JsValue) -> Option<(String, String)> {
-    let value = native_drop_remote_target(payload);
+pub(crate) fn native_drop_files_target_value(payload: JsValue) -> Option<(String, String)> {
+    let value = native_drop_files_target(payload);
     let parsed = serde_wasm_bindgen::from_value::<serde_json::Value>(value).ok()?;
     let context_id = parsed.get("contextId")?.as_str()?.to_string();
     let destination_dir = parsed.get("destinationDir")?.as_str()?.to_string();
-    if context_id.is_empty() || context_id == "local" {
+    if context_id.is_empty() {
         None
     } else {
         Some((context_id, destination_dir))
@@ -51,6 +51,64 @@ pub(crate) fn upload_to_remote_context(
                 let loc = use_locale().get_untracked();
                 show_toast(&localize_backend(loc, &js_error_text(error)));
             }
+        }
+    });
+}
+
+pub(crate) fn upload_to_local_directory(
+    destination_dir: String,
+    source_paths: Option<Vec<String>>,
+    uploading: RwSignal<bool>,
+    refresh_tick: RwSignal<u32>,
+) {
+    if uploading.get_untracked() {
+        return;
+    }
+    uploading.set(true);
+    spawn_local(async move {
+        let result = invoke_checked(
+            "upload_local_files",
+            to_value(&serde_json::json!({
+                "destinationDir": destination_dir,
+                "sourcePaths": source_paths,
+            }))
+            .unwrap(),
+        )
+        .await;
+        uploading.set(false);
+        let loc = use_locale().get_untracked();
+        match result {
+            Ok(value) => {
+                match serde_wasm_bindgen::from_value::<Vec<LocalFileUploadResult>>(value) {
+                    Ok(items) if items.is_empty() => {}
+                    Ok(items) => {
+                        let count = items.iter().filter(|item| item.path.is_some()).count();
+                        let mut message = tf(
+                            loc,
+                            "files.local_upload_complete",
+                            &[("n", &count.to_string())],
+                        );
+                        let items_len = items.len();
+                        for item in items {
+                            if let Some(error) = item.error {
+                                message.push_str(&format!(
+                                    "\n{}: {}",
+                                    item.source,
+                                    localize_backend(loc, &error)
+                                ));
+                            }
+                        }
+                        if count < items_len {
+                            show_actionable_warning_toast(&message);
+                        } else {
+                            show_toast(&message);
+                        }
+                        refresh_tick.update(|tick| *tick = tick.saturating_add(1));
+                    }
+                    Err(error) => show_toast(&error.to_string()),
+                }
+            }
+            Err(error) => show_toast(&localize_backend(loc, &js_error_text(error))),
         }
     });
 }

@@ -96,8 +96,8 @@ extern "C" {
     pub(crate) async fn upload_pasted_images(event: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = native_drop_in_composer)]
     pub(crate) fn native_drop_in_composer(payload: JsValue) -> bool;
-    #[wasm_bindgen(js_name = native_drop_remote_target)]
-    pub(crate) fn native_drop_remote_target(payload: JsValue) -> JsValue;
+    #[wasm_bindgen(js_name = native_drop_files_target)]
+    pub(crate) fn native_drop_files_target(payload: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = upload_input_files)]
     pub(crate) async fn upload_input_files(input_id: &str) -> JsValue;
     #[wasm_bindgen(js_name = preview_selection)]

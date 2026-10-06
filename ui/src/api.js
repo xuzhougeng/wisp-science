@@ -1289,10 +1289,11 @@ function nativeDropPointInside(payload, el) {
   if (!el || !payload) return false;
   const rect = el.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
-  const rawX = Number(payload.x || 0);
-  const rawY = Number(payload.y || 0);
-  const inside = (x, y) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-  return inside(rawX, rawY) || inside(rawX / scale, rawY / scale);
+  // Tauri reports physical pixels; DOM rectangles use CSS pixels. Testing
+  // the unscaled point too can route a composer drop into Files at high DPI.
+  const x = Number(payload.x || 0) / scale;
+  const y = Number(payload.y || 0) / scale;
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
 export function native_drop_in_composer(payload) {
@@ -1300,14 +1301,17 @@ export function native_drop_in_composer(payload) {
 }
 
 /** @returns {{ contextId: string, destinationDir: string } | null} */
-export function native_drop_remote_target(payload) {
+export function native_drop_files_target(payload) {
   const panel = document.querySelector(".rp-files");
   if (!nativeDropPointInside(payload, panel)) return null;
   const select = panel.querySelector(".fb-source");
   const pathInput = panel.querySelector(".fb-path-input");
-  if (!select || !pathInput) return null;
+  if (!select) return null;
   const contextId = String(select.value || "");
-  if (!contextId || contextId === "local") return null;
+  if (contextId === "local") {
+    return { contextId, destinationDir: panel.querySelector(".fb-path")?.textContent || "." };
+  }
+  if (!contextId || !pathInput) return null;
   return { contextId, destinationDir: String(pathInput.value || "~") };
 }
 

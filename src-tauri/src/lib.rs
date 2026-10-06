@@ -7705,6 +7705,7 @@ pub fn run() {
             settings_commands::validate_settings,
             list_dir,
             create_file,
+            file_browser::upload_local_files,
             create_directory,
             rename_entry,
             delete_entry,

@@ -9,6 +9,19 @@
 use serde_json::json;
 
 #[test]
+fn local_file_upload_result_preserves_success_and_failure() {
+    let wire = json!([
+        {"source": "C:\\data\\input.csv", "path": "docs/input_1.csv", "error": null},
+        {"source": "/missing.csv", "path": null, "error": "File not found"}
+    ]);
+    let results: Vec<wisp_dto::LocalFileUploadResult> =
+        serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(results[0].path.as_deref(), Some("docs/input_1.csv"));
+    assert_eq!(results[1].error.as_deref(), Some("File not found"));
+    assert_eq!(serde_json::to_value(results).unwrap(), wire);
+}
+
+#[test]
 fn workspace_path_classification_distinguishes_directories_and_unavailable_entries() {
     use wisp_dto::WorkspacePathKind;
     let wire = json!({"report.md": "file", "docs/annotation": "directory", "gone": "unavailable"});

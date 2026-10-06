@@ -1844,6 +1844,14 @@ pub struct UploadFileResult {
     pub error: Option<String>,
 }
 
+/// One file copied into the directory currently shown in the local Files panel.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct LocalFileUploadResult {
+    pub source: String,
+    pub path: Option<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub provider: String,
