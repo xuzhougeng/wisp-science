@@ -13,15 +13,16 @@ struct ProjectSearchSheet: View {
     @ObservedObject var model: ProjectBrowserModel
     var projectID: String? = nil
     let close: () -> Void
+    @StateObject private var search: NativeSearchModel
     @State private var query = ""
     @State private var selection = SearchResultSelection()
     @Environment(\.colorScheme) private var scheme
-    private var projects: [ProjectSummary] { projectID == nil ? ProjectBrowserPresentation(search: query).visibleProjects(model.projects) : [] }
-    private var sessions: [BrowserSession] {
-        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (projectID == nil ? model.recentSessions : model.sessions).filter { term.isEmpty || $0.title.localizedCaseInsensitiveContains(term) }
+    init(model: ProjectBrowserModel, projectID: String? = nil, close: @escaping () -> Void) {
+        self.model = model; self.projectID = projectID; self.close = close
+        _search = StateObject(wrappedValue: NativeSearchModel(client: model.calendarClient(), projectID: projectID))
     }
-    private var count: Int { projects.count + sessions.count }
+    private var commands: [NativeSearchCommand] { NativeSearchCommand.matching(query, project: projectID != nil, session: model.activeSessionID != nil) }
+    private var count: Int { commands.count + search.items.count }
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
 
     var body: some View {
@@ -35,23 +36,32 @@ struct ProjectSearchSheet: View {
                 Button("关闭", action: close).keyboardShortcut(.cancelAction)
             }
             Divider()
+            Text(localized("搜索所有项目、产物与会话，包括历史消息。输入 > 搜索命令。"))
+                .font(.caption).foregroundStyle(color("text-faint"))
+            if search.busy { ProgressView().controlSize(.small) }
+            if let error = search.error {
+                Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                Button(localized("重新读取")) { Task { await search.search(query, debounce: 0) } }
+            }
             ScrollViewReader { scroll in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        if !projects.isEmpty {
-                            Text("项目").font(.caption).foregroundStyle(color("text-faint"))
-                            ForEach(Array(projects.enumerated()), id: \.element.id) { index, project in
-                                result(index, title: project.name, icon: "folder")
+                        if !commands.isEmpty {
+                            Text(localized("命令")).font(.caption).foregroundStyle(color("text-faint"))
+                            ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+                                Button { open(index) } label: {
+                                    HStack { WispIcon(name: command.icon); Text(localized(command.title)); Spacer() }
+                                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(selection.selectedIndex(count: count) == index ? color("surface-hover") : .clear, in: RoundedRectangle(cornerRadius: 8))
+                                }.buttonStyle(.plain).id(index)
+                                    .accessibilityAddTraits(selection.selectedIndex(count: count) == index ? [.isSelected] : [])
                             }
                         }
-                        if !sessions.isEmpty {
-                            Text(projectID == nil ? "最近会话" : "会话").font(.caption).foregroundStyle(color("text-faint"))
-                            ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                                result(projects.count + index, title: session.title, icon: "chat")
-                            }
+                        ForEach(Array(search.items.enumerated()), id: \.element.id) { index, item in
+                            result(commands.count + index, item: item)
                         }
-                        if count == 0 {
-                            Text("没有匹配的项目或会话").foregroundStyle(color("text-faint")).padding()
+                        if count == 0 && !search.busy && search.error == nil {
+                            Text(localized("没有匹配的项目、产物或会话")).foregroundStyle(color("text-faint")).padding()
                         }
                     }
                 }
@@ -60,14 +70,27 @@ struct ProjectSearchSheet: View {
             Divider()
             Text("↑↓ 选择    ↵ 打开    esc 关闭").font(.caption).foregroundStyle(color("text-faint"))
         }
-        .padding(24).frame(width: 560, height: 380).background(color("bg-app"))
-        .onChange(of: query) { _ in selection.reset() }
+        .padding(24).frame(width: 560, height: 460).background(color("bg-app"))
+        .onChange(of: query) { _ in selection.reset(); search.invalidate() }
+        .onChange(of: search.items) { _ in selection.reset() }
+        .task(id: query) { if query.hasPrefix(">") { search.invalidate() } else { await search.search(query) } }
+        .onDisappear { search.invalidate() }
+        .background(NativeSettingsEscape(close: close))
         .onExitCommand(perform: close)
     }
 
-    private func result(_ index: Int, title: String, icon: String) -> some View {
+    private func result(_ index: Int, item: NativeSearchItem) -> some View {
         Button { open(index) } label: {
-            HStack { WispIcon(name: icon); Text(title).lineLimit(1); Spacer() }
+            HStack {
+                WispIcon(name: item.kind == "project" ? "folder" : item.kind == "artifact" ? "doc" : "chat")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title).lineLimit(1)
+                    Text(item.detail).font(.caption).foregroundStyle(color("text-faint")).lineLimit(1)
+                }
+                Spacer()
+                Text(localized(item.kind == "project" ? "项目" : item.kind == "artifact" ? "产物" : "会话"))
+                    .font(.caption).foregroundStyle(color("text-faint"))
+            }
                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(selection.selectedIndex(count: count) == index ? color("surface-hover") : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
@@ -78,18 +101,12 @@ struct ProjectSearchSheet: View {
 
     private func open(_ index: Int) {
         guard index >= 0 && index < count else { return }
-        if index < projects.count {
-            let id = projects[index].id
-            close()
-            Task { await model.openProject(id) }
-        } else {
-            let session = sessions[index - projects.count]
-            close()
-            Task {
-                if projectID == session.projectID { await model.openSession(session.id) }
-                else { await model.openProject(session.projectID, sessionID: session.id) }
-            }
+        if index < commands.count {
+            let command = commands[index]; close(); model.executeSearchCommand(command); return
         }
+        let item = search.items[index - commands.count]
+        close()
+        Task { await model.openSearchResult(item) }
     }
 }
 
@@ -106,10 +123,9 @@ private struct SearchCommandField: NSViewRepresentable {
         let field = NSTextField()
         field.isBordered = false
         field.drawsBackground = false
-        field.placeholderString = "搜索项目、会话…"
+        field.placeholderString = localized("搜索项目、产物、会话与历史消息…")
         field.font = .systemFont(ofSize: 14)
         field.delegate = context.coordinator
-        context.coordinator.installEscapeScope(field)
         field.setAccessibilityIdentifier("project-search")
         DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
         return field
@@ -118,37 +134,10 @@ private struct SearchCommandField: NSViewRepresentable {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
     }
-    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) { coordinator.removeEscapeScope() }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: SearchCommandField
         init(_ parent: SearchCommandField) { self.parent = parent }
-        private var monitor: Any?
-        private var menuObservers: [NSObjectProtocol] = []
-        private var menuTracking = false
-
-        func installEscapeScope(_ field: NSTextField) {
-            menuObservers = [
-                NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in self?.menuTracking = true },
-                NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in self?.menuTracking = false }
-            ]
-            // Scope Escape to this sheet's key window, regardless of focus. Menus,
-            // child sheets, and IME composition get to consume it first.
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak field] event in
-                guard let self, let field, event.keyCode == 53,
-                      let window = field.window, NSApp.keyWindow === window,
-                      window.attachedSheet == nil, !self.menuTracking,
-                      !((field.currentEditor() as? NSTextView)?.hasMarkedText() ?? false) else { return event }
-                self.parent.cancel()
-                return nil
-            }
-        }
-        func removeEscapeScope() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-            menuObservers.forEach(NotificationCenter.default.removeObserver)
-            menuObservers = []
-        }
         func controlTextDidChange(_ notification: Notification) {
             if let field = notification.object as? NSTextField { parent.text = field.stringValue }
         }

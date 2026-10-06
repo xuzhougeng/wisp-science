@@ -73,6 +73,9 @@ final class NativeConversationModel: ObservableObject {
     private var pendingSends: [String: (id: String, text: String)] = [:]
     private var submittedDrafts: [String: (id: String, text: String)] = [:]
     private var retiredEpochs: Set<String> = []
+    @Published private var uncertainModes: Set<String> = []
+    @Published private var uncertainHistory: Set<String> = []
+    var historyUncertain: Bool { sessionID.map { uncertainHistory.contains($0) } ?? false }
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
@@ -84,17 +87,109 @@ final class NativeConversationModel: ObservableObject {
         }
         return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
     }
+    var canChangeMode: Bool {
+        snapshot?.read_only == false && snapshot?.running == false && snapshot?.stopping == false && !isAcp
+            && !busy && !composer.busy && !showingHistory && !uncertainSend && !uncertainQueue && !historyUncertain
+            && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil
+    }
+    func setPlanMode(_ enabled: Bool) async {
+        guard canChangeMode, snapshot?.plan_mode != nil, snapshot?.plan_mode != enabled else { return }
+        await changeMode("native_conversation_plan", args: ["enabled": .bool(enabled)])
+    }
+    func setFastMode(_ enabled: Bool) async {
+        guard canChangeMode, let mode = snapshot?.fast_mode, mode.enabled != enabled, let model = snapshot?.model_id else { return }
+        await changeMode("native_conversation_fast", args: ["enabled": .bool(enabled), "model_id": .string(model)])
+    }
+    private func changeMode(_ command: String, args: [String: SettingsValue]) async {
+        guard let project = projectID, let session = sessionID else { return }
+        let current = generation
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            var args = args; args["session_id"] = .string(session)
+            _ = try await client.invoke(command, args: args, projectID: project)
+            if generation == current { await refresh() }
+        } catch {
+            uncertainModes.insert(session)
+            if generation == current { operationError = localized("模式未确认保存，请重新读取会话后核对。") + "\n" + error.localizedDescription }
+        }
+    }
+    func historyTarget(row: Int, kind: String, checkpoint: String? = nil) -> NativeHistoryTarget? {
+        guard let page = showingHistory ? history : snapshot, let state = page.history_state,
+              row >= 0, row < page.items.count, ["user", "assistant"].contains(page.items[row].role),
+              let currentRevision = snapshot?.history_state?.revision else { return nil }
+        var user = (page.user_offset ?? 0) - 1
+        var userRow: Int?
+        for index in 0...row where page.items[index].role == "user" { user += 1; userRow = index }
+        guard let userRow, user >= 0, user < state.turns.count else { return nil }
+        return NativeHistoryTarget(project: page.project_id, session: page.session_id, turn: state.turns[user],
+                                   revision: currentRevision, kind: kind, checkpoint: checkpoint,
+                                   draft: Self.historyDraft(page.items[userRow].text))
+    }
+    static func historyDraft(_ text: String) -> String {
+        let markers = ["Uploaded files: ", "Attached artifacts: ", "Attached sessions: ", "Project context: ", "Selected skills: ", "Selected workflows: ", "Target environments: ", "Target runtimes: ", "AI source-edit instruction: ", "Feedback context: "]
+        let ends = markers.compactMap { text.range(of: "\n\n" + $0)?.lowerBound }
+        return ends.min().map { String(text[..<$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? text
+    }
+    func canHistoryAction(_ target: NativeHistoryTarget) -> Bool {
+        guard let page = snapshot, let state = page.history_state, page.read_only == false,
+              projectID == target.project, sessionID == target.session, !busy, !uncertainSend, !uncertainQueue,
+              !historyUncertain, connectionError == nil, target.turn.user_index >= 0,
+              target.turn.user_index < state.turns.count, state.turns[target.turn.user_index] == target.turn else { return false }
+        switch target.kind {
+        case "branch":
+            return state.can_branch && ["before_user", "after_response"].contains(target.checkpoint ?? "")
+                && (!(page.running || page.stopping) || target.turn.user_index < state.turns.count - 1)
+        case "rewind":
+            return !page.running && !page.stopping && !state.reviewing && !isAcp && state.revision == target.revision
+                && queuedTurns.isEmpty && legacyQueuedFollowUp == nil
+        default: return false
+        }
+    }
+    func acknowledgeHistoryResult() {
+        guard !busy, connectionError == nil, let sessionID else { return }
+        uncertainHistory.remove(sessionID); operationError = nil
+    }
+    /// The confirmation retains the exact turn/revision originally inspected.
+    func performHistoryAction(_ target: NativeHistoryTarget, editedDraft: String) async -> String? {
+        guard canHistoryAction(target) else { return nil }
+        let current = generation; let originalDraft = draft
+        busy = true; operationError = nil
+        defer { if generation == current { busy = false } }
+        do {
+            let turn = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(target.turn))
+            let value = try await client.invoke("native_conversation_history_action", args: [
+                "session_id": .string(target.session), "target": turn, "revision": .string(target.revision), "action": target.action
+            ], projectID: target.project)
+            guard value["session_id"].string == target.session, value["target"] == turn else { throw ProjectBrowserError.invalidResponse }
+            if target.kind == "branch" {
+                guard case .string(let id) = value["result"], !id.isEmpty else { throw ProjectBrowserError.invalidResponse }
+                drafts[id] = target.checkpoint == "before_user" ? editedDraft : ""
+                guard generation == current else { return nil }
+                return id
+            }
+            guard generation == current else { return nil }
+            latest()
+            if draft == originalDraft && originalDraft.isEmpty { draft = target.draft }
+            await refresh()
+            return ""
+        } catch {
+            uncertainHistory.insert(target.session)
+            if generation == current { operationError = localized("历史操作未确认，请重新读取并核对会话后再继续；不会自动重试。") + "\n" + error.localizedDescription }
+            return nil
+        }
+    }
     var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
     var canReference: Bool { canAttach && snapshot?.composer_references == true && connectionError == nil && !uncertainSend }
     var canQueueFollowUp: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
+        return (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && !historyUncertain && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
     }
     var queuedTurns: [ConversationQueueItem] { snapshot?.queue?.items ?? [] }
     var queuedFollowUp: String? { snapshot?.queue == nil ? legacyQueuedFollowUp : queuedTurns.first?.message }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
+        return (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && !historyUncertain && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
     }
 
     func open(project: String, session: String) async {
@@ -106,6 +201,7 @@ final class NativeConversationModel: ObservableObject {
         references = stagedReferences[session] ?? []
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending != nil ? "上次发送结果尚未确认。请核对最新消息；不会自动重发。" : uncertainQueue ? "后续未能确认排队，不会自动重试。" : nil
+        if historyUncertain { operationError = localized("历史操作未确认，请重新读取并核对会话后再继续；不会自动重试。") }
         models = []; acpAgents = []
         connectionError = nil; loading = true; busy = false
         let current = generation
@@ -164,6 +260,7 @@ final class NativeConversationModel: ObservableObject {
                 if previous.epoch != value.epoch { retiredEpochs.insert(previous.epoch) }
             }
             snapshot = value; connectionError = nil
+            uncertainModes.remove(session)
             if value.queue != nil || !value.running { legacyQueuedFollowUp = nil; queuedBySession[session] = nil }
             if let pending, value.request_id == pending.id {
                 if draft == pending.text { draft = "" }

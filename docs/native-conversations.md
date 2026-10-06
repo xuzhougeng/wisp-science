@@ -1,5 +1,42 @@
 # Native conversation loop
 
+## macOS conversation controls and workspace search (2026-10-06)
+
+SwiftUI reads the shared snapshot's optional `plan_mode`, `fast_mode` and
+`history_state`. Built-in conversations expose Agent/Plan and supported models
+expose Fast; unavailable fields on an older host hide those controls. Running,
+read-only and ACP conversations cannot change these built-in modes. Fast writes
+the displayed model ID and keeps the model-default/session-override distinction.
+An unconfirmed mode write blocks sending until an authoritative refresh; writes
+are never replayed. The controls have a separate row to keep the send/model row
+usable in narrow windows.
+
+Historical user/assistant messages have a menu for editing into a branch,
+branching after a response, and rewinding before a user message. The confirmation
+captures the persisted sequence, digest and revision of the selected global turn,
+including paginated history. Rewind removes conversation records, not file
+changes. Existing source drafts survive, edited branch questions remain drafts,
+and running latest turns cannot be branched. An unconfirmed history mutation
+blocks another attempt and sending until the user explicitly checks its result.
+
+Cmd+K now uses `native_workspace_search` to read persisted cross-project projects,
+artifacts and conversations, including message-body matches beyond the five home
+recents. Privacy and ranking remain in the shared host. Response query, preferred
+project, ownership and duplicate identities are checked before display. Selecting
+an artifact opens its exact ID in its owning conversation. Editing or closing the
+search discards late results. Type `>` for native navigation/panel commands;
+arrows and Enter select a result, and immediate Escape closes only the search.
+
+Manual smoke: with an isolated fixture, find a conversation older than the home
+recents by a message-body term, open an artifact in another project, use
+`>terminal` and `>settings`, and press Escape immediately after opening search.
+For an idle built-in conversation, save Plan/Fast, keep a draft, then open an
+older message's branch/rewind confirmation and cancel with Escape. Verify the
+parent and draft remain; confirm a branch and check its edited draft. Repeat in
+light/dark and a narrow window. Remaining macOS scope is tracked in
+[the complete workbench plan](superpowers/plans/2026-10-06-macos-workbench-parity.md).
+
+
 ## Windows input references and preferences (2026-10-05)
 
 The Windows input field follows the saved Enter/Ctrl+Enter preference, including

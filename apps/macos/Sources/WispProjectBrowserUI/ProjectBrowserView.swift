@@ -31,6 +31,9 @@ public struct ProjectBrowserView: View {
             .sheet(isPresented: $model.searchPresented) {
                 ProjectSearchSheet(model: model, projectID: model.activeProjectID, close: { model.searchPresented = false })
             }
+            .sheet(item: $model.searchArtifact) { item in
+                NativeSearchArtifactView(item: item, client: model.nativeConversation().client) { model.searchArtifact = nil }
+            }
             .sheet(isPresented: $model.createPresented) {
                 NewProjectSheet(model: model)
             }

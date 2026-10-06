@@ -190,6 +190,9 @@ struct ProjectWorkspace: View {
                                 }
                             }
                         }
+                    }, openHistoryBranch: { branchID in
+                        guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                        Task { await model.openProject(project.id, sessionID: branchID) }
                     }) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(.init(text: selection, source: "会话摘录"))
@@ -230,6 +233,21 @@ struct ProjectWorkspace: View {
                     terminalVisible = true
                 }) { panelVisible = false }
                     .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar)).id(project.id + ":" + session)
+            }
+        }
+        .onChange(of: model.workspaceCommand?.id) { _ in
+            guard let command = model.workspaceCommand, command.project == project.id,
+                  command.session == model.activeSessionID else { return }
+            switch command.action {
+            case "new-session": if !conversation.busy { createSession() }
+            case "toggle-sidebar": sidebarVisible.toggle()
+            case "terminal": terminalVisible.toggle()
+            case "close-panel": panelVisible = false
+            default:
+                guard NativePanelTabs.all.contains(command.action), model.activeSessionID != nil else { return }
+                model.returnToConversation()
+                var tabs = NativePanelTabs(saved: panelTabs, selected: panelTab, available: NativePanelTabs.all)
+                tabs.show(command.action); panelTabs = tabs.saved; panelTab = tabs.selected; panelVisible = true
             }
         }
         }

@@ -26,6 +26,11 @@ final class NativeConversationRenderTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         for (name, width, height, scheme) in [("desktop", 859.0, 760.0, ColorScheme.light), ("narrow", 419.0, 538.0, ColorScheme.light), ("dark", 859.0, 760.0, ColorScheme.dark), ("long-preview", 419.0, 538.0, ColorScheme.light)] {
             var payload = fixture
+            if name != "long-preview" {
+                payload["running"] = .bool(false)
+                payload["plan_mode"] = .bool(true)
+                payload["fast_mode"] = .object(["enabled": .bool(true), "inherited": .bool(false)])
+            }
             if name == "long-preview" {
                 var approvals = payload["approvals"].array
                 approvals[0]["preview"] = .string((1...30).map { "echo sample-\($0)" }.joined(separator: "\n"))
@@ -40,6 +45,7 @@ final class NativeConversationRenderTests: XCTestCase {
                 .foregroundStyle(WispDesign.color("text", scheme))
                 .tint(WispDesign.color("clay", scheme))
                 .environment(\.colorScheme, scheme))
+            view.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
             view.frame = NSRect(x: 0, y: 0, width: width, height: height)
             view.layoutSubtreeIfNeeded()
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return XCTFail("No native bitmap") }

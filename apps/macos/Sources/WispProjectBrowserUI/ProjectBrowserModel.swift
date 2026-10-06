@@ -6,6 +6,8 @@ import WispProjectBrowser
 @MainActor
 public final class ProjectBrowserModel: ObservableObject {
     @Published public var searchPresented = false
+    @Published var searchArtifact: NativeSearchItem?
+    @Published var workspaceCommand: NativeWorkspaceCommand?
     @Published public var createPresented = false
     @Published public var createDraft = NewProjectDraft()
     @Published private(set) var createBusy = false
@@ -164,6 +166,8 @@ public final class ProjectBrowserModel: ObservableObject {
 
     func goHome() {
         searchPresented = false
+        searchArtifact = nil
+        workspaceCommand = nil
         calendar.invalidate()
         journey.invalidate()
         publication.invalidate()
@@ -179,6 +183,33 @@ public final class ProjectBrowserModel: ObservableObject {
         sessions = []
         sessionError = nil
         sessionsLoading = false
+    }
+
+    func openSearchResult(_ item: NativeSearchItem) async {
+        guard item.valid else { return }
+        let database = databaseURL
+        await openProject(item.project_id, sessionID: item.session_id)
+        guard databaseURL == database, activeProjectID == item.project_id,
+              activeSessionID == item.session_id, sessionError == nil else { return }
+        if item.kind == "artifact" { searchArtifact = item }
+    }
+    func executeSearchCommand(_ command: NativeSearchCommand) {
+        guard (!command.project || activeProjectID != nil), (!command.session || activeSessionID != nil) else { return }
+        switch command.id {
+        case "new-project": createPresented = true
+        case "settings": projectSettingsID = nil; settingsSectionID = nil; settingsPresented = true
+        case "project-settings": if let activeProjectID { openProjectSettings(activeProjectID) }
+        case "skills": projectSettingsID = nil; settingsSectionID = "skills"; settingsPresented = true
+        case "workflows": openWorkflowSettings()
+        case "projects": goHome()
+        case "library": library.presented = true
+        case "calendar": calendar.presented = true
+        case "journey": if let activeProjectID { publication.dismiss(); journey.open(projectID: activeProjectID, day: nil) }
+        case "publication": if let activeProjectID { journey.dismiss(); publication.open(projectID: activeProjectID) }
+        case "import-project": importOptionsPresented = true
+        default:
+            if let activeProjectID { workspaceCommand = NativeWorkspaceCommand(action: command.id, project: activeProjectID, session: activeSessionID) }
+        }
     }
 
     func openProject(_ id: String, sessionID: String? = nil) async {
