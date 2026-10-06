@@ -17329,7 +17329,7 @@ test("optional environment detection does not block first-run model setup", asyn
   await onboard.getByRole("button", { name: "Set up later" }).click();
   const environment = onboard.getByTestId("local-environment");
   await expect(environment).toContainText("local-env-setup");
-  await expect(environment.locator("dd")).toHaveCount(7);
+  await expect(environment.locator("dd")).toHaveCount(8);
   await expect(environment.locator("dd").first()).toContainText("Not found");
   await expect(onboard.getByRole("button", { name: "Get started" })).toBeEnabled();
   const viewport = page.viewportSize()!;
@@ -17485,6 +17485,7 @@ for (const locale of ["en", "zh"]) {
         npm_executable: "C:\\Program Files\\nodejs\\npm.cmd",
         sci_executable: "C:\\Users\\Researcher\\AppData\\Roaming\\npm\\sci.cmd",
         pixi_executable: "C:\\Users\\Researcher\\.pixi\\bin\\pixi.exe",
+        cua_driver_executable: "C:\\Users\\Researcher\\AppData\\Local\\Programs\\Cua\\cua-driver.exe",
       }, warning: null };
     });
     await page.goto(`/?mockOnboarding=1&mockLocale=${locale}`);
@@ -17536,7 +17537,7 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await modal.getByRole("button", { name: "Set up later" }).click();
   const env = modal.getByTestId("local-environment");
   await env.getByRole("button", { name: "Edit paths" }).click();
-  await expect(env.getByRole("textbox")).toHaveCount(7);
+  await expect(env.getByRole("textbox")).toHaveCount(8);
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toHaveValue("/mock/bin/python3");
   await env.getByRole("textbox", { name: "Python", exact: true }).fill("C:\\Custom Python\\python.exe");
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toBeFocused();

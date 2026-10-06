@@ -1227,6 +1227,7 @@ pub(super) fn LocalEnvironmentPanel(
                     ("Python", "python_executable"), ("Rscript", "rscript_executable"),
                     ("uv", "uv_executable"), ("Node", "node_executable"),
                     ("npm", "npm_executable"), ("sci", "sci_executable"), ("pixi", "pixi_executable"),
+                    ("Cua Driver", "cua_driver_executable"),
                 ].into_iter().map(|(label, key)| {
                     view! {
                         <div><dt>{label}</dt><dd>

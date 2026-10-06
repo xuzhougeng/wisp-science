@@ -88,6 +88,7 @@ impl Store {
                         | "npm_executable"
                         | "sci_executable"
                         | "pixi_executable"
+                        | "cua_driver_executable"
                 ),
                 "Unknown local tool path: {key}"
             );
@@ -352,6 +353,7 @@ mod local_detection_tests {
             ("npm_executable".into(), r"C:\Node\npm.cmd".into()),
             ("sci_executable".into(), "/custom/sci".into()),
             ("pixi_executable".into(), "/custom/pixi".into()),
+            ("cua_driver_executable".into(), "/custom/cua-driver".into()),
         ]
         .into();
         store.save_local_environment_paths(&edits).await.unwrap();
@@ -397,6 +399,7 @@ mod local_detection_tests {
         assert_eq!(config["uv_executable"], "/custom/uv");
         assert_eq!(config["sci_executable"], "/custom/sci");
         assert_eq!(config["pixi_executable"], "/custom/pixi");
+        assert_eq!(config["cua_driver_executable"], "/custom/cua-driver");
         assert_eq!(config["unrelated"], true);
         assert!(config.get("python_path").is_none());
         assert!(config.get("rscript_path").is_none());

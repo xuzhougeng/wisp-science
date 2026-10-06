@@ -81,7 +81,7 @@ internal sealed partial class NativeSettingsSectionPage
                 Editor("本地运行环境", paths, "save_local_environment_paths", "paths", d =>
                 {
                     foreach (var (key, label) in new[] { ("python_executable", "Python"), ("rscript_executable", "Rscript"), ("node_executable", "Node.js"),
-                        ("npm_executable", "npm"), ("uv_executable", "uv"), ("pixi_executable", "Pixi"), ("sci_executable", "sci") }) PathField(d, key, label);
+                        ("npm_executable", "npm"), ("uv_executable", "uv"), ("pixi_executable", "Pixi"), ("sci_executable", "sci"), ("cua_driver_executable", "Cua Driver") }) PathField(d, key, label);
                 }); return Task.CompletedTask;
             }));
         }

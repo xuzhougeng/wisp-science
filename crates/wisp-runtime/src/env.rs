@@ -47,6 +47,11 @@ impl PythonEnv {
         find_local_program("pixi")
     }
 
+    /// Locate `cua-driver` (the computer-use MCP server) on PATH.
+    pub fn find_cua_driver() -> Option<PathBuf> {
+        find_local_program("cua-driver")
+    }
+
     /// Python interpreter inside the venv (`Scripts\python.exe` on Windows).
     pub fn python(&self) -> PathBuf {
         if cfg!(target_os = "windows") {
