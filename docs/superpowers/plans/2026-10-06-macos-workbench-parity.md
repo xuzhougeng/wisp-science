@@ -194,6 +194,27 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   regression gates are running. The options sheet now scrolls and its nested
   permission confirmation fits narrow windows.
 
-Conversation controls and search remain incomplete: session transfer/import/
-export and project-file search still need implementation and verification.
-Later outcome groups remain open.
+### Increment 8: reviewed session ZIP import
+
+- Added project-sidebar and scoped command-palette entry points using a distinct
+  shared archive-import icon. Preview identifies the explicit destination,
+  message/artifact counts, bounded message excerpts and existing-import status.
+  Confirmation sends the reviewed source session ID and SHA-256 through the
+  existing protected native import adapter.
+- Added project selection, existing-session inspection and exact-result opening.
+  Unknown/malformed/wrong-owner replies disable further imports in that sheet,
+  including after a reread or source/destination change. Superseded/cancelled
+  reads and closed writes cannot update another view or navigate it. Saving holds
+  the sheet; immediate Escape closes its destination picker first.
+- Thirteen targeted native checks passed (eight new import tests and five search
+  checks). Shared fixtures cover ownership, reviewed arguments/counts, scope,
+  duplicate attempts, read-only navigation guards and late replies. Preview,
+  result and project picker were rendered at 419 points in Chinese/English and
+  light/dark, with representative screenshots inspected. The full Swift suite
+  passed 446 tests after final layout/translation refinements, with no failures.
+  Formatting, wasm and generated-resource/command-contract checks passed.
+  Final full Rust/WebView regression remains in progress.
+
+Conversation controls and search remain incomplete: external session import,
+session transfer/export and project-file search still need implementation and
+verification. Later outcome groups remain open.

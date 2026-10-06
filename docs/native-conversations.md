@@ -794,14 +794,16 @@ Export/setup/privacy/update/font commands and remaining WebView
 actions still need implementation. This search batch does not complete Research
 Assistant, publication editing, MCP Apps or final packaged/DPI acceptance.
 
-### Windows session ZIP import
+### Windows and macOS session ZIP import
 
-Use **导入会话归档…** in the project menu, or the command palette, to choose a
-Wisp session-export ZIP and an explicit destination project. Preview shows the
+On Windows use **导入会话归档…** in the project menu or command palette. On macOS
+use **导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
+the command palette. Choose a Wisp session-export ZIP and an explicit
+destination project. Preview shows the
 message/artifact counts, first four user/assistant messages (600 characters each),
 artifact paths and whether the selected project already contains the import.
 Changing the path or destination clears the preview. Preview itself writes no
-conversation data; **确认导入到所选项目** imports the reviewed file. The result
+conversation data; explicit confirmation imports the reviewed file. The result
 offers **打开导入的会话** and lists artifacts that could not be restored.
 
 `wisp.native-session-import.v1` carries the destination, source session ID and
@@ -819,6 +821,17 @@ retains the selected path and destination and disables further writes in that
 dialog; a fresh preview can locate an existing imported session for inspection.
 Escape closes the destination dropdown before the sheet; closing the sheet
 retains the original conversation draft. This route handles Wisp ZIP archives.
+macOS also discards cancelled/closed/superseded previews and prevents a late
+import result from navigating another conversation. Changing file/destination
+or rereading after an uncertain write cannot enable another import in that sheet.
+
+macOS smoke: import a synthetic session ZIP into two different projects, verify
+the counts/first-message previews, reopen an existing import and update it with
+a longer archive. Check the result's missing-artifact list and open its exact
+destination. Keep a draft in the originating conversation and verify it remains
+when returning. Open the destination picker and press Escape immediately; only
+the picker closes. A second Escape closes the import sheet. Check narrow windows,
+both locales/schemes, frozen destinations and an archive changed after preview.
 
 ### Windows Codex and Claude session import
 

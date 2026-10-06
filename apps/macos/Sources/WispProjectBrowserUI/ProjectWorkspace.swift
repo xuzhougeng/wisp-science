@@ -20,6 +20,7 @@ struct ProjectWorkspace: View {
     @State private var trajectoryPresented = false
     @State private var archivePresented = false
     @State private var sharePresented = false
+    @State private var sessionImportPresented = false
     @State private var terminalVisible = false
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
@@ -240,6 +241,7 @@ struct ProjectWorkspace: View {
                   command.session == model.activeSessionID else { return }
             switch command.action {
             case "new-session": if !conversation.busy { createSession() }
+            case "import-session-archive": sessionImportPresented = true
             case "toggle-sidebar": sidebarVisible.toggle()
             case "terminal": terminalVisible.toggle()
             case "close-panel": panelVisible = false
@@ -255,6 +257,16 @@ struct ProjectWorkspace: View {
             if let session = model.activeSessionID {
                 NativeShareView(client: conversation.client, projectID: project.id, sessionID: session) { sharePresented = false }.id(project.id + ":" + session)
             }
+        }
+        .sheet(isPresented: $sessionImportPresented) {
+            let database = model.databaseURL; let sourceSession = model.activeSessionID
+            NativeSessionArchiveImportSheet(client: conversation.client, project: project.id, projects: model.projects, writable: {
+                model.databaseURL == database && model.activeProjectID == project.id && model.activeSessionID == sourceSession
+            }, close: { sessionImportPresented = false }, open: { destination, session in
+                guard model.databaseURL == database, model.activeProjectID == project.id, model.activeSessionID == sourceSession else { return }
+                sessionImportPresented = false; model.returnToConversation()
+                Task { await model.openProject(destination, sessionID: session) }
+            }).id(database.path + ":" + project.id)
         }
         .sheet(isPresented: $archivePresented) {
             if let session = model.activeSessionID {
@@ -275,8 +287,8 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset() }
-        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false }
         .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil }
         .onChange(of: conversation.snapshot?.running) { running in
             guard running == false, !model.sessionsLoading, !sessionPin.busy,
@@ -396,6 +408,9 @@ struct ProjectWorkspace: View {
             }
             VStack(spacing: 0) {
                 Button { createSession() } label: { HStack { WispIcon(name: "plus", size: 16); Text("新建会话"); Spacer() } }.buttonStyle(WispSidebarButtonStyle()).disabled(conversation.busy)
+                Button { sessionImportPresented = true } label: {
+                    HStack { WispIcon(name: "archive-import", size: 16); Text(localized("导入会话 ZIP 归档")); Spacer() }
+                }.buttonStyle(WispSidebarButtonStyle()).accessibilityIdentifier("import-session-archive")
                 Button { model.searchPresented = true } label: {
                     HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer(); Text("⌘K").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint")) }
                 }.buttonStyle(WispSidebarButtonStyle())
