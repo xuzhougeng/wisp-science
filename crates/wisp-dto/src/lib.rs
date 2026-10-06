@@ -3049,7 +3049,7 @@ pub struct UploadToContextItem {
     pub status: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct FileSearchHit {
     pub path: String,
     pub name: String,

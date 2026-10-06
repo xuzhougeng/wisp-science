@@ -10,6 +10,8 @@ struct NativePanelView: View {
     @State private var draggedTab: String?
     @Environment(\.colorScheme) private var scheme
     @State private var query = ""
+    @State private var exportError: String?
+    private let projectRoot: String
     @State private var transcriptPreview: NativeTranscriptArtifact?
     private var transcriptArtifacts: [NativeTranscriptArtifact] { NativeTranscriptArtifact.collect(transcript) }
     @State private var activity: NativeContextActivitySelection?
@@ -25,7 +27,8 @@ struct NativePanelView: View {
     let manageWorkflows: () -> Void
     let readOnly: Bool
     let close: () -> Void
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+        self.projectRoot = projectRoot
         _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.close = close
     }
     var body: some View {
@@ -35,21 +38,26 @@ struct NativePanelView: View {
                 if !["provenance", "sidechat"].contains(tab) { Button { Task { await model.refresh(tab) } } label: { WispIcon(name: "refresh") }.buttonStyle(.plain).help("刷新") }
                 Button(action: close) { WispIcon(name: "close", size: 16) }.buttonStyle(.plain).help("关闭面板").accessibilityLabel("关闭面板")
             }
-            if ["artifacts", "files"].contains(tab) { NativePanelDisplayControls(grid: $grid) }
             if tab != "sidechat" {
-            TextField(tab == "provenance" ? "搜索工具、输入或输出" : tab == "notebook" ? "搜索代码或输出" : "筛选名称", text: $query)
-            if model.loading { ProgressView().controlSize(.small) }
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+            HStack(spacing: 6) {
+                TextField(tab == "files" ? "搜索当前项目全部目录" : tab == "artifacts" ? "搜索本会话产物名称或路径" : tab == "provenance" ? "搜索工具、输入或输出" : tab == "notebook" ? "搜索代码或输出" : "筛选名称", text: $query)
+                    .accessibilityLabel(tab == "files" ? "搜索项目文件" : "搜索面板")
+                if ["artifacts", "files"].contains(tab) { NativePanelDisplayControls(grid: $grid).fixedSize() }
+            }
+            if model.loading || model.searchLoading { ProgressView().controlSize(.small) }
+            if let error = exportError ?? model.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             }
             if tab == "files" {
                 HStack {
-                    Button("上级") { Task { await model.refresh("files", directory: model.parent) } }.disabled(model.path == ".")
-                    Text(model.path).font(.caption).lineLimit(1).truncationMode(.head).help(model.path)
+                    Button { navigate(model.parent) } label: { WispIcon(name: "arrow-up", size: 16).frame(width: 30, height: 30) }.buttonStyle(.plain).disabled(model.path == ".").accessibilityLabel("上级目录")
+                    Text(query.isEmpty ? model.path == "." ? "当前项目 /" : model.path : "当前项目 · 最多 200 项").font(.caption).lineLimit(1).truncationMode(.head).help(model.path)
                     Spacer()
-                    Menu("新建") {
+                    Menu {
                         Button("新建文件") { fileAction = .init(action: .createFile, directory: model.path) }
                         Button("新建文件夹") { fileAction = .init(action: .createDirectory, directory: model.path) }
-                    }.disabled(readOnly || model.loading || model.fileActionBusy)
+                    } label: { WispIcon(name: "plus", size: 16).frame(width: 30, height: 30) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("新建文件或文件夹")
+                        .disabled(readOnly || model.loading || model.fileActionBusy || !query.isEmpty)
                 }
             }
             if tab == "sidechat", let sideChat {
@@ -62,7 +70,7 @@ struct NativePanelView: View {
                             Task { await model.readArtifact(id) }
                         }, openMessage: { transcriptPreview = $0 }, provenance: {
                             var value = layout; value.show("provenance"); store(value)
-                        })
+                        }, projectRoot: projectRoot, exportRegistered: { id in saveAs(artifactID: id) })
                     } else if tab == "notebook" {
                         NativeNotebookView(model: model, cells: NativeNotebookCell.collect(transcript), query: query).id(transcriptPage)
                     } else if tab == "highlights" {
@@ -74,17 +82,17 @@ struct NativePanelView: View {
                     } else if tab == "hosts" {
                         NativePanelContextsView(model: model, query: query, openTerminal: openTerminal) { context, runtimes in activity = .init(context: context, runtimes: runtimes) }
                     } else {
-                        ForEach(model.files.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }) { file in
-                            Button {
-                                let path = model.child(file)
-                                Task { if file.is_dir { await model.refresh("files", directory: path) } else { await model.readFile(path) } }
-                            } label: { row(title: file.name, subtitle: file.is_dir ? "文件夹" : ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file), icon: file.is_dir ? "folder" : "doc") }.buttonStyle(.plain)
-                                .contextMenu {
-                                    Button("重命名") { fileAction = .init(action: .rename, directory: model.path, name: file.name) }.disabled(readOnly || model.fileActionBusy)
-                                    Button("删除", role: .destructive) { fileAction = .init(action: .delete, directory: model.path, name: file.name) }.disabled(readOnly || model.fileActionBusy)
-                                }
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            ForEach(model.files) { file in
+                                fileRow(name: file.name, path: model.child(file), directory: file.is_dir, size: file.size)
+                            }
+                            if model.files.isEmpty && !model.loading { Text("目录为空").foregroundStyle(.secondary).padding() }
+                        } else {
+                            ForEach(model.searchHits) { hit in
+                                fileRow(name: hit.name, path: hit.path, directory: hit.is_dir, size: hit.size)
+                            }
+                            if model.searchHits.isEmpty && !model.searchLoading { Text("没有匹配的项目文件").foregroundStyle(.secondary).padding() }
                         }
-                        if model.files.isEmpty && !model.loading { Text("目录为空").foregroundStyle(.secondary).padding() }
                     }
                 }
             }
@@ -92,6 +100,10 @@ struct NativePanelView: View {
         }.padding(12).frame(maxHeight: .infinity).background(WispDesign.color("bg-sunken", scheme))
             .background(NativeSettingsEscape(close: close))
             .onAppear { var value = layout; value.reopen(); store(value) }
+            .onChange(of: tab) { _ in query = ""; exportError = nil; model.clearFileSearch() }
+            .task(id: tab + "\n" + query) {
+                if tab == "files" { await model.searchFiles(query) }
+            }
             .task(id: tab) {
                 if !availableTabs.contains(tab) { tab = "artifacts" }
                 await model.refresh(tab)
@@ -139,6 +151,46 @@ struct NativePanelView: View {
             }
             .onChange(of: highlightRevision) { _ in if tab == "highlights" { Task { await model.refresh("highlights") } } }
             .onDisappear { model.close() }
+    }
+    private func navigate(_ path: String) {
+        query = ""; model.clearFileSearch()
+        Task { await model.refresh("files", directory: path) }
+    }
+    private func fileRow(name: String, path: String, directory: Bool, size: UInt64) -> some View {
+        let layout = grid ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(alignment: .top, spacing: 2))
+        return layout {
+            Button { if directory { navigate(path) } else { Task { await model.readFile(path) } } } label: {
+                row(title: name, subtitle: query.isEmpty ? directory ? "文件夹" : ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file) : path, icon: directory ? "folder" : "doc")
+            }.buttonStyle(.plain)
+            HStack(spacing: 2) {
+                if grid { Spacer(minLength: 0) }
+                if !directory {
+                    Button { saveAs(path: path) } label: { WispIcon(name: "download", size: 16).frame(width: 30, height: 30) }
+                        .buttonStyle(.plain).help("保存副本").accessibilityLabel("保存副本 " + name)
+                }
+                Menu {
+                    Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(path, forType: .string) } label: { Label { Text("复制路径") } icon: { WispIcon(name: "copy") } }
+                    Button { selectAction(.rename, path: path) } label: { Label { Text("重命名") } icon: { WispIcon(name: "edit") } }.disabled(readOnly || model.fileActionBusy)
+                    Button(role: .destructive) { selectAction(.delete, path: path) } label: { Label { Text("删除") } icon: { WispIcon(name: "trash") } }.disabled(readOnly || model.fileActionBusy)
+                } label: { WispIcon(name: "more", size: 16).frame(width: 30, height: 30) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("文件操作 " + name)
+            }
+        }.background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
+    }
+    private func selectAction(_ action: NativePanelFileAction, path: String) {
+        let directory = (path as NSString).deletingLastPathComponent
+        fileAction = .init(action: action, directory: directory.isEmpty ? "." : directory, name: (path as NSString).lastPathComponent)
+    }
+    private func saveAs(path: String? = nil, artifactID: String? = nil) {
+        exportError = nil
+        Task {
+            do {
+                let source = try await model.exportSource(path: path, artifactID: artifactID)
+                let panel = NSSavePanel(); panel.nameFieldStringValue = source.name; panel.prompt = "保存副本"
+                guard panel.runModal() == .OK, let destination = panel.url else { return }
+                try await NativePanelExportCopy.copy(source, to: destination)
+            } catch { exportError = "保存副本失败：" + error.localizedDescription }
+        }
     }
     private var layout: NativePanelTabs { NativePanelTabs(saved: savedTabs, selected: tab, available: availableTabs) }
     private func store(_ value: NativePanelTabs) { savedTabs = value.saved; tab = value.selected }
@@ -211,12 +263,11 @@ struct NativePanelDisplayControls: View {
         HStack(spacing: 4) {
             mode("列表", icon: "list", value: false)
             mode("网格", icon: "grid", value: true)
-            Spacer()
         }
     }
     private func mode(_ label: String, icon: String, value: Bool) -> some View {
         Button { grid = value } label: {
-            WispIcon(name: icon, size: 16).padding(5)
+            WispIcon(name: icon, size: 16).frame(width: 30, height: 30)
                 .background(grid == value ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 5))
         }.buttonStyle(.plain).help(label).accessibilityLabel(label)
             .accessibilityValue(grid == value ? "已选择" : "未选择")
@@ -230,15 +281,15 @@ struct NativePanelTile: View {
     let grid: Bool
     @Environment(\.colorScheme) private var scheme
     var body: some View {
-        let layout = grid ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+        let layout = grid ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
         layout {
             WispIcon(name: icon, size: grid ? 26 : 16)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(WispDesign.font(size: 13, weight: .semibold)).lineLimit(2)
                 Text(subtitle).font(WispDesign.font(size: 10)).foregroundStyle(.secondary).lineLimit(2)
             }
             if !grid { Spacer(minLength: 0) }
-        }.padding(8).frame(maxWidth: .infinity, minHeight: grid ? 100 : nil, alignment: .topLeading)
+        }.padding(8).frame(maxWidth: .infinity, minHeight: grid ? 84 : nil, alignment: .topLeading)
             .background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
             .help(title + "\n" + subtitle)
     }

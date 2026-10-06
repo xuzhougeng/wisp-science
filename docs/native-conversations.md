@@ -104,6 +104,41 @@ results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing
 WebView remains usable. The macOS composer also supports file attachments and one
 queued follow-up, and the workspace has an Agent workflow approval panel.
+
+The composer shows the session's effective execution context and live runtime
+status. Its environment menu selects among attached contexts, and the runtime
+button opens the existing runtime controls without starting a process. The
+reasoning menu uses the exact model ID's catalog values and updates the model
+profile default for subsequent turns; models with no declared values and ACP
+conversations show a disabled control. The reference button searches artifacts,
+contexts/runtimes, sessions/projects, and skills/workflows. Selected references
+appear as removable chips and send object IDs along with readable names. Draft
+references survive session switching and unconfirmed sends; confirmed sends clear
+only the submitted chips. Older hosts without the capability disable this entry.
+
+Files search filenames across the current project, including nested directories,
+using the same bounded search as WebView (200 results; hidden/build folders and
+symlinks are excluded). An empty query lists the current directory. Search hits
+retain their project-relative paths for navigation, preview and file actions.
+Artifacts remain scoped to the current conversation, with inline tables/formulas
+from the displayed message page. Registered files group by directory, then inline
+content by kind, and searches include display paths. Workspace files display
+relative paths; remote URIs remain intact. Both collections place Save As and a
+More menu beside each item, with copy-path and applicable file/provenance actions.
+Save As copies original local bytes to a user-selected destination, independently
+of preview truncation; remote references require retrieval before local export.
+
+Transcript spacing is tighter around messages, user bubbles and code blocks.
+Code-copy buttons reserve space on the right of wrapped code, preserving original
+copy content. Composer controls use 32-point heights and panel actions use 30.
+
+Manual regression: open a saved conversation; switch the context and inspect
+runtime status; choose an available reasoning value and reopen; add references,
+switch sessions, return, and verify chips. Press Escape immediately after opening
+the reference picker or runtime sheet and verify only that sheet closes. Search a
+nested filename and preview/rename it from results; compare artifact directory
+groups and relative paths; export a file and compare bytes. Resize the window and
+check multiline code, copy buttons, lists and formula selection in both themes.
 Embedded MCP Apps, rich scientific artifact viewers and branch management remain
 follow-ups. Frozen/archived conversations are read-only in the native composer.
 

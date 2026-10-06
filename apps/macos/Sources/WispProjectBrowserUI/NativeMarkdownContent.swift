@@ -57,8 +57,8 @@ enum NativeMarkdownContent {
             let code = block.intents.contains { if case .codeBlock = $0.kind { return true }; return false }
             let value = NSMutableAttributedString(attributedString: NativeSelectableMessage.content(block.text, saved: [], scheme: scheme, monospaced: code))
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 6
-            paragraph.paragraphSpacing = 16
+            paragraph.lineSpacing = 4
+            paragraph.paragraphSpacing = 10
             paragraph.lineBreakMode = .byWordWrapping
             var indent = 0
             var listItem: PresentationIntent.IntentType?
@@ -70,7 +70,7 @@ enum NativeMarkdownContent {
                     let base = (value.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize ?? 14
                     let size = base * [1.65, 1.4, 1.2, 1.1, 1, 1][min(5, max(0, level - 1))]
                     value.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: NSRange(location: 0, length: value.length))
-                    paragraph.paragraphSpacingBefore = 18
+                    paragraph.paragraphSpacingBefore = 14
                 case .listItem:
                     if listItem == nil { listItem = component }
                 case .orderedList, .unorderedList:
@@ -117,9 +117,9 @@ enum NativeMarkdownContent {
                 value.addAttributes([copyBlockID: "code-\(block.identity ?? 0)", codeCopy: String(block.text.characters), .backgroundColor: NSColor(WispDesign.color("bg-sunken", scheme))], range: NSRange(location: 0, length: value.length))
                 let box = fullWidthBlock()
                 box.backgroundColor = NSColor(WispDesign.color("bg-sunken", scheme))
-                box.setWidth(12, type: .absoluteValueType, for: .padding)
-                box.setWidth(34, type: .absoluteValueType, for: .padding, edge: .minY)
-                box.setWidth(12, type: .absoluteValueType, for: .margin, edge: .maxY)
+                box.setWidth(10, type: .absoluteValueType, for: .padding)
+                box.setWidth(40, type: .absoluteValueType, for: .padding, edge: .maxX)
+                box.setWidth(8, type: .absoluteValueType, for: .margin, edge: .maxY)
                 box.setWidth(0.5, type: .absoluteValueType, for: .border)
                 box.setBorderColor(NSColor(WispDesign.color("border", scheme)))
                 paragraph.textBlocks = [box]
@@ -170,6 +170,12 @@ enum NativeMarkdownContent {
             }
             value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))
             result.append(value)
+        }
+        if result.length > 0, let last = result.attribute(.paragraphStyle, at: result.length - 1, effectiveRange: nil) as? NSParagraphStyle,
+           let compact = last.mutableCopy() as? NSMutableParagraphStyle {
+            compact.paragraphSpacing = 0
+            let range = (result.string as NSString).paragraphRange(for: NSRange(location: result.length - 1, length: 0))
+            result.addAttribute(.paragraphStyle, value: compact, range: range)
         }
         NativeMathContent.replace(in: result, formulas: prepared.formulas, scheme: scheme, width: width)
         let plain = NativeMathContent.plainText(result)

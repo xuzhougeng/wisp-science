@@ -38,6 +38,7 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let error: String?
     public let approvals: [ConversationApproval]
     public let acp: ConversationAcpInteractions?
+    public let composer_references: Bool?
 
     public static func decode(_ value: SettingsValue, projectID: String, sessionID: String) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
