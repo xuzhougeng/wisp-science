@@ -6512,7 +6512,7 @@ async fn side_chat(
         if run.kind == "ssh_direct" && run.cleaned_at.is_none() {
             let report = state
                 .run_manager
-                .inspect_run_server(&state.store, &run.id)
+                .inspect_run_server(&state.store, run)
                 .await;
             evidence.push(side_chat::run_server_evidence(&run.id, report));
         }

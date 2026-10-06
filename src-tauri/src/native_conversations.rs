@@ -35,6 +35,12 @@ struct Record {
     error: Option<String>,
     accepted: HashMap<String, [u8; 32]>,
 }
+fn payload_digest(request: &dto::SendRequest) -> Result<[u8; 32], String> {
+    let payload =
+        serde_json::to_vec(&(&request.message, &request.attachments, &request.references))
+            .map_err(|error| error.to_string())?;
+    Ok(Sha256::digest(payload).into())
+}
 impl Record {
     fn accept(
         &mut self,
@@ -48,10 +54,7 @@ impl Record {
         if request.references.len() > 64 {
             return Err("Too many composer references".into());
         }
-        let payload =
-            serde_json::to_vec(&(&request.message, &request.attachments, &request.references))
-                .map_err(|error| error.to_string())?;
-        let digest: [u8; 32] = Sha256::digest(payload).into();
+        let digest = payload_digest(request)?;
         if let Some(previous) = self.accepted.get(&request.request_id) {
             return if previous == &digest {
                 Ok(false)
@@ -324,6 +327,34 @@ pub(crate) async fn require_owner(
     Ok(())
 }
 
+/// Archived, read-only-scope and frozen (merged/orphaned) conversations take
+/// no queue or history mutations.
+pub(crate) async fn require_mutable_session(
+    store: &wisp_store::Store,
+    session: &str,
+) -> Result<(), String> {
+    store
+        .require_unarchived_session(session)
+        .await
+        .map_err(|e| e.to_string())?;
+    let scope = store
+        .frame_state_scope(session)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Session state scope was not found")?;
+    crate::exploration_commands::require_writable_scope(store, &scope).await?;
+    if matches!(
+        store
+            .session_branch_state(session)
+            .await
+            .map_err(|e| e.to_string())?,
+        Some("merged" | "orphaned")
+    ) {
+        return Err("Frozen conversation branches cannot be changed".into());
+    }
+    Ok(())
+}
+
 async fn owned_session_exists(
     store: &wisp_store::Store,
     project: &str,
@@ -351,7 +382,12 @@ async fn running(broker: &Broker, session: &str) -> bool {
         .await
         .contains(session)
 }
-async fn call(broker: &Broker, project: &str, command: &str, args: Value) -> Result<Value, String> {
+pub(crate) async fn call(
+    broker: &Broker,
+    project: &str,
+    command: &str,
+    args: Value,
+) -> Result<Value, String> {
     invoke_command(broker, Some(project.to_owned()), command, args).await
 }
 
@@ -831,7 +867,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 activity_status: Some(activity_status),
                 stopping: record.stopping,
                 read_only,
-                acp_state: if frozen || args.before_seq.is_some() {
+                acp_state: if frozen || args.before_seq.is_some() || binding.is_none() {
                     None
                 } else {
                     crate::acp::native_session_state(&state, session).await?
@@ -843,10 +879,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 },
                 model_id: model.as_str().unwrap_or_default().into(),
                 composer_references: Some(true),
-                follow_ups: if args.before_seq.is_some()
-                    || record.running
-                    || running(broker, session).await
-                {
+                follow_ups: if args.before_seq.is_some() || is_running {
                     Vec::new()
                 } else {
                     broker
@@ -906,11 +939,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         "native_conversation_enqueue" => {
             let args: dto::SendRequest = decode(&request.args)?;
             let id = follow_up_id(&args.request_id)?;
-            let digest: [u8; 32] = Sha256::digest(
-                serde_json::to_vec(&(&args.message, &args.attachments, &args.references))
-                    .map_err(|e| e.to_string())?,
-            )
-            .into();
+            let digest = payload_digest(&args)?;
             let mut guard = record.lock().await;
             if let Some(previous) = guard.queued_requests.get(&args.request_id) {
                 return if previous == &digest {
@@ -926,32 +955,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 return Err("Queue payload or request ledger limit exceeded".into());
             }
             let state = broker.app.state::<crate::AppState>();
-            state
-                .store
-                .require_unarchived_session(session)
-                .await
-                .map_err(|e| e.to_string())?;
-            let scope = state
-                .store
-                .frame_state_scope(session)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("Session scope missing")?;
-            crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
-            if matches!(
-                state
-                    .store
-                    .session_branch_state(session)
-                    .await
-                    .map_err(|e| e.to_string())?,
-                Some("merged" | "orphaned")
-            ) {
-                return Err("Frozen conversation queues cannot be changed".into());
-            }
+            require_mutable_session(&state.store, session).await?;
             if acp_agent_id.is_some()
-                && broker
-                    .app
-                    .state::<crate::AppState>()
+                && state
                     .store
                     .get_acp_session(session)
                     .await
@@ -963,21 +969,14 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 );
             }
             let turn_running = guard.running || running(broker, session).await;
-            let runtime = {
-                let mut sessions = state.sessions.lock().await;
-                sessions
-                    .entry(session.to_owned())
-                    .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
-                    .clone()
-            };
-            let text = crate::agent_turn::queue_follow_up_with_limit(
+            let runtime = state.session_runtime(session).await;
+            let text = crate::agent_turn::queue_follow_up(
                 turn_running,
                 &runtime,
                 id,
                 &args.message,
                 &args.attachments,
                 &args.references,
-                64,
             )?;
             guard
                 .queued_requests

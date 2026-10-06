@@ -58,15 +58,6 @@ fn read_archive_bytes(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-#[derive(serde::Serialize)]
-pub(super) struct ImportSessionSummary {
-    frame_id: String,
-    status: String,
-    message_count: usize,
-    artifact_count: usize,
-    missing_artifacts: Vec<String>,
-}
-
 fn read_zip_string<R: Read + std::io::Seek>(
     zip: &mut zip::ZipArchive<R>,
     name: &str,
@@ -88,7 +79,7 @@ fn read_zip_string<R: Read + std::io::Seek>(
     Ok(body)
 }
 
-/// Read and validate an export archive. CPU/IO-bound: call from spawn_blocking.
+#[cfg(test)]
 fn parse_import_archive(path: &Path) -> Result<ParsedImport, String> {
     parse_import_bytes(&read_archive_bytes(path)?)
 }
@@ -182,24 +173,6 @@ fn artifact_target(root: &Path, workspace_path: &str, session_id: &str) -> Optio
 
 /// Extract archived artifacts into the workspace. IO-bound: call from
 /// spawn_blocking. Failures skip the artifact instead of aborting the import.
-fn extract_artifacts(
-    archive_path: &Path,
-    artifacts: &[ImportManifestArtifact],
-    root: &Path,
-    session_id: &str,
-) -> (Vec<(String, PathBuf, String)>, Vec<String>) {
-    match std::fs::File::open(archive_path) {
-        Ok(file) => extract_artifacts_from(file, artifacts, root, session_id),
-        Err(error) => (
-            vec![],
-            artifacts
-                .iter()
-                .map(|a| format!("{}: {error}", a.workspace_path))
-                .collect(),
-        ),
-    }
-}
-
 fn extract_artifacts_from<R: Read + Seek>(
     reader: R,
     artifacts: &[ImportManifestArtifact],
@@ -329,7 +302,7 @@ fn import_timestamps(parsed: &ParsedImport) -> (i64, i64) {
     (created.unwrap(), updated.unwrap())
 }
 
-fn project_import_key(project_id: &str, source_session_id: &str) -> String {
+pub(crate) fn project_import_key(project_id: &str, source_session_id: &str) -> String {
     format!(
         "project:{}:{project_id}:{source_session_id}",
         project_id.len()
@@ -470,7 +443,7 @@ async fn preview_archive(
     path: &str,
     prepared: &PreparedArchive,
 ) -> Result<wisp_dto::native_session_import::ArchivePreview, String> {
-    use wisp_dto::native_session_import::{ArchivePreview, PreviewLine, SCHEMA};
+    use wisp_dto::native_session_import::{ArchivePreview, SCHEMA};
     let parsed = &prepared.parsed;
     let existing = existing_import(store, project, &parsed.session_id).await?;
     let state = if let Some(id) = &existing {
@@ -492,7 +465,7 @@ async fn preview_archive(
                 wisp_llm::Role::Assistant => "assistant",
                 _ => return None,
             };
-            Some(PreviewLine {
+            Some(wisp_dto::ExternalSessionPreviewLine {
                 role: role.into(),
                 text: m.content.as_text().chars().take(600).collect(),
             })
@@ -548,6 +521,8 @@ async fn apply_prepared_archive(
     let (frame_id, status) = import_parsed(store, project, model, source, &parsed).await?;
     let mut artifact_count = 0;
     let mut missing_artifacts = vec![];
+    // Artifacts are restored on first import only; a fast-forward update keeps
+    // the files and artifact rows registered by the initial import.
     if status == "imported" && !parsed.artifacts.is_empty() {
         let destination = root.to_owned();
         let source_id = parsed.session_id.clone();
@@ -604,90 +579,72 @@ pub(crate) async fn lock_native_import_target(
     project: &str,
     existing: Option<&str>,
 ) -> Result<
-    (
-        Option<std::sync::Arc<crate::SessionRuntime>>,
-        Option<tokio::sync::OwnedMutexGuard<()>>,
-    ),
+    Option<(
+        std::sync::Arc<crate::SessionRuntime>,
+        tokio::sync::OwnedMutexGuard<()>,
+    )>,
     String,
 > {
-    let runtime = if let Some(id) = existing {
-        state
+    let Some(id) = existing else {
+        return Ok(None);
+    };
+    state
+        .store
+        .require_unarchived_session(id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !matches!(
+        state.store.frame_state_scope(id).await.map_err(|e| e.to_string())?,
+        Some(wisp_store::StateScope::Mainline { project_id }) if project_id == project
+    ) {
+        return Err(
+            "Session imports can only update mainline conversations in the selected project".into(),
+        );
+    }
+    if state
+        .store
+        .get_acp_session(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+        || state
             .store
-            .require_unarchived_session(id)
-            .await
-            .map_err(|e| e.to_string())?;
-        if !matches!(
-            state.store.frame_state_scope(id).await.map_err(|e| e.to_string())?,
-            Some(wisp_store::StateScope::Mainline { project_id }) if project_id == project
-        ) {
-            return Err(
-                "Session imports can only update mainline conversations in the selected project"
-                    .into(),
-            );
-        }
-        if state
-            .store
-            .get_acp_session(id)
+            .session_branch_state(id)
             .await
             .map_err(|e| e.to_string())?
             .is_some()
-            || state
-                .store
-                .session_branch_state(id)
-                .await
-                .map_err(|e| e.to_string())?
-                .is_some()
-        {
-            return Err(
-                "Bound ACP sessions and conversation branches cannot be updated by session import"
-                    .into(),
-            );
-        }
-        if state.running_turns.lock().await.contains(id)
-            || state.reviewing.lock().unwrap().contains(id)
-        {
-            return Err("Wait for the imported conversation to finish before updating it".into());
-        }
-        Some(
-            state
-                .sessions
-                .lock()
-                .await
-                .entry(id.to_owned())
-                .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
-                .clone(),
-        )
-    } else {
-        None
-    };
-    let workflow = match &runtime {
-        Some(rt) => {
-            let guard = rt
-                .workflow
-                .clone()
-                .try_lock_owned()
-                .map_err(|_| "The imported conversation is busy")?;
-            if !rt.queued.lock().unwrap().is_empty() {
-                return Err("Remove queued messages before updating this conversation".into());
-            }
-            Some(guard)
-        }
-        None => None,
-    };
-    Ok((runtime, workflow))
+    {
+        return Err(
+            "Bound ACP sessions and conversation branches cannot be updated by session import"
+                .into(),
+        );
+    }
+    if state.running_turns.lock().await.contains(id) || state.reviewing.lock().unwrap().contains(id)
+    {
+        return Err("Wait for the imported conversation to finish before updating it".into());
+    }
+    let rt = state.session_runtime(id).await;
+    let guard = rt
+        .workflow
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| "The imported conversation is busy")?;
+    if !rt.queued.lock().unwrap().is_empty() {
+        return Err("Remove queued messages before updating this conversation".into());
+    }
+    Ok(Some((rt, guard)))
 }
 
-/// Native archive import uses explicit project identity, without selecting a WebView.
-pub(crate) async fn execute_native(
+/// The explicit, regular destination project of a native import request.
+pub(crate) async fn native_import_project<'a>(
     state: &AppState,
-    request: &wisp_dto::native_settings::Request,
-) -> Result<serde_json::Value, String> {
-    use wisp_dto::native_session_import::{ImportRequest, PreviewRequest};
+    request: &'a wisp_dto::native_settings::Request,
+) -> Result<&'a str, String> {
     let project = request
         .project_id
         .as_deref()
         .filter(|id| !id.is_empty() && id.trim() == *id)
-        .ok_or("An explicit target project is required")?;
+        .ok_or("An explicit destination project is required")?;
     if wisp_store::is_assistant_project_id(project) {
         return Err("Choose a regular destination project".into());
     }
@@ -696,7 +653,17 @@ pub(crate) async fn execute_native(
         .get_project(project)
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("Target project not found")?;
+        .ok_or("Destination project not found")?;
+    Ok(project)
+}
+
+/// Native archive import uses explicit project identity, without selecting a WebView.
+pub(crate) async fn execute_native(
+    state: &AppState,
+    request: &wisp_dto::native_settings::Request,
+) -> Result<serde_json::Value, String> {
+    use wisp_dto::native_session_import::{ImportRequest, PreviewRequest};
+    let project = native_import_project(state, request).await?;
     match request.command.as_str() {
         "native_session_archive_preview" => {
             let input: PreviewRequest =
@@ -732,8 +699,7 @@ pub(crate) async fn execute_native(
             .await?;
             let existing =
                 existing_import(&state.store, project, &prepared.parsed.session_id).await?;
-            let (runtime, _workflow) =
-                lock_native_import_target(state, project, existing.as_deref()).await?;
+            let locked = lock_native_import_target(state, project, existing.as_deref()).await?;
             let model = models::active_profile_id(&state.store).await;
             let result = apply_prepared_archive(
                 &state.store,
@@ -744,7 +710,7 @@ pub(crate) async fn execute_native(
                 prepared,
             )
             .await?;
-            if let Some(rt) = runtime {
+            if let Some((rt, _workflow)) = &locked {
                 *rt.agent.lock().await = None;
                 rt.sync_last_seq_from_store(&state.store, &result.frame_id)
                     .await?;
@@ -762,7 +728,7 @@ pub(super) async fn import_session_archive(
     app: AppHandle,
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
-) -> Result<Option<ImportSessionSummary>, String> {
+) -> Result<Option<wisp_dto::native_session_import::ImportResult>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -775,80 +741,13 @@ pub(super) async fn import_session_archive(
     let Some(picked) = rx.await.map_err(|e| format!("{e}"))? else {
         return Ok(None);
     };
-    let archive_path = PathBuf::from(picked.to_string());
-
-    let parsed = {
-        let path = archive_path.clone();
-        tokio::task::spawn_blocking(move || parse_import_archive(&path))
-            .await
-            .map_err(|e| format!("{e}"))??
-    };
-
+    let source = picked.to_string();
+    let prepared = prepare_archive(&source).await?;
     let ap = state.require_active(window.label())?;
-    let model_id = models::active_profile_id(&state.store).await;
-    let source_path = archive_path.to_string_lossy().into_owned();
-    let (frame_id, status) =
-        import_parsed(&state.store, &ap.id, &model_id, &source_path, &parsed).await?;
-
-    // Artifacts are restored on first import only; a fast-forward update keeps
-    // the files and artifact rows registered by the initial import.
-    let (artifact_count, missing_artifacts) =
-        if status == "imported" && !parsed.artifacts.is_empty() {
-            let (extracted, missing) = {
-                let path = archive_path.clone();
-                let root = ap.root.clone();
-                let session_id = parsed.session_id.clone();
-                let artifacts = parsed
-                    .artifacts
-                    .iter()
-                    .map(|a| ImportManifestArtifact {
-                        workspace_path: a.workspace_path.clone(),
-                        zip_path: a.zip_path.clone(),
-                        mime: a.mime.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                tokio::task::spawn_blocking(move || {
-                    extract_artifacts(&path, &artifacts, &root, &session_id)
-                })
-                .await
-                .map_err(|e| format!("{e}"))?
-            };
-            let mut count = 0usize;
-            for (_, target, mime) in extracted {
-                let filename = target
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("artifact")
-                    .to_string();
-                let storage_path = to_workspace_rel(&ap.root, &target.to_string_lossy());
-                if state
-                    .store
-                    .save_artifact(
-                        &uuid::Uuid::new_v4().to_string(),
-                        &ap.id,
-                        &frame_id,
-                        &filename,
-                        &mime,
-                        &storage_path,
-                    )
-                    .await
-                    .is_ok()
-                {
-                    count += 1;
-                }
-            }
-            (count, missing)
-        } else {
-            (0, vec![])
-        };
-
-    Ok(Some(ImportSessionSummary {
-        frame_id,
-        status: status.into(),
-        message_count: parsed.messages.len(),
-        artifact_count,
-        missing_artifacts,
-    }))
+    let model = models::active_profile_id(&state.store).await;
+    apply_prepared_archive(&state.store, &ap.id, &ap.root, &model, &source, prepared)
+        .await
+        .map(Some)
 }
 
 #[cfg(test)]
@@ -1262,7 +1161,12 @@ mod tests {
         );
         let parsed = parse_import_archive(&archive).unwrap();
 
-        let (extracted, missing) = extract_artifacts(&archive, &parsed.artifacts, &root, "s1");
+        let (extracted, missing) = extract_artifacts_from(
+            std::fs::File::open(&archive).unwrap(),
+            &parsed.artifacts,
+            &root,
+            "s1",
+        );
         assert!(missing.is_empty());
         assert_eq!(extracted.len(), 1);
         assert_eq!(extracted[0].1, root.join("results/data.txt"));

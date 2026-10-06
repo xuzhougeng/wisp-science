@@ -5,7 +5,7 @@
 //! [`Dispatcher`] is the dispatching side of that contract. The research
 //! assistant (`research_assistant::AssistantDispatcher`) and in-conversation
 //! subagents (`subagent_tool::SubagentDispatcher`, #1061) implement it.
-use crate::{channels, AppState, SessionRuntime, TurnOrigin};
+use crate::{channels, AppState, TurnOrigin};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -41,21 +41,11 @@ pub(crate) trait Dispatcher: Send + Sync + 'static {
     fn delivered(&self, _project_id: &str, _report: &str) {}
 }
 
-async fn runtime(state: &AppState, session: &str) -> Arc<SessionRuntime> {
-    state
-        .sessions
-        .lock()
-        .await
-        .entry(session.into())
-        .or_insert_with(|| Arc::new(SessionRuntime::new()))
-        .clone()
-}
-
 pub(crate) async fn reserve(
     state: &AppState,
     session: &str,
 ) -> Result<OwnedMutexGuard<()>, String> {
-    runtime(state, session).await.workflow.clone().try_lock_owned()
+    state.session_runtime(session).await.workflow.clone().try_lock_owned()
         .map_err(|_| "This conversation is already working. Wait for it to finish before dispatching another task or changing its server.".into())
 }
 
@@ -282,7 +272,7 @@ async fn report(
     };
     // Wait for the parent's startup acknowledgement (or another user turn) to
     // finish, then append a separate assistant reply under its workflow lock.
-    let rt = runtime(&state, parent).await;
+    let rt = state.session_runtime(parent).await;
     let _guard = rt.workflow.lock().await;
     if !dispatcher
         .may_report(&state.store, &reference.project_id)

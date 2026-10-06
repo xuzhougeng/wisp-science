@@ -65,40 +65,12 @@ pub(crate) async fn dispatch(
     let state = broker.app.state::<crate::AppState>();
     let session = &request.session_id;
     crate::native_conversations::require_owner(&state.store, project, session).await?;
-    state
-        .store
-        .require_unarchived_session(session)
-        .await
-        .map_err(|e| e.to_string())?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(session)
-            .await
-            .map_err(|e| e.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
-        return Err("Frozen conversation branches cannot be changed".into());
-    }
-    let scope = state
-        .store
-        .frame_state_scope(session)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Session state scope was not found")?;
-    crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+    crate::native_conversations::require_mutable_session(&state.store, session).await?;
     // The legacy rewind command does not take the workflow lock. Claim it
     // before reading the confirmation revision so a WebView send or queue
     // driver cannot append a new turn between validation and truncation.
     let _rewind_workflow = if matches!(request.action, HistoryAction::Rewind) {
-        let runtime = state
-            .sessions
-            .lock()
-            .await
-            .entry(session.clone())
-            .or_insert_with(|| std::sync::Arc::new(crate::SessionRuntime::new()))
-            .clone();
-        Some(rewind_guard(&runtime)?)
+        Some(rewind_guard(&*state.session_runtime(session).await)?)
     } else {
         None
     };

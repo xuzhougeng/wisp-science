@@ -1,6 +1,6 @@
 //! Scoped, read-only composer candidates. Selection carries stable IDs through
 //! the same reference resolver as WebView; labels never substitute for IDs.
-use crate::native_settings::{invoke_command, Broker};
+use crate::{native_conversations::call, native_settings::Broker};
 use serde_json::{json, Value};
 use wisp_dto::{
     native_conversations::{ReferenceCatalog, ReferenceKind, ReferenceOption, ReferenceRequest},
@@ -30,10 +30,6 @@ fn option(reference: Reference, label: String, detail: String) -> ReferenceOptio
     }
 }
 
-async fn read(broker: &Broker, project: &str, command: &str, args: Value) -> Result<Value, String> {
-    invoke_command(broker, Some(project.to_owned()), command, args).await
-}
-
 pub(crate) async fn references(
     broker: &Broker,
     project: &str,
@@ -47,7 +43,7 @@ pub(crate) async fn references(
     let mut options = Vec::new();
     match request.kind {
         ReferenceKind::Artifact => {
-            let rows = read(
+            let rows = call(
                 broker,
                 project,
                 "search_artifacts",
@@ -64,7 +60,7 @@ pub(crate) async fn references(
                     ));
                 }
             }
-            let rows = read(broker, project, "list_execution_contexts", json!({})).await?;
+            let rows = call(broker, project, "list_execution_contexts", json!({})).await?;
             let contexts: Vec<wisp_dto::ExecutionContext> =
                 serde_json::from_value(rows).map_err(|e| e.to_string())?;
             for context in contexts {
@@ -102,7 +98,7 @@ pub(crate) async fn references(
             }
         }
         ReferenceKind::Session => {
-            let current = read(broker, project, "get_project_info", json!({})).await?;
+            let current = call(broker, project, "get_project_info", json!({})).await?;
             let name = text(&current, "name");
             if matches(query, &["project", &name]) {
                 options.push(option(
@@ -111,7 +107,7 @@ pub(crate) async fn references(
                     "项目上下文".into(),
                 ));
             }
-            let rows = read(
+            let rows = call(
                 broker,
                 project,
                 "search_sessions",
@@ -130,7 +126,7 @@ pub(crate) async fn references(
             }
         }
         ReferenceKind::Skill => {
-            let workflows = read(broker, project, "list_workflow_templates", json!({})).await?;
+            let workflows = call(broker, project, "list_workflow_templates", json!({})).await?;
             for row in workflows.as_array().ok_or("Invalid workflow response")? {
                 let id = text(row, "id");
                 let name = text(row, "name");
@@ -143,7 +139,7 @@ pub(crate) async fn references(
                     options.push(option(Reference::Workflow { id }, name, description));
                 }
             }
-            let skills = read(broker, project, "list_skills", json!({})).await?;
+            let skills = call(broker, project, "list_skills", json!({})).await?;
             options.extend(skill_options(&skills, query)?);
         }
     }

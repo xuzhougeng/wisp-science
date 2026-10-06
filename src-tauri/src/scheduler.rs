@@ -293,13 +293,7 @@ async fn fire_session_timer(
     let Some(frame_id) = scheduled.frame_id.clone() else {
         return Err("The timer has no target conversation.".into());
     };
-    let rt = {
-        let mut sessions = state.sessions.lock().await;
-        sessions
-            .entry(frame_id.clone())
-            .or_insert_with(|| Arc::new(crate::SessionRuntime::new()))
-            .clone()
-    };
+    let rt = state.session_runtime(&frame_id).await;
     let Some(workflow) = timer_workflow(&rt) else {
         return if advance {
             Ok(())
@@ -418,18 +412,9 @@ fn timer_workflow(rt: &Arc<crate::SessionRuntime>) -> Option<tokio::sync::OwnedM
 }
 
 async fn ensure_native_timer(state: &AppState, frame_id: &str) -> Result<(), String> {
-    if state
-        .store
-        .get_acp_session(frame_id)
-        .await
-        .map_err(|e| e.to_string())?
+    if crate::acp::session_agent_id(&state.store, frame_id)
+        .await?
         .is_some()
-        || state
-            .store
-            .frame_acp_agent_selection(frame_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .is_some()
     {
         return Err(
             "Timers require a native Wisp conversation; ACP agents own their remote history."
@@ -473,7 +458,7 @@ pub(crate) async fn set_session_timer(
         .map_err(|e| e.to_string())?
         .into_iter()
         .find(|s| s.replace_previous_turn && s.frame_id.as_deref() == Some(&session_id));
-    if let Some(mut schedule) = existing {
+    if let Some(schedule) = existing {
         let updated = state
             .store
             .update_session_timer(&schedule.id, &prompt, interval_secs, now)
@@ -482,19 +467,14 @@ pub(crate) async fn set_session_timer(
         if !updated {
             return Err("The timer was cancelled while it was being edited.".into());
         }
-        schedule.prompt = prompt.clone();
-        schedule.name = prompt.chars().take(80).collect();
-        schedule.interval_secs = interval_secs;
-        schedule.next_run_at = now + interval_secs;
-        schedule.updated_at = now;
-        return Ok(schedule);
+        return load_schedule(&state, &schedule.id).await;
     }
     let schedule = ScheduleRecord {
         id: Uuid::new_v4().to_string(),
         project_id: project.id,
         frame_id: Some(session_id),
         replace_previous_turn: true,
-        name: prompt.chars().take(80).collect(),
+        name: prompt.chars().take(MAX_NAME_CHARS).collect(),
         prompt,
         skill: None,
         interval_secs,

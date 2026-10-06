@@ -99,16 +99,10 @@ async fn mutate(
 ) -> Result<wisp_dto::native_publication::MutationResult, String> {
     use serde_json::json;
     use wisp_dto::native_publication::{MutationResult, Operation};
-    let selected = crate::publication_commands::publication_workspace(
-        store,
-        project,
-        None,
-        Some(&input.revision_id),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    if selected.publication.as_ref().map(|p| p.project_id.as_str()) != Some(project)
-        || selected.revision.as_ref().map(|r| r.id.as_str()) != Some(input.revision_id.as_str())
+    if crate::publication_commands::revision_project(store, &input.revision_id)
+        .await
+        .map_err(|e| e.to_string())?
+        != project
     {
         return Err("Publication revision does not belong to the selected project".into());
     }
@@ -117,6 +111,7 @@ async fn mutate(
     fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
         serde_json::from_value(value).map_err(|e| e.to_string())
     }
+    let check_only = matches!(input.operation, Operation::Check { .. });
     match input.operation {
         Operation::SaveItem {
             id,
@@ -208,12 +203,7 @@ async fn mutate(
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        operation @ (Operation::Check { .. } | Operation::Freeze { .. }) => {
-            let check_only = matches!(operation, Operation::Check { .. });
-            let policy = match operation {
-                Operation::Check { policy } | Operation::Freeze { policy } => policy,
-                _ => unreachable!(),
-            };
+        Operation::Check { policy } | Operation::Freeze { policy } => {
             let result = crate::publication_freeze::prepare_or_freeze_publication(
                 store,
                 &revision_id,

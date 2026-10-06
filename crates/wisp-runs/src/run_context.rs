@@ -1579,17 +1579,12 @@ impl RunManager {
     pub async fn inspect_run_server(
         &self,
         store: &wisp_store::Store,
-        run_id: &str,
+        run: &wisp_store::RunRecord,
     ) -> Result<String, String> {
-        let run = store
-            .get_run(run_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Run not found: {run_id}"))?;
         if run.cleaned_at.is_some() {
             return Err("Run workspace was already cleaned".into());
         }
-        let remote = remote_run_from_record(store, &run)
+        let remote = remote_run_from_record(store, run)
             .await?
             .ok_or_else(|| "Run has no server workspace".to_string())?;
         harvest_remote::inspect_run_server(self.runner.as_ref(), &remote).await
