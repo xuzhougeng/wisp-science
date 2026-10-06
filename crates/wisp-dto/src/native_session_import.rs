@@ -103,12 +103,6 @@ pub struct ImportRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PreviewLine {
-    pub role: String,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ArchivePreview {
     pub schema: String,
     pub project_id: String,
@@ -118,7 +112,7 @@ pub struct ArchivePreview {
     pub title: String,
     pub message_count: usize,
     pub artifacts: Vec<String>,
-    pub messages: Vec<PreviewLine>,
+    pub messages: Vec<crate::ExternalSessionPreviewLine>,
     pub existing_session_id: Option<String>,
     pub state: String,
 }

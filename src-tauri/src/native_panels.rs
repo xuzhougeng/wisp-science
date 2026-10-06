@@ -704,11 +704,8 @@ async fn read(
     render_office: bool,
 ) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || {
-        let content = if render_pdf || render_office {
-            crate::file_browser::read_native_preview_at(&root, path, render_pdf, render_office)?
-        } else {
-            crate::file_browser::read_file_at(&root, path, None)?
-        };
+        let content =
+            crate::file_browser::read_native_preview_at(&root, path, render_pdf, render_office)?;
         serde_json::to_value(content).map_err(|e| e.to_string())
     })
     .await

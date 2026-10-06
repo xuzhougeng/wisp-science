@@ -1313,9 +1313,17 @@ fn read_context_preview_with_runner(
 }
 
 fn preview_lines(provider: ImportProvider, jsonl: &str) -> Vec<ExternalSessionPreviewLine> {
-    let mut lines = parse_jsonl(provider, jsonl)
+    preview_lines_of(provider, &parse_jsonl(provider, jsonl), jsonl)
+}
+
+fn preview_lines_of(
+    provider: ImportProvider,
+    parsed: &ParsedSession,
+    jsonl: &str,
+) -> Vec<ExternalSessionPreviewLine> {
+    let mut lines = parsed
         .messages
-        .into_iter()
+        .iter()
         .filter(|message| matches!(message.role, Role::User | Role::Assistant))
         .filter_map(|message| {
             let text = message.text.trim();
@@ -1392,17 +1400,13 @@ async fn list_sessions_in(
         .unwrap()
 }
 
-fn scoped_import_key(project: &str, provider_key: &str) -> String {
-    format!("project:{}:{project}:{provider_key}", project.len())
-}
-
 async fn existing_import(
     store: &Store,
     project: &str,
     provider_key: &str,
 ) -> Result<Option<String>, String> {
     for key in [
-        scoped_import_key(project, provider_key),
+        crate::session_import::project_import_key(project, provider_key),
         provider_key.to_owned(),
     ] {
         if let Some(frame) = store
@@ -1524,7 +1528,7 @@ async fn import_session_jsonl(
             .map_err(|e| e.to_string())?;
         store
             .record_codex_import(
-                &scoped_import_key(project_id, &import_key),
+                &crate::session_import::project_import_key(project_id, &import_key),
                 &frame_id,
                 source_path,
             )
@@ -1555,7 +1559,7 @@ async fn import_session_jsonl(
         .map_err(|e| e.to_string())?;
     store
         .record_codex_import(
-            &scoped_import_key(project_id, &import_key),
+            &crate::session_import::project_import_key(project_id, &import_key),
             &frame_id,
             source_path,
         )
@@ -1945,6 +1949,7 @@ async fn native_preview_from_jsonl(
     if parsed.session_id.trim().is_empty() || parsed.messages.is_empty() {
         return Err("The source contains no importable conversation messages".into());
     }
+    let messages = preview_lines_of(provider, &parsed, jsonl);
     Ok(ExternalPreview {
         schema: SCHEMA.into(),
         project_id: project.into(),
@@ -1960,7 +1965,7 @@ async fn native_preview_from_jsonl(
         source_session_id: parsed.session_id,
         sha256: wisp_sync::sha256_hex(jsonl.as_bytes()),
         message_count: parsed.messages.len(),
-        messages: preview_lines(provider, jsonl),
+        messages,
     })
 }
 
@@ -1988,20 +1993,7 @@ pub(crate) async fn execute_native(
     request: &wisp_dto::native_settings::Request,
 ) -> Result<serde_json::Value, String> {
     use wisp_dto::native_session_import::*;
-    let project = request
-        .project_id
-        .as_deref()
-        .filter(|p| !p.is_empty() && p.trim() == *p)
-        .ok_or("An explicit destination project is required")?;
-    if wisp_store::is_assistant_project_id(project) {
-        return Err("Choose a regular destination project".into());
-    }
-    state
-        .store
-        .get_project(project)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Destination project not found")?;
+    let project = crate::session_import::native_import_project(state, request).await?;
     match request.command.as_str() {
         "native_external_session_sources" => {
             let sources = native_import_sources(
@@ -2093,7 +2085,7 @@ pub(crate) async fn execute_native(
                 &provider.import_key(&input.source_session_id),
             )
             .await?;
-            let (runtime, _workflow) = crate::session_import::lock_native_import_target(
+            let locked = crate::session_import::lock_native_import_target(
                 state,
                 project,
                 existing.as_deref(),
@@ -2108,7 +2100,7 @@ pub(crate) async fn execute_native(
             let result =
                 import_session_jsonl(provider, &state.store, project, &model, &path, &jsonl)
                     .await?;
-            if let Some(rt) = runtime {
+            if let Some((rt, _workflow)) = &locked {
                 *rt.agent.lock().await = None;
                 rt.sync_last_seq_from_store(&state.store, &result.frame_id)
                     .await?;

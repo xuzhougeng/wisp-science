@@ -1939,12 +1939,22 @@ pub(crate) async fn enqueue_turn(
 /// - `cutin`  → offer it to the current loop, retaining its payload for a
 ///   priority handoff if that loop has already ended (or has not started yet).
 pub(crate) fn begin_queued_cutin(rt: &SessionRuntime, id: u64) -> Option<u64> {
+    let mut queued = rt.queued.lock().unwrap();
+    let index = queued.iter().position(|item| item.id == id)?;
+    cut_in_at(rt, &mut queued, index)
+}
+
+/// The caller holds `queued`. `None` while a timer turn runs: it takes no
+/// researcher guidance.
+pub(crate) fn cut_in_at(
+    rt: &SessionRuntime,
+    queued: &mut Vec<QueuedItem>,
+    index: usize,
+) -> Option<u64> {
     if rt.timer_running.load(Ordering::SeqCst) {
         return None;
     }
     // All transfers use the same lock order: queued → cut-ins → guidance.
-    let mut queued = rt.queued.lock().unwrap();
-    let index = queued.iter().position(|item| item.id == id)?;
     let item = queued.remove(index);
     let mut cutins = rt.queued_cutins.lock().unwrap();
     let guidance_id = rt
@@ -1974,40 +1984,18 @@ pub(crate) fn swap_queued_toward(q: &mut Vec<QueuedItem>, id: u64, up: bool) {
     }
 }
 
-/// Park exactly one user-authored follow-up. A second distinct draft is refused.
-/// Repeating the same id does not add another item. The queue driver drains
-/// this with `take_next_queued_turn` and stops when that returns nothing.
-#[cfg(test)]
-pub(crate) fn queue_one_follow_up(
-    turn_running: bool,
-    rt: &SessionRuntime,
-    id: u64,
-    message: &str,
-    attachments: &[String],
-) -> Result<String, String> {
-    queue_follow_up_with_references(turn_running, rt, id, message, attachments, &[])
-}
+const MAX_QUEUED_FOLLOW_UPS: usize = 64;
 
-#[cfg(test)]
-pub(crate) fn queue_follow_up_with_references(
+/// Park a user-authored follow-up. Repeating the same id does not add another
+/// item. The queue driver drains this with `take_next_queued_turn` and stops
+/// when that returns nothing.
+pub(crate) fn queue_follow_up(
     turn_running: bool,
     rt: &SessionRuntime,
     id: u64,
     message: &str,
     attachments: &[String],
     references: &[ComposerReferenceArg],
-) -> Result<String, String> {
-    queue_follow_up_with_limit(turn_running, rt, id, message, attachments, references, 1)
-}
-
-pub(crate) fn queue_follow_up_with_limit(
-    turn_running: bool,
-    rt: &SessionRuntime,
-    id: u64,
-    message: &str,
-    attachments: &[String],
-    references: &[ComposerReferenceArg],
-    limit: usize,
 ) -> Result<String, String> {
     if references.len() > 64 {
         return Err("Too many composer references".into());
@@ -2044,8 +2032,10 @@ pub(crate) fn queue_follow_up_with_limit(
         }
         return Err("Queued request ID was already used for another message".into());
     }
-    if queued.len() + cutins.len() >= limit {
-        return Err(format!("At most {limit} follow-ups can wait"));
+    if queued.len() + cutins.len() >= MAX_QUEUED_FOLLOW_UPS {
+        return Err(format!(
+            "At most {MAX_QUEUED_FOLLOW_UPS} follow-ups can wait"
+        ));
     }
     drop(cutins);
     queued.push(QueuedItem {
@@ -2273,24 +2263,25 @@ mod queue_tests {
     #[test]
     fn one_user_follow_up_is_sent_and_the_queue_stops() {
         let rt = SessionRuntime::new();
-        assert!(queue_one_follow_up(false, &rt, 1, "继续", &[]).is_err());
+        assert!(queue_follow_up(false, &rt, 1, "继续", &[], &[]).is_err());
         assert!(take_next_queued_turn(&rt).is_none());
-        let parked = queue_one_follow_up(
+        let parked = queue_follow_up(
             true,
             &rt,
             7,
             "  继续检查对照  ",
             &["uploads/notes.csv".into()],
+            &[],
         )
         .unwrap();
         assert_eq!(parked, "继续检查对照\n\nUploaded files: uploads/notes.csv");
-        assert!(queue_one_follow_up(true, &rt, 8, "另一条", &[]).is_err());
-        let replay = queue_one_follow_up(
+        let replay = queue_follow_up(
             true,
             &rt,
             7,
             "  继续检查对照  ",
             &["uploads/notes.csv".into()],
+            &[],
         )
         .unwrap();
         assert_eq!(replay, parked);
@@ -2303,13 +2294,22 @@ mod queue_tests {
     }
 
     #[test]
+    fn follow_up_queue_is_capped() {
+        let rt = SessionRuntime::new();
+        for id in 0..MAX_QUEUED_FOLLOW_UPS as u64 {
+            queue_follow_up(true, &rt, id, "x", &[], &[]).unwrap();
+        }
+        assert!(queue_follow_up(true, &rt, u64::MAX, "x", &[], &[]).is_err());
+    }
+
+    #[test]
     fn native_queued_references_survive_drain_and_reject_changed_request_ids() {
         let rt = SessionRuntime::new();
         let references = vec![ComposerReferenceArg::Skill {
             name: "RNA-seq".into(),
         }];
-        queue_follow_up_with_references(true, &rt, 42, "inspect", &[], &references).unwrap();
-        assert!(queue_follow_up_with_references(true, &rt, 42, "inspect", &[], &[]).is_err());
+        queue_follow_up(true, &rt, 42, "inspect", &[], &references).unwrap();
+        assert!(queue_follow_up(true, &rt, 42, "inspect", &[], &[]).is_err());
         let next = take_next_queued_turn(&rt).unwrap();
         assert_eq!(next.references, references);
         assert_eq!(next.message, "inspect");
@@ -2375,7 +2375,7 @@ mod queue_tests {
     #[tokio::test]
     async fn replacement_after_workflow_acquisition_still_blocks_queue_removal() {
         let rt = Arc::new(SessionRuntime::new());
-        queue_follow_up_with_limit(true, &rt, 41, "queued", &[], &[], 64).unwrap();
+        queue_follow_up(true, &rt, 41, "queued", &[], &[]).unwrap();
         rt.draining.store(true, Ordering::SeqCst);
         let guard = queued_workflow_guard(&rt).await;
         let reservation = ReplacementReservation::new(rt.clone());

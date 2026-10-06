@@ -4784,10 +4784,7 @@ async fn server_inspection_reads_a_running_ssh_run_without_changing_it() {
     )]));
     let manager = RunManager::with_runner(runner.clone());
 
-    let report = manager
-        .inspect_run_server(&store, "run-open")
-        .await
-        .unwrap();
+    let report = manager.inspect_run_server(&store, &run).await.unwrap();
     assert!(report.starts_with(
         "looked for new files under (writable directories only): \
          ~/.wisp-science/runs/run-open/inputs, /data2/proj/scotch-quant, /data2/ref/it, /dev/null\n"

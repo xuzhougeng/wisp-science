@@ -127,18 +127,9 @@ fn apply(
             queued.insert(0, item);
         }
         QueueAction::CutIn => {
-            if !can_cut_in || runtime.timer_running.load(Ordering::SeqCst) {
+            if !can_cut_in || crate::agent_turn::cut_in_at(runtime, &mut queued, index).is_none() {
                 return Err("This session does not support inserting into the current turn".into());
             }
-            let item = queued.remove(index);
-            let mut cutins = runtime.queued_cutins.lock().unwrap();
-            let guidance_id = runtime.guidance_seq.fetch_add(1, Ordering::Relaxed);
-            runtime
-                .pending_guidance
-                .lock()
-                .unwrap()
-                .push((guidance_id, item.message.clone()));
-            cutins.push((guidance_id, item));
         }
     }
     Ok(None)
@@ -152,28 +143,7 @@ pub(crate) async fn dispatch(
 ) -> Result<Value, String> {
     let state = broker.app.state::<crate::AppState>();
     crate::native_conversations::require_owner(&state.store, project, &request.session_id).await?;
-    state
-        .store
-        .require_unarchived_session(&request.session_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let scope = state
-        .store
-        .frame_state_scope(&request.session_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Session scope missing")?;
-    crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
-    if matches!(
-        state
-            .store
-            .session_branch_state(&request.session_id)
-            .await
-            .map_err(|e| e.to_string())?,
-        Some("merged" | "orphaned")
-    ) {
-        return Err("Frozen conversation queues cannot be changed".into());
-    }
+    crate::native_conversations::require_mutable_session(&state.store, &request.session_id).await?;
     let runtime = state
         .sessions
         .lock()
@@ -290,26 +260,16 @@ mod tests {
     fn native_queue_accepts_distinct_payloads_and_reconciles_cutin_handoff() {
         let rt = SessionRuntime::new();
         for (id, file) in [(1, "a.csv"), (2, "b.csv")] {
-            crate::agent_turn::queue_follow_up_with_limit(
-                true,
-                &rt,
-                id,
-                "same",
-                &[file.into()],
-                &[],
-                64,
-            )
-            .unwrap();
+            crate::agent_turn::queue_follow_up(true, &rt, id, "same", &[file.into()], &[]).unwrap();
         }
         assert_eq!(items(&rt).len(), 2);
-        assert!(crate::agent_turn::queue_follow_up_with_limit(
+        assert!(crate::agent_turn::queue_follow_up(
             true,
             &rt,
             1,
             "same",
             &["other.csv".into()],
-            &[],
-            64
+            &[]
         )
         .is_err());
         let cutin = request(&rt, 2, QueueAction::CutIn);

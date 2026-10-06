@@ -632,6 +632,14 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
+    pub(crate) async fn session_runtime(&self, session: &str) -> Arc<SessionRuntime> {
+        self.sessions
+            .lock()
+            .await
+            .entry(session.into())
+            .or_insert_with(|| Arc::new(SessionRuntime::new()))
+            .clone()
+    }
     pub(crate) fn project_activity(&self, project_id: &str) -> Arc<tokio::sync::RwLock<()>> {
         self.project_activity.project(project_id)
     }
