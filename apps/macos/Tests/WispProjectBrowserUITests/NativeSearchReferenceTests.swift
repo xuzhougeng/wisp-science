@@ -133,7 +133,7 @@ final class NativeSearchReferenceTests: XCTestCase {
         let query = try XCTUnwrap(calls[0].1["query"]?.string); XCTAssertLessThanOrEqual(query.utf8.count, 512); XCTAssertTrue(selected.title.hasPrefix(query))
     }
     @MainActor func testNativeFieldRoutesEnterAndShiftEnterAndLeavesIMECandidatesAlone() throws {
-        _ = NSApplication.shared; var submissions: [Bool] = []
+        _ = NSApplication.shared; var submissions: [NativeSearchDisposition] = []
         let host = NSHostingView(rootView: SearchCommandField(text: .constant("query"), cancel: {}, move: { _ in }, submit: { submissions.append($0) }))
         host.frame = NSRect(x: 0, y: 0, width: 400, height: 44); host.layoutSubtreeIfNeeded()
         func field(in view: NSView) -> NSTextField? { (view as? NSTextField) ?? view.subviews.compactMap { field(in: $0) }.first }
@@ -141,10 +141,13 @@ final class NativeSearchReferenceTests: XCTestCase {
         let editor = NSTextView()
         XCTAssertTrue(coordinator.control(textField, textView: editor, doCommandBy: #selector(NSResponder.insertNewline(_:))))
         XCTAssertTrue(coordinator.control(textField, textView: editor, doCommandBy: #selector(NSResponder.insertLineBreak(_:))))
-        XCTAssertEqual(submissions, [false, true])
+        XCTAssertEqual(submissions, [.open, .reference])
+        XCTAssertEqual(NativeSearchDisposition.resolve(.command), .newWindow)
+        XCTAssertEqual(NativeSearchDisposition.resolve(.control), .newWindow)
+        XCTAssertEqual(NativeSearchDisposition.resolve([.command, .shift]), .reference)
         editor.setMarkedText("候选", selectedRange: NSRange(location: 0, length: 2), replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(editor.hasMarkedText())
         XCTAssertFalse(coordinator.control(textField, textView: editor, doCommandBy: #selector(NSResponder.insertNewline(_:))))
-        XCTAssertEqual(submissions, [false, true])
+        XCTAssertEqual(submissions, [.open, .reference])
     }
 }

@@ -9,6 +9,7 @@ struct NativeSearchCommand: Identifiable, Equatable {
     var session = false
     static let all: [Self] = [
         .init(id: "new-project", title: "新建项目", icon: "folder-plus", keywords: "new project"),
+        .init(id: "new-window", title: "新建窗口", icon: "expand", keywords: "new window"),
         .init(id: "new-session", title: "新建会话", icon: "plus", keywords: "new conversation session", project: true),
         .init(id: "settings", title: "设置", icon: "gear", keywords: "preferences config"),
         .init(id: "project-settings", title: "项目设置", icon: "adjustments", keywords: "project preferences", project: true),

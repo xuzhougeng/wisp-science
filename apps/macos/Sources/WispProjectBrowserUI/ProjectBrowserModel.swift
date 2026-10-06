@@ -48,6 +48,8 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published private(set) var sessionError: String?
     private var navigationGeneration = UUID()
     @Published public private(set) var isLoading = false
+    @Published public private(set) var windowReady = true
+    @Published private(set) var windowOpening = false
     @Published private(set) var error: String?
     @Published private(set) var listRefreshFailed = false
     @Published private(set) var savingProjectID: String?
@@ -75,7 +77,7 @@ public final class ProjectBrowserModel: ObservableObject {
     }
     func nativeConversation() -> NativeConversationModel {
         if let existing = nativeModels[databaseURL] { return existing }
-        let model = NativeConversationModel(client: NativeConversationClient(transport: NativeSettingsClient(databaseURL: databaseURL, executableURL: nativeDesktopHostURL())))
+        let model = NativeConversationModel(client: NativeConversationClient(transport: projectTransport()))
         nativeModels[databaseURL] = model
         return model
     }
@@ -88,8 +90,7 @@ public final class ProjectBrowserModel: ObservableObject {
         await openSession(id)
     }
     private let client: any ProjectBrowserQuerying
-    private let projectTransportOverride: (any NativeSettingsQuerying)?
-    private var projectHosts: [URL: NativeSettingsClient] = [:]
+    private let transports: NativeWorkspaceTransports
 
     public init() {
         let environment = ProcessInfo.processInfo.environment
@@ -101,13 +102,50 @@ public final class ProjectBrowserModel: ObservableObject {
             ?? Bundle.main.url(forAuxiliaryExecutable: "wisp-service")
             ?? Bundle.main.bundleURL.appendingPathComponent("wisp-service")
         client = ProjectBrowserClient(executableURL: executable)
-        projectTransportOverride = nil
+        transports = NativeWorkspaceTransports()
     }
 
     init(client: any ProjectBrowserQuerying, databaseURL: URL, projectTransport: (any NativeSettingsQuerying)? = nil) {
         self.client = client
         self.databaseURL = databaseURL
-        self.projectTransportOverride = projectTransport
+        transports = NativeWorkspaceTransports(override: projectTransport)
+    }
+    private init(client: any ProjectBrowserQuerying, databaseURL: URL, transports: NativeWorkspaceTransports) {
+        self.client = client; self.databaseURL = databaseURL; self.transports = transports
+    }
+
+    public func newWindowRequest() -> NativeWorkspaceWindowRequest { NativeWorkspaceWindowRequest(databaseURL: databaseURL) }
+    func windowRequest(for item: NativeSearchItem) -> NativeWorkspaceWindowRequest? {
+        guard item.valid, item.kind == "project" || item.kind == "session" else { return nil }
+        return NativeWorkspaceWindowRequest(databaseURL: databaseURL, projectID: item.project_id, sessionID: item.session_id)
+    }
+    public func makeIndependentWorkspace(databaseURL: URL) -> ProjectBrowserModel {
+        let model = ProjectBrowserModel(client: client, databaseURL: databaseURL, transports: transports)
+        model.windowReady = false
+        return model
+    }
+    public func loadWindow(_ request: NativeWorkspaceWindowRequest) async -> Bool {
+        guard !windowOpening else { return false }
+        windowReady = false
+        guard request.valid, request.databaseURL == databaseURL, !isLoading else {
+            error = localized("窗口请求无效或数据库已改变，请重新打开。")
+            return false
+        }
+        windowOpening = true
+        defer { windowOpening = false }
+        await refresh()
+        guard !Task.isCancelled, request.databaseURL == databaseURL, !listRefreshFailed else { return false }
+        guard let project = request.projectID else { windowReady = true; return true }
+        guard projects.contains(where: { $0.id == project }) else {
+            error = localized("请求的项目已不存在或不可见，请重新搜索。")
+            return false
+        }
+        await openProject(project, sessionID: request.sessionID)
+        windowReady = !Task.isCancelled && request.databaseURL == databaseURL && activeProjectID == project
+            && (request.sessionID == nil || activeSessionID == request.sessionID) && sessionError == nil
+            && sessions.allSatisfy { $0.projectID == project }
+        if !windowReady && error == nil && sessionError == nil { error = localized("请求的会话不属于此项目，请重新搜索。") }
+        return windowReady
     }
 
     public func refresh() async {
@@ -557,11 +595,7 @@ public final class ProjectBrowserModel: ObservableObject {
     func calendarClient() -> any NativeSettingsQuerying { projectTransport() }
 
     private func projectTransport() -> any NativeSettingsQuerying {
-        if let projectTransportOverride { return projectTransportOverride }
-        if let host = projectHosts[databaseURL] { return host }
-        let host = NativeSettingsClient(databaseURL: databaseURL, executableURL: nativeDesktopHostURL())
-        projectHosts[databaseURL] = host
-        return host
+        transports.client(database: databaseURL)
     }
 
     func reveal(_ project: ProjectSummary) {

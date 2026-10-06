@@ -659,5 +659,18 @@
   "来源已失效的分支": "Branch with an invalidated source",
   "分支": "Branch",
   "子代理会话": "Subagent conversation",
-  "此分支的检查点已失效，仍可查看保存的记录。": "This branch's checkpoint is invalidated. Its saved records remain available to inspect."
+  "此分支的检查点已失效，仍可查看保存的记录。": "This branch's checkpoint is invalidated. Its saved records remain available to inspect.",
+  "↑↓ 选择    ↵ 打开    ⌘↵ 新窗口    ⇧↵ 引用    esc 关闭": "↑↓ Select    ↵ Open    ⌘↵ New window    ⇧↵ Attach    esc Close",
+  "↑↓ 选择    ↵ 打开    esc 关闭": "↑↓ Select    ↵ Open    esc Close",
+  "⌘↵ 新窗口    ⇧↵ 引用": "⌘↵ New window    ⇧↵ Attach",
+  "在新窗口打开": "Open in new window",
+  "新建窗口": "New window",
+  "正在打开窗口…": "Opening window…",
+  "窗口请求无效或数据库已改变，请重新打开。": "The window request is invalid or the database changed. Open it again.",
+  "请求的项目已不存在或不可见，请重新搜索。": "The requested project is missing or hidden. Search again.",
+  "请求的会话不属于此项目，请重新搜索。": "The requested conversation does not belong to this project. Search again.",
+  "设置…": "Settings…",
+  "选择数据库…": "Choose database…",
+  "搜索项目与会话": "Search projects and conversations",
+  "刷新项目": "Refresh projects"
 }

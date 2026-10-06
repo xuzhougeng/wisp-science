@@ -403,3 +403,29 @@ groups remain open.
   workspace gate passed 2655 tests across 45 test summaries, without failures or
   ignored tests. The focus increment adds no Rust command/schema. Independent
   windows and later outcome groups remain open.
+
+### Increment 15: independent workspace windows from search
+
+- Added value-based SwiftUI workspace scenes with a fresh identity per open. Each
+  scene owns its browser/conversation/navigation/draft/panel models and shares a
+  database-keyed descriptor transport registry. A window changing database uses
+  that database's host; same-database windows retain a shared transport. The request contains no draft
+  or token. Project/session targets are reread; unavailable/hidden/missing/foreign
+  targets fail visibly without recent-session fallback, and cancelled reads cannot
+  make the window ready. The primary Dock/Finder reopen behavior is retained.
+- Added Cmd/Ctrl+Enter and project/session result context actions, Cmd+N and a scoped
+  `>new window` action. Artifacts keep WebView's original-window preview. Shift+Enter
+  preserves reference priority and IME commands stay with AppKit. Application menu
+  actions use the focused scene's model; initialization failures cannot receive
+  workspace actions. The translated shortcut legend fits narrow windows.
+- Thirty-six targeted Swift checks passed, including six new scene identity,
+  database/ownership/failure/cancellation and real browser/conversation isolation
+  checks using fake queries and a shared fake host. The final full Swift suite
+  passed 503 tests without failures after the database registry refinement.
+  Chinese/English light/dark search layouts were
+  rerendered at 419 points and representative results inspected. Formatting and
+  both generated-resource/command checks passed. No Rust command or schema changed;
+  the completed 2655-test Rust gate and WebView full gate/rerun are recorded above.
+- Files/viewers, assistant/automation/timers, journey/publication/workflow editing
+  and final packaged multi-window acceptance remain open. These conversation and
+  search increments do not complete the overall goal.

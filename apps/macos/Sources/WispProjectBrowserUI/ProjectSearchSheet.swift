@@ -9,6 +9,14 @@ struct SearchResultSelection {
     func selectedIndex(count: Int) -> Int? { count > 0 ? min(index, count - 1) : nil }
 }
 
+enum NativeSearchDisposition: Equatable {
+    case open, reference, newWindow
+    static func resolve(_ flags: NSEvent.ModifierFlags) -> Self {
+        if flags.contains(.shift) { return .reference }
+        return flags.intersection([.command, .control]).isEmpty ? .open : .newWindow
+    }
+}
+
 struct ProjectSearchSheet: View {
     @ObservedObject var model: ProjectBrowserModel
     var projectID: String? = nil
@@ -21,6 +29,7 @@ struct ProjectSearchSheet: View {
     @State private var query = ""
     @State private var selection = SearchResultSelection()
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.openWindow) private var openWindow
     init(model: ProjectBrowserModel, projectID: String? = nil, searchModel: NativeSearchModel? = nil, close: @escaping () -> Void) {
         self.model = model; self.projectID = projectID; self.close = close
         let database = model.databaseURL, project = model.activeProjectID, session = model.activeSessionID
@@ -39,9 +48,9 @@ struct ProjectSearchSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 WispIcon(name: "search")
-                SearchCommandField(text: $query, cancel: close, move: { selection.move($0, count: count) }, submit: { attach in
+                SearchCommandField(text: $query, cancel: close, move: { selection.move($0, count: count) }, submit: { disposition in
                     if let index = selection.selectedIndex(count: count) {
-                        if attach { attachSelection(index) } else { open(index) }
+                        if disposition == .reference { attachSelection(index) } else { open(index, newWindow: disposition == .newWindow) }
                     }
                 })
                 .frame(height: 24)
@@ -82,7 +91,13 @@ struct ProjectSearchSheet: View {
                 .onChange(of: selection.index) { index in scroll.scrollTo(index) }
             }
             Divider()
-            Text(localized("↑↓ 选择    ↵ 打开    ⇧↵ 引用    esc 关闭")).font(.caption).foregroundStyle(color("text-faint"))
+            ViewThatFits(in: .horizontal) {
+                Text(localized("↑↓ 选择    ↵ 打开    ⌘↵ 新窗口    ⇧↵ 引用    esc 关闭"))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(localized("↑↓ 选择    ↵ 打开    esc 关闭"))
+                    Text(localized("⌘↵ 新窗口    ⇧↵ 引用"))
+                }
+            }.font(.caption).foregroundStyle(color("text-faint"))
         }
         .padding(24).frame(minWidth: 320, idealWidth: 560, maxWidth: 680, minHeight: 380, idealHeight: 460, maxHeight: 740).background(color("bg-app"))
         .onChange(of: query) { _ in selection.reset(); search.invalidate(); references.invalidate() }
@@ -112,6 +127,9 @@ struct ProjectSearchSheet: View {
         .buttonStyle(.plain).id(index)
         .accessibilityAddTraits(selection.selectedIndex(count: count) == index ? [.isSelected] : [])
         .contextMenu {
+            if model.windowRequest(for: item) != nil {
+                Button { open(index, newWindow: true) } label: { Label { Text(localized("在新窗口打开")) } icon: { WispIcon(name: "expand") } }
+            }
             if NativeSearchReferenceModel.referenceable(item) {
                 Button { attach(item) } label: { Label { Text(localized("引用到当前草稿")) } icon: { WispIcon(name: "link") } }
                     .disabled(!references.available || references.reading)
@@ -130,12 +148,20 @@ struct ProjectSearchSheet: View {
         }
     }
 
-    private func open(_ index: Int) {
-        guard index >= 0 && index < count else { return }
+    private func open(_ index: Int, newWindow: Bool = false) {
+        guard index >= 0 && index < count, model.databaseURL == originDatabase,
+              model.activeProjectID == originProject, model.activeSessionID == originSession else { return }
         if index < commands.count {
-            let command = commands[index]; close(); model.executeSearchCommand(command); return
+            let command = commands[index]; close()
+            if command.id == "new-window" { openWindow(value: model.newWindowRequest()) }
+            else { model.executeSearchCommand(command) }
+            return
         }
         let item = search.items[index - commands.count]
+        guard model.databaseURL == originDatabase, model.activeProjectID == originProject, model.activeSessionID == originSession else { return }
+        if newWindow, let request = model.windowRequest(for: item) {
+            close(); openWindow(value: request); return
+        }
         close()
         Task {
             guard model.databaseURL == originDatabase, model.activeProjectID == originProject, model.activeSessionID == originSession else { return }
@@ -150,7 +176,7 @@ struct SearchCommandField: NSViewRepresentable {
     @Binding var text: String
     let cancel: () -> Void
     let move: (Int) -> Void
-    let submit: (Bool) -> Void
+    let submit: (NativeSearchDisposition) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSTextField {
@@ -182,7 +208,8 @@ struct SearchCommandField: NSViewRepresentable {
             case #selector(NSResponder.moveDown(_:)): parent.move(1)
             case #selector(NSResponder.moveUp(_:)): parent.move(-1)
             case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), #selector(NSResponder.insertLineBreak(_:)):
-                parent.submit(NSApp.currentEvent.map { $0.modifierFlags.contains(.shift) } ?? (selector == #selector(NSResponder.insertLineBreak(_:))))
+                parent.submit(NSApp.currentEvent.map { NativeSearchDisposition.resolve($0.modifierFlags) }
+                    ?? (selector == #selector(NSResponder.insertLineBreak(_:)) ? .reference : .open))
             default: return false
             }
             return true

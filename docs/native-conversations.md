@@ -70,8 +70,7 @@ a window, replace text, move the caret or send a message. Enter retains
 normal navigation; IME candidate confirmation stays with AppKit. Search now
 fits narrow windows, including its translated reference shortcut. Project file
 search already exists in the Files panel, as in the WebView; this change does not
-add a new file category to Cmd+K. Independent-window navigation remains follow-up
-work.
+add a new file category to Cmd+K.
 
 Manual smoke: keep unsent text in an editable conversation, search for another
 conversation and an artifact, then use Shift+Enter or the context menu. Verify
@@ -83,6 +82,40 @@ Press Enter while an IME candidate is active to confirm text only. Press Escape
 immediately while reading; it closes the search and a late response has no effect.
 Switch to another window during dismissal; that window must retain its focus.
 Check both locales/schemes and narrow windows.
+
+## macOS independent workspace windows (2026-10-06)
+
+Cmd+K opens project/session results in an independent window with **Cmd+Enter**,
+**Ctrl+Enter**, or the result context menu's **在新窗口打开**. Shift+Enter keeps
+reference selection priority, including when Command/Control is also held.
+Artifact results keep the WebView behavior and open their preview in the original
+window. The File menu's **新建窗口** (Cmd+N) and `>new window` command open the
+project landing in another window using the current window's database.
+
+Each scene has its own browser, conversation drafts, navigation, search/settings,
+library/calendar and session-panel models. Opening, navigating or closing it does
+not replace the original window's draft/selection or stop its run. The descriptor
+transport is shared for the captured database, including when the primary window
+later chooses another database; window scene values contain only identity,
+database and target IDs. They contain no drafts or host tokens. Menu settings,
+database selection, search and refresh use the focused scene's model.
+
+The new window rereads the project list and exact requested session before showing
+the workspace. Missing, hidden, foreign-owner and unavailable targets show an error
+with a read-only retry; they never fall back to a recent conversation. Cancelled
+initial reads cannot show a late target. Dock/Finder reopening after all windows
+close still restores the primary scene through the existing delegate.
+
+Manual smoke: keep an unsent draft in the primary window, use Cmd+K/Cmd+Enter to
+open a different session, and type a different draft there. Navigate/close the new
+window and confirm the primary draft and selection persist. Open two windows on
+the same session and check that local drafts remain independent. Focus each window
+in turn and use Cmd+K, Cmd+comma and Cmd+R; only that window may change. Use immediate
+Escape in one window's search/settings and verify the other remains open. Delete
+or hide a target after searching and confirm a new window shows an error instead
+of opening another session. Check Cmd+N, `>new window`, IME confirmation and both
+locales/schemes at narrow widths. Final packaged multi-window acceptance remains
+part of the complete parity goal.
 
 ## macOS conversation controls and workspace search (2026-10-06)
 
