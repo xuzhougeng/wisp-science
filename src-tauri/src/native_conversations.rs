@@ -1073,6 +1073,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 composer_references: Some(true),
                 context_view: Some(binding.is_none() && acp_agent_id.is_none()),
                 file_browser: Some(true),
+                file_transfers: Some(true),
                 follow_ups: if args.before_seq.is_some() || is_running {
                     Vec::new()
                 } else {

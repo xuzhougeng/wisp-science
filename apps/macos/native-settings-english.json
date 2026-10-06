@@ -711,5 +711,17 @@
   "关闭预览": "Close preview",
   "放弃未保存的修改？": "Discard unsaved changes?",
   "仅展示文件开头；完整文件大小": "Showing the start of the file; full size",
-  "永久删除“%@”？文件夹内的所有内容也会被删除。此操作无法撤销。": "Permanently delete “%@”? All contents of a folder will also be deleted. This cannot be undone."
+  "永久删除“%@”？文件夹内的所有内容也会被删除。此操作无法撤销。": "Permanently delete “%@”? All contents of a folder will also be deleted. This cannot be undone.",
+  "上传到当前目录": "Upload to this folder",
+  "读取拖放文件…": "Reading dropped files…",
+  "正在提交传输…": "Submitting transfer…",
+  "传输结果未确认，未自动重试。请重新读取后再决定是否提交。": "Transfer result is unconfirmed. Read again before deciding whether to submit.",
+  "传输结果": "Transfer results",
+  "查看传输任务": "View transfers",
+  "正在传输": "Transferring",
+  "传输完成": "Completed",
+  "传输失败": "Failed",
+  "状态未知": "Unknown status",
+  "正在取消": "Cancelling",
+  "拖放内容必须是本地文件或文件夹。": "Drop local files or folders."
 }

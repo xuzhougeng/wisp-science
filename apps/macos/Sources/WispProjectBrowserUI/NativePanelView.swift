@@ -35,11 +35,13 @@ struct NativePanelView: View {
     let manageWorkflows: () -> Void
     let readOnly: Bool
     var fileBrowserSupported = false
+    var fileTransfersSupported = false
     var environments: () -> Void = {}
     let close: () -> Void
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
         self.projectRoot = projectRoot
         _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.fileBrowserSupported = fileBrowserSupported; self.environments = environments; self.close = close
+        self.fileTransfersSupported = fileTransfersSupported
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -75,7 +77,7 @@ struct NativePanelView: View {
                     guard let sideChat, sideChat.projectID == model.projectID, sideChat.sessionID == model.sessionID else { return }
                     sideChat.quotes.append(quote)
                     var value = layout; value.show("sidechat"); store(value)
-                }, environments: environments)
+                }, environments: environments, runs: { context in activity = .init(context: context, runtimes: false) }, transfersSupported: fileTransfersSupported)
             } else if tab == "sidechat", let sideChat {
                 NativeSideChatView(model: sideChat)
             } else {

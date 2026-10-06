@@ -634,16 +634,19 @@ fn copy_upload_file(root: &Path, destination: &Path, source: &Path) -> Result<St
             let _ = std::fs::remove_file(&target);
             return Err(error.to_string());
         }
-        return Ok(target
+        let relative = target
             .strip_prefix(root)
             .map_err(|error| error.to_string())?
             .to_string_lossy()
-            .replace('\\', "/"));
+            .into_owned();
+        #[cfg(windows)]
+        let relative = relative.replace('\\', "/");
+        return Ok(relative);
     }
     Err("Too many files with the same name in this folder".into())
 }
 
-fn upload_local_files_at(
+pub(super) fn upload_local_files_at(
     root: &Path,
     destination_dir: &str,
     sources: Vec<String>,

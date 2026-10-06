@@ -11,6 +11,12 @@ pub(crate) async fn dispatch(
     project_id: &str,
     session: &str,
 ) -> Result<Value, String> {
+    if matches!(
+        request.command.as_str(),
+        "native_conversation_panel_file_upload" | "native_conversation_panel_file_download"
+    ) {
+        return dispatch_transfer(broker, request, project_id, session).await;
+    }
     let args: dto::Request =
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())?;
     if args.session_id != session {
@@ -135,6 +141,181 @@ pub(crate) async fn dispatch(
     }
 }
 
+async fn dispatch_transfer(
+    broker: &Broker,
+    request: &Request,
+    project_id: &str,
+    session: &str,
+) -> Result<Value, String> {
+    let args: dto::TransferRequest =
+        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    let upload = request.command.ends_with("file_upload");
+    validate_transfer(&args, session, upload)?;
+    let state = broker.app.state::<crate::AppState>();
+    let (project, scope) =
+        crate::exploration_commands::working_project_for_frame(&state, session).await?;
+    if project.id != project_id {
+        return Err("Project scope mismatch".into());
+    }
+    let activity = state.begin_project_activity(project_id)?;
+    let items = if upload {
+        crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+        state
+            .store
+            .require_unarchived_session(session)
+            .await
+            .map_err(|error| error.to_string())?;
+        if args.context_id == "local" {
+            let root = project.root;
+            let path = args.path.clone();
+            let sources = args.source_paths.clone();
+            let (results, _activity) = tokio::task::spawn_blocking(move || {
+                (
+                    crate::file_browser::upload_local_files_at(&root, &path, sources),
+                    activity,
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+            let results = results?;
+            if results.iter().any(|item| item.path.is_some()) {
+                state
+                    .store
+                    .bump_state_generation(&scope)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            results
+                .into_iter()
+                .map(|item| dto::TransferItem {
+                    source_path: item.source,
+                    status: if item.path.is_some() {
+                        "succeeded"
+                    } else {
+                        "failed"
+                    }
+                    .into(),
+                    destination_path: item.path,
+                    error: item.error,
+                    run_id: None,
+                })
+                .collect()
+        } else {
+            let _activity = activity;
+            remote_upload(&state.store, &state.run_manager, project_id, session, &args).await?
+        }
+    } else {
+        let _activity = activity;
+        let context = require_ssh(&state.store, &args.context_id).await?;
+        let destination = args
+            .destination_path
+            .as_ref()
+            .ok_or("Download destination is required")?;
+        let run_id = state
+            .run_manager
+            .submit_ssh_file_download(
+                &state.store,
+                project_id,
+                Some(session),
+                &context,
+                &args.path,
+                Path::new(destination),
+            )
+            .await?;
+        vec![dto::TransferItem {
+            source_path: args.path.clone(),
+            destination_path: Some(destination.clone()),
+            run_id: Some(run_id),
+            status: "running".into(),
+            error: None,
+        }]
+    };
+    value(dto::Transfer {
+        schema: dto::SCHEMA.into(),
+        project_id: project_id.into(),
+        session_id: session.into(),
+        context_id: args.context_id,
+        path: args.path,
+        items,
+    })
+}
+
+fn validate_transfer(
+    args: &dto::TransferRequest,
+    session: &str,
+    upload: bool,
+) -> Result<(), String> {
+    if args.session_id != session {
+        return Err("Session scope mismatch".into());
+    }
+    if upload {
+        if args.destination_path.is_some()
+            || args.source_paths.is_empty()
+            || args
+                .source_paths
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != args.source_paths.len()
+            || args
+                .source_paths
+                .iter()
+                .any(|path| !Path::new(path).is_absolute() || path.contains('\0'))
+        {
+            return Err(
+                "Upload requires unique absolute local sources and one destination directory"
+                    .into(),
+            );
+        }
+        if args.context_id != "local" {
+            crate::run_context::join_remote_upload_destination(&args.path, "item")?;
+        }
+    } else {
+        if !args.source_paths.is_empty() || args.context_id == "local" {
+            return Err("Download requires one SSH file".into());
+        }
+        remote_reference(&args.context_id, &args.path)?;
+        let destination = args
+            .destination_path
+            .as_ref()
+            .ok_or("Download destination is required")?;
+        if !Path::new(destination).is_absolute() || destination.contains('\0') {
+            return Err("Download destination must be absolute".into());
+        }
+    }
+    Ok(())
+}
+
+async fn remote_upload(
+    store: &wisp_store::Store,
+    manager: &crate::run_context::RunManager,
+    project: &str,
+    session: &str,
+    args: &dto::TransferRequest,
+) -> Result<Vec<dto::TransferItem>, String> {
+    let items = crate::run_context::submit_local_uploads_to_context(
+        store,
+        manager,
+        project,
+        Some(session),
+        &args.context_id,
+        &args.path,
+        &args.source_paths,
+    )
+    .await?;
+    Ok(items
+        .into_iter()
+        .zip(&args.source_paths)
+        .map(|(item, source)| dto::TransferItem {
+            source_path: source.clone(),
+            destination_path: Some(item.destination_path),
+            run_id: Some(item.run_id),
+            status: item.status,
+            error: None,
+        })
+        .collect())
+}
+
 fn value<T: serde::Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
@@ -162,7 +343,10 @@ fn locations(contexts: &[wisp_store::ExecutionContext]) -> Vec<dto::Location> {
     result
 }
 
-async fn require_ssh(store: &wisp_store::Store, id: &str) -> Result<(), String> {
+async fn require_ssh(
+    store: &wisp_store::Store,
+    id: &str,
+) -> Result<wisp_store::ExecutionContext, String> {
     let context = store
         .get_execution_context(id)
         .await
@@ -171,7 +355,7 @@ async fn require_ssh(store: &wisp_store::Store, id: &str) -> Result<(), String> 
     if context.kind != wisp_store::ExecutionContextKind::Ssh {
         return Err("Files remote location must be an SSH context".into());
     }
-    Ok(())
+    Ok(context)
 }
 
 fn local_directory(root: &Path, path: &str) -> Result<wisp_dto::DirectoryListing, String> {
@@ -251,6 +435,92 @@ fn remote_reference(context: &str, path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transfer_requests_require_exact_session_unique_absolute_sources_and_matching_operation_fields(
+    ) {
+        let source = std::env::temp_dir()
+            .join("upload.csv")
+            .to_string_lossy()
+            .into_owned();
+        let mut args = dto::TransferRequest {
+            session_id: "s".into(),
+            context_id: "local".into(),
+            path: ".".into(),
+            source_paths: vec![source.clone()],
+            destination_path: None,
+        };
+        assert!(validate_transfer(&args, "s", true).is_ok());
+        assert!(validate_transfer(&args, "foreign", true).is_err());
+        args.source_paths.push(source.clone());
+        assert!(validate_transfer(&args, "s", true).is_err());
+        args.source_paths = vec!["relative.csv".into()];
+        assert!(validate_transfer(&args, "s", true).is_err());
+        args.source_paths = vec![source.clone()];
+        args.context_id = "ssh:lab".into();
+        for path in ["../results", "/results/*", "/results\nother"] {
+            args.path = path.into();
+            assert!(validate_transfer(&args, "s", true).is_err());
+        }
+        args.path = "/results".into();
+        assert!(validate_transfer(&args, "s", true).is_ok());
+        args.destination_path = Some(source);
+        assert!(validate_transfer(&args, "s", true).is_err());
+        assert!(validate_transfer(&args, "s", false).is_err());
+        args.source_paths.clear();
+        args.path = "/results/qc.csv".into();
+        assert!(validate_transfer(&args, "s", false).is_ok());
+        args.context_id = "local".into();
+        assert!(validate_transfer(&args, "s", false).is_err());
+    }
+
+    #[test]
+    fn local_uploads_preserve_branch_scope_collisions_partial_results_and_native_names() {
+        let root = tempfile::tempdir().unwrap();
+        let branch = root.path().join("branch");
+        std::fs::create_dir_all(branch.join("results")).unwrap();
+        let source = root.path().join("QC.csv");
+        std::fs::write(&source, b"new QC bytes").unwrap();
+        std::fs::write(branch.join("results/QC.csv"), b"existing QC").unwrap();
+        let results = crate::file_browser::upload_local_files_at(
+            &branch,
+            "results",
+            vec![
+                source.to_string_lossy().into_owned(),
+                root.path().join("missing").to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(results[0].path.as_deref(), Some("results/QC_1.csv"));
+        assert!(results[1].path.is_none() && results[1].error.is_some());
+        assert_eq!(
+            std::fs::read(branch.join("results/QC.csv")).unwrap(),
+            b"existing QC"
+        );
+        assert_eq!(
+            std::fs::read(branch.join("results/QC_1.csv")).unwrap(),
+            b"new QC bytes"
+        );
+        assert!(!root.path().join("results").exists());
+        assert!(crate::file_browser::upload_local_files_at(
+            &branch,
+            "..",
+            vec![source.to_string_lossy().into_owned()]
+        )
+        .is_err());
+        #[cfg(unix)]
+        {
+            let source = root.path().join("QC\\copy.csv");
+            std::fs::write(&source, b"literal backslash").unwrap();
+            let results = crate::file_browser::upload_local_files_at(
+                &branch,
+                "results",
+                vec![source.to_string_lossy().into_owned()],
+            )
+            .unwrap();
+            assert_eq!(results[0].path.as_deref(), Some("results/QC\\copy.csv"));
+        }
+    }
 
     #[test]
     fn directory_and_copies_use_the_actual_physical_working_root() {

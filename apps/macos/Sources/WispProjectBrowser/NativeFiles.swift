@@ -109,6 +109,53 @@ public struct NativeFilePreview: Codable, Sendable {
     }
 }
 
+public struct NativeFileTransferItem: Codable, Identifiable, Sendable {
+    public var id: String { run_id ?? source_path }
+    public let source_path: String
+    public let destination_path: String?
+    public let run_id: String?
+    public let status: String
+    public let error: String?
+}
+public struct NativeFileTransfer: Codable, Sendable {
+    public let schema: String
+    public let project_id: String
+    public let session_id: String
+    public let context_id: String
+    public let path: String
+    public let items: [NativeFileTransferItem]
+    public static func decode(_ value: SettingsValue, project: String, session: String, context: String, path: String, sources: [String], destination: String?) throws -> Self {
+        let page = try NativeFilesContract.decode(value, as: Self.self)
+        try NativeFilesContract.owner(page.schema, page.project_id, page.session_id, projectID: project, sessionID: session)
+        let runStatuses = ["submitted", "running", "succeeded", "failed", "cancelled", "cancelling"]
+        guard page.context_id == context, page.path == path, !page.items.isEmpty,
+              Set(page.items.map(\.id)).count == page.items.count else { throw ProjectBrowserError.invalidResponse }
+        if let destination {
+            guard sources.isEmpty, context != "local", page.items.count == 1,
+                  page.items[0].source_path == path, page.items[0].destination_path == destination,
+                  page.items[0].run_id?.isEmpty == false, runStatuses.contains(page.items[0].status), page.items[0].error == nil else { throw ProjectBrowserError.invalidResponse }
+        } else {
+            guard page.items.map(\.source_path) == sources, Set(sources).count == sources.count else { throw ProjectBrowserError.invalidResponse }
+            for item in page.items {
+                if context == "local" {
+                    guard item.run_id == nil else { throw ProjectBrowserError.invalidResponse }
+                    if item.status == "succeeded" {
+                        guard let saved = item.destination_path, NativeFilesContract.relative(saved), item.error == nil,
+                              (saved as NSString).deletingLastPathComponent == (path == "." ? "" : path) else { throw ProjectBrowserError.invalidResponse }
+                    } else {
+                        guard item.status == "failed", item.destination_path == nil, item.error?.isEmpty == false else { throw ProjectBrowserError.invalidResponse }
+                    }
+                } else {
+                    guard let saved = item.destination_path, NativeFilesContract.remote(saved),
+                          (saved as NSString).deletingLastPathComponent == (path == "/" ? "/" : path),
+                          item.run_id?.isEmpty == false, runStatuses.contains(item.status), item.error == nil else { throw ProjectBrowserError.invalidResponse }
+                }
+            }
+        }
+        return page
+    }
+}
+
 public enum NativeFileSort: String, CaseIterable, Sendable {
     case name, size, modified
     public func sorted(_ files: [NativePanelFile]) -> [NativePanelFile] {

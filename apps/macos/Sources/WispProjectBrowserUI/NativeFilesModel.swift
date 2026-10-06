@@ -10,6 +10,12 @@ struct NativeFileBrowserRow: Identifiable {
     let modified: UInt64?
 }
 
+struct NativeFilesTransferTarget: Equatable {
+    let generation: UUID
+    let context: String
+    let directory: String
+}
+
 /// A Files tab has its own location/navigation lifetime, separate from agents
 /// and artifact previews. Every host call still resolves this exact frame.
 @MainActor
@@ -42,6 +48,14 @@ final class NativeFilesModel: ObservableObject {
     @Published private(set) var actionUnconfirmed = false
     @Published private(set) var copyBusy = false
     @Published var readOnly: Bool
+    @Published var transfersSupported: Bool
+    @Published private(set) var transfer: NativeFileTransfer?
+    @Published private(set) var transferRuns: [String: NativeRun] = [:]
+    @Published private(set) var transferSubmitting = false
+    @Published private(set) var transferUnconfirmed = false
+    @Published private(set) var transferError: String?
+    @Published private(set) var transferContext: String?
+    private var transferGeneration = UUID()
     private(set) var closed = false
     private var generation = UUID()
     private var catalogGeneration = UUID()
@@ -49,12 +63,24 @@ final class NativeFilesModel: ObservableObject {
     private var searchGeneration = UUID()
     private var previewGeneration = UUID()
     private var copyGeneration = UUID()
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool) {
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, transfersSupported: Bool = false) {
         self.client = client; self.projectID = projectID; self.sessionID = sessionID; self.readOnly = readOnly
+        self.transfersSupported = transfersSupported
         legacy = NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)
     }
     var local: Bool { contextID == "local" }
-    var canWrite: Bool { !closed && local && !readOnly && catalog?.read_only == false && !fileActionBusy && !actionUnconfirmed }
+    var canWrite: Bool { !closed && local && !readOnly && catalog?.read_only == false && !fileActionBusy && !actionUnconfirmed && !transferSubmitting && !transferUnconfirmed }
+    var canUpload: Bool { transfersSupported && !closed && !readOnly && catalog?.read_only == false && !loading && !catalogLoading && query.isEmpty && !fileActionBusy && !actionUnconfirmed && !saving && !transferSubmitting && !transferUnconfirmed }
+    var canDownload: Bool { transfersSupported && !closed && !local && catalog != nil && !loading && !transferSubmitting && !transferUnconfirmed }
+    var transferPollKey: String { transfer?.items.compactMap(\.run_id).joined(separator: ":") ?? "" }
+    var hasActiveTransfers: Bool { transfer?.items.contains { item in item.run_id != nil && ["submitted", "running", "cancelling"].contains(transferRuns[item.id]?.status ?? item.status) } == true }
+    func transferTarget(upload: Bool) -> NativeFilesTransferTarget? {
+        guard upload ? canUpload : canDownload else { return nil }
+        return .init(generation: generation, context: contextID, directory: path)
+    }
+    func owns(_ target: NativeFilesTransferTarget) -> Bool {
+        !closed && generation == target.generation && contextID == target.context && path == target.directory
+    }
     var rows: [NativeFileBrowserRow] {
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && local {
             return searchHits.map { .init(path: $0.path, name: $0.name, directory: $0.is_dir, size: $0.size, modified: nil) }
@@ -78,7 +104,7 @@ final class NativeFilesModel: ObservableObject {
         await refreshLocations()
     }
     func refreshLocations() async {
-        guard !closed, !Task.isCancelled, !fileActionBusy, !saving else { return }
+        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, !transferSubmitting else { return }
         let current = UUID(); catalogGeneration = current; catalogLoading = true; error = nil
         defer { if catalogGeneration == current { catalogLoading = false } }
         do {
@@ -91,12 +117,12 @@ final class NativeFilesModel: ObservableObject {
         } catch { if !closed, catalogGeneration == current, !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func chooseLocation(_ context: String) async {
-        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, catalog?.locations.contains(where: { $0.id == context }) == true else { return }
+        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, !transferSubmitting, catalog?.locations.contains(where: { $0.id == context }) == true else { return }
         contextID = context; query = ""; selecting = false; sorting = false
         await navigate(context == "local" ? "." : "~")
     }
     func navigate(_ requested: String) async {
-        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, catalog != nil,
+        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, !transferSubmitting, catalog != nil,
               (local ? NativeFilesContract.relative(requested, rootAllowed: true) : NativeFilesContract.remote(requested)) else { return }
         query = ""; selection = []; entries = []; searchHits = []; searchGeneration = UUID(); searchLoading = false
         dismissPreview(); invalidate(); let current = generation; let context = contextID
@@ -109,7 +135,7 @@ final class NativeFilesModel: ObservableObject {
         } catch { if !closed, generation == current, !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func refresh() async {
-        guard !closed, !Task.isCancelled, !fileActionBusy, !saving else { return }
+        guard !closed, !Task.isCancelled, !fileActionBusy, !saving, !transferSubmitting else { return }
         if catalog == nil { await refreshLocations(); return }
         let current = UUID(); directoryGeneration = current; let scope = generation; let context = contextID; let requested = path
         loading = true; error = nil
@@ -122,6 +148,7 @@ final class NativeFilesModel: ObservableObject {
             guard !closed, directoryGeneration == current, generation == scope, !Task.isCancelled else { return }
             selection.formIntersection(rows.map(\.id))
             actionUnconfirmed = false
+            transferUnconfirmed = false
         } catch { if !closed, directoryGeneration == current, generation == scope, !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func search() async {
@@ -225,9 +252,52 @@ final class NativeFilesModel: ObservableObject {
         guard !closed, local, generation == current, !Task.isCancelled, NativeFilesContract.inside(source.path, root: root) else { throw ProjectBrowserError.invalidResponse }
         return source
     }
+    func upload(_ sources: [String], target: NativeFilesTransferTarget) async {
+        guard !Task.isCancelled, canUpload, owns(target), !sources.isEmpty, Set(sources).count == sources.count,
+              sources.allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") }) else { return }
+        await submitTransfer(target, sources: sources, source: target.directory, destination: nil)
+    }
+    func download(_ row: NativeFileBrowserRow, destination: String, target: NativeFilesTransferTarget) async {
+        guard !Task.isCancelled, canDownload, owns(target), !row.directory, rows.contains(where: { $0.id == row.id }),
+              destination.hasPrefix("/"), !destination.contains("\0") else { return }
+        await submitTransfer(target, sources: [], source: row.path, destination: destination)
+    }
+    private func submitTransfer(_ target: NativeFilesTransferTarget, sources: [String], source: String, destination: String?) async {
+        let current = UUID(); transferGeneration = current
+        transferSubmitting = true; transferUnconfirmed = true; transferError = nil; transferContext = target.context; transfer = nil; transferRuns = [:]
+        defer { transferSubmitting = false }
+        do {
+            var args: [String: SettingsValue] = ["path": .string(source)]
+            if let destination { args["destination_path"] = .string(destination) }
+            else { args["source_paths"] = .array(sources.map(SettingsValue.string)) }
+            let page = try NativeFileTransfer.decode(await call(destination == nil ? "file_upload" : "file_download", args, context: target.context), project: projectID, session: sessionID, context: target.context, path: source, sources: sources, destination: destination)
+            // Search changes invalidate browser reads, not an already submitted transfer.
+            guard !closed, current == transferGeneration, !Task.isCancelled else { return }
+            transfer = page; transferUnconfirmed = false; transferSubmitting = false
+            if target.context == "local" { await refresh() }
+        } catch {
+            if !closed, current == transferGeneration { transferError = error.localizedDescription }
+        }
+    }
+    func refreshTransferRuns() async {
+        guard !closed, !Task.isCancelled, !transferSubmitting, let page = transfer, !transferPollKey.isEmpty else { return }
+        let current = transferGeneration
+        do {
+            let snapshot = try JSONDecoder().decode(NativeContextActivity.self, from: JSONEncoder().encode(try await call("activity")))
+            guard !closed, current == transferGeneration, !Task.isCancelled else { return }
+            let ids = Set(page.items.compactMap(\.run_id))
+            let runs = snapshot.runs.filter { ids.contains($0.id) }
+            guard Set(runs.map(\.id)) == ids, Set(runs.map(\.id)).count == runs.count,
+                  runs.allSatisfy({ $0.context_id == page.context_id && $0.frame_id == sessionID && $0.kind == "file_transfer" }) else { throw ProjectBrowserError.invalidResponse }
+            let wasActive = hasActiveTransfers
+            for run in runs { transferRuns[run.id] = run }
+            transferError = nil
+            if wasActive && !hasActiveTransfers && page.context_id == contextID && page.path == path { await refresh() }
+        } catch { if !closed, current == transferGeneration, !Task.isCancelled { transferError = error.localizedDescription } }
+    }
     func dismissPreview() { previewGeneration = UUID(); preview = nil; previewLoading = false; saving = false; saveUnconfirmed = false }
     func close() {
         closed = true; invalidate(); catalogGeneration = UUID(); searchGeneration = UUID(); selection = []; sorting = false
-        loading = false; catalogLoading = false; searchLoading = false; fileActionBusy = false; dismissPreview(); legacy.close()
+        loading = false; catalogLoading = false; searchLoading = false; fileActionBusy = false; transferGeneration = UUID(); transferSubmitting = false; dismissPreview(); legacy.close()
     }
 }

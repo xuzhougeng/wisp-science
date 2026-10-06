@@ -7,7 +7,40 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_file_directory",
     "native_conversation_panel_file_paths",
     "native_conversation_panel_file_read",
+    "native_conversation_panel_file_upload",
+    "native_conversation_panel_file_download",
 ];
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransferRequest {
+    pub session_id: String,
+    pub context_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub source_paths: Vec<String>,
+    #[serde(default)]
+    pub destination_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TransferItem {
+    pub source_path: String,
+    pub destination_path: Option<String>,
+    pub run_id: Option<String>,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Transfer {
+    pub schema: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub context_id: String,
+    pub path: String,
+    pub items: Vec<TransferItem>,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +133,10 @@ mod tests {
         for name in ["local_preview", "remote_preview"] {
             let preview: Preview = serde_json::from_value(fixture[name].clone()).unwrap();
             assert_eq!(serde_json::to_value(preview).unwrap(), fixture[name]);
+        }
+        for name in ["local_upload", "remote_upload", "remote_download"] {
+            let transfer: Transfer = serde_json::from_value(fixture[name].clone()).unwrap();
+            assert_eq!(serde_json::to_value(transfer).unwrap(), fixture[name]);
         }
         assert!(COMMANDS
             .iter()

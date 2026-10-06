@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import WispProjectBrowser
+import UniformTypeIdentifiers
 @testable import WispProjectBrowserUI
 
 private func filesFixture() throws -> SettingsValue {
@@ -39,6 +40,34 @@ private actor FilesFake: NativeConversationQuerying {
         case "native_conversation_panel_searchfiles":
             result = .array([.object(["path": .string("other/QC.csv"), "name": .string("QC.csv"), "is_dir": .bool(false), "size": .integer(18)]), .object(["path": .string("results/QC.csv"), "name": .string("QC.csv"), "is_dir": .bool(false), "size": .integer(18)])])
         case "native_conversation_panel_file_action", "native_conversation_panel_savefile": result = .bool(true)
+        case "native_conversation_panel_file_upload":
+            result = fixture[context == "local" ? "local_upload" : "remote_upload"]
+            result["path"] = args["path"]!
+            result["items"] = .array(args["source_paths"]!.array.enumerated().map { index, source in
+                let local = context == "local", missing = context == "local" && source.string.hasSuffix("missing.csv")
+                var item = fixture[local ? "local_upload" : "remote_upload"]["items"].array[missing ? 1 : 0]
+                item["source_path"] = source
+                if item["status"] != .string("failed") {
+                    let directory = args["path"]!.string
+                    let name = (source.string as NSString).lastPathComponent
+                    item["destination_path"] = .string((directory == "." ? "" : directory == "/" ? "/" : directory + "/") + (context == "local" && name == "QC.csv" ? "QC_1.csv" : name))
+                }
+                if context != "local" { item["run_id"] = .string("upload-\(index + 1)") }
+                return item
+            })
+        case "native_conversation_panel_file_download":
+            result = fixture["remote_download"]; result["path"] = args["path"]!
+            var item = result["items"].array[0]; item["source_path"] = args["path"]!; item["destination_path"] = args["destination_path"]!; result["items"] = .array([item])
+        case "native_conversation_panel_activity":
+            let transfers = calls.filter { $0.1.hasSuffix("file_upload") || $0.1.hasSuffix("file_download") }.filter { $0.2["context_id"] != .string("local") }
+            var runs: [SettingsValue] = []
+            for call in transfers {
+                let download = call.1.hasSuffix("file_download")
+                for index in 0..<(download ? 1 : call.2["source_paths"]!.array.count) {
+                    runs.append(.object(["id": .string(download ? "download-1" : "upload-\(index + 1)"), "frame_id": .string(mode == "run_scope" ? "foreign-session" : "session-1"), "context_id": call.2["context_id"]!, "title": .string("Transfer QC.csv"), "kind": .string("file_transfer"), "status": .string(mode == "run_complete" ? "succeeded" : "running"), "created_at": .integer(1700000000), "progress_json": .string("{\"total_bytes\":17,\"completed_bytes\":9,\"indeterminate\":false}")]))
+                }
+            }
+            result = .object(["runtimes": .array([]), "runs": .array(mode == "run_missing" ? [] : runs), "read_only": .bool(false)])
         default: throw ProjectBrowserError.invalidResponse
         }
         if command == hold { await withCheckedContinuation { held = $0 } }
@@ -47,6 +76,14 @@ private actor FilesFake: NativeConversationQuerying {
         if mode == "owner" { result["session_id"] = .string("other-session") }
         return result
     }
+}
+
+private final class FilesDropGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callback: ((Data?, Error?) -> Void)?
+    func install(_ callback: @escaping (Data?, Error?) -> Void) { lock.lock(); self.callback = callback; lock.unlock() }
+    var waiting: Bool { lock.lock(); defer { lock.unlock() }; return callback != nil }
+    func release(_ data: Data) { lock.lock(); let call = callback; callback = nil; lock.unlock(); call?(data, nil) }
 }
 
 @MainActor private final class FilesDatabaseSelection: ObservableObject {
@@ -59,14 +96,188 @@ private struct FilesDatabasePane: View {
     @ObservedObject var selection: FilesDatabaseSelection
     var body: some View {
         NativePanelView(client: selection.databaseURL.lastPathComponent == "original.sqlite" ? selection.original : selection.clone,
-                        projectID: "research-1", sessionID: "session-1", fileBrowserSupported: true, close: {})
+                        projectID: "research-1", sessionID: "session-1", fileBrowserSupported: true, fileTransfersSupported: true, close: {})
             .id(NativePanelScopeIdentity(databaseURL: selection.databaseURL, projectID: "research-1", sessionID: "session-1"))
     }
 }
 
 final class NativeFilesTests: XCTestCase {
-    @MainActor private func model(_ fake: FilesFake, readOnly: Bool = false) -> NativeFilesModel {
-        NativeFilesModel(client: fake, projectID: "research-1", sessionID: "session-1", readOnly: readOnly)
+    @MainActor private func model(_ fake: FilesFake, readOnly: Bool = false, transfersSupported: Bool = false) -> NativeFilesModel {
+        NativeFilesModel(client: fake, projectID: "research-1", sessionID: "session-1", readOnly: readOnly, transfersSupported: transfersSupported)
+    }
+    func testSharedTransferContractsRequireExactSourcesDestinationsAndOwnership() throws {
+        let fixture = try filesFixture()
+        for key in ["local_upload", "remote_upload", "remote_download"] {
+            let value = fixture[key], download = key == "remote_download"
+            let sources = download ? [] : value["items"].array.map { $0["source_path"].string }
+            let destination = download ? value["items"].array[0]["destination_path"].string : nil
+            func decode(_ page: SettingsValue) throws -> NativeFileTransfer {
+                try NativeFileTransfer.decode(page, project: "research-1", session: "session-1", context: value["context_id"].string, path: value["path"].string, sources: sources, destination: destination)
+            }
+            XCTAssertFalse(try decode(value).items.isEmpty)
+            for field in ["schema", "project_id", "session_id", "context_id", "path"] {
+                var bad = value; bad[field] = .string("foreign"); XCTAssertThrowsError(try decode(bad), field)
+            }
+            var bad = value, items = value["items"].array
+            items[0]["source_path"] = .string("/other/source.csv"); bad["items"] = .array(items); XCTAssertThrowsError(try decode(bad))
+            items = value["items"].array; items[0]["destination_path"] = .string("/outside/QC.csv"); bad["items"] = .array(items); XCTAssertThrowsError(try decode(bad))
+            bad = value; bad["items"] = .array([]); XCTAssertThrowsError(try decode(bad))
+        }
+    }
+    @MainActor func testCapturedUploadTargetsRejectChangedDirectoryQueryLocationClosureAndCapabilities() async throws {
+        for change in ["directory", "query", "location", "close", "readOnly", "capability"] {
+            let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+            let target = try XCTUnwrap(model.transferTarget(upload: true))
+            switch change {
+            case "directory": await model.navigate("results"); await model.navigate(".")
+            case "query": model.query = "QC"; model.query = ""
+            case "location": await model.chooseLocation("ssh:lab"); await model.chooseLocation("local")
+            case "close": model.close()
+            case "readOnly": model.readOnly = true
+            default: model.transfersSupported = false
+            }
+            await model.upload(["/incoming/QC.csv"], target: target)
+            let calls = await fake.recorded(); XCTAssertFalse(calls.contains { $0.1.hasSuffix("file_upload") }, change)
+        }
+    }
+    @MainActor func testLocalPartialUploadsAndRemoteRunsRetainTheExactFrameAndDestination() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open(); await model.navigate("results")
+        await model.upload(["/incoming/QC.csv", "/incoming/missing.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+        XCTAssertEqual(model.transfer?.items.map(\.status), ["succeeded", "failed"])
+        XCTAssertEqual(model.transfer?.items[0].destination_path, "results/QC_1.csv"); XCTAssertNotNil(model.transfer?.items[1].error)
+        XCTAssertFalse(model.transferUnconfirmed); XCTAssertFalse(model.transferSubmitting)
+        await model.chooseLocation("ssh:lab"); XCTAssertTrue(model.canUpload); XCTAssertFalse(model.canWrite)
+        await model.upload(["/incoming/QC.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+        XCTAssertTrue(model.hasActiveTransfers); await model.refreshTransferRuns()
+        XCTAssertEqual(model.transferRuns.values.first?.frame_id, "session-1")
+        await fake.setup(failure: "run_complete"); await model.refreshTransferRuns(); XCTAssertFalse(model.hasActiveTransfers)
+        let calls = await fake.recorded(), writes = calls.filter { $0.1.hasSuffix("file_upload") }
+        XCTAssertEqual(writes.count, 2); XCTAssertEqual(writes.last?.2["path"], .string("/home/research/results")); XCTAssertEqual(writes.last?.2["context_id"], .string("ssh:lab"))
+        XCTAssertTrue(writes.allSatisfy { $0.0 == "research-1" && $0.2["session_id"] == .string("session-1") })
+    }
+    @MainActor func testRemoteDownloadPreservesChosenSourceDestinationAndReadOnlyExportBehavior() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, readOnly: true, transfersSupported: true); await model.open(); await model.chooseLocation("ssh:lab")
+        XCTAssertFalse(model.canUpload); XCTAssertTrue(model.canDownload)
+        let target = try XCTUnwrap(model.transferTarget(upload: false)), row = try XCTUnwrap(model.rows.first { !$0.directory })
+        await model.download(try XCTUnwrap(model.rows.first { $0.directory }), destination: "/exports/QC.csv", target: target)
+        await model.download(row, destination: "relative.csv", target: target)
+        await model.download(row, destination: "/exports/QC.csv", target: target)
+        XCTAssertEqual(model.transfer?.items.first?.destination_path, "/exports/QC.csv")
+        let writes = await fake.recorded().filter { $0.1.hasSuffix("file_download") }
+        XCTAssertEqual(writes.count, 1); XCTAssertEqual(writes[0].2["path"], .string("/home/research/results/QC.csv")); XCTAssertEqual(writes[0].2["destination_path"], .string("/exports/QC.csv"))
+        XCTAssertEqual(writes[0].2["session_id"], .string("session-1")); XCTAssertEqual(writes[0].2["context_id"], .string("ssh:lab"))
+    }
+    @MainActor func testLostMalformedOrForeignTransferAcknowledgementsBlockReplayUntilFreshRead() async throws {
+        for failure in ["lost", "malformed", "owner"] {
+            let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+            let target = try XCTUnwrap(model.transferTarget(upload: true)); await fake.setup(failure: failure)
+            await model.upload(["/incoming/QC.csv"], target: target); await model.upload(["/incoming/QC.csv"], target: target)
+            XCTAssertTrue(model.transferUnconfirmed); XCTAssertFalse(model.transferSubmitting); XCTAssertNil(model.transfer); XCTAssertNotNil(model.transferError)
+            let writes = await fake.recorded().filter { $0.1.hasSuffix("file_upload") }; XCTAssertEqual(writes.count, 1)
+            await fake.setup(); await model.refresh(); XCTAssertFalse(model.transferUnconfirmed)
+            await model.upload(["/incoming/QC.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+            let final = await fake.recorded().filter { $0.1.hasSuffix("file_upload") }; XCTAssertEqual(final.count, 2); XCTAssertNotNil(model.transfer)
+        }
+    }
+    @MainActor func testCancelledStartupAndClosedHeldTransfersCannotDispatchOrRestorePanels() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+        let target = try XCTUnwrap(model.transferTarget(upload: true))
+        let cancelled = Task { await model.upload(["/incoming/QC.csv"], target: target) }; cancelled.cancel(); await cancelled.value
+        XCTAssertFalse(model.transferUnconfirmed)
+        await fake.setup(hold: "native_conversation_panel_file_upload")
+        let pending = Task { await model.upload(["/incoming/QC.csv"], target: target) }
+        while !(await fake.waiting()) { await Task.yield() }
+        XCTAssertTrue(model.transferSubmitting); await model.chooseLocation("ssh:lab"); XCTAssertEqual(model.contextID, "local")
+        model.close(); await fake.release(); await pending.value
+        XCTAssertNil(model.transfer); XCTAssertFalse(model.transferSubmitting); XCTAssertFalse(model.canUpload)
+        let writes = await fake.recorded().filter { $0.1.hasSuffix("file_upload") }; XCTAssertEqual(writes.count, 1)
+    }
+    @MainActor func testConfirmedUploadAcknowledgementPreservesSearchChangedDuringSubmission() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+        let target = try XCTUnwrap(model.transferTarget(upload: true)); await fake.setup(hold: "native_conversation_panel_file_upload")
+        let pending = Task { await model.upload(["/incoming/QC.csv"], target: target) }
+        while !(await fake.waiting()) { await Task.yield() }
+        model.query = "QC"; await fake.release(); await pending.value
+        XCTAssertEqual(model.query, "QC"); XCTAssertEqual(model.path, ".")
+        XCTAssertEqual(model.transfer?.items.first?.status, "succeeded"); XCTAssertFalse(model.transferUnconfirmed); XCTAssertFalse(model.transferSubmitting)
+        let writes = await fake.recorded().filter { $0.1.hasSuffix("file_upload") }; XCTAssertEqual(writes.count, 1)
+    }
+    @MainActor func testForeignAndSupersededRunRepliesCannotPopulateTransferStatus() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open(); await model.chooseLocation("ssh:lab")
+        await model.upload(["/incoming/QC.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+        for failure in ["run_scope", "run_missing"] {
+            await fake.setup(failure: failure); await model.refreshTransferRuns(); XCTAssertTrue(model.transferRuns.isEmpty); XCTAssertNotNil(model.transferError)
+        }
+        await fake.setup(hold: "native_conversation_panel_activity")
+        let pending = Task { await model.refreshTransferRuns() }; while !(await fake.waiting()) { await Task.yield() }
+        await model.chooseLocation("local"); await fake.setup()
+        await model.upload(["/incoming/QC.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+        await fake.release(); await pending.value
+        XCTAssertEqual(model.transfer?.context_id, "local"); XCTAssertTrue(model.transferRuns.isEmpty)
+    }
+    func testDropSourcesDecodeNativeURLsDataStringsAndRejectNonFileItems() async throws {
+        let url = URL(fileURLWithPath: "/incoming/样本 QC.csv")
+        XCTAssertEqual(try NativeFileDropSources.url(url as NSURL), url)
+        XCTAssertEqual(try NativeFileDropSources.url(url.dataRepresentation as NSData), url)
+        XCTAssertEqual(try NativeFileDropSources.url(url.absoluteString as NSString), url)
+        for invalid in ["https://example.com/qc.csv", "/incoming/raw-string.csv"] { XCTAssertThrowsError(try NativeFileDropSources.url(invalid as NSString)) }
+        XCTAssertThrowsError(try NativeFileDropSources.url(nil))
+        let providers = [NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier), NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier)]
+        let paths = try await NativeFileDropSources.paths(providers); XCTAssertEqual(paths, [url.path])
+    }
+    @MainActor func testChooserWindowIdentityDoesNotFollowAnotherWorkspaceWindow() {
+        _ = NSApplication.shared
+        let a = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        let b = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        a.isReleasedWhenClosed = false; b.isReleasedWhenClosed = false; defer { a.close(); b.close() }
+        let chooser = NativeFilesChooser(); chooser.window = a; XCTAssertTrue(chooser.owns(a))
+        chooser.window = b; XCTAssertFalse(chooser.owns(a)); XCTAssertTrue(chooser.owns(b))
+        chooser.close(); XCTAssertFalse(chooser.owns(b))
+    }
+    @MainActor func testDelayedNativeDropCannotUploadIntoANewDirectory() async throws {
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+        let target = try XCTUnwrap(model.transferTarget(upload: true)), gate = FilesDropGate(), provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { callback in gate.install(callback); return nil }
+        let pending = Task { let paths = try await NativeFileDropSources.paths([provider]); await model.upload(paths, target: target) }
+        for _ in 0..<500 { if gate.waiting { break }; try await Task.sleep(nanoseconds: 2_000_000) }
+        XCTAssertTrue(gate.waiting); await model.navigate("results")
+        gate.release(URL(fileURLWithPath: "/incoming/QC.csv").dataRepresentation); try await pending.value
+        let calls = await fake.recorded(); XCTAssertFalse(calls.contains { $0.1.hasSuffix("file_upload") }); XCTAssertEqual(model.path, "results")
+    }
+    @MainActor func testImmediateEscapeCancelsNativeUploadPickerAndPreservesFilesParent() async throws {
+        _ = NSApplication.shared
+        let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 419, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let chooser = NativeFilesChooser(); chooser.window = window
+        defer { chooser.close(); model.close(); window.close() }
+        var parentClosed = 0
+        let host = NSHostingView(rootView: Text("Files").background(NativeSettingsEscape { parentClosed += 1 })); window.contentView = host; host.layoutSubtreeIfNeeded()
+        chooser.upload(model)
+        let panel = try XCTUnwrap(chooser.panel)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        XCTAssertFalse(NativeEscapeStack.shared.consume(event, keyWindow: window, modalWindow: nil))
+        XCTAssertTrue(chooser.consume(event))
+        for _ in 0..<200 { if !chooser.busy { break }; try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertFalse(chooser.busy); XCTAssertNil(window.attachedSheet); XCTAssertEqual(parentClosed, 0)
+        let calls = await fake.recorded(); XCTAssertFalse(calls.contains { $0.1.hasSuffix("file_upload") })
+    }
+    @MainActor func testRenderTransferControlsPartialResultsAndProgressAtNarrowWidths() async throws {
+        guard let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] else { throw XCTSkip("Set WISP_NATIVE_SNAPSHOT_DIR to render files") }
+        let saved = UserDefaults.standard.object(forKey: "nativeSettings.locale")
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: "nativeSettings.locale") } else { UserDefaults.standard.removeObject(forKey: "nativeSettings.locale") } }
+        for locale in ["zh", "en"] { for scheme in [ColorScheme.light, .dark] { for remote in [false, true] { for width in [320.0, 419.0] {
+            UserDefaults.standard.set(locale, forKey: "nativeSettings.locale")
+            let fake = FilesFake(try filesFixture()), model = model(fake, transfersSupported: true); await model.open(); await model.navigate("results")
+            if remote { await model.chooseLocation("ssh:lab") }
+            await model.upload(remote ? ["/incoming/QC.csv"] : ["/incoming/QC.csv", "/incoming/missing.csv"], target: try XCTUnwrap(model.transferTarget(upload: true)))
+            if remote { await model.refreshTransferRuns() }
+            let host = NSHostingView(rootView: NativeFilesView(client: fake, projectID: "research-1", sessionID: "session-1", readOnly: false, transfersSupported: true, model: model).padding(12).background(WispDesign.color("bg-sunken", scheme)).foregroundStyle(WispDesign.color("text", scheme)).tint(WispDesign.color("clay", scheme)).environment(\.colorScheme, scheme))
+            host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua); host.frame = NSRect(x: 0, y: 0, width: width, height: 550); host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:])); XCTAssertGreaterThan(data.count, 1000)
+            try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("files-transfer-\(remote ? "remote" : "local")-\(locale)-\(scheme == .dark ? "dark" : "light")-\(Int(width)).png")); model.close()
+        } } } }
     }
     @MainActor func testEnvironmentShortcutClearsPreviousProjectSettingsScope() {
         let browser = ProjectBrowserModel()
@@ -122,6 +333,7 @@ final class NativeFilesTests: XCTestCase {
         XCTAssertThrowsError(try NativeFileDirectory.decode(bad, project: "research-1", session: "session-1", context: "local"))
         var snapshot = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("contracts/native-conversations/v1/snapshot.json")))
         XCTAssertNil(try ConversationSnapshot.decode(snapshot, projectID: "project-a", sessionID: "session-a").file_browser)
+        XCTAssertNil(try ConversationSnapshot.decode(snapshot, projectID: "project-a", sessionID: "session-a").file_transfers)
         snapshot["file_browser"] = .bool(true)
         XCTAssertEqual(try ConversationSnapshot.decode(snapshot, projectID: "project-a", sessionID: "session-a").file_browser, true)
     }

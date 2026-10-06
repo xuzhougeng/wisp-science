@@ -1194,9 +1194,43 @@ saves cannot be replayed from the same sheet; close and reread before making a
 new decision. Sorting and file-action Escape handling preserves the parent panel
 without moving focus.
 
-Upload/drop, remote download and the richer scientific/Office/PDF interactions
-remain tracked in the [active macOS parity ledger](superpowers/plans/2026-10-06-macos-workbench-parity.md).
+Hosts advertising `file_transfers` also support **Upload to this folder** and
+Finder file-URL drops. Local uploads accept regular files, copy into the captured
+working directory and use collision suffixes without overwriting existing files.
+Each result reports its saved path or failure. SSH uploads accept files and
+directories and submit the existing persisted transfer Runs to the displayed
+directory; no session attachment is required, but the host must be ready.
+
+Remote file rows provide **Save a copy** with a window-owned save panel. A download
+returns a Run immediately after preflight, copies to a private temporary directory
+and replaces the chosen destination only after successful complete bytes and an
+unchanged destination metadata fingerprint. New destinations appearing during
+transfer, changed existing destinations, truncated bytes, cancellation and failures
+leave the destination untouched and clean temporary files. Run details include the
+chosen destination. Export remains available for read-only source sessions.
+
+File pickers and delayed drop providers retain the originating window, model and
+location. Before dispatch, navigation (including leaving and returning), query
+changes, a different database, closure, revoked capability or write permission
+prevents a late upload. After dispatch, a confirmed reply updates the transfer
+result even if the search query changes; the current query and directory remain
+selected.
+Busy submissions cannot dispatch a second transfer. Lost/malformed/foreign replies
+are not retried; reread before another decision, and inspect the captured SSH
+context's Runs if its acknowledgement was lost. Confirmed remote transfers show
+scoped live status/progress and link to the existing task list, details and cancel
+controls. Missing/foreign Runs cannot claim completion. Pickers have a temporary
+window Escape listener, removed on dismissal/cleanup; it cancels the picker before
+its parent and leaves native menus, nested confirmations and IME precedence intact.
+
+The richer scientific/Office/PDF interactions remain tracked in the
+[active macOS parity ledger](superpowers/plans/2026-10-06-macos-workbench-parity.md).
 Manual smoke: use an isolated exploration fixture, compare copied absolute paths
 with its working root, sort/select/search across directories, open configured SSH
 locations, quote a remote text selection and press Escape immediately after
 opening sort/file-action surfaces. Check both locales/schemes and narrow panels.
+Also upload colliding/missing files, drop from Finder, cancel upload/save pickers
+with Escape immediately without moving focus, change directory while a drop URL is
+resolving, and verify only the originating window can accept its result. For SSH,
+inspect/cancel a transfer Run and change a chosen destination during download;
+verify its newer bytes survive. Use fake/probed fixtures for automated checks.

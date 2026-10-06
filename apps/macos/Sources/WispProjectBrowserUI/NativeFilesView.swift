@@ -1,21 +1,29 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WispProjectBrowser
 
 struct NativeFilesView: View {
     @StateObject private var model: NativeFilesModel
+    @StateObject private var chooser = NativeFilesChooser()
     @Environment(\.colorScheme) private var scheme
     @AppStorage("native.workspace.panel.grid") private var grid = false
     @AppStorage("native.workspace.file.sort") private var savedSort = "name"
     @State private var pathDraft = ""
     @State private var action: NativeFileActionSelection?
     @State private var exportError: String?
+    @State private var dropTargeted = false
+    @State private var dropLoading = false
+    @State private var dropTask: Task<Void, Never>?
     let readOnly: Bool
     var quote: ((NativeSideChatQuote) -> Void)?
     var environments: () -> Void = {}
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, quote: ((NativeSideChatQuote) -> Void)? = nil, environments: @escaping () -> Void = {}, model: NativeFilesModel? = nil) {
-        _model = StateObject(wrappedValue: model ?? NativeFilesModel(client: client, projectID: projectID, sessionID: sessionID, readOnly: readOnly))
+    var runs: (String) -> Void = { _ in }
+    var transfersSupported = false
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, quote: ((NativeSideChatQuote) -> Void)? = nil, environments: @escaping () -> Void = {}, runs: @escaping (String) -> Void = { _ in }, transfersSupported: Bool = false, model: NativeFilesModel? = nil) {
+        _model = StateObject(wrappedValue: model ?? NativeFilesModel(client: client, projectID: projectID, sessionID: sessionID, readOnly: readOnly, transfersSupported: transfersSupported))
         self.readOnly = readOnly; self.quote = quote; self.environments = environments
+        self.runs = runs; self.transfersSupported = transfersSupported
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -34,6 +42,11 @@ struct NativeFilesView: View {
                     .buttonStyle(.plain).disabled(model.loading || model.catalogLoading).help(localized("刷新"))
                 Button { model.sorting.toggle() } label: { WispIcon(name: "sort", size: 16).frame(width: 28, height: 28) }
                     .buttonStyle(.plain).help(localized("排序文件")).accessibilityLabel(localized("排序文件"))
+                if model.transfersSupported {
+                    Button { chooser.upload(model) } label: { WispIcon(name: "upload", size: 16).frame(width: 28, height: 28) }
+                        .buttonStyle(.plain).disabled(!model.canUpload || chooser.busy || dropLoading)
+                        .help(localized("上传到当前目录")).accessibilityLabel(localized("上传到当前目录"))
+                }
                 if model.local {
                     Menu {
                         Button(localized("新建文件")) { action = .init(action: .createFile, directory: model.path) }
@@ -68,6 +81,7 @@ struct NativeFilesView: View {
                     if !model.local { Button(localized("环境设置"), action: environments) }
                 }.font(.caption)
             }
+            transferResults
             ScrollView {
                 LazyVGrid(columns: grid && model.local ? [GridItem(.adaptive(minimum: 130), alignment: .top)] : [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 6) {
                     ForEach(model.rows) { row in fileRow(row) }
@@ -78,12 +92,22 @@ struct NativeFilesView: View {
             }
             if !model.query.isEmpty { Text(localized("当前项目 · 最多 200 项")).font(.caption).foregroundStyle(.secondary) }
         }.frame(maxHeight: .infinity)
+            .background(NativeFilesWindowAnchor(owner: chooser).frame(width: 0, height: 0))
+            .overlay { RoundedRectangle(cornerRadius: 8).stroke(dropTargeted && model.canUpload ? WispDesign.color("clay", scheme) : .clear, lineWidth: 2).allowsHitTesting(false) }
+            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $dropTargeted, perform: drop)
             .overlay(alignment: .topTrailing) { if model.sorting { sortMenu.padding(.top, 66) } }
             .task { model.sort = NativeFileSort(rawValue: savedSort) ?? .name; await model.open(); pathDraft = model.path }
             .task(id: model.query) { await model.search() }
             .onChange(of: model.path) { pathDraft = $0 }
             .onChange(of: model.sort) { savedSort = $0.rawValue }
             .onChange(of: readOnly) { model.readOnly = $0 }
+            .onChange(of: transfersSupported) { model.transfersSupported = $0 }
+            .task(id: model.transferPollKey) {
+                while model.hasActiveTransfers && !model.closed && !Task.isCancelled {
+                    await model.refreshTransferRuns()
+                    if model.hasActiveTransfers { try? await Task.sleep(nanoseconds: 2_000_000_000) }
+                }
+            }
             .sheet(item: $action, onDismiss: { Task { await model.refresh() } }) { selection in
                 NativeFileActionView(selection: selection, model: model.legacy, perform: { try await model.performAction($0, path: $1, newPath: $2) }) { action = nil }
             }
@@ -97,14 +121,14 @@ struct NativeFilesView: View {
                         })
                 }
             }
-            .onDisappear { model.close() }
+            .onDisappear { dropTask?.cancel(); chooser.close(); model.close() }
     }
     private var location: some View {
         Picker(localized("文件位置"), selection: Binding(get: { model.contextID }, set: { context in Task { await model.chooseLocation(context) } })) {
             ForEach(model.catalog?.locations ?? []) { location in
                 Text(location.id == "local" ? localized("当前项目") : location.label).tag(location.id)
             }
-        }.labelsHidden().disabled(model.catalogLoading || model.fileActionBusy || model.saving).accessibilityLabel(localized("文件位置"))
+        }.labelsHidden().disabled(model.catalogLoading || model.fileActionBusy || model.saving || model.transferSubmitting || chooser.busy || dropLoading).accessibilityLabel(localized("文件位置"))
     }
     private var sortMenu: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -161,6 +185,9 @@ struct NativeFilesView: View {
                         Button(role: .destructive) { selectAction(.delete, row) } label: { Label { Text(localized("删除")) } icon: { WispIcon(name: "trash") } }.disabled(!model.canWrite)
                     } label: { WispIcon(name: "more", size: 16, menuScheme: scheme).frame(width: 28, height: 28) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 }
+            } else if model.transfersSupported && !row.directory {
+                Button { chooser.download(row, model: model) } label: { WispIcon(name: "download", size: 16).frame(width: 28, height: 28) }
+                    .buttonStyle(.plain).disabled(!model.canDownload || chooser.busy || dropLoading).help(localized("保存副本"))
             }
         }.background(WispDesign.color(model.selection.contains(row.id) ? "surface-hover" : "bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
             .contextMenu {
@@ -170,14 +197,77 @@ struct NativeFilesView: View {
                 }
             }
     }
+    @ViewBuilder private var transferResults: some View {
+        if model.transferSubmitting || dropLoading { HStack { ProgressView().controlSize(.small); Text(localized(dropLoading ? "读取拖放文件…" : "正在提交传输…")).font(.caption) } }
+        if model.transferUnconfirmed && !model.transferSubmitting {
+            Text(localized("传输结果未确认，未自动重试。请重新读取后再决定是否提交。")) .font(.caption).foregroundStyle(.orange)
+            if let context = model.transferContext, context != "local" {
+                Button(localized("查看传输任务")) { if !model.closed { runs(context) } }.font(.caption)
+            }
+        }
+        if let error = model.transferError { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+        if let transfer = model.transfer {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text(localized("传输结果")).font(.caption.bold())
+                    Spacer()
+                    if transfer.context_id != "local" {
+                        Button(localized("查看传输任务")) { if !model.closed { runs(transfer.context_id) } }.font(.caption)
+                    }
+                }
+                Text((transfer.context_id == "local" ? localized("当前项目") : model.catalog?.locations.first(where: { $0.id == transfer.context_id })?.label ?? transfer.context_id) + " · " + transfer.path)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(transfer.items) { item in
+                            let run = model.transferRuns[item.id]
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(alignment: .top) {
+                                    Text(item.destination_path ?? item.source_path).font(.caption).lineLimit(2).truncationMode(.middle)
+                                    Spacer(minLength: 4)
+                                    Text(status(run?.status ?? item.status)).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                if let error = item.error { Text(error).font(.caption2).foregroundStyle(.orange).textSelection(.enabled) }
+                                if let run { transferProgress(run) }
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(height: min(120, CGFloat(transfer.items.reduce(0) { $0 + 28 + ($1.error == nil ? 0 : 20) + ($1.run_id == nil ? 0 : 28) })))
+            }.padding(8).background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+    private func status(_ value: String) -> String {
+        localized(["submitted": "已提交", "running": "正在传输", "succeeded": "传输完成", "failed": "传输失败", "cancelled": "已取消", "cancelling": "正在取消" ][value] ?? "状态未知")
+    }
+    @ViewBuilder private func transferProgress(_ run: NativeRun) -> some View {
+        if let progress = try? JSONDecoder().decode(SettingsValue.self, from: Data(run.progress_json.utf8)),
+           case let .integer(total) = progress["total_bytes"], case let .integer(completed) = progress["completed_bytes"], total > 0, completed >= 0 {
+            if progress["indeterminate"] != .bool(true) { ProgressView(value: Double(min(completed, total)), total: Double(total)).controlSize(.small) }
+            Text(formattedBytes(completed) + " / " + formattedBytes(total)).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+    private func formattedBytes(_ count: Int64) -> String {
+        var format = ByteCountFormatStyle(style: .file)
+        format.locale = Locale(identifier: UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? "en_US" : "zh_CN")
+        return format.format(count)
+    }
+    private func drop(_ providers: [NSItemProvider]) -> Bool {
+        guard !dropLoading, !chooser.busy, let target = model.transferTarget(upload: true), !providers.isEmpty else { return false }
+        dropLoading = true; exportError = nil
+        dropTask = Task {
+            defer { dropLoading = false }
+            do { let sources = try await NativeFileDropSources.paths(providers); await model.upload(sources, target: target) }
+            catch { if !model.closed, !Task.isCancelled, model.owns(target) { exportError = error.localizedDescription } }
+        }
+        return true
+    }
     private func metadata(_ row: NativeFileBrowserRow) -> String {
         if !model.query.isEmpty { return row.path }
         let locale = Locale(identifier: UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? "en_US" : "zh_CN")
         if model.sort == .modified, let millis = row.modified, millis > 0 {
             return Date(timeIntervalSince1970: Double(millis) / 1000).formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(locale))
         }
-        var format = ByteCountFormatStyle(style: .file); format.locale = locale
-        return row.directory ? localized("文件夹") : format.format(Int64(clamping: row.size))
+        return row.directory ? localized("文件夹") : formattedBytes(Int64(clamping: row.size))
     }
     private func selectAction(_ kind: NativePanelFileAction, _ row: NativeFileBrowserRow) {
         let parent = (row.path as NSString).deletingLastPathComponent

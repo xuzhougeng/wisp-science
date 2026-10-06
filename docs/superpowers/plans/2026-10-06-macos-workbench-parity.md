@@ -472,3 +472,43 @@ groups remain open.
   WebView or test change was needed. Full-run failure evidence is retained in `/tmp`.
 - Upload/drop, remote download, rich/scientific viewers and the later outcome
   groups remain open. This increment does not complete Files or the overall goal.
+
+### Increment 17: native Files uploads, drops and remote downloads
+
+- Added optional `file_transfers` advertisement and two exact-frame adapters with
+  shared DTO/Swift fixtures. Upload writes recheck writable/unarchived ownership
+  and resolve the working directory before dispatch. Local copies preserve
+  collision suffixes, partial results and Unix literal-backslash filenames;
+  SSH uploads reuse persisted transfer Runs and the selected configured context.
+- Added file/directory pickers, Finder file-URL drops, per-file results and scoped
+  live Run status/progress with task-list navigation. Delayed provider/picker
+  results retain the originating window/location and are discarded after changes
+  or closure. Unknown acknowledgements block replay until an explicit fresh read;
+  their captured SSH context remains available for Run inspection.
+- Added an asynchronous chosen-destination SSH download API. It returns an owned
+  Run after preflight, stages privately, verifies complete size and an unchanged
+  destination metadata fingerprint, and records the chosen destination. Conflict,
+  failure, cancellation or incomplete bytes preserve the destination and clean up.
+  The existing waiting download API remains covered by its connection-option test.
+- Immediate Escape uncovered a system file-picker startup gap. A temporary scoped
+  window listener now cancels the picker before Files without moving focus, and
+  respects menus, nested sheets and marked text. Cleanup removes the listener.
+- A held-upload regression exposed a browser-generation check rejecting a valid
+  acknowledgement after a search change. Reply ownership now uses the independent
+  transfer lifetime; confirmed results preserve the current query and directory.
+  Delayed picker/drop results still validate browser ownership before dispatch.
+- Seven host Files checks, two shared DTO checks and three download checks passed;
+  the two new download tests exercise successful/new targets, conflicting/appearing
+  destinations, failure, incomplete bytes, cancellation and invalid target types
+  with a held fake runner. All thirty-two Files checks passed, including
+  thirteen new contract/capture/partial-result/uncertainty/drop/window/Escape/render
+  checks. The final full Swift suite passed 535 tests without failures. Both
+  locales/schemes at 320 and 419 points were rendered and representative final
+  images inspected. Formatting, wasm and both generated checks passed. Full WebView
+  passed 1021 tests with two existing optional-service skips and two homepage-loading
+  timeouts before the outline/history assertions. All thirteen checks in those two
+  files passed on isolated rerun; no WebView or test changes were needed. Full-run
+  failure evidence is retained in `/tmp`. The full Rust workspace gate passed
+  2666 tests across 45 test summaries, without failures or ignored tests.
+  Rich/scientific viewers, assistant/automation/timers, journey/publication/workflow
+  editing and packaged acceptance remain open; the overall goal is still active.
