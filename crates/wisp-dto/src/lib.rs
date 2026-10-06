@@ -221,7 +221,7 @@ pub struct CustomCredentialStatus {
     pub present: bool,
 }
 
-#[derive(Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageResource {
     pub id: String,
@@ -3006,7 +3006,7 @@ pub struct Artifact {
     pub source_discarded: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct FileContent {
     pub path: String,
     pub mime: String,

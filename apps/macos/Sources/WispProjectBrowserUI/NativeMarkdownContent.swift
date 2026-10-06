@@ -25,7 +25,7 @@ enum NativeMarkdownContent {
         return NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1, startingColumn: 0, columnSpan: 1)
     }
 
-    static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme, width: CGFloat = 600) -> NSAttributedString {
+    static func render(_ source: String, saved: [String], revealed: String? = nil, scheme: ColorScheme, width: CGFloat = 600, images: [String: NSImage] = [:], unavailableImages: Set<String> = []) -> NSAttributedString {
         let prepared = NativeMathContent.prepare(source)
         guard let parsed = try? AttributedString(markdown: prepared.markdown, options: .init(interpretedSyntax: .full)) else {
             return NativeSelectableMessage.content(AttributedString(source), saved: saved, scheme: scheme)
@@ -97,7 +97,8 @@ enum NativeMarkdownContent {
                         prefix = " "
                         break
                     }
-                    let attrs = value.length > 0 ? value.attributes(at: 0, effectiveRange: nil) : [:]
+                    var attrs = value.length > 0 ? value.attributes(at: 0, effectiveRange: nil) : [:]
+                    attrs.removeValue(forKey: NativeImageContent.referenceKey)
                     value.insert(NSAttributedString(string: prefix, attributes: attrs), at: 0)
                     if let task {
                         let attachment = NSTextAttachment(); attachment.attachmentCell = NativeTaskCell(checked: task != "[ ] ")
@@ -158,7 +159,8 @@ enum NativeMarkdownContent {
             // A paragraph separator is essential: full Markdown parsing strips
             // block delimiters. Preserve fenced-code line breaks exactly.
             if !value.string.hasSuffix("\n") {
-                let attributes = value.length > 0 ? value.attributes(at: value.length - 1, effectiveRange: nil) : [:]
+                var attributes = value.length > 0 ? value.attributes(at: value.length - 1, effectiveRange: nil) : [:]
+                attributes.removeValue(forKey: NativeImageContent.referenceKey)
                 value.append(NSAttributedString(string: "\n", attributes: attributes))
             }
             // Empty cells still own a paragraph and belong to the table's
@@ -178,6 +180,7 @@ enum NativeMarkdownContent {
             result.addAttribute(.paragraphStyle, value: compact, range: range)
         }
         NativeMathContent.replace(in: result, formulas: prepared.formulas, scheme: scheme, width: width)
+        NativeImageContent.replace(in: result, images: images, unavailable: unavailableImages, width: width)
         let plain = NativeMathContent.plainText(result)
         func range(_ match: Range<Int>) -> NSRange {
             let start = plain.index(plain.startIndex, offsetBy: match.lowerBound)

@@ -14,6 +14,7 @@ struct NativeConversationView: View {
     @State private var referencePicker = false
     @State private var runtimeActivity: NativeContextActivitySelection?
     @State private var confirmResend = false
+    @State private var confirmRequeue = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
     @State private var feedbackApproval: ConversationApproval?
@@ -26,6 +27,7 @@ struct NativeConversationView: View {
                     Spacer()
                     Button("重新读取") { Task { await conversation.refresh() } }
                     if conversation.uncertainSend { Button("已检查，允许再次发送…") { confirmResend = true } }
+                    if conversation.uncertainQueue { Button(localized("已核对队列，允许继续…")) { confirmRequeue = true } }
                 }.padding(12).foregroundStyle(.orange)
             }
             ScrollViewReader { scroll in
@@ -121,6 +123,10 @@ struct NativeConversationView: View {
             Button("保留草稿，允许再次发送") { conversation.acknowledgeUncertainSend() }
             Button("取消", role: .cancel) {}
         }
+        .confirmationDialog(localized("先核对最新队列和会话，确认上次排队结果后再继续。"), isPresented: $confirmRequeue) {
+            Button(localized("已核对，保留草稿并继续")) { conversation.acknowledgeUncertainQueue() }
+            Button("取消", role: .cancel) {}
+        }
     }
     private func markedText(_ item: ConversationItem, index: Int, input: Bool = false) -> AttributedString {
         let source = item.role == "user" && !input ? SavedAttachments.body(in: item.text) : item.text
@@ -159,6 +165,11 @@ struct NativeConversationView: View {
                         if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
                         selectableMessage(item, index: index)
                     } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
+                    if let path = NativeMessageImageRequest.generatedPath(item) {
+                        NativeMessageBody(text: AttributedString(""), markdown: NativeMessageImageRequest.attachmentMarkdown([path]), resources: item.resources ?? [], saved: [], revealed: nil, monospaced: false,
+                                          client: conversation.client, project: projectID ?? "", session: sessionID ?? "", quote: nil, save: nil)
+                            .id((projectID ?? "") + ":" + (sessionID ?? "") + ":generated:" + String(index))
+                    }
                 } else if item.role == "question", let question = NativeQuestion(item.text) {
                     NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
                         .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
@@ -166,7 +177,7 @@ struct NativeConversationView: View {
                     selectableMessage(item, index: index)
                     if item.role == "user" {
                         let files = SavedAttachments.files(in: item.text)
-                        ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                        ForEach(Array(files.filter { !NativeMessageImageRequest.isImageFile($0) }.enumerated()), id: \.offset) { _, file in
                             Text((file as NSString).lastPathComponent)
                                 .font(WispDesign.font(size: 12))
                                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -188,12 +199,15 @@ struct NativeConversationView: View {
         }
     }
     private func selectableMessage(_ item: ConversationItem, index: Int, input: Bool = false) -> some View {
-        NativeSelectableMessage(text: markedText(item, index: index, input: input), saved: conversation.savedHighlights.map(\.code), quote: quoteSelection, save: { selection in
+        let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
+        let attachments = item.role == "user" ? NativeMessageImageRequest.attachmentMarkdown(SavedAttachments.files(in: item.text)) : ""
+        let markdown = item.role == "tool" || input ? nil : source + (attachments.isEmpty ? "" : "\n\n" + attachments)
+        return NativeMessageBody(text: markedText(item, index: index, input: input), markdown: markdown, resources: item.resources ?? [], saved: conversation.savedHighlights.map(\.code),
+                          revealed: conversation.scrollTarget == index ? conversation.revealedExcerpt : nil, monospaced: item.role == "tool",
+                          client: conversation.client, project: projectID ?? "", session: sessionID ?? "", quote: quoteSelection, save: { selection in
             guard let projectID, let sessionID else { return }
             Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
-        }, monospaced: item.role == "tool",
-           markdown: item.role == "tool" || input ? nil : item.role == "user" ? SavedAttachments.body(in: item.text) : item.text,
-           revealed: conversation.scrollTarget == index ? conversation.revealedExcerpt : nil).frame(maxWidth: .infinity, alignment: .leading)
+        }).id((projectID ?? "") + ":" + (sessionID ?? "") + ":" + String(index) + (input ? ":input" : ":body"))
     }
     private var composer: some View {
         VStack(spacing: 8) {
@@ -204,7 +218,9 @@ struct NativeConversationView: View {
                 NativeComposerEnvironment(model: conversation.composer, writable: composerWritable) {
                     runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
                 }
-                if let queued = conversation.queuedFollowUp {
+                if !conversation.queuedTurns.isEmpty, let sessionID {
+                    NativeConversationQueueView(conversation: conversation, session: sessionID).id((projectID ?? "") + ":" + sessionID)
+                } else if let queued = conversation.queuedFollowUp {
                     Text("已排队一条后续：\(queued)").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
                         .accessibilityIdentifier("queued-follow-up")
                 }
@@ -276,7 +292,7 @@ struct NativeConversationView: View {
             }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(color("border")))
             HStack {
-                Text(sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
+                Text(localized(conversation.snapshot?.running == true ? (sendWithModifier ? "⌘Enter 排队 · Enter 换行" : "Enter 排队 · Shift+Enter 换行") : (sendWithModifier ? "⌘Enter 发送 · Enter 换行" : "Enter 发送 · Shift+Enter 换行"))).font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint"))
                 Spacer()
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
@@ -297,7 +313,10 @@ struct NativeConversationView: View {
     private func submitComposer() {
         if let executeComposerCommand, conversation.runComposerCommand(available: completionCommands, execute: executeComposerCommand) { return }
         conversation.completions.dismiss()
-        Task { await conversation.send() }
+        Task {
+            if conversation.snapshot?.running == true { await conversation.queueFollowUp() }
+            else { await conversation.send() }
+        }
     }
     private func queueComposer() {
         if let executeComposerCommand, conversation.runComposerCommand(available: completionCommands, execute: executeComposerCommand) { return }

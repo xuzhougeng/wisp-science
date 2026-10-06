@@ -1,0 +1,82 @@
+{
+  "schema": "wisp.native-conversations.v1",
+  "epoch": "host-one",
+  "sequence": 7,
+  "project_id": "project-a",
+  "session_id": "session-a",
+  "items": [
+    {
+      "role": "user",
+      "text": "检查样本",
+      "tool_name": null,
+      "input": null,
+      "ok": null,
+      "status": null
+    },
+    {
+      "role": "assistant",
+      "text": "Counts: ![QC figure](figures/qc.png)",
+      "tool_name": null,
+      "input": null,
+      "ok": null,
+      "status": null,
+      "resources": [
+        {
+          "id": "resource-a",
+          "ordinal": 0,
+          "originalReference": "figures/qc.png",
+          "artifactId": "artifact-a",
+          "artifactVersionId": "version-a",
+          "displayName": "qc.png",
+          "kind": "image",
+          "mimeType": "image/png",
+          "status": "ready",
+          "error": null
+        }
+      ]
+    }
+  ],
+  "next_before_seq": null,
+  "running": true,
+  "stopping": false,
+  "read_only": false,
+  "model_id": "model-a",
+  "request_id": "c2bb7a45-ddbb-47b1-82db-82f289d9aa7d",
+  "error": null,
+  "approvals": [],
+  "composer_references": true,
+  "queue": {
+    "items": [
+      {
+        "id": "18446744073709551615",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "state": "queued",
+        "message": "Compare controls",
+        "attachments": [
+          "uploads/control.png"
+        ],
+        "references": [
+          {
+            "kind": "artifact",
+            "id": "artifact-a"
+          }
+        ]
+      },
+      {
+        "id": "9007199254740993",
+        "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "queued",
+        "message": "Summarize results",
+        "attachments": [],
+        "references": []
+      }
+    ],
+    "outcomes": [
+      {
+        "id": "1",
+        "state": "completed"
+      }
+    ],
+    "can_cut_in": true
+  }
+}

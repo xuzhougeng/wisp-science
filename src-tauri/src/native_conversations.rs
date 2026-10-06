@@ -135,6 +135,7 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
         Vec::new()
     };
     dto::Item {
+        resources: item.resources.into_iter().map(Into::into).collect(),
         proposal: (item.role == "plan")
             .then(|| dto::PlanProposal::from_text(&item.text))
             .flatten(),
@@ -466,6 +467,23 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             project,
             session,
             decode(&request.args)?,
+        )
+        .await;
+    }
+    if request.command == "native_conversation_image" {
+        let state = broker.app.state::<crate::AppState>();
+        let (working, scope) =
+            crate::exploration_commands::working_project_for_frame(&state, session).await?;
+        if working.id != project {
+            return Err("Project scope mismatch".into());
+        }
+        let args: dto::ImageRequest = decode(&request.args)?;
+        return crate::native_message_images::read(
+            &state.store,
+            &working.root,
+            &scope,
+            project,
+            args,
         )
         .await;
     }

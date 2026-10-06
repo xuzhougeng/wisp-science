@@ -10,6 +10,9 @@ struct NativeSelectableMessage: NSViewRepresentable {
     var monospaced = false
     var markdown: String?
     var revealed: String?
+    var images: [String: NSImage] = [:]
+    var unavailableImages: Set<String> = []
+    var openImage: ((String) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> NativeMessageTextView {
@@ -27,8 +30,9 @@ struct NativeSelectableMessage: NSViewRepresentable {
     func updateNSView(_ view: NativeMessageTextView, context: Context) { configure(view) }
     private func configure(_ view: NativeMessageTextView) {
         view.quote = quote; view.save = save
+        view.openImage = openImage
         view.linkTextAttributes = [.foregroundColor: NSColor(WispDesign.color("clay", scheme)), .underlineStyle: NSUnderlineStyle.single.rawValue]
-        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme, width: view.bounds.width > 0 ? view.bounds.width : 600) }
+        view.apply(markdown.map { NativeMarkdownContent.render($0, saved: saved, revealed: revealed, scheme: scheme, width: view.bounds.width > 0 ? view.bounds.width : 600, images: images, unavailableImages: unavailableImages) }
                    ?? Self.content(text, saved: saved, scheme: scheme, monospaced: monospaced))
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NativeMessageTextView, context: Context) -> CGSize? {
@@ -39,7 +43,7 @@ struct NativeSelectableMessage: NSViewRepresentable {
         layout.ensureLayout(for: container)
         return CGSize(width: width, height: nsView.contentHeight())
     }
-    static func dismantleNSView(_ view: NativeMessageTextView, coordinator: ()) { view.quote = nil; view.save = nil }
+    static func dismantleNSView(_ view: NativeMessageTextView, coordinator: ()) { view.quote = nil; view.save = nil; view.openImage = nil }
     static func content(_ text: AttributedString, saved: [String], scheme: ColorScheme, monospaced: Bool = false) -> NSAttributedString {
         let value = NSMutableAttributedString(text)
         let plain = value.string
@@ -68,6 +72,7 @@ struct NativeSelectableMessage: NSViewRepresentable {
                 if intent.contains(.strikethrough) { value.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range) }
             }
             value.addAttribute(.font, value: font, range: range)
+            if let image = run.imageURL { value.addAttribute(NativeImageContent.referenceKey, value: image.absoluteString, range: range) }
         }
         for excerpt in Set(saved) {
             for range in NativeSavedExcerpt.ranges(in: plain, excerpt: excerpt) {
@@ -113,9 +118,12 @@ class NativeMessageTextView: NSTextView {
     private var copyLayoutWidth: CGFloat = -1
     private var copyButtons: [NSButton] = []
     private var copyActions: [NativeSelectionAction] = []
+    private var imageButtons: [NSButton] = []
+    private var imageActions: [NativeSelectionAction] = []
+    var openImage: ((String) -> Void)?
     override func accessibilityChildren() -> [Any]? {
         let existing = super.accessibilityChildren() ?? []
-        return existing + copyButtons.filter { button in !existing.contains { ($0 as? NSView) === button } }
+        return existing + (copyButtons + imageButtons).filter { button in !existing.contains { ($0 as? NSView) === button } }
     }
     override func layout() {
         super.layout()
@@ -155,6 +163,21 @@ class NativeMessageTextView: NSTextView {
             copyButtons.append(button); copyActions.append(action)
         }
         for button in previous.values where !copyButtons.contains(where: { $0 === button }) { button.removeFromSuperview() }
+        imageButtons.forEach { $0.removeFromSuperview() }; imageButtons = []; imageActions = []
+        storage.enumerateAttribute(NativeImageContent.previewKey, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let reference = value as? String else { return }
+            let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            let action = NativeSelectionAction { [weak self] in self?.openImage?(reference) }
+            let button = NSButton(title: "", target: action, action: #selector(NativeSelectionAction.invoke(_:)))
+            button.isBordered = false
+            let name = storage.attribute(NativeMathContent.sourceKey, at: range.location, effectiveRange: nil) as? String ?? reference
+            let title = localized("打开图片预览") + " · " + (name.isEmpty ? reference : name)
+            button.toolTip = title; button.setAccessibilityLabel(title)
+            button.identifier = NSUserInterfaceItemIdentifier("message-image-\(range.location)")
+            button.frame = rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            addSubview(button); imageButtons.append(button); imageActions.append(action)
+        }
     }
 
     var quote: ((String) -> Void)?
@@ -162,11 +185,17 @@ class NativeMessageTextView: NSTextView {
     func apply(_ content: NSAttributedString) {
         guard let storage = textStorage, !storage.isEqual(to: content) else { return }
         let selected = selectedRange()
+        let plainStart = selected.location <= storage.length ? (NativeMathContent.plainText(storage.attributedSubstring(from: NSRange(location: 0, length: selected.location))) as NSString).length : 0
+        let plainLength = NSMaxRange(selected) <= storage.length ? (NativeMathContent.plainText(storage.attributedSubstring(from: selected)) as NSString).length : 0
         storage.setAttributedString(content)
         copyLayoutWidth = -1
         needsLayout = true
-        let start = min(selected.location, storage.length)
-        setSelectedRange(NSRange(location: start, length: min(selected.length, storage.length - start)))
+        if selected.length > 0, plainLength > 0, plainStart + plainLength <= (NativeMathContent.plainText(content) as NSString).length {
+            setSelectedRange(NativeMathContent.renderedRange(NSRange(location: plainStart, length: plainLength), in: content))
+        } else {
+            let start = min(selected.location, storage.length)
+            setSelectedRange(NSRange(location: start, length: min(selected.length, storage.length - start)))
+        }
     }
     func selectionActions() -> [NSMenuItem] {
         let range = selectedRange()

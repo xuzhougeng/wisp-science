@@ -25,6 +25,7 @@ private actor ConversationFake: NativeConversationQuerying {
     var holdPreferences = false
     var holdCommand: String?
     var heldWrite: CheckedContinuation<SettingsValue, Never>?
+    var heldCommand: String?
     func configure(_ values: [ConversationSnapshot], failSend: Bool = false, failRead: Bool = false) { reads = values; self.failSend = failSend; self.failRead = failRead }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot {
         if holdRead { holdRead = false; return try await withCheckedThrowingContinuation { held = $0 } }
@@ -38,7 +39,7 @@ private actor ConversationFake: NativeConversationQuerying {
         }
         if command == "list_models" || command == "list_acp_agents" { return .array([]) }
         writes.append((command, args, projectID))
-        if holdCommand == command { holdCommand = nil; return await withCheckedContinuation { heldWrite = $0 } }
+        if holdCommand == command { holdCommand = nil; heldCommand = command; return await withCheckedContinuation { heldWrite = $0 } }
         if failSend { throw ProjectBrowserError.service("response lost") }
         return .null
     }
@@ -53,7 +54,9 @@ private actor ConversationFake: NativeConversationQuerying {
     func finishPreferences() { heldPreferences?.resume(returning: .null); heldPreferences = nil }
     func holdWrite(_ command: String) { holdCommand = command }
     func isHoldingWrite() -> Bool { heldWrite != nil }
-    func finishWrite() { heldWrite?.resume(returning: .null); heldWrite = nil }
+    func finishWrite() {
+        heldWrite?.resume(returning: heldCommand == "native_conversation_enqueue" ? .object(["queued": .bool(true)]) : .null); heldWrite = nil; heldCommand = nil
+    }
     func isHeld() -> Bool { held != nil }
     func finish(_ value: ConversationSnapshot) { held?.resume(returning: value); held = nil }
 }
