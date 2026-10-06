@@ -14,12 +14,22 @@ struct ProjectSearchSheet: View {
     var projectID: String? = nil
     let close: () -> Void
     @StateObject private var search: NativeSearchModel
+    @StateObject private var references: NativeSearchReferenceModel
+    private let originDatabase: URL
+    private let originProject: String?
+    private let originSession: String?
     @State private var query = ""
     @State private var selection = SearchResultSelection()
     @Environment(\.colorScheme) private var scheme
-    init(model: ProjectBrowserModel, projectID: String? = nil, close: @escaping () -> Void) {
+    init(model: ProjectBrowserModel, projectID: String? = nil, searchModel: NativeSearchModel? = nil, close: @escaping () -> Void) {
         self.model = model; self.projectID = projectID; self.close = close
-        _search = StateObject(wrappedValue: NativeSearchModel(client: model.calendarClient(), projectID: projectID))
+        let database = model.databaseURL, project = model.activeProjectID, session = model.activeSessionID
+        originDatabase = database; originProject = project; originSession = session
+        let conversation = model.nativeConversation()
+        _search = StateObject(wrappedValue: searchModel ?? NativeSearchModel(client: model.calendarClient(), projectID: projectID))
+        _references = StateObject(wrappedValue: NativeSearchReferenceModel(client: conversation.client, project: project ?? "", session: session ?? "", writable: {
+            model.databaseURL == database && model.activeProjectID == project && model.activeSessionID == session && conversation.canReference
+        }, accept: conversation.addReference))
     }
     private var commands: [NativeSearchCommand] { NativeSearchCommand.matching(query, project: projectID != nil, session: model.activeSessionID != nil) }
     private var count: Int { commands.count + search.items.count }
@@ -29,16 +39,20 @@ struct ProjectSearchSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 WispIcon(name: "search")
-                SearchCommandField(text: $query, cancel: close, move: { selection.move($0, count: count) }, submit: {
-                    if let index = selection.selectedIndex(count: count) { open(index) }
+                SearchCommandField(text: $query, cancel: close, move: { selection.move($0, count: count) }, submit: { attach in
+                    if let index = selection.selectedIndex(count: count) {
+                        if attach { attachSelection(index) } else { open(index) }
+                    }
                 })
                 .frame(height: 24)
-                Button("关闭", action: close).keyboardShortcut(.cancelAction)
+                Button(localized("关闭"), action: close).keyboardShortcut(.cancelAction)
             }
             Divider()
             Text(localized("搜索所有项目、产物与会话，包括历史消息。输入 > 搜索命令。"))
                 .font(.caption).foregroundStyle(color("text-faint"))
             if search.busy { ProgressView().controlSize(.small) }
+            if references.reading { ProgressView(localized("正在读取引用…")).controlSize(.small) }
+            if let error = references.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             if let error = search.error {
                 Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                 Button(localized("重新读取")) { Task { await search.search(query, debounce: 0) } }
@@ -68,13 +82,13 @@ struct ProjectSearchSheet: View {
                 .onChange(of: selection.index) { index in scroll.scrollTo(index) }
             }
             Divider()
-            Text("↑↓ 选择    ↵ 打开    esc 关闭").font(.caption).foregroundStyle(color("text-faint"))
+            Text(localized("↑↓ 选择    ↵ 打开    ⇧↵ 引用    esc 关闭")).font(.caption).foregroundStyle(color("text-faint"))
         }
-        .padding(24).frame(width: 560, height: 460).background(color("bg-app"))
-        .onChange(of: query) { _ in selection.reset(); search.invalidate() }
+        .padding(24).frame(minWidth: 320, idealWidth: 560, maxWidth: 680, minHeight: 380, idealHeight: 460, maxHeight: 740).background(color("bg-app"))
+        .onChange(of: query) { _ in selection.reset(); search.invalidate(); references.invalidate() }
         .onChange(of: search.items) { _ in selection.reset() }
-        .task(id: query) { if query.hasPrefix(">") { search.invalidate() } else { await search.search(query) } }
-        .onDisappear { search.invalidate() }
+        .task(id: query) { if query.hasPrefix(">") { search.invalidate() } else if search.resultQuery != query || search.items.isEmpty { await search.search(query) } }
+        .onDisappear { search.invalidate(); references.close() }
         .background(NativeSettingsEscape(close: close))
         .onExitCommand(perform: close)
     }
@@ -97,6 +111,23 @@ struct ProjectSearchSheet: View {
         }
         .buttonStyle(.plain).id(index)
         .accessibilityAddTraits(selection.selectedIndex(count: count) == index ? [.isSelected] : [])
+        .contextMenu {
+            if NativeSearchReferenceModel.referenceable(item) {
+                Button { attach(item) } label: { Label { Text(localized("引用到当前草稿")) } icon: { WispIcon(name: "link") } }
+                    .disabled(!references.available || references.reading)
+            }
+        }
+    }
+
+    private func attachSelection(_ index: Int) {
+        let selected = index >= commands.count && index < count ? search.items[index - commands.count] : nil
+        if let item = selected.flatMap({ NativeSearchReferenceModel.referenceable($0) ? $0 : nil }) ?? search.items.first(where: NativeSearchReferenceModel.referenceable) { attach(item) }
+    }
+    private func attach(_ item: NativeSearchItem) {
+        Task {
+            guard search.items.contains(item) else { return }
+            if await references.attach(item) { close() }
+        }
     }
 
     private func open(_ index: Int) {
@@ -106,17 +137,20 @@ struct ProjectSearchSheet: View {
         }
         let item = search.items[index - commands.count]
         close()
-        Task { await model.openSearchResult(item) }
+        Task {
+            guard model.databaseURL == originDatabase, model.activeProjectID == originProject, model.activeSessionID == originSession else { return }
+            await model.openSearchResult(item)
+        }
     }
 }
 
 /// AppKit's field editor consumes arrow keys before SwiftUI's onMoveCommand.
 /// Handle its navigation commands while preserving IME candidate selection.
-private struct SearchCommandField: NSViewRepresentable {
+struct SearchCommandField: NSViewRepresentable {
     @Binding var text: String
     let cancel: () -> Void
     let move: (Int) -> Void
-    let submit: () -> Void
+    let submit: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSTextField {
@@ -125,6 +159,7 @@ private struct SearchCommandField: NSViewRepresentable {
         field.drawsBackground = false
         field.placeholderString = localized("搜索项目、产物、会话与历史消息…")
         field.font = .systemFont(ofSize: 14)
+        field.cell?.usesSingleLineMode = true; field.cell?.lineBreakMode = .byTruncatingTail
         field.delegate = context.coordinator
         field.setAccessibilityIdentifier("project-search")
         DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
@@ -146,7 +181,8 @@ private struct SearchCommandField: NSViewRepresentable {
             switch selector {
             case #selector(NSResponder.moveDown(_:)): parent.move(1)
             case #selector(NSResponder.moveUp(_:)): parent.move(-1)
-            case #selector(NSResponder.insertNewline(_:)): parent.submit()
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), #selector(NSResponder.insertLineBreak(_:)):
+                parent.submit(NSApp.currentEvent.map { $0.modifierFlags.contains(.shift) } ?? (selector == #selector(NSResponder.insertLineBreak(_:))))
             default: return false
             }
             return true

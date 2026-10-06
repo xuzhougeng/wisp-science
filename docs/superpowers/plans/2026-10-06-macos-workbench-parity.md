@@ -291,8 +291,8 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   passed on isolated rerun; no product or test changes were needed for that timeout.
 
 Conversation controls and search remain incomplete. The Files panel already
-searches project directories; integrating those results and reference/new-window
-actions into Cmd+K remains open. Session export is tracked below. Later outcome
+searches project directories, matching the WebView's separate Files search.
+Cmd+K reference/new-window actions are tracked separately. Session export is tracked below. Later outcome
 groups remain open.
 
 ### Increment 11: conversation relationship navigation
@@ -359,3 +359,24 @@ groups remain open.
   wasm and both generated-resource/command-contract checks passed. New full
   Rust/WebView regression gates remain in progress; final packaged/native
   acceptance and the remaining outcome groups are still open.
+
+### Increment 13: scoped search references
+
+- Added Shift+Enter and an explicit result-context-menu reference action. The
+  existing scoped composer catalog rereads privacy/eligibility and supplies the
+  exact ID/kind and fresh label before the existing composer stages/deduplicates
+  the chip. No send, navigation or draft replacement is involved. Long Unicode
+  titles are bounded at scalar boundaries for the existing 512-byte query limit.
+- Closed, cancelled, superseded and changed-scope reads cannot stage into a
+  different draft; unavailable/hidden/missing/wrong-owner results remain errors.
+  Search-result navigation also rechecks its origin at Task startup. Enter and
+  Shift+Enter use native field-editor commands while preserving IME candidates.
+  Made the search sheet responsive and translated its shortcut/close controls.
+- Seventeen targeted Swift checks passed, including six new reference tests,
+  actual conversation staging/deduplication, field-editor/IME callbacks and the
+  existing search/composer checks. Four locale/scheme layouts were rendered at
+  419 points and representative final layouts were inspected. The final full
+  Swift suite passed 492 tests with no failures after the layout/translation/
+  matching-query refinements. Formatting and both generated-resource/command
+  checks passed. No new Rust command or schema is required. Independent windows,
+  composer focus after staging and later outcome groups remain open.

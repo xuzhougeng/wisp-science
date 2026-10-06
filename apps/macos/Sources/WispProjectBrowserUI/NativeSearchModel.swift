@@ -7,6 +7,7 @@ final class NativeSearchModel: ObservableObject {
     @Published private(set) var items: [NativeSearchItem] = []
     @Published private(set) var busy = false
     @Published private(set) var error: String?
+    private(set) var resultQuery: String?
     private var generation = UUID()
     private let client: any NativeSettingsQuerying
     private let projectID: String?
@@ -15,11 +16,11 @@ final class NativeSearchModel: ObservableObject {
         self.client = client; self.projectID = projectID
     }
 
-    func invalidate() { generation = UUID(); items = []; busy = false; error = nil }
+    func invalidate() { generation = UUID(); items = []; busy = false; error = nil; resultQuery = nil }
 
     func search(_ query: String, debounce: UInt64 = 120_000_000) async {
         let current = UUID(); generation = current
-        items = []; error = nil; busy = true
+        items = []; error = nil; busy = true; resultQuery = nil
         defer { if generation == current { busy = false } }
         do {
             guard query.utf8.count <= 512 else { throw ProjectBrowserError.unavailable(localized("搜索关键词过长，请缩短后重试。")) }
@@ -28,7 +29,7 @@ final class NativeSearchModel: ObservableObject {
             let value = try await client.invoke("native_workspace_search", args: ["query": .string(query)], projectID: projectID)
             let result = try NativeSearchResponse.decode(value, query: query, projectID: projectID)
             guard generation == current, !Task.isCancelled else { return }
-            items = result.items
+            resultQuery = query; items = result.items
         } catch is CancellationError {
         } catch {
             if generation == current, !Task.isCancelled { self.error = localized("搜索未能读取，请重试。") + "\n" + error.localizedDescription }

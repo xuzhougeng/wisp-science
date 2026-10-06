@@ -47,6 +47,36 @@ Check archived conversations, busy/queued/reviewing guards, unchanged drafts,
 both locales/schemes and narrow windows. Packaged save-panel interaction remains
 part of the final native acceptance gate.
 
+## macOS search references (2026-10-06)
+
+Cmd+K supports **Shift+Enter** and the result context menu's **引用到当前草稿**
+for saved conversations and registered artifacts. If a command/project is
+selected, Shift+Enter uses the first referenceable result, matching the WebView.
+Selection rereads the current conversation's existing reference catalog and
+stages only the exact advertised kind/ID, using its fresh label. Removed or hidden
+results, self-session references and unavailable/read-only composers cannot stage
+a reference. Source reads are bounded to a 512-byte query at a Unicode scalar
+boundary. Reference selection never sends a message, navigates to another
+conversation or replaces typed text; the existing composer deduplicates chips.
+
+A failed read leaves the search open with an error. Query changes, cancellation,
+closing, database/project/session navigation or loss of composer eligibility
+discard late selections. A successful stage closes the search. Enter retains
+normal navigation; IME candidate confirmation stays with AppKit. Search now
+fits narrow windows, including its translated reference shortcut. Project file
+search already exists in the Files panel, as in the WebView; this change does not
+add a new file category to Cmd+K. Independent-window navigation and restoring
+composer focus after staging remain follow-up work.
+
+Manual smoke: keep unsent text in an editable conversation, search for another
+conversation and an artifact, then use Shift+Enter or the context menu. Verify
+the exact chip, unchanged text and absence of a send/navigation. Repeat the same
+selection to check deduplication. Hide/remove a result or change conversation
+while its reference read is pending; it must not stage into the new draft.
+Press Enter while an IME candidate is active to confirm text only. Press Escape
+immediately while reading; it closes the search and a late response has no effect.
+Check both locales/schemes and narrow windows.
+
 ## macOS conversation controls and workspace search (2026-10-06)
 
 The composer environment row opens session options. Full permission, delegation,

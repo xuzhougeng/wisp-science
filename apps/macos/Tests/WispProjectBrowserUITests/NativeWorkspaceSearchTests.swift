@@ -29,6 +29,23 @@ private struct EmptySearchBrowser: ProjectBrowserQuerying {
 }
 
 final class NativeWorkspaceSearchTests: XCTestCase {
+    @MainActor func testRenderSearchAndReferenceShortcutInBothLocalesAndSchemesAtNarrowWidth() async throws {
+        guard let directory = ProcessInfo.processInfo.environment["WISP_NATIVE_SNAPSHOT_DIR"] else { throw XCTSkip("Set WISP_NATIVE_SNAPSHOT_DIR to render search") }
+        let previous = UserDefaults.standard.object(forKey: "nativeSettings.locale")
+        defer { if let previous { UserDefaults.standard.set(previous, forKey: "nativeSettings.locale") } else { UserDefaults.standard.removeObject(forKey: "nativeSettings.locale") } }
+        let fake = WorkspaceSearchFake(), browser = ProjectBrowserModel(client: EmptySearchBrowser(), databaseURL: URL(fileURLWithPath: "/unused"), projectTransport: WorkspaceSearchFake())
+        for locale in ["zh", "en"] {
+            UserDefaults.standard.set(locale, forKey: "nativeSettings.locale")
+            for scheme in [ColorScheme.light, .dark] {
+                let search = NativeSearchModel(client: fake, projectID: nil); await search.search("", debounce: 0)
+                let host = NSHostingView(rootView: ProjectSearchSheet(model: browser, searchModel: search, close: {}).frame(maxWidth: .infinity, maxHeight: .infinity).background(WispDesign.color("bg-app", scheme)).foregroundStyle(WispDesign.color("text", scheme)).tint(WispDesign.color("clay", scheme)).environment(\.colorScheme, scheme))
+                host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua); host.frame = NSRect(x: 0, y: 0, width: 419, height: 460); host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:])); XCTAssertGreaterThan(data.count, 1000)
+                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("workspace-search-reference-\(locale)-\(scheme == .dark ? "dark" : "light").png"))
+            }
+        }
+    }
     @MainActor func testCommandPaletteUsesScopeAndEnglishAliases() {
         XCTAssertEqual(NativeSearchCommand.matching(">terminal", project: true, session: true).map(\.id), ["terminal"])
         XCTAssertTrue(NativeSearchCommand.matching(">terminal", project: true, session: false).isEmpty)
