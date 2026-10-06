@@ -26,12 +26,6 @@ public sealed partial class WorkspaceConversationModel
         stagedFiles[session] = Attachments; stagedReferences[session] = References; stagedQuotes[session] = Quotes;
         queueRecoveryReasons.Remove((session, id)); submittedQueueDrafts.Remove((session, id)); Notify();
     }
-    public void AcknowledgeQueueResult()
-    {
-        if (sessionId == null || Busy || ConnectionError != null) return;
-        uncertainQueueActions.Remove(sessionId); uncertainQueues.Remove(sessionId); RetainUnconfirmedQueueDraft(sessionId);
-        OperationError = null; Notify();
-    }
     private void RetainUnconfirmedQueueDraft(string session)
     {
         if (pendingQueueEnqueues.Remove(session, out var pendingQueue))

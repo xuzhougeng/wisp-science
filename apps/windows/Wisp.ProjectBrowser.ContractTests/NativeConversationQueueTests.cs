@@ -29,7 +29,7 @@ internal static class NativeConversationQueueTests
         await model.QueueActionAsync(target, new() { ["kind"] = "replace" });
         await model.RefreshAsync(); await model.QueueActionAsync(target, new() { ["kind"] = "replace" });
         Check(model.QueueUncertain && host.Actions.Count == 2, "ambiguous replace is not replayed by poll or a second action");
-        model.AcknowledgeQueueResult(); host.LoseAction = false;
+        model.AcknowledgeUncertainSend(); host.LoseAction = false;
         host.PendingAction = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = model.QueueActionAsync(target, new() { ["kind"] = "cancel" });
         await model.OpenAsync("p", "other"); model.Draft = "other draft";

@@ -41,7 +41,7 @@ internal static class NativeHistoricalRunTests
             await model.RefreshAsync();
             Check(model.History.RunCards.Single().Status == status && model.History.Items[1].Run?.Status == status
                 && model.History.Items[2].Run?.Status == status && !model.CanCancelRun(model.History.RunCards.Single())
-                && NativeToolPresentation.OwnsTerminalRun(model.History.Items[1], 1),
+                && model.History.Items[1].Run?.OwnerIndex == 1,
                 status + " updates every link and preserves the exact submission owner");
         }
         host.Current = host.Current with { Status = "running", EndedAt = null }; await model.RefreshAsync();

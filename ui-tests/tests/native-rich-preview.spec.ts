@@ -240,6 +240,10 @@ test('native formula and PDF viewer renders locally with failure and navigation 
   // Exercise mouse text selection on the real PDF.js layer, not the canvas.
   await text.dblclick({ position: { x: 8, y: 5 } });
   await expect(add).toBeEnabled();
+  const selections = () => page.evaluate(() => (window as any).previewMessages.filter((m: any) => m.type === 'selection').length);
+  const reported = await selections();
+  await page.evaluate(() => document.dispatchEvent(new Event('selectionchange')));
+  expect(await selections()).toBe(reported);
   await add.click();
   const quotes = () => page.evaluate(() => (window as any).previewMessages.filter((m: any) => m.type === 'quote'));
   expect(await quotes()).toEqual([{ type: 'quote', text: 'Alpha', page: 1, jump: false }]);
