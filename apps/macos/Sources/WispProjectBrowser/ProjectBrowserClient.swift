@@ -52,13 +52,18 @@ public struct BrowserSession: Codable, Identifiable, Equatable, Sendable {
     public let status: String
     public let folderID: String?
     public let pinned: Bool?
-    public init(id: String, projectID: String, title: String, ts: Int64, status: String, folderID: String? = nil, pinned: Bool? = nil) {
+    public let branchedFrom: String?
+    public let branchState: String?
+    public let dispatchedFrom: String?
+    public init(id: String, projectID: String, title: String, ts: Int64, status: String, folderID: String? = nil, pinned: Bool? = nil, branchedFrom: String? = nil, branchState: String? = nil, dispatchedFrom: String? = nil) {
         self.id = id; self.projectID = projectID; self.title = title; self.ts = ts; self.status = status; self.folderID = folderID; self.pinned = pinned
+        self.branchedFrom = branchedFrom; self.branchState = branchState; self.dispatchedFrom = dispatchedFrom
     }
     enum CodingKeys: String, CodingKey {
         case id, title, ts, status, pinned
         case projectID = "project_id"
         case folderID = "folder_id"
+        case branchedFrom = "branched_from", branchState = "branch_state", dispatchedFrom = "dispatched_from"
     }
 }
 

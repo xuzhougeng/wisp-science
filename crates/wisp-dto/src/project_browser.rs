@@ -91,3 +91,34 @@ pub struct BrowserMessage {
     pub text: String,
     pub tool_name: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn relationship_fixture_preserves_links_and_older_sessions_stay_compatible() {
+        let response: Response = serde_json::from_str(include_str!(
+            "../../../contracts/project-browser/v1/relationships.json"
+        ))
+        .unwrap();
+        let Reply::Sessions { sessions, .. } = response.reply else {
+            panic!("Expected sessions")
+        };
+        assert_eq!(sessions[1].branched_from.as_deref(), Some("main"));
+        assert_eq!(sessions[2].branch_state.as_deref(), Some("merged"));
+        assert_eq!(sessions[3].branch_state.as_deref(), Some("orphaned"));
+        assert!(sessions[3].branched_from.is_none());
+        assert_eq!(sessions[4].dispatched_from.as_deref(), Some("main"));
+        let main = serde_json::to_value(&sessions[0]).unwrap();
+        assert!(main.get("branched_from").is_none());
+        let old: Response = serde_json::from_str(include_str!(
+            "../../../contracts/project-browser/v1/sessions.json"
+        ))
+        .unwrap();
+        let Reply::Sessions { sessions, .. } = old.reply else {
+            panic!("Expected sessions")
+        };
+        assert!(sessions[0].branched_from.is_none());
+        assert!(sessions[0].branch_state.is_none());
+    }
+}

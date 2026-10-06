@@ -290,6 +290,32 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   timeout before the activity-indicator assertions. All three indicator checks
   passed on isolated rerun; no product or test changes were needed for that timeout.
 
-Conversation controls and search remain incomplete: session export, branch
-relationship navigation and project-file search still need implementation and
+Conversation controls and search remain incomplete: session export and
+project-file search still need implementation and
 verification. Later outcome groups remain open.
+
+### Increment 11: conversation relationship navigation
+
+- Added optional persisted source, branch-state and subagent-parent metadata to
+  the shared project-browser DTO. Project reads use existing store queries;
+  global five-recent reads retain their previous shape, and unavailable metadata
+  in an older read-only database does not invent a relationship. Legacy links
+  without a checkpoint keep the shared WebView behavior. Orphaned checkpoints
+  advertise their state without an active source or sibling relationship, and
+  the dialog explains that their saved records remain readable.
+- Added a conversation-menu and scoped Cmd+K relationship dialog, identifying
+  source, sibling branches, direct branches and subagents. Sidebar icons and
+  accessible labels identify states. Only advertised records in the same project
+  can open; missing/deleted/foreign/self references cannot create navigation.
+  Opening uses normal conversation navigation and retains unsent drafts.
+- Ten targeted native checks passed (five new relationship checks and five
+  search checks), covering scoped navigation/drafts, missing/deleted/foreign/self
+  links, duplicate rows, invalidated checkpoints and immediate Escape. The final
+  full Swift suite passed 472 tests with no failures. Twelve relationship layouts
+  were rendered at 419 points in both locales/schemes, including invalidated
+  sources, and representative final screenshots were inspected.
+- All eleven project-query tests passed, including persisted active/merged/
+  orphaned states, subagent parents and old read-only database compatibility.
+  The shared DTO fixture and all ninety DTO tests passed. Formatting, wasm and
+  both generated-resource/command-contract checks passed. Full repository gates
+  are still tracked separately; later outcome groups remain open.

@@ -23,6 +23,7 @@ struct ProjectWorkspace: View {
     @State private var sessionImportPresented = false
     @State private var externalImportPresented = false
     @State private var sessionTransfer: NativeSessionTransferTarget?
+    @State private var sessionRelations: BrowserSession?
     @State private var terminalVisible = false
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
@@ -96,6 +97,8 @@ struct ProjectWorkspace: View {
                         .disabled(!canTransfer(.copy))
                     Button { beginTransfer(.move) } label: { Label { Text(localized("移动到其他项目…")) } icon: { WispIcon(name: "conversation-move", size: 14) } }
                         .disabled(!canTransfer(.move)).help(localized("移动前请清空输入中的附件和引用；文字草稿会保留。"))
+                    Button { sessionRelations = selectedSession } label: { Label { Text(localized("会话关系")) } icon: { WispIcon(name: "fork", size: 14) } }
+                        .disabled(selectedSession == nil || model.sessionsLoading)
                     } label: { WispIcon(name: "more", size: 16) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted")).accessibilityLabel("会话操作")
                     Spacer()
@@ -251,6 +254,7 @@ struct ProjectWorkspace: View {
             case "import-external-session": externalImportPresented = true
             case "copy-session-project": beginTransfer(.copy)
             case "move-session-project": beginTransfer(.move)
+            case "session-relations": sessionRelations = selectedSession
             case "toggle-sidebar": sidebarVisible.toggle()
             case "terminal": terminalVisible.toggle()
             case "close-panel": panelVisible = false
@@ -286,6 +290,22 @@ struct ProjectWorkspace: View {
                 externalImportPresented = false; model.returnToConversation()
                 Task { await model.openProject(destination, sessionID: session) }
             }).id(database.path + ":" + project.id)
+        }
+        .sheet(item: $sessionRelations) { selected in
+            let database = model.databaseURL
+            NativeSessionRelationsSheet(selected: selected, sessions: model.sessions, close: { sessionRelations = nil }, open: { id in
+                guard model.databaseURL == database, model.activeProjectID == selected.projectID,
+                      model.activeSessionID == selected.id,
+                      NativeSessionRelations(selected: selected, sessions: model.sessions).canOpen(id) else { return }
+                sessionRelations = nil
+                model.returnToConversation()
+                Task {
+                    guard model.databaseURL == database, model.activeProjectID == selected.projectID,
+                          model.activeSessionID == selected.id,
+                          NativeSessionRelations(selected: selected, sessions: model.sessions).canOpen(id) else { return }
+                    await model.openSession(id)
+                }
+            }).id(database.path + ":" + selected.projectID + ":" + selected.id)
         }
         .sheet(item: $sessionTransfer) { target in
             let database = model.databaseURL
@@ -328,9 +348,9 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil }
-        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil }
-        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionTransfer = nil }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil }
+        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionTransfer = nil; sessionRelations = nil }
         .onChange(of: conversation.snapshot?.running) { running in
             guard running == false, !model.sessionsLoading, !sessionPin.busy,
                   let session = conversation.snapshot?.session_id else { return }
@@ -573,6 +593,8 @@ struct ProjectWorkspace: View {
                                 }
                             } label: {
                                 HStack {
+                                    if session.branchState != nil { WispIcon(name: "fork", size: 12).help(localized(NativeSessionRelations.stateLabel(session) ?? "分支")) }
+                                    else if session.dispatchedFrom != nil { WispIcon(name: "chat", size: 12).help(localized("子代理会话")) }
                                     Text(session.title).font(WispDesign.font(size: 14)).lineLimit(1)
                                     Spacer()
                                 }
@@ -580,6 +602,7 @@ struct ProjectWorkspace: View {
                                 .background(groups.selected.contains(session.id) ? color("clay").opacity(0.18) : (session.id == model.activeSessionID ? color("bg-elev") : .clear), in: RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(.plain).accessibilityIdentifier("session-\(session.id)")
+                            .accessibilityLabel(session.title + (NativeSessionRelations.stateLabel(session).map { " · " + localized($0) } ?? ""))
                             .accessibilityAddTraits(groups.isSelected(session.id, activeSessionID: model.activeSessionID) ? [.isSelected] : [])
                         }
                     }

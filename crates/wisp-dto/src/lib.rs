@@ -3391,6 +3391,13 @@ pub struct RecentSession {
     /// Project sidebar pin state. Global recent-session queries do not fetch it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
+    /// Persisted conversation relationships, fetched only for project sidebars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branched_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched_from: Option<String>,
 }
 
 #[derive(Clone, serde::Deserialize, PartialEq)]

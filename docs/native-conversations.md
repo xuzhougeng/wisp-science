@@ -177,6 +177,23 @@ state. Add a destination collision and verify files remain unchanged. Check
 queued/running/archived restrictions, draft retention, both locales/schemes and
 immediate Escape with the destination picker open. Use only fixture projects.
 
+The action menu and scoped Cmd+K command **Conversation relationships** show the
+source conversation, sibling branches, direct branches and subagent conversations
+from the saved project sidebar. Active, merged and orphaned branch states are
+identified. Sidebar rows also identify branches and subagent conversations.
+Opening a relationship uses its exact advertised session ID in the same project
+and preserves each conversation's text draft. Missing, deleted or foreign
+sources do not become navigation targets; the dialog explains an unavailable
+source. Orphaned checkpoints carry an explicit explanation and do not advertise
+a source or sibling link. Navigation remains available for inspecting frozen records; the host's
+existing read-only controls govern any subsequent mutation.
+
+Manual smoke: create a source, two branches and a branch from a branch. Open
+**Conversation relationships** from each record and inspect the source, siblings
+and direct children. Keep unsent text in two conversations and switch between
+them. Inspect merged/orphaned branches and subagent records. Check both locales,
+light/dark, a narrow window and immediate Escape without moving focus.
+
 
 ## Windows input references and preferences (2026-10-05)
 

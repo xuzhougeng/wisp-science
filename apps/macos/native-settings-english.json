@@ -626,5 +626,19 @@
   "移动前请清空输入中的附件和引用；文字草稿会保留。": "Clear staged attachments and references before moving; your text draft will be retained.",
   "上传文件": "Uploaded file",
   "文件数量": "Files",
-  "重新预览不会再次提交。请关闭窗口后，在原项目和目标项目核对记录。": "Previewing again will not resubmit. Close this window and check the saved conversations in both projects."
+  "重新预览不会再次提交。请关闭窗口后，在原项目和目标项目核对记录。": "Previewing again will not resubmit. Close this window and check the saved conversations in both projects.",
+  "会话关系": "Conversation relationships",
+  "查看来源会话、同源分支和子会话。打开记录会保留当前输入草稿。": "Inspect the source, sibling branches and child conversations. Opening a record keeps your current draft.",
+  "当前会话记录不可用，请刷新项目。": "This conversation is unavailable. Refresh the project.",
+  "来源会话": "Source conversation",
+  "来源会话已不在当前项目的可用记录中。": "The source conversation is no longer available in this project's records.",
+  "同源分支": "Sibling branches",
+  "此会话的分支": "Branches from this conversation",
+  "此会话还没有来源或子会话。": "This conversation has no source or child conversations yet.",
+  "活动分支": "Active branch",
+  "已合并分支": "Merged branch",
+  "来源已失效的分支": "Branch with an invalidated source",
+  "分支": "Branch",
+  "子代理会话": "Subagent conversation",
+  "此分支的检查点已失效，仍可查看保存的记录。": "This branch's checkpoint is invalidated. Its saved records remain available to inspect."
 }
