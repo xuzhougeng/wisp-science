@@ -4,7 +4,7 @@ use super::{
 };
 use crate::bindings::{
     attach_cropped_region, crop_region_to_upload, invoke, invoke_checked, is_mac, mount_preview,
-    native_drop_remote_target, open_external_url, open_tutorials, schedule_highlight,
+    native_drop_files_target, open_external_url, open_tutorials, schedule_highlight,
     schedule_run_output_follow, set_highlighted_code, upload_files, upload_input_files,
     upload_pasted_images,
 };

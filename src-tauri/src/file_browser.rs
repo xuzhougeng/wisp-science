@@ -621,6 +621,129 @@ pub(super) async fn create_file(
     Ok(())
 }
 
+fn copy_upload_file(root: &Path, destination: &Path, source: &Path) -> Result<String, String> {
+    if !std::fs::metadata(source)
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("Only regular files can be uploaded".into());
+    }
+    let mut input = std::fs::File::open(source).map_err(|error| error.to_string())?;
+    let name = source.file_name().ok_or("invalid filename")?;
+    let stem = source.file_stem().unwrap_or(name);
+    for index in 0..10_000 {
+        let candidate = if index == 0 {
+            name.to_os_string()
+        } else {
+            let mut candidate = stem.to_os_string();
+            candidate.push(format!("_{index}"));
+            if let Some(extension) = source.extension() {
+                candidate.push(".");
+                candidate.push(extension);
+            }
+            candidate
+        };
+        // Keep native filenames (including Unicode) intact on every platform.
+        let target = destination.join(candidate);
+        let mut output = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Err(error) = std::io::copy(&mut input, &mut output) {
+            drop(output);
+            let _ = std::fs::remove_file(&target);
+            return Err(error.to_string());
+        }
+        return Ok(target
+            .strip_prefix(root)
+            .map_err(|error| error.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/"));
+    }
+    Err("Too many files with the same name in this folder".into())
+}
+
+fn upload_local_files_at(
+    root: &Path,
+    destination_dir: &str,
+    sources: Vec<String>,
+) -> Result<Vec<wisp_dto::LocalFileUploadResult>, String> {
+    let root = wisp_tools::safety::resolve_under_root(root, ".")?;
+    let destination = wisp_tools::safety::resolve_under_root(&root, destination_dir)?;
+    if !destination.is_dir() {
+        return Err("Upload destination must be an existing directory".into());
+    }
+    Ok(sources
+        .into_iter()
+        .map(|source| {
+            let result = copy_upload_file(&root, &destination, Path::new(&source));
+            let (path, error) = match result {
+                Ok(path) => (Some(path), None),
+                Err(error) => (None, Some(error)),
+            };
+            wisp_dto::LocalFileUploadResult {
+                source,
+                path,
+                error,
+            }
+        })
+        .collect())
+}
+
+/// Copy selected or natively dropped files into the displayed workspace folder.
+#[tauri::command]
+pub(super) async fn upload_local_files(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    window: WorkspaceSurface,
+    destination_dir: String,
+    source_paths: Option<Vec<String>>,
+) -> Result<Vec<wisp_dto::LocalFileUploadResult>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    // Capture the writable workspace before the picker can change focus/session.
+    let (project, scope, activity) = writable_active_project(&state, window.label()).await?;
+    let sources = match source_paths {
+        Some(paths) => paths,
+        None => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            app.dialog().file().pick_files(move |picked| {
+                let _ = tx.send(picked);
+            });
+            rx.await
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| path.to_string())
+                .collect()
+        }
+    };
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (results, _activity) = tauri::async_runtime::spawn_blocking(move || {
+        (
+            upload_local_files_at(&project.root, &destination_dir, sources),
+            activity,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let results = results?;
+    if results.iter().any(|item| item.path.is_some()) {
+        state
+            .store
+            .bump_state_generation(&scope)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(results)
+}
+
 /// Byte ceiling for a user-driven editor save. The center editor refuses to
 /// edit files it could not load in full, so anything larger is a bug or abuse.
 const SAVE_FILE_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -2071,6 +2194,91 @@ mod tests {
         assert_eq!(dto.modified_unix_millis, Some(modified));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_upload_copies_binary_files_to_current_directory_without_overwriting() {
+        let project = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join("docs")).unwrap();
+        let source = sources.path().join("研究 数据.bin");
+        let bytes = [0, 255, 10, 128];
+        std::fs::write(&source, bytes).unwrap();
+        std::fs::write(project.path().join("docs/研究 数据.bin"), b"keep").unwrap();
+        let results = upload_local_files_at(
+            project.path(),
+            "docs",
+            vec![
+                source.to_string_lossy().into_owned(),
+                source.to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(results[0].path.as_deref(), Some("docs/研究 数据_1.bin"));
+        assert_eq!(results[1].path.as_deref(), Some("docs/研究 数据_2.bin"));
+        for result in &results {
+            assert!(result.error.is_none());
+            assert_eq!(
+                std::fs::read(project.path().join(result.path.as_ref().unwrap())).unwrap(),
+                bytes
+            );
+        }
+        assert_eq!(std::fs::read(source).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(project.path().join("docs/研究 数据.bin")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[test]
+    fn local_upload_reports_each_failure_and_confines_destination() {
+        let project = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let source = sources.path().join("ok.txt");
+        std::fs::write(&source, b"ok").unwrap();
+        let paths = vec![
+            sources.path().to_string_lossy().into_owned(),
+            sources
+                .path()
+                .join("missing")
+                .to_string_lossy()
+                .into_owned(),
+            source.to_string_lossy().into_owned(),
+        ];
+        let results = upload_local_files_at(project.path(), ".", paths.clone()).unwrap();
+        assert!(results[0].error.is_some());
+        assert!(results[1].error.is_some());
+        assert_eq!(results[2].path.as_deref(), Some("ok.txt"));
+        assert!(upload_local_files_at(project.path(), "..", paths.clone()).is_err());
+        assert!(upload_local_files_at(project.path(), "ok.txt", paths.clone()).is_err());
+        assert!(upload_local_files_at(project.path(), "missing", paths).is_err());
+        assert!(upload_local_files_at(project.path(), ".", vec![])
+            .unwrap()
+            .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_upload_rejects_symlink_escape_and_preserves_existing_links() {
+        use std::os::unix::fs::symlink;
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let source = outside.path().join("input.txt");
+        std::fs::write(&source, b"keep").unwrap();
+        symlink(outside.path(), project.path().join("escape")).unwrap();
+        symlink(&source, project.path().join("input.txt")).unwrap();
+        let paths = vec![source.to_string_lossy().into_owned()];
+        assert!(upload_local_files_at(project.path(), "escape", paths.clone()).is_err());
+        let results = upload_local_files_at(project.path(), ".", paths).unwrap();
+        assert_eq!(results[0].path.as_deref(), Some("input_1.txt"));
+        assert!(project
+            .path()
+            .join("input.txt")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(source).unwrap(), b"keep");
     }
 
     #[test]

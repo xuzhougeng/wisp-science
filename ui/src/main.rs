@@ -428,8 +428,9 @@ fn App() -> impl IntoView {
     let motif_selection = create_rw_signal(None::<MotifSelection>);
     let uploading = create_rw_signal(false);
     let remote_file_uploading = create_rw_signal(false);
+    let local_file_uploading = create_rw_signal(false);
     let files_drag_over = create_rw_signal(false);
-    let remote_files_refresh_tick = create_rw_signal(0u32);
+    let files_refresh_tick = create_rw_signal(0u32);
     let drag_over = create_rw_signal(false);
     // Per-session streaming state. `running` is the set of session ids with an
     // in-flight turn; `transcripts` caches the live transcript of background
@@ -1574,10 +1575,10 @@ fn App() -> impl IntoView {
     });
     let refresh_models = move || model_settings.refresh_models();
     // Tauri's native drag/drop event contains absolute paths (including
-    // directories). Drops on a remote Files panel upload via scp; drops on
+    // directories). Files panel drops copy locally or upload via scp; drops on
     // the composer stay as path references and must not go through `upload_file`.
     let native_drop_cb = Closure::wrap(Box::new(move |payload: JsValue| {
-        let remote_target = native_drop_remote_target_value(payload.clone());
+        let files_target = native_drop_files_target_value(payload.clone());
         let inside_composer = native_drop_in_composer(payload.clone());
         let value =
             serde_wasm_bindgen::from_value::<serde_json::Value>(payload).unwrap_or_default();
@@ -1587,8 +1588,8 @@ fn App() -> impl IntoView {
             .unwrap_or("")
             .to_ascii_lowercase();
         if matches!(kind.as_str(), "enter" | "over" | "hover" | "hovered") {
-            files_drag_over.set(remote_target.is_some());
-            drag_over.set(inside_composer && remote_target.is_none());
+            files_drag_over.set(files_target.is_some());
+            drag_over.set(inside_composer && files_target.is_none());
             return;
         }
         if matches!(kind.as_str(), "leave" | "cancel" | "cancelled") {
@@ -1609,15 +1610,24 @@ fn App() -> impl IntoView {
             .into_iter()
             .filter_map(|item| item.as_str().map(str::to_string))
             .collect::<Vec<_>>();
-        if let Some((context_id, destination_dir)) = remote_target {
+        if let Some((context_id, destination_dir)) = files_target {
             if !paths.is_empty() {
-                upload_to_remote_context(
-                    context_id,
-                    destination_dir,
-                    Some(paths),
-                    remote_file_uploading,
-                    remote_files_refresh_tick,
-                );
+                if context_id == "local" {
+                    upload_to_local_directory(
+                        destination_dir,
+                        Some(paths),
+                        local_file_uploading,
+                        files_refresh_tick,
+                    );
+                } else {
+                    upload_to_remote_context(
+                        context_id,
+                        destination_dir,
+                        Some(paths),
+                        remote_file_uploading,
+                        files_refresh_tick,
+                    );
+                }
             }
             return;
         }
@@ -2262,7 +2272,7 @@ fn App() -> impl IntoView {
     let remote_file_loading = create_rw_signal(false);
     let remote_file_error = create_rw_signal::<Option<String>>(None);
     create_effect(move |_| {
-        if remote_files_refresh_tick.get() == 0 {
+        if files_refresh_tick.get() == 0 {
             return;
         }
         refresh_active_file_dir(
@@ -2274,6 +2284,9 @@ fn App() -> impl IntoView {
             remote_file_loading,
             remote_file_error,
         );
+        if file_source.get_untracked() == "local" && !file_query.get_untracked().trim().is_empty() {
+            refresh_file_search(file_query, file_search_hits);
+        }
     });
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
@@ -16682,6 +16695,17 @@ fn App() -> impl IntoView {
                                                 <span class="fb-path">{cwd.clone()}</span>
                                             </div>
                                             <div class="fb-actions">
+                                                <button type="button" data-testid="files-local-upload"
+                                                    disabled=move || local_file_uploading.get()
+                                                    on:click=move |_| upload_to_local_directory(
+                                                        file_cwd.get_untracked(), None, local_file_uploading,
+                                                        files_refresh_tick,
+                                                    )>
+                                                    {compose_icon("upload")}
+                                                    <span>{move || t(locale.get(), if local_file_uploading.get() {
+                                                        "files.uploading"
+                                                    } else { "files.upload" })}</span>
+                                                </button>
                                                 <button type="button" on:click=move |_| {
                                                     file_entry_input.set(String::new());
                                                     file_entry_error.set(None);
@@ -16722,6 +16746,7 @@ fn App() -> impl IntoView {
                                                 </button>
                                                 <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
                                             </div>
+                                            <div class="hint fb-upload-hint">{t(loc, "files.local_upload_hint")}</div>
                                             <input class="fb-search" type="text"
                                                 placeholder=move || t(locale.get(), "files.search")
                                                 prop:value=move || file_query.get()
@@ -16939,7 +16964,7 @@ fn App() -> impl IntoView {
                                                             remote_file_cwd.get_untracked(),
                                                             None,
                                                             remote_file_uploading,
-                                                            remote_files_refresh_tick,
+                                                            files_refresh_tick,
                                                         );
                                                     }>
                                                     {compose_icon("upload")}
