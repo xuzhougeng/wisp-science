@@ -116,6 +116,35 @@ appear as removable chips and send object IDs along with readable names. Draft
 references survive session switching and unconfirmed sends; confirmed sends clear
 only the submitted chips. Older hosts without the capability disable this entry.
 
+The macOS input now opens inline candidates when a user types `@` for artifacts,
+contexts/runtimes, `#` for sessions/project context, or `/` for enabled skills,
+workflows and available native commands. Token boundaries and UTF-16 caret
+positions follow WebView: ASCII words, email addresses, URLs and embedded paths
+do not trigger a menu; Chinese text can directly precede a trigger. Pasting or
+restoring a draft does not open a menu. Moving the caret away or selecting text
+closes it. Search replies are isolated by query, project and conversation.
+
+While candidates are open, Up/Down wrap through rows and reveal the selected row;
+Return (including modified/keypad Return) and Tab confirm instead of sending.
+Loading, error and empty states also consume these keys. Immediate window-level
+Escape closes just the candidates, retains the draft and invalidates pending
+searches. Clicking outside closes the menu. Chinese IME marked text owns its
+keys, remains untouched by external draft updates, and resumes candidate search
+after commit. Each conversation owns a separate editor so a composition cannot
+commit into another conversation. Confirming a reference removes only the token
+before the caret, adds its stable-ID chip and restores the caret at that position.
+
+The slash menu groups commands, workflows and skills. Available native commands
+are `/archive`, `/btw`, `/skills`, `/files`, `/upload`, `/share` and `/trajectory`,
+using the same surfaces as their buttons. Actions run on selection; `/btw` fills
+the input for a question and routes submission to side chat. Existing side-chat
+drafts or an active side-chat request retain the new question as draft text.
+These commands do not become reference chips or normal model messages. WebView
+commands that need additional native APIs or confirmation surfaces (such as
+`/fork`, `/rewind`, `/plan`, `/compact` and `/timer`) are not advertised by this
+menu. Read-only/history/disconnected conversations and older reference hosts
+retain their existing capability restrictions.
+
 Files search filenames across the current project, including nested directories,
 using the same bounded search as WebView (200 results; hidden/build folders and
 symlinks are excluded). An empty query lists the current directory. Search hits
@@ -154,7 +183,10 @@ quotes, fenced code and native tables in one selectable document. Code retains
 newlines; long lines wrap within the conversation. Right-click a code block to
 copy its original content or a table to copy TSV. Quote and highlight actions
 work across blocks. Task state is shown as readable completion labels. Formula
-rendering and inline images remain separate follow-ups; tool output stays literal.
+rendering uses the shared native SwiftMath renderer for inline and block LaTeX,
+preserving source for copy and selection and falling back to wrapped source for
+unsupported or over-wide equations. Inline images remain a follow-up; tool output
+stays literal.
 
 Fenced-code syntax highlighting loads the bundled grammar through the same
 resource lookup as the native UI: installed apps use `Contents/Resources`, while

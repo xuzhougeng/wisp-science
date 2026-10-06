@@ -14,6 +14,11 @@ struct NativeMessageInput: NSViewRepresentable {
     var fontSize: CGFloat = 13
     var placeholder = ""
     var fitsContent = false
+    var completions: NativeComposerCompletionModel?
+    var referencesAvailable: () -> Bool = { false }
+    var selectReference: (NativeComposerReference) -> Bool = { _ in false }
+    var completionCommands: [NativeComposerCommand] = []
+    var executeCommand: (NativeComposerCommand, String) -> Void = { _, _ in }
     @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -50,6 +55,12 @@ struct NativeMessageInput: NSViewRepresentable {
         editor.canSubmit = canSubmit
         editor.submit = submit
         editor.sendWithModifier = sendWithModifier
+        editor.completions = completions
+        completions?.editor = editor
+        editor.referencesAvailable = referencesAvailable
+        editor.selectReference = selectReference
+        editor.completionCommands = completionCommands
+        editor.executeCommand = executeCommand
         editor.isEditable = editable
         editor.setAccessibilityLabel(accessibilityLabel)
         editor.placeholder = placeholder
@@ -66,6 +77,8 @@ struct NativeMessageInput: NSViewRepresentable {
     }
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: ()) {
         guard let editor = scroll.documentView as? NativeComposerTextView else { return }
+        editor.completions?.detach(editor)
+        editor.completions = nil; editor.referencesAvailable = nil; editor.selectReference = nil; editor.executeCommand = nil
         editor.onChange = nil; editor.canSubmit = nil; editor.submit = nil
     }
 }
@@ -95,15 +108,80 @@ class NativeComposerTextView: NSTextView {
     var onChange: ((String) -> Void)?
     var canSubmit: (() -> Bool)?
     var submit: (() -> Void)?
+    weak var completions: NativeComposerCompletionModel?
+    var referencesAvailable: (() -> Bool)?
+    var selectReference: ((NativeComposerReference) -> Bool)?
+    var completionCommands: [NativeComposerCommand] = []
+    var executeCommand: ((NativeComposerCommand, String) -> Void)?
+    private var editing = false
 
     func apply(_ text: String) {
         guard !hasMarkedText(), string != text else { return }
+        completions?.dismiss()
         string = text
         needsDisplay = true
         setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
     }
-    override func didChangeText() { super.didChangeText(); needsDisplay = true; onChange?(string) }
+    override func didChangeText() {
+        super.didChangeText(); needsDisplay = true; onChange?(string)
+        if !editing { completions?.dismiss() }
+    }
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        let wasEditing = editing; editing = true
+        super.insertText(insertString, replacementRange: replacementRange)
+        editing = wasEditing
+        if !wasEditing { completions?.edited(insertion: true) }
+    }
+    override func deleteBackward(_ sender: Any?) {
+        let wasEditing = editing; editing = true; super.deleteBackward(sender); editing = wasEditing
+        if !wasEditing { completions?.edited(insertion: false) }
+    }
+    override func deleteForward(_ sender: Any?) {
+        let wasEditing = editing; editing = true; super.deleteForward(sender); editing = wasEditing
+        if !wasEditing { completions?.edited(insertion: false) }
+    }
+    override func paste(_ sender: Any?) {
+        completions?.dismiss(); editing = true; super.paste(sender); editing = false
+    }
+    override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        // Plain-text paste, Services and drag/pasteboard insertion share this
+        // AppKit boundary and must not masquerade as typed trigger keys.
+        completions?.dismiss(); let wasEditing = editing; editing = true
+        let result = super.readSelection(from: pboard, type: type)
+        editing = wasEditing
+        return result
+    }
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let wasEditing = editing; completions?.suspendComposition(); editing = true
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        editing = wasEditing
+    }
+    override func unmarkText() {
+        let wasEditing = editing; editing = true; super.unmarkText(); editing = wasEditing
+        if !wasEditing { completions?.edited(insertion: true) }
+    }
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if !editing { completions?.selectionChanged() }
+    }
+    func replaceCompletion(_ range: NSRange, with text: String) {
+        editing = true
+        // AppKit's edit path retains undo and puts the caret immediately after
+        // the replacement, including when a token sits in the middle of text.
+        insertText(text, replacementRange: range)
+        editing = false
+        window?.makeFirstResponder(self)
+    }
     override func keyDown(with event: NSEvent) {
+        if isEditable, !hasMarkedText(), completions?.isOpen == true {
+            switch event.keyCode {
+            case 125: completions?.move(1); return
+            case 126: completions?.move(-1); return
+            case 36, 76, 48: completions?.accept(); return
+            case 53: completions?.dismiss(); return
+            default: break
+            }
+        }
         guard event.keyCode == 36 || event.keyCode == 76 else { super.keyDown(with: event); return }
         switch NativeMessageReturnAction.resolve(shift: event.modifierFlags.contains(.shift), composing: hasMarkedText(), sendWithModifier: sendWithModifier, modifier: !event.modifierFlags.intersection([.command, .control]).isEmpty) {
         case .composition: super.keyDown(with: event)

@@ -55,6 +55,7 @@ final class NativeConversationModel: ObservableObject {
     private var stagedReferences: [String: [NativeComposerReference]] = [:]
     private var sentReferences: [String: [NativeComposerReference]] = [:]
     let composer: NativeComposerModel
+    let completions: NativeComposerCompletionModel
     @Published private(set) var attachments: [ComposerFile] = []
     @Published private(set) var queuedFollowUp: String?
     private var queuedBySession: [String: String] = [:]
@@ -71,7 +72,7 @@ final class NativeConversationModel: ObservableObject {
     private var submittedDrafts: [String: (id: String, text: String)] = [:]
     private var retiredEpochs: Set<String> = []
     let client: any NativeConversationQuerying
-    init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client) }
+    init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
     var isAcp: Bool { snapshot?.acp_agent_id != nil || snapshot?.model_id.hasPrefix("acp:") == true }
     var modelLabel: String {
@@ -97,6 +98,7 @@ final class NativeConversationModel: ObservableObject {
         outlinePresented = false; outline = []; outlineError = nil; outlineLoading = false; scrollTarget = nil; revealedExcerpt = nil
         savedHighlights = []; savingSelections = []; highlightsReadGeneration = UUID()
         projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []; queuedFollowUp = queuedBySession[session]
+        completions.bind(project: project, session: session)
         references = stagedReferences[session] ?? []
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
@@ -143,7 +145,7 @@ final class NativeConversationModel: ObservableObject {
             stagedReferences[sessionID] = references
             if let queuedFollowUp { queuedBySession[sessionID] = queuedFollowUp } else { queuedBySession.removeValue(forKey: sessionID) }
         }
-        composer.reset()
+        composer.reset(); completions.reset()
         generation = UUID(); polling?.cancel(); polling = nil
     }
     func refresh() async {
@@ -216,14 +218,30 @@ final class NativeConversationModel: ObservableObject {
         guard let projectID, let sessionID, snapshot != nil else { return }
         await composer.bind(project: projectID, session: sessionID, profile: isAcp ? .null : models.first { $0["id"].string == snapshot?.model_id } ?? .null)
     }
-    func addReference(_ option: NativeComposerReference) {
-        guard canReference, option.valid, !references.contains(where: { $0.id == option.id }) else { return }
+    @discardableResult
+    func addReference(_ option: NativeComposerReference) -> Bool {
+        guard canReference, option.valid else { return false }
+        if references.contains(where: { $0.id == option.id }) { return true }
         references.append(option)
         if let sessionID { stagedReferences[sessionID] = references }
+        return true
     }
     func removeReference(_ id: String) {
         references.removeAll { $0.id == id }
         if let sessionID { stagedReferences[sessionID] = references }
+    }
+    @discardableResult
+    func runComposerCommand(available: [NativeComposerCommand], execute: (NativeComposerCommand, String) -> Void) -> Bool {
+        guard canRunComposerCommand(available: available), let (command, payload) = NativeComposerCommand.parse(draft) else { return false }
+        completions.dismiss(); draft = ""
+        if let sessionID { drafts[sessionID] = draft }
+        execute(command, payload)
+        return true
+    }
+    func canRunComposerCommand(available: [NativeComposerCommand]) -> Bool {
+        guard canAttach, snapshot?.read_only == false, connectionError == nil, !uncertainSend,
+              let (command, _) = NativeComposerCommand.parse(draft) else { return false }
+        return available.contains(command)
     }
     private func clearSentReferences(_ request: String, session: String) {
         let sent = Set((sentReferences[request] ?? []).map(\.id))

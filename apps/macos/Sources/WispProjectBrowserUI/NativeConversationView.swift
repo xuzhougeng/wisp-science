@@ -7,6 +7,7 @@ struct NativeConversationView: View {
     var projectID: String?
     var sessionID: String?
     var createAcpConversation: ((String) -> Void)?
+    var executeComposerCommand: ((NativeComposerCommand, String) -> Void)?
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
@@ -106,7 +107,7 @@ struct NativeConversationView: View {
             }
         }
         .sheet(isPresented: $referencePicker) {
-            NativeComposerReferencePicker(model: conversation.composer, select: conversation.addReference) { referencePicker = false }
+            NativeComposerReferencePicker(model: conversation.composer, select: { _ = conversation.addReference($0) }) { referencePicker = false }
         }
         .sheet(item: $runtimeActivity, onDismiss: { Task { await conversation.composer.refreshContexts() } }) { selection in
             if let projectID, let sessionID {
@@ -231,17 +232,17 @@ struct NativeConversationView: View {
                         }
                     }
                 }
-                NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend }, submit: { Task { await conversation.send() } },
-                                   sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
-                                   accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "请输入问题，或使用下方按钮添加引用…", fitsContent: true)
-                    .fixedSize(horizontal: false, vertical: true)
+                NativeInlineComposerInput(conversation: conversation, completions: conversation.completions, sendWithModifier: sendWithModifier,
+                                          commands: completionCommands, executeCommand: { executeComposerCommand?($0, $1) }, submit: submitComposer)
+                    .id((projectID ?? "") + ":" + (sessionID ?? ""))
+                    .zIndex(10)
                 HStack {
                     Button { attachFiles() } label: { WispIcon(name: "plus", size: 17).frame(width: 32, height: 32)
                         .background(color("bg-elev"), in: Circle()).overlay(Circle().strokeBorder(color("border-strong"))) }
                         .buttonStyle(.plain).help("添加到消息").accessibilityLabel("对话附件")
                         .disabled(!conversation.canAttach)
                         .accessibilityIdentifier("composer-attach")
-                    Button { referencePicker = true } label: { WispIcon(name: "link", size: 16).frame(width: 32, height: 32) }
+                    Button { conversation.completions.dismiss(); referencePicker = true } label: { WispIcon(name: "link", size: 16).frame(width: 32, height: 32) }
                         .buttonStyle(.plain).disabled(!conversation.canReference).help("添加产物、会话、环境或技能引用").accessibilityLabel("添加引用")
                     Spacer(minLength: 8)
                     Menu {
@@ -264,12 +265,12 @@ struct NativeConversationView: View {
                         .frame(maxWidth: 180).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
                     NativeComposerEffort(model: conversation.composer, enabled: composerWritable, acp: conversation.isAcp)
                     if conversation.snapshot?.running == true {
-                        Button("排队后续") { Task { await conversation.queueFollowUp() } }
-                            .disabled(!conversation.canQueueFollowUp)
+                        Button(conversation.canRunComposerCommand(available: completionCommands) ? "执行命令" : "排队后续", action: queueComposer)
+                            .disabled(!conversation.canQueueFollowUp && !conversation.canRunComposerCommand(available: completionCommands))
                             .accessibilityIdentifier("composer-queue")
                         Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle(height: 32)).disabled(conversation.busy)
                     } else {
-                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true, height: 32)).disabled(!conversation.canSend)
+                        Button("发送", action: submitComposer).buttonStyle(WispButtonStyle(primary: true, height: 32)).disabled(!conversation.canSend)
                     }
                 }
             }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
@@ -282,7 +283,29 @@ struct NativeConversationView: View {
         }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)
     }
     private var composerWritable: Bool { conversation.snapshot?.read_only == false && conversation.snapshot?.running == false && !conversation.busy && !conversation.showingHistory && conversation.connectionError == nil }
+    private var completionCommands: [NativeComposerCommand] {
+        guard executeComposerCommand != nil, conversation.canAttach, conversation.snapshot?.read_only == false,
+              conversation.connectionError == nil, !conversation.uncertainSend else { return [] }
+        return NativeComposerCommand.allCases.filter { command in
+            switch command {
+            case .archive: return conversation.snapshot?.running == false && !conversation.visibleItems.isEmpty
+            case .share: return conversation.visibleItems.contains { ["user", "assistant", "thinking"].contains($0.role) }
+            default: return true
+            }
+        }
+    }
+    private func submitComposer() {
+        if let executeComposerCommand, conversation.runComposerCommand(available: completionCommands, execute: executeComposerCommand) { return }
+        conversation.completions.dismiss()
+        Task { await conversation.send() }
+    }
+    private func queueComposer() {
+        if let executeComposerCommand, conversation.runComposerCommand(available: completionCommands, execute: executeComposerCommand) { return }
+        conversation.completions.dismiss()
+        Task { await conversation.queueFollowUp() }
+    }
     private func attachFiles() {
+        conversation.completions.dismiss()
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false

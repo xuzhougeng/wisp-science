@@ -30,6 +30,17 @@ struct NativeComposerReference: Codable, Equatable, Identifiable {
     }
 }
 
+struct NativeComposerReferenceCatalog: Decodable {
+    let session_id: String
+    let options: [NativeComposerReference]
+    static func decode(_ value: SettingsValue, session: String) throws -> [NativeComposerReference] {
+        let result = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
+        guard result.session_id == session, result.options.count <= 120, result.options.allSatisfy(\.valid) else { throw ProjectBrowserError.invalidResponse }
+        var seen: Set<String> = []
+        return result.options.filter { seen.insert($0.id).inserted }
+    }
+}
+
 /// Composer configuration shares the host's session scope and exact-model catalog.
 /// Binding changes invalidate reads and acknowledgements from the previous session.
 @MainActor final class NativeComposerModel: ObservableObject {
@@ -139,11 +150,9 @@ struct NativeComposerReference: Codable, Equatable, Identifiable {
         let current = UUID(); searchEpoch = current; searching = true; options = []; searchError = nil
         defer { if searchEpoch == current { searching = false } }
         do {
-            struct Catalog: Decodable { let session_id: String; let options: [NativeComposerReference] }
-            let result = try decode(await client.invoke("native_conversation_references", args: ["session_id": .string(session), "kind": .string(kind), "query": .string(query)], projectID: project), Catalog.self)
+            let result = try NativeComposerReferenceCatalog.decode(await client.invoke("native_conversation_references", args: ["session_id": .string(session), "kind": .string(kind), "query": .string(query)], projectID: project), session: session)
             guard searchEpoch == current, !Task.isCancelled else { return }
-            guard result.session_id == session, result.options.count <= 120, result.options.allSatisfy(\.valid) else { throw ProjectBrowserError.invalidResponse }
-            var seen: Set<String> = []; options = result.options.filter { seen.insert($0.id).inserted }
+            options = result
         } catch { if searchEpoch == current, !Task.isCancelled { searchError = error.localizedDescription } }
     }
 }
