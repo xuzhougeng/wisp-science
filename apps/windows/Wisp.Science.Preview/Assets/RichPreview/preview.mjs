@@ -6,7 +6,7 @@ const scientificKinds = new Set(['structure', 'molecule', 'msa', 'fasta']);
 const content = document.getElementById('content'), status = document.getElementById('status');
 const nav = document.querySelector('nav');
 let task, documentPdf, pdfLib, page = 1, scale = 1, renderTask, textTask, generation = 0, rendering = false;
-let canQuote = false, quotePending = false, selectedText = '', activeKind = '', selectedQuote = null;
+let canQuote = false, quotePending = false, selectedText = '', activeKind = '', selectedQuote = null, sentActive = null;
 const send = data => window.chrome.webview.postMessage(data);
 const buttons = [...document.querySelectorAll('#pdf-actions button')];
 const quoteButtons = [...document.querySelectorAll('[data-quote]')];
@@ -14,9 +14,12 @@ function selectionChanged() {
     selectedQuote = !rendering && canQuote ? documentSelection(content, activeKind, page) : null;
     selectedText = selectedQuote?.text ?? '';
     quoteButtons.forEach(button => { button.disabled = !canQuote || quotePending || !selectedText || selectedText.length > 32768; });
-    send({ type: 'selection', active: !!selectedText });
+    // DOM mutations and selectionchange fire constantly while pages render and
+    // sheets scroll; the host only mirrors the flag.
+    if (sentActive !== !!selectedText) { sentActive = !!selectedText; send({ type: 'selection', active: sentActive }); }
 }
-function clearSelection() { clearDocumentSelection(content); selectedText = ''; selectedQuote = null; selectionChanged(); }
+// Always report after an explicit clear: the host resets its own flag then.
+function clearSelection() { clearDocumentSelection(content); sentActive = null; selectionChanged(); }
 document.addEventListener('selectionchange', selectionChanged);
 content.addEventListener('click', () => queueMicrotask(selectionChanged));
 // Sheet changes and virtualized cell disposal retire the previous cell selection.

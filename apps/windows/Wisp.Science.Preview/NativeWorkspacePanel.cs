@@ -174,7 +174,8 @@ internal sealed partial class NativeWorkspacePanel : UserControl, IDisposable
     private ConversationSnapshot? Transcript => conversation?.ShowingHistory == true ? conversation.History : conversation?.Snapshot;
     private void RefreshTranscript()
     {
-        if (!disposed && transcriptTables.Update(Transcript) && model.Tabs.Selected == "artifacts") Render();
+        // Every table consumer is on the artifacts tab, which updates on render.
+        if (!disposed && model.Tabs.Selected == "artifacts" && transcriptTables.Update(Transcript)) Render();
     }
 
     private void RestoreScroll(object? sender, object e)

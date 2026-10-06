@@ -16,7 +16,10 @@ public sealed record NativeTranscriptTable(string Id, string Name, Table Content
 public sealed class NativeTranscriptTables
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UsePipeTables().Build();
-    private Dictionary<string, (string Text, Table[] Tables)> cache = [];
+    // Parsing, copy text and identity depend only on the message text, so
+    // snapshot polls reuse them for unchanged messages.
+    private sealed record ParsedTable(Table Content, int Rows, int Columns, string CopyText, string Identity);
+    private Dictionary<string, (string Text, ParsedTable[] Tables)> cache = [];
     public IReadOnlyList<NativeTranscriptTable> Items { get; private set; } = [];
     public string? SelectedId { get; private set; }
     public NativeTranscriptTable? Selected => Items.FirstOrDefault(item => item.Id == SelectedId);
@@ -29,7 +32,7 @@ public sealed class NativeTranscriptTables
 
     public bool Update(ConversationSnapshot? page)
     {
-        var next = new Dictionary<string, (string Text, Table[] Tables)>();
+        var next = new Dictionary<string, (string Text, ParsedTable[] Tables)>();
         var items = new List<NativeTranscriptTable>();
         if (page != null)
         {
@@ -42,20 +45,15 @@ public sealed class NativeTranscriptTables
                 if (row.Role != "assistant" && !NativeTranscriptActivity.Completion(row)) continue;
                 var key = keys[index];
                 if (!cache.TryGetValue(key, out var parsed) || parsed.Text != row.Text)
-                    parsed = (row.Text, Markdown.Parse(row.Text, Pipeline).Descendants<Table>().ToArray());
+                    parsed = (row.Text, Markdown.Parse(row.Text, Pipeline).Descendants<Table>().Select(Parse).ToArray());
                 next[key] = parsed;
                 var occurrences = new Dictionary<string, int>();
-                for (var ordinal = 0; ordinal < parsed.Tables.Length; ordinal++)
+                foreach (var table in parsed.Tables)
                 {
-                    var table = parsed.Tables[ordinal];
-                    var rows = table.OfType<TableRow>().ToArray();
-                    var columns = ColumnCount(table);
-                    var text = Copy(table);
-                    var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
-                    var occurrence = occurrences.GetValueOrDefault(identity);
-                    occurrences[identity] = occurrence + 1;
-                    items.Add(new($"{key}/table:{identity}/{occurrence}", $"表格 {items.Count + 1}", table,
-                        rows.Count(row => !row.IsHeader), columns, text));
+                    var occurrence = occurrences.GetValueOrDefault(table.Identity);
+                    occurrences[table.Identity] = occurrence + 1;
+                    items.Add(new($"{key}/table:{table.Identity}/{occurrence}", $"表格 {items.Count + 1}", table.Content,
+                        table.Rows, table.Columns, table.CopyText));
                 }
             }
         }
@@ -64,6 +62,13 @@ public sealed class NativeTranscriptTables
         Items = items;
         if (Selected == null) SelectedId = null;
         return true;
+    }
+
+    private static ParsedTable Parse(Table table)
+    {
+        var text = Copy(table);
+        return new(table, table.OfType<TableRow>().Count(row => !row.IsHeader), ColumnCount(table), text,
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))));
     }
 
     /// <summary>Visible cell text as TSV, including the header; formatting and

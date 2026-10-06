@@ -47,9 +47,8 @@ internal static class NativeExecutionReadingTests
         foreach (var status in new[] { "succeeded", "failed", "cancelled", "timed_out", "lost" })
         {
             var owned = new ConversationItem("tool", "result", "run_in_context", null, true, null, Run: new("r", status, 1, true));
-            Check(NativeToolPresentation.OwnsTerminalRun(owned, 1) && !NativeToolPresentation.InitiallyExpanded(owned, 1),
+            Check(!NativeToolPresentation.InitiallyExpanded(owned, 1),
                 "every terminal Run starts folded in its exact submission, independently of review nomination");
-            Check(!NativeToolPresentation.OwnsTerminalRun(owned, 2), "nearby rows cannot claim terminal Run ownership");
         }
         await RunLifecycleAsync();
         await ReviewRaceAsync();

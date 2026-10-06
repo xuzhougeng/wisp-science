@@ -8,8 +8,6 @@ public static class NativeToolPresentation
     public static bool IsFailure(ConversationItem item) => item.Ok == false || item.Status is "failed" or "error"
         || item.Run?.Status is "failed" or "timed_out" or "lost";
     public static bool RequiresAttention(ConversationItem item) => IsFailure(item) || item.Run?.NeedsReview == true;
-    public static bool OwnsTerminalRun(ConversationItem item, int index) => item.Run is { } run
-        && run.OwnerIndex == index && WorkspaceConversationModel.RunTerminal(run.Status);
     public static bool InitiallyExpanded(ConversationItem item, int index) =>
         !(item.Run is { } run && WorkspaceConversationModel.RunTerminal(run.Status)) && RequiresAttention(item);
 

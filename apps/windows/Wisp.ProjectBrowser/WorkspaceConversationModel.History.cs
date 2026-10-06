@@ -14,15 +14,20 @@ public sealed partial class WorkspaceConversationModel
         if (sessionId == null || ConnectionError != null || Busy) return;
         uncertainHistory.Remove(sessionId); OperationError = null; Notify();
     }
-    public NativeHistoryTarget? HistoryTarget(ConversationSnapshot page, int row)
+    public NativeHistoryTarget? HistoryTarget(ConversationSnapshot page, int row) => HistoryTurnAt(page, row) is { } at
+        ? new(page.ProjectId, page.SessionId, at.Turn, page.HistoryState!.Revision, page.Items[row].Role,
+            HistoryDraft(page.Items[at.UserRow].Text))
+        : null;
+    /// <summary>The turn a row belongs to, without building its rewind draft.</summary>
+    public NativeTurnIdentity? HistoryTurn(ConversationSnapshot page, int row) => HistoryTurnAt(page, row)?.Turn;
+    private (NativeTurnIdentity Turn, int UserRow)? HistoryTurnAt(ConversationSnapshot page, int row)
     {
         if (page.SessionId != sessionId || page.ProjectId != projectId || row < 0 || row >= page.Items.Length
             || page.Items[row].Role is not ("user" or "assistant") || page.HistoryState == null) return null;
         var user = (page.UserOffset ?? 0) - 1; var userRow = -1;
         for (var n = 0; n <= row; n++) if (page.Items[n].Role == "user") { user++; userRow = n; }
         if (userRow < 0 || user < 0 || user >= page.HistoryState.Turns.Length) return null;
-        return new(page.ProjectId, page.SessionId, page.HistoryState.Turns[user], page.HistoryState.Revision,
-            page.Items[row].Role, HistoryDraft(page.Items[userRow].Text));
+        return (page.HistoryState.Turns[user], userRow);
     }
     public static string HistoryDraft(string text)
     {

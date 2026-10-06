@@ -629,7 +629,7 @@ internal sealed partial class NativeConversationPage : UserControl, IDisposable
             var terminalRun = item.Run is { } terminal && WorkspaceConversationModel.RunTerminal(terminal.Status);
             retained.Add(key);
             var fingerprint = JsonSerializer.Serialize(item) + JsonSerializer.Serialize(runRecord) + (runRecord == null ? "" : $"/{model.IsRunHidden(runRecord.Id)}/{model.RunBusy(runRecord.Id)}/{model.RunError(runRecord.Id)}/{model.RunReadError(runRecord.Id)}/{model.CanCancelRun(runRecord)}") + style + $"/{snapshot?.HistoryState != null}"
-                + (snapshot == null ? "" : JsonSerializer.Serialize(model.HistoryTarget(snapshot, captured)?.Turn))
+                + (snapshot == null ? "" : JsonSerializer.Serialize(model.HistoryTurn(snapshot, captured)))
                 + (item.Role == "plan" ? $"/{model.ShowingHistory}/{model.Snapshot?.Running}/{model.Snapshot?.ReadOnly}/{model.Busy}/{model.ConnectionError}/{model.Snapshot?.PlanMode}/{model.Snapshot?.AcpState?.CurrentMode}/{model.LatestProposal?.Key}"
                     + (model.LatestProposal is { } proposal ? $"/{model.CanDecidePlan(proposal)}/{model.PlanDecisionUncertain(proposal)}" : "") : "")
                 + (item.Role == "question" ? $"/{model.ShowingHistory}/{model.Snapshot?.ReadOnly}/{model.Busy}/{model.ConnectionError}/"
