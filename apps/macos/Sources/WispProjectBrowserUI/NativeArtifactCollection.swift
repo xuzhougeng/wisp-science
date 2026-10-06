@@ -1,21 +1,48 @@
+import AppKit
 import SwiftUI
 import WispProjectBrowser
+
+enum NativeWorkspacePath {
+    static func display(_ path: String, root: String) -> String {
+        if path.contains("://") { return path }
+        var value = path.replacingOccurrences(of: "\\", with: "/")
+        while value.hasPrefix("./") { value.removeFirst(2) }
+        let base = root.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var normalizedRoot = root.replacingOccurrences(of: "\\", with: "/")
+        while normalizedRoot.hasSuffix("/") { normalizedRoot.removeLast() }
+        let windows = normalizedRoot.count > 1 && normalizedRoot.dropFirst().hasPrefix(":")
+        let matches = windows ? value.lowercased().hasPrefix(normalizedRoot.lowercased() + "/") : value.hasPrefix(normalizedRoot + "/")
+        if !base.isEmpty && matches { value = String(value.dropFirst(normalizedRoot.count + 1)) }
+        return value.isEmpty ? "." : value
+    }
+    static func group(_ path: String, root: String) -> String {
+        let value = display(path, root: root)
+        let parts = value.split(separator: "/").map(String.init)
+        if parts.count < 2 { return "." }
+        let parent = parts.dropLast().joined(separator: "/")
+        if value.hasPrefix("/") || value.contains(":") { return parts[parts.count - 2] + "/" }
+        return parent + "/"
+    }
+    static func artifact(_ artifact: NativePanelArtifact, root: String) -> String { display(artifact.location ?? artifact.logical_path ?? artifact.path, root: root) }
+}
 
 struct NativeArtifactGroup: Identifiable {
     let id: String
     let registered: [NativePanelArtifact]
     let messages: [NativeTranscriptArtifact]
     var count: Int { registered.count + messages.count }
-    var title: String { localized(["table": "表格", "latex": "公式", "image": "图片", "chart": "图表", "file": "文件"][id] ?? id) }
-    static func collect(registered: [NativePanelArtifact], messages: [NativeTranscriptArtifact], query: String) -> [Self] {
-        let registered = registered.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.kind.localizedCaseInsensitiveContains(query) }
+    var title: String { id == "." ? localized("项目根目录") : id.hasPrefix("@") ? localized(["@table": "表格", "@latex": "公式"][id] ?? String(id.dropFirst())) : id }
+    static func collect(registered: [NativePanelArtifact], messages: [NativeTranscriptArtifact], query: String, root: String = "") -> [Self] {
+        let registered = registered.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.kind.localizedCaseInsensitiveContains(query) || NativeWorkspacePath.artifact($0, root: root).localizedCaseInsensitiveContains(query) }
         let messages = messages.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.source.localizedCaseInsensitiveContains(query) || $0.kind.localizedCaseInsensitiveContains(query) || localized($0.kind == "table" ? "表格" : "公式").localizedCaseInsensitiveContains(query) }
-        let kinds = Set(registered.map(\.kind) + messages.map(\.kind)).sorted()
-        return kinds.map { kind in Self(id: kind, registered: registered.filter { $0.kind == kind }, messages: messages.filter { $0.kind == kind }) }
+        let groups = Dictionary(grouping: registered) { NativeWorkspacePath.group($0.location ?? $0.logical_path ?? $0.path, root: root) }
+        return groups.keys.sorted().map { Self(id: $0, registered: groups[$0] ?? [], messages: []) }
+            + Set(messages.map(\.kind)).sorted().map { kind in Self(id: "@" + kind, registered: [], messages: messages.filter { $0.kind == kind }) }
     }
 }
 
 struct NativeArtifactCollection: View {
+    @Environment(\.colorScheme) private var scheme
     let registered: [NativePanelArtifact]
     let messages: [NativeTranscriptArtifact]
     let query: String
@@ -25,7 +52,9 @@ struct NativeArtifactCollection: View {
     let openRegistered: (String) -> Void
     let openMessage: (NativeTranscriptArtifact) -> Void
     let provenance: () -> Void
-    private var groups: [NativeArtifactGroup] { NativeArtifactGroup.collect(registered: registered, messages: messages, query: query) }
+    var projectRoot = ""
+    var exportRegistered: (String) -> Void = { _ in }
+    private var groups: [NativeArtifactGroup] { NativeArtifactGroup.collect(registered: registered, messages: messages, query: query, root: projectRoot) }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(localized("文件来自当前会话；表格和公式来自当前显示的消息页。"))
@@ -35,12 +64,24 @@ struct NativeArtifactCollection: View {
                     HStack { Text(group.title).font(.subheadline.weight(.semibold)); Text("\(group.count)").font(.caption).foregroundStyle(.secondary); Spacer() }
                     LazyVGrid(columns: grid ? [GridItem(.adaptive(minimum: 140), alignment: .top)] : [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
                         ForEach(group.registered) { artifact in
-                            Button { openRegistered(artifact.id) } label: {
-                                NativePanelTile(title: artifact.name, subtitle: artifact.logical_path ?? artifact.path, icon: "doc", grid: grid)
-                            }.buttonStyle(.plain).contextMenu {
-                                Button(localized("打开预览")) { openRegistered(artifact.id) }
-                                Button(localized("查看溯源"), action: provenance)
-                            }
+                            let path = NativeWorkspacePath.artifact(artifact, root: projectRoot)
+                            let layout = grid ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(alignment: .top, spacing: 2))
+                            layout {
+                                Button { openRegistered(artifact.id) } label: {
+                                    NativePanelTile(title: artifact.name, subtitle: path, icon: "doc", grid: grid)
+                                }.buttonStyle(.plain)
+                                HStack(spacing: 2) {
+                                    if grid { Spacer(minLength: 0) }
+                                    Button { exportRegistered(artifact.id) } label: { WispIcon(name: "download", size: 16).frame(width: 30, height: 30) }
+                                        .buttonStyle(.plain).help("保存副本").accessibilityLabel("保存副本 " + artifact.name)
+                                    Menu {
+                                        Button { openRegistered(artifact.id) } label: { Label { Text("打开预览") } icon: { WispIcon(name: "expand") } }
+                                        Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(path, forType: .string) } label: { Label { Text("复制路径") } icon: { WispIcon(name: "copy") } }
+                                        Button(action: provenance) { Label { Text("查看溯源") } icon: { WispIcon(name: "research-trail") } }
+                                    } label: { WispIcon(name: "more", size: 16).frame(width: 30, height: 30) }
+                                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("产物操作 " + artifact.name)
+                                }
+                            }.background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8))
                         }
                         ForEach(group.messages) { artifact in
                             Button { openMessage(artifact) } label: {

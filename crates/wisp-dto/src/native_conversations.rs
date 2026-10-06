@@ -36,6 +36,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_context_default",
     "native_conversation_panel_artifacts",
     "native_conversation_panel_files",
+    "native_conversation_panel_searchfiles",
+    "native_conversation_panel_export",
     "native_conversation_panel_readfile",
     "native_conversation_panel_savefile",
     "native_conversation_panel_file_action",
@@ -205,6 +207,8 @@ pub enum PanelFileAction {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PanelRequest {
+    #[serde(default)]
+    pub query: Option<String>,
     /// Opt in to bounded PDF page bytes instead of extracted document text.
     #[serde(default)]
     pub render_pdf: bool,
@@ -254,6 +258,15 @@ pub struct PanelRequest {
     pub path: Option<String>,
     #[serde(default)]
     pub artifact_id: Option<String>,
+}
+
+/// Validated local source for an explicit native Save As operation. No data is
+/// copied until the user chooses a destination in the platform save dialog.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PanelExport {
+    pub path: String,
+    pub name: String,
+    pub total_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

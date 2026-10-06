@@ -9,6 +9,7 @@ private func fixture(_ session: String = "session-a", sequence: UInt64 = 7, epoc
     var value = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: url.appendingPathComponent("contracts/native-conversations/v1/snapshot.json")))
     value["session_id"] = .string(session); value["sequence"] = .integer(Int64(sequence)); value["epoch"] = .string(epoch)
     value["running"] = .bool(running); value["request_id"] = requestID.map(SettingsValue.string) ?? .null
+    value["composer_references"] = .bool(true)
     value["error"] = error.map(SettingsValue.string) ?? .null
     value["approvals"] = .array(approvalID.map { id in [.object(["approval_id": .string(id), "frame_id": .string(session), "message": .string("Run?"), "tool": .string("shell"), "preview": .string("echo test")])] } ?? [])
     return try ConversationSnapshot.decode(value, projectID: "project-a", sessionID: session)
@@ -22,6 +23,8 @@ private actor ConversationFake: NativeConversationQuerying {
     var holdRead = false
     var heldPreferences: CheckedContinuation<SettingsValue, Never>?
     var holdPreferences = false
+    var holdCommand: String?
+    var heldWrite: CheckedContinuation<SettingsValue, Never>?
     func configure(_ values: [ConversationSnapshot], failSend: Bool = false, failRead: Bool = false) { reads = values; self.failSend = failSend; self.failRead = failRead }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot {
         if holdRead { holdRead = false; return try await withCheckedThrowingContinuation { held = $0 } }
@@ -35,6 +38,7 @@ private actor ConversationFake: NativeConversationQuerying {
         }
         if command == "list_models" || command == "list_acp_agents" { return .array([]) }
         writes.append((command, args, projectID))
+        if holdCommand == command { holdCommand = nil; return await withCheckedContinuation { heldWrite = $0 } }
         if failSend { throw ProjectBrowserError.service("response lost") }
         return .null
     }
@@ -47,10 +51,56 @@ private actor ConversationFake: NativeConversationQuerying {
     func holdInputPreferences() { holdPreferences = true }
     func isHoldingPreferences() -> Bool { heldPreferences != nil }
     func finishPreferences() { heldPreferences?.resume(returning: .null); heldPreferences = nil }
+    func holdWrite(_ command: String) { holdCommand = command }
+    func isHoldingWrite() -> Bool { heldWrite != nil }
+    func finishWrite() { heldWrite?.resume(returning: .null); heldWrite = nil }
     func isHeld() -> Bool { held != nil }
     func finish(_ value: ConversationSnapshot) { held?.resume(returning: value); held = nil }
 }
 final class NativeConversationModelTests: XCTestCase {
+    @MainActor func testAcknowledgedReferencesClearTheirOriginalDraftAfterNavigation() async throws {
+        for queued in [false, true] {
+            let client = ConversationFake(); let model = NativeConversationModel(client: client)
+            await client.configure([try fixture(running: queued)])
+            await model.open(project: "project-a", session: "session-a")
+            let reference = NativeComposerReference(reference: .object(["kind": .string("artifact"), "id": .string("artifact-id")]), label: "QC report", detail: "results/qc.csv")
+            model.addReference(reference)
+            await client.holdWrite(queued ? "native_conversation_enqueue" : "native_conversation_send")
+            let sending = Task { if queued { await model.queueFollowUp() } else { await model.send() } }
+            while !(await client.isHoldingWrite()) { await Task.yield() }
+            await client.configure([try fixture("session-b")])
+            await model.open(project: "project-a", session: "session-b")
+            model.addReference(reference)
+            await client.finishWrite(); await sending.value
+            XCTAssertEqual(model.references, [reference], "Another conversation's draft must remain intact")
+            await client.configure([try fixture()])
+            await model.open(project: "project-a", session: "session-a")
+            XCTAssertTrue(model.references.isEmpty, "An acknowledged payload must not be staged again")
+            model.pause()
+        }
+    }
+    @MainActor func testReferenceDraftsRemainScopedAndUncertainSendsNeverReplay() async throws {
+        let client = ConversationFake(); let model = NativeConversationModel(client: client)
+        await client.configure([try fixture()], failSend: true)
+        await model.open(project: "project-a", session: "session-a")
+        let reference = NativeComposerReference(reference: .object(["kind": .string("artifact"), "id": .string("artifact-id")]), label: "QC report", detail: "results/qc.csv")
+        model.addReference(reference); model.addReference(reference)
+        XCTAssertEqual(model.references.count, 1); XCTAssertTrue(model.canSend)
+        await model.send(); XCTAssertTrue(model.uncertainSend); XCTAssertEqual(model.references, [reference])
+        let args = await client.lastArgs()
+        XCTAssertEqual(args["references"], .array([reference.reference]))
+        XCTAssertEqual(args["message"], .string("Attached artifacts: QC report"))
+        await model.send(); let count = await client.count(); XCTAssertEqual(count, 1)
+        await client.configure([try fixture("session-b")])
+        await model.open(project: "project-a", session: "session-b"); XCTAssertTrue(model.references.isEmpty)
+        await client.configure([try fixture()])
+        await model.open(project: "project-a", session: "session-a"); XCTAssertEqual(model.references, [reference])
+        await client.configure([try fixture(sequence: 8, running: true, requestID: args["request_id"]?.string)])
+        await model.refresh(); XCTAssertTrue(model.references.isEmpty); XCTAssertFalse(model.uncertainSend)
+        await client.configure([try fixture(sequence: 9, requestID: args["request_id"]?.string, error: "provider failed")])
+        await model.refresh(); XCTAssertEqual(model.references, [reference])
+        model.pause()
+    }
     @MainActor func testComposerWaitsForSavedInputPolicyBeforeAcceptingMessages() async {
         let client = ConversationFake(); let model = NativeConversationModel(client: client)
         await client.holdInputPreferences()

@@ -97,12 +97,13 @@ struct WispButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     var primary = false
     var compact = false
+    var height: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(WispDesign.font(size: 13, weight: .medium))
             .foregroundStyle(primary ? Color.white : WispDesign.color("text", scheme))
-            .padding(.horizontal, compact ? 8 : 12).frame(height: compact ? 30 : 38)
+            .padding(.horizontal, compact ? 8 : 12).frame(height: height ?? (compact ? 30 : 38))
             .background(compact && !primary ? Color.clear : WispDesign.color(primary ? "clay" : "bg-elev", scheme), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(compact ? Color.clear : WispDesign.color("border", scheme)))
             .opacity(!enabled ? 0.45 : (configuration.isPressed ? 0.7 : 1))

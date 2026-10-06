@@ -114,13 +114,7 @@ pub(super) struct FileContent {
     total_bytes: Option<u64>,
 }
 
-#[derive(Serialize, Clone)]
-pub(super) struct FileSearchHit {
-    path: String,
-    name: String,
-    is_dir: bool,
-    size: u64,
-}
+pub(super) use wisp_dto::FileSearchHit;
 
 pub(super) use wisp_runs::mime::mime_for_path;
 
@@ -435,6 +429,10 @@ fn collect_file_search_hits(
         if name.starts_with('.') {
             continue;
         }
+        // Do not recurse into symlink cycles or enumerate outside the project.
+        if ent.file_type().map_err(|e| e.to_string())?.is_symlink() {
+            continue;
+        }
         let meta = ent.metadata().map_err(|e| format!("{e}"))?;
         let is_dir = meta.is_dir();
         let rel = if rel_base == "." {
@@ -469,24 +467,33 @@ pub(super) async fn search_files(
     limit: Option<usize>,
 ) -> Result<Vec<FileSearchHit>, String> {
     let root = state.require_active(window.label())?.root;
-    tauri::async_runtime::spawn_blocking(move || {
-        let q = query.trim();
-        if q.is_empty() {
-            return Ok(vec![]);
-        }
-        let cap = limit.unwrap_or(200).clamp(1, 500);
-        let mut hits = Vec::new();
-        collect_file_search_hits(&root, ".", q, cap, &mut hits)?;
-        hits.sort_by(|a, b| {
-            a.name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then(a.path.cmp(&b.path))
-        });
-        Ok(hits)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || search_files_at(&root, &query, limit))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// Shared project-wide filename search for WebView and native session panels.
+pub(super) fn search_files_at(
+    root: &Path,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<Vec<FileSearchHit>, String> {
+    let q = query.trim();
+    if q.len() > 512 {
+        return Err("File search query is too long".into());
+    }
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut hits = Vec::new();
+    collect_file_search_hits(root, ".", q, limit.unwrap_or(200).clamp(1, 500), &mut hits)?;
+    hits.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then(a.path.cmp(&b.path))
+    });
+    Ok(hits)
 }
 
 #[tauri::command(async)]

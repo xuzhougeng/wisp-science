@@ -9,6 +9,10 @@ final class NativePanelModel: ObservableObject {
     @Published private(set) var highlights: [NativeHighlight] = []
     @Published private(set) var highlightRemoving: Set<String> = []
     @Published private(set) var artifacts: [NativePanelArtifact] = []
+    @Published private(set) var searchHits: [NativePanelSearchHit] = []
+    @Published private(set) var searchLoading = false
+    private var searchQuery = ""
+    private var searchGeneration = UUID()
     @Published private(set) var files: [NativePanelFile] = []
     @Published private(set) var path = "."
     @Published private(set) var loading = false
@@ -44,6 +48,7 @@ final class NativePanelModel: ObservableObject {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
     func refresh(_ tab: String, directory: String? = nil, quiet: Bool = false) async {
+        if tab != "files" { clearFileSearch() }
         selectedTab = tab
         let current = UUID(); generation = current; loading = !quiet
         if !quiet { error = nil }
@@ -78,6 +83,32 @@ final class NativePanelModel: ObservableObject {
             }
         } catch { if generation == current, !Task.isCancelled { self.error = error.localizedDescription } }
     }
+    func clearFileSearch() { searchGeneration = UUID(); searchQuery = ""; searchHits = []; searchLoading = false }
+    func searchFiles(_ query: String) async {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = UUID(); searchGeneration = current; searchQuery = query; searchHits = []
+        searchLoading = !query.isEmpty; error = nil
+        guard !query.isEmpty, selectedTab == "files" else { searchLoading = false; return }
+        defer { if searchGeneration == current { searchLoading = false } }
+        do {
+            try await Task.sleep(nanoseconds: 150_000_000)
+            guard searchGeneration == current, !Task.isCancelled else { return }
+            let rows = try decode(await call("searchfiles", ["query": .string(query)]), as: [NativePanelSearchHit].self)
+            guard searchGeneration == current, selectedTab == "files", !Task.isCancelled else { return }
+            guard rows.count <= 200, rows.allSatisfy({ !$0.path.isEmpty && !$0.path.hasPrefix("/") && !$0.path.contains("://") && !$0.path.split(separator: "/").contains("..") }) else { throw ProjectBrowserError.invalidResponse }
+            searchHits = rows
+        } catch { if searchGeneration == current, !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+    func exportSource(path: String? = nil, artifactID: String? = nil) async throws -> NativePanelExport {
+        var args: [String: SettingsValue] = [:]
+        if let path { args["path"] = .string(path) }
+        if let artifactID { args["artifact_id"] = .string(artifactID) }
+        let current = agentEpoch
+        let source = try decode(await call("export", args), as: NativePanelExport.self)
+        guard current == agentEpoch, !Task.isCancelled else { throw ProjectBrowserError.unavailable("面板已关闭。") }
+        guard (source.path as NSString).isAbsolutePath, !source.name.isEmpty else { throw ProjectBrowserError.invalidResponse }
+        return source
+    }
     func performFileAction(_ action: NativePanelFileAction, path target: String, newPath: String? = nil) async throws {
         guard !fileActionBusy else { throw ProjectBrowserError.unavailable("文件操作正在进行。") }
         let epoch = agentEpoch; let directory = path
@@ -88,6 +119,7 @@ final class NativePanelModel: ObservableObject {
         guard case .bool(true) = try await call("file_action", args) else { throw ProjectBrowserError.invalidResponse }
         guard epoch == agentEpoch, !Task.isCancelled, selectedTab == "files", path == directory else { return }
         await refresh("files", directory: directory)
+        if !searchQuery.isEmpty { await searchFiles(searchQuery) }
     }
     func notebookStar(_ cell: NativeNotebookCell) -> NativeNotebookStar? { notebookStars.first { $0.matches(cell) } }
     func toggleNotebookStar(_ cell: NativeNotebookCell) async {
@@ -212,5 +244,6 @@ final class NativePanelModel: ObservableObject {
         return NativeSideChatQuote(text: text, source: path)
     }
     func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
-    func close() { agentEpoch = UUID(); notebookBusy = []; highlightRemoving = []; agentDelegationBusy = false; agentLaunching = []; agentActions = []; generation = UUID(); dismissPreview() }
+    func close() {
+        clearFileSearch(); agentEpoch = UUID(); notebookBusy = []; highlightRemoving = []; agentDelegationBusy = false; agentLaunching = []; agentActions = []; generation = UUID(); dismissPreview() }
 }

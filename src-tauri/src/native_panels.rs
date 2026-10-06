@@ -557,6 +557,38 @@ pub(crate) async fn dispatch(
             .await
             .map_err(|e| e.to_string())?
         }
+        "native_conversation_panel_searchfiles" => {
+            let query = args.query.unwrap_or_default();
+            tokio::task::spawn_blocking(move || {
+                let hits = crate::file_browser::search_files_at(&project.root, &query, None)?;
+                serde_json::to_value(hits).map_err(|e| e.to_string())
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        "native_conversation_panel_export" => {
+            let path = if let Some(id) = args.artifact_id {
+                if !state
+                    .store
+                    .artifact_visible_in_scope(&id, &scope)
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err("Artifact is not visible in this conversation scope".into());
+                }
+                state
+                    .store
+                    .artifact_path_in_scope(&id, &scope)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or("Artifact not found")?
+            } else {
+                args.path.ok_or("File path is required")?
+            };
+            tokio::task::spawn_blocking(move || export_source(&project.root, &path))
+                .await
+                .map_err(|e| e.to_string())?
+        }
         "native_conversation_panel_file_action" => {
             crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
             state
@@ -734,6 +766,58 @@ fn apply_file_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn export_source_is_scoped_and_preserves_original_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("data.bin"), [0, 255, 128, 10]).unwrap();
+        std::fs::write(temp.path().join("outside.bin"), b"outside").unwrap();
+        let source: wisp_dto::native_conversations::PanelExport =
+            serde_json::from_value(export_source(&root, "data.bin").unwrap()).unwrap();
+        assert_eq!(source.total_bytes, 4);
+        assert_eq!(std::fs::read(source.path).unwrap(), [0, 255, 128, 10]);
+        assert!(export_source(&root, "../outside.bin").is_err());
+        assert!(export_source(&root, ".").is_err());
+    }
+    #[test]
+    fn project_search_matches_nested_names_with_relative_action_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for directory in ["results/qc", "data", "target", ".hidden"] {
+            std::fs::create_dir_all(root.join(directory)).unwrap();
+            std::fs::write(root.join(directory).join("sample.csv"), b"sample").unwrap();
+        }
+        let hits = crate::file_browser::search_files_at(root, " SAMPLE ", None).unwrap();
+        assert_eq!(
+            hits.iter().map(|hit| hit.path.as_str()).collect::<Vec<_>>(),
+            ["data/sample.csv", "results/qc/sample.csv"]
+        );
+        assert_eq!(
+            crate::file_browser::search_files_at(root, "sample", Some(1))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(crate::file_browser::search_files_at(root, " ", None)
+            .unwrap()
+            .is_empty());
+        assert!(crate::file_browser::search_files_at(root, &"x".repeat(513), None).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn project_search_ignores_symlink_cycles_and_outside_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("sample-cycle")).unwrap();
+        std::fs::write(temp.path().join("outside.csv"), b"outside").unwrap();
+        std::os::unix::fs::symlink(temp.path().join("outside.csv"), root.join("sample.csv"))
+            .unwrap();
+        assert!(crate::file_browser::search_files_at(&root, "sample", None)
+            .unwrap()
+            .is_empty());
+    }
     #[test]
     fn file_actions_preserve_collisions_and_workspace_boundary() {
         use wisp_dto::native_conversations::PanelFileAction::*;
@@ -997,4 +1081,22 @@ mod tests {
                 .is_err()
         );
     }
+}
+
+fn export_source(root: &std::path::Path, path: &str) -> Result<Value, String> {
+    let real = wisp_tools::safety::validate_file_path(root, path)?;
+    let metadata = std::fs::metadata(&real).map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err("Only local files can be exported".into());
+    }
+    serde_json::to_value(wisp_dto::native_conversations::PanelExport {
+        name: real
+            .file_name()
+            .ok_or("File name is required")?
+            .to_string_lossy()
+            .into_owned(),
+        path: real.to_string_lossy().into_owned(),
+        total_bytes: metadata.len(),
+    })
+    .map_err(|e| e.to_string())
 }

@@ -10,6 +10,8 @@ struct NativeConversationView: View {
     var quoteSelection: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @AppStorage("nativeSettings.send_with_modifier") private var sendWithModifier = false
+    @State private var referencePicker = false
+    @State private var runtimeActivity: NativeContextActivitySelection?
     @State private var confirmResend = false
     @State private var followLatest = true
     @State private var expandedTools: Set<Int> = []
@@ -27,7 +29,7 @@ struct NativeConversationView: View {
             }
             ScrollViewReader { scroll in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         HStack {
                             if (conversation.showingHistory ? conversation.history : conversation.snapshot)?.next_before_seq != nil {
                                 Button("更早的消息") { Task { await conversation.older() } }
@@ -44,7 +46,7 @@ struct NativeConversationView: View {
                             HStack(spacing: 8) { ProgressView().controlSize(.small); Text(conversation.snapshot?.stopping == true ? "正在停止…" : "正在处理…").font(WispDesign.font(size: 12)) }
                         }
                         Color.clear.frame(height: 1).id("latest")
-                    }.frame(maxWidth: 800).padding(.horizontal, 16).padding(.vertical, 26).frame(maxWidth: .infinity)
+                    }.frame(maxWidth: 800).padding(.horizontal, 16).padding(.vertical, 16).frame(maxWidth: .infinity)
                 }
                 .onChange(of: conversation.scrollRevision) { _ in
                     if let target = conversation.scrollTarget { expandedTools.insert(target); followLatest = false; scroll.scrollTo(target, anchor: .center) }
@@ -94,8 +96,23 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
+        .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
+            await conversation.bindComposer()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
+                await conversation.composer.refreshContexts()
+            }
+        }
+        .sheet(isPresented: $referencePicker) {
+            NativeComposerReferencePicker(model: conversation.composer, select: conversation.addReference) { referencePicker = false }
+        }
+        .sheet(item: $runtimeActivity, onDismiss: { Task { await conversation.composer.refreshContexts() } }) { selection in
+            if let projectID, let sessionID {
+                NativeContextActivityView(client: conversation.client, projectID: projectID, sessionID: sessionID, selection: selection) { runtimeActivity = nil }
+            }
+        }
         .sheet(item: $feedbackApproval) { approval in
             NativeApprovalFeedback(approval: approval, conversation: conversation) { feedbackApproval = nil }
         }
@@ -119,7 +136,7 @@ struct NativeConversationView: View {
         if item.role == "usage" {
             if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
         } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(item.role == "user" ? "你" : item.role == "tool" ? (item.tool_name ?? "工具") : item.role == "reasoning" ? "思考" : "Wisp Science")
                         .font(WispDesign.font(size: 12, weight: .semibold)).foregroundStyle(color("text-muted"))
@@ -164,7 +181,8 @@ struct NativeConversationView: View {
                         Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
                     })
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, item.role == "user" ? 12 : 4).padding(.vertical, item.role == "user" ? 8 : 4)
                 .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
         }
     }
@@ -181,7 +199,10 @@ struct NativeConversationView: View {
             if conversation.snapshot?.read_only == true {
                 Text("该会话已归档或冻结，请新建会话继续。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                NativeComposerEnvironment(model: conversation.composer, writable: composerWritable) {
+                    runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
+                }
                 if let queued = conversation.queuedFollowUp {
                     Text("已排队一条后续：\(queued)").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
                         .accessibilityIdentifier("queued-follow-up")
@@ -196,9 +217,23 @@ struct NativeConversationView: View {
                         }.font(WispDesign.font(size: 12))
                     }
                 }
+                if !conversation.references.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(conversation.references) { reference in
+                                HStack(spacing: 6) {
+                                    Text(reference.label).lineLimit(1)
+                                    Button { conversation.removeReference(reference.id) } label: { WispIcon(name: "close", size: 12) }
+                                        .buttonStyle(.plain).accessibilityLabel("移除引用 " + reference.label)
+                                }.font(WispDesign.font(size: 12)).padding(.horizontal, 8).padding(.vertical, 5)
+                                    .background(color("bg-sunken"), in: RoundedRectangle(cornerRadius: 6)).help(reference.detail)
+                            }
+                        }
+                    }
+                }
                 NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend }, submit: { Task { await conversation.send() } },
                                    sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
-                                   accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "请输入问题…", fitsContent: true)
+                                   accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "请输入问题，或使用下方按钮添加引用…", fitsContent: true)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button { attachFiles() } label: { WispIcon(name: "plus", size: 17).frame(width: 32, height: 32)
@@ -206,6 +241,8 @@ struct NativeConversationView: View {
                         .buttonStyle(.plain).help("添加到消息").accessibilityLabel("对话附件")
                         .disabled(!conversation.canAttach)
                         .accessibilityIdentifier("composer-attach")
+                    Button { referencePicker = true } label: { WispIcon(name: "link", size: 16).frame(width: 32, height: 32) }
+                        .buttonStyle(.plain).disabled(!conversation.canReference).help("添加产物、会话、环境或技能引用").accessibilityLabel("添加引用")
                     Spacer(minLength: 8)
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
@@ -222,16 +259,17 @@ struct NativeConversationView: View {
                         }
                     } label: {
                         Text(conversation.modelLabel).lineLimit(1)
-                    }.menuStyle(.borderlessButton).padding(.horizontal, 10).padding(.vertical, 7)
+                    }.menuStyle(.borderlessButton).padding(.horizontal, 10).frame(height: 32)
                         .background(color("bg-elev"), in: Capsule()).overlay(Capsule().strokeBorder(color("border")))
-                        .frame(maxWidth: 230).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
+                        .frame(maxWidth: 180).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
+                    NativeComposerEffort(model: conversation.composer, enabled: composerWritable, acp: conversation.isAcp)
                     if conversation.snapshot?.running == true {
                         Button("排队后续") { Task { await conversation.queueFollowUp() } }
                             .disabled(!conversation.canQueueFollowUp)
                             .accessibilityIdentifier("composer-queue")
-                        Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle()).disabled(conversation.busy)
+                        Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle(height: 32)).disabled(conversation.busy)
                     } else {
-                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true)).disabled(!conversation.canSend)
+                        Button("发送") { Task { await conversation.send() } }.buttonStyle(WispButtonStyle(primary: true, height: 32)).disabled(!conversation.canSend)
                     }
                 }
             }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
@@ -243,6 +281,7 @@ struct NativeConversationView: View {
             }
         }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)
     }
+    private var composerWritable: Bool { conversation.snapshot?.read_only == false && conversation.snapshot?.running == false && !conversation.busy && !conversation.showingHistory && conversation.connectionError == nil }
     private func attachFiles() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true

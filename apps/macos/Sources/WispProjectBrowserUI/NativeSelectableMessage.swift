@@ -37,7 +37,7 @@ struct NativeSelectableMessage: NSViewRepresentable {
         guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
         container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        return CGSize(width: width, height: max(20, ceil(layout.usedRect(for: container).height)))
+        return CGSize(width: width, height: nsView.contentHeight())
     }
     static func dismantleNSView(_ view: NativeMessageTextView, coordinator: ()) { view.quote = nil; view.save = nil }
     static func content(_ text: AttributedString, saved: [String], scheme: ColorScheme, monospaced: Bool = false) -> NSAttributedString {
@@ -85,6 +85,20 @@ final class NativeSelectionAction: NSObject {
     @objc func invoke(_ sender: Any?) { perform() }
 }
 class NativeMessageTextView: NSTextView {
+    func contentHeight() -> CGFloat {
+        guard let storage = textStorage, let layout = layoutManager, let container = textContainer else { return 20 }
+        layout.ensureLayout(for: container)
+        var height = layout.usedRect(for: container).height
+        // Markdown paragraph separators must remain selectable, but the empty
+        // AppKit insertion line after a final paragraph adds no reading content.
+        if storage.length > 0, storage.string.hasSuffix("\n"),
+           let paragraph = storage.attribute(.paragraphStyle, at: storage.length - 1, effectiveRange: nil) as? NSParagraphStyle,
+           paragraph.textBlocks.isEmpty {
+            let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: 0, length: max(0, storage.length - 1)), actualCharacterRange: nil)
+            height = layout.boundingRect(forGlyphRange: glyphs, in: container).maxY
+        }
+        return max(20, ceil(height))
+    }
     override func accessibilityValue() -> String? {
         textStorage.map { NativeMathContent.plainText($0) } ?? ""
     }
@@ -136,7 +150,7 @@ class NativeMessageTextView: NSTextView {
             button.toolTip = title
             button.setAccessibilityLabel(title)
             button.identifier = NSUserInterfaceItemIdentifier(identifier)
-            button.frame = NSRect(x: max(0, bounds.width - 32), y: max(0, textContainerOrigin.y + rect.minY - 28), width: 24, height: 24)
+            button.frame = NSRect(x: max(0, bounds.width - 32), y: max(0, textContainerOrigin.y + rect.minY - (code != nil ? 4 : 28)), width: 24, height: 24)
             if button.superview !== self { addSubview(button) }
             copyButtons.append(button); copyActions.append(action)
         }

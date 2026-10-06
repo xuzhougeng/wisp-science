@@ -51,6 +51,23 @@ public struct NativePanelContexts: Codable, Sendable {
     public let contexts: [NativePanelContext]
     public let enabled_ids: [String]
     public let read_only: Bool
+    public let default_context: NativePanelDefaultContext?
     public var attached: [NativePanelContext] { contexts.filter { $0.kind == "local" || enabled_ids.contains($0.id) } }
     public var available: [NativePanelContext] { contexts.filter { $0.kind != "local" && !enabled_ids.contains($0.id) } }
+}
+
+public struct NativePanelDefaultContext: Codable, Sendable {
+    public let context_id: String?
+}
+public struct NativePanelSearchHit: Codable, Identifiable, Sendable {
+    public var id: String { path }
+    public let path: String
+    public let name: String
+    public let is_dir: Bool
+    public let size: UInt64
+}
+public struct NativePanelExport: Codable, Sendable {
+    public let path: String
+    public let name: String
+    public let total_bytes: UInt64
 }

@@ -141,6 +141,30 @@ final class NativeMarkdownTests: XCTestCase {
         XCTAssertLessThanOrEqual(bounds.width, 261)
         XCTAssertGreaterThan(bounds.height, 300)
     }
+    @MainActor func testCompactParagraphAndCodeLayoutReservesCopySpaceAtNarrowWidths() throws {
+        let plain = NativeMarkdownContent.render("A short message", saved: [], scheme: .light)
+        let storage = NSTextStorage(attributedString: plain); let layout = NSLayoutManager(); storage.addLayoutManager(layout)
+        let container = NSTextContainer(containerSize: NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude)); layout.addTextContainer(container); layout.ensureLayout(for: container)
+        let plainView = NativeMessageTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 500)); plainView.apply(plain)
+        XCTAssertLessThan(plainView.contentHeight(), 32)
+        XCTAssertEqual(plainView.string, "A short message\n")
+        for width in [260.0, 600.0] {
+            let source = "```python\nfirst = 1\nsecond = first + 2\nprint(second)\n```"
+            let content = NativeMarkdownContent.render(source, saved: [], scheme: .light, width: width)
+            let view = NativeMessageTextView(frame: NSRect(x: 0, y: 0, width: width, height: 500))
+            view.apply(content)
+            view.layoutCopyButtons()
+            let copy = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first)
+            let manager = try XCTUnwrap(view.layoutManager); let textContainer = try XCTUnwrap(view.textContainer)
+            manager.ensureLayout(for: textContainer)
+            let range = (view.string as NSString).range(of: "first = 1")
+            let glyphs = manager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var codeRect = manager.boundingRect(forGlyphRange: glyphs, in: textContainer); codeRect.origin.y += view.textContainerOrigin.y
+            XCTAssertFalse(copy.frame.intersects(codeRect))
+            XCTAssertLessThan(manager.usedRect(for: textContainer).height, 130)
+            XCTAssertEqual(view.blockActions(at: range.location).first?.title, "复制代码")
+        }
+    }
     @MainActor func testIncompleteStreamsAndEmptyCellsRemainRenderable() {
         for text in ["", "#", "---", "```python\n", "| A | B |\n| --- | --- |\n| | value |", "**unfinished"] {
             _ = NativeMarkdownContent.render(text, saved: [], scheme: .light)
