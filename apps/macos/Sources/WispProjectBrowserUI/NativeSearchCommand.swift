@@ -25,6 +25,7 @@ struct NativeSearchCommand: Identifiable, Equatable {
         .init(id: "copy-session-project", title: "复制到其他项目…", icon: "copy", keywords: "copy conversation session project", project: true, session: true),
         .init(id: "move-session-project", title: "移动到其他项目…", icon: "conversation-move", keywords: "move conversation session project", project: true, session: true),
         .init(id: "session-relations", title: "会话关系", icon: "fork", keywords: "conversation session branch source parent siblings subagents", project: true, session: true),
+        .init(id: "export-session", title: "导出会话 ZIP", icon: "archive-export", keywords: "export conversation session archive zip", project: true, session: true),
         .init(id: "artifacts", title: "查看产物", icon: "grid", keywords: "artifacts outputs", project: true, session: true),
         .init(id: "notebook", title: "笔记本", icon: "edit", keywords: "notebook", project: true, session: true),
         .init(id: "files", title: "文件", icon: "doc", keywords: "files browser", project: true, session: true),

@@ -24,6 +24,7 @@ struct ProjectWorkspace: View {
     @State private var externalImportPresented = false
     @State private var sessionTransfer: NativeSessionTransferTarget?
     @State private var sessionRelations: BrowserSession?
+    @State private var sessionExport: BrowserSession?
     @State private var terminalVisible = false
     @AppStorage("native.workspace.panel.visible") private var panelVisible = false
     @AppStorage("native.workspace.panel.tab") private var panelTab = "artifacts"
@@ -99,6 +100,8 @@ struct ProjectWorkspace: View {
                         .disabled(!canTransfer(.move)).help(localized("移动前请清空输入中的附件和引用；文字草稿会保留。"))
                     Button { sessionRelations = selectedSession } label: { Label { Text(localized("会话关系")) } icon: { WispIcon(name: "fork", size: 14) } }
                         .disabled(selectedSession == nil || model.sessionsLoading)
+                    Button { if canExport { sessionExport = selectedSession } } label: { Label { Text(localized("导出会话 ZIP")) } icon: { WispIcon(name: "archive-export", size: 14) } }
+                        .disabled(!canExport)
                     } label: { WispIcon(name: "more", size: 16) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted")).accessibilityLabel("会话操作")
                     Spacer()
@@ -255,6 +258,7 @@ struct ProjectWorkspace: View {
             case "copy-session-project": beginTransfer(.copy)
             case "move-session-project": beginTransfer(.move)
             case "session-relations": sessionRelations = selectedSession
+            case "export-session": if canExport { sessionExport = selectedSession }
             case "toggle-sidebar": sidebarVisible.toggle()
             case "terminal": terminalVisible.toggle()
             case "close-panel": panelVisible = false
@@ -307,6 +311,13 @@ struct ProjectWorkspace: View {
                 }
             }).id(database.path + ":" + selected.projectID + ":" + selected.id)
         }
+        .sheet(item: $sessionExport) { source in
+            let database = model.databaseURL
+            NativeSessionExportSheet(client: conversation.client, source: source, writable: {
+                model.databaseURL == database && model.activeProjectID == source.projectID
+                    && model.activeSessionID == source.id && canExport
+            }, close: { sessionExport = nil }).id(database.path + ":" + source.projectID + ":" + source.id)
+        }
         .sheet(item: $sessionTransfer) { target in
             let database = model.databaseURL
             NativeSessionTransferSheet(client: conversation.client, source: target.source, mode: target.mode, projects: model.projects, writable: {
@@ -348,9 +359,9 @@ struct ProjectWorkspace: View {
         }
         .onChange(of: model.activeSessionID) { _ in trajectoryPresented = false; archivePresented = false; sharePresented = false; inboxPresented = false }
         .task(id: project.id) { await groups.load(conversation.client, projectID: project.id) }
-        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil }
-        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil }
-        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionTransfer = nil; sessionRelations = nil }
+        .onChange(of: model.activeSessionID) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
+        .onChange(of: project.id) { _ in sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionImportPresented = false; externalImportPresented = false; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
+        .onDisappear { sessionRename.reset(); sessionPin.reset(); sessionDelete.reset(); sessionManagementError = nil; sessionTransfer = nil; sessionRelations = nil; sessionExport = nil }
         .onChange(of: conversation.snapshot?.running) { running in
             guard running == false, !model.sessionsLoading, !sessionPin.busy,
                   let session = conversation.snapshot?.session_id else { return }
@@ -417,6 +428,11 @@ struct ProjectWorkspace: View {
     }
 
     private func refreshInbox() { Task { await inbox.refresh(client: conversation.client, projectID: project.id) } }
+
+    private var canExport: Bool {
+        guard let source = selectedSession, !model.sessionsLoading else { return false }
+        return NativeSessionExportModel.eligible(source: source, snapshot: conversation.snapshot, busy: conversation.busy, queued: !conversation.queuedTurns.isEmpty || conversation.queuedFollowUp != nil)
+    }
 
     private func canTransfer(_ mode: NativeSessionTransferMode) -> Bool {
         guard let session = selectedSession, let snapshot = conversation.snapshot,

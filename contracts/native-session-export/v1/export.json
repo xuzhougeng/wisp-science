@@ -1,0 +1,22 @@
+{
+  "preview": {
+    "schema":"wisp.native-session-export.v1",
+    "project_id":"research-1","session_id":"source-1","title":"RNA-seq comparison",
+    "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "include_artifacts":true,"head_epoch":2,"message_count":4,"tool_call_count":1,"terminal_event_count":1,
+    "artifacts":[{"path":"results/counts.csv","mime":"text/csv","bytes":12}],
+    "missing_artifacts":[{"path":"results/earlier.png","error":"File no longer exists"}],
+    "artifact_bytes":12,"default_filename":"wisp-session-source-1.zip"
+  },
+  "args": {
+    "session_id":"source-1","include_artifacts":true,
+    "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "destination_path":"/tmp/wisp-session-source-1.zip"
+  },
+  "result": {
+    "schema":"wisp.native-session-export.v1","project_id":"research-1","session_id":"source-1",
+    "revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "include_artifacts":true,"destination_path":"/tmp/wisp-session-source-1.zip","bytes":640,
+    "checksum":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

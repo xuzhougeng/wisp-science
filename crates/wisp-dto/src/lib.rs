@@ -22,6 +22,7 @@ pub mod native_projects;
 pub mod native_publication;
 pub mod native_queue;
 pub mod native_search;
+pub mod native_session_export;
 pub mod native_session_import;
 pub mod native_session_transfer;
 pub mod native_settings;

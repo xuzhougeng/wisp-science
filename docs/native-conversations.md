@@ -1,5 +1,52 @@
 # Native conversation loop
 
+## macOS conversation ZIP export (2026-10-06)
+
+Use **会话操作 → 导出会话 ZIP** or `>export session zip` in Cmd+K. The preview
+shows the saved conversation title, current-context message count, tool calls,
+terminal events and registered artifact paths/sizes. Artifact inclusion defaults
+on. Turning it off rereads the preview and excludes artifact bytes and provenance.
+Unavailable files appear with their reasons in the manifest. The format matches
+the existing WebView export/import: `manifest.json`, `messages.json`,
+`transcript.md`, `tool-calls.json`, `terminal-events.json` and optional artifact/
+provenance entries. It contains the current model context; messages in earlier
+compaction epochs are not exported. Importing it does not restore execution-log
+rows or pre-compaction history.
+
+The native host binds the preview to the exact project/session, saved source
+revision, artifact choice and file contents. A changed conversation or artifact
+requires another preview. Export waits for an idle conversation without queued
+messages, approvals or review; archived/read-only conversations can export.
+The native save panel selects an absolute ZIP destination. Cancelling the panel
+writes nothing and retains the preview. Escape in the panel closes only the
+panel; Escape in the idle export sheet closes only that sheet. An in-flight save
+holds the sheet. Navigation or closing discards late responses and retains the
+conversation draft.
+
+Both clients stage the archive beside the destination before replacing it. A
+failed read/compression preserves an existing destination and removes the
+temporary file. Files that grow or shrink during export are rejected instead of
+silently truncating; native exports also reject same-size content changes.
+Workspace-root aliases such as macOS `/var` and `/private/var` produce relative
+manifest paths, keeping artifact restoration compatible with the importer.
+An export cannot overwrite an included source artifact or its hardlink alias.
+A confirmed save displays its exact path, byte count and SHA-256, with an explicit
+**在 Finder 中显示** action. Lost/malformed/wrong-scope replies and cancellation
+after dispatch retain the attempted save path and prevent another write in that
+sheet, including after a fresh preview or artifact-choice change. Copy/move and
+ZIP import also block replay after cancellation of a dispatched mutation.
+
+Manual smoke: open an idle saved conversation, inspect the counts and missing
+files, toggle artifact inclusion and save a ZIP. Import it into a different
+synthetic project and check messages and artifact bytes. Repeat after compaction
+to verify that the preview and archive contain the current context only. Change
+a file after preview and check rejection; keep an existing ZIP at the destination
+and verify a failed write preserves it. Cancel the save panel immediately with
+Escape and verify the export sheet remains; the next Escape closes the sheet.
+Check archived conversations, busy/queued/reviewing guards, unchanged drafts,
+both locales/schemes and narrow windows. Packaged save-panel interaction remains
+part of the final native acceptance gate.
+
 ## macOS conversation controls and workspace search (2026-10-06)
 
 The composer environment row opens session options. Full permission, delegation,

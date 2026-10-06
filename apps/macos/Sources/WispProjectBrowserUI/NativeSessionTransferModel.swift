@@ -44,13 +44,14 @@ import WispProjectBrowser
         } catch { if !closed, generation == current, !Task.isCancelled { self.error = localized("无法读取会话转移预览。") + "\n" + error.localizedDescription } }
     }
     func confirm() async -> NativeSessionTransferResult? {
-        guard canTransfer, let preview, preview.target_project_id == target else { return nil }
+        guard canTransfer, !Task.isCancelled, let preview, preview.target_project_id == target else { return nil }
         let current = generation, files = includeArtifacts; transferring = true; error = nil
         defer { if generation == current { transferring = false } }
         do {
             let value = try await client.invoke("native_conversation_transfer", args: preview.arguments(includeArtifacts: files), projectID: source.projectID)
             let result = try NativeSessionTransferResult.decode(value, reviewed: preview, includeArtifacts: files)
-            guard !closed, generation == current, !Task.isCancelled else { return nil }; self.result = result; return result
+            guard !closed, generation == current else { return nil }
+            try Task.checkCancellation(); self.result = result; return result
         } catch {
             if !closed, generation == current {
                 uncertain = true; self.error = localized("转移结果未确认，请刷新原项目和目标项目核对；本窗口不会再次提交。") + "\n" + error.localizedDescription

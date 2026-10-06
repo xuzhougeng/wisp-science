@@ -43,6 +43,17 @@ private actor SessionTransferFake: NativeConversationQuerying {
 }
 
 final class NativeSessionTransferTests: XCTestCase {
+    @MainActor func testCancelledTransferAfterDispatchCannotReplayButPrecancelledTaskDoesNotWrite() async throws {
+        let fake = SessionTransferFake(try transferFixture()), model = model(fake)
+        await model.readPreview()
+        let before = Task { await model.confirm() }; before.cancel(); let noResult = await before.value
+        XCTAssertNil(noResult); XCTAssertFalse(model.uncertain)
+        await fake.setup(hold: "native_conversation_transfer"); let write = Task { await model.confirm() }
+        while !(await fake.waiting()) { await Task.yield() }; write.cancel(); await fake.release(); let late = await write.value
+        XCTAssertNil(late); XCTAssertNil(model.result); XCTAssertTrue(model.uncertain)
+        await model.readPreview(); _ = await model.confirm()
+        let calls = await fake.recorded(); XCTAssertEqual(calls.filter { $0.1 == "native_conversation_transfer" }.count, 1)
+    }
     private var source: BrowserSession { .init(id: "source-1", projectID: "research-1", title: "Earlier sidebar title", ts: 1, status: "complete") }
     @MainActor private func model(_ fake: SessionTransferFake, mode: NativeSessionTransferMode = .move, writable: @escaping () -> Bool = { true }) -> NativeSessionTransferModel {
         NativeSessionTransferModel(client: fake, source: source, mode: mode, projects: ["research-1", "research-2", "research-3", "assistant:global"], writable: writable)

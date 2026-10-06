@@ -59,6 +59,7 @@ mod native_projects;
 mod native_publication;
 mod native_queue;
 mod native_search;
+mod native_session_export;
 mod native_session_transfer;
 mod native_settings;
 mod privacy_mode;

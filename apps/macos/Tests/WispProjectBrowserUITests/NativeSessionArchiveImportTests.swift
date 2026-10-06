@@ -38,6 +38,17 @@ private actor SessionArchiveImportFake: NativeConversationQuerying {
 }
 
 final class NativeSessionArchiveImportTests: XCTestCase {
+    @MainActor func testCancelledImportAfterDispatchCannotReplayButPrecancelledTaskDoesNotWrite() async throws {
+        let fake = SessionArchiveImportFake(try archiveImportFixture())
+        let model = NativeSessionArchiveImportModel(client: fake, project: "research-1", projects: ["research-1", "research-2"], writable: { true })
+        model.select(project: "research-1", path: "/tmp/reviewed.zip"); await model.readPreview()
+        let before = Task { await model.confirm() }; before.cancel(); await before.value; XCTAssertFalse(model.uncertain)
+        await fake.setup(hold: "native_session_archive_import"); let write = Task { await model.confirm() }
+        while !(await fake.waiting()) { await Task.yield() }; write.cancel(); await fake.release(); await write.value
+        XCTAssertNil(model.result); XCTAssertTrue(model.uncertain)
+        model.select(project: "research-2", path: "/tmp/another.zip"); await model.readPreview(); await model.confirm()
+        let calls = await fake.recorded(); XCTAssertEqual(calls.filter { $0.1 == "native_session_archive_import" }.count, 1)
+    }
     private func project(_ id: String, name: String) throws -> ProjectSummary {
         var value = try archiveImportFixture("native-projects/v1/import")["result"]; value["id"] = .string(id); value["name"] = .string(name)
         return try NativeProjectCommand.summary(from: value)

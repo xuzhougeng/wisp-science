@@ -68,6 +68,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_rename",
     "native_conversation_transfer_preview",
     "native_conversation_transfer",
+    "native_conversation_export_preview",
+    "native_conversation_export",
     "native_conversation_pin",
     "native_conversation_delete",
     "native_conversation_exists",

@@ -531,6 +531,26 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_export_preview" => {
+            let guard = record.lock().await;
+            crate::native_session_export::preview(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_export" => {
+            let guard = record.lock().await;
+            crate::native_session_export::export(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
         "native_conversation_transfer_preview" => {
             let guard = record.lock().await;
             crate::native_session_transfer::preview(

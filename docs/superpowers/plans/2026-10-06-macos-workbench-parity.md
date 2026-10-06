@@ -290,9 +290,10 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   timeout before the activity-indicator assertions. All three indicator checks
   passed on isolated rerun; no product or test changes were needed for that timeout.
 
-Conversation controls and search remain incomplete: session export and
-project-file search still need implementation and
-verification. Later outcome groups remain open.
+Conversation controls and search remain incomplete. The Files panel already
+searches project directories; integrating those results and reference/new-window
+actions into Cmd+K remains open. Session export is tracked below. Later outcome
+groups remain open.
 
 ### Increment 11: conversation relationship navigation
 
@@ -319,3 +320,42 @@ verification. Later outcome groups remain open.
   The shared DTO fixture and all ninety DTO tests passed. Formatting, wasm and
   both generated-resource/command-contract checks passed. Full repository gates
   are still tracked separately; later outcome groups remain open.
+
+### Increment 12: reviewed conversation ZIP export
+
+- Added a shared DTO/fixture and owner-checked native host preview/write adapters.
+  Extracted the established WebView archive preparation/writing boundary so both
+  clients use the same messages, transcript, tool, terminal-event and optional
+  artifact/provenance entries. Export explicitly captures the current model
+  context, excluding pre-compaction history; it does not claim a lossless backup.
+- Added conversation-menu and scoped Cmd+K entries with a distinct shared icon,
+  preview counts/paths/sizes, artifact inclusion, native save panel, saved path/
+  checksum and explicit Finder navigation. Cancelled save panels write nothing.
+  Idle archived/read-only conversations are eligible; scope, running/stopping,
+  approvals, review and queued messages guard export. Closed/superseded reads and
+  late writes cannot affect another view. Unknown replies retain the attempted
+  save path and cannot replay, including after a fresh preview/file-choice change.
+- Native preview revisions bind the saved source and exact file bytes. The
+  shared writer stages beside the destination and preserves a previous archive
+  on failures; size changes are rejected and native writes also verify hashes.
+  Includes a macOS workspace-alias repair discovered by the actual import
+  compatibility test: relative manifest paths survive `/var`/`/private/var`.
+  Included source files and hardlink aliases cannot be overwritten by export.
+- Added cancellation-after-dispatch protection and regression checks to Copy/
+  Move and ZIP import, preventing a cancelled mutation's acknowledgement from
+  enabling duplicate writes. Added shared export contracts, native scope,
+  success, unavailable/invalid/stale/closed/cancelled responses, file-choice,
+  save-panel cancellation, immediate Escape and locale/scheme renders. Backend
+  checks cover revisions, size/content changes, destination preservation, source
+  alias protection, compaction scope and export/import artifact restoration.
+- The earlier full Rust gate with live-frame tombstone guards finished: 2646
+  tests across 45 suites passed, without failures. It predates the export code
+  and is not used as proof of this increment. All nine export/backend compatibility
+  checks and the shared DTO fixture passed after the alias repair. Thirty-seven
+  targeted Swift checks passed; the final full Swift suite passed 485 tests with
+  no failures, including the final save-path and locale refinements. Sixteen
+  export layouts were rendered at 419 points in both locales/schemes; representative
+  previews, saved results and uncertainty layouts were inspected. Formatting,
+  wasm and both generated-resource/command-contract checks passed. New full
+  Rust/WebView regression gates remain in progress; final packaged/native
+  acceptance and the remaining outcome groups are still open.

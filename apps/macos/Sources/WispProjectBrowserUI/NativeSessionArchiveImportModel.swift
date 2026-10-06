@@ -38,13 +38,14 @@ import WispProjectBrowser
         } catch { if !closed, generation == current, !Task.isCancelled { self.error = localized("无法读取会话归档预览。") + "\n" + error.localizedDescription } }
     }
     func confirm() async {
-        guard canImport, let preview, preview.project_id == project, preview.archive_path == path else { return }
+        guard canImport, !Task.isCancelled, let preview, preview.project_id == project, preview.archive_path == path else { return }
         let current = generation; importing = true; error = nil
         defer { if generation == current { importing = false } }
         do {
             let value = try await client.invoke("native_session_archive_import", args: preview.arguments, projectID: preview.project_id)
             let result = try NativeSessionArchiveImportResult.decode(value, reviewed: preview)
-            guard !closed, generation == current, !Task.isCancelled else { return }; self.result = result
+            guard !closed, generation == current else { return }
+            try Task.checkCancellation(); self.result = result
         } catch {
             if !closed, generation == current {
                 uncertain = true; self.error = localized("导入结果未确认，请先在目标项目核对；本窗口不会再次提交。") + "\n" + error.localizedDescription
