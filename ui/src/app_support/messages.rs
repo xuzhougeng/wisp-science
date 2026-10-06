@@ -270,6 +270,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "lock" => view! { <rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/> }.into_view(),
         "archive" => view! { <rect x="3" y="3" width="18" height="4" rx="1"/><path d="M5 7v13h14V7M10 11h4"/> }.into_view(),
         "archive-import" => view! { <path d="M12 3v10m-4-4 4 4 4-4"/><path d="M5 8H3v4h2v9h14v-9h2V8h-2M5 12h3m8 0h3M10 17h4"/> }.into_view(),
+        "conversation-import" => view! { <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5M3 12h13m-4-4 4 4-4 4"/> }.into_view(),
         "hand" => view! { <path d="M8 13V5a2 2 0 0 1 4 0v7"/><path d="M12 6a2 2 0 0 1 4 0v6"/><path d="M16 8a2 2 0 0 1 4 0v7a7 7 0 0 1-7 7h-1c-2 0-3.5-1-4.5-2.5L3 13a2 2 0 0 1 3-2l2 2"/> }.into_view(),
         "ban" => view! { <circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),

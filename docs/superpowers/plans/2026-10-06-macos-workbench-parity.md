@@ -215,6 +215,38 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   Formatting, wasm and generated-resource/command-contract checks passed.
   Final full Rust/WebView regression remains in progress.
 
-Conversation controls and search remain incomplete: external session import,
-session transfer/export and project-file search still need implementation and
-verification. Later outcome groups remain open.
+### Increment 9: Codex and Claude session import
+
+- Added project-sidebar and scoped command-palette entry points with a distinct
+  shared conversation-import icon. Uses existing project/provider/environment
+  source/list/preview/result contracts with strict ownership, source identity,
+  bounded excerpts, state, count and hash validation.
+- Added cached listing/rescan, text filtering, 25-row pages, single preview/import
+  and a batch across all filtered pages. Each batch write reads a fresh preview;
+  independent source-read failures do not stop other candidates. Stop completes
+  the current write or prevents a write after an in-flight preview. Unconfirmed
+  writes halt the batch without replay and remain blocked after refresh or
+  changing destination/provider/environment. Exact confirmed results can open
+  their target conversation; source drafts are retained by normal navigation.
+- Initial nine targeted native checks passed, including shared fixtures,
+  scope/advertised choices, pagination, duplicate writes, late/closed responses,
+  batch progress and immediate Escape for sources and previews. Cancellation
+  and stop-during-preview coverage was subsequently added; all 15 import/search
+  targeted checks passed. The full Swift suite passed 456 tests without failures.
+  List, results, previews and source pickers were rendered at 419 points in both
+  locales/schemes and representative screenshots inspected. Formatting, wasm
+  and generated-resource/command-contract checks passed.
+
+### Latest repository regression
+
+- The full context/approval Rust workspace gate passed 2639 tests across 45
+  suites, with no failures or ignored tests. The subsequently added helper DTO
+  fixture also passed its targeted check.
+- The full WebView Playwright gate passed 1023 tests, with two existing optional
+  real-service tests skipped and no failures. `npm ci` succeeded before the run.
+- These gates establish the completed increments' current baseline. They do not
+  complete the remaining outcome groups or packaged/native acceptance.
+
+Conversation controls and search remain incomplete: session transfer/export and
+project-file search still need implementation and verification. Later outcome
+groups remain open.

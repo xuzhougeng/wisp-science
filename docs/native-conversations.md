@@ -833,9 +833,11 @@ when returning. Open the destination picker and press Escape immediately; only
 the picker closes. A second Escape closes the import sheet. Check narrow windows,
 both locales/schemes, frozen destinations and an archive changed after preview.
 
-### Windows Codex and Claude session import
+### Windows and macOS Codex and Claude session import
 
-Use **导入 Codex / Claude 会话…** in the project menu or command palette. Choose
+On Windows use **导入 Codex / Claude 会话…** in the project menu or command
+palette. On macOS use **导入 Codex / Claude 会话** in the project sidebar or
+`>import codex` / `>import claude` in the command palette. Choose
 the destination project, Codex CLI or Claude Code, and a local or registered
 WSL/SSH source. The initial list uses the metadata cache; **重新扫描来源** scans
 up to 500 recent source files. Filtering matches title, working directory,
@@ -859,6 +861,17 @@ It is never replayed. Confirmed results can open their exact destination session
 Busy/read-only target protections match ZIP imports. Escape closes an open
 selector before the sheet; closing the sheet retains the originating draft and
 prevents late replies from navigating the window.
+
+macOS smoke: with synthetic local provider logs, compare cached listing and
+rescan, filter by title/cwd/session ID/path, and inspect a result on the second
+page. Single import must use the selected project/provider/environment and the
+reviewed file hash. Batch import includes all filtered pages, skips imported
+rows and reads a fresh preview for each candidate. Stop during a preview to
+verify no write starts; stop during a write to verify it finishes only that one.
+Simulate a lost write acknowledgement and check that reload/selection cannot
+enable another import in the same sheet. Source/destination pickers and the
+preview must each consume immediate Escape before the parent sheet. Check
+narrow windows, both locales/schemes and originating draft retention.
 
 ### Windows publication evidence workspace
 
