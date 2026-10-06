@@ -3,8 +3,10 @@
 //! not `acp_sessions`: that binding routes a frame's sends through the ACP
 //! runtime and blocks rewind, which must not happen to imported transcripts.
 
+use super::context_epochs::HEAD_EPOCH_ROWS;
 use super::Store;
 use anyhow::Result;
+use std::collections::HashMap;
 
 impl Store {
     /// The frame a Codex rollout was already imported into, if any.
@@ -21,6 +23,30 @@ impl Store {
                 .fetch_optional(&self.pool)
                 .await?,
         )
+    }
+
+    /// Rollouts imported into `project_id`, by import key: the frame and its
+    /// model-visible message count. One query for a whole import listing
+    /// instead of routed lookups per listed rollout.
+    pub async fn codex_imports_in_project(
+        &self,
+        project_id: &str,
+    ) -> Result<HashMap<String, (String, i64)>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.codex_imports_in_project(project_id)).await;
+        }
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(&format!(
+            "SELECT ci.codex_session_id, ci.frame_id, \
+             (SELECT COUNT(*) FROM messages m WHERE m.frame_id=ci.frame_id AND {HEAD_EPOCH_ROWS}) \
+             FROM codex_imports ci JOIN frames fr ON fr.id=ci.frame_id WHERE fr.project_id=?"
+        ))
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, frame, count)| (key, (frame, count)))
+            .collect())
     }
 
     /// Record (or refresh) the rollout → frame mapping after an import.
@@ -97,6 +123,39 @@ mod tests {
         // Deleting the Wisp session frees the Codex id for re-import.
         store.delete_session("f1", "p").await.unwrap();
         assert_eq!(store.find_codex_import("codex-1").await.unwrap(), None);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn project_listing_returns_only_that_projects_imports_with_counts() {
+        let (store, path) = store_with_frame().await;
+        store.create_project("q", "Other", "/other").await.unwrap();
+        store.create_frame("f2", "q", "Codex", "m").await.unwrap();
+        store
+            .append_message("f1", 1, &wisp_llm::Message::user("hi"))
+            .await
+            .unwrap();
+        store
+            .append_message("f1", 2, &wisp_llm::Message::assistant("hello"))
+            .await
+            .unwrap();
+        store
+            .record_codex_import("codex-1", "f1", "/a")
+            .await
+            .unwrap();
+        store
+            .record_codex_import("codex-2", "f2", "/b")
+            .await
+            .unwrap();
+
+        let imports = store.codex_imports_in_project("p").await.unwrap();
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports["codex-1"], ("f1".to_string(), 2));
+        assert_eq!(
+            imports["codex-1"].1,
+            store.message_count("f1").await.unwrap()
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }
