@@ -20,7 +20,7 @@
 
 输入框旁的时钟显示频率、下次执行时间或暂停状态，点击可修改、暂停/恢复或取消。取消只停止后续触发，当前执行和最新结果保留；停止当前执行仍使用聊天的停止按钮。会话忙时等待空闲，错过的多个时间点合并为一次检查。仅在 Wisp 运行时触发，配置随会话持久保存。
 
-下一次检查开始前，只移除 timer 上一轮的提问、工具调用、结果和回答，普通消息保留。模型上下文也移除旧轮次；若其后发生过压缩，会恢复检查前的上下文并保留后续普通轮次，让下次正常压缩重新处理。此操作不撤销文件修改或计算任务。删除会话会同时删除 timer。ACP 外部代理维护自己的远程历史，暂不支持这种轮次替换。
+下一次检查开始前，只移除 timer 上一轮的提问、工具调用、结果和回答，普通消息保留。模型上下文也移除旧轮次；若其后发生过压缩，会恢复检查前的上下文并保留后续普通轮次，让下次正常压缩重新处理。此操作不撤销文件修改或计算任务。删除会话会同时删除 timer。ACP 外部代理维护自己的远程历史，暂不支持这种轮次替换；只读的子代理会话也不能设置 timer。
 
 ### 项目级任务
 
@@ -53,7 +53,8 @@ Automation spans every project, so it opens from the research assistant: the
   removes the preceding timer turn from both the transcript and model context,
   preserving human turns and files. Compacted context containing the old result
   is rebuilt from the pre-timer epoch plus subsequent ordinary turns. Settings
-  survive restart; deleting the conversation deletes its timer. ACP is unsupported.
+  survive restart; deleting the conversation deletes its timer. ACP conversations and
+  watch-only subagent conversations are unsupported.
 
 Commands: `get_daily_recap_automation`, `set_daily_recap_automation(enabled, time)`,
 `run_daily_recap_now`, `list_all_schedules`, and `create_schedule` with an explicit

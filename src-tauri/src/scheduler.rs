@@ -412,6 +412,13 @@ fn timer_workflow(rt: &Arc<crate::SessionRuntime>) -> Option<tokio::sync::OwnedM
 }
 
 async fn ensure_native_timer(state: &AppState, frame_id: &str) -> Result<(), String> {
+    crate::subagent_tool::require_instruction_source(
+        &state.store,
+        frame_id,
+        crate::TurnOrigin::Timer,
+        false,
+    )
+    .await?;
     if crate::acp::session_agent_id(&state.store, frame_id)
         .await?
         .is_some()

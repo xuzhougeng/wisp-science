@@ -412,9 +412,9 @@ for one focused task, such as "open a new conversation and do X there". Unlike
 the temporary sub-Agents above, a subagent is unbounded by a task plan, visible
 in the sidebar under the conversation that started it (**Subagents**), and
 watch-only for the researcher: opening it shows the live transcript, but the
-composer is locked and the backend refuses any message, queued follow-up or
-cut-in that does not come from the parent conversation. Tool approvals still
-appear in the subagent's own transcript.
+composer is locked and the backend refuses any message, queued follow-up,
+cut-in, timer, rewind or undo that does not come from the parent conversation.
+Tool approvals still appear in the subagent's own transcript.
 
 The parent conversation gets three tools:
 
