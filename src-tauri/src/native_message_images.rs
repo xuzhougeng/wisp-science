@@ -101,9 +101,13 @@ fn thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let image = reader
         .decode()
         .map_err(|e| format!("image preview unavailable: {e}"))?;
+    let image = if image.width() > 1024 || image.height() > 1024 {
+        image.thumbnail(1024, 1024)
+    } else {
+        image
+    };
     let mut png = Cursor::new(Vec::new());
     image
-        .thumbnail(1024, 1024)
         .to_rgba8()
         .write_to(&mut png, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;

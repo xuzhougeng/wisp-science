@@ -198,7 +198,8 @@ conversation's project/exploration root. Remote URLs are not fetched. PNG, JPEG,
 WebP, BMP, TIFF and the first GIF frame are supported; SVG, HEIC, animation and
 full-resolution export remain follow-ups. Reads cap input at 32 MiB, bound decoder
 allocation and dimensions, and return a PNG preview no larger than 1024 pixels
-per side. Loading/unsupported/missing images retain a readable placeholder.
+per side. Smaller images retain their original dimensions. Loading/unsupported/
+missing images retain a readable placeholder.
 Navigation discards late replies and closes the preview; Escape closes it before
 an underlying overlay, without requiring focus inside.
 
