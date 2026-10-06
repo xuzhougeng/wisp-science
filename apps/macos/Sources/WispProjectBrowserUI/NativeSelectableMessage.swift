@@ -163,21 +163,26 @@ class NativeMessageTextView: NSTextView {
             copyButtons.append(button); copyActions.append(action)
         }
         for button in previous.values where !copyButtons.contains(where: { $0 === button }) { button.removeFromSuperview() }
-        imageButtons.forEach { $0.removeFromSuperview() }; imageButtons = []; imageActions = []
+        let previousImages = Dictionary(uniqueKeysWithValues: imageButtons.compactMap { button in button.identifier.map { ($0.rawValue, button) } })
+        imageButtons = []; imageActions = []
         storage.enumerateAttribute(NativeImageContent.previewKey, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard let reference = value as? String else { return }
             let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
             let action = NativeSelectionAction { [weak self] in self?.openImage?(reference) }
-            let button = NSButton(title: "", target: action, action: #selector(NativeSelectionAction.invoke(_:)))
+            let identifier = "message-image-\(range.location)"
+            let button = previousImages[identifier] ?? NSButton(title: "", target: nil, action: nil)
+            button.target = action; button.action = #selector(NativeSelectionAction.invoke(_:))
             button.isBordered = false
             let name = storage.attribute(NativeMathContent.sourceKey, at: range.location, effectiveRange: nil) as? String ?? reference
             let title = localized("打开图片预览") + " · " + (name.isEmpty ? reference : name)
             button.toolTip = title; button.setAccessibilityLabel(title)
-            button.identifier = NSUserInterfaceItemIdentifier("message-image-\(range.location)")
+            button.identifier = NSUserInterfaceItemIdentifier(identifier)
             button.frame = rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-            addSubview(button); imageButtons.append(button); imageActions.append(action)
+            if button.superview !== self { addSubview(button) }
+            imageButtons.append(button); imageActions.append(action)
         }
+        for button in previousImages.values where !imageButtons.contains(where: { $0 === button }) { button.removeFromSuperview() }
     }
 
     var quote: ((String) -> Void)?

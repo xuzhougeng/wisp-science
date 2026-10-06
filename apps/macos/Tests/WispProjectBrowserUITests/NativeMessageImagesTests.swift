@@ -59,6 +59,9 @@ final class NativeMessageImagesTests: XCTestCase {
         var opened: [String] = []; view.openImage = { opened.append($0) }
         let buttons = view.subviews.compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("message-image-") == true }
         XCTAssertEqual(buttons.count, 2); XCTAssertTrue(buttons.allSatisfy { view.bounds.contains($0.frame) && $0.frame.height > 0 })
+        view.frame.size.width = 280
+        view.apply(NativeMarkdownContent.render(source, saved: [], scheme: .light, width: 280, images: images)); view.layoutCopyButtons()
+        XCTAssertTrue(buttons.allSatisfy { $0.superview === view }, "Polling and resizing must retain native image buttons so keyboard and accessibility focus remain stable")
         buttons.forEach { $0.performClick(nil) }; XCTAssertEqual(Set(opened), Set(images.keys))
         view.setSelectedRange(NSRange(location: 0, length: content.length)); var copied = ""; view.copyBlock = { copied = $0 }; view.copy(nil)
         XCTAssertEqual(copied, NativeMathContent.plainText(content)); XCTAssertFalse(copied.contains("\u{fffc}"))
