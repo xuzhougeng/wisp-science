@@ -751,7 +751,14 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 }
             }
             record.sequence += 1;
-            let read_only = frozen;
+            // A subagent conversation (#1061) is watched, not written to.
+            let read_only = frozen
+                || state
+                    .store
+                    .session_dispatched_from(session)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_some();
             let mut items: Vec<_> = items.into_iter().map(snapshot_item).collect();
             let outline = state
                 .store
@@ -956,6 +963,13 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             }
             let state = broker.app.state::<crate::AppState>();
             require_mutable_session(&state.store, session).await?;
+            crate::subagent_tool::require_instruction_source(
+                &state.store,
+                session,
+                crate::TurnOrigin::Queued(id),
+                false,
+            )
+            .await?;
             if acp_agent_id.is_some()
                 && state
                     .store
