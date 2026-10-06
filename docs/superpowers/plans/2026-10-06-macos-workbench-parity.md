@@ -380,3 +380,26 @@ groups remain open.
   matching-query refinements. Formatting and both generated-resource/command
   checks passed. No new Rust command or schema is required. Independent windows,
   composer focus after staging and later outcome groups remain open.
+
+### Increment 14: composer focus after search references
+
+- A successfully staged reference requests focus for the exact existing composer
+  after the search sheet dismisses. The request is consumed once; it never activates
+  a window, changes text/caret or sends. It binds the database, project, session,
+  navigation generation, search generation, editor and window identities.
+- Changed navigation (including leaving and returning), reopening search, settings,
+  another key window/sheet, detached/reparented/hidden/read-only editors and active
+  IME composition discard the request. Ordinary search cancellation/navigation and
+  failed reference reads do not request focus.
+- All 33 targeted Swift checks passed, including five new AppKit/editor and actual
+  conversation/browser focus checks. The final full Swift suite passed 497 tests
+  without failures. Formatting and both generated-resource/command checks passed.
+  This changes focus only; the existing locale/scheme search and composer renders
+  were rerun. The completed export WebView full gate passed 1022
+  tests, with two existing optional-service skips and one homepage-loading timeout
+  before the activity-indicator assertions. All three activity-indicator tests
+  passed on isolated rerun; the full-run failure evidence is retained in `/tmp`.
+  No product or test changes were made for that timeout. The completed export Rust
+  workspace gate passed 2655 tests across 45 test summaries, without failures or
+  ignored tests. The focus increment adds no Rust command/schema. Independent
+  windows and later outcome groups remain open.

@@ -29,7 +29,7 @@ struct ProjectSearchSheet: View {
         _search = StateObject(wrappedValue: searchModel ?? NativeSearchModel(client: model.calendarClient(), projectID: projectID))
         _references = StateObject(wrappedValue: NativeSearchReferenceModel(client: conversation.client, project: project ?? "", session: session ?? "", writable: {
             model.databaseURL == database && model.activeProjectID == project && model.activeSessionID == session && conversation.canReference
-        }, accept: conversation.addReference))
+        }, accept: { model.stageSearchReference($0, conversation: conversation, database: database, project: project, session: session) }))
     }
     private var commands: [NativeSearchCommand] { NativeSearchCommand.matching(query, project: projectID != nil, session: model.activeSessionID != nil) }
     private var count: Int { commands.count + search.items.count }

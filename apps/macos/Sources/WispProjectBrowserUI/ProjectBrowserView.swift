@@ -28,7 +28,7 @@ public struct ProjectBrowserView: View {
             }
         }
             .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
-            .sheet(isPresented: $model.searchPresented) {
+            .sheet(isPresented: $model.searchPresented, onDismiss: model.searchDidDismiss) {
                 ProjectSearchSheet(model: model, projectID: model.activeProjectID, close: { model.searchPresented = false })
             }
             .sheet(item: $model.searchArtifact) { item in

@@ -61,20 +61,27 @@ conversation or replaces typed text; the existing composer deduplicates chips.
 
 A failed read leaves the search open with an error. Query changes, cancellation,
 closing, database/project/session navigation or loss of composer eligibility
-discard late selections. A successful stage closes the search. Enter retains
+discard late selections. A successful stage closes the search and returns focus
+to the original editable composer after the sheet dismisses. This is a one-time
+request: navigation (including leaving and returning), reopening search, opening
+settings, another key window, another attached sheet, a detached/hidden/read-only
+editor or active IME composition cancels focus restoration. It does not activate
+a window, replace text, move the caret or send a message. Enter retains
 normal navigation; IME candidate confirmation stays with AppKit. Search now
 fits narrow windows, including its translated reference shortcut. Project file
 search already exists in the Files panel, as in the WebView; this change does not
-add a new file category to Cmd+K. Independent-window navigation and restoring
-composer focus after staging remain follow-up work.
+add a new file category to Cmd+K. Independent-window navigation remains follow-up
+work.
 
 Manual smoke: keep unsent text in an editable conversation, search for another
 conversation and an artifact, then use Shift+Enter or the context menu. Verify
-the exact chip, unchanged text and absence of a send/navigation. Repeat the same
+the exact chip, unchanged text, original input focus and absence of a send/navigation.
+Continue typing immediately after the sheet closes. Repeat the same
 selection to check deduplication. Hide/remove a result or change conversation
 while its reference read is pending; it must not stage into the new draft.
 Press Enter while an IME candidate is active to confirm text only. Press Escape
 immediately while reading; it closes the search and a late response has no effect.
+Switch to another window during dismissal; that window must retain its focus.
 Check both locales/schemes and narrow windows.
 
 ## macOS conversation controls and workspace search (2026-10-06)

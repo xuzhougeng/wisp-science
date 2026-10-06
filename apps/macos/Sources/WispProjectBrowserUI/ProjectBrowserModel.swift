@@ -5,7 +5,11 @@ import WispProjectBrowser
 
 @MainActor
 public final class ProjectBrowserModel: ObservableObject {
-    @Published public var searchPresented = false
+    @Published public var searchPresented = false {
+        didSet { if searchPresented { searchFocusGeneration = UUID(); searchComposerFocus = nil } }
+    }
+    private var searchFocusGeneration = UUID()
+    private var searchComposerFocus: NativeSearchComposerFocus?
     @Published var searchArtifact: NativeSearchItem?
     @Published var workspaceCommand: NativeWorkspaceCommand?
     @Published public var createPresented = false
@@ -192,6 +196,34 @@ public final class ProjectBrowserModel: ObservableObject {
         guard databaseURL == database, activeProjectID == item.project_id,
               activeSessionID == item.session_id, sessionError == nil else { return }
         if item.kind == "artifact" { searchArtifact = item }
+    }
+    func stageSearchReference(_ reference: NativeComposerReference, conversation: NativeConversationModel, database: URL, project: String?, session: String?) -> Bool {
+        guard let project, let session, databaseURL == database, activeProjectID == project, activeSessionID == session,
+              conversation.snapshot?.project_id == project, conversation.snapshot?.session_id == session,
+              conversation.canReference, conversation.addReference(reference) else { return false }
+        let navigation = navigationGeneration, search = searchFocusGeneration
+        searchComposerFocus = NativeSearchComposerFocus(editor: conversation.completions.editor) { [weak self, weak conversation] in
+            guard let self, let conversation else { return false }
+            return self.databaseURL == database && self.activeProjectID == project && self.activeSessionID == session
+                && self.navigationGeneration == navigation && self.searchFocusGeneration == search
+                && conversation.snapshot?.project_id == project && conversation.snapshot?.session_id == session
+                && !self.searchPresented && !self.settingsPresented && conversation.canReference
+        }
+        return true
+    }
+    func consumeSearchComposerFocus() -> NativeSearchComposerFocus? {
+        let focus = searchComposerFocus
+        searchComposerFocus = nil
+        return focus
+    }
+    func searchDidDismiss() {
+        let focus = consumeSearchComposerFocus()
+        // SwiftUI calls onDismiss after its sheet transition; give AppKit the
+        // current event turn to finish restoring the parent key window.
+        Task { @MainActor in
+            await Task.yield()
+            focus?.restore(keyWindow: NSApp.keyWindow)
+        }
     }
     func executeSearchCommand(_ command: NativeSearchCommand) {
         guard (!command.project || activeProjectID != nil), (!command.session || activeSessionID != nil) else { return }

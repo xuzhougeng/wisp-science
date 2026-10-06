@@ -29,7 +29,52 @@ private actor SearchReferenceFake: NativeConversationQuerying {
     }
 }
 
+private struct SearchReferenceBrowser: ProjectBrowserQuerying {
+    func listProjects(databaseURL: URL) async throws -> ProjectListSnapshot { ProjectListSnapshot(projects: [], activitySource: "persisted_only") }
+    func listSessions(databaseURL: URL, projectID: String?) async throws -> [BrowserSession] {
+        [BrowserSession(id: "draft-session", projectID: "destination-project", title: "Draft", ts: 1, status: "idle")]
+    }
+    func transcript(databaseURL: URL, projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> TranscriptPage { TranscriptPage(messages: [], nextBeforeSeq: nil) }
+}
+
 final class NativeSearchReferenceTests: XCTestCase {
+    @MainActor func testSearchStagingRestoresComposerAfterDismissalAndNavigationOrReopeningCancelsIt() async throws {
+        _ = NSApplication.shared
+        let database = URL(fileURLWithPath: "/unused"), fake = SearchReferenceFake()
+        let browser = ProjectBrowserModel(client: SearchReferenceBrowser(), databaseURL: database)
+        let conversation = NativeConversationModel(client: fake)
+        await browser.openProject("destination-project", sessionID: "draft-session")
+        await conversation.open(project: "destination-project", session: "draft-session"); defer { conversation.pause() }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; defer { window.close() }
+        let editor = NativeComposerTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        editor.isEditable = true; editor.string = "Unsent question"; window.contentView!.addSubview(editor)
+        conversation.completions.editor = editor; conversation.draft = editor.string
+        for state in ["dismissed", "navigate-and-return", "new-search", "settings"] {
+            browser.searchPresented = true
+            let references = NativeSearchReferenceModel(client: fake, project: "destination-project", session: "draft-session", writable: { conversation.canReference }, accept: {
+                browser.stageSearchReference($0, conversation: conversation, database: database, project: "destination-project", session: "draft-session")
+            })
+            let staged = await references.attach(try item()); XCTAssertTrue(staged)
+            browser.searchPresented = false
+            let focus = try XCTUnwrap(browser.consumeSearchComposerFocus())
+            switch state {
+            case "navigate-and-return": browser.goHome(); await browser.openProject("destination-project", sessionID: "draft-session")
+            case "new-search": browser.searchPresented = true; browser.searchPresented = false
+            case "settings": browser.settingsPresented = true
+            default: break
+            }
+            XCTAssertEqual(focus.restore(keyWindow: window), state == "dismissed", state)
+            XCTAssertNil(browser.consumeSearchComposerFocus()); browser.settingsPresented = false
+        }
+        XCTAssertEqual(conversation.references.count, 1); XCTAssertEqual(conversation.draft, "Unsent question"); XCTAssertEqual(editor.string, conversation.draft)
+        let reference = try XCTUnwrap(conversation.references.first)
+        XCTAssertFalse(browser.stageSearchReference(reference, conversation: conversation, database: URL(fileURLWithPath: "/old-db"), project: "destination-project", session: "draft-session"))
+        XCTAssertFalse(browser.stageSearchReference(reference, conversation: conversation, database: database, project: "other-project", session: "draft-session"))
+        await conversation.open(project: "other-project", session: "draft-session")
+        XCTAssertFalse(browser.stageSearchReference(reference, conversation: conversation, database: database, project: "destination-project", session: "draft-session"))
+        XCTAssertNil(browser.consumeSearchComposerFocus())
+    }
     @MainActor func testStagedSearchReferenceKeepsDraftAndDeduplicatesInTheActualConversation() async throws {
         let fake = SearchReferenceFake(), conversation = NativeConversationModel(client: fake)
         await conversation.open(project: "destination-project", session: "draft-session"); defer { conversation.pause() }
