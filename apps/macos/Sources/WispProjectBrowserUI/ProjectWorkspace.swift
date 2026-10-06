@@ -160,7 +160,37 @@ struct ProjectWorkspace: View {
                 } else if journey.presented && journey.projectID == project.id {
                     NativeJourneyPage(model: model, journey: journey)
                 } else if let session = model.activeSessionID {
-                    NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session, createAcpConversation: { agent in createSession(acpAgentID: agent) }) { selection in
+                    NativeConversationView(conversation: conversation, projectID: project.id, sessionID: session, createAcpConversation: { agent in createSession(acpAgentID: agent) }, executeComposerCommand: { command, payload in
+                        guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                        switch command {
+                        case .archive: archivePresented = true
+                        case .share: sharePresented = true
+                        case .trajectory: trajectoryPresented = true
+                        case .skills: model.projectSettingsID = nil; model.settingsSectionID = "skills"; model.settingsPresented = true
+                        case .files, .btw:
+                            var tabs = NativePanelTabs(saved: panelTabs, selected: panelTab, available: NativePanelTabs.all)
+                            tabs.show(command == .files ? "files" : "sidechat"); panelTabs = tabs.saved; panelTab = tabs.selected; panelVisible = true
+                            if command == .btw && !payload.isEmpty {
+                                let sideChat = model.nativeSideChat(projectID: project.id, sessionID: session)
+                                if sideChat.draft.isEmpty && !sideChat.busy {
+                                    sideChat.draft = payload
+                                    Task { await sideChat.send() }
+                                } else {
+                                    sideChat.draft += (sideChat.draft.isEmpty ? "" : "\n") + payload
+                                }
+                            }
+                        case .upload:
+                            let picker = NSOpenPanel(); picker.canChooseFiles = true; picker.canChooseDirectories = false; picker.allowsMultipleSelection = true
+                            guard picker.runModal() == .OK, model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                            let paths = picker.urls.map(\.path)
+                            Task {
+                                for path in paths {
+                                    guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                                    await conversation.attach(source: path, client: conversation.client)
+                                }
+                            }
+                        }
+                    }) { selection in
                         guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                         model.nativeSideChat(projectID: project.id, sessionID: session).quotes.append(.init(text: selection, source: "会话摘录"))
                         var tabs = NativePanelTabs(saved: panelTabs, selected: panelTab, available: NativePanelTabs.all)
