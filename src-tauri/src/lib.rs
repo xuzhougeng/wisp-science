@@ -51,6 +51,7 @@ mod exploration_commands;
 mod native_calendar;
 mod native_composer;
 mod native_conversations;
+mod native_files;
 mod native_history;
 mod native_journey;
 mod native_library;

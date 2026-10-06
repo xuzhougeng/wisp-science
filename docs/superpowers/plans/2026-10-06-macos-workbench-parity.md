@@ -429,3 +429,46 @@ groups remain open.
 - Files/viewers, assistant/automation/timers, journey/publication/workflow editing
   and final packaged multi-window acceptance remain open. These conversation and
   search increments do not complete the overall goal.
+
+### Increment 16: scoped Files locations, sorting and path selection
+
+- Added an optional native Files capability and four exact-frame adapters for
+  locations, canonical directory listings, previews and path copies. Shared
+  `wisp-dto` envelopes reuse the existing WebView entries/content; the backend no
+  longer mirrors those payload types. Local paths resolve the actual working
+  root, including exploration branches. The SSH catalog lists configured contexts
+  without attachment, probing, connection configuration or secrets.
+- Added a separate Files location/navigation lifetime, persistent WebView sorting,
+  full-project bounded search, list/grid selection and batch relative/absolute
+  path copies. Sorting preserves selection; navigation/query/location changes
+  clear it. Context copies match WebView's selected-row rule. Ownership, malformed
+  paths, missing/outside links, cancellations and late/closed responses are guarded
+  before displaying content or changing the clipboard.
+- Preserved local creation/rename/delete, optimistic text editing and original-byte
+  export. Lost write acknowledgements block replay until a fresh read and decision.
+  Remote previews are read-only and their quotes preserve exact SSH provenance.
+  Binary previews materialize returned bytes in private, cleaned-up temporary
+  directories. Added read retry/environment navigation and responsive previews.
+- The environment shortcut clears a previous project-settings selection. Pane
+  lifetime now includes the database, so clones retaining the same project/session
+  IDs recreate their models with the correct transport. An actual hosted pane
+  test switches clients while the old directory read is held and verifies the
+  new database's location/directory requests.
+- Five host scope/boundary/catalog/provenance/platform checks, two shared DTO
+  checks and all 32 existing file-browser checks passed. Thirty-one targeted Swift checks
+  passed, including nineteen new contract/model/cancellation/uncertainty/native
+  Escape/identity/rendering checks. Files and text previews in both locales/schemes
+  at 320 and 419 points were rendered, with representative screenshots inspected.
+  Translation and dark native-menu icon fixes retain the shared SVG set.
+- Local directory listings and path copies preserve literal backslashes in Unix
+  filenames; separator normalization is limited to Windows. The added temporary
+  directory regression exercises both listing and copy results.
+- The final full Swift suite passed 522 tests with no failures. The full Rust
+  workspace gate passed 2662 tests across 45 test summaries, without failures or
+  ignored tests. Formatting, wasm compilation and generated-resource/command
+  checks passed. Full WebView passed 1021 tests with two existing optional-service
+  skips and two homepage-loading timeouts before the activity-indicator/automation
+  assertions. All nine checks in those two files passed on isolated rerun; no
+  WebView or test change was needed. Full-run failure evidence is retained in `/tmp`.
+- Upload/drop, remote download, rich/scientific viewers and the later outcome
+  groups remain open. This increment does not complete Files or the overall goal.

@@ -57,6 +57,7 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let acp: ConversationAcpInteractions?
     public let composer_references: Bool?
     public let context_view: Bool?
+    public let file_browser: Bool?
     public let queue: ConversationQueueSnapshot?
     public let plan_mode: Bool?
     public let fast_mode: ConversationFastMode?

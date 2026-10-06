@@ -240,12 +240,16 @@ struct ProjectWorkspace: View {
                         if panelDragStart == nil { panelDragStart = panelWidth }
                         panelWidth = min(600, max(280, (panelDragStart ?? 380) - value.translation.width))
                     }.onEnded { _ in panelDragStart = nil })
-                NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
+                NativePanelView(client: conversation.client, projectID: project.id, sessionID: session, projectRoot: project.workspaceDirectory, highlightRevision: conversation.savedHighlightRevision, highlightRemoved: { id in conversation.removeSavedHighlight(id, project: project.id, session: session) }, sideChat: model.nativeSideChat(projectID: project.id, sessionID: session), transcript: conversation.visibleItems, transcriptPage: conversation.showingHistory ? "history:\(conversation.history?.next_before_seq.map(String.init) ?? "start")" : "latest", revealExcerpt: conversation.revealExcerpt, readOnly: conversation.snapshot?.read_only ?? true, fileBrowserSupported: conversation.snapshot?.file_browser == true, environments: {
+                    guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                    model.openEnvironmentSettings()
+                }, manageWorkflows: model.openWorkflowSettings, openTerminal: { context in
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.nativeTerminal(projectID: project.id, sessionID: session).requestOpen(context)
                     terminalVisible = true
                 }) { panelVisible = false }
-                    .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar)).id(project.id + ":" + session)
+                    .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar))
+                    .id(NativePanelScopeIdentity(databaseURL: model.databaseURL.standardizedFileURL, projectID: project.id, sessionID: session))
             }
         }
         .onChange(of: model.workspaceCommand?.id) { _ in

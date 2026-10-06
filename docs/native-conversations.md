@@ -1156,3 +1156,47 @@ badges. General settings group workspace interaction and notifications, offer an
 explicit send-shortcut choice, and place local environments before network
 settings. See the [alignment implementation record](superpowers/plans/2026-09-26-swiftui-webview-ui-alignment-implementation.md)
 for verification and remaining work.
+
+## macOS Files locations, sorting and selection
+
+Hosts advertising the optional `file_browser` snapshot capability provide the
+scoped `wisp.native-files.v1` browser. Older hosts retain the existing local Files
+panel. The location selector lists the current project and every configured SSH
+context, matching WebView; opening a location does not attach or probe it. Local
+paths use the displayed conversation's actual working directory, including an
+exploration branch, rather than the sidebar's mainline workspace path.
+
+Directories stay first. Name sorts case-insensitively ascending; size and
+modification time sort descending, with name as the tie-breaker and missing times
+treated as zero. The choice persists between openings. Modification-time sorting
+shows dates where available, including directories. Local search continues to
+search all project directories, with the existing 200-result bound and traversal
+order, independently of directory sorting.
+
+**Select files** toggles rows without opening them. Sorting preserves selection;
+changing query, directory or location clears it. **Copy relative paths** and
+**Copy absolute paths** copy the selected paths in sorted, deduplicated order. A
+row's menu copies the whole selection only when that row is selected; otherwise
+it copies that row. The host resolves existing files/directories under the actual
+working root. Outside links and missing paths fail without replacing the
+clipboard. Changed selection/navigation or closed panels discard late responses.
+Switching database also recreates the pane's models when a database copy retains
+the same project and conversation IDs.
+
+SSH supports directory navigation, an editable remote path, bounded previews,
+source quotes, a read retry and a shortcut to environment settings. Remote text
+is read-only. Quote sources retain the exact SSH context and file path. Binary
+previews use a private temporary copy of the returned bytes, cleaned up on
+dismissal; a remote URI is never opened as a local path. Local creation, rename,
+deletion, optimistic text editing and original-byte **Save a copy** remain
+available, with host-side read-only/conflict checks. Unconfirmed file writes or
+saves cannot be replayed from the same sheet; close and reread before making a
+new decision. Sorting and file-action Escape handling preserves the parent panel
+without moving focus.
+
+Upload/drop, remote download and the richer scientific/Office/PDF interactions
+remain tracked in the [active macOS parity ledger](superpowers/plans/2026-10-06-macos-workbench-parity.md).
+Manual smoke: use an isolated exploration fixture, compare copied absolute paths
+with its working root, sort/select/search across directories, open configured SSH
+locations, quote a remote text selection and press Escape immediately after
+opening sort/file-action surfaces. Check both locales/schemes and narrow panels.

@@ -40,6 +40,10 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_panel_context_default",
     "native_conversation_panel_artifacts",
     "native_conversation_panel_files",
+    "native_conversation_panel_file_locations",
+    "native_conversation_panel_file_directory",
+    "native_conversation_panel_file_paths",
+    "native_conversation_panel_file_read",
     "native_conversation_panel_searchfiles",
     "native_conversation_panel_export",
     "native_conversation_panel_readfile",
@@ -879,6 +883,8 @@ pub struct Snapshot {
     pub composer_references: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_view: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_browser: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub follow_ups: Vec<String>,
     /// Absent for older hosts and ACP sessions, which own their mode selection.

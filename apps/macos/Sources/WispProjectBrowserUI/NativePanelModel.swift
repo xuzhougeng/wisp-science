@@ -37,6 +37,7 @@ final class NativePanelModel: ObservableObject {
     let sessionID: String
     private var generation = UUID()
     private var previewGeneration = UUID()
+    private var closed = false
     init(client: any NativeConversationQuerying, projectID: String, sessionID: String) {
         self.client = client; self.projectID = projectID; self.sessionID = sessionID
     }
@@ -100,6 +101,7 @@ final class NativePanelModel: ObservableObject {
         } catch { if searchGeneration == current, !Task.isCancelled { self.error = error.localizedDescription } }
     }
     func exportSource(path: String? = nil, artifactID: String? = nil) async throws -> NativePanelExport {
+        guard !closed else { throw ProjectBrowserError.unavailable("面板已关闭。") }
         var args: [String: SettingsValue] = [:]
         if let path { args["path"] = .string(path) }
         if let artifactID { args["artifact_id"] = .string(artifactID) }
@@ -110,7 +112,7 @@ final class NativePanelModel: ObservableObject {
         return source
     }
     func performFileAction(_ action: NativePanelFileAction, path target: String, newPath: String? = nil) async throws {
-        guard !fileActionBusy else { throw ProjectBrowserError.unavailable("文件操作正在进行。") }
+        guard !closed, !fileActionBusy else { throw ProjectBrowserError.unavailable("文件操作正在进行或面板已关闭。") }
         let epoch = agentEpoch; let directory = path
         fileActionBusy = true
         defer { if epoch == agentEpoch { fileActionBusy = false } }
@@ -245,5 +247,6 @@ final class NativePanelModel: ObservableObject {
     }
     func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
     func close() {
+        closed = true
         clearFileSearch(); agentEpoch = UUID(); notebookBusy = []; highlightRemoving = []; agentDelegationBusy = false; agentLaunching = []; agentActions = []; generation = UUID(); dismissPreview() }
 }

@@ -33,6 +33,7 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
+    public func openEnvironmentSettings() { projectSettingsID = nil; settingsSectionID = "environments"; settingsPresented = true }
     @Published public var projectSettingsID: String?
     public func openProjectSettings(_ id: String) { projectSettingsID = id; settingsSectionID = nil; settingsPresented = true }
     @Published private(set) var projects: [ProjectSummary] = []
