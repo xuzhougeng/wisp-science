@@ -47,6 +47,7 @@ mod session_timers;
 mod sessions;
 mod storage_prefs;
 mod turn_undo;
+mod upgrade_backup;
 
 pub use acp_sessions::AcpSessionBinding;
 pub use agent_workflow_attempts::{
@@ -283,6 +284,7 @@ impl Store {
                 sqlx::query("PRAGMA journal_mode=WAL")
                     .execute(&pool)
                     .await?;
+                upgrade_backup::before_migration(&pool, &pool, None).await;
             }
             Self::migrate(&pool).await?;
             let store = Self {
@@ -867,7 +869,7 @@ impl Store {
         // later folded into 0000_init.sql (or into an already-shipped apply_*
         // body) missing, and the next query then fails with "no such column".
         Self::ensure_schema_compat(pool).await?;
-        Ok(())
+        upgrade_backup::migrated(pool).await
     }
 
     /// Idempotent repair for schema objects that numbered migrations can miss

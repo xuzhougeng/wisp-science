@@ -111,6 +111,7 @@ impl LibraryStore {
         sqlx::query("PRAGMA journal_mode=WAL")
             .execute(&pool)
             .await?;
+        super::upgrade_backup::before_migration(&pool, &pool, None).await;
         // Older databases baked `kind IN ('code','figure')` into a CHECK
         // constraint; SQLite cannot alter it in place, so rebuild once.
         let existing_ddl: Option<String> = sqlx::query_scalar(
@@ -148,6 +149,7 @@ impl LibraryStore {
         )
         .execute(&pool)
         .await?;
+        super::upgrade_backup::migrated(&pool).await?;
         Ok(Self { pool })
     }
 

@@ -214,6 +214,9 @@ impl Store {
             ids == [metadata.project_id.clone()],
             "Project metadata does not match its database"
         );
+        // Before the write transaction, whose connection may be the only one.
+        super::upgrade_backup::before_migration(&pool, &self.pool, Some(&metadata.project_id))
+            .await;
         let mut tx = self.begin_write().await?;
         let existing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
             .bind(&metadata.project_id)
@@ -400,6 +403,7 @@ impl Store {
                 .connect_with(options)
                 .await?;
             if registry.migrate_on_open {
+                super::upgrade_backup::before_migration(&pool, &registry.global, Some(id)).await;
                 Self::migrate(&pool).await?;
             }
             let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM projects")
@@ -1986,5 +1990,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(direct.message_count("f").await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn another_versions_project_database_is_backed_up_outside_the_workspace() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("app").join("wisp.sqlite");
+        let backups = root.path().join("app").join("backups");
+        let workspace = root.path().join("study");
+        let database = workspace.join(PROJECT_DATABASE);
+        let store = open_portable_application(&path).await.unwrap();
+        store
+            .create_project("study", "Study", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("frame", "study", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("frame", 1, &wisp_llm::Message::user("kept"))
+            .await
+            .unwrap();
+        // A project this version created has nothing older to keep.
+        assert!(!backups.exists());
+
+        let stamp = |version: Option<i64>| {
+            let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&database);
+            async move {
+                let pool = SqlitePool::connect_with(options).await.unwrap();
+                if let Some(version) = version {
+                    sqlx::query(&format!("PRAGMA user_version={version}"))
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                }
+                let stamp: i64 = sqlx::query_scalar("PRAGMA user_version")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                Store::close_pool(&pool).await;
+                stamp
+            }
+        };
+        let current = stamp(None).await;
+        assert!(current > 0);
+        stamp(Some(1)).await;
+
+        // Each project is copied when this version first opens it.
+        let reopened = Store::open_application(&path).await.unwrap();
+        assert!(!backups.exists());
+        assert_eq!(reopened.message_count("frame").await.unwrap(), 1);
+        assert_eq!(stamp(None).await, current);
+        let names: Vec<String> = std::fs::read_dir(&backups)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+        assert!(names[0].starts_with("project-study."), "{names:?}");
+        assert!(!workspace.join(".wisp").join("backups").exists());
+        let copy = Store::open_read_only(&backups.join(&names[0]))
+            .await
+            .unwrap();
+        assert_eq!(copy.message_count("frame").await.unwrap(), 1);
     }
 }
