@@ -295,9 +295,11 @@ pub(super) async fn set_connector_skip_approvals(
 
 #[tauri::command]
 pub(super) async fn test_mcp_connection(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     conn: McpConnection,
 ) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
+    let local = crate::app_commands::local_environment_config(&state.store).await;
+    let conn = crate::mcp_connections::with_local_tool_path(conn, &local);
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
     Ok(tools)

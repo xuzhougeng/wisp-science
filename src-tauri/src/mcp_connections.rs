@@ -83,18 +83,44 @@ pub(crate) fn host() -> &'static Connections {
     HOST.get_or_init(Connections::default)
 }
 
+/// A stdio connection whose command is the bare `cua-driver` runs the path
+/// from Settings → Local environment, so it starts when the app's PATH lacks
+/// it. Only the launched copy changes; the saved connection keeps its command.
+pub(crate) fn with_local_tool_path(
+    mut conn: McpConnection,
+    local: &serde_json::Value,
+) -> McpConnection {
+    if let McpTransport::Stdio { command, .. } = &mut conn.transport {
+        let bare = matches!(
+            command.trim().to_ascii_lowercase().as_str(),
+            "cua-driver" | "cua-driver.exe"
+        );
+        if bare {
+            if let Some(path) =
+                app_commands::configured_or_detected_path(local, "cua_driver_executable", None)
+            {
+                *command = path.to_string_lossy().into_owned();
+            }
+        }
+    }
+    conn
+}
+
 pub(crate) async fn configured(
     store: &Store,
     project: &str,
 ) -> (Vec<Spec>, Vec<plugins::PluginRuntimeError>) {
     let (plugins, errors) = plugins::enabled_plugin_mcp_launches(store, project).await;
     let mut specs: Vec<_> = plugins.into_iter().map(Spec::Plugin).collect();
+    // Resolved on the spec, so editing the path changes the descriptor and
+    // the next acquire reconnects.
+    let local = app_commands::local_environment_config(store).await;
     specs.extend(
         load_mcp_connections(store)
             .await
             .into_iter()
             .filter(|c| c.enabled)
-            .map(Spec::Custom),
+            .map(|c| Spec::Custom(with_local_tool_path(c, &local))),
     );
     if let Ok(command) = std::env::var("WISP_MCP_COMMAND") {
         let parts: Vec<String> = command
@@ -647,6 +673,48 @@ mod tests {
             axum::serve(listener, router).await.unwrap();
         });
         (root, store, Spec::Custom(conn), fixture, server)
+    }
+
+    #[test]
+    fn bare_cua_driver_command_runs_the_saved_local_path() {
+        let root = std::env::temp_dir().join(format!("wisp-cua-path-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let saved = root.join("cua driver.exe");
+        std::fs::write(&saved, b"never executed").unwrap();
+        let stdio = |command: &str| McpConnection {
+            id: "cua".into(),
+            name: "Cua Driver".into(),
+            enabled: true,
+            transport: McpTransport::Stdio {
+                command: command.into(),
+                args: vec!["mcp".into()],
+                env: vec![],
+                cwd: None,
+            },
+        };
+        let command = |conn: McpConnection, local: &serde_json::Value| {
+            let McpTransport::Stdio { command, args, .. } =
+                with_local_tool_path(conn, local).transport
+            else {
+                unreachable!()
+            };
+            assert_eq!(args, ["mcp"]);
+            command
+        };
+        let local = json!({ "cua_driver_executable": saved.to_string_lossy() });
+        for bare in ["cua-driver", " CUA-Driver.exe "] {
+            assert_eq!(command(stdio(bare), &local), saved.to_string_lossy());
+        }
+        // An explicit path, another program, and a saved path that no longer
+        // exists all keep the command the user wrote.
+        for other in ["/opt/cua/cua-driver", "uv"] {
+            assert_eq!(command(stdio(other), &local), other);
+        }
+        let missing = json!({ "cua_driver_executable": root.join("gone.exe").to_string_lossy() });
+        for local in [&missing, &json!({}), &serde_json::Value::Null] {
+            assert_eq!(command(stdio("cua-driver"), local), "cua-driver");
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

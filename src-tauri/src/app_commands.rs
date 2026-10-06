@@ -588,17 +588,21 @@ pub(super) fn finish_environment_detection(
     status.local_environment = Some(report);
 }
 
-async fn detect_environment(app: &tauri::AppHandle) -> BootstrapStatus {
-    let state = app.state::<AppState>();
-    let app_data = state.app_data.clone();
-    let config = state
-        .store
+/// Local's saved configuration; null when it cannot be read.
+pub(super) async fn local_environment_config(store: &Store) -> serde_json::Value {
+    store
         .get_execution_context("local")
         .await
         .ok()
         .flatten()
         .and_then(|context| serde_json::from_str(&context.config_json).ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+async fn detect_environment(app: &tauri::AppHandle) -> BootstrapStatus {
+    let state = app.state::<AppState>();
+    let app_data = state.app_data.clone();
+    let config = local_environment_config(&state.store).await;
     let mut report = tokio::task::spawn_blocking(move || discover_local_paths(&app_data, &config))
         .await
         .unwrap_or_else(|error| wisp_dto::LocalEnvironmentStatus {
