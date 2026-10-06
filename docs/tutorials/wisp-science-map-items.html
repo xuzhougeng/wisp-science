@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page="tutorial-article" data-title-zh="用 map_items 批量处理文献 · 教程 | Wisp Science" data-title-en="Batch-Process Papers with map_items · Tutorials | Wisp Science" data-desc-zh="Wisp Science高级用法：用 map_items 批量处理文献" data-desc-en="Wisp Science Advanced: Batch-Process Papers with map_items">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wisp Science高级用法：用 map_items 批量处理文献">
+  <title>用 map_items 批量处理文献 · 教程 | Wisp Science</title>
+  <script>
+    (function () {
+      var lang = "zh";
+      try {
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "en" || q === "zh") lang = q;
+        else {
+          var s = localStorage.getItem("wisp-pages-lang");
+          if (s === "en" || s === "zh") lang = s;
+        }
+      } catch (e) {}
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="stylesheet" href="../assets/tutorials.css">
+</head>
+<body class="doc-page tutorial-detail">
+  <header class="site-nav">
+    <div class="container">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="28" height="28">
+        <span class="brand-name">Wisp Science</span>
+      </a>
+      <nav class="nav-links" data-i18n-aria="nav.aria" aria-label="页面导航">
+        <a href="../index.html#features" data-i18n="nav.features">功能</a>
+        <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
+        <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
+        <a href="../index.html#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/README.md" data-i18n="nav.docs">文档</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="语言">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a class="btn btn-primary" href="../index.html#download"><span class="btn-label-full" data-i18n="nav.downloadFull">下载桌面版</span><span class="btn-label-short" data-i18n="nav.downloadShort">下载</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main class="tutorial-reader container">
+<nav class="tutorial-breadcrumb" aria-label="教程导航" data-i18n-aria="tutorials.readerNav"><a class="tutorial-back" href="../tutorials.html#wisp-science-map-items" data-i18n="tutorials.back">返回教程目录</a></nav>
+<article class="tutorial-article" id="wisp-science-map-items" aria-labelledby="article-title">
+<header><h1 id="article-title" data-text-zh="Wisp Science高级用法：用 map_items 批量处理文献" data-text-en="Wisp Science Advanced: Batch-Process Papers with map_items">Wisp Science高级用法：用 map_items 批量处理文献</h1>
+<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-map-items.md" data-href-zh="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-map-items.md" data-href-en="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/en/wisp-science-map-items.md" data-i18n="tutorials.source">查看原文</a></header>
+<div class="tutorial-body lang-zh" lang="zh-CN">
+<p>下载了 100 篇 PDF，要逐篇判断“是不是随机对照试验、样本量多少、是否符合纳入标准”。在一段对话里让 Agent 一篇篇读，读到二十来篇上下文就满了；拆成 100 段对话，又没法汇总。</p>
+<p>这类“同一个任务重复 N 次”的工作，交给 <code>map_items</code>：一条指令、N 个条目，每个条目在自己独立的短上下文里处理，结果写成一张表。主对话只收到计数和简短清单，不会被全文淹没。</p>
+<p>这篇教程用“筛选 100 篇文献”走一遍完整流程：怎么让 Agent 调用它、审批时看什么、结果在哪、怎么续跑和二次筛选。</p>
+<blockquote>
+<p>本文示例中的文件名、运行编号、数字和回答均为示意，用于说明交互方式，不代表已经执行的筛选结果。</p>
+</blockquote>
+<p><strong>先弄清一件事：<code>map_items</code> 是 Agent 的工具，不是你要敲的命令。</strong></p>
+<p>你不需要手写 JSON。在项目对话里用自然语言描述批量任务，Agent 会自己组织参数并调用；你要做的是把任务说清楚，并在审批时确认一次。下文出现的 JSON 是 Agent 实际发出的调用，放在这里是为了让你看懂审批提示和工具卡片，也方便在 Agent 选错工具时直接点名“用 map_items”。</p>
+<p>它和另外几种“分出去做”的方式分工不同：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>场景</th>
+<th>用什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>同一个任务重复很多次：筛 100 篇文献、从 50 个 PDF 抽同一张表</td>
+<td><code>map_items</code></td>
+</tr>
+<tr>
+<td>少数几个互不相同的任务，最多 8 个</td>
+<td><code>delegate_tasks</code>，或 <a href="wisp-science-agent-workflow.html">Agent Workflow</a></td>
+</tr>
+<tr>
+<td>一次开放式的调查</td>
+<td><code>explore</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>准备：把条目放进项目，按需配置 TypeSafe 密钥。</strong></p>
+<ul>
+<li>把文件放在项目目录下，例如 <code>papers/</code>。PDF、Office 文档、EPUB 和纯文本都在本机转成文字，这一步不消耗 token。</li>
+<li>扫描版 PDF 没有可提取的文字，暂不支持 OCR；这样的文件只会让它自己那一行失败。</li>
+<li>一次最多 1000 个条目。超过会直接报错，不会悄悄截断。</li>
+<li>只做信息抽取不需要额外配置。想让每一行自动得到“通过 / 剔除 / 不确定”的判定，需要在“设置 → 凭据”里填写 TypeSafe（Jev）的 API key；命令行则设置环境变量 <code>TYPESAFE_API_KEY</code>。没有密钥时，Agent 的工具里不会出现判定这一步。</li>
+</ul>
+<p><strong>第一步：把“对一个条目做什么”说清楚。</strong></p>
+<p>在项目对话里发送：</p>
+<blockquote>
+<p>用 map_items 处理 <code>papers/</code> 下所有 PDF。每篇提取：研究设计（rct、cohort、case-control 或 other）、样本量、主要结局指标。先只抽取，不做判定。</p>
+</blockquote>
+<p>好的批量指令有三个特点：针对<strong>单个条目</strong>；自包含，处理条目的模型看不到你们之前聊过什么；字段固定。Agent 会把它整理成这样的调用：</p>
+<pre><code class="language-json">{
+  &quot;items&quot;: { &quot;glob&quot;: &quot;papers/*.pdf&quot; },
+  &quot;worker&quot;: {
+    &quot;instruction&quot;: &quot;Read this paper. Report its study design, sample size and primary outcome.&quot;,
+    &quot;output_schema&quot;: {
+      &quot;type&quot;: &quot;object&quot;,
+      &quot;required&quot;: [&quot;design&quot;, &quot;sample_size&quot;, &quot;primary_outcome&quot;],
+      &quot;properties&quot;: {
+        &quot;design&quot;: { &quot;enum&quot;: [&quot;rct&quot;, &quot;cohort&quot;, &quot;case-control&quot;, &quot;other&quot;] },
+        &quot;sample_size&quot;: { &quot;type&quot;: &quot;integer&quot; },
+        &quot;primary_outcome&quot;: { &quot;type&quot;: &quot;string&quot; }
+      }
+    }
+  }
+}
+</code></pre>
+<p><code>worker</code> 是每个条目上的一次抽取，<code>output_schema</code> 规定一行结果长什么样。某一篇的回答不符合这个结构，那一行记为失败并保留原因，不会混进后面的汇总。</p>
+<p><strong>第二步：看懂审批提示，确认一次。</strong></p>
+<p>开始消耗 token 之前，Wisp 只问一次（项目的工具审批模式设为“完全放行”时不会询问）。提示大致如下：</p>
+<pre><code class="language-text">map_items will process 100 item(s) — 100 item(s) from glob 'papers/*.pdf'.
+Worker: model your-model-id — up to ~3150k input / 100k output tokens; stops and pauses at 3250k total.
+Concurrency 4; pauses after 20 min per call (resume continues). Results: .wisp/map-runs/20261006-081530-a1b2c3
+</code></pre>
+<p>确认四件事：条目数对不对、用的是哪个模型、token 上限、结果写到哪里。上限按“每篇都读满 60000 个字符”估算，是保守的上界，不是预计花费；到达上限时运行会暂停，而不是截断。</p>
+<p>条目清单在这一刻冻结。运行期间往 <code>papers/</code> 里新增文件，不会被加进这次运行。</p>
+<p><strong>第三步：读结果。</strong></p>
+<p>运行结束后，Agent 收到一份简短报告，并据此向你汇报：</p>
+<pre><code class="language-text">[map_items run 20261006-081530-a1b2c3: complete — 97 ok, 3 failed, 0 not yet processed, of 100]
+failed (3): papers/scan_017.pdf (no extractable text (a scanned PDF? OCR is not supported)), ...
+tokens (worker/reduce): 812k in / 21k out; 412s elapsed
+rows: .wisp/map-runs/20261006-081530-a1b2c3/rows.jsonl
+table: .wisp/map-runs/20261006-081530-a1b2c3/results.csv
+continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (retries the failed items)
+</code></pre>
+<p>完整结果保存在项目的 <code>.wisp/map-runs/&lt;运行编号&gt;/</code> 下：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>文件</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>manifest.json</code></td>
+<td>冻结的条目清单和参数、运行状态</td>
+</tr>
+<tr>
+<td><code>rows.jsonl</code></td>
+<td>逐条追加的记录；同一条目以最后一行为准</td>
+</tr>
+<tr>
+<td><code>results.csv</code></td>
+<td>每个条目一行：条目、状态、判定、抽取出的字段、各问题的概率、错误原因</td>
+</tr>
+<tr>
+<td><code>reduce.md</code></td>
+<td>汇总结果，只有要求了汇总才会生成</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>results.csv</code> 可以直接在项目文件预览中打开。</p>
+<p><strong>第四步：需要筛选时，把判定标准一起交代。</strong></p>
+<p>抽取回答“这篇文献里写了什么”，判定回答“它符不符合要求”。配置了 TypeSafe 密钥后，可以在任务里把标准一并说出来：</p>
+<blockquote>
+<p>用 map_items 筛选 <code>papers/</code> 下所有 PDF。纳入标准：随机对照试验，且样本量不少于 100。每篇先提取研究设计和样本量，再判定是否纳入。</p>
+</blockquote>
+<p>调用里会多出 <code>decide</code>：</p>
+<pre><code class="language-json">&quot;decide&quot;: {
+  &quot;questions&quot;: {
+    &quot;is_rct&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is `design` a randomized controlled trial?&quot; },
+    &quot;large_enough&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is `sample_size` at least 100?&quot; }
+  }
+}
+</code></pre>
+<p><code>noul</code> 是“是 / 否”问题，问题里用反引号引用上一步抽取出的字段。每个问题都要写成<strong>回答“是”代表符合要求</strong>。Jev 对每个问题返回一个概率，判定规则是固定的：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>判定</th>
+<th>条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pass</code> 通过</td>
+<td>每个是否问题的概率都不低于 <code>pass_at</code>，默认 0.8</td>
+</tr>
+<tr>
+<td><code>reject</code> 剔除</td>
+<td>任何一个是否问题的概率不高于 <code>reject_at</code>，默认 0.2</td>
+</tr>
+<tr>
+<td><code>uncertain</code> 不确定</td>
+<td>其余情况，包括概率缺失</td>
+</tr>
+</tbody>
+</table></div>
+<p>判定只是标签，不会删除或移动任何文件。还有两点需要知道：</p>
+<ul>
+<li><strong>数据会离开本机。</strong> 使用判定时，每个条目抽取出的那一行会发送给 TypeSafe；如果没有抽取这一步，发送的是条目开头的一段文字。审批提示会写明这一点。</li>
+<li><strong>推荐“抽取 + 判定”一起用。</strong> 抽取读全文并整理出事实，判定只看这一行紧凑的结果。只用判定适合对标题和摘要做一次便宜的初筛。</li>
+</ul>
+<p><strong>第五步：处理“不确定”和没跑完的条目。</strong></p>
+<p>这几种情况都用一句话交代，Agent 会带上对应的参数：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>你想做什么</th>
+<th>可以这样说</th>
+<th>调用里的关键参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行被停止、到了时间或 token 上限、有条目失败</td>
+<td>“继续刚才那次 map_items 运行”</td>
+<td><code>{&quot;resume&quot;: &quot;&lt;运行编号&gt;&quot;}</code></td>
+</tr>
+<tr>
+<td>觉得阈值太严或太松</td>
+<td>“把通过阈值改成 0.7，重新贴标签”</td>
+<td><code>resume</code> 加上 <code>decide.pass_at</code></td>
+</tr>
+<tr>
+<td>只复核不确定的那些</td>
+<td>“对上次不确定的文献再跑一遍，这次允许查阅项目里的补充材料”</td>
+<td><code>&quot;items&quot;: {&quot;run&quot;: &quot;&lt;运行编号&gt;&quot;, &quot;verdict&quot;: [&quot;uncertain&quot;]}</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>续跑会跳过已经完成的条目，并重试失败的条目。如果某一条只是判定这一步失败，已经付费得到的抽取结果会被复用，只重新询问 Jev。改阈值后重新贴标签不需要调用模型，因为每一行都保存了原始概率。</p>
+<p>续跑只能调整并发、上限和阈值。要更换条目、抽取指令或判定问题，需要开始一次新的运行；用 <code>items.run</code> 可以把上一次的结果行作为新的输入。</p>
+<p><strong>按需加上汇总，或换一种条目来源。</strong></p>
+<p>想在表格之外得到一段总结，直接说“最后汇总纳入的研究各用了哪些结局指标”。调用里会多出 <code>reduce</code>，它在全部条目完成后只读取结构化的结果行，不读全文；有判定时，默认只汇总通过和不确定的行。</p>
+<p>条目不一定是文件夹里的文件：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>来源</th>
+<th>写法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>匹配的文件</td>
+<td><code>{&quot;glob&quot;: &quot;papers/*.pdf&quot;}</code></td>
+<td>相对项目根目录</td>
+</tr>
+<tr>
+<td>指定的文件</td>
+<td><code>{&quot;paths&quot;: [&quot;a.pdf&quot;, &quot;b.docx&quot;]}</code></td>
+<td>逐个列出</td>
+</tr>
+<tr>
+<td>JSONL 文件</td>
+<td><code>{&quot;jsonl&quot;: &quot;records.jsonl&quot;, &quot;id_field&quot;: &quot;pmid&quot;, &quot;where&quot;: {&quot;year&quot;: 2024}}</code></td>
+<td>每行一个条目；<code>where</code> 按字段相等过滤</td>
+</tr>
+<tr>
+<td>上一次运行</td>
+<td><code>{&quot;run&quot;: &quot;&lt;运行编号&gt;&quot;, &quot;verdict&quot;: [&quot;uncertain&quot;]}</code></td>
+<td>二次处理</td>
+</tr>
+</tbody>
+</table></div>
+<p>四种来源每次只能选一种。</p>
+<p><strong>在命令行里使用。</strong></p>
+<p>交互模式下的用法和桌面一致，审批会以 <code>[y/n]</code> 的形式出现在终端里：</p>
+<pre><code class="language-bash">export TYPESAFE_API_KEY=&quot;your-typesafe-key&quot;   # 只在需要判定时设置
+wisp-science
+</code></pre>
+<p><code>wisp-science run --output jsonl</code> 无法应答审批，请求会被自动拒绝，因此批量任务不适合在这个输出模式下启动。模型环境变量的配置见 <a href="wisp-science-cli.html">Wisp 命令行</a>。</p>
+<p><strong>运行不符合预期时，先看这张表。</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>现象</th>
+<th>先检查什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent 一篇篇手动读文件，没有调用工具</td>
+<td>在消息里直接点名“用 map_items”；确认任务确实是同一件事重复多次</td>
+</tr>
+<tr>
+<td>调用里没有判定这一步</td>
+<td>是否配置了 TypeSafe 密钥；命令行是否设置了 <code>TYPESAFE_API_KEY</code></td>
+</tr>
+<tr>
+<td>提示条目数超过上限</td>
+<td>一次最多 1000 个，缩小匹配范围或分成几次运行</td>
+</tr>
+<tr>
+<td>某些 PDF 失败，原因是没有可提取的文字</td>
+<td>多为扫描版；先自行 OCR 成文本或带文字层的 PDF</td>
+</tr>
+<tr>
+<td>很多行失败，原因是回答不符合结构</td>
+<td>指令是否写清每个字段的含义和取值；结构是否过严</td>
+</tr>
+<tr>
+<td>运行显示暂停</td>
+<td>到了时间或 token 上限，或被手动停止；说“继续”即可续跑</td>
+</tr>
+<tr>
+<td>运行很快以失败结束</td>
+<td>连续 5 次服务错误会熔断，检查密钥、接口地址和网络后再续跑</td>
+</tr>
+<tr>
+<td>长论文的中间部分没被读到</td>
+<td>单个条目默认只送 60000 个字符，保留开头和结尾；可以要求调高 <code>max_chars</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>第一次使用，建议先拿 5 到 10 篇试跑：确认字段抽得对、判定问题的方向没写反，再对全部文献运行。</p>
+<blockquote>
+<p>全部参数与实现细节见 <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/map-items.md">map_items 参考文档</a>；与其他委派方式的关系见 <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/agent-delegation.md">Agent delegation</a>。本文依据撰写时的项目实现整理，不同版本的提示文字可能略有差异。</p>
+</blockquote>
+</div>
+<div class="tutorial-body lang-en" lang="en">
+<p>You have downloaded 100 PDFs and need to decide, paper by paper, whether each is a randomized controlled trial, how large the sample is, and whether it meets your inclusion criteria. Ask the agent to read them one by one in a single conversation and the context fills up after twenty or so. Split the job into 100 conversations and there is nothing to summarize.</p>
+<p>Work where the same task repeats N times belongs to <code>map_items</code>: one instruction, N items, each item handled in its own short-lived context, and the results written to a table. The main conversation receives only counts and short lists, never the full texts.</p>
+<p>This tutorial walks through screening 100 papers: how to get the agent to call the tool, what to check at approval, where the results go, and how to resume a run or screen a second time.</p>
+<blockquote>
+<p>File names, run ids, numbers, and replies in this article are illustrative. They show the interaction and are not the results of a screening that was run.</p>
+</blockquote>
+<p><strong>First, one thing to know: <code>map_items</code> is a tool the agent calls, not a command you type.</strong></p>
+<p>You do not write JSON by hand. Describe the batch task in plain language in a project conversation, and the agent builds the arguments and makes the call. Your part is to state the task clearly and confirm once at approval. The JSON below is what the agent sends. It is shown so that you can read the approval prompt and the tool card, and so that you can say &quot;use map_items&quot; when the agent picks a different tool.</p>
+<p>It has a different job from the other ways of handing work off:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Situation</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The same task repeated many times: screening 100 papers, extracting the same table from 50 PDFs</td>
+<td><code>map_items</code></td>
+</tr>
+<tr>
+<td>A few different tasks, at most 8</td>
+<td><code>delegate_tasks</code>, or an <a href="wisp-science-agent-workflow.html">Agent Workflow</a></td>
+</tr>
+<tr>
+<td>One open-ended investigation</td>
+<td><code>explore</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Prepare: put the items in the project, and add a TypeSafe key if you need one.</strong></p>
+<ul>
+<li>Put the files under the project directory, for example in <code>papers/</code>. PDFs, Office documents, EPUB, and plain text are converted to text on your machine, which spends no tokens.</li>
+<li>A scanned PDF has no extractable text, and OCR is not supported yet. Such a file fails only its own row.</li>
+<li>One run takes at most 1000 items. More than that is an error, never a silent cut.</li>
+<li>Extraction alone needs no extra setup. To have each row labelled pass, reject, or uncertain, enter a TypeSafe (Jev) API key under Settings → Credentials, or set the <code>TYPESAFE_API_KEY</code> environment variable for the CLI. Without a key, the decision step is not offered to the agent at all.</li>
+</ul>
+<p><strong>Step 1: say what to do with one item.</strong></p>
+<p>Send this in a project conversation:</p>
+<blockquote>
+<p>Use map_items on every PDF in <code>papers/</code>. For each paper, extract the study design (rct, cohort, case-control, or other), the sample size, and the primary outcome. Extract only, with no decision yet.</p>
+</blockquote>
+<p>A good batch instruction is about <strong>one item</strong>, is self-contained because the model handling an item cannot see your earlier conversation, and has fixed fields. The agent turns it into a call like this:</p>
+<pre><code class="language-json">{
+  &quot;items&quot;: { &quot;glob&quot;: &quot;papers/*.pdf&quot; },
+  &quot;worker&quot;: {
+    &quot;instruction&quot;: &quot;Read this paper. Report its study design, sample size and primary outcome.&quot;,
+    &quot;output_schema&quot;: {
+      &quot;type&quot;: &quot;object&quot;,
+      &quot;required&quot;: [&quot;design&quot;, &quot;sample_size&quot;, &quot;primary_outcome&quot;],
+      &quot;properties&quot;: {
+        &quot;design&quot;: { &quot;enum&quot;: [&quot;rct&quot;, &quot;cohort&quot;, &quot;case-control&quot;, &quot;other&quot;] },
+        &quot;sample_size&quot;: { &quot;type&quot;: &quot;integer&quot; },
+        &quot;primary_outcome&quot;: { &quot;type&quot;: &quot;string&quot; }
+      }
+    }
+  }
+}
+</code></pre>
+<p><code>worker</code> is one extraction per item, and <code>output_schema</code> defines what a result row looks like. If the reply for one paper does not match it, that row is recorded as failed with its reason and never reaches the summary step.</p>
+<p><strong>Step 2: read the approval prompt and confirm once.</strong></p>
+<p>Wisp asks once before any tokens are spent (it does not ask when the project's tool approval mode is &quot;Full bypass&quot;). The prompt looks roughly like this:</p>
+<pre><code class="language-text">map_items will process 100 item(s) — 100 item(s) from glob 'papers/*.pdf'.
+Worker: model your-model-id — up to ~3150k input / 100k output tokens; stops and pauses at 3250k total.
+Concurrency 4; pauses after 20 min per call (resume continues). Results: .wisp/map-runs/20261006-081530-a1b2c3
+</code></pre>
+<p>Check four things: the item count, the model, the token ceiling, and where the results go. The ceiling assumes every paper fills all 60000 characters, so it is a conservative upper bound and not the expected spend. When the ceiling is reached the run pauses. It does not truncate.</p>
+<p>The item list is frozen at this point. Files added to <code>papers/</code> during the run are not picked up by it.</p>
+<p><strong>Step 3: read the results.</strong></p>
+<p>When the run ends, the agent receives a short report and tells you what it says:</p>
+<pre><code class="language-text">[map_items run 20261006-081530-a1b2c3: complete — 97 ok, 3 failed, 0 not yet processed, of 100]
+failed (3): papers/scan_017.pdf (no extractable text (a scanned PDF? OCR is not supported)), ...
+tokens (worker/reduce): 812k in / 21k out; 412s elapsed
+rows: .wisp/map-runs/20261006-081530-a1b2c3/rows.jsonl
+table: .wisp/map-runs/20261006-081530-a1b2c3/results.csv
+continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (retries the failed items)
+</code></pre>
+<p>The full results are saved in the project under <code>.wisp/map-runs/&lt;run id&gt;/</code>:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>manifest.json</code></td>
+<td>The frozen item list and arguments, and the run status</td>
+</tr>
+<tr>
+<td><code>rows.jsonl</code></td>
+<td>Records appended one at a time; the last line for an item wins</td>
+</tr>
+<tr>
+<td><code>results.csv</code></td>
+<td>One row per item: item, status, verdict, extracted fields, the probability for each question, and the error</td>
+</tr>
+<tr>
+<td><code>reduce.md</code></td>
+<td>The summary, written only when you asked for one</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>results.csv</code> opens directly in the project file preview.</p>
+<p><strong>Step 4: when you are screening, give the criteria along with the task.</strong></p>
+<p>Extraction answers &quot;what does this paper say&quot;. The decision answers &quot;does it meet the requirement&quot;. With a TypeSafe key configured, state the criteria in the same request:</p>
+<blockquote>
+<p>Use map_items to screen every PDF in <code>papers/</code>. Inclusion criteria: a randomized controlled trial with a sample size of at least 100. For each paper, extract the study design and sample size, then decide whether to include it.</p>
+</blockquote>
+<p>The call gains a <code>decide</code> block:</p>
+<pre><code class="language-json">&quot;decide&quot;: {
+  &quot;questions&quot;: {
+    &quot;is_rct&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is `design` a randomized controlled trial?&quot; },
+    &quot;large_enough&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is `sample_size` at least 100?&quot; }
+  }
+}
+</code></pre>
+<p><code>noul</code> is a yes/no question, and backticks in the question refer to fields extracted in the previous step. Phrase every question so that <strong>yes means the item meets the requirement</strong>. Jev returns one probability per question, and the rule that turns them into a verdict is fixed:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pass</code></td>
+<td>Every yes/no probability is at least <code>pass_at</code>, 0.8 by default</td>
+</tr>
+<tr>
+<td><code>reject</code></td>
+<td>Any yes/no probability is at most <code>reject_at</code>, 0.2 by default</td>
+</tr>
+<tr>
+<td><code>uncertain</code></td>
+<td>Everything else, including a missing probability</td>
+</tr>
+</tbody>
+</table></div>
+<p>Verdicts are labels. No file is deleted or moved. Two more things to know:</p>
+<ul>
+<li><strong>Data leaves your machine.</strong> With a decision step, the extracted row for each item is sent to TypeSafe. Without an extraction step, the start of the item's text is sent instead. The approval prompt says so.</li>
+<li><strong>Extraction plus decision is the recommended setup.</strong> Extraction reads the full text and collects the facts, and the decision judges that one compact row. A decision step on its own suits a cheap first pass over titles and abstracts.</li>
+</ul>
+<p><strong>Step 5: handle uncertain items and items that did not finish.</strong></p>
+<p>Each of these takes one sentence, and the agent adds the matching argument:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>What you want</th>
+<th>What to say</th>
+<th>Key argument in the call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The run was stopped, reached its time or token ceiling, or had failed items</td>
+<td>&quot;Continue that map_items run&quot;</td>
+<td><code>{&quot;resume&quot;: &quot;&lt;run id&gt;&quot;}</code></td>
+</tr>
+<tr>
+<td>The thresholds feel too strict or too loose</td>
+<td>&quot;Change the pass threshold to 0.7 and relabel&quot;</td>
+<td><code>resume</code> plus <code>decide.pass_at</code></td>
+</tr>
+<tr>
+<td>Review only the uncertain ones</td>
+<td>&quot;Run the uncertain papers again, and this time allow reading the supplementary files in the project&quot;</td>
+<td><code>&quot;items&quot;: {&quot;run&quot;: &quot;&lt;run id&gt;&quot;, &quot;verdict&quot;: [&quot;uncertain&quot;]}</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>A resume skips finished items and retries failed ones. If only the decision step failed for an item, the extraction you already paid for is reused and only Jev is asked again. Relabelling after a threshold change needs no model call, because each row stores the raw probabilities.</p>
+<p>A resume can change only concurrency, limits, and thresholds. To change the items, the extraction instruction, or the questions, start a new run. <code>items.run</code> feeds the rows of the earlier run in as the new input.</p>
+<p><strong>Add a summary, or use another item source, when you need to.</strong></p>
+<p>For a written summary on top of the table, ask for it directly: &quot;then summarize which outcomes the included studies used.&quot; The call gains a <code>reduce</code> block. It runs after every item is done and reads only the structured rows, never the full texts. When there is a decision step, it summarizes pass and uncertain rows by default.</p>
+<p>Items do not have to be files in a folder:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Source</th>
+<th>Form</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Matching files</td>
+<td><code>{&quot;glob&quot;: &quot;papers/*.pdf&quot;}</code></td>
+<td>Relative to the project root</td>
+</tr>
+<tr>
+<td>Named files</td>
+<td><code>{&quot;paths&quot;: [&quot;a.pdf&quot;, &quot;b.docx&quot;]}</code></td>
+<td>Listed one by one</td>
+</tr>
+<tr>
+<td>A JSONL file</td>
+<td><code>{&quot;jsonl&quot;: &quot;records.jsonl&quot;, &quot;id_field&quot;: &quot;pmid&quot;, &quot;where&quot;: {&quot;year&quot;: 2024}}</code></td>
+<td>One item per line; <code>where</code> filters by field equality</td>
+</tr>
+<tr>
+<td>An earlier run</td>
+<td><code>{&quot;run&quot;: &quot;&lt;run id&gt;&quot;, &quot;verdict&quot;: [&quot;uncertain&quot;]}</code></td>
+<td>A second pass</td>
+</tr>
+</tbody>
+</table></div>
+<p>A call takes exactly one of the four.</p>
+<p><strong>Using it from the CLI.</strong></p>
+<p>Interactive mode works the same way as the desktop, and the approval appears in the terminal as a <code>[y/n]</code> question:</p>
+<pre><code class="language-bash">export TYPESAFE_API_KEY=&quot;your-typesafe-key&quot;   # only when you need the decision step
+wisp-science
+</code></pre>
+<p><code>wisp-science run --output jsonl</code> cannot answer an approval, so the request is refused automatically and a batch run should not be started in that output mode. For the model environment variables, see <a href="wisp-science-cli.html">Wisp CLI</a>.</p>
+<p><strong>When a run does not go as expected, start with this table.</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The agent reads the files one by one and never calls the tool</td>
+<td>Name it in your message: &quot;use map_items&quot;. Confirm the task really is one thing repeated many times</td>
+</tr>
+<tr>
+<td>The call has no decision step</td>
+<td>Whether a TypeSafe key is configured; for the CLI, whether <code>TYPESAFE_API_KEY</code> is set</td>
+</tr>
+<tr>
+<td>The item count is over the limit</td>
+<td>One run takes at most 1000. Narrow the pattern or split the work into several runs</td>
+</tr>
+<tr>
+<td>Some PDFs fail with no extractable text</td>
+<td>Usually scanned copies. Run OCR yourself first, into text or a PDF with a text layer</td>
+</tr>
+<tr>
+<td>Many rows fail because the reply does not match the structure</td>
+<td>Whether the instruction defines each field and its allowed values; whether the structure is too strict</td>
+</tr>
+<tr>
+<td>The run reports paused</td>
+<td>It reached the time or token ceiling, or was stopped by hand. Say &quot;continue&quot; to resume</td>
+</tr>
+<tr>
+<td>The run ends quickly as failed</td>
+<td>Five service errors in a row trip a circuit breaker. Check the key, endpoint, and network, then resume</td>
+</tr>
+<tr>
+<td>The middle of a long paper was not read</td>
+<td>One item sends 60000 characters by default, keeping the start and the end. Ask for a higher <code>max_chars</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>For a first attempt, try 5 to 10 papers: confirm that the fields come out right and that no decision question is phrased the wrong way round, then run it on everything.</p>
+<blockquote>
+<p>All arguments and implementation details are in the <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/map-items.md">map_items reference</a>. For how it relates to the other ways of delegating, see <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/agent-delegation.md">Agent delegation</a>. This article reflects the project implementation at the time of writing, and prompt wording may differ slightly between versions.</p>
+</blockquote>
+</div>
+</article>
+<nav class="tutorial-pagination" aria-label="相邻教程" data-i18n-aria="tutorials.pagination"><a class="tutorial-previous" href="wisp-science-agent-workflow-create.html"><span data-i18n="tutorials.previous">上一篇</span><strong data-text-zh="创建 Agent Workflow" data-text-en="Creating an Agent Workflow">创建 Agent Workflow</strong></a><a class="tutorial-next" href="wisp-science-research-assistant.html"><span data-i18n="tutorials.next">下一篇</span><strong data-text-zh="科研版的个人助理来！" data-text-en="A Personal Assistant, Built for Research">科研版的个人助理来！</strong></a></nav>
+<div class="tutorial-reader-back"><a class="tutorial-back" href="../tutorials.html#wisp-science-map-items" data-i18n="tutorials.back">返回教程目录</a></div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="24" height="24">
+        Wisp Science
+      </a>
+      <nav class="footer-links">
+        <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/releases" data-i18n="footer.releases">版本记录</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/issues" data-i18n="footer.issues">问题反馈</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE">AGPL-3.0-only</a>
+      </nav>
+      <p class="footer-copy" data-i18n="footer.copy">© 2026 Wisp Science · 开源科学计算 Agent</p>
+    </div>
+  </footer>
+  <script src="../assets/i18n.js"></script>
+</body>
+</html>
