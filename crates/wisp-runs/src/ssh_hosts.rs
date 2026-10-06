@@ -566,12 +566,15 @@ fn validate_connection_name(label: &str, value: &str) -> Result<(), String> {
     if value.starts_with('-') {
         return Err(format!("{label} must not start with '-'"));
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    {
+    // '@' is legal in an SSH user (`user@tenant` HPC gateways): ssh, scp and rsync
+    // all split `user@host` on the last '@'. Aliases and host addresses never carry one.
+    let allow_at = label == "SSH user";
+    if !value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') || (allow_at && c == '@')
+    }) {
+        let at = if allow_at { ", '@'" } else { "" };
         return Err(format!(
-            "{label} may contain only ASCII letters, digits, '.', '_' and '-'"
+            "{label} may contain only ASCII letters, digits, '.', '_'{at} and '-'"
         ));
     }
     Ok(())
@@ -1732,6 +1735,34 @@ Host -unsafe bad/name !negated
     }
 
     #[test]
+    fn ssh_user_may_contain_at_for_user_tenant_gateways() {
+        // #1465: `user@tenant` logins must reach ssh intact; OpenSSH splits on the last '@'.
+        let connection = SshConnection {
+            alias: "gateway".into(),
+            host_name: Some("gateway.example.com".into()),
+            user: Some("myuser@mytenant".into()),
+            port: Some(2222),
+            identity_file: None,
+            auth_method: SshAuthMethod::Password,
+        };
+        assert_eq!(
+            connection.target().unwrap(),
+            "myuser@mytenant@gateway.example.com"
+        );
+        assert_eq!(
+            connection.ssh_args().unwrap().last().unwrap(),
+            "myuser@mytenant@gateway.example.com"
+        );
+        // '@' is only a user-name character, never an alias or host address one.
+        let host_with_at = SshConnection {
+            host_name: Some("tenant@gateway.example.com".into()),
+            user: None,
+            ..connection
+        };
+        assert!(host_with_at.target().is_err());
+    }
+
+    #[test]
     fn ssh_connection_rejects_unsafe_names_and_identity_paths() {
         for alias in ["", "-proxy", "gpu box", "gpu/box", "güp"] {
             let connection = SshConnection {
@@ -1744,7 +1775,7 @@ Host -unsafe bad/name !negated
             };
             assert!(connection.ssh_args().is_err(), "accepted alias {alias:?}");
         }
-        for user in ["", "-root", "user@host", "用户"] {
+        for user in ["", "-root", "user name", "用户"] {
             let connection = SshConnection {
                 alias: "gpu-box".into(),
                 host_name: None,
