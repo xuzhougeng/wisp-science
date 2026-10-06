@@ -267,7 +267,30 @@ pub(crate) async fn respond_native_confirmation(
             feedback: request.feedback.clone().filter(|s| !s.trim().is_empty()),
         }
     };
-    settle_confirmation(state, &request.session_id, pending, decision, Some("once")).await
+    settle_confirmation(
+        state,
+        &request.session_id,
+        pending,
+        decision,
+        Some(request.scope.as_str()),
+    )
+    .await
+}
+
+pub(crate) fn native_approval_scopes(
+    has_grant: bool,
+    tool: &str,
+    message: &str,
+) -> Vec<wisp_dto::native_conversations::ApprovalScope> {
+    use wisp_dto::native_conversations::ApprovalScope::*;
+    let ordinary = has_grant
+        && !matches!(tool, "update_plan" | "resource_conflict" | "image_resize")
+        && !(message.starts_with("Workflow node ") && message.contains(" requests confirmation"));
+    if ordinary {
+        vec![Once, Session, Project, Global]
+    } else {
+        vec![Once]
+    }
 }
 
 fn take_native_confirmation(
@@ -280,6 +303,18 @@ fn take_native_confirmation(
         .is_some_and(|p| p.request.approval_id == request.approval_id && p.project_id == project)
     {
         return Err("Approval expired; refresh the conversation".into());
+    }
+    let current = pending.get(&request.session_id).unwrap();
+    if !native_approval_scopes(
+        current.grant.is_some(),
+        &current.request.tool,
+        &current.request.message,
+    )
+    .contains(&request.scope)
+        || (!request.approved
+            && request.scope != wisp_dto::native_conversations::ApprovalScope::Once)
+    {
+        return Err("This approval cannot grant the selected scope".into());
     }
     Ok(pending.remove(&request.session_id).unwrap())
 }
@@ -407,6 +442,7 @@ mod tests {
             approval_id: "old-approval".into(),
             approved: true,
             feedback: None,
+            scope: Default::default(),
         };
         assert!(take_native_confirmation(&mut entries, "project", &request).is_err());
         assert_eq!(entries.len(), 1);
@@ -415,6 +451,48 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(take_native_confirmation(&mut entries, "project", &request).is_ok());
         assert!(take_native_confirmation(&mut entries, "project", &request).is_err());
+    }
+
+    #[test]
+    fn native_scope_requires_a_grant_and_special_confirmations_remain_once() {
+        use wisp_dto::native_conversations::ApprovalScope;
+        let mut request = wisp_dto::native_conversations::ApprovalRequest {
+            session_id: "session".into(),
+            approval_id: "approval".into(),
+            approved: true,
+            feedback: None,
+            scope: ApprovalScope::Project,
+        };
+        let mut entries = HashMap::from([("session".into(), pending("approval"))]);
+        assert!(take_native_confirmation(&mut entries, "project", &request).is_err());
+        assert_eq!(entries.len(), 1);
+        entries.get_mut("session").unwrap().grant = Some(ApprovalGrantKey {
+            kind: "tool".into(),
+            target: "shell".into(),
+        });
+        request.approved = false;
+        assert!(take_native_confirmation(&mut entries, "project", &request).is_err());
+        request.approved = true;
+        assert!(take_native_confirmation(&mut entries, "project", &request).is_ok());
+        for tool in ["update_plan", "resource_conflict", "image_resize"] {
+            assert_eq!(
+                native_approval_scopes(true, tool, "confirm"),
+                vec![ApprovalScope::Once]
+            );
+        }
+        assert_eq!(
+            native_approval_scopes(true, "shell", "Workflow node shell requests confirmation"),
+            vec![ApprovalScope::Once]
+        );
+        assert_eq!(
+            native_approval_scopes(true, "shell", "Ordinary tool"),
+            vec![
+                ApprovalScope::Once,
+                ApprovalScope::Session,
+                ApprovalScope::Project,
+                ApprovalScope::Global
+            ]
+        );
     }
 
     #[tokio::test]
@@ -435,6 +513,7 @@ mod tests {
                 approval_id: "project-approval".into(),
                 approved,
                 feedback: None,
+                scope: Default::default(),
             };
             assert!(take_native_confirmation(
                 &mut entries,

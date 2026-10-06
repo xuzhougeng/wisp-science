@@ -62,6 +62,7 @@ async fn resolve(
                 approval_id: request.approval_id.clone(),
                 approved: decision.approved(),
                 feedback: decision.feedback().map(str::to_string),
+                scope: Default::default(),
             },
         )
         .await

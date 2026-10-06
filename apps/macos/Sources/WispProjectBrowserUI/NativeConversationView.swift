@@ -75,25 +75,7 @@ struct NativeConversationView: View {
                     }.frame(maxHeight: 260).padding(.bottom, 12)
                 }
                 ForEach(conversation.snapshot?.approvals ?? []) { approval in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("需要确认 · \(approval.tool)").font(WispDesign.font(size: 13, weight: .semibold))
-                        Text(approval.message).font(WispDesign.font(size: 13)).textSelection(.enabled)
-                        if !approval.preview.isEmpty {
-                            ViewThatFits(in: .vertical) {
-                                Text(approval.preview).fixedSize(horizontal: false, vertical: true)
-                                ScrollView { Text(approval.preview).frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 130)
-                            }.font(WispDesign.font(size: 12, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, maxHeight: 130, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        HStack {
-                            Button("修改意见…") { feedbackApproval = approval }
-                            Spacer()
-                            Button("拒绝") { Task { await conversation.approve(approval, allowed: false) } }
-                            Button("允许这一次") { Task { await conversation.approve(approval, allowed: true) } }.buttonStyle(WispButtonStyle(primary: true))
-                        }.disabled(!conversation.canApprove(approval))
-                    }.padding(16).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color("clay")))
+                    NativeToolApprovalCard(conversation: conversation, approval: approval, feedback: { feedbackApproval = approval }).id(approval.id)
                         .frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 12)
                 }
             }

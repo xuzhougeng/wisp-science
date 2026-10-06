@@ -53,6 +53,7 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let request_id: String?
     public let error: String?
     public let approvals: [ConversationApproval]
+    public let approval_scopes: [String: [String]]?
     public let acp: ConversationAcpInteractions?
     public let composer_references: Bool?
     public let context_view: Bool?
@@ -66,10 +67,16 @@ public struct ConversationSnapshot: Codable, Sendable {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
         guard snapshot.schema == schemaID, !snapshot.epoch.isEmpty, snapshot.sequence > 0,
               snapshot.project_id == projectID, snapshot.session_id == sessionID,
-              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.queue?.valid != false, snapshot.history_state?.valid != false,
+              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.validApprovalScopes, snapshot.queue?.valid != false, snapshot.history_state?.valid != false,
               snapshot.acp_state == nil || (snapshot.acp_state?.frameID == sessionID && snapshot.acp_state?.valid == true),
               (snapshot.acp?.permissions ?? []).allSatisfy({ $0.frame_id == sessionID && !$0.request_id.isEmpty }) else { throw ProjectBrowserError.invalidResponse }
         return snapshot
+    }
+    private var validApprovalScopes: Bool {
+        (approval_scopes ?? [:]).allSatisfy { id, scopes in
+            approvals.contains { $0.approval_id == id } && scopes.contains("once")
+                && Set(scopes).count == scopes.count && scopes.allSatisfy { ["once", "session", "project", "global"].contains($0) }
+        }
     }
 }
 

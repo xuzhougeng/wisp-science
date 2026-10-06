@@ -1,5 +1,6 @@
 //! Native conversation protocol, independent of either platform's UI toolkit.
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
@@ -595,6 +596,28 @@ pub struct ApprovalRequest {
     pub approved: bool,
     #[serde(default)]
     pub feedback: Option<String>,
+    #[serde(default)]
+    pub scope: ApprovalScope,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalScope {
+    #[default]
+    Once,
+    Session,
+    Project,
+    Global,
+}
+impl ApprovalScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Session => "session",
+            Self::Project => "project",
+            Self::Global => "global",
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -866,6 +889,9 @@ pub struct Snapshot {
     pub request_id: Option<String>,
     pub error: Option<String>,
     pub approvals: Vec<super::PendingToolApproval>,
+    /// Exact pending IDs and the scopes each request can actually grant.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub approval_scopes: HashMap<String, Vec<ApprovalScope>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp: Option<AcpInteractions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1563,11 +1589,23 @@ mod tests {
             serde_json::from_str::<SendRequest>(r#"{"message":"hello","request_id":"x"}"#).is_err()
         );
         assert!(serde_json::from_str::<ApprovalRequest>(
-            r#"{"session_id":"s","approval_id":"a","approved":true,"scope":"global"}"#
+            r#"{"session_id":"s","approval_id":"a","approved":true,"scope":"everything"}"#
         )
         .is_err());
         assert!(!COMMANDS.contains(&"send_message"));
         assert!(COMMANDS.contains(&"native_conversation_attach"));
+    }
+    #[test]
+    fn native_approval_scope_defaults_once_and_accepts_only_the_shared_names() {
+        for scope in ["once", "session", "project", "global"] {
+            let request: ApprovalRequest = serde_json::from_value(serde_json::json!({"session_id":"s","approval_id":"a","approved":true,"scope":scope})).unwrap();
+            assert_eq!(request.scope.as_str(), scope);
+        }
+        let old: ApprovalRequest = serde_json::from_value(
+            serde_json::json!({"session_id":"s","approval_id":"a","approved":true}),
+        )
+        .unwrap();
+        assert_eq!(old.scope, ApprovalScope::Once);
     }
     #[test]
     fn saved_snapshot_keeps_composer_attachments() {

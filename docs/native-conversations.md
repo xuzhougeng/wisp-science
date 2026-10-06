@@ -80,6 +80,22 @@ closes the compaction/undo confirmation before the context view, without writing
 Reads closed or superseded by navigation do not update a later view, and unknown
 mutation results are never automatically replayed.
 
+Native tool approvals default to **Once**. The snapshot now advertises scopes
+for each exact pending approval ID. Ordinary grantable requests can select this
+conversation, this project or all projects; project/global grants use the
+existing persisted permission registry and can be revoked in Settings. Plans,
+workflow-node decisions, image resizing and resource conflicts remain once-only.
+Older hosts keep their existing once-only controls. Selecting a scope does not
+write; the labelled Allow button submits the decision for the exact request.
+
+The host validates ownership, request identity and grant eligibility before
+consuming a pending request. Denial cannot create a broader grant. The Swift
+client blocks another submission after an unconfirmed reply. **Recheck pending
+request** performs a read only; if a fresh owned snapshot confirms that the exact
+request is still pending, the user can explicitly decide again. Stale requests
+and malformed scope maps are rejected. Escape closes the scope picker before
+underlying surfaces, and narrow approval cards move long actions to another row.
+
 Cmd+K now uses `native_workspace_search` to read persisted cross-project projects,
 artifacts and conversations, including message-body matches beyond the five home
 recents. Privacy and ranking remain in the shared host. Response query, preferred

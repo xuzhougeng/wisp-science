@@ -65,6 +65,7 @@ final class NativeConversationModel: ObservableObject {
     private var drafts: [String: String] = [:]
     private var questionDrafts: [String: (target: NativeQuestionTarget, text: String, prefix: String)] = [:]
     private var submittedAcpRequests: Set<String> = []
+    private var submittedApprovals: Set<String> = []
     private var projectID: String?
     private var sessionID: String?
     private var generation = UUID()
@@ -658,13 +659,26 @@ final class NativeConversationModel: ObservableObject {
     func stop() async { await action("native_conversation_stop", [:]) }
     func canApprove(_ approval: ConversationApproval) -> Bool {
         !busy && !showingHistory && connectionError == nil && snapshot?.read_only == false
-            && approval.frame_id == sessionID && snapshot?.approvals.contains(where: { $0.approval_id == approval.approval_id }) == true
+            && !submittedApprovals.contains(approval.id) && approval.frame_id == sessionID
+            && snapshot?.approvals.contains(approval) == true
+    }
+    func approvalScopes(_ approval: ConversationApproval) -> [String] { snapshot?.approval_scopes?[approval.id] ?? ["once"] }
+    func approvalSubmitted(_ approval: ConversationApproval) -> Bool { submittedApprovals.contains(approval.id) && snapshot?.approvals.contains(approval) == true }
+    func reconcileApproval(_ approval: ConversationApproval) async {
+        guard !busy, approvalSubmitted(approval), let previous = snapshot, previous.session_id == approval.frame_id else { return }
+        await refresh()
+        guard let current = snapshot, current.project_id == previous.project_id, current.session_id == previous.session_id,
+              current.epoch != previous.epoch || current.sequence > previous.sequence,
+              current.approvals.contains(approval), connectionError == nil else { return }
+        submittedApprovals.remove(approval.id); operationError = nil
     }
     @discardableResult
-    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil) async -> Bool {
-        guard canApprove(approval) else { return false }
+    func approve(_ approval: ConversationApproval, allowed: Bool, feedback: String? = nil, scope: String = "once") async -> Bool {
+        guard canApprove(approval), approvalScopes(approval).contains(scope), allowed || scope == "once" else { return false }
         var args: [String: SettingsValue] = ["approval_id": .string(approval.approval_id), "approved": .bool(allowed)]
+        if scope != "once" { args["scope"] = .string(scope) }
         if !allowed, let feedback = feedback?.trimmingCharacters(in: .whitespacesAndNewlines), !feedback.isEmpty { args["feedback"] = .string(feedback) }
+        submittedApprovals.insert(approval.id)
         return await action("native_conversation_approve", args)
     }
     func selectModel(_ id: String) async { guard !isAcp else { return }; await action("native_conversation_model", ["model_id": .string(id)]) }

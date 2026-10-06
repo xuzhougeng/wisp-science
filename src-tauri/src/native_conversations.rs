@@ -959,7 +959,38 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 &state.awaiting_confirm.lock().unwrap(),
             )
             .to_owned();
+            let (approvals, approval_scopes) = {
+                let entries = state.confirms.lock().unwrap();
+                let pending = entries
+                    .get(session)
+                    .filter(|pending| pending.project_id == project);
+                let approvals = pending
+                    .map(|pending| wisp_dto::PendingToolApproval {
+                        approval_id: pending.request.approval_id.clone(),
+                        frame_id: session.into(),
+                        message: pending.request.message.clone(),
+                        tool: pending.request.tool.clone(),
+                        preview: pending.request.preview.clone(),
+                    })
+                    .into_iter()
+                    .collect();
+                let scopes = pending
+                    .map(|pending| {
+                        (
+                            pending.request.approval_id.clone(),
+                            crate::approval_commands::native_approval_scopes(
+                                pending.grant.is_some(),
+                                &pending.request.tool,
+                                &pending.request.message,
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                (approvals, scopes)
+            };
             let snapshot = dto::Snapshot {
+                approval_scopes,
                 run_cards,
                 run_review_supported: Some(true),
                 queue: Some(
@@ -1014,20 +1045,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 acp_agent_id: binding.map(|binding| binding.agent_profile_id),
                 request_id: record.request_id.clone(),
                 error: record.error.clone(),
-                approvals: state
-                    .confirms
-                    .lock()
-                    .unwrap()
-                    .get(session)
-                    .map(|pending| wisp_dto::PendingToolApproval {
-                        approval_id: pending.request.approval_id.clone(),
-                        frame_id: session.into(),
-                        message: pending.request.message.clone(),
-                        tool: pending.request.tool.clone(),
-                        preview: pending.request.preview.clone(),
-                    })
-                    .into_iter()
-                    .collect(),
+                approvals,
             };
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }

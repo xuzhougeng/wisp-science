@@ -153,7 +153,26 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   and generated native-resource checks passed. The new context changes still
   need the final full workspace run with subsequent conversation increments.
 
+### Increment 6: scoped tool approvals
+
+- Added optional exact-approval scope advertisement and a strict shared scope
+  enum defaulting to once for older clients. The host validates scope and grant
+  eligibility before atomically consuming the pending request. Special plan,
+  workflow, resize and conflict confirmations remain once-only.
+- Added native scope selection with explicit scope labels/descriptions and
+  existing persisted project/global grants. Selection does not write. Unknown
+  replies block duplicate decisions; an explicit fresh read can confirm that
+  the exact request is still pending before another human decision.
+- Eight targeted native approval checks passed, covering advertised scopes,
+  older/read-only/special/stale/malformed requests, response loss, read-only
+  reconciliation and immediate Escape. The full Swift suite passed 429 tests
+  after the final narrow-card layout adjustment. All six Rust approval regression
+  checks and 35 shared native conversation DTO checks passed. The scope
+  picker and narrow global-scope card were rendered in both locales/schemes and
+  representative screenshots inspected. Generated-resource and formatting
+  checks passed; final full regression still remains.
+
 Conversation controls and search remain incomplete:
-scoped per-tool approval, remaining global composer helpers and session
+remaining global composer helpers and session
 transfer/import/export and project-file search still need implementation and
 verification. Later outcome groups remain open.
