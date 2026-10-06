@@ -8,13 +8,16 @@ import WispProjectBrowser
 private actor PanelClient: NativeConversationQuerying {
     let rows: SettingsValue
     var mutations = 0
+    var calls: [(String, String, [String: SettingsValue])] = []
+    func recorded() -> [(String, String, [String: SettingsValue])] { calls }
     func mutationCount() -> Int { mutations }
     var held: CheckedContinuation<SettingsValue, Error>?
     init(_ rows: SettingsValue) { self.rows = rows }
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot { throw ProjectBrowserError.invalidResponse }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
+        calls.append((projectID, command, args))
         if command.hasSuffix("context_enabled") { mutations += 1; throw ProjectBrowserError.invalidResponse }
-        if args["path"]?.string == "slow" { return try await withCheckedThrowingContinuation { held = $0 } }
+        if args["path"]?.string == "slow" || command == "native_conversation_image" && args["path"]?.string.hasSuffix("slow.png") == true { return try await withCheckedThrowingContinuation { held = $0 } }
         return rows
     }
     func pending() -> Bool { held != nil }
@@ -38,6 +41,32 @@ private actor FileSaveClient: NativeConversationQuerying {
     }
 }
 final class NativePanelTests: XCTestCase {
+    @MainActor func testArtifactMarkdownImageRequestsStayOwnedAndValidateReturnedSource() async throws {
+        var original = try fixture("panel-preview"); original["path"] = .string("/work/reports/report.md"); original["text"] = .string("![plot](figures/plot.png)")
+        let content = try JSONDecoder().decode(NativePanelFileContent.self, from: JSONEncoder().encode(original))
+        for mode in ["success", "foreign", "closed"] {
+            var image = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(imagePreview()))
+            image["path"] = .string(mode == "foreign" ? "/foreign/plot.png" : "/work/reports/figures/plot.png")
+            let client = PanelClient(image), model = NativePanelModel(client: client, projectID: "p", sessionID: "s"); model.preview = content
+            if mode == "closed" { model.close() }
+            do {
+                let value = try await model.readPreviewImage("figures/plot.png", original: content)
+                XCTAssertEqual(mode, "success"); XCTAssertNotNil(try NativeFileDocumentImages.decode(value))
+            } catch { XCTAssertNotEqual(mode, "success") }
+            let calls = await client.recorded(); XCTAssertEqual(calls.count, mode == "closed" ? 0 : 1)
+            if let call = calls.first { XCTAssertEqual(call.0, "p"); XCTAssertEqual(call.1, "native_conversation_image"); XCTAssertEqual(call.2["session_id"], .string("s")); XCTAssertEqual(call.2["path"], .string("/work/reports/figures/plot.png")) }
+        }
+    }
+    @MainActor func testLateArtifactMarkdownImageCannotPopulateDismissedPreview() async throws {
+        var original = try fixture("panel-preview"); original["path"] = .string("/work/report.md")
+        let content = try JSONDecoder().decode(NativePanelFileContent.self, from: JSONEncoder().encode(original))
+        let client = PanelClient(original), model = NativePanelModel(client: client, projectID: "p", sessionID: "s"); model.preview = content
+        let pending = Task { try await model.readPreviewImage("slow.png", original: content) }
+        while !(await client.pending()) { await Task.yield() }
+        model.dismissPreview(); await client.finish()
+        do { _ = try await pending.value; XCTFail("Late image must be discarded") } catch {}
+        XCTAssertNil(model.preview)
+    }
     func fixture(_ name: String) throws -> SettingsValue {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }

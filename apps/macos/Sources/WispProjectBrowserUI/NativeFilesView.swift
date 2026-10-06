@@ -118,7 +118,7 @@ struct NativeFilesView: View {
                         quote: quote == nil ? nil : { text in
                             guard let source = model.quote(text, source: preview.content.path) else { return }
                             quote?(source); model.dismissPreview()
-                        })
+                        }, loadImage: { try await model.readPreviewImage($0, original: preview.content) })
                 }
             }
             .onDisappear { dropTask?.cancel(); chooser.close(); model.close() }

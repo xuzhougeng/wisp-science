@@ -139,7 +139,7 @@ struct NativePanelView: View {
                         sideChat.quotes.append(quote)
                         model.dismissPreview()
                         var value = layout; value.show("sidechat"); store(value)
-                    })
+                    }, loadImage: { try await model.readPreviewImage($0, original: content) })
                 }
             }
             .sheet(item: $transcriptPreview) { artifact in
@@ -319,6 +319,8 @@ struct NativePanelFilePreview: View {
     let close: () -> Void
     var save: ((String) async throws -> Void)? = nil
     var quote: ((String) -> Void)? = nil
+    var loadImage: NativeFileImageLoader? = nil
+    @State private var sourceMode = false
     @State private var editing = false
     @State private var draft = ""
     @State private var saving = false
@@ -326,6 +328,7 @@ struct NativePanelFilePreview: View {
     @State private var saveUnconfirmed = false
     @State private var confirmDiscard = false
     private var dirty: Bool { editing && draft != content.text }
+    private var document: NativeFileTextDocument { NativeFileTextDocument(content) }
     private func requestClose() { if dirty { confirmDiscard = true } else { close() } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -350,12 +353,31 @@ struct NativePanelFilePreview: View {
                 Button(localized("关闭预览"), action: requestClose).disabled(saving)
             }
             Text(content.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(content.path).textSelection(.enabled)
+            if content.text != nil, !editing, document.kind != .text {
+                HStack {
+                    Picker(localized("文件显示方式"), selection: $sourceMode) {
+                        Text(localized("阅读")).tag(false)
+                        Text(localized("源文本")).tag(true)
+                    }.pickerStyle(.segmented).labelsHidden().accessibilityLabel(localized("文件显示方式")).frame(maxWidth: 220)
+                    Spacer(minLength: 0)
+                    Button(localized("复制源文本")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(content.text ?? "", forType: .string) }
+                }
+            }
             if let saveError { Text(saveError).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
-            if content.truncated { Text(localized("仅展示文件开头；完整文件大小") + " \(content.total_bytes ?? 0) bytes").font(.caption).foregroundStyle(.orange) }
+            if content.truncated || document.clipped || sourceMode && document.rawDisplayClipped { Text(localized("仅展示文件开头；完整文件大小") + " \(content.total_bytes ?? UInt64(content.text?.utf8.count ?? 0)) bytes").font(.caption).foregroundStyle(.orange) }
             if editing {
                 TextEditor(text: $draft).font(.system(size: 12, design: .monospaced)).disabled(saving).accessibilityLabel("文件内容")
-            } else if let text = content.text {
-                ScrollView { NativeSelectableMessage(text: AttributedString(text), saved: [], quote: quote, save: nil, monospaced: true).frame(maxWidth: .infinity, alignment: .topLeading) }
+            } else if content.text != nil {
+                if !sourceMode, document.kind == .markdown {
+                    NativeMarkdownFilePreview(markdown: document.markdown, quote: quote, loadImage: loadImage).id(content.path)
+                } else if !sourceMode, document.kind == .delimited {
+                    if let table = document.table { NativeDelimitedFilePreview(table: table, quote: quote) }
+                    else { Text(document.tableError ?? "").foregroundStyle(.orange); Spacer() }
+                } else {
+                    GeometryReader { geometry in
+                        ScrollView { NativeSelectableMessage(text: AttributedString(document.rawDisplaySource), saved: [], quote: quote, save: nil, monospaced: true).frame(width: max(1, geometry.size.width), alignment: .topLeading) }
+                    }
+                }
             } else if content.base64 != nil { NativeFileBytesPreview(content: content) }
             else { Text(localized("无法预览文件。")) }
         }.padding(16).frame(minWidth: 320, idealWidth: 850, minHeight: 420, idealHeight: 650)

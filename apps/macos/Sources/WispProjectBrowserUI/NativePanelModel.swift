@@ -240,10 +240,19 @@ final class NativePanelModel: ObservableObject {
         preview = try decode(value, as: NativePanelFileContent.self)
     }
     func selectedPreviewQuote(_ text: String, path: String) -> NativeSideChatQuote? {
-        guard let preview, preview.path == path, let source = preview.text,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              source.contains(text) else { return nil }
+        guard !closed, !savingPreview, let preview, preview.path == path, preview.text != nil,
+              NativeFileTextDocument(preview).containsSelection(text) else { return nil }
         return NativeSideChatQuote(text: text, source: path)
+    }
+    func readPreviewImage(_ reference: String, original: NativePanelFileContent) async throws -> NativePanelFileContent {
+        guard !closed, !Task.isCancelled, preview?.path == original.path, preview?.text == original.text,
+              let path = NativeFileImagePath.resolve(reference, document: original.path, remote: false) else { throw ProjectBrowserError.invalidResponse }
+        let current = previewGeneration
+        let value = try await client.invoke("native_conversation_image", args: ["session_id": .string(sessionID), "path": .string(path)], projectID: projectID)
+        guard !closed, !Task.isCancelled, previewGeneration == current, preview?.text == original.text else { throw CancellationError() }
+        let image = try decode(value, as: NativePanelFileContent.self)
+        guard image.path == path, image.mime == "image/png", image.text == nil, image.base64 != nil, !image.truncated else { throw ProjectBrowserError.invalidResponse }
+        return image
     }
     func dismissPreview() { previewGeneration = UUID(); preview = nil; previewEditable = false; savingPreview = false; agentResult = nil; agentResultLoading = false }
     func close() {

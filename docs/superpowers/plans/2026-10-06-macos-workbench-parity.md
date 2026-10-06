@@ -4,8 +4,9 @@ Baseline: `c296e134`, 2026-10-06. The user requested the complete sequence:
 conversation controls and search → files and scientific viewers → research
 assistant and timers → publication and workflow editing.
 
-This is an active implementation ledger. A completed increment does not complete
-the objective. Existing Rust commands and `wisp-dto` contracts are the behavior
+Implementation is paused at the user's request while the current branch is
+packaged into a PR. A completed increment does not complete the objective.
+Existing Rust commands and `wisp-dto` contracts are the behavior
 source; SwiftUI must preserve project/session ownership, unknown-result handling,
 drafts, privacy filtering and the window Escape stack.
 
@@ -511,4 +512,44 @@ groups remain open.
   failure evidence is retained in `/tmp`. The full Rust workspace gate passed
   2666 tests across 45 test summaries, without failures or ignored tests.
   Rich/scientific viewers, assistant/automation/timers, journey/publication/workflow
-  editing and packaged acceptance remain open; the overall goal is still active.
+  editing and packaged acceptance remain open for later increments.
+
+### Increment 18: Markdown and CSV/TSV reading
+
+- Added Read/Source presentation to Files and artifact/search previews. Markdown
+  reuses the native selectable renderer for headings, lists, code, tables and
+  formulas, while complete leading YAML is hidden only in reading. Source copy
+  and local editing retain the original text and optimistic-save baseline.
+- Added literal, scrollable native CSV/TSV tables with proper quoted delimiter,
+  escaped quote, multiline, BOM/CRLF and empty/ragged-cell parsing. The first 500
+  rows and 128 columns are shown; TSV copy retains all complete records read,
+  normalizing cell whitespace as WebView does. Selected rows support native copy
+  and source quotes, including a selected passage within a cell. A malformed file retains Source; a truncated final record
+  is omitted visibly. A 1 MiB read bound and 8,000-line source/Markdown display
+  bound preserve full editing text; table copying keeps rows beyond that line cap.
+- Rendered selections now validate against the displayed Markdown/table content
+  as well as raw text, with exact current preview/source ownership. Relative
+  images use existing local/scoped SSH reads, resolve against the document and
+  retain remote home paths. Decoding is bounded; failed images retain alt text.
+  Closed/replaced/cancelled/changed reads cannot populate another document. Image
+  and document Escape handling preserves the next parent without moving focus.
+- Added parser, rendered selection, native table/Source-picker, image scope,
+  cancellation, bilingual-menu and immediate-Escape regressions. CRLF metadata
+  tests caught a Swift grapheme/splitting issue and led to string-based splitting.
+  An actual-window table-column assertion reproduced an infinite-width SwiftUI
+  measurement poisoning AppKit layout; finite-width fallback fixes the document
+  and the shared renderer, with the actual column geometry covered by regression.
+  All 65 file/document/panel checks passed in the final full Swift gate, including
+  24 new regressions. The final full Swift suite passed 559 tests with no failures
+  or skips. Twenty-four Chinese/English light/dark reading views at 320, 419 and
+  900 points were rendered in actual windows and representative final images
+  inspected. Formatting, wasm and both generated checks passed. The full Rust
+  workspace gate passed 2666 tests across 45 summaries without failures or ignored
+  tests. Full WebView passed 1020 tests with two existing optional-service skips
+  and three timeouts (two homepage/listener startups and Chromium extension-manager
+  screenshot startup). All 25 checks in those three files passed on isolated rerun;
+  no WebView/test changes were needed. Full-run evidence is retained in `/tmp`.
+- HTML, PDF/Office and scientific viewers, assistant/automation/timers,
+  journey/publication/workflow editing and packaged acceptance remain open. This
+  increment does not complete the viewer group or the overall goal. The user
+  paused implementation here and requested a PR for the current changes.

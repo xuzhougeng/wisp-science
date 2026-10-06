@@ -1223,7 +1223,39 @@ controls. Missing/foreign Runs cannot claim completion. Pickers have a temporary
 window Escape listener, removed on dismissal/cleanup; it cancels the picker before
 its parent and leaves native menus, nested confirmations and IME precedence intact.
 
-The richer scientific/Office/PDF interactions remain tracked in the
+Markdown (`.md`, `.markdown`, `.Rmd`, `.qmd`) and CSV/TSV now open in a dedicated
+reading view in Files and artifact previews, including search results. **Read** /
+**Source** changes presentation without modifying the file. Source copy and the
+existing local editor retain the original text, including YAML front matter,
+quoting and line endings. Completed leading YAML front matter is hidden only in
+Markdown reading; ordinary thematic breaks and incomplete metadata remain visible.
+Headings, lists, quotes, code, formulas and Markdown tables share the selectable
+message renderer and its code/table/formula copy actions. Rendered selections can
+be quoted with the exact local or SSH source; foreign text and closed previews are
+rejected. Selection and block-copy menus follow the current language.
+
+CSV and TSV use their actual delimiter, accept quoted delimiters, doubled quotes,
+multiline fields, BOM and CRLF, and preserve empty/ragged cells. Cell strings remain
+literal. The table scrolls horizontally/vertically and shows at most 500 rows and
+128 columns, while **Copy table TSV** includes all complete records read. TSV copy
+normalizes cell whitespace as WebView does; selected rows can be copied with
+Cmd+C or quoted through their context menu. Double-click a cell to select and
+quote part of its text through the standard selection menu. Multiline cells have a one-line label
+and their complete value in the tooltip. Malformed tables retain Source; a
+truncated final record is omitted with a notice instead of invented complete data.
+Reading is capped at 1 MiB. Markdown and source display additionally cap at 8,000
+lines; table copying is not limited by that source-display cap.
+
+Markdown images resolve relative to the document's directory, within the current
+project/conversation or selected SSH host. Remote home paths never expand locally.
+File reads retain the existing ownership/path boundary; external URLs are shown
+as unavailable. Image decoding bounds bytes and pixel dimensions and produces a
+preview up to 1024 pixels per side. Failed or missing images keep readable alt
+text. Changing/closing/saving the document or cancelling its read discards late
+images. Clicking a loaded image opens a native sheet; immediate Escape closes
+that image before its document, then the document before Files.
+
+The richer HTML/scientific/Office/PDF interactions remain tracked in the
 [active macOS parity ledger](superpowers/plans/2026-10-06-macos-workbench-parity.md).
 Manual smoke: use an isolated exploration fixture, compare copied absolute paths
 with its working root, sort/select/search across directories, open configured SSH
@@ -1234,3 +1266,9 @@ with Escape immediately without moving focus, change directory while a drop URL 
 resolving, and verify only the originating window can accept its result. For SSH,
 inspect/cancel a transfer Run and change a chosen destination during download;
 verify its newer bytes survive. Use fake/probed fixtures for automated checks.
+For rich text, compare a Markdown report with YAML, code, tables and a relative
+figure against Source, then edit/save and verify the original source baseline.
+Open CSV/TSV containing quoted delimiters, blank cells and multiline fields;
+scroll, select separated rows, copy TSV and quote with its source. Try a truncated
+or malformed record, and switch/close previews while an image read is pending.
+Compare both locales/schemes at 320, 419 and normal window widths.

@@ -31,6 +31,7 @@ private actor FilesFake: NativeConversationQuerying {
             if context == "local" { result["path"] = args["path"] ?? .string(".") }
         case "native_conversation_panel_file_read":
             result = fixture[context == "local" ? "local_preview" : "remote_preview"]
+            if args["path"]!.string.hasSuffix(".png"), fixture["document_image"] != .null { result["content"] = fixture["document_image"] }
             let path = args["path"]!.string; result["requested_path"] = .string(path)
             result["content"]["path"] = .string(context == "local" ? fixture["locations"]["local_root"].string + "/" + path : "ssh://" + String(context.dropFirst(4)) + "/" + path.drop(while: { $0 == "/" }))
         case "native_conversation_panel_file_paths":
@@ -104,6 +105,60 @@ private struct FilesDatabasePane: View {
 final class NativeFilesTests: XCTestCase {
     @MainActor private func model(_ fake: FilesFake, readOnly: Bool = false, transfersSupported: Bool = false) -> NativeFilesModel {
         NativeFilesModel(client: fake, projectID: "research-1", sessionID: "session-1", readOnly: readOnly, transfersSupported: transfersSupported)
+    }
+    @MainActor func testRichFileQuotesValidateRenderedMarkdownAndTsvWithExactLocalAndSshSources() async throws {
+        var fixture = try filesFixture()
+        for key in ["local_preview", "remote_preview"] { fixture[key]["content"]["mime"] = .string("text/markdown"); fixture[key]["content"]["text"] = .string("# Result\n\n**Sample A** passed.") }
+        let fake = FilesFake(fixture), model = model(fake); await model.open()
+        for context in ["local", "ssh:lab"] {
+            if context != "local" { await model.chooseLocation(context) }
+            await model.read(try XCTUnwrap(model.rows.first { !$0.directory })); let source = try XCTUnwrap(model.preview?.content.path)
+            let quote = try XCTUnwrap(model.quote("Result\nSample A passed.", source: source)); XCTAssertEqual(quote.source, source)
+            XCTAssertNil(model.quote("Sample B passed.", source: source)); XCTAssertNil(model.quote(quote.text, source: "other"))
+            model.dismissPreview(); XCTAssertNil(model.quote(quote.text, source: source))
+        }
+        let csvFake = FilesFake(try filesFixture()), csv = self.model(csvFake); await csv.open()
+        await csv.read(try XCTUnwrap(csv.rows.first { $0.path.hasSuffix("QC.csv") })); let csvSource = try XCTUnwrap(csv.preview?.content.path)
+        XCTAssertEqual(csv.quote("A\tpass", source: csvSource)?.source, csvSource)
+        XCTAssertNil(csv.quote("A\tfail", source: csvSource))
+    }
+    @MainActor func testMarkdownImagesUseDocumentDirectoryAndExactFileScopeWithoutExternalReads() async throws {
+        var fixture = try filesFixture(); fixture["document_image"] = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(imagePreview()))
+        let fake = FilesFake(fixture), model = model(fake); await model.open()
+        for context in ["local", "ssh:lab"] {
+            if context == "local" { await model.navigate("results") } else { await model.chooseLocation(context) }
+            await model.read(try XCTUnwrap(model.rows.first { !$0.directory })); let original = try XCTUnwrap(model.preview?.content)
+            let image = try await model.readPreviewImage("../figures/plot%20A.png", original: original)
+            XCTAssertEqual(image.mime, "image/png"); XCTAssertNotNil(try NativeFileDocumentImages.decode(image))
+            let calls = await fake.recorded(), read = try XCTUnwrap(calls.last)
+            XCTAssertEqual(read.0, "research-1"); XCTAssertEqual(read.2["session_id"], .string("session-1")); XCTAssertEqual(read.2["context_id"], .string(context))
+            XCTAssertEqual(read.2["path"], .string(context == "local" ? "figures/plot A.png" : "/home/research/figures/plot A.png"))
+            for invalid in ["https://example.com/plot.png", "file://foreign/plot.png", "plot.svg"] {
+                do { _ = try await model.readPreviewImage(invalid, original: original); XCTFail(invalid) } catch {}
+            }
+            let after = await fake.recorded(); XCTAssertEqual(after.count, calls.count)
+        }
+    }
+    @MainActor func testClosedChangedCancelledAndForeignImageRepliesCannotReachTheCurrentDocument() async throws {
+        for change in ["dismiss", "location", "close", "cancel", "save", "owner"] {
+            var fixture = try filesFixture(); fixture["document_image"] = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(imagePreview()))
+            let fake = FilesFake(fixture), model = model(fake); await model.open()
+            await model.read(try XCTUnwrap(model.rows.first { !$0.directory })); let original = try XCTUnwrap(model.preview?.content)
+            await fake.setup(hold: "native_conversation_panel_file_read", failure: change == "owner" ? "owner" : "")
+            let pending = Task { try await model.readPreviewImage("plot.png", original: original) }
+            while !(await fake.waiting()) { await Task.yield() }
+            switch change {
+            case "dismiss": model.dismissPreview()
+            case "location": await model.chooseLocation("ssh:lab")
+            case "close": model.close()
+            case "cancel": pending.cancel()
+            case "save": try await model.save("changed source", original: original)
+            default: break
+            }
+            await fake.release()
+            do { _ = try await pending.value; XCTFail(change) } catch {}
+            XCTAssertFalse(model.previewLoading)
+        }
     }
     func testSharedTransferContractsRequireExactSourcesDestinationsAndOwnership() throws {
         let fixture = try filesFixture()

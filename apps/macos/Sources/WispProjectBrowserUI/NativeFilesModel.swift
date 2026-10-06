@@ -242,8 +242,22 @@ final class NativeFilesModel: ObservableObject {
     }
     func quote(_ text: String, source: String) -> NativeSideChatQuote? {
         guard !closed, !saving, let content = preview?.content, content.path == source,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, content.text?.contains(text) == true else { return nil }
+              content.text != nil, NativeFileTextDocument(content).containsSelection(text) else { return nil }
         return NativeSideChatQuote(text: text, source: source)
+    }
+    func readPreviewImage(_ reference: String, original: NativePanelFileContent) async throws -> NativePanelFileContent {
+        guard !closed, !Task.isCancelled, let page = preview, page.content.path == original.path, page.content.text == original.text,
+              let root = catalog?.local_root,
+              let resolved = NativeFileImagePath.resolve(reference, document: page.context_id == "local" ? original.path : page.requested_path, remote: page.context_id != "local") else { throw ProjectBrowserError.invalidResponse }
+        let path: String
+        if page.context_id == "local" {
+            guard NativeFilesContract.inside(resolved, root: root) else { throw ProjectBrowserError.invalidResponse }
+            path = String(resolved.dropFirst(root == "/" ? 1 : root.count + 1))
+        } else { path = resolved }
+        let current = previewGeneration
+        let image = try NativeFilePreview.decode(await call("file_read", ["path": .string(path)], context: page.context_id), project: projectID, session: sessionID, context: page.context_id, requested: path, root: root)
+        guard !closed, !Task.isCancelled, current == previewGeneration, preview?.content.text == original.text else { throw CancellationError() }
+        return image.content
     }
     func exportSource(_ row: NativeFileBrowserRow) async throws -> NativePanelExport {
         guard !closed, local, !row.directory, rows.contains(where: { $0.id == row.id }), let root = catalog?.local_root else { throw ProjectBrowserError.invalidResponse }

@@ -49,7 +49,7 @@ struct NativeSearchArtifactView: View {
     var body: some View {
         Group {
             if let content = panel.preview {
-                NativePanelFilePreview(content: content, close: close)
+                NativePanelFilePreview(content: content, close: close, loadImage: { try await panel.readPreviewImage($0, original: content) })
             } else {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack { Text(item.title).font(.headline); Spacer(); Button(localized("关闭"), action: close) }
