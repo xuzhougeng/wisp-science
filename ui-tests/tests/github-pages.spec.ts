@@ -161,7 +161,7 @@ test("tutorial directory stays compact and links to independent articles", async
   await expect(page.locator(".tutorial-group-title")).toHaveText(["基础入门", "使用技巧", "进阶"]);
   await expect(page.locator("#basics .tutorial-card")).toHaveCount(7);
   await expect(page.locator("#tips .tutorial-card")).toHaveCount(4);
-  await expect(page.locator("#advanced .tutorial-card h3")).toHaveText(["完成转录组上游分析", "完成转录组下游分析", "Agent Workflow", "创建 Agent Workflow", "科研版的个人助理来！", "Wisp 命令行", "ACP配置"]);
+  await expect(page.locator("#advanced .tutorial-card h3")).toHaveText(["完成转录组上游分析", "完成转录组下游分析", "Agent Workflow", "创建 Agent Workflow", "用 map_items 批量处理文献", "科研版的个人助理来！", "Wisp 命令行", "ACP配置"]);
   await page.screenshot({ path: test.info().outputPath("tutorials-desktop.png") });
   for (const width of [1440, 1280, 1120, 1101, 1100, 980, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
@@ -259,6 +259,11 @@ test("article links, previous and next navigation, and browser back stay within 
   await expect(page.locator("h1")).toHaveText("Wisp 命令行");
   await page.locator(".tutorial-previous").click();
   await expect(page.locator("h1")).toHaveText("科研版的个人助理来！");
+  await page.locator(".tutorial-previous").click();
+  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：用 map_items 批量处理文献");
+  await page.locator(".tutorial-next").click();
+  await expect(page.locator("h1")).toHaveText("科研版的个人助理来！");
+  await page.locator(".tutorial-previous").click();
   await page.locator(".tutorial-previous").click();
   await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：创建 Agent Workflow");
   await page.locator(".tutorial-previous").click();
