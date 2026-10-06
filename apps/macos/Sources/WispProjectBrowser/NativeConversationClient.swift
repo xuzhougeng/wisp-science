@@ -10,6 +10,21 @@ public struct ConversationItem: Codable, Equatable, Sendable {
     public let duration_ms: UInt64?
     public let model_name: String?
     public let timestamp: Int64?
+    public let resources: [ConversationMessageResource]?
+}
+
+/// Shared wisp-dto MessageResource uses camelCase on the wire.
+public struct ConversationMessageResource: Codable, Equatable, Sendable {
+    public let id: String
+    public let ordinal: Int64
+    public let originalReference: String
+    public let artifactId: String?
+    public let artifactVersionId: String?
+    public let displayName: String
+    public let kind: String
+    public let mimeType: String
+    public let status: String
+    public let error: String?
 }
 public struct ConversationApproval: Codable, Equatable, Identifiable, Sendable {
     public var id: String { approval_id }
@@ -39,12 +54,13 @@ public struct ConversationSnapshot: Codable, Sendable {
     public let approvals: [ConversationApproval]
     public let acp: ConversationAcpInteractions?
     public let composer_references: Bool?
+    public let queue: ConversationQueueSnapshot?
 
     public static func decode(_ value: SettingsValue, projectID: String, sessionID: String) throws -> Self {
         let snapshot = try JSONDecoder().decode(Self.self, from: JSONEncoder().encode(value))
         guard snapshot.schema == schemaID, !snapshot.epoch.isEmpty, snapshot.sequence > 0,
               snapshot.project_id == projectID, snapshot.session_id == sessionID,
-              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }),
+              snapshot.approvals.allSatisfy({ $0.frame_id == sessionID }), snapshot.queue?.valid != false,
               (snapshot.acp?.permissions ?? []).allSatisfy({ $0.frame_id == sessionID && !$0.request_id.isEmpty }) else { throw ProjectBrowserError.invalidResponse }
         return snapshot
     }

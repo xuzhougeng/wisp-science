@@ -102,8 +102,8 @@ The SwiftUI preview supports creating/opening HTTP-model and ACP conversations,
 selecting an HTTP conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing
-WebView remains usable. The macOS composer also supports file attachments and one
-queued follow-up, and the workspace has an Agent workflow approval panel.
+WebView remains usable. The macOS composer supports file attachments and multiple
+queued follow-ups, and the workspace has an Agent workflow approval panel.
 
 The composer shows the session's effective execution context and live runtime
 status. Its environment menu selects among attached contexts, and the runtime
@@ -185,8 +185,50 @@ copy its original content or a table to copy TSV. Quote and highlight actions
 work across blocks. Task state is shown as readable completion labels. Formula
 rendering uses the shared native SwiftMath renderer for inline and block LaTeX,
 preserving source for copy and selection and falling back to wrapped source for
-unsupported or over-wide equations. Inline images remain a follow-up; tool output
-stays literal.
+unsupported or over-wide equations. Local Markdown images and uploaded raster
+images appear inside messages, with a click-to-enlarge native preview. Completed
+`generate_image` tools show their image below the tool disclosure; tool text stays
+literal. Image alt text remains available for copy, quote, highlight and VoiceOver.
+Loading an image preserves a text selection made before it arrived.
+
+Images bound to message resources read the immutable artifact version captured
+for that message. Missing/failed bindings never fall back to a newer file. Legacy
+Markdown paths, uploaded copies and generated-tool paths read within the selected
+conversation's project/exploration root. Remote URLs are not fetched. PNG, JPEG,
+WebP, BMP, TIFF and the first GIF frame are supported; SVG, HEIC, animation and
+full-resolution export remain follow-ups. Reads cap input at 32 MiB, bound decoder
+allocation and dimensions, and return a PNG preview no larger than 1024 pixels
+per side. Smaller images retain their original dimensions. Loading/unsupported/
+missing images retain a readable placeholder.
+Navigation discards late replies and closes the preview; Escape closes it before
+an underlying overlay, without requiring focus inside.
+
+On hosts advertising `queue`, the macOS composer displays all shared waiting
+messages in order in a bounded scroll area. Enter queues while a turn runs,
+following the same modifier/newline and IME policy as normal sending. Rows show
+attachment names and support edit, cancel and move up/down. Editing retains
+attachment paths and typed references. IDs remain decimal strings through JSON,
+including values above 2^53. Actions require the exact row ID and payload digest;
+started or externally edited rows cannot be changed by stale controls. Snapshots
+reflect messages queued by other windows and retire started/completed rows.
+
+Unconfirmed enqueues keep the draft and block further submission until the user
+checks the queue and explicitly allows another submission. Neither enqueues nor
+queue actions retry automatically. This uncertainty survives switching sessions
+within the open client. The queue remains transient in the desktop host; pending
+rows are not persisted across host restart. Advanced cut-in and interrupt/replace
+controls remain WebView/Windows features; macOS labels pending cut-ins read-only.
+Older hosts retain their single-follow-up behavior.
+
+Smoke-test images in light/dark and narrow windows: open a message containing a
+local figure, click it, immediately press Escape, select/copy text across the
+figure, and reopen an older message after overwriting the original file. Attach
+an image and confirm it renders after sending; remove a captured snapshot and
+confirm it shows an unavailable placeholder. For queues, keep an isolated turn
+running, add three follow-ups (one with files/references), edit, reorder and cancel
+them, then verify execution order and session switching. Simulate lost responses
+and confirm that refresh never repeats a write. These checks use offline fake
+transports and AppKit rendering; they do not establish real-provider acceptance.
 
 Fenced-code syntax highlighting loads the bundled grammar through the same
 resource lookup as the native UI: installed apps use `Contents/Resources`, while

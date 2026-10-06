@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-conversations.v1";
 pub const COMMANDS: &[&str] = &[
+    "native_conversation_image",
     "native_conversation_queue_action",
     "native_conversation_history_action",
     "native_conversation_references",
@@ -417,6 +418,15 @@ pub struct SessionRequest {
     #[serde(default)]
     pub before_seq: Option<i64>,
 }
+/// Exactly one source: a message-bound immutable resource or a legacy project
+/// path. Image reads never download a remote URL.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageRequest {
+    pub session_id: String,
+    pub resource_id: Option<String>,
+    pub path: Option<String>,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenameRequest {
@@ -736,6 +746,8 @@ pub struct TranscriptRun {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Item {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<crate::MessageResource>,
     /// Shared interpretation of ACP and built-in plan-mode proposals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal: Option<PlanProposal>,
@@ -1081,6 +1093,36 @@ mod tests {
         assert!(serde_json::from_value::<Item>(old).unwrap().run.is_none());
     }
     use super::*;
+
+    #[test]
+    fn image_queue_fixture_retains_immutable_bindings_and_full_width_ids() {
+        let snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/snapshot-images-queue.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            snapshot.items[1].resources[0]
+                .artifact_version_id
+                .as_deref(),
+            Some("version-a")
+        );
+        let value = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(
+            value["items"][1]["resources"][0]["originalReference"],
+            "figures/qc.png"
+        );
+        assert_eq!(value["queue"]["items"][0]["id"], "18446744073709551615");
+        assert_eq!(value["queue"]["items"][1]["id"], "9007199254740993");
+        assert!(COMMANDS.contains(&"native_conversation_image"));
+        assert!(
+            serde_json::from_str::<ImageRequest>(r#"{"session_id":"s","path":"p.png"}"#).is_ok()
+        );
+        assert!(serde_json::from_str::<ImageRequest>(
+            r#"{"session_id":"s","resource_id":"r","project_id":"other"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ImageRequest>(r#"{"path":"p.png"}"#).is_err());
+    }
     #[test]
     fn fast_preserves_default_and_explicit_off_semantics() {
         for default in ["", "default", "priority", "fast"] {

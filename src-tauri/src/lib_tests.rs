@@ -878,6 +878,26 @@ fn reloaded_tool_items_keep_notebook_source() {
 }
 
 #[test]
+fn reloaded_image_generation_retains_the_preview_path() {
+    let mut assistant = wisp_llm::Message::assistant("");
+    assistant.tool_calls = vec![wisp_llm::ToolCall {
+        id: "image-call".into(),
+        kind: "function".into(),
+        function: wisp_llm::FunctionCall {
+            name: "generate_image".into(),
+            arguments: r#"{"path":"figures/counts.png","prompt":"counts"}"#.into(),
+        },
+    }];
+    let items = messages_to_items(&[
+        assistant,
+        wisp_llm::Message::tool("image-call", "generate_image", "Saved figures/counts.png"),
+    ]);
+    assert_eq!(items[0].input.as_deref(), Some("figures/counts.png"));
+    let bytes = serde_json::to_value(&items[0]).unwrap();
+    assert_eq!(bytes["tool_name"], "generate_image");
+}
+
+#[test]
 fn legacy_tool_replay_is_bounded_but_complete_cards_are_not_truncated() {
     let ordinary = wisp_llm::Message::tool(
         "call-shell",

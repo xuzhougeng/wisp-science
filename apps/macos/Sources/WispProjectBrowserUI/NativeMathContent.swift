@@ -42,6 +42,13 @@ enum NativeMathContent {
         if let code = try? NSRegularExpression(pattern: #"(`+)([\s\S]*?)\1"#) {
             protected += code.matches(in: source, range: NSRange(location: 0, length: text.length)).map(\.range)
         }
+        // Image captions and paths are Markdown data. Dollar/bracket syntax
+        // in filenames must not become equation tokens before image parsing.
+        for pattern in [#"!\[(?:\\.|[^\]])*\](?:\((?:<[^>\n]*>|\\.|[^)\n])*\)|\[[^\]\n]*\])"#, #"(?m)^[ \t]{0,3}\[[^\]\n]+\]:[^\n]+"#] {
+            if let image = try? NSRegularExpression(pattern: pattern) {
+                protected += image.matches(in: source, range: NSRange(location: 0, length: text.length)).map(\.range)
+            }
+        }
         let pattern = #"(?s)(?<!\\)\$\$(.+?)(?<!\\)\$\$|(?<!\\)\\\[(.+?)\\\]|(?<!\\)\\\((.+?)\\\)|(?<![\\$])\$(?![\s$])([^\n]*?\S)(?<!\\)\$(?![\d$])"#
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return .init(markdown: source, formulas: []) }
         var formulas: [Formula] = []

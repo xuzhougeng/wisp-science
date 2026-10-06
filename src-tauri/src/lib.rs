@@ -54,6 +54,7 @@ mod native_conversations;
 mod native_history;
 mod native_journey;
 mod native_library;
+mod native_message_images;
 mod native_projects;
 mod native_publication;
 mod native_queue;
@@ -1234,6 +1235,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                 "python" | "r" => args.get("code").and_then(|v| v.as_str()),
                 "shell" => args.get("cmd").and_then(|v| v.as_str()),
                 "monitor_run" | "wisp_monitor_run" => args.get("run_id").and_then(|v| v.as_str()),
+                "generate_image" => args.get("path").and_then(|v| v.as_str()),
                 _ => None,
             }?;
             Some((call.id.as_str(), bounded_ui_tool_input(input)))

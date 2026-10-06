@@ -56,7 +56,7 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # TIFF -> PNG transcode for OOXML preview media plus PNG/WebP Pet atlases.
-image = { version = "0.25", default-features = false, features = ["tiff", "png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["tiff", "png", "webp", "jpeg", "gif", "bmp"] }
 which = "7"
 walkdir = { workspace = true }
 wisp-core = { workspace = true }

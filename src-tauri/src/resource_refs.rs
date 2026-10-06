@@ -64,6 +64,22 @@ impl From<&MessageResourceLink> for UiMessageResource {
         }
     }
 }
+impl From<UiMessageResource> for wisp_dto::MessageResource {
+    fn from(value: UiMessageResource) -> Self {
+        Self {
+            id: value.id,
+            ordinal: value.ordinal,
+            original_reference: value.original_reference,
+            artifact_id: value.artifact_id,
+            artifact_version_id: value.artifact_version_id,
+            display_name: value.display_name,
+            kind: value.kind,
+            mime_type: value.mime_type,
+            status: value.status,
+            error: value.error,
+        }
+    }
+}
 
 fn markdown_resources(markdown: &str) -> Vec<MarkdownResource> {
     let markdown = rewrite_codex_image_tags(markdown);
