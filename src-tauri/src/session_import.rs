@@ -638,13 +638,24 @@ pub(crate) async fn lock_import_target(
 
 /// Apply a prepared archive into `project`; WebView and native imports share it.
 /// An updated conversation is locked meanwhile and reloads its agent afterwards.
+/// The caller holds a project activity guard, so the destination cannot move
+/// while its root is resolved here and the archive lands in it.
 async fn import_prepared_archive(
     state: &AppState,
     project: &str,
-    root: &Path,
     source: &str,
     prepared: PreparedArchive,
 ) -> Result<wisp_dto::native_session_import::ImportResult, String> {
+    let (_, root) = state
+        .store
+        .get_project(project)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Target project not found")?;
+    let root = PathBuf::from(root);
+    if !root.is_absolute() || !root.is_dir() {
+        return Err("The target workspace directory is unavailable".into());
+    }
     crate::exploration_commands::require_writable_scope(
         &state.store,
         &wisp_store::StateScope::mainline(project),
@@ -654,7 +665,7 @@ async fn import_prepared_archive(
     let locked = lock_import_target(state, project, existing.as_deref()).await?;
     let model = models::active_profile_id(&state.store).await;
     let result =
-        apply_prepared_archive(&state.store, project, root, &model, source, prepared).await?;
+        apply_prepared_archive(&state.store, project, &root, &model, source, prepared).await?;
     if let Some((rt, _workflow)) = &locked {
         *rt.agent.lock().await = None;
         rt.sync_last_seq_from_store(&state.store, &result.frame_id)
@@ -708,21 +719,8 @@ pub(crate) async fn execute_native(
             let prepared = prepare_archive(&input.archive_path).await?;
             validate_review(&prepared, &input)?;
             let _project_guard = state.begin_project_exclusive_activity(project)?;
-            // Resolve the current destination under its mutation guard: archive
-            // preparation may take long enough for another window to move it.
-            let (_, root) = state
-                .store
-                .get_project(project)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("Target project not found")?;
-            let root = PathBuf::from(root);
-            if !root.is_absolute() || !root.is_dir() {
-                return Err("The target workspace directory is unavailable".into());
-            }
             let result =
-                import_prepared_archive(state, project, &root, &input.archive_path, prepared)
-                    .await?;
+                import_prepared_archive(state, project, &input.archive_path, prepared).await?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         _ => Err("Unsupported native session import command".into()),
@@ -739,6 +737,9 @@ pub(super) async fn import_session_archive(
 ) -> Result<Option<wisp_dto::native_session_import::ImportResult>, String> {
     use tauri_plugin_dialog::DialogExt;
 
+    // The project this window showed when the import began, even if the
+    // window switches projects while the picker is open.
+    let project = state.require_active(window.label())?.id;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -751,9 +752,8 @@ pub(super) async fn import_session_archive(
     };
     let source = picked.to_string();
     let prepared = prepare_archive(&source).await?;
-    let ap = state.require_active(window.label())?;
-    let _project_activity = state.begin_project_activity(&ap.id)?;
-    import_prepared_archive(&state, &ap.id, &ap.root, &source, prepared)
+    let _project_activity = state.begin_project_activity(&project)?;
+    import_prepared_archive(&state, &project, &source, prepared)
         .await
         .map(Some)
 }

@@ -358,6 +358,13 @@ async fn frame_and_project(
 }
 
 async fn validate_undo_session(state: &AppState, frame_id: &str) -> Result<(), String> {
+    crate::subagent_tool::require_instruction_source(
+        &state.store,
+        frame_id,
+        crate::TurnOrigin::Desktop,
+        false,
+    )
+    .await?;
     if matches!(
         state
             .store
@@ -437,7 +444,7 @@ pub(super) async fn undo_turn(
     };
     if runtime
         .as_ref()
-        .is_some_and(|runtime| !runtime.queued.lock().unwrap().is_empty())
+        .is_some_and(|runtime| runtime.has_queued_turns())
     {
         return Err("Remove queued messages before undoing the latest turn.".into());
     }

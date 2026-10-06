@@ -1162,6 +1162,13 @@ pub(crate) async fn rewind_locked(
     frame_id: &str,
     user_index: usize,
 ) -> Result<(), String> {
+    crate::subagent_tool::require_instruction_source(
+        &state.store,
+        frame_id,
+        crate::TurnOrigin::Desktop,
+        false,
+    )
+    .await?;
     let frame_id = frame_id.to_owned();
     let project_id = state
         .store
@@ -1267,9 +1274,22 @@ pub(super) async fn undo_compaction(
     {
         return Err("ACP sessions cannot undo compaction.".into());
     }
-    if state.running_turns.lock().await.contains(&frame_id) {
-        return Err("Stop the running turn before undoing compaction.".into());
-    }
+    crate::subagent_tool::require_instruction_source(
+        &state.store,
+        &frame_id,
+        crate::TurnOrigin::Desktop,
+        false,
+    )
+    .await?;
+    // A finishing turn leaves running_turns before it persists its own
+    // compaction epoch; the workflow lock covers it until it is done.
+    let _workflow = state
+        .session_runtime(&frame_id)
+        .await
+        .workflow
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| "Stop the running turn before undoing compaction.")?;
     let epoch = state
         .store
         .undo_context_epoch(&frame_id)
