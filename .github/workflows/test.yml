@@ -76,7 +76,7 @@ jobs:
         run: node --test ui/build-fast.test.mjs
 
       - name: Run project storage startup and migration regressions
-        run: cargo test -p wisp-store project_storage::tests
+        run: cargo test -p wisp-store -- project_storage::tests upgrade_backup::tests
 
       # Interpreters are often launchers: Windows Rscript.exe re-launches
       # bin\x64\Rscript.exe through cmd.exe. Stopping a runtime must reclaim

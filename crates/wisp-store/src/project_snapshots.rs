@@ -169,6 +169,15 @@ fn write_atomic(target: &Path, write: impl FnOnce(&Path) -> Result<()>) -> Resul
     result
 }
 
+/// A project id reduced to characters that are safe in a file name.
+pub(super) fn file_label(project_id: &str) -> String {
+    project_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(64)
+        .collect()
+}
+
 fn fingerprint(database: &Path) -> Fingerprint {
     ["", "-wal"]
         .iter()
@@ -207,11 +216,7 @@ impl Store {
         std::fs::create_dir_all(&dir)?;
         // A fresh name per registration: a stale cache left by a removed
         // registration may hold unpublished edits and is never overwritten.
-        let label: String = project_id
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-            .take(64)
-            .collect();
+        let label = file_label(project_id);
         Ok(dir.join(format!("{label}-{}.sqlite", uuid::Uuid::new_v4())))
     }
 
