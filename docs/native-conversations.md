@@ -138,6 +138,45 @@ parent and draft remain; confirm a branch and check its edited draft. Repeat in
 light/dark and a narrow window. Remaining macOS scope is tracked in
 [the complete workbench plan](superpowers/plans/2026-10-06-macos-workbench-parity.md).
 
+The conversation action menu and scoped Cmd+K commands now offer **Copy to
+another project** and **Move to another project**. The reviewed preview binds the
+source conversation, destination project, transfer mode and saved transcript
+revision, including all context epochs and persisted events. Confirmation checks
+that revision under the shared workflow/agent lock. Running turns, approvals,
+reviews, unconsumed queued messages and exploration conversations cannot transfer;
+archived conversations may be copied but cannot be moved. Moving a mainline with
+branches or an active exploration still follows the existing host restrictions.
+
+Copy transfers saved conversation records; local files and Runs remain in the
+source project. Move optionally uses the existing artifact fingerprint, collision
+checks and recoverable file operation. The preview lists transferable artifacts
+and files plus retained shared/uploaded/changed/unavailable items. If file preview
+fails, the transcript alone may still move. File selection defaults off and
+resets after rereading or changing destination. Confirmation revalidates file
+state before changing it. Runs are retained in the source project.
+Retained artifact or Run lineage may keep a deleted source frame internally;
+conversation reads, mutations and queued sends reject that frame, including when
+an old client would otherwise allocate a fresh runtime.
+
+A move retains the current text draft for the new destination conversation
+without sending it. Staged attachments and references must be cleared first
+because they belong to the source project. Copy leaves the original draft in
+place. A confirmed result can explicitly open the exact new frame. Closing a
+confirmed move removes the source row; opening also navigates to the destination.
+Unconfirmed replies block further submissions in that sheet, even after a new
+preview or target selection. Closed/cancelled/superseded reads and late writes
+cannot navigate another view. Saving holds the sheet open, and immediate Escape
+closes the destination picker before the transfer sheet.
+
+Manual smoke: create two temporary projects and an idle conversation with a text
+draft and local generated artifacts. Copy it and inspect the destination records
+while the original draft/files remain. Move another conversation with files off,
+then with files on; inspect paths and retained uploads/shared artifacts. Change a
+source file or transcript after preview and verify confirmation refuses stale
+state. Add a destination collision and verify files remain unchanged. Check
+queued/running/archived restrictions, draft retention, both locales/schemes and
+immediate Escape with the destination picker open. Use only fixture projects.
+
 
 ## Windows input references and preferences (2026-10-05)
 

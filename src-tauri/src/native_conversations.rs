@@ -343,7 +343,7 @@ pub(crate) async fn require_owner(
 ) -> Result<(), String> {
     if session.is_empty()
         || store
-            .frame_project_id(session)
+            .live_frame_project_id(session)
             .await
             .map_err(|e| e.to_string())?
             .as_deref()
@@ -360,6 +360,14 @@ pub(crate) async fn require_mutable_session(
     store: &wisp_store::Store,
     session: &str,
 ) -> Result<(), String> {
+    if store
+        .live_frame_project_id(session)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_none()
+    {
+        return Err("Conversation no longer exists".into());
+    }
     store
         .require_unarchived_session(session)
         .await
@@ -391,7 +399,7 @@ async fn owned_session_exists(
         return Err("A conversation is required".into());
     }
     match store
-        .frame_project_id(session)
+        .live_frame_project_id(session)
         .await
         .map_err(|error| error.to_string())?
     {
@@ -523,6 +531,26 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         crate::acp::session_agent_id(&broker.app.state::<crate::AppState>().store, session).await?;
     let record = broker.conversations.session(session).await?;
     match request.command.as_str() {
+        "native_conversation_transfer_preview" => {
+            let guard = record.lock().await;
+            crate::native_session_transfer::preview(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
+        "native_conversation_transfer" => {
+            let guard = record.lock().await;
+            crate::native_session_transfer::transfer(
+                broker,
+                project,
+                decode(&request.args)?,
+                guard.running,
+            )
+            .await
+        }
         "native_conversation_context" => {
             let args: dto::SessionRequest = decode(&request.args)?;
             if args.before_seq.is_some() || acp_agent_id.is_some() {
@@ -1651,6 +1679,77 @@ mod tests {
         assert!(owned_session_exists(&store, "a", "").await.is_err());
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn moved_conversation_tombstone_cannot_be_read_mutated_or_revived() {
+        let store = wisp_store::Store::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        store.create_project("a", "A", "").await.unwrap();
+        store.create_project("b", "B", "").await.unwrap();
+        store
+            .create_frame("s", "a", "OPERON", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("s", 0, &wisp_llm::Message::user("Research"))
+            .await
+            .unwrap();
+        store
+            .save_artifact(
+                "artifact",
+                "a",
+                "s",
+                "result.csv",
+                "text/csv",
+                "results/result.csv",
+            )
+            .await
+            .unwrap();
+        store
+            .create_run(&wisp_store::RunRecord::new(
+                "run", "a", "local", "Analysis", "command",
+            ))
+            .await
+            .unwrap();
+        store
+            .save_run_artifact_link("link", "run", "artifact", "table")
+            .await
+            .unwrap();
+        crate::agent_turn::require_live_turn_frame(&store, "s", false)
+            .await
+            .unwrap();
+        assert!(
+            crate::agent_turn::require_live_turn_frame(&store, "s", true)
+                .await
+                .is_err()
+        );
+        store
+            .move_session_to_project("s", "a", "b", "moved")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.frame_project_id("s").await.unwrap().as_deref(),
+            Some("a")
+        );
+        assert!(store.live_frame_project_id("s").await.unwrap().is_none());
+        assert_eq!(store.list_artifacts("s").await.unwrap().len(), 1);
+        assert!(require_owner(&store, "a", "s").await.is_err());
+        assert!(!owned_session_exists(&store, "a", "s").await.unwrap());
+        assert!(require_mutable_session(&store, "s").await.is_err());
+        // A newly allocated runtime has not seen the original deletion flag.
+        assert!(
+            crate::agent_turn::require_live_turn_frame(&store, "s", false)
+                .await
+                .is_err()
+        );
+        require_owner(&store, "b", "moved").await.unwrap();
+        require_mutable_session(&store, "moved").await.unwrap();
+        crate::agent_turn::require_live_turn_frame(&store, "moved", false)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -1661,6 +1661,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn portable_live_frame_lookup_excludes_retained_tombstones() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("global.sqlite");
+        let store = open_portable_application(&path).await.unwrap();
+        store
+            .create_project("p", "Project", root.path().join("p").to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("f", "p", "OPERON", "model")
+            .await
+            .unwrap();
+        store
+            .save_artifact(
+                "artifact",
+                "p",
+                "f",
+                "result.csv",
+                "text/csv",
+                "results/result.csv",
+            )
+            .await
+            .unwrap();
+        store
+            .create_run(&crate::RunRecord::new(
+                "run", "p", "local", "Analysis", "command",
+            ))
+            .await
+            .unwrap();
+        store
+            .save_run_artifact_link("link", "run", "artifact", "table")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.live_frame_project_id("f").await.unwrap().as_deref(),
+            Some("p")
+        );
+        store.delete_session("f", "p").await.unwrap();
+        assert_eq!(
+            store.frame_project_id("f").await.unwrap().as_deref(),
+            Some("p")
+        );
+        assert!(store.live_frame_project_id("f").await.unwrap().is_none());
+        let reader = Store::open_read_only(&path).await.unwrap();
+        assert_eq!(
+            reader.frame_project_id("f").await.unwrap().as_deref(),
+            Some("p")
+        );
+        assert!(reader.live_frame_project_id("f").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn independent_projects_support_concurrent_writes_search_copy_and_native_reads() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("global.sqlite");

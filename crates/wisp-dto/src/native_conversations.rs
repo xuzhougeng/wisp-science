@@ -66,6 +66,8 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_outline",
     "native_conversation_create",
     "native_conversation_rename",
+    "native_conversation_transfer_preview",
+    "native_conversation_transfer",
     "native_conversation_pin",
     "native_conversation_delete",
     "native_conversation_exists",

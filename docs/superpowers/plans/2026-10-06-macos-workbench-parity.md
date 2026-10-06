@@ -247,6 +247,49 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
 - These gates establish the completed increments' current baseline. They do not
   complete the remaining outcome groups or packaged/native acceptance.
 
-Conversation controls and search remain incomplete: session transfer/export and
-project-file search still need implementation and verification. Later outcome
-groups remain open.
+### Increment 10: reviewed cross-project conversation transfer
+
+- Added conversation-menu and scoped Cmd+K copy/move entry points with distinct
+  shared icons and explicit destination selection. The native DTO/fixture binds
+  source, destination, mode, all-epoch message count, transcript revision, file
+  choice and confirmed new frame ID. The shared transfer command rechecks a
+  native preview's revision while holding its workflow/agent lock and rejects
+  unconsumed queued turns. Its optional revision argument keeps WebView callers
+  compatible.
+- Move previews reuse the existing artifact plan and fingerprint. Lists identify
+  movable artifacts/files and retained shared/uploaded/changed/unavailable
+  entries; an unavailable file preview still permits transcript-only movement.
+  Files default off and reset after rereading or changing destination. Existing
+  file collision, stale fingerprint, recoverable file operation, archive,
+  exploration and branch restrictions remain authoritative in the host.
+- Confirmed moves retain the text draft at the exact new frame without sending;
+  staged attachments/references must be cleared because they belong to the
+  source project. Copy retains the original draft. Lost/malformed/wrong-scope
+  replies block further submissions in that sheet even after rereading or
+  changing destination; a persistent explanation remains after rereading. Closed,
+  cancelled and superseded reads or writes cannot navigate a different view.
+  Saving holds the sheet and immediate Escape closes its project picker first.
+- Retained artifacts or Runs can keep a deleted source frame as a lineage
+  tombstone. Added a separate live-frame lookup for conversation operations,
+  preserving raw ownership for lineage. Native reads/mutations, shared transfers
+  and both built-in/ACP turn paths reject stale source frames under their locks.
+  Regression checks cover moved conversations with retained artifacts and
+  deletion with/without retained Run lineage.
+- Sixteen targeted native checks passed (eleven new transfer tests and five
+  search checks). Two host checks cover source ownership/title, all context
+  epochs, saved events, stale revisions and queue exclusion; the shared DTO
+  fixture test passed. Seven WebView session-action/file-operation checks passed
+  after `npm ci`. Copy, move, retained files, file-preview failure, confirmed
+  results and uncertainty were rendered at 419 points in both locales/schemes;
+  representative final screenshots were inspected. Full Swift passed 467 tests
+  after final layout and fresh-preview title refinements. Formatting, wasm and
+  both generated resource/command-contract checks passed. The initial full Rust
+  gate passed 2643 tests; three new live-frame regression tests passed separately
+  and the full gate with those guards is running. Full Playwright passed 1022
+  tests with two existing optional-service skips and one homepage-loading
+  timeout before the activity-indicator assertions. All three indicator checks
+  passed on isolated rerun; no product or test changes were needed for that timeout.
+
+Conversation controls and search remain incomplete: session export, branch
+relationship navigation and project-file search still need implementation and
+verification. Later outcome groups remain open.

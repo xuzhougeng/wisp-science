@@ -373,6 +373,15 @@ final class NativeConversationModel: ObservableObject {
             }
         }
     }
+    /// Only text can follow a confirmed move: staged files and references still
+    /// belong to the source project, so the move entry point requires clearing
+    /// them first. Keep the source draft too; never dispatch it automatically.
+    func retainDraftForTransferredSession(_ result: NativeSessionTransferResult) {
+        guard result.mode == .move, result.project_id == projectID, result.session_id == sessionID,
+              result.frame_id != sessionID, attachments.isEmpty, references.isEmpty else { return }
+        drafts[result.frame_id] = draft
+        pause()
+    }
     func pause() {
         if let sessionID {
             drafts[sessionID] = draft

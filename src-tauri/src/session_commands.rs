@@ -736,6 +736,7 @@ pub(super) async fn transfer_session_to_project(
     mode: String,
     include_artifacts: Option<bool>,
     artifact_fingerprint: Option<String>,
+    expected_revision: Option<String>,
 ) -> Result<String, String> {
     let source = state.require_active(window.label())?;
     if target_project_id == source.id {
@@ -752,7 +753,7 @@ pub(super) async fn transfer_session_to_project(
     }
     let owner = state
         .store
-        .frame_project_id(&id)
+        .live_frame_project_id(&id)
         .await
         .map_err(|error| error.to_string())?;
     if owner.as_deref() != Some(source.id.as_str()) {
@@ -833,6 +834,25 @@ pub(super) async fn transfer_session_to_project(
             "Wait for the session to finish its turn, approval, or review before transferring it."
                 .into(),
         );
+    }
+
+    if let Some(runtime) = runtime.as_deref() {
+        crate::native_session_transfer::require_no_queue(runtime)?;
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    if state
+        .store
+        .live_frame_project_id(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(source.id.as_str())
+    {
+        return Err("Conversation no longer exists in the source project".into());
+    }
+    if let Some(expected) = expected_revision {
+        crate::native_session_transfer::require_revision(&state.store, &source.id, &id, &expected)
+            .await?;
     }
 
     let new_id = Uuid::new_v4().to_string();
@@ -2074,7 +2094,7 @@ async fn read_session_transcript_page(
     Ok(page)
 }
 
-async fn flush_session_events(
+pub(crate) async fn flush_session_events(
     writer: &StdMutex<Option<tokio::sync::mpsc::WeakUnboundedSender<SessionUiMessage>>>,
 ) -> Result<(), String> {
     let writer = writer

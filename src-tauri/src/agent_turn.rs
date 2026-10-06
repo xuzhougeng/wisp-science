@@ -9,6 +9,26 @@
 
 use super::*;
 
+/// Recheck after acquiring the turn lock so a queued turn cannot recreate a
+/// deleted conversation's runtime. Artifact and Run lineage may keep its frame
+/// as a tombstone even after the conversation has moved or been deleted.
+pub(crate) async fn require_live_turn_frame(
+    store: &Store,
+    frame_id: &str,
+    runtime_deleted: bool,
+) -> Result<(), String> {
+    if runtime_deleted
+        || store
+            .live_frame_project_id(frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none()
+    {
+        return Err("This session was deleted while the turn was queued.".into());
+    }
+    Ok(())
+}
+
 /// Where a user-visible turn originated. IM turns share the desktop approval
 /// UI but must not inherit an unattended Allow default for mutating tools.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -322,6 +342,7 @@ pub(crate) async fn send_message_inner(
     // run the turn in the owner project — never error out on a mismatch or,
     // worse, run tools in a stranger's workspace (#182, #194).
     if let Some(id) = session_id.as_deref().filter(|id| !id.is_empty()) {
+        require_live_turn_frame(&state.store, id, false).await?;
         state
             .store
             .require_unarchived_session(id)
@@ -430,6 +451,12 @@ pub(crate) async fn send_message_inner(
                 &owned_workflow
             }
         };
+        require_live_turn_frame(
+            &state.store,
+            &frame_id,
+            runtime.deleted.load(Ordering::SeqCst),
+        )
+        .await?;
         runtime.cancel.store(false, Ordering::SeqCst);
         let refs = references.as_deref().unwrap_or_default();
         let skills = active_skill_index(&state.store, &ap).await;
@@ -697,9 +724,7 @@ pub(crate) async fn send_message_inner(
     }
     let _progress_subscription =
         progress_observer_id.and_then(|id| channels::activate_progress_observer(id, &frame_id));
-    if rt.deleted.load(Ordering::SeqCst) {
-        return Err("This session was deleted while the turn was queued.".into());
-    }
+    require_live_turn_frame(&state.store, &frame_id, rt.deleted.load(Ordering::SeqCst)).await?;
     // Resolve all provider-dependent settings only after this workflow owns the
     // session. A queued follow-up may have been accepted before the previous
     // turn ended; reading its profile earlier would rebuild the invalidated
