@@ -1111,6 +1111,50 @@ mod tests {
     }
 
     #[test]
+    fn composer_helpers_reuse_global_preferences_and_full_specialist_contracts() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/composer-helpers.json"
+        ))
+        .unwrap();
+        let memory: crate::MemoryView = serde_json::from_value(fixture["memory"].clone()).unwrap();
+        assert_eq!(memory.project_id, "project-a");
+        assert!(memory.enabled);
+        let analysis: crate::AutoFailureAnalysisSettings =
+            serde_json::from_value(fixture["analysis"].clone()).unwrap();
+        assert_eq!(
+            analysis,
+            crate::AutoFailureAnalysisSettings {
+                enabled: true,
+                ..Default::default()
+            }
+        );
+        let specialists: Vec<crate::Specialist> =
+            serde_json::from_value(fixture["specialists"].clone()).unwrap();
+        assert_eq!(specialists[0].id, "reviewer");
+        assert_eq!(
+            specialists[0].skills.as_deref(),
+            Some(["synthetic-skill".into()].as_slice())
+        );
+        assert_eq!(
+            specialists[0].review_backend,
+            Some(crate::ReviewBackendConfig::http("chat-a"))
+        );
+        let models: Vec<crate::ModelProfile> =
+            serde_json::from_value(fixture["models"].clone()).unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .filter(|model| model.is_chat_model())
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["chat-a", "sibling"]
+        );
+        let agents: Vec<crate::AcpAgentProfile> =
+            serde_json::from_value(fixture["agents"].clone()).unwrap();
+        assert_eq!(agents[0].id, "agent-a");
+    }
+
+    #[test]
     fn run_review_contract_requires_explicit_destructive_confirmation() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-conversations/v1/run-review.json"

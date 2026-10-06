@@ -172,7 +172,28 @@ Chinese/English and normal/narrow windows, and verify the entire required outcom
   representative screenshots inspected. Generated-resource and formatting
   checks passed; final full regression still remains.
 
-Conversation controls and search remain incomplete:
-remaining global composer helpers and session
-transfer/import/export and project-file search still need implementation and
-verification. Later outcome groups remain open.
+### Increment 7: global composer helpers
+
+- Added a visibly global section for memory, automatic failure analysis and
+  reviewer backend using the existing shared commands/contracts. Range edits
+  preserve the enabled/other threshold values and reject values outside 1–100.
+- Added default HTTP/follow-session/configured chat/ACP reviewer choices. Exact
+  media IDs and explicitly configured image profiles are excluded. A pre-save
+  reread preserves concurrent persona edits and refuses a changed backend;
+  complete specialist fields are retained. Unknown results require a fresh read
+  without automatic replay. Closed/cancelled reads and late writes cannot update
+  another sheet or dispatch a reviewer write after navigation.
+- Fifteen targeted native checks passed (nine new helper tests plus six session
+  option tests), covering shared contracts, advertised choices, read-only and
+  stale state, unknown/malformed replies, duplicate writes, cancellation and
+  immediate Escape. The shared DTO fixture test passed. Options, global controls,
+  short-window scrolling and reviewer selection were rendered at 419 points in
+  Chinese/English and light/dark; representative screenshots were inspected.
+- Full Swift passed 438 tests with no failures. Formatting, wasm compilation and
+  generated-resource/command-contract checks passed; final full Rust/WebView
+  regression gates are running. The options sheet now scrolls and its nested
+  permission confirmation fits narrow windows.
+
+Conversation controls and search remain incomplete: session transfer/import/
+export and project-file search still need implementation and verification.
+Later outcome groups remain open.

@@ -15,6 +15,31 @@ states cannot save, while a live conversation can change options for its tools
 and delegation. Reading may be cancelled with Escape; saving keeps the sheet
 open. Immediate Escape closes only the permission confirmation before options.
 
+The same sheet has a separate **Global settings** section for memory, automatic
+failure analysis and the reviewer backend. These settings affect all projects
+and conversations. Failure analysis preserves its other values and bounds the
+failure-rate threshold and minimum-failure count to 1–100. Memory replies must
+identify the selected project and confirm the requested global preference;
+memory file contents are not displayed in the composer.
+
+Reviewer choices match the WebView: default HTTP model, follow the current
+conversation, configured chat models, or a configured ACP agent. Known media
+model IDs and explicit image profiles are excluded using the shared contract's
+exact model rules. Switching rereads the complete reviewer persona before
+saving and preserves its instructions, skills and connectors. A changed backend
+selection in another window requires a fresh read; unconfirmed replies disable
+further changes until explicit reconciliation. Saves are never replayed.
+The reviewer picker participates in the window Escape stack and closes before
+the options sheet. The options body scrolls in short/narrow windows.
+
+Manual smoke: open conversation options, scroll to Global settings in a narrow
+window, toggle memory, adjust failure thresholds and select each reviewer kind.
+Reopen the sheet in a second project to check the global preference. Open the
+reviewer picker and press Escape immediately; options must remain open. A second
+press closes options. Verify both locales and schemes. Concurrent full-persona
+writes still use the existing shared specialist command; its pre-save reread
+reduces stale updates but is not an atomic compare-and-swap across windows.
+
 Bound ACP conversations also expose their declared modes and configuration.
 The native decoder preserves the protocol's `frameId`, `configOptions`,
 `currentModeId` and `currentValue` keys. Select options include grouped choices;
