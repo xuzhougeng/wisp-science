@@ -75,6 +75,11 @@ pub(crate) struct QueuedItem {
 }
 
 impl SessionRuntime {
+    /// A queued follow-up, or a cut-in the last turn never consumed, which the
+    /// queue driver will run next.
+    pub(crate) fn has_queued_turns(&self) -> bool {
+        !self.queued.lock().unwrap().is_empty() || !self.queued_cutins.lock().unwrap().is_empty()
+    }
     pub(crate) fn new() -> Self {
         Self {
             agent: tokio::sync::Mutex::new(None),

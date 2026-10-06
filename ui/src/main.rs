@@ -3195,38 +3195,44 @@ fn App() -> impl IntoView {
         focus_composer();
         spawn_local(async move {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
-            if invoke_checked("rewind_session", arg).await.is_ok() {
-                if let Some(id) = sid.filter(|id| !id.is_empty()) {
-                    let loaded = invoke(
-                        "load_session",
-                        to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
-                    )
-                    .await;
-                    if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(loaded) {
-                        conversation_branches.update(|branches| {
-                            branches.insert(id.clone(), page.branches.clone());
+            // A refused rewind (queued turns, frozen branch, busy project) left
+            // the conversation intact: say why and reload it either way.
+            if let Err(error) = invoke_checked("rewind_session", arg).await {
+                show_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ));
+            }
+            if let Some(id) = sid.filter(|id| !id.is_empty()) {
+                let loaded = invoke(
+                    "load_session",
+                    to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
+                )
+                .await;
+                if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(loaded) {
+                    conversation_branches.update(|branches| {
+                        branches.insert(id.clone(), page.branches.clone());
+                    });
+                    active_branch_state.set(page.branch_state.clone());
+                    if page.archived {
+                        archived_sessions.update(|s| {
+                            s.insert(id.clone());
                         });
-                        active_branch_state.set(page.branch_state.clone());
-                        if page.archived {
-                            archived_sessions.update(|s| {
-                                s.insert(id.clone());
-                            });
-                        }
-                        let mut chats = page
-                            .items
-                            .into_iter()
-                            .map(LoadedItem::into_chat)
-                            .collect::<Vec<_>>();
-                        settle_question_cards(&mut chats);
-                        items.set(chats);
-                        context_epochs.set(page.context_epochs);
-                        head_epoch.set(page.head_epoch);
-                        in_context_from_user_index.set(page.in_context_from_user_index);
-                        model_view.set(false);
-                        context_view_items.set(Vec::new());
                     }
-                    refresh_session_history();
+                    let mut chats = page
+                        .items
+                        .into_iter()
+                        .map(LoadedItem::into_chat)
+                        .collect::<Vec<_>>();
+                    settle_question_cards(&mut chats);
+                    items.set(chats);
+                    context_epochs.set(page.context_epochs);
+                    head_epoch.set(page.head_epoch);
+                    in_context_from_user_index.set(page.in_context_from_user_index);
+                    model_view.set(false);
+                    context_view_items.set(Vec::new());
                 }
+                refresh_session_history();
             }
         });
     };

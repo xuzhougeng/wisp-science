@@ -573,8 +573,9 @@ async fn apply_prepared_archive(
     })
 }
 
-/// Shared by native ZIP and CLI imports after acquiring the project write guard.
-pub(crate) async fn lock_native_import_target(
+/// Every import that may update an existing conversation holds its workflow
+/// lock, so it never rewrites a running or queued conversation.
+pub(crate) async fn lock_import_target(
     state: &AppState,
     project: &str,
     existing: Option<&str>,
@@ -629,10 +630,37 @@ pub(crate) async fn lock_native_import_target(
         .clone()
         .try_lock_owned()
         .map_err(|_| "The imported conversation is busy")?;
-    if !rt.queued.lock().unwrap().is_empty() {
+    if rt.has_queued_turns() {
         return Err("Remove queued messages before updating this conversation".into());
     }
     Ok(Some((rt, guard)))
+}
+
+/// Apply a prepared archive into `project`; WebView and native imports share it.
+/// An updated conversation is locked meanwhile and reloads its agent afterwards.
+async fn import_prepared_archive(
+    state: &AppState,
+    project: &str,
+    root: &Path,
+    source: &str,
+    prepared: PreparedArchive,
+) -> Result<wisp_dto::native_session_import::ImportResult, String> {
+    crate::exploration_commands::require_writable_scope(
+        &state.store,
+        &wisp_store::StateScope::mainline(project),
+    )
+    .await?;
+    let existing = existing_import(&state.store, project, &prepared.parsed.session_id).await?;
+    let locked = lock_import_target(state, project, existing.as_deref()).await?;
+    let model = models::active_profile_id(&state.store).await;
+    let result =
+        apply_prepared_archive(&state.store, project, root, &model, source, prepared).await?;
+    if let Some((rt, _workflow)) = &locked {
+        *rt.agent.lock().await = None;
+        rt.sync_last_seq_from_store(&state.store, &result.frame_id)
+            .await?;
+    }
+    Ok(result)
 }
 
 /// The explicit, regular destination project of a native import request.
@@ -692,29 +720,9 @@ pub(crate) async fn execute_native(
             if !root.is_absolute() || !root.is_dir() {
                 return Err("The target workspace directory is unavailable".into());
             }
-            crate::exploration_commands::require_writable_scope(
-                &state.store,
-                &wisp_store::StateScope::mainline(project),
-            )
-            .await?;
-            let existing =
-                existing_import(&state.store, project, &prepared.parsed.session_id).await?;
-            let locked = lock_native_import_target(state, project, existing.as_deref()).await?;
-            let model = models::active_profile_id(&state.store).await;
-            let result = apply_prepared_archive(
-                &state.store,
-                project,
-                &root,
-                &model,
-                &input.archive_path,
-                prepared,
-            )
-            .await?;
-            if let Some((rt, _workflow)) = &locked {
-                *rt.agent.lock().await = None;
-                rt.sync_last_seq_from_store(&state.store, &result.frame_id)
+            let result =
+                import_prepared_archive(state, project, &root, &input.archive_path, prepared)
                     .await?;
-            }
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         _ => Err("Unsupported native session import command".into()),
@@ -744,8 +752,8 @@ pub(super) async fn import_session_archive(
     let source = picked.to_string();
     let prepared = prepare_archive(&source).await?;
     let ap = state.require_active(window.label())?;
-    let model = models::active_profile_id(&state.store).await;
-    apply_prepared_archive(&state.store, &ap.id, &ap.root, &model, &source, prepared)
+    let _project_activity = state.begin_project_activity(&ap.id)?;
+    import_prepared_archive(&state, &ap.id, &ap.root, &source, prepared)
         .await
         .map(Some)
 }

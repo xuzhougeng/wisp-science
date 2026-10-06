@@ -1146,6 +1146,23 @@ pub(super) async fn rewind_session(
             .active_frame(window.label())
             .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
+    // Wait for a running turn to finish persisting: truncating under it would
+    // leave its later rows (tool results) orphaned past the rewind point.
+    let rt = state.session_runtime(&frame_id).await;
+    let _workflow = rt.workflow.clone().lock_owned().await;
+    if rt.has_queued_turns() {
+        return Err("Remove queued messages before rewinding this conversation".into());
+    }
+    rewind_locked(&state, &frame_id, user_index).await
+}
+
+/// The caller holds the conversation's workflow lock.
+pub(crate) async fn rewind_locked(
+    state: &AppState,
+    frame_id: &str,
+    user_index: usize,
+) -> Result<(), String> {
+    let frame_id = frame_id.to_owned();
     let project_id = state
         .store
         .frame_project_id(&frame_id)

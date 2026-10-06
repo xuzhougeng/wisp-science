@@ -12,7 +12,7 @@ fn rewind_guard(
         .clone()
         .try_lock_owned()
         .map_err(|_| "Wait for this conversation to finish before rewinding")?;
-    if !runtime.queued.lock().unwrap().is_empty() {
+    if runtime.has_queued_turns() {
         return Err("Remove queued messages before rewinding this conversation".into());
     }
     Ok(guard)
@@ -66,9 +66,9 @@ pub(crate) async fn dispatch(
     let session = &request.session_id;
     crate::native_conversations::require_owner(&state.store, project, session).await?;
     crate::native_conversations::require_mutable_session(&state.store, session).await?;
-    // The legacy rewind command does not take the workflow lock. Claim it
-    // before reading the confirmation revision so a WebView send or queue
-    // driver cannot append a new turn between validation and truncation.
+    // Claim the workflow lock before reading the confirmation revision so a
+    // WebView send or queue driver cannot append a new turn between
+    // validation and truncation.
     let _rewind_workflow = if matches!(request.action, HistoryAction::Rewind) {
         Some(rewind_guard(&*state.session_runtime(session).await)?)
     } else {
@@ -96,7 +96,11 @@ pub(crate) async fn dispatch(
             args["title"] = json!(outline[index].1);
             "branch_session"
         }
-        HistoryAction::Rewind => "rewind_session",
+        HistoryAction::Rewind => {
+            // The WebView command would wait on the workflow lock held above.
+            crate::session_commands::rewind_locked(&state, session, index).await?;
+            return Ok(json!({"session_id":session,"target":request.target,"result":null}));
+        }
         HistoryAction::UndoPreview => "preview_turn_undo",
         HistoryAction::Undo => "undo_turn",
         HistoryAction::Review => "review_session",
@@ -126,6 +130,17 @@ mod tests {
         let running = runtime.workflow.clone().lock_owned().await;
         assert!(rewind_guard(&runtime).is_err());
         drop(running);
+        runtime.queued_cutins.lock().unwrap().push((
+            1,
+            crate::QueuedItem {
+                id: 9,
+                message: "unconsumed cut-in".into(),
+                attachments: vec![],
+                references: vec![],
+            },
+        ));
+        assert!(rewind_guard(&runtime).is_err());
+        runtime.queued_cutins.lock().unwrap().clear();
         let rewinding = rewind_guard(&runtime).unwrap();
         assert!(runtime.workflow.try_lock().is_err());
         drop(rewinding);

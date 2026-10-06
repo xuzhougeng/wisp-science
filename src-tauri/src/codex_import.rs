@@ -1474,6 +1474,40 @@ struct ImportResult {
     last_active_at_ms: i64,
 }
 
+/// One source into `project`; WebView and native imports share it. Updating an
+/// existing conversation holds its workflow lock and reloads its agent after.
+async fn import_jsonl_locked(
+    state: &AppState,
+    provider: ImportProvider,
+    project: &str,
+    model: &str,
+    source_path: &str,
+    source_session_id: &str,
+    jsonl: &str,
+) -> Result<ImportResult, String> {
+    crate::exploration_commands::require_writable_scope(
+        &state.store,
+        &wisp_store::StateScope::mainline(project),
+    )
+    .await?;
+    let existing = existing_import(
+        &state.store,
+        project,
+        &provider.import_key(source_session_id),
+    )
+    .await?;
+    let locked =
+        crate::session_import::lock_import_target(state, project, existing.as_deref()).await?;
+    let result =
+        import_session_jsonl(provider, &state.store, project, model, source_path, jsonl).await?;
+    if let Some((rt, _workflow)) = &locked {
+        *rt.agent.lock().await = None;
+        rt.sync_last_seq_from_store(&state.store, &result.frame_id)
+            .await?;
+    }
+    Ok(result)
+}
+
 async fn import_session_jsonl(
     provider: ImportProvider,
     store: &Store,
@@ -1831,12 +1865,14 @@ async fn import_sessions(
         };
         let outcome = match loaded {
             Ok(jsonl) => {
-                import_session_jsonl(
+                let source_session_id = parse_jsonl(provider, &jsonl).session_id;
+                import_jsonl_locked(
+                    &state,
                     provider,
-                    &state.store,
                     &ap.id,
                     &model_id,
                     &source_path,
+                    &source_session_id,
                     &jsonl,
                 )
                 .await
@@ -2074,37 +2110,22 @@ pub(crate) async fn execute_native(
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("Destination project not found")?;
-            crate::exploration_commands::require_writable_scope(
-                &state.store,
-                &wisp_store::StateScope::mainline(project),
-            )
-            .await?;
-            let existing = existing_import(
-                &state.store,
-                project,
-                &provider.import_key(&input.source_session_id),
-            )
-            .await?;
-            let locked = crate::session_import::lock_native_import_target(
-                state,
-                project,
-                existing.as_deref(),
-            )
-            .await?;
             let model = super::models::active_profile_id(&state.store).await;
             let path = if input.context_id == "local" {
                 input.path.clone()
             } else {
                 format!("{}:{}", input.context_id, input.path)
             };
-            let result =
-                import_session_jsonl(provider, &state.store, project, &model, &path, &jsonl)
-                    .await?;
-            if let Some((rt, _workflow)) = &locked {
-                *rt.agent.lock().await = None;
-                rt.sync_last_seq_from_store(&state.store, &result.frame_id)
-                    .await?;
-            }
+            let result = import_jsonl_locked(
+                state,
+                provider,
+                project,
+                &model,
+                &path,
+                &input.source_session_id,
+                &jsonl,
+            )
+            .await?;
             let _ = state
                 .store
                 .mark_external_session_cache_synced(
