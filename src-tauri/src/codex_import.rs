@@ -1356,17 +1356,24 @@ async fn list_candidates(
     project: &str,
     candidates: Vec<SessionCandidate>,
 ) -> Result<Vec<ExternalSessionInfo>, String> {
+    let imports = store
+        .codex_imports_in_project(project)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut out = vec![];
     for candidate in candidates {
         let import_key = provider.import_key(&candidate.metadata.session_id);
-        let state = match existing_import(store, project, &import_key).await? {
-            Some(frame_id) => {
-                let stored = store
-                    .message_count(&frame_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+        // Same precedence as `existing_import`: project-scoped key, then legacy.
+        let state = match imports
+            .get(&crate::session_import::project_import_key(
+                project,
+                &import_key,
+            ))
+            .or_else(|| imports.get(&import_key))
+        {
+            Some((_, stored)) => {
                 if candidate.changed_since_import
-                    || candidate.metadata.message_count as i64 > stored
+                    || candidate.metadata.message_count as i64 > *stored
                 {
                     "updatable"
                 } else {
