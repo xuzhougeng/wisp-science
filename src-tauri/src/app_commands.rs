@@ -530,6 +530,7 @@ fn discover_local_paths(
         ("npm_executable", PythonEnv::find_npm()),
         ("sci_executable", PythonEnv::find_sci()),
         ("pixi_executable", PythonEnv::find_pixi()),
+        ("cua_driver_executable", PythonEnv::find_cua_driver()),
     ]
     .into_iter()
     .filter_map(|(name, path)| {
