@@ -1983,6 +1983,24 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "channels.device.unspecified_ipv4") => Some("0.0.0.0 is not allowed. Choose one specific IPv4 address."),
         (Locale::En, "channels.device.invalid_port") => Some("Port must be between 1 and 65535."),
         (Locale::En, "channels.device.security") => Some("StickS3 can only read the minimal pet state and request ping, focus-session, or acknowledge. It cannot submit prompts, run tools or shell commands, read SQLite, or approve actions."),
+        (Locale::En, "channels.remote.title") => Some("Remote web access"),
+        (Locale::En, "channels.remote.subtitle") => Some("Use this Wisp from a phone or browser through your own relay"),
+        (Locale::En, "channels.remote.heading") => Some("Open this Wisp in a browser"),
+        (Locale::En, "channels.remote.hint") => Some("Wisp dials out to your self-hosted wisp-relay; no inbound port is opened. The relay only forwards encrypted frames. Anyone with the link or code can use this computer's projects, so keep it to yourself."),
+        (Locale::En, "channels.remote.toggle") => Some("Enable remote web access"),
+        (Locale::En, "channels.remote.relay_url") => Some("Relay server URL"),
+        (Locale::En, "channels.remote.token") => Some("Relay access token"),
+        (Locale::En, "channels.remote.token_placeholder") => Some("The relay's WISP_RELAY_TOKEN"),
+        (Locale::En, "channels.remote.code") => Some("Connection code"),
+        (Locale::En, "channels.remote.copy_link") => Some("Copy link"),
+        (Locale::En, "channels.remote.copy_code") => Some("Copy code"),
+        (Locale::En, "channels.remote.reset") => Some("Reset code"),
+        (Locale::En, "channels.remote.copied") => Some("Copied"),
+        (Locale::En, "channels.remote.reset_done") => Some("New code generated. Old links and connected browsers no longer work."),
+        (Locale::En, "channels.remote.clients") => Some("Browsers connected: {n}"),
+        (Locale::En, "channels.remote.security") => Some("Remotely started turns always ask before writing files, editing or running commands. Terminal input, kernel execution and file writes are not available remotely. Reset the code to disconnect every browser."),
+        (Locale::En, "err.remote_relay") => Some("Enter the relay server URL and access token before enabling remote access."),
+        (Locale::En, "err.relay_https") => Some("The relay URL must use HTTPS (HTTP is allowed only for localhost)."),
         (Locale::En, "channels.state.stopped") => Some("Stopped"),
         (Locale::En, "channels.state.connecting") => Some("Connecting…"),
         (Locale::En, "channels.state.running") => Some("Running"),
@@ -5036,6 +5054,24 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "channels.device.unspecified_ipv4") => Some("不允许使用 0.0.0.0，请选择一个具体 IPv4 地址。"),
         (Locale::Zh, "channels.device.invalid_port") => Some("端口必须在 1 到 65535 之间。"),
         (Locale::Zh, "channels.device.security") => Some("StickS3 只能读取最小化宠物状态，并请求 ping、聚焦会话或确认已读；不能提交 Prompt、执行工具或 shell、读取 SQLite，也不能批准操作。"),
+        (Locale::Zh, "channels.remote.title") => Some("网页远程访问"),
+        (Locale::Zh, "channels.remote.subtitle") => Some("通过自建中继，在手机或浏览器中使用这台电脑上的 Wisp"),
+        (Locale::Zh, "channels.remote.heading") => Some("在浏览器中打开这台电脑上的 Wisp"),
+        (Locale::Zh, "channels.remote.hint") => Some("Wisp 主动连接你自建的 wisp-relay，不开放任何入站端口；中继只转发加密数据。拿到链接或联机码的人可以使用这台电脑上的项目，请只留给自己。"),
+        (Locale::Zh, "channels.remote.toggle") => Some("启用网页远程访问"),
+        (Locale::Zh, "channels.remote.relay_url") => Some("中继服务器地址"),
+        (Locale::Zh, "channels.remote.token") => Some("中继访问令牌"),
+        (Locale::Zh, "channels.remote.token_placeholder") => Some("中继的 WISP_RELAY_TOKEN"),
+        (Locale::Zh, "channels.remote.code") => Some("联机码"),
+        (Locale::Zh, "channels.remote.copy_link") => Some("复制链接"),
+        (Locale::Zh, "channels.remote.copy_code") => Some("复制联机码"),
+        (Locale::Zh, "channels.remote.reset") => Some("重置联机码"),
+        (Locale::Zh, "channels.remote.copied") => Some("已复制"),
+        (Locale::Zh, "channels.remote.reset_done") => Some("已生成新联机码，旧链接和已连接的网页都会失效。"),
+        (Locale::Zh, "channels.remote.clients") => Some("已连接的网页：{n}"),
+        (Locale::Zh, "channels.remote.security") => Some("远程发起的回合中，写文件、改文件和运行命令都必须先批准。远程不能使用终端输入、内核执行和文件写入。重置联机码会断开所有网页。"),
+        (Locale::Zh, "err.remote_relay") => Some("启用前请先填写中继服务器地址与访问令牌。"),
+        (Locale::Zh, "err.relay_https") => Some("中继地址必须使用 HTTPS（仅 localhost 允许 HTTP）。"),
         (Locale::Zh, "channels.state.stopped") => Some("已停止"),
         (Locale::Zh, "channels.state.connecting") => Some("连接中…"),
         (Locale::Zh, "channels.state.running") => Some("运行中"),
@@ -6779,6 +6815,12 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             t(locale, "err.update_install_busy")
         }
         "Configure a sync relay URL in Settings first." => t(locale, "err.sync_relay_url"),
+        "Enter the relay server URL and access token before enabling remote access." => {
+            t(locale, "err.remote_relay")
+        }
+        "relay URL must use HTTPS (HTTP is allowed only for localhost)" => {
+            t(locale, "err.relay_https")
+        }
         "Configure the relay token in Settings before synchronizing." => {
             t(locale, "err.sync_relay_token")
         }

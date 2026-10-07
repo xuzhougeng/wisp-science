@@ -18,9 +18,36 @@ use wisp_dto::native_settings::{HostDescriptor, Request, Response, COMMANDS, SCH
 #[derive(Clone)]
 pub(crate) struct Broker {
     pub(crate) app: tauri::AppHandle,
-    token: String,
     pub(crate) conversations: Arc<crate::native_conversations::Conversations>,
     contexts: Arc<Mutex<HashMap<Option<String>, String>>>,
+    /// Stamped by the connection, never read from a request: true for the
+    /// remote web tunnel, whose turns run with IM-style forced Ask.
+    pub(crate) remote: bool,
+}
+
+/// The one broker shared by the loopback native host and the remote tunnel,
+/// so both see the same conversation records and hidden command contexts.
+pub(crate) fn broker(app: &tauri::AppHandle) -> Broker {
+    if let Some(broker) = app.try_state::<Broker>() {
+        return broker.inner().clone();
+    }
+    let broker = Broker {
+        app: app.clone(),
+        conversations: Arc::new(crate::native_conversations::Conversations::default()),
+        contexts: Default::default(),
+        remote: false,
+    };
+    if app.manage(broker.clone()) {
+        app.manage(broker.conversations.clone());
+    }
+    app.state::<Broker>().inner().clone()
+}
+
+pub(crate) fn remote_broker(app: &tauri::AppHandle) -> Broker {
+    Broker {
+        remote: true,
+        ..broker(app)
+    }
 }
 
 pub(crate) fn requested(args: impl IntoIterator<Item = String>) -> bool {
@@ -78,17 +105,10 @@ pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
     std::fs::rename(&staging, root.join("native-settings.json")).map_err(|e| e.to_string())?;
-    let broker = Broker {
-        app: app.clone(),
-        token,
-        conversations: Arc::new(crate::native_conversations::Conversations::default()),
-        contexts: Default::default(),
-    };
-    app.manage(broker.conversations.clone());
     let router = Router::new()
         .route("/invoke", post(invoke))
         .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
-        .with_state(broker);
+        .with_state((broker(app), Arc::<str>::from(token)));
     app.manage(descriptor);
     tauri::async_runtime::spawn(async move {
         if let Ok(listener) = tokio::net::TcpListener::from_std(listener) {
@@ -132,11 +152,11 @@ fn authorize(headers: &HeaderMap, expected: &str) -> bool {
 }
 
 async fn invoke(
-    State(broker): State<Broker>,
+    State((broker, token)): State<(Broker, Arc<str>)>,
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Result<Json<Response>, StatusCode> {
-    if !authorize(&headers, &broker.token) {
+    if !authorize(&headers, &token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     let result = dispatch(&broker, &request).await;
@@ -148,7 +168,7 @@ async fn invoke(
     }))
 }
 
-async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
+pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     if request.schema != SCHEMA || request.id.trim().is_empty() || !request.args.is_object() {
         return Err("Invalid native settings request".into());
     }
@@ -274,13 +294,12 @@ async fn dispatch(broker: &Broker, request: &Request) -> Result<Value, String> {
     .await
 }
 
-pub(crate) async fn invoke_command(
+/// Hidden per-project window whose label scopes commands to that project.
+pub(crate) async fn context_label(
     broker: &Broker,
     project_id: Option<String>,
-    command: &str,
-    args: Value,
-) -> Result<Value, String> {
-    let label = {
+) -> Result<String, String> {
+    Ok({
         let mut contexts = broker.contexts.lock().await;
         if let Some(label) = contexts.get(&project_id) {
             label.clone()
@@ -332,7 +351,16 @@ pub(crate) async fn invoke_command(
             contexts.insert(project_id.clone(), label.clone());
             label
         }
-    };
+    })
+}
+
+pub(crate) async fn invoke_command(
+    broker: &Broker,
+    project_id: Option<String>,
+    command: &str,
+    args: Value,
+) -> Result<Value, String> {
+    let label = context_label(broker, project_id).await?;
     let webview = broker
         .app
         .get_webview(&label)

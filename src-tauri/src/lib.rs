@@ -7408,6 +7408,8 @@ pub fn run() {
             channels::channels_status,
             channels::assistant_weixin_status,
             channels::set_feishu_channel,
+            channels::remote::set_remote_access,
+            channels::remote::reset_remote_access_code,
             channels::feishu_bind_start,
             channels::feishu_bind_poll,
             channels::feishu_bind_cancel,

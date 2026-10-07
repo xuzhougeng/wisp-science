@@ -17094,6 +17094,47 @@ test("StickS3 listener errors remain visible without breaking settings", async (
   await expect(page.getByTestId("sticks3-channel-card")).toBeVisible();
 });
 
+test("remote web access needs a relay, then shows the connection link and resets the code", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Remote Access");
+  // The overview toggle stays disabled until a relay URL and token are saved.
+  await expect(page.getByTestId("remote-enabled")).toBeDisabled();
+  await page.getByTestId("remote-channel-row").click();
+  await expect(page.getByTestId("remote-channel-card")).toBeVisible();
+  await expect(page.getByTestId("remote-code")).toHaveCount(0);
+
+  await page.getByTestId("remote-relay-url").fill("http://relay.example.test");
+  await page.getByTestId("remote-relay-token").fill("relay-secret");
+  // A rejected save leaves the switch off.
+  await page.getByTestId("remote-enabled-detail").click();
+  await expect(page.getByText("The relay URL must use HTTPS (HTTP is allowed only for localhost).")).toBeVisible();
+  await expect(page.getByTestId("remote-enabled-detail")).not.toBeChecked();
+
+  await page.getByTestId("remote-relay-url").fill("https://relay.example.test");
+  await page.getByTestId("remote-enabled-detail").check();
+  await expect.poll(() => lastInvokeArgs(page, "set_remote_access")).toMatchObject({
+    enabled: true,
+    relayUrl: "https://relay.example.test",
+    relayToken: "relay-secret",
+  });
+  await expect(page.getByTestId("remote-detail-state")).toHaveText("Running");
+  // The token never comes back to the field after saving.
+  await expect(page.getByTestId("remote-relay-token")).toHaveValue("");
+  await expect(page.getByTestId("remote-code")).toHaveText("0000-0203-0405-0607-0809-0a0b-0c0d-0e0f");
+  await expect(page.getByTestId("remote-link")).toHaveText(
+    "https://relay.example.test/remote#0000-0203-0405-0607-0809-0a0b-0c0d-0e0f",
+  );
+
+  await page.getByTestId("remote-reset-code").click();
+  await expect(page.getByTestId("remote-code")).toHaveText("0001-0203-0405-0607-0809-0a0b-0c0d-0e0f");
+
+  await page.locator(".settings-head-back").click();
+  await expect(page.getByTestId("remote-enabled")).toBeChecked();
+  await page.getByTestId("remote-channel-row").locator(".toggle-track").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_remote_access")).toMatchObject({ enabled: false });
+  await expect(page.getByTestId("remote-state")).toHaveText("Stopped");
+});
+
 test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescanning", async ({ page }) => {
   await enterApp(page);
   await expect(page.locator(".sidebar").getByRole("button", { name: "Import from Codex" })).toHaveCount(0);

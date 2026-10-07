@@ -417,6 +417,36 @@ async fn running(broker: &Broker, session: &str) -> bool {
         .await
         .contains(session)
 }
+/// Remote web turns run like IM turns (#1460): the IM origin forces Ask for
+/// mutating tools, so a phone cannot inherit an unattended Allow default.
+async fn remote_turn(
+    broker: &Broker,
+    project: &str,
+    session: &str,
+    message: &str,
+    references: &[wisp_dto::ComposerReferenceArg],
+) -> Result<Value, String> {
+    let label = crate::native_settings::context_label(broker, Some(project.to_owned())).await?;
+    crate::send_message_inner(
+        broker.app.state::<crate::AppState>().inner(),
+        broker.app.clone(),
+        &label,
+        Some(session.to_owned()),
+        message.to_owned(),
+        None,
+        Some(references.to_vec()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        crate::TurnOrigin::Im,
+    )
+    .await
+    .map(Value::String)
+}
+
 pub(crate) async fn call(
     broker: &Broker,
     project: &str,
@@ -1187,6 +1217,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             Ok(json!({"queued": true, "message": text, "id":id.to_string()}))
         }
         "native_conversation_send" => {
+            if broker.remote && acp_agent_id.is_some() {
+                return Err("ACP conversations can only be continued on the desktop".into());
+            }
             let mut args: dto::SendRequest = decode(&request.args)?;
             args.attachments.retain(|path| !path.trim().is_empty());
             args.message = dto::message_with_attachments(&args.message, &args.attachments);
@@ -1201,18 +1234,25 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let acp_agent_id = acp_agent_id.clone();
                 let references = args.references.clone();
                 tauri::async_runtime::spawn(async move {
-                    let mut turn = Box::pin(call(
-                        &broker,
-                        &project,
-                        "send_message",
-                        turn_arguments(
-                            &session,
-                            &message,
-                            &attachments,
-                            acp_agent_id.as_deref(),
-                            &references,
-                        ),
-                    ));
+                    let mut turn = Box::pin(async {
+                        if broker.remote {
+                            remote_turn(&broker, &project, &session, &message, &references).await
+                        } else {
+                            call(
+                                &broker,
+                                &project,
+                                "send_message",
+                                turn_arguments(
+                                    &session,
+                                    &message,
+                                    &attachments,
+                                    acp_agent_id.as_deref(),
+                                    &references,
+                                ),
+                            )
+                            .await
+                        }
+                    });
                     // The Stop request can precede creation of SessionRuntime.
                     // Keep cancelling until the turn settles, without dropping
                     // its persistence/cleanup future or affecting other sessions.

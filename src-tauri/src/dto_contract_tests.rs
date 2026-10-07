@@ -623,8 +623,16 @@ fn channels_status_contract_includes_feishu_owner() {
             has_token: false,
             runtime: crate::device_bridge::DeviceBridgeRuntimeStatus::default(),
         },
+        remote: wisp_dto::RemoteAccessStatus {
+            enabled: true,
+            state: "running".into(),
+            link: Some("https://relay.example.test/remote#0000".into()),
+            clients: 2,
+            ..Default::default()
+        },
     };
     let dto: wisp_dto::ChannelsStatus = roundtrip(&backend);
+    assert_eq!(dto.remote, backend.remote);
     assert_eq!(dto.feishu_owner_open_id, "ou_owner");
     assert_eq!(dto.feishu_pending_owner_open_id, "ou_pending");
     assert_eq!(dto.feishu_app_id, "cli_1");

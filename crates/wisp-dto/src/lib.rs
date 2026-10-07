@@ -2133,6 +2133,33 @@ pub struct ChannelsStatus {
     pub weixin_detail: String,
     #[serde(default)]
     pub device: DeviceBridgeStatus,
+    #[serde(default)]
+    pub remote: RemoteAccessStatus,
+}
+
+/// Remote web access (#1460): the desktop dials out to a self-hosted relay
+/// and browsers open `link`, whose fragment carries the connection code.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoteAccessStatus {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub relay_url: String,
+    #[serde(default)]
+    pub has_token: bool,
+    /// "stopped" | "connecting" | "running" | "error"
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub detail: String,
+    /// Grouped connection code, present once one was generated.
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub link: Option<String>,
+    /// Browsers currently connected through the relay.
+    #[serde(default)]
+    pub clients: u32,
 }
 
 #[derive(Deserialize, Clone)]
