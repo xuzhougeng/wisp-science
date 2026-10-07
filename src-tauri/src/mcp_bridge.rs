@@ -1380,7 +1380,7 @@ impl ToolEnv for BridgeToolEnv {
     async fn emit(&self, _event: ToolEvent) {}
 }
 
-fn sanitize_tool_part(raw: &str) -> String {
+pub(crate) fn sanitize_tool_part(raw: &str) -> String {
     let mut out = String::new();
     for ch in raw.chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {

@@ -5703,8 +5703,14 @@ async fn finish_custom_mcp_wiring(
     for (_, name, plugin_id, connector_id, require_approval, res) in results {
         match res {
             Ok(client) => {
-                match register_mcp_with_approval(registry, client, &connector_id, require_approval)
-                    .await
+                match register_mcp_with_approval(
+                    registry,
+                    client,
+                    &connector_id,
+                    &name,
+                    require_approval,
+                )
+                .await
                 {
                     Ok(names) => result.added_tools.extend(names),
                     Err(error) => {
@@ -5740,6 +5746,7 @@ async fn register_mcp_with_approval(
     registry: &mut wisp_tools::Registry,
     client: std::sync::Arc<wisp_mcp::McpClient>,
     connector_id: &str,
+    connector_name: &str,
     require_approval: bool,
 ) -> Result<Vec<String>, String> {
     if connector_id.trim().is_empty() {
@@ -5749,11 +5756,25 @@ async fn register_mcp_with_approval(
     }
     match client.tools_list().await {
         Ok(tools) => {
-            let collisions: Vec<_> = tools
-                .iter()
-                .filter(|tool| tool.visible_to_model() && registry.get(&tool.name).is_some())
-                .map(|tool| tool.name.clone())
-                .collect();
+            // A name already taken (built-in `search`/`fetch`, or another
+            // connector) is exposed as `<connector>__<tool>` instead of
+            // dropping the whole connector.
+            let prefix = mcp_bridge::sanitize_tool_part(connector_name);
+            let taken = |names: &[String], name: &str| {
+                registry.get(name).is_some() || names.iter().any(|n| n == name)
+            };
+            let mut names = Vec::new();
+            let mut collisions = Vec::new();
+            for tool in tools.iter().filter(|tool| tool.visible_to_model()) {
+                let alias = format!("{prefix}__{}", tool.name);
+                if !taken(&names, &tool.name) {
+                    names.push(tool.name.clone());
+                } else if !taken(&names, &alias) {
+                    names.push(alias);
+                } else {
+                    collisions.push(tool.name.clone());
+                }
+            }
             if !collisions.is_empty() {
                 return Err(format!("tool name collision: {}", collisions.join(", ")));
             }
@@ -5761,12 +5782,8 @@ async fn register_mcp_with_approval(
             // checked below when adding tools to the agent registry.
             client.mark_catalog_current();
             let catalog = std::sync::Arc::new(tools);
-            let mut names = Vec::new();
-            for t in catalog.iter() {
-                if !t.visible_to_model() {
-                    continue;
-                }
-                names.push(t.name.clone());
+            let visible = catalog.iter().filter(|t| t.visible_to_model());
+            for (t, name) in visible.zip(&names) {
                 let tool = if require_approval {
                     wisp_mcp::McpTool::with_catalog_requiring_approval(
                         t.clone(),
@@ -5782,7 +5799,7 @@ async fn register_mcp_with_approval(
                         std::sync::Arc::clone(&catalog),
                     )
                 };
-                registry.add(Box::new(tool));
+                registry.add(Box::new(tool.renamed(name.as_str())));
             }
             // With a TypeSafe key, a Cua Driver connection also gets the
             // Jev-driven autopilot; without one the agent drives Cua Driver.
