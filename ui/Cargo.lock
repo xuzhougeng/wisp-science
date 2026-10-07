@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-dto"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-ui"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "console_error_panic_hook",
  "futures-channel",
