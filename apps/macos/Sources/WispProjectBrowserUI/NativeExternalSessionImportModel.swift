@@ -74,7 +74,7 @@ import WispProjectBrowser
         await load(refresh: false)
     }
     func load(refresh: Bool) async {
-        guard !closed, !importing, projects.contains(project), sources.contains(where: { $0.id == context }) else { return }
+        guard !closed, !importing, projects.contains(project), sources.contains(where: { $0.id == self.context }) else { return }
         let current = UUID(); listRead = current; let project = project, provider = provider, context = context
         clearPreview(); loading = true; items = []; results = [:]; itemErrors = [:]; page = 0; error = nil
         defer { if !closed, listRead == current { loading = false } }
