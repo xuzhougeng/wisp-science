@@ -645,8 +645,11 @@ if (Test-Path -LiteralPath $submitted) {{
 }}
 $commandPath = Join-Path $workdir 'command.ps1'
 $supervisorPath = Join-Path $workdir 'supervisor.ps1'
-[System.IO.File]::WriteAllText($commandPath, [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{command_b64}')))
-[System.IO.File]::WriteAllText($supervisorPath, [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{supervisor_b64}')))
+# Windows PowerShell 5.1 reads BOM-less .ps1 files as the ANSI code page, which
+# corrupts non-ASCII paths (e.g. Chinese project dirs); write a UTF-8 BOM.
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+[System.IO.File]::WriteAllText($commandPath, [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{command_b64}')), $utf8Bom)
+[System.IO.File]::WriteAllText($supervisorPath, [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{supervisor_b64}')), $utf8Bom)
 Write-Output '__WISP_PREPARED__'
 "#,
         workdir_win = workdir_win.replace('\'', "''"),

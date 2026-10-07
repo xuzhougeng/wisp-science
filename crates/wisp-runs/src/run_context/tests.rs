@@ -2545,6 +2545,10 @@ fn windows_control_payloads_contain_process_identity_and_timeout() {
     let prepare = prepare_payload(&remote);
     assert!(prepare.contains("FromBase64String"));
     assert!(prepare.contains("__WISP_PREPARED__"));
+    // Windows PowerShell 5.1 reads BOM-less .ps1 as ANSI and mangles non-ASCII
+    // (e.g. Chinese) paths, so both scripts must be written with a UTF-8 BOM.
+    assert!(prepare.contains("UTF8Encoding($true)"), "{prepare}");
+    assert_eq!(prepare.matches(", $utf8Bom)").count(), 2, "{prepare}");
     let supervisor = String::from_utf8(
         base64::engine::general_purpose::STANDARD
             .decode(
