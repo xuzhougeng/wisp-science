@@ -3624,3 +3624,43 @@ async fn mcp_app_default_allows_calls_longer_than_old_limits() {
     tokio::time::advance(std::time::Duration::from_secs(10)).await;
     assert!(task.await.unwrap().is_ok());
 }
+
+#[tokio::test]
+async fn mcp_tool_named_like_a_builtin_is_aliased_not_dropped() {
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let result = if request["method"] == "tools/list" {
+                    serde_json::json!({"tools": [
+                        {"name": "search", "description": "", "inputSchema": {"type": "object"}},
+                        {"name": "write_note", "description": "", "inputSchema": {"type": "object"}}
+                    ]})
+                } else {
+                    serde_json::json!({"protocolVersion": "2024-11-05", "capabilities": {},
+                                       "serverInfo": {"name": "fixture", "version": "1"}})
+                };
+                axum::Json(
+                    serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result}),
+                )
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let service = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Arc::new(
+        wisp_mcp::McpClient::connect_http_with_proxy(&url, &[], "none")
+            .await
+            .unwrap(),
+    );
+    let mut registry = wisp_tools::Registry::builtins();
+    let names =
+        super::register_mcp_with_approval(&mut registry, client, "bm", "Basic Memory", false)
+            .await
+            .unwrap();
+    assert_eq!(names, ["Basic_Memory__search", "write_note"]);
+    assert!(registry.get("Basic_Memory__search").unwrap().defer_schema());
+    assert!(!registry.get("search").unwrap().defer_schema());
+    service.abort();
+}

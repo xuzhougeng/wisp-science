@@ -67,6 +67,18 @@ impl McpTool {
         wrapped
     }
 
+    /// Expose the tool under another registry name (e.g. when the server's
+    /// name collides with a built-in). Calls still use the server's name.
+    pub fn renamed(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self.schema = ToolSchema::new(
+            &self.name,
+            &self.remote.description,
+            self.remote.input_schema.clone(),
+        );
+        self
+    }
+
     async fn emit_mcp_app(
         &self,
         uri: &str,
