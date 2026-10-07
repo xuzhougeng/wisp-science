@@ -21,6 +21,7 @@ pub mod feishu;
 pub mod feishu_card;
 pub mod feishu_registration;
 pub mod pbbp2;
+pub mod remote;
 pub mod weixin;
 
 use wisp_dto::{AssistantWeixinStatus, WeixinDestination};
@@ -110,6 +111,9 @@ pub struct ChannelManager {
     weixin_config_lock: tokio::sync::Mutex<()>,
     feishu_registrations:
         tokio::sync::Mutex<HashMap<String, feishu_registration::RegistrationFlow>>,
+    remote: StdMutex<Option<watch::Sender<bool>>>,
+    remote_status: Arc<StdMutex<ChannelStatus>>,
+    remote_clients: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl ChannelManager {
@@ -118,6 +122,7 @@ impl ChannelManager {
         set_status(&mgr.feishu_status, "stopped", "");
         set_status(&mgr.weixin_status, "stopped", "");
         set_status(&mgr.assistant_weixin_status, "stopped", "");
+        set_status(&mgr.remote_status, "stopped", "");
         mgr
     }
 
@@ -210,6 +215,8 @@ pub async fn autostart(app: AppHandle) {
             mgr.start_weixin(&app, destination).await;
         }
     }
+    drop(_guard);
+    remote::autostart(&app).await;
 }
 
 // ------------------------------------------------------------------- helpers
@@ -1322,12 +1329,14 @@ pub struct ChannelsStatus {
     pub weixin_state: String,
     pub weixin_detail: String,
     pub device: crate::device_bridge::DeviceBridgeSettingsStatus,
+    pub remote: wisp_dto::RemoteAccessStatus,
 }
 
 #[tauri::command]
 pub(crate) async fn channels_status(
     state: State<'_, AppState>,
     mgr: State<'_, ChannelManager>,
+    app: AppHandle,
 ) -> Result<ChannelsStatus, String> {
     let feishu = status_snapshot(&mgr.feishu_status);
     let weixin = status_snapshot(&mgr.weixin_status);
@@ -1350,6 +1359,7 @@ pub(crate) async fn channels_status(
         weixin_state: weixin.state,
         weixin_detail: weixin.detail,
         device: crate::device_bridge::settings_status(&state).await,
+        remote: remote::status(&app).await,
     })
 }
 

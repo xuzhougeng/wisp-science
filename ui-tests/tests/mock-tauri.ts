@@ -1267,7 +1267,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       url: null as string | null,
       detail: "",
     },
+    remote: {
+      enabled: false,
+      relay_url: "",
+      has_token: false,
+      state: "stopped",
+      detail: "",
+      code: null as string | null,
+      link: null as string | null,
+      clients: 0,
+    },
   };
+  let mockRemoteCodeSequence = 0;
+  const mockRemoteCode = () =>
+    `${String(mockRemoteCodeSequence).padStart(4, "0")}-0203-0405-0607-0809-0a0b-0c0d-0e0f`;
   let mockDeviceToken = "";
   let mockDeviceTokenSequence = 0;
   let mockFeishuPollCount = 0;
@@ -3663,7 +3676,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if ((window as any).__assistantWeixinStatusError) throw new Error("Assistant connection unavailable");
             return { ...mockAssistantWeixin };
           case "channels_status":
-            return { ...mockChannels, device: { ...mockChannels.device } };
+            return { ...mockChannels, device: { ...mockChannels.device }, remote: { ...mockChannels.remote } };
+          case "set_remote_access": {
+            const relayUrl = String(arg("relayUrl") ?? "").trim();
+            if (relayUrl && !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)/.test(relayUrl)) {
+              throw new Error("relay URL must use HTTPS (HTTP is allowed only for localhost)");
+            }
+            mockChannels.remote.relay_url = relayUrl;
+            if (String(arg("relayToken") ?? "").trim()) mockChannels.remote.has_token = true;
+            const enabled = Boolean(arg("enabled"));
+            if (enabled && (!relayUrl || !mockChannels.remote.has_token)) {
+              throw new Error("Enter the relay server URL and access token before enabling remote access.");
+            }
+            mockChannels.remote.enabled = enabled;
+            mockChannels.remote.state = enabled ? "running" : "stopped";
+            if (enabled && !mockChannels.remote.code) mockChannels.remote.code = mockRemoteCode();
+            mockChannels.remote.link = mockChannels.remote.code
+              ? `${relayUrl.replace(/\/$/, "")}/remote#${mockChannels.remote.code}`
+              : null;
+            return null;
+          }
+          case "reset_remote_access_code":
+            mockRemoteCodeSequence += 1;
+            mockChannels.remote.code = mockRemoteCode();
+            mockChannels.remote.link = `${mockChannels.remote.relay_url.replace(/\/$/, "")}/remote#${mockChannels.remote.code}`;
+            return null;
           case "set_feishu_channel":
             mockChannels.feishu_enabled = Boolean(arg("enabled"));
             mockChannels.feishu_international = Boolean(arg("international"));

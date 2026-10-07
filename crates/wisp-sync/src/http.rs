@@ -18,6 +18,7 @@ pub const MAX_RELAY_BODY_BYTES: usize = 256 * 1024 * 1024;
 pub struct RelayHttpState {
     relay: FileRelay,
     bearer_token: Arc<str>,
+    pub(crate) remote: Arc<crate::remote::RemoteHub>,
 }
 
 impl RelayHttpState {
@@ -29,6 +30,7 @@ impl RelayHttpState {
         Ok(Self {
             relay,
             bearer_token: bearer_token.into(),
+            remote: Default::default(),
         })
     }
 }
@@ -46,11 +48,15 @@ pub fn relay_router(state: RelayHttpState) -> Router {
             get(get_blob).head(head_blob).put(put_blob),
         )
         .route("/v1/projects/{project_id}/commit", post(commit))
+        .route("/remote", get(crate::remote::page))
+        .route("/remote.js", get(crate::remote::script))
+        .route("/v1/remote/host/{sid}", get(crate::remote::host_socket))
+        .route("/v1/remote/client/{sid}", get(crate::remote::client_socket))
         .layer(DefaultBodyLimit::max(MAX_RELAY_BODY_BYTES))
         .with_state(state)
 }
 
-fn authorized(headers: &HeaderMap, state: &RelayHttpState) -> bool {
+pub(crate) fn authorized(headers: &HeaderMap, state: &RelayHttpState) -> bool {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -65,7 +71,7 @@ fn authorized(headers: &HeaderMap, state: &RelayHttpState) -> bool {
         })
 }
 
-fn unauthorized() -> Response {
+pub(crate) fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
 }
 

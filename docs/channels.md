@@ -2,7 +2,9 @@
 
 Settings → Remote Access connects IM bots to the workspace agent: messages you send
 from Feishu or WeChat drive normal agent sessions (visible in the desktop app),
-and the final answer of each turn is sent back to the chat.
+and the final answer of each turn is sent back to the chat. To see the full
+transcript, tool calls and diffs and approve from a browser instead, use
+[Remote web access](remote-access.md).
 
 The **Research assistant → Remote access** entry is a separate, WeChat-only
 connection to the assistant's persistent conversation. It manages visible

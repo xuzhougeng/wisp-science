@@ -83,6 +83,10 @@ pub(super) fn ChannelsPane(
     let device_port = create_rw_signal(DEFAULT_DEVICE_BRIDGE_PORT.to_string());
     // Bumped to cancel a stale QR poll loop (new scan, unbind, unmount race).
     let poll_gen = create_rw_signal(0usize);
+    let remote_url = create_rw_signal(String::new());
+    let remote_token = create_rw_signal(String::new());
+    // Status events fire on every browser connect; load the URL field once.
+    let remote_loaded = create_rw_signal(false);
 
     let refresh = Callback::new(move |_: ()| {
         spawn_local(async move {
@@ -92,6 +96,10 @@ pub(super) fn ChannelsPane(
                     let _ = feishu_international.try_set(s.feishu_international);
                     let _ = device_bind_ipv4.try_set(s.device.bind_ipv4.clone());
                     let _ = device_port.try_set(s.device.port.to_string());
+                    if remote_loaded.try_get_untracked() == Some(false) {
+                        let _ = remote_url.try_set(s.remote.relay_url.clone());
+                        let _ = remote_loaded.try_set(true);
+                    }
                     let _ = status.try_set(Some(s));
                 }
             }
@@ -494,6 +502,60 @@ pub(super) fn ChannelsPane(
         });
     });
 
+    let save_remote = Callback::new(move |enabled: bool| {
+        let arg = to_value(&serde_json::json!({
+            "enabled": enabled,
+            "relayUrl": remote_url.get_untracked().trim(),
+            "relayToken": remote_token.get_untracked(),
+        }))
+        .unwrap();
+        spawn_local(async move {
+            match invoke_checked("set_remote_access", arg).await {
+                Ok(_) => {
+                    let _ = remote_token.try_set(String::new());
+                    let _ = msg.try_set(Some((
+                        true,
+                        t(locale.get_untracked(), "channels.saved").into(),
+                    )));
+                }
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+            refresh.call(());
+        });
+    });
+
+    let reset_remote_code = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            match invoke_checked("reset_remote_access_code", JsValue::UNDEFINED).await {
+                Ok(_) => {
+                    let _ = msg.try_set(Some((
+                        true,
+                        t(locale.get_untracked(), "channels.remote.reset_done").into(),
+                    )));
+                }
+                Err(error) => {
+                    let _ = msg.try_set(Some((
+                        false,
+                        localize_backend(locale.get_untracked(), &js_error_text(error)),
+                    )));
+                }
+            }
+            refresh.call(());
+        });
+    });
+
+    let copy_remote = move |text: Option<String>| {
+        if let Some(text) = text {
+            copy_text(text);
+            msg.set(Some((true, t(locale.get_untracked(), "channels.remote.copied").into())));
+        }
+    };
+
     let rotate_device_token = Callback::new(move |_: ()| {
         spawn_local(async move {
             match invoke_checked("rotate_device_bridge_token", JsValue::UNDEFINED).await {
@@ -604,6 +666,15 @@ pub(super) fn ChannelsPane(
         let state = if s.enabled { s.state } else { "stopped".into() };
         view! {
             <span class=format!("badge channel-state-{}", state_tone(&state)) data-testid="sticks3-state">
+                {state_label(locale.get(), &state)}
+            </span>
+        }
+    };
+    let remote_badge = move || {
+        let s = status.get().unwrap_or_default().remote;
+        let state = if s.enabled { s.state } else { "stopped".into() };
+        view! {
+            <span class=format!("badge channel-state-{}", state_tone(&state)) data-testid="remote-state">
                 {state_label(locale.get(), &state)}
             </span>
         }
@@ -1003,6 +1074,110 @@ pub(super) fn ChannelsPane(
                 </div>
             </div>
         }.into_view(),
+        Some("remote") => view! {
+            <div class="settings-pane settings-pane-subpage" data-testid="remote-channel-card">
+                {msg_view}
+                <div class="channel-bind-row">
+                    <div>
+                        <strong>{move || t(locale.get(), "channels.remote.heading")}</strong>
+                        <p>{move || t(locale.get(), "channels.remote.hint")}</p>
+                    </div>
+                    <span class=move || {
+                        let s = status.get().unwrap_or_default().remote;
+                        let state = if s.enabled { s.state } else { "stopped".into() };
+                        format!("badge channel-state-{}", state_tone(&state))
+                    } data-testid="remote-detail-state">
+                        {move || {
+                            let s = status.get().unwrap_or_default().remote;
+                            state_label(locale.get(), if s.enabled { &s.state } else { "stopped" })
+                        }}
+                    </span>
+                </div>
+
+                <div class="settings-form-grid">
+                    <label class="span-2 settings-check">
+                        <input type="checkbox" data-testid="remote-enabled-detail"
+                            prop:checked=move || status.get().unwrap_or_default().remote.enabled
+                            on:change=move |ev| save_remote.call(event_target_checked(&ev)) />
+                        <span>{move || t(locale.get(), "channels.remote.toggle")}</span>
+                    </label>
+                    <label class="span-2">
+                        <span>{move || t(locale.get(), "channels.remote.relay_url")}</span>
+                        <input type="url" data-testid="remote-relay-url"
+                            placeholder="https://relay.example.com"
+                            prop:value=move || remote_url.get()
+                            on:input=move |ev| remote_url.set(event_target_input(&ev).value()) />
+                    </label>
+                    <label class="span-2">
+                        <span>{move || t(locale.get(), "channels.remote.token")}</span>
+                        <input type="password" data-testid="remote-relay-token"
+                            prop:value=move || remote_token.get()
+                            placeholder=move || if status.get().unwrap_or_default().remote.has_token {
+                                t(locale.get(), "settings.key_stored")
+                            } else {
+                                t(locale.get(), "channels.remote.token_placeholder")
+                            }
+                            on:input=move |ev| remote_token.set(event_target_input(&ev).value()) />
+                    </label>
+                </div>
+                {move || {
+                    let s = status.get().unwrap_or_default().remote;
+                    (s.enabled && !s.detail.is_empty()).then(|| view! {
+                        <p class="settings-field-error" data-testid="remote-runtime-error">
+                            {localize_backend(locale.get(), &s.detail)}
+                        </p>
+                    })
+                }}
+                {move || {
+                    let s = status.get().unwrap_or_default().remote;
+                    s.code.clone().map(|code| {
+                        let link = s.link.clone();
+                        let shown_link = link.clone().unwrap_or_default();
+                        let copy_link = link.clone();
+                        view! {
+                            <div class="device-token-row">
+                                <div>
+                                    <strong>{move || t(locale.get(), "channels.remote.code")}</strong>
+                                    <p><code data-testid="remote-code">{code.clone()}</code></p>
+                                    <p class="settings-field-hint" data-testid="remote-link">{shown_link}</p>
+                                </div>
+                                <div class="row">
+                                    <button type="button" data-testid="remote-copy-link"
+                                        prop:disabled=link.is_none()
+                                        on:click=move |_| copy_remote(copy_link.clone())>
+                                        {move || t(locale.get(), "channels.remote.copy_link")}
+                                    </button>
+                                    <button type="button" data-testid="remote-copy-code"
+                                        on:click=move |_| copy_remote(Some(code.clone()))>
+                                        {move || t(locale.get(), "channels.remote.copy_code")}
+                                    </button>
+                                    <button type="button" class="danger" data-testid="remote-reset-code"
+                                        on:click=move |_| reset_remote_code.call(())>
+                                        {move || t(locale.get(), "channels.remote.reset")}
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    })
+                }}
+                {move || {
+                    let s = status.get().unwrap_or_default().remote;
+                    (s.enabled && s.state == "running").then(|| view! {
+                        <p class="settings-field-hint" data-testid="remote-clients">
+                            {t(locale.get(), "channels.remote.clients").replace("{n}", &s.clients.to_string())}
+                        </p>
+                    })
+                }}
+                <p class="settings-note">{move || t(locale.get(), "channels.remote.security")}</p>
+                <div class="row settings-footer">
+                    <span class="settings-footer-note">{move || t(locale.get(), "channels.secret_note")}</span>
+                    <button type="button" class="primary" data-testid="remote-save"
+                        on:click=move |_| save_remote.call(status.get_untracked().unwrap_or_default().remote.enabled)>
+                        {move || t(locale.get(), "settings.save")}
+                    </button>
+                </div>
+            </div>
+        }.into_view(),
         Some(_) => view! { <div></div> }.into_view(),
         None => view! {
             <div class="settings-card channels-overview" data-testid="channels-overview">
@@ -1099,6 +1274,38 @@ pub(super) fn ChannelsPane(
                                     prop:disabled=move || status.get().unwrap_or_default().device.bind_ipv4.is_empty()
                                     prop:checked=move || status.get().unwrap_or_default().device.enabled
                                     on:change=move |ev| save_device.call(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                        </div>
+                    </div>
+                    <div class="settings-list-row settings-list-row-link" data-testid="remote-channel-row"
+                        on:click=move |_| open.set(Some("remote".into()))>
+                        <div class="settings-list-main">
+                            <span class="settings-list-title">
+                                {move || t(locale.get(), "channels.remote.title")}
+                                " "
+                                {remote_badge}
+                            </span>
+                            <span class="settings-list-sub">{move || {
+                                let remote = status.get().unwrap_or_default().remote;
+                                if remote.enabled && !remote.relay_url.is_empty() {
+                                    remote.relay_url
+                                } else {
+                                    t(locale.get(), "channels.remote.subtitle").to_string()
+                                }
+                            }}</span>
+                        </div>
+                        <div class="settings-list-actions">
+                            <label class="toggle" on:click=move |ev| ev.stop_propagation()>
+                                <input type="checkbox" data-testid="remote-enabled"
+                                    aria-label=move || t(locale.get(), "channels.remote.toggle")
+                                    prop:disabled=move || {
+                                        let remote = status.get().unwrap_or_default().remote;
+                                        remote.relay_url.is_empty() || !remote.has_token
+                                    }
+                                    prop:checked=move || status.get().unwrap_or_default().remote.enabled
+                                    on:change=move |ev| save_remote.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                             <span class="settings-list-chevron" aria-hidden="true">"›"</span>

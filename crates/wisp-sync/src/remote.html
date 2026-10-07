@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Wisp Remote</title>
+<style>
+:root {
+  --bg: #faf9f6; --elev: #ffffff; --sunken: #f3f1ec; --text: #141413;
+  --muted: #5a574e; --faint: #706d65; --border: rgba(60, 55, 45, 0.12);
+  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: rgba(13, 148, 136, 0.12);
+  --on-accent: #ffffff; --ok: hsl(152 45% 38%); --err: hsl(0 72% 51%);
+  --warn: hsl(39 96% 38%); --warn-soft: hsl(43 96% 50% / 0.16);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171614; --elev: #1f1e1b; --sunken: #121110; --text: #ebe8e2;
+    --muted: #a39e94; --faint: #7a756c; --border: rgba(245, 240, 230, 0.1);
+    --accent: #2da898; --accent-strong: #3fbfad; --accent-soft: rgba(45, 168, 152, 0.16);
+    --on-accent: #f4fffc; --ok: hsl(152 40% 48%); --err: hsl(0 65% 62%);
+    --warn: hsl(39 85% 55%); --warn-soft: hsl(43 80% 50% / 0.18);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171614; --elev: #1f1e1b; --sunken: #121110; --text: #ebe8e2;
+  --muted: #a39e94; --faint: #7a756c; --border: rgba(245, 240, 230, 0.1);
+  --accent: #2da898; --accent-strong: #3fbfad; --accent-soft: rgba(45, 168, 152, 0.16);
+  --on-accent: #f4fffc; --ok: hsl(152 40% 48%); --err: hsl(0 65% 62%);
+  --warn: hsl(39 85% 55%); --warn-soft: hsl(43 80% 50% / 0.18);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  display: flex; flex-direction: column; min-height: 100dvh;
+}
+button, textarea, input { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--border); background: var(--elev); border-radius: 8px;
+  padding: 8px 14px; cursor: pointer; min-height: 40px;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.danger { color: var(--err); }
+button:focus-visible, textarea:focus-visible, input:focus-visible, .row:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.bar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.bar .icon { border: 0; background: transparent; padding: 8px; min-height: 40px; margin-left: -8px; }
+.bar .heading { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bar strong, .bar small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar small { color: var(--faint); font-size: 12px; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.status[data-state="online"]::before { background: var(--ok); }
+.status[data-state="offline"]::before { background: var(--err); }
+main { flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; }
+.banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--text); }
+.empty { color: var(--faint); text-align: center; padding: 32px 0; }
+.connect { max-width: 420px; margin: 12vh auto 0; display: grid; gap: 12px; }
+.connect h1 { margin: 0; font-size: 22px; }
+.connect p { margin: 0; color: var(--muted); }
+.connect input {
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--elev); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.list { display: grid; gap: 8px; }
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.list-head h2 { margin: 0; font-size: 16px; }
+.row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
+}
+.row .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.row .sub { color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
+.badge.running { background: var(--accent-soft); color: var(--accent-strong); }
+.badge.needs_you { background: var(--warn-soft); color: var(--warn); }
+.transcript { display: grid; gap: 12px; padding-bottom: 8px; }
+.msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user {
+  justify-self: end; max-width: 88%; background: var(--accent-soft); padding: 8px 12px;
+  border-radius: 12px 12px 4px 12px;
+}
+.msg.note { color: var(--faint); font-size: 13px; }
+details.tool { border: 1px solid var(--border); border-radius: 8px; background: var(--elev); }
+details.tool summary {
+  cursor: pointer; padding: 6px 10px; font-size: 13px; color: var(--muted);
+  display: flex; gap: 8px; align-items: center; list-style: none;
+}
+details.tool summary::-webkit-details-marker { display: none; }
+details.tool summary .state { margin-left: auto; font-size: 12px; }
+details.tool summary .state.fail { color: var(--err); }
+pre {
+  margin: 0; padding: 10px; overflow: auto; max-height: 360px; white-space: pre-wrap;
+  overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--sunken); border-radius: 0 0 8px 8px;
+}
+.approval { border: 1px solid var(--warn); border-radius: 10px; background: var(--elev); padding: 12px; display: grid; gap: 8px; }
+.approval h3 { margin: 0; font-size: 14px; }
+.approval pre { border-radius: 8px; }
+.approval .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.activity { color: var(--faint); font-size: 13px; }
+.composer {
+  position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border);
+  padding: 10px 16px; padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+.composer .inner { max-width: 728px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea {
+  flex: 1; resize: none; min-height: 44px; max-height: 40vh; padding: 10px 12px;
+  border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
+}
+.composer .hint { max-width: 728px; margin: 6px auto 0; color: var(--faint); font-size: 12px; }
+.older { justify-self: center; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <button type="button" class="icon" id="back" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+  <div class="heading"><strong id="title">Wisp</strong><small id="subtitle"></small></div>
+  <span class="status" id="status" data-state="idle"></span>
+</header>
+<main id="main"></main>
+<footer class="composer" id="composer" hidden>
+  <div class="inner">
+    <textarea id="draft" rows="1"></textarea>
+    <button type="button" class="primary" id="send"></button>
+    <button type="button" class="danger" id="stop" hidden></button>
+  </div>
+  <p class="hint" id="composer-hint" hidden></p>
+</footer>
+<script src="remote.js"></script>
+</body>
+</html>
