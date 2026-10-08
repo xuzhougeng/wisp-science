@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page="tutorial-article" data-title-zh="用手机和浏览器远程使用 Wisp · 教程 | Wisp Science" data-title-en="Use Wisp from a Phone or Browser · Tutorials | Wisp Science" data-desc-zh="Wisp Science高级用法：用手机和浏览器远程使用 Wisp" data-desc-en="Wisp Science Advanced: Use Wisp from a Phone or Browser">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wisp Science高级用法：用手机和浏览器远程使用 Wisp">
+  <title>用手机和浏览器远程使用 Wisp · 教程 | Wisp Science</title>
+  <script>
+    (function () {
+      var lang = "zh";
+      try {
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "en" || q === "zh") lang = q;
+        else {
+          var s = localStorage.getItem("wisp-pages-lang");
+          if (s === "en" || s === "zh") lang = s;
+        }
+      } catch (e) {}
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="stylesheet" href="../assets/tutorials.css">
+</head>
+<body class="doc-page tutorial-detail">
+  <header class="site-nav">
+    <div class="container">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="28" height="28">
+        <span class="brand-name">Wisp Science</span>
+      </a>
+      <nav class="nav-links" data-i18n-aria="nav.aria" aria-label="页面导航">
+        <a href="../index.html#features" data-i18n="nav.features">功能</a>
+        <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
+        <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
+        <a href="../index.html#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/README.md" data-i18n="nav.docs">文档</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="语言">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a class="btn btn-primary" href="../index.html#download"><span class="btn-label-full" data-i18n="nav.downloadFull">下载桌面版</span><span class="btn-label-short" data-i18n="nav.downloadShort">下载</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main class="tutorial-reader container">
+<nav class="tutorial-breadcrumb" aria-label="教程导航" data-i18n-aria="tutorials.readerNav"><a class="tutorial-back" href="../tutorials.html#wisp-science-remote-web" data-i18n="tutorials.back">返回教程目录</a></nav>
+<article class="tutorial-article" id="wisp-science-remote-web" aria-labelledby="article-title">
+<header><h1 id="article-title" data-text-zh="Wisp Science高级用法：用手机和浏览器远程使用 Wisp" data-text-en="Wisp Science Advanced: Use Wisp from a Phone or Browser">Wisp Science高级用法：用手机和浏览器远程使用 Wisp</h1>
+<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-remote-web.md" data-href-zh="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-remote-web.md" data-href-en="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/en/wisp-science-remote-web.md" data-i18n="tutorials.source">查看原文</a></header>
+<div class="tutorial-body lang-zh" lang="zh-CN">
+<p>分析任务跑在实验室的工作站上，人却在会议室、食堂，或者回家的地铁上。这时想做的往往只有三件事：看一眼跑到哪了，看看刚出的图，点一下“批准”让它继续。为这点事专程回到电脑前并不划算。</p>
+<p>Wisp Science 的<strong>网页远程访问</strong>解决的就是这段距离：在手机或任何浏览器里打开一个网页，直接使用电脑上正在运行的 Wisp，切换项目和对话、读回复、看图、预览文件、发消息、处理审批。计算、文件和模型调用仍然发生在那台电脑上，网页只是它的一扇窗。</p>
+<p>这篇文章从部署一台中继服务器开始，接着在桌面端开启远程访问，最后介绍手机和电脑浏览器里各能做什么，以及它刻意不做什么。</p>
+<blockquote>
+<p>本文配图来自实际前端，项目、对话、图表和文件均为演示数据。<code>relay.example.com</code> 是占位域名，图中的联机码是示例值，不能用来连接任何电脑。网页远程访问在 v1.18.0 之后加入，需要更新的桌面端版本。</p>
+</blockquote>
+<p><strong>先认识三个角色。</strong></p>
+<pre><code>手机 / 浏览器 ──HTTPS──▶ 中继服务器 ◀──主动连出── 电脑上的 Wisp
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>角色</th>
+<th>在哪里</th>
+<th>负责什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>桌面端 Wisp</td>
+<td>你的电脑或工作站</td>
+<td>真正干活：运行 Agent、读写文件、调用模型</td>
+</tr>
+<tr>
+<td>中继服务器 <code>wisp-relay</code></td>
+<td>一台有域名的公网服务器</td>
+<td>让网页和电脑“碰头”，只转发加密后的数据</td>
+</tr>
+<tr>
+<td>网页</td>
+<td>手机或任意浏览器</td>
+<td>显示内容，发送你的指令</td>
+</tr>
+</tbody>
+</table></div>
+<p>电脑是主动连出去的，不需要公网 IP，也不用在路由器上开端口。中继看不到对话内容，也拿不到联机码，它转发的每一帧都是密文。一台中继可以同时服务多台电脑，各自用自己的联机码区分。</p>
+<p><strong>第一步：在服务器上部署中继。</strong></p>
+<p>需要一台能从外网访问的服务器、一个解析到它的域名，并放行 80 和 443 端口。浏览器只允许在 HTTPS 页面里使用加密功能，所以中继前面必须有 HTTPS；下面的配置用 Caddy 自动申请和续期证书。</p>
+<p>把这段内容保存为 <code>compose.yaml</code>，把 <code>relay.example.com</code> 换成你的域名：</p>
+<pre><code class="language-yaml">services:
+  relay:
+    image: ghcr.io/xuzhougeng/wisp-relay:latest
+    restart: unless-stopped
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+    volumes:
+      - relay-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from relay.example.com --to relay:8787
+    ports:
+      - &quot;80:80&quot;
+      - &quot;443:443&quot;
+    volumes:
+      - caddy-data:/data
+volumes:
+  relay-data:
+  caddy-data:
+</code></pre>
+<p>然后生成访问令牌并启动：</p>
+<pre><code class="language-bash">echo &quot;WISP_RELAY_TOKEN=$(openssl rand -hex 32)&quot; &gt; .env
+docker compose up -d
+</code></pre>
+<p><code>.env</code> 里的令牌稍后要填进桌面端，请像密码一样保管。只有持有令牌的电脑才能登记到这台中继，陌生人无法把它当作免费的隧道。</p>
+<p>镜像同时支持 x86 和 ARM 服务器。<code>latest</code> 对应最新正式版；如果桌面端是从开发分支构建的，把镜像标签换成 <code>:main</code>。服务器上已经有 nginx 等反向代理，或者想自己构建镜像时，参见文末的参考文档。</p>
+<p><strong>第二步：在桌面端开启远程访问。</strong></p>
+<p>打开 <strong>设置 → 远程接入 → 网页远程访问</strong>，填写中继服务器地址（<code>https://你的域名</code>）和刚才的访问令牌，勾选 <strong>启用网页远程访问</strong>。</p>
+<p><img src="../assets/tutorials/remote-web/01-settings.png" alt="网页远程访问设置：中继服务器地址、访问令牌、联机码和可复制的链接" loading="lazy" width="1440" height="1000" /></p>
+<p><em>图 1：状态显示“运行中”表示电脑已经连上中继。图中的地址和联机码都是演示值；令牌保存后不会再显示在输入框里。</em></p>
+<p>状态变为“运行中”后，页面会显示一个<strong>联机码</strong>和一条完整链接。点击 <strong>复制链接</strong>，把它发到自己的手机上。</p>
+<ul>
+<li>联机码就是钥匙。拿到链接或联机码的人可以使用这台电脑上的项目，请只留给自己。</li>
+<li>令牌和联机码保存在操作系统的凭据库中，不写入项目数据。</li>
+<li>怀疑链接外泄时，点击 <strong>重置联机码</strong>：旧链接立即失效，已经打开的网页全部断开。</li>
+<li>远程访问期间，电脑上的 Wisp 需要保持运行。</li>
+</ul>
+<p><strong>第三步：在手机上打开。</strong></p>
+<p>在手机浏览器里打开刚才的链接；也可以访问 <code>https://你的域名/remote</code>，手动输入联机码。右上角显示“已连接”就可以用了。</p>
+<p><img src="../assets/tutorials/remote-web/04-phone.png" alt="手机上的三个画面：对话列表、等待处理的审批、项目文件" loading="lazy" width="1440" height="1000" /></p>
+<p><em>图 2：手机上一次显示一栏。左：一个项目下的对话列表；中：对话底部等待你处理的审批；右：这条对话所在项目的文件。</em></p>
+<p>手机屏幕窄，页面一次只显示一栏，左上角的返回箭头逐级退出。浏览器自带的后退同样有效，刷新或收藏之后会回到同一条对话。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>想做的事</th>
+<th>怎么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>换一个项目</td>
+<td>顶部的项目下拉框</td>
+</tr>
+<tr>
+<td>换一条对话</td>
+<td>对话列表；带“运行中”“待处理”标记的优先看</td>
+</tr>
+<tr>
+<td>开一条新对话</td>
+<td>列表上方的 <strong>新对话</strong></td>
+</tr>
+<tr>
+<td>让它继续或停下</td>
+<td>在输入框发消息；运行中可以点 <strong>停止</strong></td>
+</tr>
+<tr>
+<td>处理审批</td>
+<td>对话底部的审批卡片会显示完整的命令或改动，点 <strong>批准</strong> 或 <strong>拒绝</strong></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>在电脑浏览器里，三栏同时展开。</strong></p>
+<p><img src="../assets/tutorials/remote-web/02-conversation.png" alt="宽屏下的对话：左侧对话列表，中间是带表格和火山图的回复" loading="lazy" width="1440" height="1000" /></p>
+<p><em>图 3：屏幕够宽时，左侧是当前项目的对话，中间是对话内容。示例中的基因、数值和火山图都是演示数据。</em></p>
+<p>回复按 Markdown 渲染，表格、列表、代码和链接都能正常显示，回复里的图片直接出现在对话中。打开一条已经结束的对话，它在桌面端的“待处理”标记也会一并消除。</p>
+<p><strong>文件夹按钮：看看它刚写出了什么。</strong></p>
+<p>点击右上角的文件夹按钮，右侧会打开这条对话所在项目的文件夹，可以逐级浏览。回复里指向项目文件的链接，点一下也会在这里打开。</p>
+<p><img src="../assets/tutorials/remote-web/03-files.png" alt="文件面板：对话右侧预览 figures 目录下的火山图" loading="lazy" width="1440" height="1000" /></p>
+<p><em>图 4：文件面板和对话并排显示，顶部的路径可以点击返回上一级。</em></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>文件类型</th>
+<th>网页里看到的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文本、代码、CSV、日志</td>
+<td>文本内容；大文件只显示开头 1 MB</td>
+</tr>
+<tr>
+<td>Markdown</td>
+<td>渲染后的文档</td>
+</tr>
+<tr>
+<td>PNG、JPG 等图片</td>
+<td>缩略图，最长边 1024 像素</td>
+</tr>
+<tr>
+<td>PDF、Word、PPT、Excel</td>
+<td>桌面端提取出的文字，不是原始版式</td>
+</tr>
+<tr>
+<td>其他二进制文件</td>
+<td>提示无法预览，请在桌面端打开</td>
+</tr>
+</tbody>
+</table></div>
+<p>文件面板是只读的，不能上传、下载、改名或删除。打开的文件夹会自动刷新，Agent 新写出的文件稍等几秒就会出现。</p>
+<p><strong>远程操作的安全边界。</strong></p>
+<p>把一台能读写文件、运行命令的电脑接到网页上，需要比本地更保守。Wisp 的做法是：</p>
+<ul>
+<li><strong>远程发起的回合一律先问。</strong> 从网页发出的消息，写文件、改文件和运行命令都必须经过你批准，即使桌面端平时设置为自动允许。批准只对当前这一次生效。</li>
+<li><strong>能做的事是一张短名单。</strong> 列出项目和对话、读对话、新建对话、发送、停止、审批、浏览和预览文件。终端输入、Python／R 内核执行、保存或修改文件、上传附件和 ACP 对话都不能远程使用。</li>
+<li><strong>文件内容不出电脑。</strong> 除了文本预览和图片缩略图，文件的原始内容不会发送给网页。</li>
+<li><strong>中继只见密文。</strong> 联机码放在链接的 <code>#</code> 之后，浏览器不会把这一段发给任何服务器；数据在网页和电脑之间端到端加密。</li>
+</ul>
+<p><strong>它不是完整的客户端。</strong></p>
+<p>网页远程访问的定位，是人不在电脑前时的应急入口。切换模型、计划模式、运行卡片、终端、Notebook、更早的历史消息、PDF 原样渲染和文件下载，都留在桌面端。页面靠定时刷新获取进展（任务运行时约 1.5 秒一次），没有消息推送。</p>
+<p><strong>遇到问题时，先看这几项。</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>现象</th>
+<th>先检查什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>页面显示“电脑离线”</td>
+<td>电脑上的 Wisp 是否在运行，远程访问是否仍为“运行中”</td>
+</tr>
+<tr>
+<td>桌面端迟迟连不上</td>
+<td>中继地址是否以 <code>https://</code> 开头，令牌是否与 <code>.env</code> 一致；电脑能否直接访问该域名（桌面端连接中继暂不支持代理）</td>
+</tr>
+<tr>
+<td>提示联机码格式不正确</td>
+<td>联机码是 32 位十六进制；重置之后要使用新的链接</td>
+</tr>
+<tr>
+<td>提示必须使用 HTTPS</td>
+<td>用 <code>https://</code> 打开页面；只有 <code>localhost</code> 允许 HTTP</td>
+</tr>
+<tr>
+<td>发送失败</td>
+<td>输入的内容会保留；先刷新确认上一条是否已经送达，再决定是否重发</td>
+</tr>
+</tbody>
+</table></div>
+<p>第一次使用可以只完成四件事：启动中继、在桌面端看到“运行中”、用手机打开链接、在手机上批准一次操作。确认这条链路通了，再把它当作日常的远程入口。</p>
+<p>项目与下载：<a href="https://github.com/xuzhougeng/wisp-science">Wisp Science</a></p>
+<p>继续阅读：<a href="wisp-science-research-assistant.html">科研助理</a> · <a href="wisp-science-servers-cli.html">服务器环境配置</a> · <a href="wisp-science-quick-start.html">快速开始</a></p>
+<blockquote>
+<p>部署细节（nginx 反向代理、自行构建镜像、数据备份）和完整的安全模型见<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/remote-access.md">网页远程访问参考文档</a>。本文依据撰写时的项目实现整理，不同版本的界面文字可能略有差异。</p>
+</blockquote>
+</div>
+<div class="tutorial-body lang-en" lang="en">
+<p>The analysis is running on the lab workstation, and you are in a meeting room, at lunch, or on the way home. What you want is usually three small things: see how far it got, look at the figure it just produced, and press Approve so it can continue. None of that is worth a trip back to the computer.</p>
+<p><strong>Remote web access</strong> in Wisp Science covers that distance. You open a web page on a phone or in any browser and use the Wisp that is running on your computer: switch projects and conversations, read replies, look at figures, preview files, send messages and answer approval requests. Computation, files and model calls stay on that computer; the page is a window onto it.</p>
+<p>This tutorial deploys a relay server, turns remote access on in the desktop app, and then shows what the page does on a phone and in a desktop browser, and what it deliberately leaves out.</p>
+<blockquote>
+<p>Screenshots show the real frontend in English with demonstration projects, conversations, figures and files. <code>relay.example.com</code> is a placeholder domain, and the connection code in the screenshots is an example that connects to nothing. Remote web access was added after v1.18.0 and needs a newer desktop version.</p>
+</blockquote>
+<p><strong>Meet the three parts first.</strong></p>
+<pre><code>phone / browser ──HTTPS──▶ relay server ◀──dials out── Wisp on your computer
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Part</th>
+<th>Where it runs</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Desktop Wisp</td>
+<td>Your computer or workstation</td>
+<td>The actual work: runs the agent, reads and writes files, calls models</td>
+</tr>
+<tr>
+<td>Relay server <code>wisp-relay</code></td>
+<td>A public server with a domain</td>
+<td>Lets the page and the computer meet; forwards encrypted data only</td>
+</tr>
+<tr>
+<td>Web page</td>
+<td>A phone or any browser</td>
+<td>Shows content and sends your instructions</td>
+</tr>
+</tbody>
+</table></div>
+<p>The computer dials out, so it needs no public IP address and no port opened on a router. The relay cannot read conversations and never receives the connection code: every frame it forwards is ciphertext. One relay can serve several computers, each told apart by its own code.</p>
+<p><strong>Step 1: deploy the relay on a server.</strong></p>
+<p>You need a server reachable from the internet, a domain that points to it, and ports 80 and 443 open. Browsers only allow the page's encryption on HTTPS pages, so the relay must sit behind HTTPS; the setup below uses Caddy to obtain and renew the certificate automatically.</p>
+<p>Save this as <code>compose.yaml</code> and replace <code>relay.example.com</code> with your domain:</p>
+<pre><code class="language-yaml">services:
+  relay:
+    image: ghcr.io/xuzhougeng/wisp-relay:latest
+    restart: unless-stopped
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+    volumes:
+      - relay-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from relay.example.com --to relay:8787
+    ports:
+      - &quot;80:80&quot;
+      - &quot;443:443&quot;
+    volumes:
+      - caddy-data:/data
+volumes:
+  relay-data:
+  caddy-data:
+</code></pre>
+<p>Then create the access token and start it:</p>
+<pre><code class="language-bash">echo &quot;WISP_RELAY_TOKEN=$(openssl rand -hex 32)&quot; &gt; .env
+docker compose up -d
+</code></pre>
+<p>The token in <code>.env</code> goes into the desktop app next; treat it like a password. Only a computer that holds the token can register with this relay, so strangers cannot use it as a free tunnel.</p>
+<p>The image runs on both x86 and ARM servers. <code>latest</code> is the newest release; if your desktop app was built from the development branch, change the image tag to <code>:main</code>. If the server already runs a reverse proxy such as nginx, or you want to build the image yourself, see the reference linked at the end.</p>
+<p><strong>Step 2: turn on remote access in the desktop app.</strong></p>
+<p>Open <strong>Settings → Remote Access → Remote web access</strong>, enter the relay server URL (<code>https://your-domain</code>) and the access token from the previous step, then check <strong>Enable remote web access</strong>.</p>
+<p><img src="../assets/tutorials/en/remote-web/01-settings.png" alt="Remote web access settings with the relay server URL, access token, connection code and a link to copy" loading="lazy" width="1440" height="1000" /></p>
+<p><em>Figure 1: “Running” means the computer has reached the relay. The URL and connection code are demonstration values; a saved token is never shown in the field again.</em></p>
+<p>Once the state reads “Running”, the page shows a <strong>connection code</strong> and a complete link. Press <strong>Copy link</strong> and send it to your own phone.</p>
+<ul>
+<li>The connection code is the key. Anyone with the link or the code can use this computer's projects, so keep it to yourself.</li>
+<li>The token and the code are stored in the operating system's credential store, not in project data.</li>
+<li>If the link may have leaked, press <strong>Reset code</strong>: the old link stops working at once and every open page is disconnected.</li>
+<li>Wisp has to keep running on the computer while you use it remotely.</li>
+</ul>
+<p><strong>Step 3: open it on your phone.</strong></p>
+<p>Open the link in the phone's browser, or go to <code>https://your-domain/remote</code> and type the code. When the top right corner says “Connected”, it is ready.</p>
+<p><img src="../assets/tutorials/en/remote-web/04-phone.png" alt="Three phone screens: the conversation list, a pending approval and the project files" loading="lazy" width="1440" height="1000" /></p>
+<p><em>Figure 2: A phone shows one pane at a time. Left: the conversations of one project. Middle: an approval waiting at the end of a conversation. Right: the files of that conversation's project.</em></p>
+<p>On a narrow screen the page shows one pane at a time, and the back arrow at the top left steps out of it. The browser's own Back button works too, and a reload or a bookmark returns to the same conversation.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>To do this</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Switch project</td>
+<td>The project picker at the top</td>
+</tr>
+<tr>
+<td>Switch conversation</td>
+<td>The conversation list; look at rows marked “Running” or “Needs you” first</td>
+</tr>
+<tr>
+<td>Start a conversation</td>
+<td><strong>New conversation</strong> above the list</td>
+</tr>
+<tr>
+<td>Continue or stop</td>
+<td>Send a message in the composer; press <strong>Stop</strong> while a turn is running</td>
+</tr>
+<tr>
+<td>Answer an approval</td>
+<td>The card at the end of the conversation shows the full command or change; press <strong>Approve</strong> or <strong>Reject</strong></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>In a desktop browser, all three panes are open.</strong></p>
+<p><img src="../assets/tutorials/en/remote-web/02-conversation.png" alt="Wide layout: the conversation list on the left and a reply with a table and a volcano plot in the middle" loading="lazy" width="1440" height="1000" /></p>
+<p><em>Figure 3: On a wide screen the project's conversations are on the left and the conversation in the middle. The genes, numbers and volcano plot are demonstration data.</em></p>
+<p>Replies are rendered as Markdown, so tables, lists, code and links look as they should, and pictures in a reply appear inline. Opening a finished conversation here also clears its “Needs you” mark on the desktop.</p>
+<p><strong>The folder button: see what it just wrote.</strong></p>
+<p>Press the folder button at the top right to open the project folder of this conversation on the right and browse into it. A link in a reply that points to a project file opens here as well.</p>
+<p><img src="../assets/tutorials/en/remote-web/03-files.png" alt="Files pane previewing the volcano plot from the figures folder beside the conversation" loading="lazy" width="1440" height="1000" /></p>
+<p><em>Figure 4: The files pane sits beside the conversation. The path at its top is clickable and leads back up.</em></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>File type</th>
+<th>What the page shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Text, code, CSV, logs</td>
+<td>The text; only the first 1 MB of a large file</td>
+</tr>
+<tr>
+<td>Markdown</td>
+<td>The rendered document</td>
+</tr>
+<tr>
+<td>PNG, JPG and other images</td>
+<td>A thumbnail, at most 1024 pixels on its longer side</td>
+</tr>
+<tr>
+<td>PDF, Word, PowerPoint, Excel</td>
+<td>The text the desktop extracts, not the original layout</td>
+</tr>
+<tr>
+<td>Other binary files</td>
+<td>A note that it cannot be previewed; open it on the desktop</td>
+</tr>
+</tbody>
+</table></div>
+<p>The files pane is read-only: nothing can be uploaded, downloaded, renamed or deleted. An open folder refreshes by itself, so a file the agent has just written appears after a few seconds.</p>
+<p><strong>The safety boundary of remote use.</strong></p>
+<p>Connecting a computer that reads and writes files and runs commands to a web page calls for more caution than local use. This is what Wisp does:</p>
+<ul>
+<li><strong>Remotely started turns always ask.</strong> For a message sent from the page, writing files, editing and running commands all need your approval, even if the desktop normally allows them automatically. An approval applies to that one request only.</li>
+<li><strong>What the page can do is a short list.</strong> List projects and conversations, read a conversation, start one, send, stop, approve, and browse and preview files. Terminal input, Python/R kernel execution, saving or changing files, attachments and ACP conversations are not available remotely.</li>
+<li><strong>File contents stay on the computer.</strong> Apart from text previews and image thumbnails, the original contents of a file are never sent to the page.</li>
+<li><strong>The relay only sees ciphertext.</strong> The connection code sits after the <code>#</code> in the link, a part browsers never send to any server; data is encrypted end to end between the page and the computer.</li>
+</ul>
+<p><strong>It is not a full client.</strong></p>
+<p>Remote web access is the fallback for when you are away from the computer. Model switching, plan mode, run cards, the terminal, notebooks, earlier transcript pages, PDFs in their original layout and file downloads all stay on the desktop. The page learns about progress by refreshing on a timer (about every 1.5 seconds while a turn runs); there are no push notifications.</p>
+<p><strong>When something goes wrong, check these first.</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The page says “Computer offline”</td>
+<td>Whether Wisp is running on the computer and remote access still reads “Running”</td>
+</tr>
+<tr>
+<td>The desktop never connects</td>
+<td>Whether the relay URL starts with <code>https://</code> and the token matches <code>.env</code>; whether the computer can reach the domain directly (the desktop's connection to the relay does not use a proxy yet)</td>
+</tr>
+<tr>
+<td>“Invalid code”</td>
+<td>The code is 32 hexadecimal digits; after a reset, use the new link</td>
+</tr>
+<tr>
+<td>A message about HTTPS</td>
+<td>Open the page over <code>https://</code>; HTTP is allowed only on <code>localhost</code></td>
+</tr>
+<tr>
+<td>A message fails to send</td>
+<td>Your text is kept; reload to see whether the previous one arrived before sending again</td>
+</tr>
+</tbody>
+</table></div>
+<p>For a first run, four things are enough: start the relay, see “Running” on the desktop, open the link on your phone, and approve one request from the phone. Once that path works, use it as your everyday remote entry.</p>
+<p>Project and downloads: <a href="https://github.com/xuzhougeng/wisp-science">Wisp Science</a></p>
+<p>Keep reading: <a href="wisp-science-research-assistant.html">Research Assistant</a> · <a href="wisp-science-servers-cli.html">Server Environment Setup</a> · <a href="wisp-science-quick-start.html">Quick Start</a></p>
+<blockquote>
+<p>Deployment details (an nginx reverse proxy, building the image yourself, backing up data) and the full security model are in the <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/remote-access.md">remote web access reference</a>. This tutorial reflects the implementation when written; labels may vary by version.</p>
+</blockquote>
+</div>
+</article>
+<nav class="tutorial-pagination" aria-label="相邻教程" data-i18n-aria="tutorials.pagination"><a class="tutorial-previous" href="wisp-science-research-assistant.html"><span data-i18n="tutorials.previous">上一篇</span><strong data-text-zh="科研版的个人助理来！" data-text-en="A Personal Assistant, Built for Research">科研版的个人助理来！</strong></a><a class="tutorial-next" href="wisp-science-cli.html"><span data-i18n="tutorials.next">下一篇</span><strong data-text-zh="Wisp 命令行" data-text-en="Wisp CLI">Wisp 命令行</strong></a></nav>
+<div class="tutorial-reader-back"><a class="tutorial-back" href="../tutorials.html#wisp-science-remote-web" data-i18n="tutorials.back">返回教程目录</a></div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="24" height="24">
+        Wisp Science
+      </a>
+      <nav class="footer-links">
+        <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/releases" data-i18n="footer.releases">版本记录</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/issues" data-i18n="footer.issues">问题反馈</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE">AGPL-3.0-only</a>
+      </nav>
+      <p class="footer-copy" data-i18n="footer.copy">© 2026 Wisp Science · 开源科学计算 Agent</p>
+    </div>
+  </footer>
+  <script src="../assets/i18n.js"></script>
+</body>
+</html>
