@@ -260,7 +260,7 @@ struct NativeAutomationsSheet: View {
                             Text(scheduleSummary(row)).font(.caption).foregroundStyle(.secondary)
                             HStack { Button(localized("立即运行")) { Task { await model.mutate(["action": .string("run_now"), "id": row["id"]]) } }; Button(localized("删除"), role: .destructive) { deletion = row } }.disabled(!model.canWrite)
                             ForEach(Array(model.workspace["runs"].array.filter { $0["schedule_id"] == row["id"] }.prefix(10).enumerated()), id: \.offset) { _, run in
-                                Text(localized(run["status"].string) + " · " + Date(timeIntervalSince1970: TimeInterval(run["fired_at"].integer)).formatted() + (run["error"].string.isEmpty ? "" : " · " + run["error"].string)).font(.caption).textSelection(.enabled)
+                                Text(verbatim: localized(run["status"].string) + " · " + Date(timeIntervalSince1970: TimeInterval(run["fired_at"].integer)).formatted() + (run["error"].string.isEmpty ? "" : " · " + run["error"].string)).font(.caption).textSelection(.enabled)
                             }
                         }; Divider()
                     }

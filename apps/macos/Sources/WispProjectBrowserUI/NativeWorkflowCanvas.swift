@@ -146,7 +146,7 @@ struct NativeWorkflowGraph: View {
                     }.onEnded { _ in zoomOrigin = nil; draft.persistLayout() })
             }
             if draft.connectionSource != nil { Text(localized("选择目标输入端口，或按 Escape 取消连线。")).font(.caption).foregroundStyle(.secondary) }
-            Text("\(draft.tasks.count) " + localized("节点") + " · \(draft.layout.stageCount) " + localized("阶段") + " · \(Int(draft.zoom * 100))%").font(.caption).foregroundStyle(.secondary)
+            Text(verbatim: "\(draft.tasks.count) " + localized("节点") + " · \(draft.layout.stageCount) " + localized("阶段") + " · \(Int(draft.zoom * 100))%").font(.caption).foregroundStyle(.secondary)
         }.background { if draft.connectionSource != nil { NativeSettingsEscape { draft.cancelConnection() } } }
     }
     private var graph: some View {
