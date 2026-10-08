@@ -8,10 +8,13 @@ test('a subagent conversation nests under its parent and can only be watched', a
   await page.locator('.proj-card-main').first().click();
 
   const group = page.getByTestId('sidebar-subagents');
-  const toggle = group.getByTestId('sidebar-subagent-toggle');
-  await expect(toggle).toContainText('Subagents');
+  const toggle = page.getByTestId('sidebar-nest-toggle');
   const child = group.locator('[data-session-id="subagent-child"]');
   await expect(child).toHaveAttribute('data-session-subagent', 'true');
+  // The row names its own kind; there is no "Subagents" heading above it.
+  await expect(child.locator('.session-branch-icon')).toHaveAttribute('title', 'Subagents');
+  await expect(child).toHaveAttribute('aria-description', 'Subagents');
+  await expect(group).not.toContainText('Subagents');
   await expect(page.getByTestId('sidebar-branches')).toHaveCount(0);
 
   // The parent stays an ordinary, writable conversation.
@@ -26,5 +29,5 @@ test('a subagent conversation nests under its parent and can only be watched', a
   await expect(composer).toHaveAttribute('placeholder', /watch only/);
 
   await toggle.click();
-  await expect(child).toHaveCount(0);
+  await expect(child).toBeHidden();
 });

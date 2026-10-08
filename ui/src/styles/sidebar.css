@@ -168,9 +168,11 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .side-item.ses.selecting .ses-status { display: none; }
 .side-item.ses.selected { background: var(--clay-soft); border-color: var(--clay); color: var(--text); }
 .side-item.ses.selected .session-select-mark { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
-.session-branch-icon { display: inline-flex; flex: 0 0 auto; color: var(--clay); }
-.session-branch-icon svg { width: 15px; height: 15px; }
-.side-item.ses.selecting .session-branch-icon { display: none; }
+/* A nested row's kind icon rests in the status slot and yields to live status. */
+.session-branch-icon { display: inline-flex; color: var(--clay); }
+.ses-status .session-branch-icon svg { width: 15px; height: 15px; }
+.side-item.ses.running .session-branch-icon,
+.side-item.ses.attention .session-branch-icon { display: none; }
 /* Left status slot holds geometry at rest. Running is a comet ring,
    attention a circle-alert — never a raw color dot. */
 .ses-status {
@@ -222,35 +224,61 @@ button.side-item.ses.selecting { padding-right: 10px; }
 }
 .ses-initial { display: none; }
 .ses-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.side-exploration-group {
-  display: grid; gap: 2px; margin: 2px 0 5px 14px; padding: 5px 0 2px 9px;
-  border-left: 1px solid color-mix(in srgb, var(--clay) 42%, var(--border));
-}
+/* Explorations, branches (#531) and subagents (#1061) hang under the session that
+   started them: one chevron on the parent, one guide line dropping from it. */
+.side-nest-group { display: flex; flex-direction: column; gap: 1px; }
 .side-nest-toggle {
-  display: flex; align-items: center; gap: 5px; width: 100%;
-  padding: 1px 4px 3px; border: 0; border-radius: var(--radius-xs);
-  background: transparent; color: var(--text-faint); font: inherit;
-  font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  cursor: pointer; text-align: left;
+  position: absolute; z-index: 1; top: 50%; left: 11px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--text-faint); cursor: pointer;
+  transition: opacity .12s ease, color .12s ease;
 }
-.side-nest-toggle:hover { color: var(--text-muted); background: var(--bg-elev); }
-.side-nest-caret { display: inline-flex; flex: 0 0 auto; transition: transform .15s ease; }
-.side-nest-caret.collapsed { transform: rotate(-90deg); }
-.side-nest-toggle svg { width: 12px; height: 12px; }
-.side-nest-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side-nest-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; font-weight: 600; }
+.side-nest-toggle svg { width: 13px; height: 13px; transition: transform .15s ease; }
+.side-nest-toggle.collapsed svg { transform: rotate(-90deg); }
+/* The slot shows live status first; the chevron takes it back on hover or keyboard focus. */
+.side-item.ses.running ~ .side-nest-toggle,
+.side-item.ses.attention ~ .side-nest-toggle { opacity: 0; }
+.side-item-wrap:hover > .side-nest-toggle,
+.side-nest-toggle:focus-visible { opacity: 1; background: var(--bg-elev); }
+.side-nest-toggle:hover, .side-nest-toggle:focus-visible { color: var(--text); }
+.side-item.ses.selecting ~ .side-nest-toggle,
+.side-item.ses.selecting ~ .side-nest-count { display: none; }
+/* Collapsed parents say how much they hide, in the gutter the row menu uses on hover. */
+.side-nest-count {
+  position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
+  display: none; color: var(--text-faint); pointer-events: none;
+  font-size: calc(11px * var(--ui-font-scale, 1)); font-variant-numeric: tabular-nums;
+}
+.side-nest-group.collapsed .side-nest-count { display: block; }
+.side-item-wrap:hover > .side-nest-count,
+.side-item-wrap:focus-within > .side-nest-count { opacity: 0; }
+.side-nest {
+  display: flex; flex-direction: column; gap: 1px;
+  margin-left: 19px; padding-left: 6px; border-left: 1px solid var(--border);
+}
+.side-nest-group.collapsed > .side-nest { display: none; }
+.side-folder-sessions .side-nest-toggle { left: 19px; }
+.side-folder-sessions .side-nest { margin-left: 27px; }
 .side-nest-items { display: flex; flex-direction: column; gap: 1px; }
+/* Nested rows start their icon where the parent's title starts, and mark the
+   open one with a flat tint so the guide line stays readable beside it. */
+.side-nest .side-item-wrap > .side-item { padding-left: 9px; }
+.side-nest .side-item.active { background: var(--clay-soft); box-shadow: none; }
+.side-nest .side-item.active ~ .session-actions:not(:hover):not(:focus-visible) { background: transparent; }
 .side-exploration {
-  display: flex; min-width: 0; width: 100%; align-items: center; gap: 7px;
-  padding: 6px 8px; border: 1px solid transparent; border-radius: var(--radius-xs);
+  display: flex; min-width: 0; width: 100%; align-items: center; gap: 9px;
+  padding: 6px 9px; border: 1px solid transparent; border-radius: var(--radius-sm);
   background: transparent; color: var(--text-muted); font: inherit; text-align: left; cursor: pointer;
 }
-.side-exploration:hover { background: var(--surface-hover); color: var(--text); }
-.side-exploration.active { border-color: var(--border-active); background: var(--clay-soft); color: var(--text); }
+.side-exploration:hover { background: var(--bg-elev); color: var(--text); }
+.side-exploration.active { background: var(--clay-soft); color: var(--text); }
 .exploration-kind-icon { display: inline-flex; flex: 0 0 auto; color: var(--clay); }
 .exploration-kind-icon svg { width: 14px; height: 14px; }
+.side-exploration .exploration-kind-icon { width: 16px; justify-content: center; }
+.side-exploration .exploration-kind-icon svg { width: 15px; height: 15px; }
 .side-exploration-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
-.side-exploration-title { overflow: hidden; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.side-exploration-title { overflow: hidden; font-size: calc(13px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .side-exploration-meta { overflow: hidden; color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .side-hint { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 6px 10px; }
 .side-load-more { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
@@ -389,12 +417,11 @@ button.side-item.ses.selecting { padding-right: 10px; }
   .sidebar .side-folder > svg { margin: 0; }
   .sidebar .side-folder-sessions { padding-left: 0; }
   .sidebar .side-folder-sessions .side-item { padding-left: 8px; }
-  .sidebar .side-branch-kids { margin-left: 0; padding-left: 4px; }
-  .sidebar .side-exploration-group { margin-left: 0; padding-left: 4px; }
-  .sidebar .side-nest-label,
+  .sidebar .side-nest { margin-left: 0; padding-left: 4px; }
+  .sidebar .side-nest .side-item-wrap > .side-item { padding-left: 8px; }
+  .sidebar .side-nest-toggle,
   .sidebar .side-nest-count,
   .sidebar .side-exploration-copy { display: none; }
-  .sidebar .side-nest-toggle { justify-content: center; padding: 6px 4px; }
   .sidebar .side-exploration { justify-content: center; padding: 8px; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .nav { gap: 4px; }

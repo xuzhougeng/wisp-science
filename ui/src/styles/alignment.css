@@ -121,9 +121,6 @@
 .folder-actions { position: static; flex: 0 0 auto; transform: none; margin: -3px -5px -3px 0; }
 .side-folder-sessions { display: flex; flex-direction: column; gap: 1px; padding-left: 12px; }
 .side-folder-sessions .side-item { padding-left: 18px; }
-/* Branch sessions nested under the session they were forked from (#531). */
-.side-branch-group { display: flex; flex-direction: column; gap: 1px; }
-.side-branch-kids { display: flex; flex-direction: column; gap: 1px; margin-left: 12px; padding-left: 8px; border-left: 1px solid var(--border); }
 .message-branch-links { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 8px 0 4px; padding-left: 28px; }
 .message-nest-group { display: flex; width: min(320px, 80vw); flex-direction: column; align-items: stretch; gap: 5px; }
 .message-nest-toggle {

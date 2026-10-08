@@ -10,57 +10,38 @@ use crate::window_capture_escape;
 use leptos::*;
 use std::collections::{HashMap, HashSet};
 
-fn toggle_collapsed_key(set: &mut HashSet<String>, key: String) {
-    if !set.insert(key.clone()) {
-        set.remove(&key);
-    }
+/// Whether a parent's nested rows are in use: the parent or one of its children is the
+/// open conversation, or a child is running / waiting on the user.
+fn nest_in_use(
+    parent: &str,
+    kids: &[String],
+    active: Option<&str>,
+    running: &HashSet<String>,
+    attention: &HashSet<String>,
+) -> bool {
+    active.is_some_and(|id| id == parent || kids.iter().any(|kid| kid == id))
+        || kids.iter().any(|kid| running.contains(kid) || attention.contains(kid))
 }
 
 #[cfg(test)]
-mod nest_toggle_tests {
-    use super::toggle_collapsed_key;
+mod nest_tests {
+    use super::nest_in_use;
     use std::collections::HashSet;
 
     #[test]
-    fn toggle_collapsed_key_inserts_then_removes() {
-        let mut set = HashSet::new();
-        toggle_collapsed_key(&mut set, "e:main".into());
-        assert!(set.contains("e:main"));
-        toggle_collapsed_key(&mut set, "e:main".into());
-        assert!(set.is_empty());
-        toggle_collapsed_key(&mut set, "b:main".into());
-        toggle_collapsed_key(&mut set, "e:main".into());
-        assert_eq!(set.len(), 2);
-    }
-}
-
-fn nest_group_toggle(
-    locale: Locale,
-    label_key: &'static str,
-    expand_key: &'static str,
-    collapse_key: &'static str,
-    count: usize,
-    collapsed: bool,
-    test_id: &'static str,
-    on_click: impl Fn(web_sys::MouseEvent) + 'static,
-) -> impl IntoView {
-    let action = t(locale, if collapsed { expand_key } else { collapse_key });
-    let count_label = count.to_string();
-    let aria = format!("{action} ({count})");
-    view! {
-        <button type="button" class="side-nest-toggle"
-            class:collapsed=collapsed
-            data-testid=test_id
-            aria-expanded=if collapsed { "false" } else { "true" }
-            title=action
-            aria-label=aria
-            on:click=on_click>
-            <span class="side-nest-caret" class:collapsed=collapsed aria-hidden="true">
-                {compose_icon("chevron-down")}
-            </span>
-            <span class="side-nest-label">{t(locale, label_key)}</span>
-            <span class="side-nest-count">{count_label}</span>
-        </button>
+    fn nest_opens_for_its_family_and_for_busy_children_only() {
+        let kids = vec!["kid".to_string()];
+        let none = HashSet::new();
+        let busy_kid: HashSet<String> = ["kid".to_string()].into();
+        let busy_parent: HashSet<String> = ["main".to_string()].into();
+        assert!(nest_in_use("main", &kids, Some("main"), &none, &none));
+        assert!(nest_in_use("main", &kids, Some("kid"), &none, &none));
+        assert!(!nest_in_use("main", &kids, Some("other"), &none, &none));
+        assert!(!nest_in_use("main", &kids, None, &none, &none));
+        assert!(nest_in_use("main", &kids, Some("other"), &busy_kid, &none));
+        assert!(nest_in_use("main", &kids, None, &none, &busy_kid));
+        // A busy parent already shows its own status; that alone does not unfold it.
+        assert!(!nest_in_use("main", &kids, Some("other"), &busy_parent, &busy_parent));
     }
 }
 
@@ -205,8 +186,9 @@ pub(super) fn Sidebar(
         &["folder", "date", "none"],
     ));
     let sort_menu_open = create_rw_signal(false);
-    // Collapsed nested branch / exploration groups, keyed as "b:{parent}" / "e:{parent}".
-    let collapsed_nests = create_rw_signal(HashSet::<String>::new());
+    // Nested explorations / branches / subagents fold under their parent. A nest is
+    // open while its family is in use; a manual toggle (keyed by parent id) overrides that.
+    let nest_choice = create_rw_signal(HashMap::<String, bool>::new());
     let selecting_sessions = create_rw_signal(false);
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     let bulk_move_target = create_rw_signal(String::new());
@@ -561,9 +543,19 @@ pub(super) fn Sidebar(
                     // zone available (so a session can be dragged out of a folder) without
                     // reading drag_session here, which would rebuild the whole list mid-drag.
                     let has_folders = !folder_list.is_empty();
-                    let item = move |s: &SessionInfo| {
+                    // `nest` is the parent-only disclosure control drawn over the status slot.
+                    let row = move |s: &SessionInfo, nest: Option<View>| {
                         let is_branch = s.branch_state.is_some();
                         let is_subagent = s.dispatched_from.is_some();
+                        // Nested rows carry their kind in the status slot instead of a group header.
+                        let kind = if is_subagent {
+                            Some(("bot", t(loc, "subagent.group")))
+                        } else if is_branch {
+                            Some(("branch", t(loc, "branch.group")))
+                        } else {
+                            None
+                        };
+                        let kind_label = kind.as_ref().map(|(_, label)| label.to_string());
                         let has_branch_family = branch_family_ids.contains(&s.id);
                         let has_exploration_round = exploration_source_ids.contains(&s.id);
                         let id = s.id.clone();
@@ -607,6 +599,7 @@ pub(super) fn Sidebar(
                                     class:pinned=pinned
                                     class:branch-session=is_branch
                                     title=title_tooltip
+                                    aria-description=kind_label
                                     class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                     class:running=move || running.get().contains(&id_running)
                                     class:attention=move || attention.get().contains(&id_attention)
@@ -672,16 +665,14 @@ pub(super) fn Sidebar(
                                         <span class="ses-attention" title=move || t(locale.get(), "sess_status.needs_you")>
                                             {compose_icon("circle-alert")}
                                         </span>
+                                        {kind.map(|(icon, label)| view! {
+                                            <span class="session-branch-icon" title=label>{compose_icon(icon)}</span>
+                                        })}
                                     </span>
                                     <span class="ses-initial" aria-hidden="true">{initial}</span>
-                                    {is_branch.then(|| view! {
-                                        <span class="session-branch-icon" aria-hidden="true">{compose_icon("branch")}</span>
-                                    })}
-                                    {is_subagent.then(|| view! {
-                                        <span class="session-branch-icon" aria-hidden="true">{compose_icon("eye")}</span>
-                                    })}
                                     <span class="ses-title">{title}</span>
                                 </button>
+                                {nest}
                                 <button type="button" class="session-actions"
                                     class:selection-hidden=move || selecting_sessions.get()
                                     disabled=move || selecting_sessions.get()
@@ -750,7 +741,7 @@ pub(super) fn Sidebar(
                         }.into_view()
                     };
                     let make = move |s: &SessionInfo| {
-                        // Subagents (#1061) nest like branches but under their own heading.
+                        // Subagents (#1061) nest like branches, listed after them.
                         let (subagent_kids, kids): (Vec<SessionInfo>, Vec<SessionInfo>) = branch_kids
                             .get(&s.id)
                             .cloned()
@@ -759,108 +750,71 @@ pub(super) fn Sidebar(
                             .partition(|kid| kid.dispatched_from.is_some());
                         let exploration_kids = exploration_groups.get(&s.id).cloned().unwrap_or_default();
                         if kids.is_empty() && subagent_kids.is_empty() && exploration_kids.is_empty() {
-                            return item(s);
+                            return row(s, None);
                         }
-                        let nests = collapsed_nests.get();
-                        let exploration_key = format!("e:{}", s.id);
-                        let branch_key = format!("b:{}", s.id);
-                        let subagent_key = format!("s:{}", s.id);
-                        let subagent_collapsed = nests.contains(&subagent_key);
-                        let subagent_count = subagent_kids.len();
-                        let exploration_collapsed = nests.contains(&exploration_key);
-                        let branch_collapsed = nests.contains(&branch_key);
-                        let exploration_count = exploration_kids.len();
-                        let branch_count = kids.len();
-                        let exploration_toggle_key = exploration_key.clone();
-                        let branch_toggle_key = branch_key.clone();
-                        let parent = item(s);
+                        let count = kids.len() + subagent_kids.len() + exploration_kids.len();
+                        let parent_id = s.id.clone();
+                        let kid_ids: Vec<String> = kids
+                            .iter()
+                            .chain(&subagent_kids)
+                            .map(|kid| kid.id.clone())
+                            .chain(exploration_kids.iter().map(|kid| kid.exploration.frame_id.clone()))
+                            .collect();
+                        // Read inside its own closures only, so a toggle or a session switch
+                        // restyles this nest without rebuilding the whole list.
+                        let expanded = {
+                            let parent_id = parent_id.clone();
+                            Signal::derive(move || {
+                                nest_choice.with(|choice| choice.get(&parent_id).copied()).unwrap_or_else(|| {
+                                    active_session.with(|active| running.with(|running| attention.with(|attention| {
+                                        nest_in_use(&parent_id, &kid_ids, active.as_deref(), running, attention)
+                                    })))
+                                })
+                            })
+                        };
+                        let toggle_label = move || {
+                            t(loc, if expanded.get() { "sidebar.nest_collapse" } else { "sidebar.nest_expand" })
+                        };
+                        let toggle = view! {
+                            <button type="button" class="side-nest-toggle"
+                                class:collapsed=move || !expanded.get()
+                                data-testid="sidebar-nest-toggle"
+                                aria-expanded=move || expanded.get().to_string()
+                                title=toggle_label
+                                aria-label=toggle_label
+                                on:click=move |ev: web_sys::MouseEvent| {
+                                    ev.prevent_default();
+                                    ev.stop_propagation();
+                                    let open = !expanded.get_untracked();
+                                    nest_choice.update(|choice| {
+                                        choice.insert(parent_id.clone(), open);
+                                    });
+                                }>
+                                {compose_icon("chevron-down")}
+                            </button>
+                            <span class="side-nest-count" aria-hidden="true">{count}</span>
+                        }.into_view();
+                        let parent = row(s, Some(toggle));
                         view! {
-                            <div class="side-branch-group">
+                            <div class="side-nest-group" class:collapsed=move || !expanded.get()>
                                 {parent}
-                                {(!exploration_kids.is_empty()).then(|| {
-                                    let exploration_toggle_key = exploration_toggle_key.clone();
-                                    view! {
-                                    <div class="side-exploration-group" data-testid="sidebar-explorations">
-                                        {nest_group_toggle(
-                                            loc,
-                                            "exploration.group",
-                                            "exploration.expand",
-                                            "exploration.collapse",
-                                            exploration_count,
-                                            exploration_collapsed,
-                                            "sidebar-exploration-toggle",
-                                            move |ev: web_sys::MouseEvent| {
-                                                ev.prevent_default();
-                                                ev.stop_propagation();
-                                                collapsed_nests.update(|set| {
-                                                    toggle_collapsed_key(set, exploration_toggle_key.clone());
-                                                });
-                                            },
-                                        )}
-                                        {(!exploration_collapsed).then(|| view! {
-                                            <div class="side-nest-items">
-                                                {exploration_kids.iter().map(&exploration_item).collect_view()}
-                                            </div>
-                                        })}
-                                    </div>
-                                    }
-                                })}
-                                {(!kids.is_empty()).then(|| {
-                                    let branch_toggle_key = branch_toggle_key.clone();
-                                    view! {
-                                    <div class="side-branch-kids" data-testid="sidebar-branches">
-                                        {nest_group_toggle(
-                                            loc,
-                                            "branch.group",
-                                            "branch.expand",
-                                            "branch.collapse",
-                                            branch_count,
-                                            branch_collapsed,
-                                            "sidebar-branch-toggle",
-                                            move |ev: web_sys::MouseEvent| {
-                                                ev.prevent_default();
-                                                ev.stop_propagation();
-                                                collapsed_nests.update(|set| {
-                                                    toggle_collapsed_key(set, branch_toggle_key.clone());
-                                                });
-                                            },
-                                        )}
-                                        {(!branch_collapsed).then(|| view! {
-                                            <div class="side-nest-items">
-                                                {kids.iter().map(&item).collect_view()}
-                                            </div>
-                                        })}
-                                    </div>
-                                    }
-                                })}
-                                {(!subagent_kids.is_empty()).then(|| {
-                                    let subagent_key = subagent_key.clone();
-                                    view! {
-                                    <div class="side-branch-kids" data-testid="sidebar-subagents">
-                                        {nest_group_toggle(
-                                            loc,
-                                            "subagent.group",
-                                            "subagent.expand",
-                                            "subagent.collapse",
-                                            subagent_count,
-                                            subagent_collapsed,
-                                            "sidebar-subagent-toggle",
-                                            move |ev: web_sys::MouseEvent| {
-                                                ev.prevent_default();
-                                                ev.stop_propagation();
-                                                collapsed_nests.update(|set| {
-                                                    toggle_collapsed_key(set, subagent_key.clone());
-                                                });
-                                            },
-                                        )}
-                                        {(!subagent_collapsed).then(|| view! {
-                                            <div class="side-nest-items">
-                                                {subagent_kids.iter().map(&item).collect_view()}
-                                            </div>
-                                        })}
-                                    </div>
-                                    }
-                                })}
+                                <div class="side-nest" data-testid="sidebar-nest">
+                                    {(!exploration_kids.is_empty()).then(|| view! {
+                                        <div class="side-nest-items" data-testid="sidebar-explorations">
+                                            {exploration_kids.iter().map(&exploration_item).collect_view()}
+                                        </div>
+                                    })}
+                                    {(!kids.is_empty()).then(|| view! {
+                                        <div class="side-nest-items" data-testid="sidebar-branches">
+                                            {kids.iter().map(|kid| row(kid, None)).collect_view()}
+                                        </div>
+                                    })}
+                                    {(!subagent_kids.is_empty()).then(|| view! {
+                                        <div class="side-nest-items" data-testid="sidebar-subagents">
+                                            {subagent_kids.iter().map(|kid| row(kid, None)).collect_view()}
+                                        </div>
+                                    })}
+                                </div>
                             </div>
                         }.into_view()
                     };
