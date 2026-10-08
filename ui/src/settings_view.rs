@@ -4987,10 +4987,13 @@ pub(super) fn SettingsView(
                                                                                 settings_busy.set(false);
                                                                             });
                                                                         }>{move || t(locale.get(), "models.use")}</button>
-                                                                        <button type="button" title=move || t(locale.get(), "models.remove") on:click=move |_| {
+                                                                    }.into_view()}}
+                                                                    // The default model is removable too (remove_model falls back to another chat model); only the last chat model is not.
+                                                                    {move || models.with(|list| list.iter().any(|o| o.id != delete.id && o.is_chat_model())).then(|| { let delete = delete.clone(); view! {
+                                                                        <button type="button" data-testid="remove-subscription-model" title=move || t(locale.get(), "models.remove") on:click=move |_| {
                                                                             delete_confirm.set(Some(DeleteConfirm::Model { id: delete.id.clone(), label: delete.label.clone() }));
                                                                         }>{compose_icon("close")}</button>
-                                                                    }.into_view()}}
+                                                                    }})}
                                                                 </div>
                                                             }}
                                                         </For>
