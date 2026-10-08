@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page="tutorial-article" data-title-zh="在 Sealos 部署 Wisp 网页远程访问 · 教程 | Wisp Science" data-title-en="Deploy Wisp Remote Web Access on Sealos · Tutorials | Wisp Science" data-desc-zh="在 Sealos 部署 Wisp 网页远程访问" data-desc-en="Deploy Wisp Remote Web Access on Sealos">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="在 Sealos 部署 Wisp 网页远程访问">
+  <title>在 Sealos 部署 Wisp 网页远程访问 · 教程 | Wisp Science</title>
+  <script>
+    (function () {
+      var lang = "zh";
+      try {
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "en" || q === "zh") lang = q;
+        else {
+          var s = localStorage.getItem("wisp-pages-lang");
+          if (s === "en" || s === "zh") lang = s;
+        }
+      } catch (e) {}
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="stylesheet" href="../assets/tutorials.css">
+</head>
+<body class="doc-page tutorial-detail">
+  <header class="site-nav">
+    <div class="container">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="28" height="28">
+        <span class="brand-name">Wisp Science</span>
+      </a>
+      <nav class="nav-links" data-i18n-aria="nav.aria" aria-label="页面导航">
+        <a href="../index.html#features" data-i18n="nav.features">功能</a>
+        <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
+        <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
+        <a href="../index.html#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/README.md" data-i18n="nav.docs">文档</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="语言">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a class="btn btn-primary" href="../index.html#download"><span class="btn-label-full" data-i18n="nav.downloadFull">下载桌面版</span><span class="btn-label-short" data-i18n="nav.downloadShort">下载</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main class="tutorial-reader container">
+<nav class="tutorial-breadcrumb" aria-label="教程导航" data-i18n-aria="tutorials.readerNav"><a class="tutorial-back" href="../tutorials.html#wisp-science-sealos-remote-web" data-i18n="tutorials.back">返回教程目录</a></nav>
+<article class="tutorial-article" id="wisp-science-sealos-remote-web" aria-labelledby="article-title">
+<header><h1 id="article-title" data-text-zh="在 Sealos 部署 Wisp 网页远程访问" data-text-en="Deploy Wisp Remote Web Access on Sealos">在 Sealos 部署 Wisp 网页远程访问</h1>
+<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-sealos-remote-web.md" data-href-zh="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-sealos-remote-web.md" data-href-en="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/en/wisp-science-sealos-remote-web.md" data-i18n="tutorials.source">查看原文</a></header>
+<div class="tutorial-body lang-zh" lang="zh-CN">
+<p>把 Wisp 的中继服务部署到 Sealos 后，就可以通过手机或浏览器访问电脑上的 Wisp，查看对话、发送消息、预览文件和处理审批。下面从创建应用开始，完成中继部署、桌面端连接和浏览器验证。</p>
+<p>整个连接方式是：</p>
+<pre><code class="language-text">手机／浏览器 ←→ Sealos 中继服务 ←→ 电脑上的 Wisp
+</code></pre>
+<p>Sealos 负责提供网页和转发加密数据，Agent、模型调用和计算任务仍在你的电脑上执行。因此，远程使用时，<strong>电脑需要保持联网、避免休眠，Wisp 需要保持运行</strong>。电脑主动连接中继，不需要公网 IP，也不用在路由器上开放入站端口。</p>
+<blockquote>
+<p>本文基于 2026 年 10 月 8 日的部署操作。Sealos 配图中的域名已遮挡，Wisp 设置图使用仓库中的演示截图。桌面端需要支持“网页远程访问”功能；该功能在 v1.18.0 之后加入。</p>
+</blockquote>
+<p><strong>第一步：创建应用。</strong></p>
+<p>登录 Sealos，进入「应用管理」，点击「创建应用」。按下面的内容填写，操作入口可以参考 <a href="https://sealos.run/docs/getting-started/deploy-docker-image">Sealos Docker 镜像部署文档</a>。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>配置项</th>
+<th>填写内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>应用名称</td>
+<td><code>wisp-relay</code></td>
+</tr>
+<tr>
+<td>镜像源</td>
+<td>公开</td>
+</tr>
+<tr>
+<td>镜像名</td>
+<td><code>ghcr.io/xuzhougeng/wisp-relay:main</code></td>
+</tr>
+<tr>
+<td>部署模式</td>
+<td>固定实例</td>
+</tr>
+<tr>
+<td>实例数</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>CPU</td>
+<td><code>0.2</code> 核</td>
+</tr>
+<tr>
+<td>内存</td>
+<td><code>256 M</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>本次部署核实时，镜像仓库只有 <code>main</code> 标签，使用 <code>latest</code> 会出现 <code>not found</code>。因此，本教程使用已验证可拉取的 <code>main</code> 镜像。<code>main</code> 会随开发分支更新；后续正式版镜像可用时，可以改用明确的版本标签固定版本。</p>
+<p>截图中的资源配置可以作为个人使用的起点，后续根据实际用量调整。实例数保持为 <strong>1</strong>，因为当前中继在单个进程内维护电脑与浏览器的连接配对，多实例可能使两端连接到不同的进程。</p>
+<p><strong>第二步：配置网络。</strong></p>
+<p>在「网络配置」中填写：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>配置项</th>
+<th>填写内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>容器暴露端口</td>
+<td><code>8787</code></td>
+</tr>
+<tr>
+<td>公网访问</td>
+<td>开启</td>
+</tr>
+<tr>
+<td>访问协议</td>
+<td><code>https://</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><img src="../assets/tutorials/sealos-remote-web/01-deployment.png" alt="Sealos 应用配置：公开的 main 镜像、单实例、0.2 核 CPU、256 M 内存以及 8787 端口的 HTTPS 公网入口" loading="lazy" width="1372" height="1547" /></p>
+<p><em>图 1：本次成功部署使用的基础配置和网络配置，公网域名已遮挡。</em></p>
+<p>Sealos 会分配一个公网域名，后面需要把这个地址填进 Wisp。本次部署使用截图中的 <strong>HTTPS 入口</strong>，已经成功建立远程连接，沿用此配置即可。Sealos 负责 HTTPS 入口，不需要另外部署 Caddy 或手动配置证书。</p>
+<p>网页远程访问同时使用 HTTPS 页面和 WSS 长连接。如果以后添加自己的反向代理，需要保证同一个域名下的 WebSocket 请求也能转发到容器的 <code>8787</code> 端口。</p>
+<p><strong>第三步：配置环境变量。</strong></p>
+<p>展开「高级配置」，将「启动命令」和「Arguments」留空，使用镜像自带的启动方式。</p>
+<p>添加以下环境变量：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WISP_RELAY_TOKEN</code></td>
+<td>自己生成的一段长随机令牌</td>
+</tr>
+<tr>
+<td><code>WISP_RELAY_BIND</code></td>
+<td><code>0.0.0.0:8787</code></td>
+</tr>
+<tr>
+<td><code>WISP_RELAY_ROOT</code></td>
+<td><code>/data</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>如果本地有 OpenSSL，可以在终端用下面的命令生成令牌：</p>
+<pre><code class="language-bash">openssl rand -hex 32
+</code></pre>
+<p>Windows 没有安装 OpenSSL 时，也可以在 PowerShell 中生成：</p>
+<pre><code class="language-powershell">$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
+([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()
+</code></pre>
+<p>将输出复制到 <code>WISP_RELAY_TOKEN</code> 的值中，并保存好，桌面端需要填写同一个令牌。</p>
+<p><strong>仅使用网页远程访问时，不要新增 <code>/data</code> 本地存储挂载。</strong> 保留 <code>WISP_RELAY_ROOT=/data</code> 环境变量即可，程序会使用镜像内已有的可写目录。</p>
+<p>网页远程访问不需要持久化数据。额外挂载存储卷可能覆盖镜像原有的目录权限，导致容器启动时无法创建目录。如果以后需要项目同步，再单独配置持久化存储，并确保容器用户 <code>10001:10001</code> 有写入权限。</p>
+<p><strong>第四步：部署并检查。</strong></p>
+<p>点击部署，等待实例进入运行状态。</p>
+<p>假设 Sealos 分配的地址是 <code>https://你的应用域名</code>，先在浏览器打开：</p>
+<pre><code class="language-text">https://你的应用域名/healthz
+</code></pre>
+<p>显示 <code>ok</code>，说明中继服务可以访问。再打开：</p>
+<pre><code class="language-text">https://你的应用域名/remote
+</code></pre>
+<p>应看到网页远程访问页面。注意，<strong>网页入口是 <code>/remote</code></strong>，不要只用根地址判断服务是否正常。</p>
+<p><strong>第五步：连接电脑上的 Wisp。</strong></p>
+<p>打开 Wisp，进入 <strong>设置 → 远程接入 → 网页远程访问</strong>，填写：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>配置项</th>
+<th>填写内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>中继服务器地址</td>
+<td><code>https://你的应用域名</code></td>
+</tr>
+<tr>
+<td>中继访问令牌</td>
+<td>部署时设置的 <code>WISP_RELAY_TOKEN</code></td>
+</tr>
+<tr>
+<td>启用网页远程访问</td>
+<td>勾选</td>
+</tr>
+</tbody>
+</table></div>
+<p>中继服务器地址只填域名，<strong>不要加 <code>/remote</code></strong>。点击「保存」。</p>
+<p><img src="../assets/tutorials/remote-web/01-settings.png" alt="Wisp 网页远程访问设置：中继地址、访问令牌、启用开关和联机码" loading="lazy" width="1440" height="1000" /></p>
+<p><em>图 2：桌面端设置示意图，域名和联机码均为演示值。</em></p>
+<p>连接成功后，右侧会显示 <strong>“运行中”</strong>，下方会出现联机码和远程访问链接。</p>
+<p>这里的两种凭据用途不同：</p>
+<ul>
+<li><strong>中继访问令牌</strong>：让电脑上的 Wisp 连接到中继，由你在部署时设置。</li>
+<li><strong>联机码</strong>：让浏览器连接到这台电脑上的 Wisp，由桌面端自动生成。</li>
+</ul>
+<p><strong>第六步：在手机或浏览器中使用。</strong></p>
+<p>点击 Wisp 中的「复制链接」，在手机或其他浏览器打开。链接形式如下：</p>
+<pre><code class="language-text">https://你的应用域名/remote#你的联机码
+</code></pre>
+<p>也可以打开 <code>/remote</code> 页面，手动输入联机码。当桌面端显示 <strong>“已连接的网页：1”</strong>，说明已有一个网页接入。</p>
+<p>现在可以在网页上打开一个对话、发送一条消息，确认回复能正常显示。远程发起的写文件、改文件和运行命令仍需审批，可以在网页上处理。</p>
+<p>联机码和完整访问链接具有访问权限，请像密码一样保管。分享截图前，遮住令牌、联机码和链接中 <code>#</code> 后面的内容。链接泄露时，在桌面端点击「重置联机码」，再复制新链接；旧链接会失效，已连接的网页会断开。</p>
+<p><strong>常见问题。</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>现象</th>
+<th>排查方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>拉取镜像提示 <code>latest: not found</code></td>
+<td>使用本教程的 <code>ghcr.io/xuzhougeng/wisp-relay:main</code>，或确认目标版本标签已经发布</td>
+</tr>
+<tr>
+<td>提示 <code>Back-off restarting failed container</code></td>
+<td>查看应用日志；它表示容器反复退出，具体原因以日志为准，有“上一次运行日志”时优先查看</td>
+</tr>
+<tr>
+<td>日志提示令牌缺失或为空</td>
+<td>检查 <code>WISP_RELAY_TOKEN</code> 是否填写并保存</td>
+</tr>
+<tr>
+<td>日志提示 <code>Permission denied</code></td>
+<td>检查 <code>/data</code> 挂载权限；新建且没有同步数据、仅用于 remote web 的应用可移除该挂载，已有同步数据时先保留存储并修复权限</td>
+</tr>
+<tr>
+<td><code>/healthz</code> 正常，但 Wisp 连不上</td>
+<td>核对中继地址、令牌，以及电脑到该域名的网络连接；使用自定义代理时检查 WebSocket 转发</td>
+</tr>
+<tr>
+<td>网页显示电脑离线</td>
+<td>确认电脑未休眠、Wisp 正在运行且远程访问显示“运行中”</td>
+</tr>
+</tbody>
+</table></div>
+<p>继续阅读：<a href="wisp-science-remote-web.html">用手机和浏览器远程使用 Wisp</a> · <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/remote-access.md">网页远程访问部署参考</a> · <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.md">项目同步</a></p>
+</div>
+<div class="tutorial-body lang-en" lang="en">
+<p>With the Wisp relay deployed on Sealos, you can reach the Wisp on your computer from a phone or a browser: read conversations, send messages, preview files and answer approvals. This article starts from creating the app and goes through deploying the relay, connecting the desktop app and checking the result in a browser.</p>
+<p>The connection looks like this:</p>
+<pre><code class="language-text">phone / browser ←→ relay on Sealos ←→ Wisp on your computer
+</code></pre>
+<p>Sealos serves the web page and forwards encrypted data. The agent, the model calls and the computation still run on your computer. So while you use it remotely, <strong>the computer has to stay online and awake, and Wisp has to keep running</strong>. The computer dials out to the relay, so it needs no public IP address and no inbound port opened on a router.</p>
+<blockquote>
+<p>This article follows a deployment done on October 8, 2026. The Sealos screenshot shows the console in its Chinese interface, with the domain masked; the Wisp settings screenshot is the demonstration capture from the repository. Field names for the Sealos console follow its English documentation, and the console's own wording may differ slightly. The desktop app needs remote web access, which was added after v1.18.0.</p>
+</blockquote>
+<p><strong>Step 1: create the app.</strong></p>
+<p>Sign in to Sealos, open <strong>App Launchpad</strong> and create a new app. Fill it in as below; for where each field is, see <a href="https://sealos.io/docs/guides/app-deploy/first-deploy/">Deploy Your First App</a> in the Sealos documentation.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>App name</td>
+<td><code>wisp-relay</code></td>
+</tr>
+<tr>
+<td>Image source</td>
+<td>Public</td>
+</tr>
+<tr>
+<td>Image</td>
+<td><code>ghcr.io/xuzhougeng/wisp-relay:main</code></td>
+</tr>
+<tr>
+<td>Deploy mode</td>
+<td>Fixed instances</td>
+</tr>
+<tr>
+<td>Instance count</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>CPU</td>
+<td><code>0.2</code> cores</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td><code>256 M</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>When this deployment was checked, the registry only had the <code>main</code> tag, and <code>latest</code> failed with <code>not found</code>. This tutorial therefore uses the <code>main</code> image, which was verified to pull. <code>main</code> follows the development branch; once a release image is available, you can pin an explicit version tag instead.</p>
+<p>The resources in the screenshot are a starting point for personal use; adjust them later to what you actually use. Keep the instance count at <strong>1</strong>: the relay pairs each computer with its browsers inside one process, and with several instances the two sides may land on different processes.</p>
+<p><strong>Step 2: configure networking.</strong></p>
+<p>In the network section, enter:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Container port</td>
+<td><code>8787</code></td>
+</tr>
+<tr>
+<td>Public Access</td>
+<td>Enabled</td>
+</tr>
+<tr>
+<td>Protocol</td>
+<td><code>https://</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><img src="../assets/tutorials/en/sealos-remote-web/01-deployment.png" alt="Sealos app settings: the public main image, one fixed instance, 0.2 CPU cores, 256 M of memory and an HTTPS public entry on port 8787" loading="lazy" width="1372" height="1547" /></p>
+<p><em>Figure 1: The basic and network settings of this deployment, in the console's Chinese interface. From top to bottom: the app name, the image, the deploy mode with its instance count, CPU and memory, then the container port and public access. The public domain is masked.</em></p>
+<p>Sealos assigns a public domain, which goes into Wisp later. This deployment used the <strong>HTTPS entry</strong> shown in the screenshot and connected successfully, so keep that setting. Sealos provides the HTTPS entry; there is no Caddy to deploy and no certificate to configure by hand.</p>
+<p>Remote web access uses an HTTPS page and a long-lived WSS connection. If you add your own reverse proxy later, make sure WebSocket requests on the same domain are also forwarded to port <code>8787</code> of the container.</p>
+<p><strong>Step 3: set the environment variables.</strong></p>
+<p>Open the advanced section and leave the startup command and its arguments empty, so the image starts the way it was built to.</p>
+<p>Add these environment variables:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WISP_RELAY_TOKEN</code></td>
+<td>A long random token that you generate</td>
+</tr>
+<tr>
+<td><code>WISP_RELAY_BIND</code></td>
+<td><code>0.0.0.0:8787</code></td>
+</tr>
+<tr>
+<td><code>WISP_RELAY_ROOT</code></td>
+<td><code>/data</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>With OpenSSL installed, generate the token in a terminal:</p>
+<pre><code class="language-bash">openssl rand -hex 32
+</code></pre>
+<p>On Windows without OpenSSL, PowerShell can generate it too:</p>
+<pre><code class="language-powershell">$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
+([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()
+</code></pre>
+<p>Copy the output into the value of <code>WISP_RELAY_TOKEN</code> and keep it somewhere safe: the desktop app needs the same token.</p>
+<p><strong>For remote web access alone, do not add a storage mount at <code>/data</code>.</strong> Keeping the <code>WISP_RELAY_ROOT=/data</code> environment variable is enough; the program uses the writable directory that already exists in the image.</p>
+<p>Remote web access keeps no data. An extra storage volume can replace the directory permissions that come with the image, and the container then fails to create its directories at startup. If you need project sync later, configure persistent storage separately and make sure the container user <code>10001:10001</code> can write to it.</p>
+<p><strong>Step 4: deploy and check.</strong></p>
+<p>Deploy the app and wait until the instance is running.</p>
+<p>Say the address Sealos assigned is <code>https://your-app-domain</code>. First open this in a browser:</p>
+<pre><code class="language-text">https://your-app-domain/healthz
+</code></pre>
+<p>If it shows <code>ok</code>, the relay is reachable. Then open:</p>
+<pre><code class="language-text">https://your-app-domain/remote
+</code></pre>
+<p>You should see the remote web access page. Note that <strong>the page lives at <code>/remote</code></strong>; do not judge whether the service works from the root address alone.</p>
+<p><strong>Step 5: connect the Wisp on your computer.</strong></p>
+<p>Open Wisp, go to <strong>Settings → Remote Access → Remote web access</strong>, and enter:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Relay server URL</td>
+<td><code>https://your-app-domain</code></td>
+</tr>
+<tr>
+<td>Relay access token</td>
+<td>The <code>WISP_RELAY_TOKEN</code> you set when deploying</td>
+</tr>
+<tr>
+<td>Enable remote web access</td>
+<td>Checked</td>
+</tr>
+</tbody>
+</table></div>
+<p>The relay server URL is the domain only; <strong>do not add <code>/remote</code></strong>. Press <strong>Save</strong>.</p>
+<p><img src="../assets/tutorials/en/remote-web/01-settings.png" alt="Wisp remote web access settings: the relay URL, the access token, the enable switch and the connection code" loading="lazy" width="1440" height="1000" /></p>
+<p><em>Figure 2: The desktop settings, as an illustration. The domain and the connection code are demonstration values.</em></p>
+<p>Once connected, the right side reads <strong>“Running”</strong>, and a connection code and a remote access link appear below.</p>
+<p>The two credentials do different jobs:</p>
+<ul>
+<li><strong>Relay access token</strong>: lets the Wisp on your computer connect to the relay. You set it when deploying.</li>
+<li><strong>Connection code</strong>: lets a browser connect to the Wisp on this computer. The desktop app generates it.</li>
+</ul>
+<p><strong>Step 6: use it from a phone or a browser.</strong></p>
+<p>Press <strong>Copy link</strong> in Wisp and open the link on a phone or in another browser. The link has this form:</p>
+<pre><code class="language-text">https://your-app-domain/remote#your-connection-code
+</code></pre>
+<p>You can also open the <code>/remote</code> page and type the connection code. When the desktop app shows <strong>“Browsers connected: 1”</strong>, one page has joined.</p>
+<p>Now open a conversation in the page and send a message to confirm that the reply shows up. Writing files, editing files and running commands that were started remotely still need approval, which you can give in the page.</p>
+<p>The connection code and the full link grant access, so keep them like a password. Before sharing a screenshot, cover the token, the connection code and everything after <code>#</code> in the link. If the link leaks, press <strong>Reset code</strong> in the desktop app and copy the new link: the old link stops working and connected pages are disconnected.</p>
+<p><strong>Troubleshooting.</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Symptom</th>
+<th>What to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pulling the image fails with <code>latest: not found</code></td>
+<td>Use <code>ghcr.io/xuzhougeng/wisp-relay:main</code> from this tutorial, or confirm that the version tag you want has been published</td>
+</tr>
+<tr>
+<td><code>Back-off restarting failed container</code></td>
+<td>Read the app logs. The message means the container keeps exiting, and the logs give the actual reason; if the console offers the logs of the previous run, read those first</td>
+</tr>
+<tr>
+<td>The logs say the token is missing or empty</td>
+<td>Check that <code>WISP_RELAY_TOKEN</code> is filled in and saved</td>
+</tr>
+<tr>
+<td>The logs say <code>Permission denied</code></td>
+<td>Check the permissions of the <code>/data</code> mount. A new app with no sync data that only serves remote web access can drop the mount; with existing sync data, keep the storage and fix its permissions</td>
+</tr>
+<tr>
+<td><code>/healthz</code> works but Wisp cannot connect</td>
+<td>Check the relay URL, the token, and the network path from the computer to that domain; with a proxy of your own, check that it forwards WebSocket</td>
+</tr>
+<tr>
+<td>The page says the computer is offline</td>
+<td>Make sure the computer is awake, Wisp is running and remote access reads “Running”</td>
+</tr>
+</tbody>
+</table></div>
+<p>Keep reading: <a href="wisp-science-remote-web.html">Use Wisp from a Phone or Browser</a> · <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/remote-access.md">Remote web access deployment reference</a> · <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.md">Project sync</a></p>
+</div>
+</article>
+<nav class="tutorial-pagination" aria-label="相邻教程" data-i18n-aria="tutorials.pagination"><a class="tutorial-previous" href="wisp-science-remote-web.html"><span data-i18n="tutorials.previous">上一篇</span><strong data-text-zh="用手机和浏览器远程使用 Wisp" data-text-en="Use Wisp from a Phone or Browser">用手机和浏览器远程使用 Wisp</strong></a><a class="tutorial-next" href="wisp-science-cli.html"><span data-i18n="tutorials.next">下一篇</span><strong data-text-zh="Wisp 命令行" data-text-en="Wisp CLI">Wisp 命令行</strong></a></nav>
+<div class="tutorial-reader-back"><a class="tutorial-back" href="../tutorials.html#wisp-science-sealos-remote-web" data-i18n="tutorials.back">返回教程目录</a></div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="24" height="24">
+        Wisp Science
+      </a>
+      <nav class="footer-links">
+        <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/releases" data-i18n="footer.releases">版本记录</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/issues" data-i18n="footer.issues">问题反馈</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE">AGPL-3.0-only</a>
+      </nav>
+      <p class="footer-copy" data-i18n="footer.copy">© 2026 Wisp Science · 开源科学计算 Agent</p>
+    </div>
+  </footer>
+  <script src="../assets/i18n.js"></script>
+</body>
+</html>

@@ -28,7 +28,7 @@ READING_ORDER = [
     "wisp-science-transcriptome-upstream", "wisp-science-rnaseq-downstream",
     "wisp-science-agent-workflow", "wisp-science-agent-workflow-create",
     "wisp-science-map-items", "wisp-science-research-assistant", "wisp-science-remote-web",
-    "wisp-science-cli", "wisp-science-acp",
+    "wisp-science-sealos-remote-web", "wisp-science-cli", "wisp-science-acp",
 ]
 
 
