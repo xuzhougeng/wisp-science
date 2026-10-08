@@ -207,6 +207,24 @@ fn resource_conflict_confirmation_has_dedicated_ui_payload_and_no_saved_grant() 
 }
 
 #[test]
+fn dangerous_command_preview_keeps_the_whole_command() {
+    let (tool, preview) = super::parse_confirm_payload(
+        "Dangerous command detected (delete): rm -r ~/data # note: ok",
+    );
+    assert_eq!(tool, "shell");
+    assert_eq!(preview, "rm -r ~/data # note: ok");
+}
+
+#[test]
+fn follow_up_parser_rejects_inverted_bracket_range() {
+    assert!(super::parse_follow_up_questions("see x] then [").is_err());
+    assert_eq!(
+        super::parse_follow_up_questions(r#"ok ["a", "b", "c"]"#).unwrap(),
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+#[test]
 fn mcp_app_tool_confirm_payload_parses_and_keys_a_grant() {
     let message =
         "Run tool 'figure_preview_exact' from MCP App 'Figure Library' (connector 'figure-library')?";
@@ -2237,6 +2255,19 @@ fn copy_dir_recursive_copies_nested_files() {
         "---\nname: x\n---\nbody"
     );
 
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_dir_recursive_refuses_symlinks() {
+    let base = std::env::temp_dir().join(format!("wisp_copy_symlink_{}", std::process::id()));
+    let from = base.join("from");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::write(base.join("secret"), "key").unwrap();
+    std::os::unix::fs::symlink(base.join("secret"), from.join("SKILL.md")).unwrap();
+    let error = copy_dir_recursive(&from, &base.join("to")).unwrap_err();
+    assert!(error.to_string().contains("symlink"), "{error}");
     let _ = std::fs::remove_dir_all(&base);
 }
 

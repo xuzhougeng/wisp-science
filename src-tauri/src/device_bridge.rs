@@ -949,8 +949,13 @@ async fn store_token(token: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-async fn delete_token() {
-    let _ = tokio::task::spawn_blocking(|| Secret::delete(DEVICE_TOKEN_SECRET)).await;
+async fn delete_token() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| Secret::delete(DEVICE_TOKEN_SECRET))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!("failed to remove the Device Bridge token from the keyring: {error}")
+        })
 }
 
 async fn load_config(store: &Store) -> Result<DeviceBridgeConfig, String> {
@@ -1080,7 +1085,7 @@ pub(crate) async fn set_device_bridge(
 
     if !enabled {
         state.device_bridge.stop().await;
-        delete_token().await;
+        delete_token().await?;
         return Ok(settings_status(&state).await);
     }
 
@@ -1121,8 +1126,7 @@ pub(crate) async fn revoke_device_bridge_token(
     state: TauriState<'_, AppState>,
 ) -> Result<(), String> {
     state.device_bridge.revoke_token();
-    delete_token().await;
-    Ok(())
+    delete_token().await
 }
 
 #[cfg(test)]

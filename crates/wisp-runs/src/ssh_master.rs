@@ -266,50 +266,48 @@ pub async fn run(
     if slot.master.is_some() && slot.args != ssh_args {
         slot.master = None;
     }
-    let reused = slot.master.is_some();
     let mut spawn_args = ssh_args.clone();
     spawn_args.push("sh".into());
-    if !reused {
-        slot.master = Some(Master::spawn("ssh", &spawn_args, envs)?);
-        slot.args = ssh_args;
-    }
-    let master = slot.master.as_mut().expect("master just ensured");
+    // The master leaves the slot while an RPC is in flight. If this future
+    // is dropped mid-RPC (run cancelled, lease lost) the master is dropped
+    // with it, so a half-read stream is never handed to the next caller.
+    let reused = slot.master.is_some();
+    let mut master = match slot.master.take() {
+        Some(master) => master,
+        None => {
+            slot.args = ssh_args;
+            Master::spawn("ssh", &spawn_args, envs)?
+        }
+    };
+    let timed_out = || {
+        Err(format!(
+            "SSH command timed out after {}s",
+            timeout.as_secs()
+        ))
+    };
     match tokio::time::timeout(timeout, master.rpc(&payload)).await {
-        Ok(Ok(output)) => Ok(output),
+        Ok(Ok(output)) => {
+            slot.master = Some(master);
+            Ok(output)
+        }
         Ok(Err(_stale)) if reused => {
             // An idle master may have died (sleep, network change, server
             // idle timeout); retry once on a fresh connection.
-            slot.master = None;
-            let master = slot.master.insert(Master::spawn("ssh", &spawn_args, envs)?);
+            drop(master);
+            let mut master = Master::spawn("ssh", &spawn_args, envs)?;
             match tokio::time::timeout(timeout, master.rpc(&payload)).await {
-                Ok(result) => {
-                    if result.is_err() {
-                        slot.master = None;
-                    }
-                    result
+                Ok(Ok(output)) => {
+                    slot.master = Some(master);
+                    Ok(output)
                 }
-                Err(_) => {
-                    slot.master = None;
-                    Err(format!(
-                        "SSH command timed out after {}s",
-                        timeout.as_secs()
-                    ))
-                }
+                Ok(Err(error)) => Err(error),
+                Err(_) => timed_out(),
             }
         }
-        Ok(Err(error)) => {
-            slot.master = None;
-            Err(error)
-        }
-        Err(_) => {
-            // The remote side may still be mid-RPC; the stream is desynced,
-            // so the master cannot be reused.
-            slot.master = None;
-            Err(format!(
-                "SSH command timed out after {}s",
-                timeout.as_secs()
-            ))
-        }
+        Ok(Err(error)) => Err(error),
+        // The remote side may still be mid-RPC; the stream is desynced, so
+        // the master (already out of the slot) is dropped, not reused.
+        Err(_) => timed_out(),
     }
 }
 

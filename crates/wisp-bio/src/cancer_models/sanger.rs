@@ -683,7 +683,10 @@ fn encode_filter(filters: &[Value]) -> Result<String> {
 }
 
 fn looks_like_sidm(value: &str) -> bool {
-    value.len() >= 4 && value[..4].eq_ignore_ascii_case("SIDM")
+    value
+        .as_bytes()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"SIDM"))
 }
 
 pub(super) fn require_label(value: &str, what: &str) -> Result<String> {
@@ -716,5 +719,15 @@ fn field_text(value: &Value, key: &str) -> Option<String> {
         Some(Value::String(text)) if !text.is_empty() => Some(text.clone()),
         Some(Value::Number(number)) => Some(number.to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod slice_tests {
+    #[test]
+    fn looks_like_sidm_survives_non_ascii() {
+        assert!(super::looks_like_sidm("sidm00001"));
+        assert!(!super::looks_like_sidm("肺癌"));
+        assert!(!super::looks_like_sidm("SID"));
     }
 }

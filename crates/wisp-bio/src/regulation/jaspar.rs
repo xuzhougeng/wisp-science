@@ -223,9 +223,10 @@ fn is_matrix_id(value: &str, versioned: bool) -> bool {
     if versioned != version.is_some() {
         return false;
     }
+    let base = base.as_bytes();
     let base_ok = base.len() == 6
-        && base[..2].bytes().all(|b| b.is_ascii_uppercase())
-        && base[2..].bytes().all(|b| b.is_ascii_digit());
+        && base[..2].iter().all(u8::is_ascii_uppercase)
+        && base[2..].iter().all(u8::is_ascii_digit);
     let version_ok = version
         .is_none_or(|v| !v.is_empty() && v.len() <= 4 && v.bytes().all(|b| b.is_ascii_digit()));
     base_ok && version_ok
@@ -311,4 +312,15 @@ fn project_release(row: &Value) -> Option<Value> {
         "active": row.get("active"),
         "url": row.get("url"),
     }))
+}
+
+#[cfg(test)]
+mod slice_tests {
+    #[test]
+    fn is_matrix_id_survives_non_ascii() {
+        assert!(super::is_matrix_id("MA0004", false));
+        assert!(super::is_matrix_id("MA0004.1", true));
+        assert!(!super::is_matrix_id("转录", false));
+        assert!(!super::is_matrix_id("转录.1", true));
+    }
 }

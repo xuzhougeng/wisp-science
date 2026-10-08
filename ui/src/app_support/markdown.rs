@@ -275,12 +275,18 @@ pub(crate) fn replace_file_links(html: String, arts: &[Artifact]) -> String {
     out
 }
 
+/// First 8 chars (not bytes): tokens are model-written and may be CJK.
+fn short_prefix(s: &str) -> &str {
+    let end = s.char_indices().nth(8).map_or(s.len(), |(i, _)| i);
+    &s[..end]
+}
+
 pub(crate) fn artifact_matches_token(token: &str, id: &str) -> bool {
     let t = token.trim();
     t == id
         || t.starts_with(id)
-        || id.starts_with(&t[..t.len().min(8)])
-        || t.starts_with(&id[..id.len().min(8)])
+        || id.starts_with(short_prefix(t))
+        || t.starts_with(short_prefix(id))
 }
 
 pub(crate) fn replace_artifact_tokens(mut html: String, arts: &[Artifact]) -> String {
@@ -303,7 +309,7 @@ pub(crate) fn replace_artifact_tokens(mut html: String, arts: &[Artifact]) -> St
                 }
             })
             .unwrap_or_else(|| {
-                let short = &token[..token.len().min(8)];
+                let short = short_prefix(token);
                 format!(r#"<span class="art-ref dead" title="{token}">artifact-{short}</span>"#)
             });
         html = format!("{head}{chip}{tail}");
@@ -1792,5 +1798,16 @@ pub(crate) fn handle_md_click(
             }
         }
         el = n.parent_element();
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    #[test]
+    fn short_prefix_cuts_on_char_boundaries() {
+        assert_eq!(super::short_prefix("abcdefghij"), "abcdefgh");
+        assert_eq!(super::short_prefix("分析结果"), "分析结果");
+        assert_eq!(super::short_prefix("一二三四五六七八九十"), "一二三四五六七八");
+        assert!(!super::artifact_matches_token("分析结果", "abc"));
     }
 }
