@@ -53,6 +53,19 @@ pub fn relay_router(state: RelayHttpState) -> Router {
         .route("/v1/projects/{project_id}/commit", post(commit))
         .route("/remote", get(crate::remote::page))
         .route("/remote.js", get(crate::remote::script))
+        .route("/remote.webmanifest", get(crate::remote::manifest))
+        .route(
+            "/remote-icon-192.png",
+            get(|| crate::remote::icon(crate::remote::ICON_192)),
+        )
+        .route(
+            "/remote-icon-512.png",
+            get(|| crate::remote::icon(crate::remote::ICON_512)),
+        )
+        .route(
+            "/remote-touch-icon.png",
+            get(|| crate::remote::icon(crate::remote::TOUCH_ICON)),
+        )
         .route("/v1/remote/host/{sid}", get(crate::remote::host_socket))
         .route("/v1/remote/client/{sid}", get(crate::remote::client_socket))
         .layer(DefaultBodyLimit::max(MAX_RELAY_BODY_BYTES))
@@ -419,6 +432,46 @@ mod tests {
             "Bearer correct-token".parse().unwrap(),
         );
         assert!(authorized(&headers, &state));
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn the_remote_page_installs_with_icons_the_relay_actually_serves() {
+        let root = std::env::temp_dir().join(format!("wisp-http-pwa-{}", uuid::Uuid::new_v4()));
+        let relay = FileRelay::open(&root).await.unwrap();
+        let app = relay_router(RelayHttpState::new(relay, "token").unwrap());
+        let fetch = |path: String| {
+            let app = app.clone();
+            async move {
+                let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let kind = response.headers()["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX);
+                (kind, body.await.unwrap())
+            }
+        };
+        let (kind, body) = fetch("/remote.webmanifest".into()).await;
+        assert_eq!(kind, "application/manifest+json");
+        let manifest: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(manifest["display"], "standalone");
+        let icons = manifest["icons"].as_array().unwrap();
+        assert_eq!(icons.len(), 2);
+        for icon in icons {
+            let (kind, png) = fetch(format!("/{}", icon["src"].as_str().unwrap())).await;
+            assert_eq!(kind, "image/png");
+            // Width and height from the PNG header match what the manifest claims.
+            let side = u32::from_be_bytes(png[16..20].try_into().unwrap());
+            assert_eq!(side, u32::from_be_bytes(png[20..24].try_into().unwrap()));
+            assert_eq!(icon["sizes"], format!("{side}x{side}"));
+        }
+        let page = String::from_utf8(fetch("/remote".into()).await.1.to_vec()).unwrap();
+        assert!(page.contains(r#"<link rel="manifest" href="remote.webmanifest">"#));
+        let (kind, _) = fetch("/remote-touch-icon.png".into()).await;
+        assert_eq!(kind, "image/png");
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 

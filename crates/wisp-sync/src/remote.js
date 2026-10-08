@@ -1,7 +1,8 @@
 "use strict";
 // Wisp remote web client (#1460). The connection code stays in the URL
-// fragment and in memory; the relay only sees the derived rendezvous id and
-// AES-GCM frames. Every host string is rendered with textContent.
+// fragment and, once it has worked, in this browser's storage; the relay only
+// sees the derived rendezvous id and AES-GCM frames. Every host string is
+// rendered with textContent.
 (() => {
   const zh = (navigator.language || "").toLowerCase().startsWith("zh");
   const T = zh
@@ -20,6 +21,10 @@
         placeholder: "给 Wisp 发消息", sessionsCount: (n) => `${n} 个对话`,
         files: "文件", closeFiles: "关闭文件", noPreview: "这类文件无法在网页中预览，请在桌面端打开。",
         truncated: (size) => `文件较大（${size}），只显示开头部分。`, imageFailed: "图片无法显示",
+        queue: "排队", cancelQueued: "取消排队的消息", inbox: (n) => `还有 ${n} 个对话待处理`,
+        earlier: "加载更早的消息", suggestions: "建议的后续消息", forget: "更换联机码",
+        attach: "添加图片", removePhoto: "移除图片", photoFailed: "这张图片无法处理", photoLimit: (n) => `一条消息最多 ${n} 张图片。`,
+        runState: { draft: "草稿", submitted: "排队中", running: "运行中", paused: "已暂停", cancelling: "取消中", succeeded: "完成", failed: "失败", cancelled: "已取消", timed_out: "超时", lost: "失联" },
       }
     : {
         connectTitle: "Connect to your Wisp", connectHint: "Enter the code shown in desktop Settings → Channels → Remote web access, or open the link copied from the desktop.",
@@ -36,6 +41,10 @@
         placeholder: "Message Wisp", sessionsCount: (n) => `${n} conversations`,
         files: "Files", closeFiles: "Close files", noPreview: "This file type cannot be previewed here. Open it on the desktop.",
         truncated: (size) => `Large file (${size}); only the beginning is shown.`, imageFailed: "Image unavailable",
+        queue: "Queue", cancelQueued: "Cancel queued message", inbox: (n) => (n === 1 ? "1 other conversation needs you" : `${n} other conversations need you`),
+        earlier: "Load earlier messages", suggestions: "Suggested next messages", forget: "Use another code",
+        attach: "Add a picture", removePhoto: "Remove picture", photoFailed: "This picture could not be processed", photoLimit: (n) => `A message takes at most ${n} pictures.`,
+        runState: { draft: "Draft", submitted: "Queued", running: "Running", paused: "Paused", cancelling: "Cancelling", succeeded: "Done", failed: "Failed", cancelled: "Cancelled", timed_out: "Timed out", lost: "Lost" },
       };
   document.documentElement.lang = zh ? "zh-CN" : "en";
   const enc = new TextEncoder();
@@ -63,6 +72,8 @@
   const ICONS = {
     folder: ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"],
     doc: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
+    close: ["M18 6 6 18", "m6 6 12 12"],
+    clock: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z", "M12 6v6l4 2"],
   };
   function icon(name) {
     const ns = "http://www.w3.org/2000/svg";
@@ -119,8 +130,27 @@
   const state = {
     code: "", sid: null, key: null, ws: null, nonce: null, seq: 0, retry: 0, host: null,
     pending: new Map(), waiters: [], sendChain: Promise.resolve(), recvChain: Promise.resolve(),
-    route: {}, projects: [], sessions: [],
+    route: {}, projects: [], sessions: [], inbox: [], reconnect: 0,
   };
+  // A page installed on the home screen opens without the link, so a code
+  // that has worked is kept on this device until "Use another code".
+  const saved = {
+    get() {
+      try {
+        return localStorage.getItem("wisp-remote-code") || "";
+      } catch {
+        return ""; // Storage can be disabled; the link still works.
+      }
+    },
+    set(code) {
+      try {
+        if (code) localStorage.setItem("wisp-remote-code", code);
+        else localStorage.removeItem("wisp-remote-code");
+      } catch {}
+    },
+  };
+  /// The relay serves this page, so the desktop behind it can be older.
+  const can = (command) => !!state.host && (state.host.commands || []).includes(command);
   // Each pane reloads on its own; a stale loop sees a newer generation and stops.
   const gens = { side: 0, chat: 0, panel: 0 };
 
@@ -150,7 +180,7 @@
       }
       state.pending.clear();
       setStatus(event.code === 4404 ? "offline" : "connecting");
-      setTimeout(connect, Math.min(8000, 1000 * 2 ** state.retry++));
+      state.reconnect = setTimeout(connect, Math.min(8000, 1000 * 2 ** state.retry++));
     };
   }
 
@@ -167,6 +197,7 @@
       state.seq = 0;
       state.retry = 0;
       state.host = message;
+      saved.set(state.code);
       setStatus("online");
       for (const resolve of state.waiters.splice(0)) resolve();
       renderHeader();
@@ -186,7 +217,7 @@
 
   // Mutations are never retried automatically; a lost reply surfaces as an
   // error and the next snapshot shows what actually happened.
-  async function call(command, projectId, args = {}) {
+  async function call(command, projectId, args = {}, timeout = 90000) {
     await whenReady();
     return new Promise((resolve, reject) => {
       const ws = state.ws;
@@ -194,8 +225,8 @@
       const id = crypto.randomUUID();
       const timer = setTimeout(() => {
         state.pending.delete(id);
-        reject(new Error(T.timeout));
-      }, 90000);
+        reject(Object.assign(new Error(T.timeout), { timedOut: true }));
+      }, timeout);
       state.pending.set(id, { resolve, reject, timer });
       // Sequence numbers must leave in order, so sealing is serialized.
       state.sendChain = state.sendChain
@@ -207,6 +238,25 @@
         .catch(() => {});
     });
   }
+
+  // A phone suspends the page in the background. Back in view, it catches up
+  // at once instead of at the next poll, and replaces a socket that died
+  // quietly: one that cannot answer in a few seconds is closed and redialled.
+  document.addEventListener("visibilitychange", () => {
+    if (!state.key) return;
+    renderHeader();
+    if (document.visibilityState !== "visible") return;
+    const ws = state.ws;
+    if (!ws) {
+      clearTimeout(state.reconnect);
+      state.retry = 0;
+      connect();
+    } else if (state.nonce) {
+      // ponytail: a fixed 4 s. A link too slow for that redials once per return; scale it if that shows up.
+      call("list_projects", null, {}, 4000).catch((error) => error.timedOut && state.ws === ws && ws.close());
+    }
+    refreshNow();
+  });
 
   // ----------------------------------------------------------------- route
   // "#<code>/p/<project>/s/<session>/d/<directory>" (or "/f/<file>"). The whole
@@ -299,7 +349,15 @@
     $("title").textContent = title;
     $("subtitle").textContent = subtitle;
     $("project").value = route.project || "";
-    document.title = `${title} · Wisp`;
+    // Out of view, the open conversation counts too: the tab title is all there is.
+    const others = state.inbox.filter((row) => row.id !== route.session);
+    const waiting = document.visibilityState === "hidden" ? state.inbox.length : others.length;
+    document.title = `${waiting ? `(${waiting}) ` : ""}${title} · Wisp`;
+    const inbox = $("inbox");
+    inbox.hidden = !others.length;
+    inbox.lastElementChild.textContent = others.length;
+    inbox.setAttribute("aria-label", T.inbox(others.length));
+    inbox.onclick = others.length ? () => go({ project: others[0].project_id, session: others[0].id, ...noFiles }) : null;
     const back = $("back");
     back.hidden = !up;
     back.onclick = up && (() => go(up));
@@ -320,7 +378,8 @@
         wakes.delete(wake);
         resolve();
       };
-      const timer = setTimeout(wake, ms);
+      // Out of view nothing needs to be fresh; coming back wakes every loop.
+      const timer = setTimeout(wake, document.visibilityState === "hidden" ? Math.max(ms, 30000) : ms);
       wakes.add(wake);
     });
   }
@@ -351,9 +410,32 @@
     renderHeader();
   }
 
+  /// Conversations in any project that wait for an answer or an approval.
+  async function watchInbox() {
+    for (;;) {
+      try {
+        if (!state.projects.length) await refreshProjects();
+        // The inbox spans every project; the host only needs a valid one to ask through.
+        if (state.projects.length && can("native_conversation_inbox")) {
+          state.inbox = await call("native_conversation_inbox", state.projects[0].id);
+          renderHeader();
+        }
+      } catch {
+        // The next round asks again.
+      }
+      await sleep(10000);
+    }
+  }
+
   async function projectsView(gen) {
     $("composer").hidden = true;
-    main.replaceChildren(el("p", { class: "empty" }, T.loading));
+    const list = el("div", { class: "list" }, el("p", { class: "empty" }, T.loading));
+    // Reachable while the computer is offline, when a reset code is the reason.
+    const forget = el("button", { type: "button", class: "quiet", onclick: () => {
+      saved.set("");
+      location.hash = "";
+    } }, T.forget);
+    main.replaceChildren(el("div", { class: "list" }, list, forget));
     let shown = "";
     while (gen === gens.chat) {
       try {
@@ -363,19 +445,18 @@
         const data = JSON.stringify(state.projects);
         if (data !== shown) {
           shown = data;
-          main.replaceChildren(
-            el("div", { class: "list" },
-              state.projects.length ? state.projects.map((project) =>
-                el("a", { class: "row", href: href({ project: project.id, session: null, ...noFiles }) },
-                  el("span", { class: "main" },
-                    el("span", { class: "name" }, project.name),
-                    el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0))),
-                  project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null)
-              ) : el("p", { class: "empty" }, T.none)));
+          list.replaceChildren(
+            ...(state.projects.length ? state.projects.map((project) =>
+              el("a", { class: "row", href: href({ project: project.id, session: null, ...noFiles }) },
+                el("span", { class: "main" },
+                  el("span", { class: "name" }, project.name),
+                  el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0))),
+                project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null)
+            ) : [el("p", { class: "empty" }, T.none)]));
         }
       } catch (error) {
         shown = "";
-        if (gen === gens.chat) main.replaceChildren(banner(error));
+        if (gen === gens.chat) list.replaceChildren(banner(error));
       }
       await sleep(15000);
     }
@@ -667,8 +748,15 @@
   function itemNode(item, index, opened, ctx) {
     const key = item.call_id || `i${index}`;
     switch (item.role) {
-      case "user":
-        return el("div", { class: "msg user" }, item.text);
+      case "user": {
+        // Pictures sent with the message are shown; the line naming them is not.
+        const sent = item.attachments || [];
+        const pictures = sent.filter((path) => IMAGE_EXT.has(extension(path)));
+        const text = pictures.length === sent.length
+          ? item.text.split("\n\n").filter((block) => !block.startsWith("Uploaded files: ")).join("\n\n")
+          : item.text;
+        return el("div", { class: "msg user" }, text, pictures.map((path) => ctx.image({ path }, baseName(path))));
+      }
       case "assistant":
         if (!item.text) return null;
         return markdown(item.text, {
@@ -715,6 +803,67 @@
         el("button", { type: "button", class: "primary", onclick: decide(true) }, T.approve)));
   }
 
+  // --------------------------------------------------------------------- runs
+  const RUN_OVER = new Set(["succeeded", "failed", "cancelled", "timed_out", "lost"]);
+  const RUN_FAILED = new Set(["failed", "timed_out", "lost"]);
+  const seconds = (ts) => (ts > 1e12 ? ts / 1000 : ts);
+  function elapsed(from, to) {
+    const total = Math.max(0, Math.round(seconds(to) - seconds(from)));
+    const [h, m, sec] = [Math.floor(total / 3600), Math.floor(total / 60) % 60, total % 60];
+    return h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`;
+  }
+
+  /// A Run this conversation started: its state and the end of its output.
+  /// It is updated in place, so a reader keeps their place while output grows.
+  function runNode(card, opened) {
+    const [name, time, status, pre] = [el("span", { class: "name" }), el("span", { class: "sub" }), el("span"), el("pre")];
+    const node = fold(`run:${card.id}`, opened, !RUN_OVER.has(card.status), "tool run", [name, time, status], pre);
+    node.addEventListener("toggle", () => node.open && (pre.scrollTop = pre.scrollHeight));
+    const update = (card) => {
+      const over = RUN_OVER.has(card.status);
+      const failed = RUN_FAILED.has(card.status);
+      const output = [card.stdout_tail, failed && card.stderr_tail, card.last_poll_error].filter(Boolean).join("\n\n").slice(-8000);
+      const text = [card.command && `$ ${card.command}`, output].filter(Boolean).join("\n\n");
+      const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+      name.textContent = card.title || card.kind;
+      time.textContent = card.started_at ? elapsed(card.started_at, card.ended_at || Date.now()) : "";
+      status.className = failed ? "state fail" : over ? "state" : "state live";
+      status.textContent = T.runState[card.status] || card.status;
+      if (pre.textContent !== text) {
+        pre.textContent = text;
+        if (atEnd) pre.scrollTop = pre.scrollHeight;
+      }
+    };
+    update(card);
+    return { node, update };
+  }
+
+  // ----------------------------------------------------------------- pictures
+  const MAX_PHOTOS = 4;
+  // A picture travels in one sealed browser frame, which the relay caps at
+  // 1 MiB. Base64 inside base64 leaves room for about this much image.
+  // ponytail: one frame per picture; chunked upload (#1460) lifts the limit.
+  const MAX_PHOTO_BYTES = 560 * 1024;
+
+  /// Redraws a picture as a JPEG, smaller each time until it fits one frame.
+  async function shrink(file) {
+    const bitmap = await createImageBitmap(file).catch(() => {
+      throw new Error(T.photoFailed);
+    });
+    for (let side = 1600, quality = 0.85; side >= 400; side = Math.round(side * 0.7), quality = 0.75) {
+      const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+      const canvas = el("canvas", { width: Math.max(1, Math.round(bitmap.width * scale)), height: Math.max(1, Math.round(bitmap.height * scale)) });
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#fff"; // JPEG has no transparency.
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (blob && blob.size <= MAX_PHOTO_BYTES) return blob;
+    }
+    throw new Error(T.photoFailed);
+  }
+
+  // --------------------------------------------------------------------- chat
   async function chatView(gen, project, session) {
     const live = () => gen === gens.chat;
     main.replaceChildren(el("p", { class: "empty" }, T.loading));
@@ -723,6 +872,9 @@
     const send = $("send");
     const stop = $("stop");
     const hint = $("composer-hint");
+    const attach = $("attach");
+    const picker = $("photo");
+    const strip = $("photos");
     // Keep a draft across reconnects, never across conversations.
     if (draft.dataset.session !== session) {
       draft.value = "";
@@ -730,18 +882,30 @@
       draft.dataset.session = session;
     }
     draft.placeholder = T.placeholder;
-    send.textContent = T.send;
     stop.textContent = T.stop;
+    attach.setAttribute("aria-label", T.attach);
     const opened = new Map();
     const rendered = [];
+    const runCards = new Map();
     let lastItems = "";
+    let lastExtras = "";
     let snapshot = null;
     let sending = false;
+    let uploading = 0;
+    let photos = [];
     let failed = false;
     let wasRunning = false;
+    let unseen = false;
+    let head; // Where the latest page starts; older pages are fetched from `cursor`.
+    let cursor = null;
+    const earlier = el("button", { type: "button", class: "more", hidden: true }, T.earlier);
+    const older = el("div", { class: "transcript" }, earlier);
     const transcript = el("div", { class: "transcript" });
+    const runs = el("div", { class: "transcript" });
     const approvals = el("div", { class: "transcript" });
     const activity = el("p", { class: "activity" });
+    const chips = el("div", { class: "chips", role: "group", "aria-label": T.suggestions });
+    const queue = el("div", { class: "transcript" });
     const errors = el("div");
     const nearBottom = () => main.scrollHeight - main.scrollTop - main.clientHeight < 120;
     const toBottom = () => (main.scrollTop = main.scrollHeight);
@@ -754,37 +918,87 @@
       image: (source, label) => imageNode(project, session, source, label, pin),
     };
     const seen = () => call("native_conversation_seen", project, { session_id: session }).catch(() => {});
+    const fail = (error) => live() && errors.replaceChildren(banner(error));
 
     const sync = () => {
       const blocked = !snapshot || snapshot.read_only || !!snapshot.acp_agent_id;
       const running = !!snapshot && snapshot.running;
+      // While a turn runs, the next message waits its turn on the computer.
+      const queues = running && can("native_conversation_enqueue");
       draft.disabled = blocked;
-      send.hidden = running;
-      send.disabled = blocked || sending || !draft.value.trim();
+      send.hidden = running && !queues;
+      send.textContent = queues ? T.queue : T.send;
+      send.disabled = blocked || sending || uploading > 0 || !(draft.value.trim() || photos.length);
+      attach.hidden = !can("remote_attach_image");
+      attach.disabled = blocked || photos.length + uploading >= MAX_PHOTOS;
       stop.hidden = !running;
       stop.disabled = !!snapshot && snapshot.stopping;
       hint.hidden = false;
       hint.textContent = !snapshot ? "" : snapshot.read_only ? T.readOnly : snapshot.acp_agent_id ? T.acp : T.remoteAsk;
     };
+    const showPhotos = () => {
+      strip.hidden = !photos.length;
+      strip.replaceChildren(...photos.map((photo) =>
+        el("span", { class: "photo" },
+          el("img", { src: photo.url, alt: "" }),
+          el("button", { type: "button", "aria-label": T.removePhoto, onclick: () => {
+            photos = photos.filter((other) => other !== photo);
+            showPhotos();
+            sync();
+          } }, icon("close")))));
+    };
+    showPhotos();
     draft.oninput = () => {
       draft.style.height = "auto";
       draft.style.height = `${draft.scrollHeight}px`;
       sync();
     };
+    attach.onclick = () => picker.click();
+    picker.onchange = async () => {
+      const files = [...picker.files];
+      picker.value = "";
+      errors.replaceChildren();
+      for (const file of files) {
+        if (photos.length >= MAX_PHOTOS) {
+          fail(new Error(T.photoLimit(MAX_PHOTOS)));
+          break;
+        }
+        uploading++;
+        sync();
+        try {
+          const blob = await shrink(file);
+          const base64 = b64(new Uint8Array(await blob.arrayBuffer()));
+          const attached = await call("remote_attach_image", project, { session_id: session, base64 });
+          if (!live()) return;
+          photos = [...photos, { path: attached.path, url: `data:image/jpeg;base64,${base64}` }];
+          showPhotos();
+        } catch (error) {
+          fail(error);
+        }
+        uploading--;
+        if (live()) sync();
+      }
+    };
     send.onclick = async () => {
       const message = draft.value.trim();
-      if (!message || sending) return;
+      const sent = photos;
+      if ((!message && !sent.length) || sending || uploading) return;
+      const args = { session_id: session, request_id: crypto.randomUUID(), message };
+      if (sent.length) args.attachments = sent.map((photo) => photo.path);
+      const queues = snapshot && snapshot.running && can("native_conversation_enqueue");
       sending = true;
       sync();
       errors.replaceChildren();
       try {
-        await call("native_conversation_send", project, { session_id: session, request_id: crypto.randomUUID(), message });
+        await call(queues ? "native_conversation_enqueue" : "native_conversation_send", project, args);
         if (live()) {
           draft.value = "";
+          photos = photos.filter((photo) => !sent.includes(photo));
+          showPhotos();
           draft.oninput();
         }
       } catch (error) {
-        errors.replaceChildren(banner(error)); // The draft is kept.
+        fail(error); // The draft and its pictures are kept.
       }
       sending = false;
       if (live()) sync();
@@ -795,7 +1009,7 @@
       try {
         await call("native_conversation_stop", project, { session_id: session });
       } catch (error) {
-        errors.replaceChildren(banner(error));
+        fail(error);
       }
       refreshNow();
     };
@@ -805,15 +1019,50 @@
         send.onclick();
       }
     };
+    earlier.onclick = async () => {
+      earlier.disabled = true;
+      try {
+        const page = await call("native_conversation_snapshot", project, { session_id: session, before_seq: cursor });
+        if (!live()) return;
+        const folds = new Map();
+        const nodes = page.items.map((item, index) => itemNode(item, index, folds, ctx));
+        const height = main.scrollHeight;
+        earlier.after(el("div", { class: "transcript" }, foldSteps(page.items, nodes, false, folds)));
+        cursor = page.next_before_seq ?? null;
+        earlier.hidden = cursor == null;
+        main.scrollTop += main.scrollHeight - height; // The reader stays where they were.
+      } catch (error) {
+        fail(error);
+      }
+      earlier.disabled = false;
+    };
+    const cancelQueued = (item) => async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        await call("native_conversation_queue_action", project, { session_id: session, id: item.id, digest: item.digest, action: { kind: "cancel" } });
+      } catch (error) {
+        fail(error);
+      }
+      refreshNow();
+    };
     sync();
 
     let first = true;
     while (live()) {
+      let waiting = [];
       try {
         const next = await call("native_conversation_snapshot", project, { session_id: session });
         if (!live()) return;
         snapshot = next;
         const stick = first || nearBottom();
+        // The latest page moves on with each new turn. Older pages fetched
+        // behind the previous one would leave a gap, so they start over.
+        const start = next.next_before_seq ?? null;
+        if (start !== head) {
+          head = cursor = start;
+          older.replaceChildren(earlier);
+          earlier.hidden = cursor == null;
+        }
         const items = `${next.running}${JSON.stringify(next.items)}`; // Folding follows `running` too.
         if (items !== lastItems) {
           lastItems = items;
@@ -827,15 +1076,47 @@
           rendered.length = next.items.length;
           transcript.replaceChildren(...foldSteps(next.items, nodes, next.running, opened));
         }
+        const cards = [...(next.run_cards || [])].sort((a, b) => a.created_at - b.created_at);
+        for (const id of [...runCards.keys()]) if (!cards.some((card) => card.id === id)) runCards.delete(id);
+        const shown = cards.map((card) => {
+          const run = runCards.get(card.id);
+          if (run) run.update(card);
+          else runCards.set(card.id, runNode(card, opened));
+          return runCards.get(card.id).node;
+        });
+        if (shown.length !== runs.children.length || shown.some((node, index) => runs.children[index] !== node)) runs.replaceChildren(...shown);
         approvals.replaceChildren(...(next.approvals || []).map((approval) => approvalNode(approval, session, project)));
         activity.textContent = next.running ? next.activity_status || T.running : next.error || "";
+        const follow = next.read_only || next.acp_agent_id ? [] : next.follow_ups || [];
+        waiting = (next.queue && next.queue.items) || [];
+        const extras = JSON.stringify([follow, waiting]);
+        if (extras !== lastExtras) {
+          lastExtras = extras;
+          chips.replaceChildren(...follow.map((text) =>
+            el("button", { type: "button", class: "chip", onclick: () => {
+              draft.value = text;
+              draft.oninput();
+            } }, text)));
+          queue.replaceChildren(...waiting.map((item) =>
+            el("div", { class: "queued" },
+              icon("clock"),
+              el("span", { class: "text" }, item.message),
+              item.state === "queued" && can("native_conversation_queue_action")
+                ? el("button", { type: "button", class: "icon", "aria-label": T.cancelQueued, onclick: cancelQueued(item) }, icon("close"))
+                : null)));
+        }
         if (failed) errors.replaceChildren();
         failed = false;
-        if (first) main.replaceChildren(errors, transcript, approvals, activity);
+        if (first) main.replaceChildren(errors, older, transcript, runs, approvals, activity, chips, queue);
         sync();
         if (stick) toBottom();
-        // Reading a finished reply here clears its "needs you" flag everywhere.
-        if (!next.running && (first || wasRunning) && document.visibilityState === "visible") seen();
+        // Reading a finished reply here clears its "needs you" flag everywhere,
+        // also when it finished while this page was out of view.
+        if (!next.running && (first || wasRunning)) unseen = true;
+        if (unseen && document.visibilityState === "visible") {
+          unseen = false;
+          seen();
+        }
         wasRunning = next.running;
         first = false;
       } catch (error) {
@@ -844,7 +1125,7 @@
         errors.replaceChildren(banner(error));
         if (first) main.replaceChildren(errors);
       }
-      await sleep(snapshot && (snapshot.running || (snapshot.approvals || []).length) ? 1500 : 4000);
+      await sleep(snapshot && (snapshot.running || (snapshot.approvals || []).length || waiting.length) ? 1500 : 4000);
     }
   }
 
@@ -955,6 +1236,8 @@
 
   async function start() {
     $("composer").hidden = true;
+    // Opened from the home screen: no link carries the code, this device does.
+    if (!location.hash.slice(1) && saved.get()) history.replaceState(null, "", `#${saved.get()}`);
     const route = readRoute();
     const secret = parseCode(route.code);
     // A different code is a different computer: start over rather than mix state.
@@ -983,6 +1266,7 @@
     };
     applyRoute();
     connect();
+    watchInbox();
   }
 
   start();

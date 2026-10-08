@@ -270,6 +270,7 @@ mod tests {
                 message: "Next".into(),
                 attachments: vec![],
                 references: vec![],
+                unattended: false,
             },
         ));
         assert!(require_no_queue(&runtime).is_err());

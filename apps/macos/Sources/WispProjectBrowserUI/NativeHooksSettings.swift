@@ -116,7 +116,7 @@ struct NativeHooksSettings: View {
                     Text(model.project["trusted"].bool ? localized("已信任：这些钩子会运行。") : localized("未信任：这些钩子不会运行。"))
                     Text(localized("文件有任何改动都需要重新审查。信任仅适用于下方显示的文件内容。"))
                     ForEach(Array(model.project["hooks"].array.enumerated()), id: \.offset) { _, hook in
-                        Text(hook["event"].string + " · " + hook["matcher"].string + " · " + (hook["enabled"].bool ? localized("启用") : localized("停用")))
+                        Text(verbatim: hook["event"].string + " · " + hook["matcher"].string + " · " + (hook["enabled"].bool ? localized("启用") : localized("停用")))
                         Text(hook["command"].string).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         Text(localized("超时（秒）") + ": " + (hook["timeout"] == .null ? "60" : hook["timeout"].string)).font(.caption)
                     }

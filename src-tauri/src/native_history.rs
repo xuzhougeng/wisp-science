@@ -137,6 +137,7 @@ mod tests {
                 message: "unconsumed cut-in".into(),
                 attachments: vec![],
                 references: vec![],
+                unattended: false,
             },
         ));
         assert!(rewind_guard(&runtime).is_err());

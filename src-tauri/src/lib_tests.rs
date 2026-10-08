@@ -2938,6 +2938,7 @@ fn queue_driver_claim_is_single_and_reclaimable() {
         message: format!("m{id}"),
         attachments: vec![],
         references: vec![],
+        unattended: false,
     };
     let rt = SessionRuntime::new();
 
@@ -2980,6 +2981,7 @@ fn unconsumed_cutin_returns_to_the_front_of_the_queue() {
         message: "close tabs".into(),
         attachments: vec![],
         references: vec![],
+        unattended: false,
     });
 
     begin_queued_cutin(&rt, 7).unwrap();
@@ -2997,6 +2999,7 @@ fn consumed_cutin_is_not_queued_again() {
         message: "use tab.close".into(),
         attachments: vec![],
         references: vec![],
+        unattended: false,
     });
 
     begin_queued_cutin(&rt, 8).unwrap();
@@ -3015,6 +3018,7 @@ async fn queued_cutin_precedes_the_fifo_driver_already_waiting_for_the_turn() {
             message: format!("message {id}"),
             attachments: vec![format!("file-{id}.png")],
             references: vec![],
+            unattended: false,
         });
     }
     rt.draining.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3056,6 +3060,7 @@ fn queued_cutin_handoff_preserves_arrival_order_and_does_not_steal_direct_guidan
             message: format!("message {id}"),
             attachments: vec![],
             references: vec![],
+            unattended: false,
         });
     }
     let consumed = begin_queued_cutin(&rt, 2).unwrap();
@@ -3091,6 +3096,7 @@ fn queue_reorder_swaps_and_clamps() {
         message: format!("m{id}"),
         attachments: vec![],
         references: vec![],
+        unattended: false,
     };
     let ids = |q: &[QueuedItem]| q.iter().map(|it| it.id).collect::<Vec<_>>();
 

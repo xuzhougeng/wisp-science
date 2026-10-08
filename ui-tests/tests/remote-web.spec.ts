@@ -18,6 +18,12 @@ const label = (text: string) => enc.encode(text);
 const concat = (a: Uint8Array, b: Uint8Array) => new Uint8Array([...a, ...b]);
 
 type Call = { command: string; project_id: string | null; args: any };
+/// What the fake desktop offers and how it behaves. A host with no `commands`
+/// is a desktop older than the page, which must still work as before.
+type Host = { commands?: string[]; mute?: boolean; connections?: number };
+const CURRENT = [
+  "native_conversation_inbox", "native_conversation_enqueue", "native_conversation_queue_action", "remote_attach_image",
+];
 
 const REPLY = [
   "## Result",
@@ -80,7 +86,50 @@ const snapshots: Record<string, any> = {
     approvals: [],
   },
   "s-9": { items: [{ role: "assistant", text: `Other project.\n\n${WIDE_TABLE}`, tool_name: null, input: null, ok: null, status: null }], approvals: [] },
+  // A turn at work, for queuing the next message behind it.
+  "s-4": {
+    running: true,
+    items: [{ role: "user", text: "Align the reads", tool_name: null, input: null, ok: null, status: null }],
+    approvals: [],
+    queue: { items: [], outcomes: [], can_cut_in: true },
+  },
+  // More turns than one page holds.
+  "s-6": {
+    items: [{ role: "user", text: "Latest question", tool_name: null, input: null, ok: null, status: null }],
+    approvals: [],
+    next_before_seq: 40,
+  },
+  "s-7": {
+    items: [{ role: "assistant", text: "Two runs started.", tool_name: null, input: null, ok: null, status: null }],
+    approvals: [],
+    run_cards: [
+      {
+        id: "r-2", title: "Align reads", kind: "local", status: "running", command: "bwa mem ref.fa reads.fq", created_at: 1750000200,
+        started_at: Math.floor(Date.now() / 1000) - 125, ended_at: null, exit_code: null, stdout_tail: "chunk 1\nchunk 2", stderr_tail: null,
+      },
+      {
+        id: "r-1", title: "Index reference", kind: "local", status: "failed", command: "bwa index ref.fa", created_at: 1750000100,
+        started_at: 1750000100, ended_at: 1750000103, exit_code: 1, stdout_tail: "", stderr_tail: "ref.fa: no such file",
+      },
+    ],
+  },
 };
+// Earlier pages of s-6, by the cursor that asks for them.
+const earlier: Record<number, any> = {
+  40: {
+    items: [
+      { role: "user", text: "First question", tool_name: null, input: null, ok: null, status: null },
+      { role: "tool", text: "ok", tool_name: "shell", input: "ls", ok: true, status: null, call_id: "e1" },
+      { role: "tool", text: "ok", tool_name: "shell", input: "pwd", ok: true, status: null, call_id: "e2" },
+      { role: "assistant", text: "First answer", tool_name: null, input: null, ok: null, status: null },
+    ],
+    next_before_seq: 12,
+  },
+  12: { items: [{ role: "user", text: "Very first", tool_name: null, input: null, ok: null, status: null }], next_before_seq: null },
+};
+// Conversations waiting for the reader, across projects.
+let inbox: any[] = [];
+let uploads = 0;
 const sessions: Record<string, any[]> = {
   "p-1": [
     { id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", ts: 1750000000, activity_at: 1750000300, status: "needs_you" },
@@ -122,9 +171,30 @@ function answer({ command, project_id, args }: Call): any {
     case "remote_sessions":
       return sessions[project_id!];
     case "native_conversation_snapshot":
-      return { running: false, ...snapshots[session], project_id, session_id: session, stopping: false, read_only: false, model_id: "m", error: null, request_id: null };
+      return { running: false, ...(args.before_seq == null ? snapshots[session] : earlier[args.before_seq]), project_id, session_id: session, stopping: false, read_only: false, model_id: "m", error: null, request_id: null };
+    case "native_conversation_inbox":
+      if (Object.keys(args).length) throw new Error("Inbox takes no arguments");
+      return inbox;
+    case "native_conversation_enqueue":
+      if (!snapshots[session].running) throw new Error("Queue a follow-up only while a turn is running");
+      snapshots[session].queue.items.push({ id: String(snapshots[session].queue.items.length + 7), digest: `d-${args.message}`, state: "queued", message: args.message, attachments: [], references: [] });
+      return { queued: true, id: "7" };
+    case "native_conversation_queue_action": {
+      const queue = snapshots[session].queue;
+      if (args.action.kind !== "cancel") throw new Error("Remote browsers can only cancel a queued message");
+      if (!queue.items.some((item: any) => item.id === args.id && item.digest === args.digest)) throw new Error("This queued turn has already started or changed; refresh the queue");
+      queue.items = queue.items.filter((item: any) => item.id !== args.id);
+      return { session_id: session, id: args.id };
+    }
+    case "remote_attach_image": {
+      // The picture arrives re-encoded as a JPEG, never under a name of its own.
+      if (Object.keys(args).sort().join() !== "base64,session_id") throw new Error("unknown field");
+      if (!Buffer.from(args.base64, "base64").subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) throw new Error("Only JPEG, PNG and WebP pictures can be attached remotely");
+      const name = `photo-${++uploads}.jpg`;
+      return { path: `uploads/${name}`, name };
+    }
     case "native_conversation_image":
-      if (args.resource_id !== "res-1" && !/\.png$/.test(args.path ?? "")) throw new Error("image preview unavailable");
+      if (args.resource_id !== "res-1" && !/\.(png|jpg)$/.test(args.path ?? "")) throw new Error("image preview unavailable");
       return { path: "thumbnail", mime: "image/png", text: null, base64: PNG, truncated: false, total_bytes: 68 };
     case "native_conversation_panel_file_directory":
       if (!directories[args.path]) throw new Error("No such directory");
@@ -146,7 +216,7 @@ function answer({ command, project_id, args }: Call): any {
 
 /// Serves the page and stands in for relay + desktop. Returns every request
 /// the browser made, after authentication and replay checks.
-async function remote(page: Page): Promise<Call[]> {
+async function remote(page: Page, host: Host = {}): Promise<Call[]> {
   const calls: Call[] = [];
   const secret = Uint8Array.from(CODE.replace(/-/g, "").match(/../g)!, (hex) => parseInt(hex, 16));
   const raw = await webcrypto.subtle.digest("SHA-256", concat(label("wisp-remote/key/v1"), secret));
@@ -170,6 +240,7 @@ async function remote(page: Page): Promise<Call[]> {
         const request = JSON.parse(new TextDecoder().decode(plain));
         if (request.nonce !== nonce || request.seq <= seq) return;
         seq = request.seq;
+        if (host.mute) return; // A connection that died without closing.
         const call = { command: request.command, project_id: request.project_id, args: request.args };
         calls.push(call);
         let result = null;
@@ -182,7 +253,9 @@ async function remote(page: Page): Promise<Call[]> {
         socket.send(await seal({ type: "response", response: { schema: "wisp.native-settings.v1", id: request.id, result, error } }));
       });
     });
-    socket.send(await seal({ type: "hello", nonce, name: "lab-mac", version: "1.18.0" }));
+    host.connections = (host.connections ?? 0) + 1;
+    host.mute = false; // A redial reaches a live relay again.
+    socket.send(await seal({ type: "hello", nonce, name: "lab-mac", version: "1.18.0", commands: host.commands }));
   });
   return calls;
 }
@@ -462,4 +535,236 @@ test("a missing or malformed code asks for one instead of connecting", async ({ 
   await expect(page).toHaveURL(new RegExp(`#${CODE.replace(/-/g, "")}$`));
   await expect(page.locator("#status")).toHaveText("Connected");
   await expect(page.getByRole("link", { name: /RNA-seq/ })).toBeVisible();
+});
+
+/// Sends the page to the background or back, as a phone does when its user
+/// switches apps.
+const setVisible = (page: Page, visible: boolean) => page.evaluate((state) => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}, visible ? "visible" : "hidden");
+const users = (page: Page) => page.locator("#main .msg.user");
+
+test("the next message queues behind a running turn and can be withdrawn", async ({ page }) => {
+  const problems = watchConsole(page);
+  const calls = await remote(page, { commands: CURRENT });
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-4`);
+
+  const send = page.locator("#send");
+  await expect(send).toHaveText("Queue");
+  await expect(page.locator("#stop")).toBeVisible();
+  await page.locator("#draft").fill("then plot the coverage");
+  await send.click();
+  await expect(page.locator("#draft")).toHaveValue("");
+  const queued = page.locator("#main .queued");
+  await expect(queued).toHaveText("then plot the coverage");
+  expect(calls.find((call) => call.command === "native_conversation_enqueue")!.args).toMatchObject({ session_id: "s-4", message: "then plot the coverage" });
+  expect(calls.some((call) => call.command === "native_conversation_send")).toBe(false);
+  // The composer and its three controls still fit a phone.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  await queued.getByRole("button", { name: "Cancel queued message" }).click();
+  await expect(queued).toHaveCount(0);
+  expect(calls.find((call) => call.command === "native_conversation_queue_action")!.args).toEqual(
+    { session_id: "s-4", id: "7", digest: "d-then plot the coverage", action: { kind: "cancel" } });
+
+  // Once the turn ends the same button sends, and suggestions fill the draft without sending.
+  snapshots["s-4"] = { ...snapshots["s-4"], running: false, follow_ups: ["Plot the top genes", "Export the table"] };
+  await expect(send).toHaveText("Send");
+  await expect(page.locator("#stop")).toBeHidden();
+  const chips = page.getByRole("group", { name: "Suggested next messages" }).getByRole("button");
+  await expect(chips).toHaveText(["Plot the top genes", "Export the table"]);
+  await chips.nth(1).click();
+  await expect(page.locator("#draft")).toHaveValue("Export the table");
+  expect(calls.some((call) => call.command === "native_conversation_send")).toBe(false);
+  await send.click();
+  await expect.poll(() => calls.find((call) => call.command === "native_conversation_send")?.args.message).toBe("Export the table");
+  expect(problems).toEqual([]);
+});
+
+test("an older desktop is offered only what it supports", async ({ page }) => {
+  snapshots["s-4"] = { ...snapshots["s-4"], running: true, follow_ups: [] };
+  inbox = [{ id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", status: "needs_you" }];
+  const calls = await remote(page);
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-4`);
+  await expect(page.locator("#stop")).toBeVisible();
+  await expect(page.locator("#send")).toBeHidden();
+  await expect(page.locator("#attach")).toBeHidden();
+  await expect(page.locator("#inbox")).toBeHidden();
+  expect(calls.some((call) => CURRENT.includes(call.command))).toBe(false);
+  inbox = [];
+});
+
+test("the header counts other conversations that need you and jumps to the next", async ({ page }) => {
+  const problems = watchConsole(page);
+  inbox = [
+    { id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", status: "needs_you" },
+    { id: "s-9", project_id: "p-2", project_name: "Proteomics", title: LONG_TITLE, status: "needs_you" },
+  ];
+  await remote(page, { commands: CURRENT });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+
+  const bell = page.locator("#inbox");
+  await expect(bell).toHaveAccessibleName("2 other conversations need you");
+  await expect(bell.locator(".count")).toHaveText("2");
+  await expect(page).toHaveTitle("(2) Figure polish · Wisp");
+  await bell.click();
+  await expect(page).toHaveURL(new RegExp(`/p/p-1/s/s-1$`));
+  // The open conversation is in front of the reader, so it is not counted.
+  await expect(bell).toHaveAccessibleName("1 other conversation needs you");
+  await expect(page).toHaveTitle("(1) QC run · Wisp");
+  await bell.click();
+  await expect(page).toHaveURL(new RegExp(`/p/p-2/s/s-9$`));
+  await expect(page.locator("#project")).toHaveValue("p-2");
+  // In a background tab the title is all there is, so the open one counts again.
+  await setVisible(page, false);
+  await expect(page).toHaveTitle(/^\(2\) Mass spec/);
+  await setVisible(page, true);
+  await expect(page).toHaveTitle(/^\(1\) Mass spec/);
+
+  inbox = [];
+  await expect(bell).toBeHidden({ timeout: 15_000 });
+  await expect(page).toHaveTitle(/^Mass spec/);
+  expect(problems).toEqual([]);
+});
+
+test("coming back to the page catches up at once and replaces a dead connection", async ({ page }) => {
+  const host: Host = { commands: CURRENT };
+  const calls = await remote(page, host);
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+  await expect(page.locator("#main")).toContainText("Second conversation.");
+  const polls = () => calls.filter((call) => call.command === "native_conversation_snapshot").length;
+
+  // In the background the page stops its 4 s polling once the pending round is done.
+  await setVisible(page, false);
+  const before = polls();
+  await expect.poll(polls, { timeout: 8_000 }).toBeGreaterThan(before);
+  const settled = polls();
+  const original = snapshots["s-2"];
+  snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Finished while you were away.", tool_name: null, input: null, ok: null, status: null }] };
+  await page.waitForTimeout(5_000);
+  expect(polls()).toBe(settled);
+  await expect(page.locator("#main")).not.toContainText("Finished while you were away.");
+  await setVisible(page, true);
+  await expect(page.locator("#main")).toContainText("Finished while you were away.", { timeout: 2_000 });
+
+  // A socket that stopped answering without closing is closed and redialled.
+  host.mute = true;
+  await setVisible(page, false);
+  await setVisible(page, true);
+  await expect.poll(() => host.connections, { timeout: 10_000 }).toBe(2);
+  await expect(page.locator("#status")).toHaveText("Connected");
+  snapshots["s-2"] = { ...original, items: [...original.items, { role: "assistant", text: "Back online.", tool_name: null, input: null, ok: null, status: null }] };
+  await expect(page.locator("#main")).toContainText("Back online.");
+  await expect(page.locator("#main [role=alert]")).toHaveCount(0);
+  snapshots["s-2"] = original;
+});
+
+test("earlier messages load a page at a time, above what is already shown", async ({ page }) => {
+  const problems = watchConsole(page);
+  const calls = await remote(page, { commands: CURRENT });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-6`);
+
+  const more = page.getByRole("button", { name: "Load earlier messages" });
+  await expect(users(page)).toHaveText(["Latest question"]);
+  await more.click();
+  await expect(users(page)).toHaveText(["First question", "Latest question"]);
+  // An earlier turn folds its steps like any finished one.
+  await expect(page.locator("#main details.steps > summary")).toHaveText("Ran 2 steps");
+  await expect(page.locator("#main .md")).toHaveText("First answer");
+  await more.click();
+  await expect(users(page)).toHaveText(["Very first", "First question", "Latest question"]);
+  await expect(more).toBeHidden();
+  expect(calls.filter((call) => call.command === "native_conversation_snapshot" && call.args.before_seq != null).map((call) => call.args.before_seq)).toEqual([40, 12]);
+
+  // A new turn moves the latest page on; older pages start over rather than leave a gap.
+  snapshots["s-6"] = { ...snapshots["s-6"], next_before_seq: 55 };
+  await expect(users(page)).toHaveText(["Latest question"]);
+  await expect(more).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test("runs show their state and the end of their output, updated in place", async ({ page }) => {
+  const problems = watchConsole(page);
+  await remote(page, { commands: CURRENT });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-7`);
+
+  const runs = page.locator("#main details.run");
+  await expect(runs.locator(".name")).toHaveText(["Index reference", "Align reads"]);
+  await expect(runs.locator(".state")).toHaveText(["Failed", "Running"]);
+  await expect(runs.nth(0)).not.toHaveAttribute("open");
+  await expect(runs.nth(1)).toHaveAttribute("open", "");
+  await expect(runs.nth(1).locator(".sub")).toHaveText(/^2m \d+s$/);
+  await expect(runs.nth(1).locator("pre")).toHaveText("$ bwa mem ref.fa reads.fq\n\nchunk 1\nchunk 2");
+  await runs.nth(0).locator("summary").click();
+  await expect(runs.nth(0).locator("pre")).toHaveText("$ bwa index ref.fa\n\nref.fa: no such file");
+  await expect(runs.nth(0).locator(".sub")).toHaveText("3s");
+
+  // New output and the final state arrive in the same row.
+  await runs.nth(1).evaluate((node) => ((node as HTMLElement).dataset.kept = "yes"));
+  const [live, failed] = snapshots["s-7"].run_cards;
+  snapshots["s-7"] = { ...snapshots["s-7"], run_cards: [{ ...live, status: "succeeded", ended_at: live.started_at + 130, exit_code: 0, stdout_tail: "chunk 1\nchunk 2\nchunk 3" }, failed] };
+  await expect(runs.nth(1).locator(".state")).toHaveText("Done");
+  await expect(runs.nth(1).locator("pre")).toContainText("chunk 3");
+  await expect(runs.nth(1).locator(".sub")).toHaveText("2m 10s");
+  await expect(runs.nth(1)).toHaveAttribute("data-kept", "yes");
+  await expect(runs.nth(0)).toHaveAttribute("open", "");
+  expect(problems).toEqual([]);
+});
+
+test("a picture is shrunk in the browser, attached and sent with the message", async ({ page }) => {
+  const problems = watchConsole(page);
+  const calls = await remote(page, { commands: CURRENT });
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+
+  const picture = { name: "IMG_0001.png", mimeType: "image/png", buffer: Buffer.from(PNG, "base64") };
+  await expect(page.getByRole("button", { name: "Add a picture" })).toBeVisible();
+  await expect(page.locator("#send")).toBeDisabled();
+  await page.locator("#photo").setInputFiles([picture, picture]);
+  const thumbs = page.locator("#photos .photo");
+  await expect(thumbs).toHaveCount(2);
+  await expect(thumbs.first().locator("img")).toHaveAttribute("src", /^data:image\/jpeg;base64,\/9j\//);
+  await thumbs.first().getByRole("button", { name: "Remove picture" }).click();
+  await expect(thumbs).toHaveCount(1);
+  // Something that is not a picture is refused here, before anything is sent.
+  await page.locator("#photo").setInputFiles({ name: "notes.png", mimeType: "image/png", buffer: Buffer.from("not a picture") });
+  await expect(page.locator("#main [role=alert]")).toHaveText("This picture could not be processed");
+  expect(calls.filter((call) => call.command === "remote_attach_image")).toHaveLength(2);
+
+  // A picture alone is a message.
+  await expect(page.locator("#send")).toBeEnabled();
+  await page.locator("#send").click();
+  await expect(thumbs).toHaveCount(0);
+  await expect(page.locator("#photos")).toBeHidden();
+  expect(calls.find((call) => call.command === "native_conversation_send")!.args).toMatchObject({ session_id: "s-2", message: "", attachments: ["uploads/photo-2.jpg"] });
+
+  // The sent picture shows in the message; the line that names its file does not.
+  const original = snapshots["s-2"];
+  snapshots["s-2"] = { ...original, items: [...original.items, { role: "user", text: "What is this?\n\nUploaded files: uploads/photo-2.jpg", attachments: ["uploads/photo-2.jpg"], tool_name: null, input: null, ok: null, status: null }] };
+  await expect(users(page)).toHaveText("What is this?photo-2.jpg");
+  await expect(users(page).locator("img")).toHaveAttribute("src", `data:image/png;base64,${PNG}`);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  snapshots["s-2"] = original;
+  expect(problems).toEqual([]);
+});
+
+test("the page can live on the home screen: it remembers the code until told to forget", async ({ page }) => {
+  await remote(page, { commands: CURRENT });
+  await page.goto(`/remote#${CODE}`);
+  await expect(page.locator("#status")).toHaveText("Connected");
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "remote.webmanifest");
+
+  // The installed page starts without the link.
+  await page.goto("about:blank");
+  await page.goto("/remote");
+  await expect(page).toHaveURL(new RegExp(`#${CODE}$`));
+  await expect(page.locator("#status")).toHaveText("Connected");
+  await expect(page.getByRole("link", { name: /RNA-seq/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Use another code" }).click();
+  await expect(page.getByRole("heading", { name: "Connect to your Wisp" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Connect to your Wisp" })).toBeVisible();
 });

@@ -162,7 +162,7 @@ struct NativeJourneyGraph: View {
                         Text(NativeJourneyPresentation.label(node["kind"].string)).font(.caption).foregroundStyle(.secondary)
                         if node["kind"].string == "run", !node["ref_id"].string.isEmpty { Button(localized("运行记录")) { run = NativeJourneyRunID(id: node["ref_id"].string) } }
                         ForEach(Array(journey.graph["edges"].array.filter { $0["source_id"] == node["id"] || $0["target_id"] == node["id"] }.enumerated()), id: \.offset) { _, edge in
-                            Button { selected = edge } label: { Text(title(edge["source_id"]) + " → " + NativeJourneyPresentation.label(edge["relation"].string) + " → " + title(edge["target_id"])) }.buttonStyle(.link)
+                            Button { selected = edge } label: { Text(verbatim: title(edge["source_id"]) + " → " + NativeJourneyPresentation.label(edge["relation"].string) + " → " + title(edge["target_id"])) }.buttonStyle(.link)
                         }
                     }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                 }

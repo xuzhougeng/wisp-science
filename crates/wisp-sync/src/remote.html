@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171614" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Wisp">
+<link rel="manifest" href="remote.webmanifest">
+<link rel="apple-touch-icon" href="remote-touch-icon.png">
 <title>Wisp Remote</title>
 <style>
 :root {
@@ -62,6 +69,12 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .icon { border: 0; background: transparent; padding: 8px; min-height: 40px; display: inline-flex; }
 .bar #back { margin-left: -8px; }
 .icon[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+/* Other conversations waiting for an answer or an approval. */
+#inbox { position: relative; color: var(--warn); }
+#inbox .count {
+  position: absolute; top: 2px; right: 0; min-width: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--warn); color: var(--bg); font-size: 11px; line-height: 16px; text-align: center;
+}
 .bar .heading { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bar strong, .bar small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar small { color: var(--faint); font-size: 12px; }
@@ -109,6 +122,8 @@ body[data-pane="panel"] #panel { display: flex; }
   #panel { border-left: 0; position: absolute; inset: 0; z-index: 1; background: var(--bg); }
   body[data-pane="side"] .chat, body[data-pane="chat"] #side { display: none; }
 }
+.quiet { border: 0; background: transparent; color: var(--faint); font-size: 13px; text-decoration: underline; justify-self: center; }
+.more { justify-self: center; font-size: 13px; color: var(--muted); }
 .banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--text); }
 .empty { color: var(--faint); text-align: center; padding: 32px 0; }
 .connect { max-width: 420px; margin: 12vh auto 0; display: grid; gap: 12px; }
@@ -134,12 +149,14 @@ body[data-pane="panel"] #panel { display: flex; }
 .badge.running { background: var(--accent-soft); color: var(--accent-strong); }
 .badge.needs_you { background: var(--warn-soft); color: var(--warn); }
 .transcript { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-bottom: 8px; }
+.transcript:empty, .chips:empty { display: none; }
 .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user {
   justify-self: end; max-width: 88%; background: var(--accent-soft); padding: 8px 12px;
   border-radius: 12px 12px 4px 12px;
 }
 .msg.note { color: var(--faint); font-size: 13px; }
+.msg.user .img img { max-height: 180px; width: auto; }
 /* Rendered Markdown: assistant replies and Markdown file previews. */
 .md { white-space: normal; overflow-wrap: anywhere; }
 .md > :first-child { margin-top: 0; }
@@ -173,6 +190,22 @@ details.tool summary::-webkit-details-marker { display: none; }
 details.tool summary .state { margin-left: auto; font-size: 12px; }
 details.tool summary .state.fail { color: var(--err); }
 details.steps > .transcript { gap: 8px; padding: 0 8px 8px; }
+details.run summary .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.run summary .sub { color: var(--faint); font-size: 12px; white-space: nowrap; }
+details.run summary .state.live { color: var(--accent-strong); }
+/* Suggested next messages: a tap fills the composer, it does not send. */
+.chips { display: grid; gap: 6px; }
+.chip {
+  text-align: left; min-height: 0; padding: 8px 12px; border-radius: 10px; font-size: 14px;
+  color: var(--muted); background: transparent; white-space: normal; overflow-wrap: anywhere;
+}
+.chip:hover { background: var(--elev); color: var(--text); }
+.queued {
+  display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; border-radius: 10px;
+  border: 1px dashed var(--border); color: var(--muted); font-size: 14px;
+}
+.queued > svg { width: 16px; height: 16px; color: var(--faint); }
+.queued .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 pre {
   margin: 0; padding: 10px; overflow: auto; max-height: 360px; white-space: pre-wrap;
   overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -188,6 +221,16 @@ pre {
   padding: 10px 16px; padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
 .composer .inner { max-width: 728px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+.composer #attach { margin: 0 -4px 2px -8px; color: var(--muted); }
+/* The padding keeps each remove button, which overhangs its corner, inside the scroller. */
+.photos { max-width: 728px; margin: 0 auto 8px; padding: 6px 6px 0 0; display: flex; gap: 12px; overflow: auto; }
+.photo { position: relative; flex: none; }
+.photo img { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: var(--elev); }
+.photo button {
+  position: absolute; top: -6px; right: -6px; min-height: 0; padding: 2px; border-radius: 50%;
+  display: inline-flex; background: var(--elev);
+}
+.photo button svg { width: 14px; height: 14px; }
 .composer textarea {
   flex: 1; resize: none; min-height: 44px; max-height: 40vh; padding: 10px 12px;
   border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
@@ -200,6 +243,7 @@ pre {
 <header class="bar">
   <button type="button" class="icon" id="back" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
   <div class="heading"><strong id="title">Wisp</strong><small id="subtitle"></small></div>
+  <button type="button" class="icon" id="inbox" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="count"></span></button>
   <button type="button" class="icon" id="files" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
   <span class="status" id="status" data-state="idle"></span>
 </header>
@@ -214,7 +258,10 @@ pre {
   <section class="chat">
     <main id="main"></main>
     <footer class="composer" id="composer" hidden>
+      <div class="photos" id="photos" hidden></div>
       <div class="inner">
+        <button type="button" class="icon" id="attach"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></button>
+        <input type="file" id="photo" accept="image/*" multiple hidden>
         <textarea id="draft" rows="1"></textarea>
         <button type="button" class="primary" id="send"></button>
         <button type="button" class="danger" id="stop" hidden></button>
