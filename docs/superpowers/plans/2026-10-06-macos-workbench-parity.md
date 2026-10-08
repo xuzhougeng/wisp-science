@@ -6,7 +6,8 @@ assistant and timers → publication and workflow editing.
 
 The historical pause after increment 18 ended when the user resumed the four
 remaining workbench groups on 2026-10-08. Those groups are now implemented and
-accepted on `codex/macos-workbench-completion`; see the
+accepted on `codex/macos-workbench-completion` and submitted in
+[PR #1480](https://github.com/xuzhougeng/wisp-science/pull/1480); see the
 [completion record](2026-10-08-macos-workbench-completion.md). This does not mark
 the broader parity roadmap complete.
 Existing Rust commands and `wisp-dto` contracts are the behavior

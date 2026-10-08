@@ -4,8 +4,9 @@ The user resumed implementation on 2026-10-08 with four required outcomes:
 research assistant, publication evidence editing, specialized viewers, and a
 workflow canvas. The historical pause in the 2026-10-06 parity plan does not
 apply to this work. All four groups have passed their acceptance checks. The
-implementation is complete on `codex/macos-workbench-completion` and is being
-submitted as a PR for review; the broader product parity roadmap remains separate.
+implementation is complete on `codex/macos-workbench-completion` and submitted in
+[PR #1480](https://github.com/xuzhougeng/wisp-science/pull/1480) for review; the
+broader product parity roadmap remains separate.
 
 ## Outcomes and acceptance
 

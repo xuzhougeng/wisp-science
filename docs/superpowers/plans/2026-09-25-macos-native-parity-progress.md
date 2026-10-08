@@ -14,8 +14,9 @@
 - 同一合成数据的 SwiftUI/WebView 实测覆盖助理、停用调度、论文冻结与
   克隆、文件引用、工作流保存重开及嵌套 Escape。未运行真实模型、SSH、
   集群或复现任务；这些路径使用假传输/执行器验证。
-- 当前四模块目标已结项，正在提交本轮 PR 供评审。全产品 parity 不随之
-  结项：Hooks、界面组织差异及历史路线图中的其他事项仍单独保留。
+- 当前四模块目标已结项，[PR #1480](https://github.com/xuzhougeng/wisp-science/pull/1480)
+  已创建并等待评审。全产品 parity 不随之结项：Hooks、界面组织差异及
+  历史路线图中的其他事项仍单独保留。
 
 详见[本轮完成计划](2026-10-08-macos-workbench-completion.md)和
 [配对差异与验收报告](../../macos-workbench-comparison-2026-10-08.md)。
