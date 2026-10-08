@@ -38,6 +38,10 @@ pub(crate) enum TurnOrigin {
     Im,
     Timer,
     Queued(u64),
+    /// A queued turn that was parked over the remote web tunnel. It keeps its
+    /// queue id and the IM approval floor: waiting in the queue must not turn
+    /// a remote message into a desktop one.
+    QueuedUnattended(u64),
     /// A subagent conversation's turn, sent by its parent conversation's agent
     /// (#1061). `unattended` carries the parent's IM origin so a subagent
     /// cannot run under a weaker approval floor than the turn that started it.
@@ -48,7 +52,7 @@ pub(crate) enum TurnOrigin {
 
 impl TurnOrigin {
     pub(crate) fn for_dispatch(self) -> Self {
-        if matches!(self, Self::Im) {
+        if matches!(self, Self::Im | Self::QueuedUnattended(_)) {
             Self::Im
         } else {
             Self::Desktop
@@ -56,12 +60,15 @@ impl TurnOrigin {
     }
 
     pub(crate) fn force_ask_mutations(self) -> bool {
-        matches!(self, Self::Im | Self::Subagent { unattended: true })
+        matches!(
+            self,
+            Self::Im | Self::QueuedUnattended(_) | Self::Subagent { unattended: true }
+        )
     }
 
     fn queue_id(self) -> Option<u64> {
         match self {
-            Self::Queued(id) => Some(id),
+            Self::Queued(id) | Self::QueuedUnattended(id) => Some(id),
             Self::Desktop | Self::Im | Self::Timer | Self::Subagent { .. } => None,
         }
     }
@@ -1869,6 +1876,11 @@ pub(crate) fn spawn_queue_driver(
                 }
             };
             emit_queued_turn_state(&app, &session_id, item.id, "started");
+            let origin = if item.unattended {
+                TurnOrigin::QueuedUnattended(item.id)
+            } else {
+                TurnOrigin::Queued(item.id)
+            };
             let state = app.state::<AppState>();
             if let Err(error) = send_message_inner(
                 state.inner(),
@@ -1884,7 +1896,7 @@ pub(crate) fn spawn_queue_driver(
                 None,
                 None,
                 Some(&guard),
-                TurnOrigin::Queued(item.id),
+                origin,
             )
             .await
             {
@@ -1963,6 +1975,7 @@ pub(crate) async fn enqueue_turn(
             message,
             attachments: attachments.unwrap_or_default(),
             references: references.unwrap_or_default(),
+            unattended: false,
         });
         // Claim the driver slot atomically with the push: the driver only clears
         // `draining` while holding this same lock on an empty queue.
@@ -2038,6 +2051,7 @@ pub(crate) fn queue_follow_up(
     message: &str,
     attachments: &[String],
     references: &[ComposerReferenceArg],
+    unattended: bool,
 ) -> Result<String, String> {
     if references.len() > 64 {
         return Err("Too many composer references".into());
@@ -2085,6 +2099,7 @@ pub(crate) fn queue_follow_up(
         message: text.clone(),
         attachments: paths,
         references: references.to_vec(),
+        unattended,
     });
     Ok(text)
 }
@@ -2305,7 +2320,7 @@ mod queue_tests {
     #[test]
     fn one_user_follow_up_is_sent_and_the_queue_stops() {
         let rt = SessionRuntime::new();
-        assert!(queue_follow_up(false, &rt, 1, "继续", &[], &[]).is_err());
+        assert!(queue_follow_up(false, &rt, 1, "继续", &[], &[], false).is_err());
         assert!(take_next_queued_turn(&rt).is_none());
         let parked = queue_follow_up(
             true,
@@ -2314,6 +2329,7 @@ mod queue_tests {
             "  继续检查对照  ",
             &["uploads/notes.csv".into()],
             &[],
+            false,
         )
         .unwrap();
         assert_eq!(parked, "继续检查对照\n\nUploaded files: uploads/notes.csv");
@@ -2324,6 +2340,7 @@ mod queue_tests {
             "  继续检查对照  ",
             &["uploads/notes.csv".into()],
             &[],
+            false,
         )
         .unwrap();
         assert_eq!(replay, parked);
@@ -2339,9 +2356,9 @@ mod queue_tests {
     fn follow_up_queue_is_capped() {
         let rt = SessionRuntime::new();
         for id in 0..MAX_QUEUED_FOLLOW_UPS as u64 {
-            queue_follow_up(true, &rt, id, "x", &[], &[]).unwrap();
+            queue_follow_up(true, &rt, id, "x", &[], &[], false).unwrap();
         }
-        assert!(queue_follow_up(true, &rt, u64::MAX, "x", &[], &[]).is_err());
+        assert!(queue_follow_up(true, &rt, u64::MAX, "x", &[], &[], false).is_err());
     }
 
     #[test]
@@ -2350,8 +2367,8 @@ mod queue_tests {
         let references = vec![ComposerReferenceArg::Skill {
             name: "RNA-seq".into(),
         }];
-        queue_follow_up(true, &rt, 42, "inspect", &[], &references).unwrap();
-        assert!(queue_follow_up(true, &rt, 42, "inspect", &[], &[]).is_err());
+        queue_follow_up(true, &rt, 42, "inspect", &[], &references, false).unwrap();
+        assert!(queue_follow_up(true, &rt, 42, "inspect", &[], &[], false).is_err());
         let next = take_next_queued_turn(&rt).unwrap();
         assert_eq!(next.references, references);
         assert_eq!(next.message, "inspect");
@@ -2365,6 +2382,7 @@ mod queue_tests {
             message: "same".into(),
             attachments: vec![],
             references: vec![],
+            unattended: false,
         };
         let mut attachment = item.clone();
         attachment.id = 2;
@@ -2417,7 +2435,7 @@ mod queue_tests {
     #[tokio::test]
     async fn replacement_after_workflow_acquisition_still_blocks_queue_removal() {
         let rt = Arc::new(SessionRuntime::new());
-        queue_follow_up(true, &rt, 41, "queued", &[], &[]).unwrap();
+        queue_follow_up(true, &rt, 41, "queued", &[], &[], false).unwrap();
         rt.draining.store(true, Ordering::SeqCst);
         let guard = queued_workflow_guard(&rt).await;
         let reservation = ReplacementReservation::new(rt.clone());
@@ -2469,6 +2487,26 @@ mod queue_tests {
         assert!(!TurnOrigin::Desktop.for_dispatch().force_ask_mutations());
         assert_eq!(TurnOrigin::Queued(42).for_dispatch(), TurnOrigin::Desktop);
         assert_eq!(TurnOrigin::Im.for_dispatch().queue_id(), None);
+        // A follow-up queued from the remote page waits unattended: it still
+        // asks, and so does anything it dispatches.
+        let remote = TurnOrigin::QueuedUnattended(42);
+        assert!(remote.force_ask_mutations());
+        assert_eq!(remote.for_dispatch(), TurnOrigin::Im);
+        assert_eq!(remote.queue_id(), Some(42));
+    }
+
+    #[test]
+    fn a_remotely_queued_follow_up_stays_unattended_until_it_runs() {
+        let rt = SessionRuntime::new();
+        queue_follow_up(true, &rt, 1, "from the desk", &[], &[], false).unwrap();
+        queue_follow_up(true, &rt, 2, "from the phone", &[], &[], true).unwrap();
+        // Offered to the running turn and not consumed: it returns to the
+        // queue as the same item, flag included.
+        begin_queued_cutin(&rt, 2).unwrap();
+        let first = take_next_queued_turn(&rt).unwrap();
+        assert_eq!((first.id, first.unattended), (2, true));
+        let second = take_next_queued_turn(&rt).unwrap();
+        assert_eq!((second.id, second.unattended), (1, false));
     }
 
     #[test]

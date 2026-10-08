@@ -72,6 +72,9 @@ pub(crate) struct QueuedItem {
     pub(crate) message: String,
     pub(crate) attachments: Vec<String>,
     pub(crate) references: Vec<ComposerReferenceArg>,
+    /// Queued over the remote web tunnel: it waits unattended, so its turn
+    /// keeps the forced Ask of the turn that would have been sent directly.
+    pub(crate) unattended: bool,
 }
 
 impl SessionRuntime {

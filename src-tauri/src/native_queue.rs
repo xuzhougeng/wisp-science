@@ -198,6 +198,7 @@ mod tests {
             message: "same".into(),
             attachments: vec![file.into()],
             references: vec![],
+            unattended: false,
         });
     }
     fn request(rt: &SessionRuntime, id: u64, action: QueueAction) -> QueueActionRequest {
@@ -260,7 +261,8 @@ mod tests {
     fn native_queue_accepts_distinct_payloads_and_reconciles_cutin_handoff() {
         let rt = SessionRuntime::new();
         for (id, file) in [(1, "a.csv"), (2, "b.csv")] {
-            crate::agent_turn::queue_follow_up(true, &rt, id, "same", &[file.into()], &[]).unwrap();
+            crate::agent_turn::queue_follow_up(true, &rt, id, "same", &[file.into()], &[], false)
+                .unwrap();
         }
         assert_eq!(items(&rt).len(), 2);
         assert!(crate::agent_turn::queue_follow_up(
@@ -269,7 +271,8 @@ mod tests {
             1,
             "same",
             &["other.csv".into()],
-            &[]
+            &[],
+            false,
         )
         .is_err());
         let cutin = request(&rt, 2, QueueAction::CutIn);

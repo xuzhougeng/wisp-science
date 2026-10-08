@@ -424,6 +424,7 @@ async fn remote_turn(
     project: &str,
     session: &str,
     message: &str,
+    attachments: &[String],
     references: &[wisp_dto::ComposerReferenceArg],
 ) -> Result<Value, String> {
     let label = crate::native_settings::context_label(broker, Some(project.to_owned())).await?;
@@ -433,7 +434,7 @@ async fn remote_turn(
         &label,
         Some(session.to_owned()),
         message.to_owned(),
-        None,
+        Some(attachments.to_vec()),
         Some(references.to_vec()),
         None,
         None,
@@ -1152,6 +1153,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             serde_json::to_value(attached).map_err(|error| error.to_string())
         }
         "native_conversation_enqueue" => {
+            if broker.remote && acp_agent_id.is_some() {
+                return Err("ACP conversations can only be continued on the desktop".into());
+            }
             let args: dto::SendRequest = decode(&request.args)?;
             let id = follow_up_id(&args.request_id)?;
             let digest = payload_digest(&args)?;
@@ -1199,6 +1203,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 &args.message,
                 &args.attachments,
                 &args.references,
+                broker.remote,
             )?;
             guard
                 .queued_requests
@@ -1239,7 +1244,15 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(async {
                         if broker.remote {
-                            remote_turn(&broker, &project, &session, &message, &references).await
+                            remote_turn(
+                                &broker,
+                                &project,
+                                &session,
+                                &message,
+                                &attachments,
+                                &references,
+                            )
+                            .await
                         } else {
                             call(
                                 &broker,

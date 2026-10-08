@@ -217,21 +217,43 @@ pub(crate) async fn script() -> Response {
     static_asset("text/javascript; charset=utf-8", include_str!("remote.js"))
 }
 
-fn static_asset(content_type: &'static str, body: &'static str) -> Response {
+/// Lets a phone keep the page on its home screen. Every URL is relative, so
+/// a path prefix in front of the relay keeps working. The page restores the
+/// connection code itself: `start_url` cannot carry a fragment per device.
+pub(crate) async fn manifest() -> Response {
+    static_asset(
+        "application/manifest+json",
+        r##"{"name":"Wisp Remote","short_name":"Wisp","start_url":"remote","display":"standalone","background_color":"#faf9f6","theme_color":"#faf9f6","icons":[{"src":"remote-icon-192.png","sizes":"192x192","type":"image/png"},{"src":"remote-icon-512.png","sizes":"512x512","type":"image/png"}]}"##,
+    )
+}
+
+/// The desktop app's own icons, so the two cannot drift apart.
+pub(crate) const ICON_192: &[u8] =
+    include_bytes!("../../../src-tauri/icons/android/mipmap-xxxhdpi/ic_launcher.png");
+pub(crate) const ICON_512: &[u8] = include_bytes!("../../../src-tauri/icons/icon.png");
+/// iOS draws its own rounded corners over a full square.
+pub(crate) const TOUCH_ICON: &[u8] =
+    include_bytes!("../../../src-tauri/icons/ios/AppIcon-60x60@3x.png");
+
+pub(crate) async fn icon(bytes: &'static [u8]) -> Response {
+    static_asset("image/png", bytes)
+}
+
+fn static_asset(content_type: &'static str, body: impl Into<Body>) -> Response {
     (
         [
             (header::CONTENT_TYPE, content_type),
             (
                 header::CONTENT_SECURITY_POLICY,
                 "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; \
-                 connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; \
-                 frame-ancestors 'none'",
+                 connect-src 'self'; img-src data: 'self'; manifest-src 'self'; \
+                 base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
             ),
             (header::REFERRER_POLICY, "no-referrer"),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (header::CACHE_CONTROL, "no-cache"),
         ],
-        body,
+        body.into(),
     )
         .into_response()
 }

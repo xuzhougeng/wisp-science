@@ -21,6 +21,7 @@ use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest, protocol::WebSocketConfig, Message,
 };
 use wisp_dto::native_conversations::{ApprovalRequest, ApprovalScope, CreateRequest, SendRequest};
+use wisp_dto::native_queue::{QueueAction, QueueActionRequest};
 use wisp_dto::native_settings::{Request, Response, SCHEMA};
 use wisp_dto::RemoteAccessStatus;
 use wisp_store::secrets::Secret;
@@ -37,13 +38,18 @@ const CODE_SECRET: &str = "remote_access_code";
 /// What a remote browser may run. Terminal input, kernel execution and file
 /// writes stay off the tunnel until identity, roles and audit exist (#1460).
 /// The file commands are read-only and local: a directory listing, a text
-/// preview and a bounded image thumbnail.
+/// preview and a bounded image thumbnail. The one thing a browser can write
+/// is a small picture into `uploads/`, to attach to its own message.
 const REMOTE_COMMANDS: &[&str] = &[
     "list_projects",
     "remote_sessions",
+    "remote_attach_image",
+    "native_conversation_inbox",
     "native_conversation_create",
     "native_conversation_snapshot",
     "native_conversation_send",
+    "native_conversation_enqueue",
+    "native_conversation_queue_action",
     "native_conversation_stop",
     "native_conversation_approve",
     "native_conversation_seen",
@@ -53,6 +59,10 @@ const REMOTE_COMMANDS: &[&str] = &[
 ];
 /// Room for the relay envelope around a sealed reply.
 const MAX_REPLY_BYTES: usize = REMOTE_HOST_MAX_FRAME_BYTES - 1024;
+/// The page shrinks a photo to fit one browser frame, which the relay caps at
+/// 1 MiB sealed; this is the host's own bound, not a trust in that cap.
+const MAX_IMAGE_BYTES: usize = 768 * 1024;
+const MAX_ATTACHMENTS: usize = 4;
 const MAX_CLIENTS: usize = 8;
 const HEARTBEAT: Duration = Duration::from_secs(25);
 const RELAY_SILENCE: Duration = Duration::from_secs(75);
@@ -315,6 +325,9 @@ async fn session(
                                 "nonce": nonce,
                                 "name": host_name(),
                                 "version": env!("CARGO_PKG_VERSION"),
+                                // The relay serves the page, so it can be newer
+                                // than this desktop: it offers only what is listed.
+                                "commands": REMOTE_COMMANDS,
                             });
                             peers.insert(c, Peer { nonce, seq: 0 });
                             clients.store(peers.len() as u32, Ordering::Relaxed);
@@ -429,6 +442,9 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
         )
         .await;
     }
+    if request.command == "remote_attach_image" {
+        return attach_image(broker, project_id, decode(&request.args)?).await;
+    }
     let mut result = crate::native_settings::dispatch(
         broker,
         &Request {
@@ -446,6 +462,79 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
     Ok(result)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachImage {
+    session_id: String,
+    base64: String,
+}
+
+/// JPEG, PNG or WebP by content, never by a name the browser supplied.
+fn image_extension(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("This picture is too large to send remotely".into());
+    }
+    match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Jpeg) => Ok("jpg"),
+        Ok(image::ImageFormat::Png) => Ok("png"),
+        Ok(image::ImageFormat::WebP) => Ok("webp"),
+        _ => Err("Only JPEG, PNG and WebP pictures can be attached remotely".into()),
+    }
+}
+
+/// Stages the picture under a name the host chooses, then attaches it exactly
+/// as the desktop attaches a local file: same ownership check, same
+/// `uploads/` copy, same message resource.
+async fn attach_image(
+    broker: &Broker,
+    project_id: Option<String>,
+    args: AttachImage,
+) -> Result<Value, String> {
+    use base64::Engine;
+    if args.base64.len() > MAX_IMAGE_BYTES.div_ceil(3) * 4 {
+        return Err("This picture is too large to send remotely".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(args.base64.trim())
+        .map_err(|_| "The picture could not be read")?;
+    let extension = image_extension(&bytes)?;
+    let staging = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let name = chrono::Local::now().format("photo-%Y%m%d-%H%M%S");
+    let path = staging.path().join(format!("{name}.{extension}"));
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::native_settings::dispatch(
+        broker,
+        &Request {
+            schema: SCHEMA.into(),
+            id: String::new(),
+            project_id,
+            command: "native_conversation_attach".into(),
+            args: json!({"session_id": args.session_id, "path": path.to_string_lossy()}),
+        },
+    )
+    .await
+}
+
+/// Paths `remote_attach_image` hands out, and nothing that walks elsewhere.
+fn uploaded(path: &str) -> bool {
+    path.strip_prefix("uploads/")
+        .is_some_and(|name| !matches!(name, "" | "." | "..") && !name.contains(['/', '\\']))
+}
+
+fn check_message(args: &SendRequest) -> Result<(), String> {
+    if !args.references.is_empty() {
+        return Err("Remote messages cannot carry references yet".into());
+    }
+    if args.attachments.len() > MAX_ATTACHMENTS
+        || !args.attachments.iter().all(|path| uploaded(path))
+    {
+        return Err("Remote messages can only attach pictures sent from this page".into());
+    }
+    Ok(())
+}
+
 /// Text previews only: file bytes never leave the computer this way. Images
 /// go through the bounded thumbnail command instead.
 fn strip_file_bytes(preview: &mut Value) {
@@ -459,11 +548,20 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
         return Err("This command is not available remotely".into());
     }
     match request.command.as_str() {
-        "native_conversation_send" => {
-            let args: SendRequest = decode(&request.args)?;
-            if !args.attachments.is_empty() || !args.references.is_empty() {
-                return Err("Remote messages cannot attach files yet".into());
+        "native_conversation_send" | "native_conversation_enqueue" => {
+            check_message(&decode(&request.args)?)?;
+        }
+        // A waiting message can be withdrawn. Reordering, editing and cutting
+        // into the running turn stay on the desktop: a cut-in would run under
+        // that turn's approval policy, not the remote one.
+        "native_conversation_queue_action" => {
+            let args: QueueActionRequest = decode(&request.args)?;
+            if !matches!(args.action, QueueAction::Cancel) {
+                return Err("Remote browsers can only cancel a queued message".into());
             }
+        }
+        "remote_attach_image" => {
+            decode::<AttachImage>(&request.args)?;
         }
         "native_conversation_approve" => {
             let args: ApprovalRequest = decode(&request.args)?;
@@ -511,7 +609,6 @@ mod tests {
             "native_conversation_panel_runtime_execute",
             "native_conversation_panel_savefile",
             "native_conversation_panel_file_action",
-            "native_conversation_enqueue",
             "native_conversation_attach",
             "native_conversation_panel_file_upload",
             "native_conversation_panel_file_download",
@@ -549,10 +646,72 @@ mod tests {
         assert!(check(&request("native_conversation_approve", approve("project"))).is_err());
         let send = json!({"session_id": "s", "request_id": "r", "message": "hi"});
         assert!(check(&request("native_conversation_send", send)).is_ok());
-        let attached = json!({"session_id": "s", "request_id": "r", "message": "hi", "attachments": ["a.txt"]});
-        assert!(check(&request("native_conversation_send", attached)).is_err());
+        // Sending and queuing share one rule: text, plus pictures this page uploaded.
+        for command in ["native_conversation_send", "native_conversation_enqueue"] {
+            let with = |extra: Value| {
+                let mut args = json!({"session_id": "s", "request_id": "r", "message": "hi"});
+                args.as_object_mut()
+                    .unwrap()
+                    .extend(extra.as_object().unwrap().clone());
+                check(&request(command, args))
+            };
+            assert!(with(json!({})).is_ok(), "{command}");
+            assert!(
+                with(json!({"attachments": ["uploads/photo-1.jpg"]})).is_ok(),
+                "{command}"
+            );
+            for path in [
+                "a.txt",
+                "uploads/",
+                "uploads/.",
+                "uploads/..",
+                "uploads/../.env",
+                "uploads/a/b.png",
+                "uploads\\a.png",
+                "/etc/passwd",
+            ] {
+                assert!(
+                    with(json!({"attachments": [path]})).is_err(),
+                    "{command} {path}"
+                );
+            }
+            let many = vec!["uploads/a.jpg"; MAX_ATTACHMENTS + 1];
+            assert!(with(json!({"attachments": many})).is_err(), "{command}");
+            let reference = json!({"references": [{"kind": "session", "id": "x"}]});
+            assert!(with(reference).is_err(), "{command}");
+        }
+        let queued = |action: Value| {
+            let args = json!({"session_id": "s", "id": "7", "digest": "d", "action": action});
+            check(&request("native_conversation_queue_action", args))
+        };
+        assert!(queued(json!({"kind": "cancel"})).is_ok());
+        for kind in ["cut_in", "move_up", "move_down", "replace"] {
+            assert!(queued(json!({"kind": kind})).is_err(), "{kind}");
+        }
+        assert!(queued(json!({"kind": "edit", "message": "rm -rf"})).is_err());
+        let picture = json!({"session_id": "s", "base64": "AAEC"});
+        assert!(check(&request("remote_attach_image", picture)).is_ok());
+        let named = json!({"session_id": "s", "base64": "AAEC", "path": "/etc/passwd"});
+        assert!(check(&request("remote_attach_image", named)).is_err());
         let acp = json!({"acp_agent_id": "codex"});
         assert!(check(&request("native_conversation_create", acp)).is_err());
+    }
+
+    #[test]
+    fn remote_pictures_are_recognised_by_content_and_bounded() {
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        assert_eq!(image_extension(&png).unwrap(), "png");
+        assert_eq!(
+            image_extension(&[0xff, 0xd8, 0xff, 0xe0, 0, 0]).unwrap(),
+            "jpg"
+        );
+        assert_eq!(image_extension(b"RIFF\0\0\0\0WEBPVP8 ").unwrap(), "webp");
+        // A script or an SVG is not a picture, whatever the browser calls it.
+        assert!(image_extension(b"#!/bin/sh\nrm -rf ~").is_err());
+        assert!(image_extension(b"<svg xmlns='http://www.w3.org/2000/svg'/>").is_err());
+        let mut huge = png.to_vec();
+        huge.resize(MAX_IMAGE_BYTES + 1, 0);
+        assert!(image_extension(&huge).is_err());
     }
 
     #[test]

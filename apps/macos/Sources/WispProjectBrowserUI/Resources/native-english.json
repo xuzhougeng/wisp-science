@@ -3355,7 +3355,7 @@
   "进度": "progress",
   "进行中": "In progress",
   "远程 URL": "Remote URL",
-  "远程发起的回合中，写文件、改文件和运行命令都必须先批准。远程不能使用终端输入、内核执行和文件写入。重置联机码会断开所有网页。": "Remotely started turns always ask before writing files, editing or running commands. Terminal input, kernel execution and file writes are not available remotely. Reset the code to disconnect every browser.",
+  "远程发起的回合（包括排队等待的）中，写文件、改文件和运行命令都必须先批准。远程不能使用终端输入、内核执行和文件编辑，只能给自己的消息附图片（保存到 uploads/）。重置联机码会断开所有网页。": "Remotely started turns always ask before writing files, editing or running commands, also when they were queued. Terminal input, kernel execution and file edits are not available remotely; a browser can only add pictures to its own message, saved under uploads/. Reset the code to disconnect every browser.",
   "远程接入": "Remote Access",
   "远程接入设置已保存。": "Remote access settings saved.",
   "远程文件为只读：点击预览，右键下载。": "Remote files are read-only: click to preview, right-click to download.",
