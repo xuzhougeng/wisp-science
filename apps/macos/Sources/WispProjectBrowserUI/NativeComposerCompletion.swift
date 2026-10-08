@@ -279,7 +279,7 @@ struct NativeInlineComposerInput: View {
     var body: some View {
         NativeMessageInput(text: $conversation.draft, canSubmit: { conversation.canSend || conversation.canQueueFollowUp || conversation.canRunComposerCommand(available: commands) }, submit: submit,
                            sendWithModifier: sendWithModifier, editable: conversation.snapshot?.read_only != true && !conversation.showingHistory,
-                           accessibilityLabel: "消息输入框", fontSize: 14, placeholder: "输入 @ 引用产物、# 引用会话、/ 选择技能或命令…", fitsContent: true,
+                           accessibilityLabel: "消息输入框", fontSize: 14, placeholder: localized("输入 @ 引用产物、# 引用会话、/ 选择技能或命令…"), fitsContent: true,
                            completions: completions, referencesAvailable: { conversation.canReference }, selectReference: conversation.addReference,
                            completionCommands: commands, executeCommand: executeCommand)
             .fixedSize(horizontal: false, vertical: true)

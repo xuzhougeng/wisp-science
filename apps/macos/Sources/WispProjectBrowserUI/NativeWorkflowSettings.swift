@@ -78,7 +78,7 @@ struct NativeWorkflowSettings: View {
             fields += [.init(key: "workflow_template_id", label: "工作流模板", kind: .choice((model.values["list_workflow_templates"]?.array ?? []).map { ($0["id"].string, $0["name"].string) })), .init(key: "enabled", label: "启用", kind: .toggle), .init(key: "sort_order", label: "排序", kind: .integer)]
         case .workflows:
             if new && draft["proposal"] == .null { draft["proposal"] = .object(["goal": .string(""), "context": .string(""), "approval_policy": .string("review_all"), "tasks": .array([])]) }
-            workflowDraft = NativeWorkflowDraft(template: draft, sourceHash: sourceHash, client: model.client, projectID: model.projectID, removable: !new && !row["builtin"].bool)
+            workflowDraft = NativeWorkflowDraft(template: draft, sourceHash: sourceHash, client: model.client, projectID: model.projectID, removable: !new && !row["builtin"].bool, layoutStore: model.layoutScope.map { NativeWorkflowLayoutStore(scope: $0) })
             return
         default:
             command = "save_specialist_cmd"; parameter = "spec"; remove = "remove_specialist"; idKey = "id"

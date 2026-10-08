@@ -410,8 +410,21 @@ change the WebView's active project or session.
 
 A lost read keeps the last rows and is not retried. Search filters the rows
 already read. A reply that arrives after the sheet has closed does not open or
-change a project. Escape closes only the journey sheet. Adding a journal
-entry, artifact detail, and run detail stay out of this slice. WinUI connects the same read through `INativeJourneyClient`, with date range and local title search.
+change a project. macOS additionally supports manual journal entries (progress,
+finding, decision and next step), daily recap review/edit/confirm/dismiss, a
+relationship view with edge details, immutable artifact sources and persisted run
+records including log tails. Recap sources stay intact; rewritten items lose old
+citations through the existing store validation. Relationship inspection matches
+the current WebView; neither shell adds manual graph links from this page.
+
+The new `native_research_journey_add`, `native_research_journey_recap` and
+`native_research_journey_graph` commands retain the explicit mainline project.
+Writes reject unavailable projects and cross-project recap IDs. A stale editor
+cannot save into a newly selected project. Lost replies block replay until the
+researcher refreshes and checks the result, including the selected entry date.
+Escape closes only the top editor/source detail before its parent journey.
+WinUI connects the original read through `INativeJourneyClient`; these added
+macOS editing surfaces are separate from its current implementation.
 
 ## Publication workspace
 
@@ -690,10 +703,15 @@ the current project or a WebView window. It uses the existing restricted assista
 tool set and shared conversation pipeline. Project context accompanies each new
 message; privacy-filtered plan items link back to their project conversations.
 The calendar resolves privacy before reading history, and its backend filters
-again in case privacy changed after the client read.
+again in case privacy changed after the client read. At widths of at least
+1200 points, the assistant shows project/plan, conversation and an inline calendar
+in three columns. Narrow windows retain the project/plan and calendar buttons.
 
 The assistant's Automations sheet shows the built-in daily recap, persisted
-project schedules and recent execution reports. Create an interval, daily or
+project schedules and recent execution reports. Literature watch, Run check and
+Weekly report templates prefill editable prompts and cadence before any save.
+Their bilingual content and scheduling defaults are generated from the WebView
+presets by the native resource sync script. Create an interval, daily or
 weekly schedule, optionally naming an existing conversation and skill; toggle,
 run now or delete it through the existing scheduler. Daily and weekly options
 choose the next local start time and then use fixed intervals, matching WebView.

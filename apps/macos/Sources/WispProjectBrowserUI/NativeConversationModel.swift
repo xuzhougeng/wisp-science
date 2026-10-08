@@ -100,7 +100,7 @@ final class NativeConversationModel: ObservableObject {
             let id = snapshot?.acp_agent_id ?? String((snapshot?.model_id ?? "").dropFirst(4))
             return acpAgents.first(where: { $0["id"].string == id })?["label"].string ?? String((snapshot?.model_id ?? "ACP").dropFirst(4))
         }
-        return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? "选择模型"
+        return models.first(where: { $0["id"].string == snapshot?.model_id })?["label"].string ?? localized("选择模型")
     }
     private var canChangeConversationSettings: Bool {
         snapshot?.read_only == false && snapshot?.running == false && snapshot?.stopping == false

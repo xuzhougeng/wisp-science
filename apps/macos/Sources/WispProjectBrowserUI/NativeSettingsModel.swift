@@ -5,7 +5,7 @@ import WispProjectBrowser
 enum NativeSettingsSection: String, CaseIterable, Identifiable {
     case general, network, session, appearance, pet, models
     case quickActions = "quick-actions"
-    case workflows, specialists, memory, skills, plugins, browser, connections, channels, credentials, permissions, environments, storage, usage
+    case hooks, workflows, specialists, memory, skills, plugins, browser, connections, channels, credentials, permissions, environments, storage, usage
     var id: String { rawValue }
     var title: String { localized(chineseTitle) }
     private var navigation: [String: String] { WispDesign.settingsNavigation[rawValue] ?? [:] }
@@ -19,6 +19,7 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"]
         case .network: return ["get_network_settings"]
+        case .hooks: return []
         case .session: return ["get_settings", "get_auto_review_enabled"]
         case .appearance: return ["get_appearance_prefs"]
         case .pet: return ["get_settings", "get_pet_runtime_status", "get_pet"]
@@ -59,9 +60,19 @@ final class NativeSettingsModel: ObservableObject {
     private var loadedProject: String?
     private var snapshots: [String: SettingsValue] = [:]
     let client: any NativeSettingsQuerying
+    let layoutScope: String?
+    private var hooksByProject: [String: NativeHooksModel] = [:]
+    func hooksModel() -> NativeHooksModel {
+        let key = projectID.map { "project:" + $0 } ?? "global"
+        if let model = hooksByProject[key] { return model }
+        let model = NativeHooksModel(client: client, projectID: projectID)
+        hooksByProject[key] = model
+        return model
+    }
 
-    init(client: any NativeSettingsQuerying, projectID: String?) {
+    init(client: any NativeSettingsQuerying, projectID: String?, layoutScope: String? = nil) {
         self.client = client
+        self.layoutScope = layoutScope
         self.projectID = projectID
     }
 

@@ -1,0 +1,32 @@
+[
+  {
+    "icon": "book",
+    "en": "Literature watch",
+    "zh": "文献追踪",
+    "prompt_en": "Search for papers published in the past 7 days that bear on this project's research question. List at most 10, most relevant first, each with one sentence on how it relates to this project, and state the search queries you used. Read-only: do not change project files.",
+    "prompt_zh": "检索过去 7 天内与本项目研究问题相关的新文献，按相关性列出最多 10 篇，每篇用一句话说明与本项目的关系，并注明所用检索式。只读，不修改项目文件。",
+    "cadence": "weekly",
+    "time": "09:00",
+    "weekday": 1
+  },
+  {
+    "icon": "gauge",
+    "en": "Run check",
+    "zh": "运行巡检",
+    "prompt_en": "Check this project's runs. List runs that are still running, failed, lost their connection, or finished without their outputs harvested, with the likely reason and a suggested next step for each. Read-only: do not resubmit or cancel runs.",
+    "prompt_zh": "检查本项目的所有运行：列出仍在运行、失败、失去连接或已完成但尚未收取产出的任务，说明可能原因和建议的下一步。只读，不重新提交或取消任务。",
+    "cadence": "daily",
+    "time": "18:00",
+    "weekday": 1
+  },
+  {
+    "icon": "doc",
+    "en": "Weekly report",
+    "zh": "研究周报",
+    "prompt_en": "Summarize this week's research journey for this project, including its daily recaps, into a short weekly report: completed work, key findings and decisions, problems met, and next week's plan. Cite runs and outputs by name. Read-only.",
+    "prompt_zh": "汇总本项目本周的研究历程（含每日回顾），整理成一份简短周报：本周完成、关键发现与决定、遇到的问题、下周计划，并注明相关运行和产出。只读。",
+    "cadence": "weekly",
+    "time": "17:00",
+    "weekday": 5
+  }
+]

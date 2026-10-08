@@ -312,6 +312,7 @@ final class NativeCalendarModel: ObservableObject {
 struct NativeCalendarPage: View {
     @ObservedObject var model: ProjectBrowserModel
     @ObservedObject var calendar: NativeCalendarModel
+    var embedded = false
     @Environment(\.colorScheme) private var scheme
     @State private var filtersExpanded = false
     private var projectIDs: [String] { model.projects.map(\.id) }
@@ -328,7 +329,7 @@ struct NativeCalendarPage: View {
         GeometryReader { geometry in
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Button(localized("返回首页")) { calendar.dismiss() }
+                    if !embedded { Button(localized("返回首页")) { calendar.dismiss() } }
                     Text(localized("研究日历")).font(.title2.bold())
                     Spacer()
                     Button { Task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) } } label: { WispIcon(name: "refresh") }
@@ -363,8 +364,9 @@ struct NativeCalendarPage: View {
                 }
             }.background(color("bg-app"))
         }
-        .background(NativeSettingsEscape { calendar.dismiss() })
-        .task { await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) }
+        .background { if !embedded { NativeSettingsEscape { calendar.dismiss() } } }
+        .task { if embedded { calendar.presented = true }; await calendar.openMonth(model.calendarClient(), projectIDs: projectIDs) }
+        .onDisappear { if embedded { calendar.dismiss() } }
     }
 
     private var projectFilters: some View {
@@ -436,7 +438,7 @@ struct NativeCalendarPage: View {
                     HStack {
                         Text(name(project.projectID)).font(.headline)
                         Spacer()
-                        Button(localized("打开研究历程")) { Task { await model.openCalendarJourney(projectID: project.projectID, day: calendar.selectedDay) } }
+                        Button(localized("打开研究历程")) { if embedded { model.assistantPresented = false }; Task { await model.openCalendarJourney(projectID: project.projectID, day: calendar.selectedDay) } }
                             .disabled(project.error != nil || calendar.busy)
                     }
                     if let error = project.error { Text(error).foregroundStyle(.red).font(.caption) }

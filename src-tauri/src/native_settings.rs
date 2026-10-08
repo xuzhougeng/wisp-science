@@ -227,6 +227,21 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     }
     if wisp_dto::native_journey::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
+        let _activity = if matches!(
+            request.command.as_str(),
+            "native_research_journey_add" | "native_research_journey_recap"
+        ) {
+            Some(
+                state.begin_project_activity(
+                    request
+                        .project_id
+                        .as_deref()
+                        .ok_or("A project id is required")?,
+                )?,
+            )
+        } else {
+            None
+        };
         return crate::native_journey::execute(&state.store, request).await;
     }
     if wisp_dto::native_publication::COMMANDS.contains(&request.command.as_str()) {
