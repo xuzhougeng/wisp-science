@@ -192,6 +192,19 @@ test("Sign in with ChatGPT is the first card, browser-only, and saves managed mo
   await expect(page.locator("#model-form-api-key")).toHaveCount(0);
 });
 
+test("a subscription model stays removable after it becomes the default", async ({ page }) => {
+  await setup(page, "en", true);
+  await subscriptions(page);
+  const rows = page.getByTestId("subscription-account-codex").getByTestId("subscription-model");
+  await expect(rows.getByTestId("remove-subscription-model")).toBeVisible();
+  await rows.locator("button:not(.subscription-model-edit)").first().click();
+  await expect(rows.locator(".settings-model-default")).toBeVisible();
+  await rows.getByTestId("remove-subscription-model").click();
+  await page.getByTestId("model-delete-confirm").locator("button.primary").click();
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByTestId("subscription-account-xai").getByTestId("subscription-model")).toHaveCount(1);
+});
+
 test("leaving before the challenge arrives cancels it without reopening sign-in", async ({ page }) => {
   await setup(page);
   await page.evaluate(() => (window as any).__subscription.startDelay = 700);
