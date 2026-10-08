@@ -2055,6 +2055,26 @@ pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
     state.device_hub.resolve_needs_user(frame_id);
 }
 
+/// App exit: stop every agent this app still runs for a conversation, and
+/// with it whatever that agent started. Each handle gets a moment to end its
+/// connection before its process tree is stopped; the wait is bounded so a
+/// wedged agent cannot hold the exit up.
+pub(crate) async fn shutdown_all(state: &AppState) {
+    let runtimes: Vec<_> = state
+        .acp_sessions
+        .lock()
+        .await
+        .drain()
+        .map(|(_, runtime)| runtime)
+        .collect();
+    futures_util::future::join_all(
+        runtimes
+            .iter()
+            .map(|runtime| runtime.handle.shutdown(Duration::from_secs(1))),
+    )
+    .await;
+}
+
 pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
     crate::mcp_broker::cancel_frame(frame_id);
     // Bind first so the global guard is released before awaiting the agent;

@@ -27,8 +27,9 @@ use agent_client_protocol::{
     },
     Agent, Client, ConnectTo, ConnectionTo, Handled, JsonRpcMessage, Lines, UntypedMessage,
 };
-use futures::{io::BufReader, AsyncBufReadExt, AsyncWriteExt, StreamExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
+use wisp_tools::process::ProcessTree;
 
 pub use agent_client_protocol as acp;
 
@@ -923,20 +924,26 @@ struct ProcessTransport {
 
 impl ConnectTo<Client> for ProcessTransport {
     async fn connect_to(self, client: impl ConnectTo<Agent>) -> agent_client_protocol::Result<()> {
-        let mut command = async_process::Command::new(&self.profile.command);
-        command.args(&self.profile.args).envs(&self.profile.env);
-        #[cfg(windows)]
-        {
-            use async_process::windows::CommandExt as _;
-            command.creation_flags(0x0800_0000);
-        }
+        let mut command = tokio::process::Command::new(&self.profile.command);
         command
+            .args(&self.profile.args)
+            .envs(&self.profile.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        ProcessTree::configure(&mut command);
         let mut child = command
             .spawn()
             .map_err(agent_client_protocol::Error::into_internal_error)?;
+        // Attached before anything else can fail: on Windows the agent stays
+        // suspended until it is inside the boundary, and an early return
+        // drops `child`, which kills it.
+        let tree = ProcessTree::attach(&child).map_err(|error| {
+            agent_client_protocol::util::internal_error(format!(
+                "attach agent process tree: {error}"
+            ))
+        })?;
         let stdin = child
             .stdin
             .take()
@@ -949,23 +956,33 @@ impl ConnectTo<Client> for ProcessTransport {
             .stderr
             .take()
             .ok_or_else(|| agent_client_protocol::util::internal_error("missing agent stderr"))?;
+        let mut agent = AgentProcess { _tree: tree, child };
 
         let captured = self.stderr.clone();
         let child_stderr = self.stderr.clone();
         // Drain stderr on an independent task. Racing the reader inside the
         // transport select dropped it as soon as the protocol or the child
         // ended — sometimes before a just-exited child's diagnostics were
-        // read, losing them for good (#179). The pipe hits EOF once the child
-        // dies, so the task always terminates.
+        // read, losing them for good (#179). The pipe hits EOF once the last
+        // process holding it dies, so the task always terminates.
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
-            while let Some(line) = lines.next().await {
-                if let Ok(line) = line {
-                    captured.push(line.as_bytes());
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => captured.push(line.as_bytes()),
+                    // A line that is not UTF-8 is skipped, not the rest.
+                    Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {}
+                    Ok(None) | Err(_) => break,
                 }
             }
         });
-        let incoming = Box::pin(BufReader::new(stdout).lines());
+        let incoming = Box::pin(futures::stream::unfold(
+            BufReader::new(stdout).lines(),
+            async |mut lines| {
+                let line = lines.next_line().await.transpose()?;
+                Some((line, lines))
+            },
+        ));
         let outgoing = Box::pin(futures::sink::unfold(
             stdin,
             async move |mut stdin, line: String| {
@@ -976,8 +993,8 @@ impl ConnectTo<Client> for ProcessTransport {
         ));
         let protocol = ConnectTo::<Client>::connect_to(Lines::new(outgoing, incoming), client);
         let child_monitor = async move {
-            let mut guard = ChildGuard(child);
-            let status = guard
+            let status = agent
+                .child
                 .wait()
                 .await
                 .map_err(agent_client_protocol::Error::into_internal_error)?;
@@ -1005,18 +1022,17 @@ impl ConnectTo<Client> for ProcessTransport {
     }
 }
 
-struct ChildGuard(async_process::Child);
-
-impl ChildGuard {
-    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.0.status().await
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        drop(self.0.kill());
-    }
+/// The agent and everything it started. An agent keeps helpers of its own
+/// (Codex runs a `node_repl` per tool session), and killing only the agent
+/// left them running and holding their files open (#1477). One OS boundary
+/// owns the whole tree: a Job object on Windows, a process group on Unix.
+///
+/// Dropping this stops the tree, whether the agent is still running or has
+/// already exited and left helpers behind. The tree is declared first so the
+/// boundary is signalled while the agent's process id is still held.
+struct AgentProcess {
+    _tree: ProcessTree,
+    child: tokio::process::Child,
 }
 
 #[cfg(test)]

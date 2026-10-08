@@ -7112,12 +7112,12 @@ name = "wisp-acp"
 version = "1.18.0"
 dependencies = [
  "agent-client-protocol",
- "async-process",
  "futures",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "wisp-tools",
 ]
 
 [[package]]

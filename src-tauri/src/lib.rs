@@ -7902,6 +7902,8 @@ pub fn run() {
                 tracing::info!(target: "wisp", step="stop-device-bridge", "app.exit.step");
                 let device_bridge = _app.state::<AppState>().device_bridge.clone();
                 tauri::async_runtime::block_on(device_bridge.stop());
+                tracing::info!(target: "wisp", step="shutdown-acp-agents", "app.exit.step");
+                tauri::async_runtime::block_on(acp::shutdown_all(_app.state::<AppState>().inner()));
                 tracing::info!(target: "wisp", step="shutdown-runtimes", "app.exit.step");
                 let runtime_manager = _app.state::<AppState>().runtime_manager.clone();
                 tauri::async_runtime::block_on(runtime_manager.shutdown_all());

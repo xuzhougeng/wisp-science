@@ -82,6 +82,9 @@ async fn run_tests() -> Result<(), String> {
     test_cancel_during_initialize()
         .await
         .map_err(|error| format!("initialize cancellation: {error}"))?;
+    test_stopping_the_agent_stops_what_it_started()
+        .await
+        .map_err(|error| format!("agent process tree: {error}"))?;
     Ok(())
 }
 
@@ -411,6 +414,44 @@ async fn test_cancel_during_initialize() -> Result<(), String> {
     )
 }
 
+/// An agent starts helpers of its own: Codex keeps a `node_repl` per tool
+/// session. Stopping the agent has to stop them too, however it is stopped
+/// (#1477). The helper here never reads its stdin, so nothing but the process
+/// boundary can end it.
+async fn test_stopping_the_agent_stops_what_it_started() -> Result<(), String> {
+    for stop in ["shutdown", "drop", "agent exit"] {
+        let marker = unique_temp_path("wisp-acp-helper");
+        let scenario = if stop == "agent exit" {
+            "tree-exit"
+        } else {
+            "tree"
+        };
+        let launched = AcpSessionHandle::launch(profile(
+            scenario,
+            vec![marker.to_string_lossy().to_string()],
+        ))
+        .await;
+        match (stop, launched) {
+            ("shutdown", Ok(handle)) => handle.shutdown(Duration::from_secs(1)).await,
+            ("drop", Ok(handle)) => drop(handle),
+            // The agent quits by itself right after starting its helper.
+            ("agent exit", Err(_)) => {}
+            (_, Ok(_)) => return Err(format!("{stop}: the agent did not exit")),
+            (_, Err(error)) => return Err(format!("{stop}: {error}")),
+        }
+        check(marker.exists(), "the helper never started")?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let first = std::fs::read(&marker).map_err(stringify)?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let second = std::fs::read(&marker).map_err(stringify)?;
+        let _ = std::fs::remove_file(&marker);
+        if first != second {
+            return Err(format!("{stop} left the agent's helper running"));
+        }
+    }
+    Ok(())
+}
+
 fn unique_temp_path(prefix: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -458,6 +499,37 @@ fn fake_agent(args: &[String]) -> ExitCode {
                 loop {
                     std::thread::park();
                 }
+            }
+        }
+        // Stands in for a helper the agent starts and never waits for.
+        "helper" => {
+            let marker = PathBuf::from(args.get(1).expect("helper marker"));
+            // Bounded, so a failing run cannot leave it behind for good.
+            for value in 0..1500_u64 {
+                let _ = std::fs::write(&marker, value.to_string());
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            return ExitCode::SUCCESS;
+        }
+        "tree" | "tree-exit" => {
+            let marker = PathBuf::from(args.get(1).expect("helper marker"));
+            let helper =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args(["--fake-agent", "helper"])
+                    .arg(&marker)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            if helper.is_err() {
+                return ExitCode::FAILURE;
+            }
+            while !marker.exists() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if scenario == "tree-exit" {
+                eprintln!("fake agent quit and left its helper");
+                return ExitCode::from(17);
             }
         }
         "environment" => {

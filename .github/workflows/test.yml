@@ -69,6 +69,11 @@ jobs:
       - name: Run MCP process-tree shutdown regression
         run: cargo test -p wisp-mcp --test process_tree_shutdown
 
+      # An ACP agent starts helpers of its own (Codex keeps a node_repl per
+      # tool session). Stopping the agent must stop them on every OS (#1477).
+      - name: Run ACP agent process-tree regression
+        run: cargo test -p wisp-acp --test process
+
       - name: Test repository build launcher
         run: cargo test --locked -p wisp-dev
 
