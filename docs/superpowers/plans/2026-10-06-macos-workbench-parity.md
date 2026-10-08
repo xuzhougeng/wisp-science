@@ -4,8 +4,11 @@ Baseline: `c296e134`, 2026-10-06. The user requested the complete sequence:
 conversation controls and search → files and scientific viewers → research
 assistant and timers → publication and workflow editing.
 
-Implementation is paused at the user's request while the current branch is
-packaged into a PR. A completed increment does not complete the objective.
+The historical pause after increment 18 ended when the user resumed the four
+remaining workbench groups on 2026-10-08. Those groups are now implemented and
+accepted on `codex/macos-workbench-completion`; see the
+[completion record](2026-10-08-macos-workbench-completion.md). This does not mark
+the broader parity roadmap complete.
 Existing Rust commands and `wisp-dto` contracts are the behavior
 source; SwiftUI must preserve project/session ownership, unknown-result handling,
 drafts, privacy filtering and the window Escape stack.
@@ -22,15 +25,15 @@ drafts, privacy filtering and the window Escape stack.
   find older conversations independently of the five recent home entries.
 - [ ] Files: local and remote location selection, upload/drop, sorting, selection,
   batch actions, text editing and downloads with scope and conflict checks.
-- [ ] Viewers: Markdown, HTML, CSV/TSV, images, PDF, Office, FASTA/MSA and molecular
+- [x] Viewers: Markdown, HTML, CSV/TSV, images, PDF, Office, FASTA/MSA and molecular
   structures with the corresponding WebView interactions and source quotes.
-- [ ] Research assistant: project context, assistant conversation and calendar,
+- [x] Research assistant: project context, assistant conversation and calendar,
   automation management and session timers with persisted state and live status.
-- [ ] Publication: create/edit publications and revisions, structure/evidence
+- [x] Publication: create/edit publications and revisions, structure/evidence
   editing, source inspection, checks, reproduction and freezing.
 - [ ] Research journey: relationships, manual records, recap editing and run
   navigation in addition to the existing daily view.
-- [ ] Workflow: readable stages/dependencies and visual node/edge editing,
+- [x] Workflow: readable stages/dependencies and visual node/edge editing,
   validation, save/copy, conversion and existing execution/approval controls.
 
 ## Verification

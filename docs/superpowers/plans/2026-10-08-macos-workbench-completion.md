@@ -3,8 +3,9 @@
 The user resumed implementation on 2026-10-08 with four required outcomes:
 research assistant, publication evidence editing, specialized viewers, and a
 workflow canvas. The historical pause in the 2026-10-06 parity plan does not
-apply to this work. Implement each group in reviewable increments; the overall
-goal remains open until all four groups pass their acceptance checks.
+apply to this work. All four groups have passed their acceptance checks. The
+implementation is complete on `codex/macos-workbench-completion` and is being
+submitted as a PR for review; the broader product parity roadmap remains separate.
 
 ## Outcomes and acceptance
 
@@ -37,6 +38,9 @@ contract/design sync checks, and paired current packaged-app smoke checks. No
 real credentials, network, cluster, or SSH host is required in automated tests.
 
 ## Progress
+
+The incremental entries retain their earlier checkpoint results. The final
+acceptance entries below supersede their historical pending checks.
 
 - Started from `5aec1c29` on `codex/macos-workbench-completion`, clean checkout.
 - Publication backend already exposes typed source and mutation commands. The
