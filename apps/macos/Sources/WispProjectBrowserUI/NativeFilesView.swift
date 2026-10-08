@@ -113,12 +113,16 @@ struct NativeFilesView: View {
             }
             .sheet(isPresented: Binding(get: { model.preview != nil }, set: { if !$0 { model.dismissPreview() } })) {
                 if let preview = model.preview {
+                    let identity = model.previewIdentity
                     NativePanelFilePreview(content: preview.content, close: model.dismissPreview,
                         save: model.canWrite && preview.context_id == "local" && !preview.content.truncated && preview.content.text != nil ? { try await model.save($0, original: preview.content) } : nil,
                         quote: quote == nil ? nil : { text in
                             guard let source = model.quote(text, source: preview.content.path) else { return }
                             quote?(source); model.dismissPreview()
-                        }, loadImage: { try await model.readPreviewImage($0, original: preview.content) })
+                        }, documentQuote: quote == nil ? nil : { selection in
+                            guard let source = model.documentQuote(selection, original: preview.content, identity: identity) else { return false }
+                            quote?(source); model.dismissPreview(); return true
+                        }, loadImage: { try await model.readPreviewImage($0, original: preview.content) }).id(identity)
                 }
             }
             .onDisappear { dropTask?.cancel(); chooser.close(); model.close() }

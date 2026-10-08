@@ -37,6 +37,7 @@ final class NativePanelModel: ObservableObject {
     let sessionID: String
     private var generation = UUID()
     private var previewGeneration = UUID()
+    var previewIdentity: UUID { previewGeneration }
     private var closed = false
     init(client: any NativeConversationQuerying, projectID: String, sessionID: String) {
         self.client = client; self.projectID = projectID; self.sessionID = sessionID
@@ -217,8 +218,8 @@ final class NativePanelModel: ObservableObject {
         let parent = (path as NSString).deletingLastPathComponent
         return parent.isEmpty ? "." : parent
     }
-    func readFile(_ path: String) async { await read("readfile", args: ["path": .string(path)]) }
-    func readArtifact(_ id: String) async { await read("readartifact", args: ["artifact_id": .string(id)]) }
+    func readFile(_ path: String) async { await read("readfile", args: ["path": .string(path), "render_pdf": .bool(true), "render_office": .bool(true)]) }
+    func readArtifact(_ id: String) async { await read("readartifact", args: ["artifact_id": .string(id), "render_pdf": .bool(true), "render_office": .bool(true)]) }
     private func read(_ action: String, args: [String: SettingsValue]) async {
         let current = UUID(); previewGeneration = current; error = nil
         do {
@@ -238,6 +239,11 @@ final class NativePanelModel: ObservableObject {
         var value = try JSONDecoder().decode(SettingsValue.self, from: JSONEncoder().encode(original))
         value["text"] = .string(text); value["total_bytes"] = .integer(Int64(text.utf8.count))
         preview = try decode(value, as: NativePanelFileContent.self)
+    }
+    func documentQuote(_ selection: NativeDocumentSelection, original: NativePanelFileContent, identity: UUID) -> NativeSideChatQuote? {
+        guard !closed, !savingPreview, previewGeneration == identity, let preview, preview.path == original.path,
+              preview.text == original.text, preview.base64 == original.base64 else { return nil }
+        return selection.quote(from: original)
     }
     func selectedPreviewQuote(_ text: String, path: String) -> NativeSideChatQuote? {
         guard !closed, !savingPreview, let preview, preview.path == path, preview.text != nil,

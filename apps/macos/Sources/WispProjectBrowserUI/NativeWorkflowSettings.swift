@@ -8,6 +8,7 @@ struct NativeWorkflowSettings: View {
     @State private var sourceSkills: Set<String> = []
     @State private var legacyTemplate = ""
     @State private var conversionResult: SettingsValue?
+    @State private var workflowDraft: NativeWorkflowDraft?
     var body: some View {
         VStack(spacing: 22) {
         NativeSettingsGroup(title: model.section.title) {
@@ -19,7 +20,7 @@ struct NativeWorkflowSettings: View {
                         if row["builtin"].bool { Text(localized("内置")).font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button(localized("编辑")) { edit(row) }
-                        Button(localized("复制")) { var copy = row; copy["id"] = .string(UUID().uuidString); copy["name"] = .string(row["name"].string + " 副本"); copy["builtin"] = .bool(false); edit(copy, new: true) }
+                        Button(localized("复制")) { var copy = row; copy["id"] = .string(UUID().uuidString); copy["name"] = .string(row["name"].string + " " + localized("副本")); copy["builtin"] = .bool(false); edit(copy, new: true) }
                     }
                     Text(row["description"].string).foregroundStyle(.secondary).textSelection(.enabled)
                     if model.section == .quickActions {
@@ -33,6 +34,7 @@ struct NativeWorkflowSettings: View {
             }
             if rows.isEmpty && !model.loading { Text(localized("尚无配置，可添加或复制现有配置。")).foregroundStyle(.secondary) }
         }
+        .sheet(item: $workflowDraft) { draft in NativeWorkflowCanvasEditor(draft: draft, close: { workflowDraft = nil }, saved: { Task { await model.load() } }) }
         if model.section == .workflows { conversion }
         }
     }
@@ -75,23 +77,9 @@ struct NativeWorkflowSettings: View {
             if new { draft["context"] = .string("selection"); draft["enabled"] = .bool(true); draft["sort_order"] = .integer(Int64(rows.count)); draft["icon"] = .string("bolt") }
             fields += [.init(key: "workflow_template_id", label: "工作流模板", kind: .choice((model.values["list_workflow_templates"]?.array ?? []).map { ($0["id"].string, $0["name"].string) })), .init(key: "enabled", label: "启用", kind: .toggle), .init(key: "sort_order", label: "排序", kind: .integer)]
         case .workflows:
-            command = "save_workflow_template"; parameter = "template"; remove = "remove_workflow_template"; idKey = "templateId"
             if new && draft["proposal"] == .null { draft["proposal"] = .object(["goal": .string(""), "context": .string(""), "approval_policy": .string("review_all"), "tasks": .array([])]) }
-            fields += [.init(key: "proposal", label: "工作流定义", kind: .object([
-                .init(key: "goal", label: "目标", kind: .multiline), .init(key: "context", label: "上下文", kind: .multiline),
-                .init(key: "approval_policy", label: "审批策略", kind: .choice([("review_all", "逐项审核"), ("auto_safe", "自动执行安全操作")])),
-                .init(key: "tasks", label: "任务节点", kind: .records([
-                    .init(key: "id", label: "节点 ID"), .init(key: "instruction", label: "指令", kind: .multiline),
-                    .init(key: "depends_on", label: "依赖节点", kind: .lines, hint: "每行一个节点 ID。保存时会检查循环依赖。"),
-                    .init(key: "capabilities", label: "工具能力", kind: .lines), .init(key: "output_schema", label: "输出 JSON Schema", kind: .json),
-                    .init(key: "specialist_id", label: "专家 ID"), .init(key: "model_id", label: "模型 ID"),
-                    .init(key: "task_kind", label: "任务类型", kind: .choice([("agent", "智能体"), ("run_activity", "计算活动")])),
-                    .init(key: "run_activity", label: "计算活动配置", kind: .json),
-                    .init(key: "isolated", label: "独立上下文", kind: .toggle), .init(key: "timeout_secs", label: "超时秒数", kind: .integer),
-                    .init(key: "executor", label: "执行器", kind: .object([.init(key: "kind", label: "类型", kind: .choice([("native", "原生智能体"), ("acp", "ACP")])), .init(key: "profile_id", label: "配置 ID")])),
-                    .init(key: "budget", label: "预算", kind: .object([.init(key: "max_tokens", label: "Token 上限", kind: .integer), .init(key: "max_tool_calls", label: "工具调用上限", kind: .integer), .init(key: "max_cost_microunits", label: "费用上限（微单位）", kind: .integer)]))
-                ]))
-            ]))]
+            workflowDraft = NativeWorkflowDraft(template: draft, sourceHash: sourceHash, client: model.client, projectID: model.projectID, removable: !new && !row["builtin"].bool)
+            return
         default:
             command = "save_specialist_cmd"; parameter = "spec"; remove = "remove_specialist"; idKey = "id"
             fields += [.init(key: "instructions", label: "系统提示词", kind: .multiline),

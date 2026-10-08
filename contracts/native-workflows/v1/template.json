@@ -1,0 +1,16 @@
+{
+  "id": "workflow-fixture",
+  "name": "Evidence review",
+  "description": "Preserve task metadata while editing the graph.",
+  "builtin": false,
+  "proposal": {
+    "goal": "Compare research evidence",
+    "context": "Scoped project context",
+    "approval_policy": "review_all",
+    "tasks": [
+      {"id":"source","instruction":"Read evidence","depends_on":[],"task_kind":"agent","run_activity":null,"capabilities":["workspace.read"],"skill_ids":[],"specialist_id":"researcher","output_schema":{"type":"object","properties":{"method_search_spec_artifact_version_id":{"type":"string"}},"required":["method_search_spec_artifact_version_id"]},"isolated":true,"model_id":"model-exact-id","executor":{"kind":"acp","profile_id":"acp-fixture"},"budget":{"max_tokens":2000,"max_tool_calls":8,"max_cost_microunits":500000},"timeout_secs":0},
+      {"id":"review","instruction":"Review source evidence","depends_on":["source"],"task_kind":"agent","run_activity":null,"capabilities":["workspace.read"],"skill_ids":[],"specialist_id":null,"output_schema":null,"isolated":false,"model_id":null,"executor":null,"budget":null,"timeout_secs":null},
+      {"id":"compute","instruction":"Run the approved method search","depends_on":["source"],"task_kind":"run_activity","run_activity":{"activity":"method_search","context_id":"local","input_task_id":"source","spec_output_pointer":"method_search_spec_artifact_version_id","max_candidates":20,"max_wall_seconds":14400,"max_evaluator_seconds":120,"max_cost_microunits":5000000},"capabilities":[],"skill_ids":[],"specialist_id":null,"output_schema":null,"isolated":false,"model_id":null,"executor":null,"budget":null,"timeout_secs":null}
+    ]
+  }
+}

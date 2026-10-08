@@ -65,3 +65,21 @@ real credentials, network, cluster, or SSH host is required in automated tests.
   Serialized Rust rerun passed all executed tests but stopped when a generated
   wisp-relay test executable was missing; final validation must rebuild that
   artifact and rerun the suite before overall completion.
+
+- Viewer increment: native PDFKit pages/search/zoom and bounded page quotations;
+  shared offline Office, HTML, sequence/alignment, structure and molecule
+  renderers in disposable WebKit surfaces. Real WebKit tests passed for DOCX,
+  XLSX, PPTX, FASTA, Clustal, PDB, RDKit/WASM and opaque HTML selection. Scoped
+  image preparation, remote PDF byte limits and stale quotation rejection are
+  tested. The build routing tests now verify renderer assets and clean rebuilds.
+- Workflow increment: native stage/dependency canvas, selection, node dragging,
+  pan/zoom/fit, full metadata editing, cycle checks, rename propagation,
+  built-in copies and conversion-source preservation. Save/delete uncertainty
+  requires a fresh read and acknowledgement. Five focused tests and the shared
+  native/backend template fixture passed, including immediate nested Escape
+  and normal/narrow English/Chinese light/dark rendering.
+- Final validation: the full Swift run passed 578 UI plus 19 core tests; a
+  later 13-test viewer/canvas rerun passed after layout/format refinements.
+  UI wasm check, design/contract sync, formatting and five fake-compiler build
+  routing tests passed. Rust workspace and Playwright suites are running;
+  packaged-app acceptance remains pending.

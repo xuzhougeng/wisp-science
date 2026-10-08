@@ -1,5 +1,25 @@
 # Native settings implementation
 
+The macOS Workflows editor opens a native canvas. Tasks are arranged in execution
+stages with selectable dependency curves. Drag the background to pan, drag nodes
+to arrange them, use zoom/fit controls, or select a node to edit its instructions,
+capabilities, schema, executor, activity, timeout and budget. The inspector adds
+and removes dependencies; cycle-forming connections are rejected. Renaming a node
+updates dependency IDs and activity input IDs while retaining other task metadata.
+Layout changes are view state and do not alter execution order.
+
+Built-in templates remain read-only and can be copied. New templates and skill or
+legacy-template conversion drafts use the same canvas; conversion source hashes
+are forwarded on save. Structure checks run in the editor, and the existing host
+validator checks complete capability, activity and budget rules before persistence.
+No run starts from the canvas. A lost save/delete response retains the draft and
+blocks another write until a fresh template read and explicit acknowledgement.
+
+Manual smoke: copy an existing template, select and rename a node, change its
+dependencies, zoom/fit and drag the canvas, save and reopen it. Check that executor,
+timeout, schema, budget and activity fields remain. Open the node editor and press
+Escape immediately; only that editor closes. Dirty editors ask before discarding.
+
 The accepted scope is the complete settings surface rendered in SwiftUI, with
 existing desktop command behavior, and an equivalent transport seam for WinUI3.
 The existing WebView client remains supported. Settings include the 20 top-level

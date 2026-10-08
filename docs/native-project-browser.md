@@ -35,13 +35,38 @@ to see its full path.
 
 Brand SVGs, the existing `compose_icon()` glyphs, and semantic colors are exported
 from the WebView sources into the Swift resource bundle. There is no second icon
-set and no WebView embedded in the SwiftUI screen. After changing those shared
+set. The shell and controls are native; specialized document rendering uses a
+disposable, isolated WebKit surface. After changing those shared
 sources, run:
 
 ```bash
 python3 scripts/sync_native_design.py
 python3 scripts/sync_native_design.py --check
 ```
+
+## Specialized macOS document previews
+
+PDF uses PDFKit with pagination, zoom, text search and selected-text quotes carrying
+actual page positions. DOCX, XLSX and PPTX use the same offline renderer modules as
+the WebView: Word pages, spreadsheet sheets/cells/formulas and slide layouts remain
+available. HTML has source and reading modes, an opaque sandbox for inline scripts,
+and project-approved embedded images. Its preview cannot navigate to external
+sites or read unrelated local files. Quotes enter the existing side-chat draft;
+the owning native model supplies the source path and rejects stale preview replies.
+
+FASTA, Clustal/Stockholm alignments, PDB/mmCIF/MOL2 structures and SMILES use the
+shared sequence, WebGL and WASM renderers. Closing a preview releases its browser,
+workers and temporary origin. The localhost origin serves bundled renderer assets
+only; file contents enter the view through scoped host reads. PDF/Office byte reads
+remain bounded at 32 MiB for local and SSH contexts. Scientific format limits and
+malformed-input handling remain those of the shared renderer.
+
+Manual smoke: open each supported fixture from Files, switch HTML to source and
+back, search PDF text, quote a Word paragraph and an XLSX cell, then press Escape
+immediately after opening. The first press must close only the preview. Reopen
+the same path and verify that an old selection cannot be quoted into it. The opt-in
+`WISP_NATIVE_DOCUMENT_SMOKE=1` Swift test exercises real WebKit offline Office,
+worker/WASM, sequence and structure rendering with repository fixtures.
 
 CI and both app builds check for asset drift. WinUI links the same SVG and
 palette files into its output. The exporter handles UTF-8 source and Windows CRLF checkouts. Native system font rendering,

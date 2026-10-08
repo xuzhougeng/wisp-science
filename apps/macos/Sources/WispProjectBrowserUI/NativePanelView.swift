@@ -133,13 +133,20 @@ struct NativePanelView: View {
             }
             .sheet(isPresented: Binding(get: { model.preview != nil }, set: { if !$0 { model.dismissPreview() } })) {
                 if let content = model.preview {
+                    let identity = model.previewIdentity
                     NativePanelFilePreview(content: content, close: model.dismissPreview, save: !readOnly && model.previewEditable ? { text in try await model.savePreview(text, original: content) } : nil, quote: sideChat == nil ? nil : { text in
                         guard let sideChat, sideChat.projectID == model.projectID, sideChat.sessionID == model.sessionID,
                               let quote = model.selectedPreviewQuote(text, path: content.path) else { return }
                         sideChat.quotes.append(quote)
                         model.dismissPreview()
                         var value = layout; value.show("sidechat"); store(value)
-                    }, loadImage: { try await model.readPreviewImage($0, original: content) })
+                    }, documentQuote: sideChat == nil ? nil : { selection in
+                        guard let sideChat, sideChat.projectID == model.projectID, sideChat.sessionID == model.sessionID,
+                              let quote = model.documentQuote(selection, original: content, identity: identity) else { return false }
+                        sideChat.quotes.append(quote); model.dismissPreview()
+                        var value = layout; value.show("sidechat"); store(value)
+                        return true
+                    }, loadImage: { try await model.readPreviewImage($0, original: content) }).id(identity)
                 }
             }
             .sheet(item: $transcriptPreview) { artifact in
@@ -319,6 +326,7 @@ struct NativePanelFilePreview: View {
     let close: () -> Void
     var save: ((String) async throws -> Void)? = nil
     var quote: ((String) -> Void)? = nil
+    var documentQuote: ((NativeDocumentSelection) -> Bool)? = nil
     var loadImage: NativeFileImageLoader? = nil
     @State private var sourceMode = false
     @State private var editing = false
@@ -353,7 +361,7 @@ struct NativePanelFilePreview: View {
                 Button(localized("关闭预览"), action: requestClose).disabled(saving)
             }
             Text(content.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(content.path).textSelection(.enabled)
-            if content.text != nil, !editing, document.kind != .text {
+            if content.text != nil, !editing, document.kind != .text || NativeDocumentKind.detect(content) != nil {
                 HStack {
                     Picker(localized("文件显示方式"), selection: $sourceMode) {
                         Text(localized("阅读")).tag(false)
@@ -367,6 +375,12 @@ struct NativePanelFilePreview: View {
             if content.truncated || document.clipped || sourceMode && document.rawDisplayClipped { Text(localized("仅展示文件开头；完整文件大小") + " \(content.total_bytes ?? UInt64(content.text?.utf8.count ?? 0)) bytes").font(.caption).foregroundStyle(.orange) }
             if editing {
                 TextEditor(text: $draft).font(.system(size: 12, design: .monospaced)).disabled(saving).accessibilityLabel("文件内容")
+            } else if !sourceMode, let kind = NativeDocumentKind.detect(content), !content.truncated {
+                if kind == .pdf, content.base64 != nil {
+                    NativePDFPreview(content: content, quote: documentQuote.map { callback in { _ = callback($0) } })
+                } else if kind != .pdf {
+                    NativeRichPreview(content: content, kind: kind, quote: documentQuote, loadImage: loadImage)
+                } else { Text(localized("当前宿主未提供 PDF 页面数据，请重新读取文件。")) }
             } else if content.text != nil {
                 if !sourceMode, document.kind == .markdown {
                     NativeMarkdownFilePreview(markdown: document.markdown, quote: quote, loadImage: loadImage).id(content.path)
