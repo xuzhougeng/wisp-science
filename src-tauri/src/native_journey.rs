@@ -14,6 +14,52 @@ pub(crate) async fn execute(
     else {
         return Err("A project id is required".into());
     };
+    if request.command == "native_research_journey_graph" {
+        if request.args.as_object().is_none_or(|args| !args.is_empty()) {
+            return Err("Graph reads do not accept arguments".into());
+        }
+        return serde_json::to_value(
+            store
+                .research_graph_in_scope(&wisp_store::StateScope::mainline(project_id))
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string());
+    }
+    if matches!(
+        request.command.as_str(),
+        "native_research_journey_add" | "native_research_journey_recap"
+    ) {
+        if store
+            .get_project(project_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("Project is unavailable".into());
+        }
+        if request.command == "native_research_journey_add" {
+            let input: wisp_dto::native_journey::AddEntryRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let id = store
+                .add_research_journal_entry(
+                    &wisp_store::StateScope::mainline(project_id),
+                    &input.input,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            return Ok(serde_json::Value::String(id));
+        }
+        let input: wisp_dto::native_journey::EditRecapRequest =
+            serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+        return serde_json::to_value(
+            store
+                .update_research_recap(project_id, &input.edit)
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string());
+    }
     if request.command == "native_research_journey_run" {
         let input: wisp_dto::native_journey::RunRequest =
             serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
@@ -218,6 +264,110 @@ mod tests {
         assert!(missing["content_error"].is_string());
         drop(store);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn native_journal_recap_and_graph_remain_in_the_named_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("store.sqlite"))
+            .await
+            .unwrap();
+        journal(&store, "a").await;
+        journal(&store, "b").await;
+        let mut write = request(
+            Some("a"),
+            json!({"input": {"title": "新发现 🧬", "body": "Evidence", "category": "finding", "occurred_at": 200}}),
+        );
+        write.command = "native_research_journey_add".into();
+        let id = execute(&store, &write).await.unwrap();
+        assert!(id.as_str().is_some_and(|id| !id.is_empty()));
+        assert_eq!(
+            store
+                .research_journey(&StateScope::mainline("a"), 0, 86400)
+                .await
+                .unwrap()
+                .entries
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
+                .research_journey(&StateScope::mainline("b"), 0, 86400)
+                .await
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+        write.project_id = Some("missing".into());
+        assert!(execute(&store, &write)
+            .await
+            .unwrap_err()
+            .contains("unavailable"));
+        write.project_id = Some("a".into());
+        write.args["unexpected"] = json!(true);
+        assert!(execute(&store, &write).await.is_err());
+        let recap = store
+            .save_research_recap(
+                "a",
+                &wisp_dto::ResearchRecap {
+                    day_start: 0,
+                    status: "draft".into(),
+                    headline: "Day".into(),
+                    done: vec![wisp_dto::ResearchRecapItem {
+                        text: "Original".into(),
+                        refs: vec![0],
+                    }],
+                    sources: vec![wisp_dto::ResearchRecapSource {
+                        kind: "record".into(),
+                        id: id.as_str().unwrap().into(),
+                        title: "Source".into(),
+                    }],
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        write.command = "native_research_journey_recap".into();
+        write.args = json!({"edit": {"id": recap.id, "status": "confirmed", "headline": "Reviewed", "done": [{"text": "Rewritten", "refs": [0]}], "findings": [], "issues": [], "next": []}});
+        write.project_id = Some("b".into());
+        assert!(execute(&store, &write).await.is_err());
+        write.project_id = Some("a".into());
+        let saved: wisp_dto::ResearchRecap =
+            serde_json::from_value(execute(&store, &write).await.unwrap()).unwrap();
+        assert_eq!(saved.status, "confirmed");
+        assert!(saved.done[0].refs.is_empty());
+        assert_eq!(saved.sources, recap.sources);
+        for project in ["a", "b"] {
+            let node = wisp_store::ResearchNode::new(
+                format!("node-{project}"),
+                project,
+                wisp_store::ResearchNodeKind::Decision,
+                format!("Decision {project}"),
+            )
+            .unwrap();
+            store
+                .save_research_node_in_scope(&node, &StateScope::mainline(project))
+                .await
+                .unwrap();
+        }
+        write.command = "native_research_journey_graph".into();
+        write.args = json!({});
+        let graph = execute(&store, &write).await.unwrap();
+        assert!(graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["id"] == "node-a"));
+        assert!(!graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["id"] == "node-b"));
+        write.args = json!({"project_id": "b"});
+        assert!(execute(&store, &write).await.is_err());
     }
 
     #[tokio::test]

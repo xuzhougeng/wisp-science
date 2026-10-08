@@ -69,6 +69,13 @@
     "group_en": "AI configuration",
     "aliases": "notes habits 笔记 习惯"
   },
+  "hooks": {
+    "zh": "钩子",
+    "en": "Hooks",
+    "group": "AI 配置",
+    "group_en": "AI configuration",
+    "aliases": "hook command stop tool review failure 钩子 命令 审查 工具失败"
+  },
   "skills": {
     "zh": "技能",
     "en": "Skills",

@@ -73,6 +73,14 @@ final class NativeJourneyModel: ObservableObject {
     @Published private(set) var projectID: String?
     @Published private(set) var day: Int64?
     @Published private(set) var entries: [CalendarEntry] = []
+    @Published private(set) var recaps: [SettingsValue] = []
+    @Published private(set) var graph: SettingsValue = .null
+    @Published private(set) var writing = false
+    @Published private(set) var uncertainProjects = Set<String>()
+    private var loaded = false
+    private var graphGeneration = UUID()
+    var uncertain: Bool { projectID.map { uncertainProjects.contains($0) } ?? false }
+    var canWrite: Bool { presented && loaded && !busy && !writing && !uncertain }
     @Published private(set) var truncated = false
     @Published private(set) var busy = false
     @Published private(set) var error: String?
@@ -90,7 +98,8 @@ final class NativeJourneyModel: ObservableObject {
         self.projectID = projectID
         self.day = day
         if let day { clock = Date(timeIntervalSince1970: TimeInterval(day)) }
-        entries = []
+        entries = []; recaps = []; graph = .null; loaded = false
+        graphGeneration = UUID()
         truncated = false
         error = nil
         busy = false
@@ -106,6 +115,7 @@ final class NativeJourneyModel: ObservableObject {
     func invalidate() {
         generation = UUID()
         presented = false
+        graphGeneration = UUID(); graph = .null; loaded = false
         busy = false
         closeDetail()
     }
@@ -136,6 +146,41 @@ final class NativeJourneyModel: ObservableObject {
         } catch {
             guard detailGeneration == current, presented, self.projectID == projectID else { return }
             detailError = error.localizedDescription
+        }
+    }
+
+    func acknowledge() { guard loaded, !busy, !writing, let projectID else { return }; uncertainProjects.remove(projectID); error = nil }
+
+    func loadGraph(_ client: any NativeSettingsQuerying) async {
+        guard presented, let projectID else { return }
+        let token = UUID(); graphGeneration = token; graph = .null; error = nil
+        do {
+            let result = try await client.invoke("native_research_journey_graph", args: [:], projectID: projectID)
+            guard presented, self.projectID == projectID, graphGeneration == token else { return }
+            guard case .array = result["nodes"], case .array = result["edges"] else { throw ProjectBrowserError.invalidResponse }
+            graph = result
+        } catch { if presented, self.projectID == projectID, graphGeneration == token { self.error = error.localizedDescription } }
+    }
+
+    @discardableResult func mutate(_ command: String, args: [String: SettingsValue], client: any NativeSettingsQuerying, savedDay: Int64? = nil, expectedProject: String? = nil) async -> Bool {
+        guard canWrite, let projectID, ["native_research_journey_add", "native_research_journey_recap"].contains(command) else { return false }
+        guard expectedProject == nil || expectedProject == projectID else { return false }
+        let token = generation
+        writing = true; uncertainProjects.insert(projectID); loaded = false; error = nil
+        if let savedDay { day = savedDay; clock = Date(timeIntervalSince1970: TimeInterval(savedDay)) }
+        do {
+            let value = try await client.invoke(command, args: args, projectID: projectID)
+            guard command == "native_research_journey_add" ? !value.string.isEmpty : value["id"] == args["edit"]?["id"] else { throw ProjectBrowserError.invalidResponse }
+            writing = false
+            guard presented, self.projectID == projectID, generation == token else { return false }
+            uncertainProjects.remove(projectID)
+            if let savedDay { day = savedDay; clock = Date(timeIntervalSince1970: TimeInterval(savedDay)) }
+            await reload(client)
+            return true
+        } catch {
+            writing = false
+            if presented, self.projectID == projectID, generation == token { self.error = localized("操作结果未确认。请刷新核对后继续，不会自动重试。") + "\n" + error.localizedDescription }
+            return false
         }
     }
 
@@ -183,12 +228,12 @@ final class NativeJourneyModel: ObservableObject {
     }
 
     func reload(_ client: any NativeSettingsQuerying) async {
-        guard presented, let projectID, !projectID.isEmpty else { return }
+        guard presented, let projectID, !projectID.isEmpty, !writing else { return }
         let requested = projectID
         let (from, until) = bounds()
         let current = UUID()
         generation = current
-        busy = true
+        busy = true; loaded = false; recaps = []
         error = nil
         defer { if generation == current { busy = false } }
         do {
@@ -198,7 +243,7 @@ final class NativeJourneyModel: ObservableObject {
                 projectID: requested)
             guard generation == current, presented, self.projectID == requested else { return }
             let page = try JSONDecoder().decode(JourneyPage.self, from: JSONEncoder().encode(value))
-            entries = page.entries
+            entries = page.entries; recaps = value["recaps"].array; loaded = true
             truncated = page.truncated
             error = nil
         } catch {
@@ -211,12 +256,16 @@ final class NativeJourneyModel: ObservableObject {
 struct NativeJourneyPage: View {
     @ObservedObject var model: ProjectBrowserModel
     @ObservedObject var journey: NativeJourneyModel
+    @State private var relationships = false
+    @State private var journalEditor = false
+    @State private var recapEditor: NativeRecapDraft?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text(localized("研究历程")).font(.title2.bold())
                 Spacer()
+                Button(localized("补充记录")) { journalEditor = true }.disabled(!journey.canWrite)
                 Button(localized("刷新")) { Task { await journey.reload(model.calendarClient()) } }.disabled(journey.busy)
                 Button(localized("返回对话")) { journey.dismiss(); model.journeyFocus = nil }
             }
@@ -227,12 +276,22 @@ struct NativeJourneyPage: View {
                 Spacer()
                 if journey.day != nil { Button(localized("整月")) { Task { await journey.showMonth(client: model.calendarClient()) } } }
             }.disabled(journey.busy)
+            Picker(localized("研究视图"), selection: $relationships) { Text(localized("研究记录")).tag(false); Text(localized("关系")).tag(true) }.pickerStyle(.segmented)
+            if journey.uncertain { Text(localized("操作结果未确认。请刷新核对后继续，不会自动重试。")); Button(localized("已核对结果，允许继续")) { journey.acknowledge() }.disabled(journey.busy || journey.writing) }
             TextField(localized("搜索研究记录"), text: $journey.query).textFieldStyle(.roundedBorder)
             if let error = journey.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             if journey.truncated { Text(localized("仅展示最近 2,000 条活动，请选择具体日期查看。")).font(.caption).foregroundStyle(.secondary) }
             if journey.busy { ProgressView(localized("正在读取研究历程…")) }
-            ScrollView {
+            if relationships { NativeJourneyGraph(journey: journey, client: model.calendarClient()) }
+            else { ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(Array(journey.recaps.enumerated()), id: \.offset) { _, recap in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(NativeCalendarClock.label(Date(timeIntervalSince1970: TimeInterval(recap["day_start"].integer)), format: "yyyy-MM-dd", calendar: journey.calendar) + " · " + localized("每日研究回顾")).font(.headline)
+                            Text(recap["headline"].string).textSelection(.enabled)
+                            HStack { Text(NativeJourneyPresentation.label(recap["status"].string)).foregroundStyle(.secondary); Spacer(); Button(localized("查看与编辑回顾")) { recapEditor = NativeRecapDraft(value: recap) } }
+                        }.padding(12).background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    }
                     ForEach(NativeJourneyDay.grouped(journey.visibleEntries(), calendar: journey.calendar)) { group in
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
@@ -252,15 +311,18 @@ struct NativeJourneyPage: View {
                         Text(journey.query.isEmpty ? "这段时间没有已记录的研究活动。" : "没有匹配的研究记录。").foregroundStyle(.secondary)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
-            }
+            } }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(NativeSettingsEscape { journey.dismiss(); model.journeyFocus = nil })
+        .background(NativeSettingsEscape(enabled: !journalEditor && recapEditor == nil && journey.selectedEntry == nil && !journey.writing) { journey.dismiss(); model.journeyFocus = nil })
+        .sheet(isPresented: $journalEditor) { NativeJournalEditor(journey: journey, client: model.calendarClient()) { journalEditor = false } }
+        .sheet(item: $recapEditor) { draft in NativeRecapEditor(journey: journey, draft: draft, client: model.calendarClient(), openSession: { id in Task { await model.openJourneySession(id, projectID: journey.projectID ?? "") } }) { recapEditor = nil } }
+        .onChange(of: relationships) { on in if on { Task { await journey.loadGraph(model.calendarClient()) } } }
         .sheet(isPresented: Binding(get: { journey.selectedEntry != nil }, set: { if !$0 { journey.closeDetail() } })) {
-            JourneyDetailView(journey: journey)
+            JourneyDetailView(journey: journey, client: model.calendarClient())
         }
-        .task(id: journey.projectID ?? "") { await journey.reload(model.calendarClient()) }
+        .task(id: journey.projectID ?? "") { await journey.reload(model.calendarClient()); if relationships { await journey.loadGraph(model.calendarClient()) } }
     }
 
     private func entryRow(_ entry: CalendarEntry, count: Int?) -> some View {
@@ -290,6 +352,8 @@ struct NativeJourneyPage: View {
 
 private struct JourneyDetailView: View {
     @ObservedObject var journey: NativeJourneyModel
+    let client: any NativeSettingsQuerying
+    @State private var run: NativeJourneyRunID?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Text(journey.selectedEntry?.title ?? "研究记录").font(.headline); Spacer(); Button(localized("关闭")) { journey.closeDetail() } }
@@ -298,6 +362,7 @@ private struct JourneyDetailView: View {
                     if let entry = journey.selectedEntry {
                         Text(entry.summary ?? "").textSelection(.enabled)
                         Text("来源 ID：\(entry.sourceID ?? entry.id)").font(.caption)
+                        if entry.kind == "run", let id = entry.sourceID { Button(localized("运行记录")) { run = NativeJourneyRunID(id: id) } }
                         if let frame = entry.frameID { Text("会话 ID：\(frame)").font(.caption) }
                     }
                     if journey.detailBusy { ProgressView(localized("正在读取产物…")) }
@@ -307,6 +372,7 @@ private struct JourneyDetailView: View {
                         if let error = artifact.contentError { Text(error).foregroundStyle(.red) }
                         if let run = artifact.source.runID {
                             Text("生成运行：\(artifact.source.runTitle)")
+                            Button(localized("运行记录")) { self.run = NativeJourneyRunID(id: run) }
                             Text("运行 ID：\(run)").font(.caption)
                             Text("执行环境：\(artifact.source.contextID)").font(.caption)
                         } else { Text(localized("未记录生成运行。")).foregroundStyle(.secondary) }
@@ -324,6 +390,7 @@ private struct JourneyDetailView: View {
                 }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
         }.padding(20).frame(minWidth: 420, idealWidth: 640, minHeight: 360, idealHeight: 560)
-            .background(NativeSettingsEscape { journey.closeDetail() })
+            .background(NativeSettingsEscape(enabled: run == nil) { journey.closeDetail() })
+            .sheet(item: $run) { item in NativeJourneyRunView(id: item.id, projectID: journey.projectID ?? "", client: client) { run = nil } }
     }
 }

@@ -58,6 +58,8 @@ struct NativeWorkflowLayout {
 final class NativeWorkflowDraft: ObservableObject, Identifiable {
     let id = UUID()
     @Published var template: SettingsValue
+    @Published var connectionSource: Int?
+    @Published var connectionPointer: CGPoint?
     @Published var selectedNode: Int?
     @Published var selectedEdge: NativeWorkflowLayout.Edge?
     @Published var positions: [Int: CGPoint] = [:]
@@ -74,17 +76,42 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
     let sourceHash: SettingsValue
     let client: any NativeSettingsQuerying
     let projectID: String?
+    let layoutStore: NativeWorkflowLayoutStore?
+    private var removed = false
     private(set) var removable: Bool
-    init(template: SettingsValue, sourceHash: SettingsValue = .null, client: any NativeSettingsQuerying, projectID: String?, removable: Bool = false) {
+    init(template: SettingsValue, sourceHash: SettingsValue = .null, client: any NativeSettingsQuerying, projectID: String?, removable: Bool = false, layoutStore: NativeWorkflowLayoutStore? = nil) {
         self.template = template; baseline = template; self.sourceHash = sourceHash; self.client = client; self.projectID = projectID
-        self.removable = removable
+        self.removable = removable; self.layoutStore = layoutStore
+        if let saved = layoutStore?.read(project: projectID, template: template["id"].string) {
+            zoom = saved.zoom; camera = saved.camera
+            for (index, task) in template["proposal"]["tasks"].array.enumerated() { positions[index] = saved.positions[task["id"].string] }
+        }
     }
     var tasks: [SettingsValue] { template["proposal"]["tasks"].array }
     var layout: NativeWorkflowLayout { NativeWorkflowLayout(tasks: tasks) }
     var readOnly: Bool { template["builtin"].bool }
     var dirty: Bool { template != baseline }
     var canWrite: Bool { !readOnly && !busy && !uncertain }
-    func close() { generation = UUID() }
+    func close() { persistLayout(); generation = UUID(); cancelConnection() }
+    func persistLayout() {
+        guard !removed else { return }
+        let points = layout.nodes.reduce(into: [String: CGPoint]()) { result, node in result[tasks[node.id]["id"].string] = point(node) }
+        layoutStore?.save(.init(positions: points, zoom: zoom, camera: camera), project: projectID, template: template["id"].string)
+    }
+    func cancelConnection() { connectionSource = nil; connectionPointer = nil }
+    func beginConnection(_ source: Int) { guard canWrite, tasks.indices.contains(source) else { return }; connectionSource = source; selectedNode = source; selectedEdge = nil }
+    func finishConnection(_ target: Int) { guard let source = connectionSource else { return }; dependency(source: source, target: target, enabled: true); cancelConnection() }
+    func finishConnection(at screen: CGPoint) {
+        let position = NativeWorkflowLayout.point(screen, camera: camera, zoom: zoom)
+        let candidate = layout.nodes.first { node in let p = point(node); return hypot(position.x - p.x, position.y - p.y - 70) * zoom <= 24 }
+        if let candidate { finishConnection(candidate.id) } else { cancelConnection() }
+    }
+    func addNode(at screen: CGPoint) {
+        let count = tasks.count; addNode()
+        guard tasks.count > count else { return }
+        let p = NativeWorkflowLayout.point(screen, camera: camera, zoom: zoom)
+        positions[count] = CGPoint(x: p.x - 120, y: p.y - 70)
+    }
     func point(_ node: NativeWorkflowLayout.Node) -> CGPoint { positions[node.id] ?? node.point }
     func moveNode(_ index: Int, origin: CGPoint, viewportTranslation: CGSize) {
         guard tasks.indices.contains(index) else { return }
@@ -92,7 +119,14 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
         let delta = NativeWorkflowLayout.point(CGPoint(x: viewportTranslation.width, y: viewportTranslation.height), camera: .zero, zoom: zoom)
         positions[index] = CGPoint(x: origin.x + delta.x, y: origin.y + delta.y)
     }
-    func fit(_ viewport: CGSize) { zoom = NativeWorkflowLayout.fit(size: layout.size, viewport: viewport); camera = CGPoint(x: 20, y: 20); positions = [:] }
+    func fit(_ viewport: CGSize) {
+        let bounds = layout.nodes.map { CGRect(origin: point($0), size: CGSize(width: 240, height: 140)) }.reduce(CGRect.null) { $0.union($1) }
+        guard !bounds.isNull else { zoom = 1; camera = CGPoint(x: 20, y: 20); return }
+        zoom = NativeWorkflowLayout.fit(size: bounds.size, viewport: viewport)
+        camera = CGPoint(x: (viewport.width - bounds.width * zoom) / 2 - bounds.minX * zoom, y: (viewport.height - bounds.height * zoom) / 2 - bounds.minY * zoom)
+        persistLayout()
+    }
+    func resetLayout() { positions = [:]; zoom = 1; camera = CGPoint(x: 20, y: 20); persistLayout() }
     func binding(_ key: String, proposal: Bool = false) -> Binding<SettingsValue> {
         Binding(get: { proposal ? self.template["proposal"][key] : self.template[key] }, set: { value in
             guard self.canWrite else { return }
@@ -127,7 +161,8 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
         let id = tasks[index]["id"].string
         var updated = tasks; updated.remove(at: index)
         updated = updated.map { task in var task = task; task["depends_on"] = .array(task["depends_on"].array.filter { $0.string != id }); return task }
-        template["proposal"]["tasks"] = .array(updated); selectedNode = nil; selectedEdge = nil; positions = [:]
+        template["proposal"]["tasks"] = .array(updated); selectedNode = nil; selectedEdge = nil
+        positions = Dictionary(uniqueKeysWithValues: positions.filter { $0.key != index }.map { ($0.key > index ? $0.key - 1 : $0.key, $0.value) }); cancelConnection()
     }
     func dependency(source: Int, target: Int, enabled: Bool) {
         guard canWrite, source != target, tasks.indices.contains(source), tasks.indices.contains(target) else { return }
@@ -198,7 +233,7 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
             let saved = try await client.invoke("save_workflow_template", args: args, projectID: projectID)
             guard current == generation else { return false }
             guard saved["id"] == prepared["id"], saved["proposal"]["tasks"].array.count == prepared["proposal"]["tasks"].array.count else { throw ProjectBrowserError.invalidResponse }
-            template = saved; baseline = saved; busy = false; message = localized("已保存"); return true
+            template = saved; baseline = saved; persistLayout(); busy = false; message = localized("已保存"); return true
         } catch {
             guard current == generation else { return false }
             busy = false; uncertain = true; reconciled = false; self.error = localized("保存结果未确认。请重新读取模板并核对，再决定是否继续编辑。") + "\n" + error.localizedDescription
@@ -221,6 +256,7 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
             let rows = try await client.invoke("remove_workflow_template", args: ["templateId": template["id"]], projectID: projectID)
             guard current == generation else { return false }
             guard case .array = rows, !rows.array.contains(where: { $0["id"] == template["id"] }) else { throw ProjectBrowserError.invalidResponse }
+            removed = true; layoutStore?.remove(project: projectID, template: template["id"].string)
             busy = false; return true
         } catch {
             guard current == generation else { return false }

@@ -9,7 +9,9 @@ remaining workbench groups on 2026-10-08. Those groups are now implemented and
 accepted on `codex/macos-workbench-completion` and submitted in
 [PR #1480](https://github.com/xuzhougeng/wisp-science/pull/1480); see the
 [completion record](2026-10-08-macos-workbench-completion.md). This does not mark
-the broader parity roadmap complete.
+the broader parity roadmap complete. PR #1480 has since merged; the follow-up
+[parity polish record](2026-10-08-macos-parity-polish.md) covers Hooks, journey
+editing, assistant presets and canvas interaction details.
 Existing Rust commands and `wisp-dto` contracts are the behavior
 source; SwiftUI must preserve project/session ownership, unknown-result handling,
 drafts, privacy filtering and the window Escape stack.
@@ -32,7 +34,7 @@ drafts, privacy filtering and the window Escape stack.
   automation management and session timers with persisted state and live status.
 - [x] Publication: create/edit publications and revisions, structure/evidence
   editing, source inspection, checks, reproduction and freezing.
-- [ ] Research journey: relationships, manual records, recap editing and run
+- [x] Research journey: relationships, manual records, recap editing and run
   navigation in addition to the existing daily view.
 - [x] Workflow: readable stages/dependencies and visual node/edge editing,
   validation, save/copy, conversion and existing execution/approval controls.

@@ -136,16 +136,18 @@ struct NativeWorkflowGraph: View {
                     WispDesign.color("bg-sunken", scheme).contentShape(Rectangle()).gesture(DragGesture().onChanged { value in
                         if panOrigin == nil { panOrigin = draft.camera }
                         draft.camera = CGPoint(x: panOrigin!.x + value.translation.width, y: panOrigin!.y + value.translation.height)
-                    }.onEnded { _ in panOrigin = nil })
+                    }.onEnded { _ in panOrigin = nil; draft.persistLayout() })
+                        .simultaneousGesture(SpatialTapGesture(count: 2, coordinateSpace: .named("workflowCanvasViewport")).onEnded { value in draft.addNode(at: value.location) })
                     graph.scaleEffect(draft.zoom, anchor: .topLeading).offset(x: draft.camera.x, y: draft.camera.y)
                     toolbar(viewport.size).padding(10).frame(width: viewport.size.width, height: viewport.size.height, alignment: .bottomTrailing)
                 }.frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading).coordinateSpace(name: "workflowCanvasViewport").clipped().overlay(RoundedRectangle(cornerRadius: 10).stroke(WispDesign.color("border", scheme)))
                     .simultaneousGesture(MagnificationGesture().onChanged { value in
                         if zoomOrigin == nil { zoomOrigin = draft.zoom }; draft.zoom = max(0.25, min(2, zoomOrigin! * value))
-                    }.onEnded { _ in zoomOrigin = nil })
+                    }.onEnded { _ in zoomOrigin = nil; draft.persistLayout() })
             }
+            if draft.connectionSource != nil { Text(localized("选择目标输入端口，或按 Escape 取消连线。")).font(.caption).foregroundStyle(.secondary) }
             Text("\(draft.tasks.count) " + localized("节点") + " · \(draft.layout.stageCount) " + localized("阶段") + " · \(Int(draft.zoom * 100))%").font(.caption).foregroundStyle(.secondary)
-        }
+        }.background { if draft.connectionSource != nil { NativeSettingsEscape { draft.cancelConnection() } } }
     }
     private var graph: some View {
         let layout = draft.layout
@@ -154,19 +156,24 @@ struct NativeWorkflowGraph: View {
                 Text(localized("阶段") + " \(stage + 1)").font(.caption.weight(.semibold)).foregroundStyle(.secondary).position(x: CGFloat(148 + stage * 320), y: 28)
             }
             ForEach(layout.edges) { edge in edgeView(edge, layout: layout) }
+            if let index = draft.connectionSource, layout.nodes.indices.contains(index), let pointer = draft.connectionPointer {
+                let start = draft.point(layout.nodes[index])
+                Path { path in path.move(to: CGPoint(x: start.x + 240, y: start.y + 70)); path.addLine(to: NativeWorkflowLayout.point(pointer, camera: draft.camera, zoom: draft.zoom)) }.stroke(WispDesign.color("clay", scheme), style: StrokeStyle(lineWidth: 2, dash: [6, 4])).allowsHitTesting(false)
+            }
             ForEach(layout.nodes) { node in nodeView(node) }
             if draft.tasks.isEmpty { Text(localized("添加第一个节点以建立工作流。")).foregroundStyle(.secondary).position(x: 230, y: 150) }
         }.frame(width: layout.size.width, height: layout.size.height)
     }
     private func toolbar(_ size: CGSize) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { add; zoomOut; zoomIn; fit(size) }
-            VStack(alignment: .trailing, spacing: 8) { HStack { add; fit(size) }; HStack { zoomOut; zoomIn } }
+            HStack(spacing: 8) { add; zoomOut; zoomIn; fit(size); reset }
+            VStack(alignment: .trailing, spacing: 8) { HStack { add; fit(size) }; HStack { zoomOut; zoomIn; reset } }
         }.fixedSize(horizontal: false, vertical: true).padding(8).background(WispDesign.color("bg-elev", scheme), in: RoundedRectangle(cornerRadius: 8)).buttonStyle(WispButtonStyle())
     }
     private var add: some View { Button { draft.addNode() } label: { WispIcon(name: "plus") }.help(localized("添加节点")).accessibilityLabel(localized("添加节点")).disabled(!draft.canWrite || draft.tasks.count >= 8) }
-    private var zoomOut: some View { Button(localized("缩小")) { draft.zoom = max(0.25, draft.zoom / 1.2) } }
-    private var zoomIn: some View { Button(localized("放大")) { draft.zoom = min(2, draft.zoom * 1.2) } }
+    private var reset: some View { Button(localized("重新排列")) { draft.resetLayout() } }
+    private var zoomOut: some View { Button(localized("缩小")) { draft.zoom = max(0.25, draft.zoom / 1.2); draft.persistLayout() } }
+    private var zoomIn: some View { Button(localized("放大")) { draft.zoom = min(2, draft.zoom * 1.2); draft.persistLayout() } }
     private func fit(_ size: CGSize) -> some View { Button(localized("适应画布")) { draft.fit(size) } }
     private func nodeView(_ node: NativeWorkflowLayout.Node) -> some View {
         let task = draft.tasks[node.id], point = draft.point(node)
@@ -183,10 +190,23 @@ struct NativeWorkflowGraph: View {
             .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("workflowCanvasViewport")).onChanged { value in
                 if dragOrigins[node.id] == nil { dragOrigins[node.id] = point }
                 draft.moveNode(node.id, origin: dragOrigins[node.id]!, viewportTranslation: value.translation)
-            }.onEnded { _ in dragOrigins[node.id] = nil })
+            }.onEnded { _ in dragOrigins[node.id] = nil; draft.persistLayout() })
+            .overlay(alignment: .leading) { port(node.id, output: false).offset(x: -10) }
+            .overlay(alignment: .trailing) { port(node.id, output: true).offset(x: 10) }
             .position(x: point.x + 120, y: point.y + 70)
             .accessibilityElement(children: .combine).accessibilityLabel(task["id"].string + ", " + task["instruction"].string)
             .accessibilityAddTraits(.isButton).accessibilityAction { draft.selectedNode = node.id; edit(node.id) }
+    }
+    private func port(_ index: Int, output: Bool) -> some View {
+        Circle().fill(draft.connectionSource == index && output ? WispDesign.color("clay", scheme) : WispDesign.color("bg-elev", scheme))
+            .overlay(Circle().stroke(WispDesign.color("clay", scheme), lineWidth: 2)).frame(width: 20, height: 20)
+            .contentShape(Circle()).onTapGesture { if output { draft.beginConnection(index) } else { draft.finishConnection(index) } }
+            .highPriorityGesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("workflowCanvasViewport")).onChanged { value in
+                guard output else { return }; if draft.connectionSource == nil { draft.beginConnection(index) }; draft.connectionPointer = value.location
+            }.onEnded { value in if output { draft.finishConnection(at: value.location) } })
+            .allowsHitTesting(draft.canWrite)
+            .accessibilityLabel(draft.tasks[index]["id"].string + " " + localized(output ? "输出端口" : "输入端口"))
+            .accessibilityAddTraits(.isButton).accessibilityAction { if output { draft.beginConnection(index) } else { draft.finishConnection(index) } }
     }
     private func edgeView(_ edge: NativeWorkflowLayout.Edge, layout: NativeWorkflowLayout) -> some View {
         let start = draft.point(layout.nodes[edge.source]), end = draft.point(layout.nodes[edge.target])

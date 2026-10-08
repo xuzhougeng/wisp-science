@@ -8,6 +8,9 @@ pub const COMMANDS: &[&str] = &[
     "native_research_journey",
     "native_research_journey_artifact",
     "native_research_journey_run",
+    "native_research_journey_graph",
+    "native_research_journey_add",
+    "native_research_journey_recap",
 ];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -65,4 +68,16 @@ mod tests {
         extra["active_window"] = serde_json::json!("main");
         assert!(serde_json::from_value::<JourneyRequest>(extra).is_err());
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddEntryRequest {
+    pub input: crate::ResearchJournalInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditRecapRequest {
+    pub edit: crate::ResearchRecapEdit,
 }

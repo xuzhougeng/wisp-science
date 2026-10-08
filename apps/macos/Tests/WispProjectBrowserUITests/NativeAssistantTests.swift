@@ -32,6 +32,8 @@ private actor AssistantHost: NativeSettingsQuerying {
             value["project_id"] = .string(NativeAssistantModel.project); value["session_id"] = .string(NativeAssistantModel.session)
             value["composer_references"] = .bool(true); value["running"] = .bool(false); value["stopping"] = .bool(false); value["approvals"] = .array([]); return value
         case "native_conversation_send": writes.append(args); return .null
+        case "get_privacy_mode": return .object(["active": .bool(false), "project_ids": .array([])])
+        case "native_research_calendar": return .array([])
         case "list_models", "list_acp_agents": return .array([])
         default: return .null
         }
@@ -53,11 +55,11 @@ final class NativeAssistantTests: XCTestCase {
         defer { if let previous { UserDefaults.standard.set(previous, forKey: "nativeSettings.locale") } else { UserDefaults.standard.removeObject(forKey: "nativeSettings.locale") } }
         let client = try AssistantHost(); let model = NativeAssistantModel(client: client)
         await model.open(); defer { model.close() }
-        let browser = ProjectBrowserModel()
+        let browser = ProjectBrowserModel(client: AssistantProjectList(), databaseURL: URL(fileURLWithPath: "/unused/assistant-render.sqlite"), projectTransport: client)
         for locale in ["zh", "en"] {
             UserDefaults.standard.set(locale, forKey: "nativeSettings.locale")
             for scheme in [ColorScheme.light, .dark] {
-                for width: CGFloat in [432, 1060] {
+                for width: CGFloat in [432, 1060, 1440] {
                     let suffix = "\(locale)-\(scheme == .dark ? "dark" : "light")-\(Int(width))"
                     try await render(NativeAssistantPage(browser: browser, model: model), width: width, scheme: scheme, name: "assistant-\(suffix)", directory: directory)
                     try await render(NativeAutomationsSheet(model: model) {}, width: width, scheme: scheme, name: "automations-\(suffix)", directory: directory)
@@ -144,4 +146,10 @@ final class NativeAssistantTests: XCTestCase {
         XCTAssertTrue(closed); XCTAssertTrue(model.active)
         window.contentView = nil
     }
+}
+
+private actor AssistantProjectList: ProjectBrowserQuerying {
+    func listProjects(databaseURL: URL) async throws -> ProjectListSnapshot { ProjectListSnapshot(projects: [], activitySource: "persisted_only") }
+    func listSessions(databaseURL: URL, projectID: String?) async throws -> [BrowserSession] { [] }
+    func transcript(databaseURL: URL, projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> TranscriptPage { TranscriptPage(messages: [], nextBeforeSeq: nil) }
 }

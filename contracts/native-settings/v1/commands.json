@@ -346,6 +346,12 @@
       "source": "src-tauri/src/browser_url_filters.rs"
     },
     {
+      "command": "get_command_hooks",
+      "arguments": [],
+      "result": "Result<Vec<CommandHook>, String>",
+      "source": "src-tauri/src/command_hooks.rs"
+    },
+    {
       "command": "get_context_storage_prefs",
       "arguments": [
         {
@@ -398,6 +404,12 @@
       "arguments": [],
       "result": "Result<PetRuntimeStatus, String>",
       "source": "src-tauri/src/pet_commands.rs"
+    },
+    {
+      "command": "get_project_hooks",
+      "arguments": [],
+      "result": "Result<Option<ProjectHooks>, String>",
+      "source": "src-tauri/src/command_hooks.rs"
     },
     {
       "command": "get_project_run_retention",
@@ -1291,6 +1303,18 @@
       "source": "src-tauri/src/browser_url_filters.rs"
     },
     {
+      "command": "set_command_hooks",
+      "arguments": [
+        {
+          "name": "hooks",
+          "rust_type": "Vec<CommandHook>",
+          "optional": false
+        }
+      ],
+      "result": "Result<Vec<CommandHook>, String>",
+      "source": "src-tauri/src/command_hooks.rs"
+    },
+    {
       "command": "set_connector_enabled",
       "arguments": [
         {
@@ -1513,6 +1537,18 @@
       ],
       "result": "Result<(), String>",
       "source": "src-tauri/src/plugins.rs"
+    },
+    {
+      "command": "set_project_hooks_trust",
+      "arguments": [
+        {
+          "name": "sha256",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<Option<ProjectHooks>, String>",
+      "source": "src-tauri/src/command_hooks.rs"
     },
     {
       "command": "set_project_run_retention",

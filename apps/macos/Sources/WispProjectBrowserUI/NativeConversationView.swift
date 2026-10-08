@@ -319,7 +319,7 @@ struct NativeConversationView: View {
                             .accessibilityIdentifier("composer-queue")
                         Button(conversation.snapshot?.stopping == true ? "正在停止…" : "停止") { Task { await conversation.stop() } }.buttonStyle(WispButtonStyle(height: 32)).disabled(conversation.busy)
                     } else {
-                        Button("发送", action: submitComposer).buttonStyle(WispButtonStyle(primary: true, height: 32)).disabled(!conversation.canSend)
+                        Button(localized("发送"), action: submitComposer).buttonStyle(WispButtonStyle(primary: true, height: 32)).disabled(!conversation.canSend)
                     }
                 }
             }.padding(12).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 16))
@@ -332,7 +332,7 @@ struct NativeConversationView: View {
                         .buttonStyle(.plain).disabled(!conversation.canReadContext).help(localized("模型上下文"))
                         .accessibilityLabel(localized("模型上下文"))
                 }
-                Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
+                Toggle(localized("跟随最新回复"), isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
         }.frame(maxWidth: 850).padding(.horizontal, 16).padding(.bottom, 12)
     }

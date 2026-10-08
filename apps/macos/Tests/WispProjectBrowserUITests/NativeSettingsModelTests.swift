@@ -162,9 +162,9 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.modelCategory, "subscriptions")
     }
 
-    func testTwentySectionsMatchSharedNavigation() {
-        XCTAssertEqual(NativeSettingsSection.allCases.count, 20)
-        XCTAssertEqual(NativeSettingsSection.allCases.map(\.rawValue), ["general", "network", "session", "appearance", "pet", "models", "quick-actions", "workflows", "specialists", "memory", "skills", "plugins", "browser", "connections", "channels", "credentials", "permissions", "environments", "storage", "usage"])
+    func testSettingsSectionsMatchSharedNavigation() {
+        XCTAssertEqual(NativeSettingsSection.allCases.count, 21)
+        XCTAssertEqual(NativeSettingsSection.allCases.map(\.rawValue), ["general", "network", "session", "appearance", "pet", "models", "quick-actions", "hooks", "workflows", "specialists", "memory", "skills", "plugins", "browser", "connections", "channels", "credentials", "permissions", "environments", "storage", "usage"])
         XCTAssertEqual(NativeSettingsSection.general.reads, ["get_settings", "get_appearance_prefs", "get_bootstrap_status", "get_update_check_enabled"])
         XCTAssertEqual(NativeSettingsSection.network.reads, ["get_network_settings"])
     }

@@ -23,10 +23,25 @@ Escape immediately; only that editor closes. Dirty editors ask before discarding
 
 The accepted scope is the complete settings surface rendered in SwiftUI, with
 existing desktop command behavior, and an equivalent transport seam for WinUI3.
-The existing WebView client remains supported. Settings include the 20 top-level
-sections from `SETTINGS_NAV_GROUPS`, their editors, and their real actions.
-Hooks (`docs/hooks.md`) is WebView-only for now; `scripts/sync_native_design.py`
-leaves it out of the native navigation export.
+The existing WebView client remains supported. macOS settings include all 21
+top-level sections from `SETTINGS_NAV_GROUPS`, including Hooks. The shared
+navigation export now includes Hooks; WinUI's page implementation remains separate.
+
+The macOS Hooks page edits the existing built-in defaults and command hook list,
+and links to reviewer/specialist settings. Project hooks display the file path,
+events, matchers, commands and timeouts before explicit trust. Trust sends the
+exact reviewed SHA-256 to the existing host validator; changed files require a
+new review. Saving does not execute commands. Unknown writes require a fresh
+read and acknowledgement; a changed hook row cannot be overwritten from an old
+editor. Immediate Escape closes the hook editor before settings.
+
+Workflow output/input ports support both dragging and sequential selection.
+Double-click blank space to add a node at that canvas coordinate. Escape cancels
+a pending connection before closing the canvas. Fit preserves manually positioned
+nodes; Reset layout restores automatic stages. Positions, zoom and pan survive
+reopening on this device, keyed by database, project and template, with node IDs
+preserving positions across reordering. These local display preferences are not
+part of executable templates and are not synchronized to WebView or other devices.
 
 ## Architecture
 
@@ -157,7 +172,7 @@ without WinUI or a real backend process.
 ## Manual smoke procedure
 
 1. Build with `bash scripts/build_native_macos.sh`; open the resulting preview.
-2. Open Settings / Cmd+, and visit all 20 sections. Check backend errors, project
+2. Open Settings / Cmd+, and visit all 21 macOS sections. Check backend errors, project
    selection and consistency with the existing WebView values.
 3. In Models, open Add API access, press Escape immediately, and confirm only
    the editor closes. Open an editor's protocol menu; Escape closes the menu,

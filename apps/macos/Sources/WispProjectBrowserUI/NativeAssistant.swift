@@ -120,9 +120,34 @@ struct NativeAutomationDraft: Equatable {
     }
 }
 
+struct NativeAutomationTemplate: Decodable, Identifiable {
+    let icon: String
+    let en: String
+    let zh: String
+    let prompt_en: String
+    let prompt_zh: String
+    let cadence: String
+    let time: String
+    let weekday: Int
+    var id: String { en }
+    static let all: [Self] = {
+        guard let url = WispDesign.resources.url(forResource: "automation-templates", withExtension: "json"), let data = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([Self].self, from: data)) ?? []
+    }()
+    func draft(project: String, locale: String, now: Date = Date(), calendar: Calendar = .current) -> NativeAutomationDraft {
+        var draft = NativeAutomationDraft()
+        draft.project = project; draft.name = locale == "en" ? en : zh; draft.prompt = locale == "en" ? prompt_en : prompt_zh; draft.cadence = cadence
+        draft.weekday = weekday + 1
+        let parts = time.split(separator: ":").compactMap { Int($0) }
+        if parts.count == 2 { draft.time = calendar.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: now) ?? now }
+        return draft
+    }
+}
+
 struct NativeAssistantPage: View {
     @ObservedObject var browser: ProjectBrowserModel
     @ObservedObject var model: NativeAssistantModel
+    @StateObject private var inlineCalendar = NativeCalendarModel()
     @State private var details = false
     @State private var automations = false
     var body: some View {
@@ -134,8 +159,10 @@ struct NativeAssistantPage: View {
                 }.padding(16)
                 Divider()
                 HStack(spacing: 0) {
+                    if geometry.size.width >= 1200 { sidebar.frame(width: 260); Divider() }
                     NativeConversationView(conversation: model.conversation, projectID: NativeAssistantModel.project, sessionID: NativeAssistantModel.session)
-                    if geometry.size.width >= 1000 { Divider(); sidebar.frame(width: 300) }
+                    if geometry.size.width >= 1200 { Divider(); NativeCalendarPage(model: browser, calendar: inlineCalendar, embedded: true).frame(width: 340) }
+                    else if geometry.size.width >= 1000 { Divider(); sidebar.frame(width: 300) }
                 }
             }
         }
@@ -206,6 +233,16 @@ struct NativeAutomationsSheet: View {
                         HStack { TextField(localized("时间（HH:MM）"), text: $recapTime); Button(localized("保存")) { Task { await model.mutate(["action": .string("set_daily_recap"), "enabled": model.workspace["daily_recap"]["enabled"], "time": .string(recapTime)]) } }.disabled(!model.canWrite) }
                         Button(localized("立即运行")) { Task { await model.mutate(["action": .string("run_daily_recap")]) } }.disabled(!model.canWrite || model.workspace["daily_recap"]["running"].bool)
                         if !model.workspace["daily_recap"]["error"].string.isEmpty { Text(model.workspace["daily_recap"]["error"].string).foregroundStyle(.orange) }
+                    }
+                    NativeSettingsGroup(title: "定时任务模板") {
+                        ForEach(NativeAutomationTemplate.all) { template in
+                            Button {
+                                draft = template.draft(project: model.selectedProject, locale: UserDefaults.standard.string(forKey: "nativeSettings.locale") ?? "zh")
+                                editor = true
+                            } label: {
+                                HStack(alignment: .top) { WispIcon(name: template.icon); VStack(alignment: .leading, spacing: 6) { Text(UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? template.en : template.zh).fontWeight(.semibold); Text(UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? template.prompt_en : template.prompt_zh).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading) } }.frame(maxWidth: .infinity, alignment: .leading)
+                            }.buttonStyle(.plain).disabled(!model.canWrite)
+                        }
                     }
                     Button(localized("添加自动化")) { draft = NativeAutomationDraft(); draft.project = model.selectedProject; editor = true }.disabled(!model.canWrite)
                     Text(localized("应用运行时按间隔触发；每日和每周从所选本地时间开始，之后按固定间隔运行。")).font(.caption).foregroundStyle(.secondary)
