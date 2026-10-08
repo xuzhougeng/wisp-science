@@ -9,10 +9,13 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use url::Url;
 
 pub const MAX_RELAY_BODY_BYTES: usize = 256 * 1024 * 1024;
+/// Control-plane JSON (head / revision / commit) is small; blobs use the full limit.
+const MAX_RELAY_JSON_BYTES: usize = 4 * 1024 * 1024;
+const MAX_RELAY_ERROR_BYTES: usize = 4 * 1024;
 
 #[derive(Clone)]
 pub struct RelayHttpState {
@@ -212,8 +215,35 @@ impl HttpRelay {
         Ok(Self {
             base_url,
             bearer_token: bearer_token.into(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .read_timeout(Duration::from_secs(60))
+                .build()
+                .context("failed to build relay HTTP client")?,
         })
+    }
+
+    /// Buffer at most `cap` bytes. Checked per chunk, so a chunked or lying
+    /// `Content-Length` response from a hostile relay cannot exhaust memory.
+    async fn bounded_body(mut response: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
+        if response.content_length().is_some_and(|n| n > cap as u64) {
+            anyhow::bail!("relay response exceeds the client size limit");
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() + chunk.len() > cap {
+                anyhow::bail!("relay response exceeds the client size limit");
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    }
+
+    async fn bounded_json<T: serde::de::DeserializeOwned>(
+        response: reqwest::Response,
+    ) -> Result<T> {
+        let body = Self::bounded_body(response, MAX_RELAY_JSON_BYTES).await?;
+        serde_json::from_slice(&body).context("relay returned malformed JSON")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -252,7 +282,10 @@ impl HttpRelay {
 
     async fn response_error(response: reqwest::Response) -> anyhow::Error {
         let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
+        let detail = Self::bounded_body(response, MAX_RELAY_ERROR_BYTES)
+            .await
+            .map(|body| String::from_utf8_lossy(&body).into_owned())
+            .unwrap_or_default();
         anyhow::anyhow!("relay request failed ({status}): {}", detail.trim())
     }
 }
@@ -274,7 +307,7 @@ impl SyncTransport for HttpRelay {
         if !response.status().is_success() {
             return Err(Self::response_error(response).await);
         }
-        Ok(Some(response.json().await?))
+        Ok(Some(Self::bounded_json(response).await?))
     }
 
     async fn revision(&self, project_id: &str, revision_id: &str) -> Result<SyncRevision> {
@@ -290,7 +323,7 @@ impl SyncTransport for HttpRelay {
         if !response.status().is_success() {
             return Err(Self::response_error(response).await);
         }
-        Ok(response.json().await?)
+        Self::bounded_json(response).await
     }
 
     async fn blob_exists(&self, blob_id: &str) -> Result<bool> {
@@ -315,17 +348,7 @@ impl SyncTransport for HttpRelay {
         if !response.status().is_success() {
             return Err(Self::response_error(response).await);
         }
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RELAY_BODY_BYTES as u64)
-        {
-            anyhow::bail!("relay blob exceeds the client size limit");
-        }
-        let bytes = response.bytes().await?;
-        if bytes.len() > MAX_RELAY_BODY_BYTES {
-            anyhow::bail!("relay blob exceeds the client size limit");
-        }
-        Ok(bytes.to_vec())
+        Self::bounded_body(response, MAX_RELAY_BODY_BYTES).await
     }
 
     async fn put_blob(&self, blob_id: &str, bytes: Vec<u8>) -> Result<()> {
@@ -355,12 +378,14 @@ impl SyncTransport for HttpRelay {
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::CONFLICT {
-            return Ok(CommitOutcome::Conflict(response.json().await?));
+            return Ok(CommitOutcome::Conflict(Self::bounded_json(response).await?));
         }
         if !response.status().is_success() {
             return Err(Self::response_error(response).await);
         }
-        Ok(CommitOutcome::Committed(response.json().await?))
+        Ok(CommitOutcome::Committed(
+            Self::bounded_json(response).await?,
+        ))
     }
 }
 

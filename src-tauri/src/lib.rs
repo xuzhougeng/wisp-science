@@ -651,8 +651,14 @@ fn parse_confirm_payload(message: &str) -> (String, String) {
             return (tool.to_string(), String::new());
         }
     }
-    if message.starts_with("Dangerous command detected") {
-        if let Some((_, cmd)) = message.rsplit_once(": ") {
+    if let Some(rest) = message.strip_prefix("Dangerous command detected") {
+        // The command itself may contain ": ", so split only after our own
+        // "(label)" prefix (or the bare ": " of the label-less form).
+        let cmd = rest
+            .split_once("): ")
+            .map(|(_, cmd)| cmd)
+            .or_else(|| rest.strip_prefix(": "));
+        if let Some(cmd) = cmd {
             return ("shell".into(), cmd.to_string());
         }
     }
@@ -6413,7 +6419,10 @@ async fn review_session(
 fn parse_follow_up_questions(raw: &str) -> Result<Vec<String>, String> {
     let start = raw.find('[').ok_or("Model did not return a JSON array.")?;
     let end = raw.rfind(']').ok_or("Model did not return a JSON array.")?;
-    let values: Vec<String> = serde_json::from_str(&raw[start..=end])
+    let body = raw
+        .get(start..=end)
+        .ok_or("Model did not return a JSON array.")?;
+    let values: Vec<String> = serde_json::from_str(body)
         .map_err(|error| format!("Invalid follow-up question response: {error}"))?;
     let mut questions = Vec::with_capacity(3);
     for value in values {

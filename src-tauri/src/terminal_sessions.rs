@@ -468,6 +468,9 @@ impl TerminalManager {
             .collect::<Vec<_>>();
         for session in sessions {
             let _ = session.terminate();
+            // tao exits via process::exit right after this, so Drop may never
+            // run; remove the plaintext askpass files now (idempotent).
+            crate::ssh_hosts::cleanup_password_auth_env(&session.auth_cleanup_envs);
         }
     }
 

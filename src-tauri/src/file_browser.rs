@@ -147,23 +147,31 @@ fn is_ooxml_path(path: &Path) -> bool {
 }
 
 fn validate_external_relationships(xml: &str, part_name: &str) -> Result<(), String> {
-    let relationship = regex::Regex::new(r"(?is)<Relationship\b[^>]*>")
-        .map_err(|error| format!("could not compile relationship validator: {error}"))?;
-    let external = regex::Regex::new(r#"(?i)\bTargetMode\s*=\s*["']External["']"#)
-        .map_err(|error| format!("could not compile relationship validator: {error}"))?;
-    let relationship_type = regex::Regex::new(r#"(?i)\bType\s*=\s*["']([^"']+)["']"#)
-        .map_err(|error| format!("could not compile relationship validator: {error}"))?;
-    let target = regex::Regex::new(r#"(?i)\bTarget\s*=\s*["']([^"']+)["']"#)
-        .map_err(|error| format!("could not compile relationship validator: {error}"))?;
+    // A real parser, not a regex: `>` inside an attribute value must not end
+    // the element early and hide `TargetMode="External"`. Parse errors fail
+    // closed because the previewer's own parser might still accept the part.
+    let doc = roxmltree::Document::parse_with_options(
+        xml,
+        roxmltree::ParsingOptions {
+            allow_dtd: false,
+            nodes_limit: 100_000,
+            entity_resolver: None,
+        },
+    )
+    .map_err(|error| format!("OOXML relationship part is not well-formed XML: {error}"))?;
+    fn attr<'a>(node: roxmltree::Node<'a, 'a>, name: &str) -> Option<&'a str> {
+        node.attributes()
+            .find(|attribute| attribute.name().eq_ignore_ascii_case(name))
+            .map(|attribute| attribute.value())
+    }
 
-    for tag in relationship.find_iter(xml).map(|matched| matched.as_str()) {
-        if !external.is_match(tag) {
+    for node in doc.descendants().filter(|node| {
+        node.is_element() && node.tag_name().name().eq_ignore_ascii_case("Relationship")
+    }) {
+        if !attr(node, "TargetMode").is_some_and(|mode| mode.eq_ignore_ascii_case("External")) {
             continue;
         }
-        let kind = relationship_type
-            .captures(tag)
-            .and_then(|captures| captures.get(1))
-            .map(|value| value.as_str().to_ascii_lowercase());
+        let kind = attr(node, "Type").map(str::to_ascii_lowercase);
         // SheetJS displays stored cells/formulas without resolving external
         // workbook references. Templates commonly retain these links to old
         // files (including UNC paths); they are not external media to fetch.
@@ -184,10 +192,7 @@ fn validate_external_relationships(xml: &str, part_name: &str) -> Result<(), Str
         {
             return Err("OOXML archive contains an external media relationship".into());
         }
-        let destination = target
-            .captures(tag)
-            .and_then(|captures| captures.get(1))
-            .map(|value| value.as_str())
+        let destination = attr(node, "Target")
             .ok_or_else(|| "OOXML external hyperlink is missing its target".to_string())?;
         let scheme = destination
             .split_once(':')
@@ -1843,6 +1848,20 @@ mod tests {
             br#"<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.org/paper" TargetMode="External"/></Relationships>"#,
         )]);
         validate_ooxml_archive(&safe_link).unwrap();
+
+        // A '>' inside an attribute value must not hide TargetMode from the check.
+        let hidden_external = test_ooxml(&[(
+            "word/_rels/document.xml.rels",
+            br#"<Relationships><Relationship Id="a>b" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.invalid/pixel.png" TargetMode="External"/></Relationships>"#,
+        )]);
+        assert!(validate_ooxml_archive(&hidden_external)
+            .unwrap_err()
+            .contains("external media"));
+        let malformed = test_ooxml(&[(
+            "word/_rels/document.xml.rels",
+            b"<Relationships><Relationship Type=\"x\" TargetMode=\"External\"",
+        )]);
+        assert!(validate_ooxml_archive(&malformed).is_err());
     }
 
     #[test]

@@ -46,8 +46,10 @@ mod backend {
     }
 
     pub fn delete(name: &str) -> anyhow::Result<()> {
-        Entry::new(SERVICE, name)?.delete_credential()?;
-        Ok(())
+        match Entry::new(SERVICE, name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 

@@ -2029,7 +2029,10 @@ fn merge_native_mode(modes: &mut Option<serde_json::Value>, payload: &serde_json
 
 pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
     crate::mcp_broker::cancel_frame(frame_id);
-    if let Some(runtime) = state.acp_sessions.lock().await.remove(frame_id) {
+    // Bind first: an if-let scrutinee temporary would hold the global guard
+    // through the body (same footgun as `runtime_for`).
+    let runtime = state.acp_sessions.lock().await.remove(frame_id);
+    if let Some(runtime) = runtime {
         let _ = runtime.handle.cancel(runtime.session_id.clone());
         cancel_pending_permissions(state, frame_id, &runtime).await;
         let handle = runtime.handle.clone();
@@ -2054,11 +2057,15 @@ pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
 
 pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
     crate::mcp_broker::cancel_frame(frame_id);
-    if let Some(runtime) = state.acp_sessions.lock().await.remove(frame_id) {
-        let _ = runtime
-            .handle
-            .close_session(runtime.session_id.clone())
-            .await;
+    // Bind first so the global guard is released before awaiting the agent;
+    // a wedged agent must not block every other ACP conversation.
+    let runtime = state.acp_sessions.lock().await.remove(frame_id);
+    if let Some(runtime) = runtime {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            runtime.handle.close_session(runtime.session_id.clone()),
+        )
+        .await;
         if let Ok(runtime) = Arc::try_unwrap(runtime) {
             if let Ok(handle) = Arc::try_unwrap(runtime.handle) {
                 handle.shutdown(Duration::from_secs(2)).await;

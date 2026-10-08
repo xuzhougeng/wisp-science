@@ -395,7 +395,19 @@ pub(super) fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> 
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let dest = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            // A link could point outside the skill folder (e.g. ~/.ssh/id_ed25519)
+            // and end up readable by the model once installed.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "skill folder contains a symlink: {}",
+                    entry.path().display()
+                ),
+            ));
+        }
+        if kind.is_dir() {
             copy_dir_recursive(&entry.path(), &dest)?;
         } else {
             std::fs::copy(entry.path(), &dest)?;

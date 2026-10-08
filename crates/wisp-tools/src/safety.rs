@@ -42,7 +42,10 @@ fn rules() -> &'static [Rule] {
             mk(r"(?i)\brd\b.*/s\b", Danger::Delete),
             mk(r"(?i)\bdel\b.*/[sf]", Danger::Delete),
             mk(r"(?i)\berase\b.*/[sf]", Danger::Delete),
-            mk(r"(?i)\brm\b\s+(-rf|--recursive|--force)", Danger::Delete),
+            mk(
+                r"(?i)\brm\b(?:\s+[^\s;&|]+)*?\s+(?:-[a-z]*[rf][a-z]*|--recursive|--force|--no-preserve-root)\b",
+                Danger::Delete,
+            ),
             mk(r"(?i)\bunlink\b", Danger::Delete),
             // Disk / partition
             mk(r"(?i)\bformat\b", Danger::Disk),
@@ -306,6 +309,30 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn recursive_rm_spellings_all_trip_the_delete_gate() {
+        for cmd in [
+            "rm -rf x",
+            "rm -r x",
+            "rm -fr x",
+            "rm -R x",
+            "rm -r -f x",
+            "rm -rv x",
+            "rm x -rf",
+            "rm --recursive x",
+            "rm --force x",
+            "cd a && rm -r b",
+        ] {
+            assert!(
+                matches!(check_command_safety(cmd), Some(Danger::Delete)),
+                "{cmd}"
+            );
+        }
+        for cmd in ["rm x", "rm -i x", "ls -r x", "rm x && grep -r y z"] {
+            assert!(check_command_safety(cmd).is_none(), "{cmd}");
+        }
     }
 
     #[test]
