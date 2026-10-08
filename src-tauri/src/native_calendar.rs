@@ -19,8 +19,17 @@ pub(crate) async fn execute(
     }
     let input: wisp_dto::native_calendar::CalendarRequest =
         serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+    let privacy = crate::privacy_mode::load(store).await?;
+    let ids: Vec<_> = input
+        .project_ids
+        .into_iter()
+        .filter(|id| {
+            !wisp_store::is_assistant_project_id(id)
+                && !(privacy.active && privacy.project_ids.contains(id))
+        })
+        .collect();
     let rows = store
-        .research_calendar(&input.project_ids, input.from, input.until)
+        .research_calendar(&ids, input.from, input.until)
         .await
         .map_err(|error| error.to_string())?;
     serde_json::to_value(rows).map_err(|error| error.to_string())
@@ -155,5 +164,27 @@ mod tests {
         .unwrap();
         let still: Vec<wisp_dto::ResearchCalendarProject> = serde_json::from_value(still).unwrap();
         assert_eq!(still[0].history.entries[0].title, "a finding");
+    }
+
+    #[tokio::test]
+    async fn privacy_changed_after_client_gate_still_hides_project_history() {
+        let fixture = Fixture::open().await;
+        fixture.journal("visible").await;
+        fixture.journal("hidden").await;
+        crate::privacy_mode::save(&fixture.store, true, &["hidden".into()])
+            .await
+            .unwrap();
+        let value = execute(
+            &fixture.store,
+            &request(
+                None,
+                json!({"project_ids":["visible", "hidden"],"from":0,"until":86400}),
+            ),
+        )
+        .await
+        .unwrap();
+        let rows: Vec<wisp_dto::ResearchCalendarProject> = serde_json::from_value(value).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].project_id, "visible");
     }
 }

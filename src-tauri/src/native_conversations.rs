@@ -525,6 +525,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         session,
     )
     .await?;
+    if request.command == "native_conversation_timer" {
+        return crate::native_assistant::timer(broker, project, decode(&request.args)?).await;
+    }
     if request.command == "native_conversation_references" {
         return crate::native_composer::references(
             broker,

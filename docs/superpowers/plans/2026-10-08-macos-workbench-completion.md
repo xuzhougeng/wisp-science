@@ -53,3 +53,15 @@ real credentials, network, cluster, or SSH host is required in automated tests.
   during a concurrent QA build, and the isolated doc test passed. A serialized
   full rerun is in progress. Reproduction execution uses fake runners in tests;
   the manual message-only fixture correctly offers no source run to reproduce.
+
+- Assistant increment: explicit native assistant DTO/adapter, restricted
+  conversation, privacy-filtered project context/plan, shared calendar, daily
+  recap and persistent automation management, and per-conversation timer panels.
+  Unknown writes require fresh reads and explicit acknowledgement. Focused
+  tests: 9 native tests (including rendering), one shared DTO fixture test, one
+  backend assistant/privacy test, and three native calendar tests passed. The
+  prior full Swift suite passed 581 tests; final suite includes the new timer
+  tests. Packaged smoke is scheduled with the remaining viewer/canvas increments.
+  Serialized Rust rerun passed all executed tests but stopped when a generated
+  wisp-relay test executable was missing; final validation must rebuild that
+  artifact and rerun the suite before overall completion.

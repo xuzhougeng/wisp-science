@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 pub mod codex_login;
 pub mod execution_plan;
+pub mod native_assistant;
 pub mod native_calendar;
 pub mod native_conversations;
 pub mod native_files;

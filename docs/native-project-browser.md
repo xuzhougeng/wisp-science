@@ -655,3 +655,35 @@ session. WinUI enables 排队后续 only for a writable running turn. An uncerta
 
 Sync errors wrap inside the native status and confirmation sheets, keeping both
 the backend explanation and the no-automatic-retry notice readable.
+
+### Native research assistant and timers
+
+The macOS home toolbar opens the persistent research assistant without rebinding
+the current project or a WebView window. It uses the existing restricted assistant
+tool set and shared conversation pipeline. Project context accompanies each new
+message; privacy-filtered plan items link back to their project conversations.
+The calendar resolves privacy before reading history, and its backend filters
+again in case privacy changed after the client read.
+
+The assistant's Automations sheet shows the built-in daily recap, persisted
+project schedules and recent execution reports. Create an interval, daily or
+weekly schedule, optionally naming an existing conversation and skill; toggle,
+run now or delete it through the existing scheduler. Daily and weekly options
+choose the next local start time and then use fixed intervals, matching WebView.
+The app must remain open for execution. Every ordinary conversation also has a
+clock button for its timer, including enable, update and cancel. Timers wait for
+busy work and replace their previous complete turn.
+
+Assistant and timer writes block replay after an unknown result. Refresh the
+records and explicitly acknowledge before continuing; drafts remain available.
+Editors register in the window Escape stack so immediate Escape dismisses only
+the top editor, with confirmation for changed automation drafts. Native command
+DTOs and a shared fixture live in `wisp-dto::native_assistant` and
+`contracts/native-assistant/v1/`.
+
+Manual smoke: open the assistant from home, select a visible project, inspect the
+date plan/calendar, and return without changing the original project. Create a
+future schedule, refresh/reopen to verify persistence, then disable/delete it.
+Open a project conversation's clock panel, save a long-interval timer, verify
+its persisted next run and cancel it. Press Escape immediately after each panel
+opens and check that only the top layer closes. Use an isolated QA database.

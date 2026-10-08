@@ -23,6 +23,12 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published var importOptionsPresented = false
     @Published var recoveryPreview: NativeWorkspaceRecoveryPreview?
     @Published var recoveryName = ""
+    @Published var assistantPresented = false
+    private var assistants: [URL: NativeAssistantModel] = [:]
+    func nativeAssistant() -> NativeAssistantModel {
+        if let model = assistants[databaseURL] { return model }
+        let model = NativeAssistantModel(client: projectTransport()); assistants[databaseURL] = model; return model
+    }
     let library = NativeLibraryModel()
     let calendar = NativeCalendarModel()
     let journey = NativeJourneyModel()
@@ -195,6 +201,8 @@ public final class ProjectBrowserModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.directoryURL = databaseURL.deletingLastPathComponent()
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        assistants[databaseURL]?.close()
+        assistantPresented = false
         nativeModels[databaseURL]?.pause()
         nativeDrafts.removeAll()
         unconfirmedDraftDeletions.removeAll()
@@ -208,6 +216,8 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     func goHome() {
+        assistantPresented = false
+        assistants[databaseURL]?.close()
         searchPresented = false
         searchArtifact = nil
         workspaceCommand = nil
@@ -284,6 +294,8 @@ public final class ProjectBrowserModel: ObservableObject {
     }
 
     func openProject(_ id: String, sessionID: String? = nil) async {
+        assistantPresented = false
+        assistants[databaseURL]?.close()
         let generation = UUID()
         navigationGeneration = generation
         transcriptGeneration = UUID()

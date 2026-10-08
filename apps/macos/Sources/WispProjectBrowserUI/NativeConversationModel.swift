@@ -30,6 +30,13 @@ private extension String {
 @MainActor
 final class NativeConversationModel: ObservableObject {
     @Published var draft = ""
+    @Published var contextReady = true
+    var restrictedAssistant = false
+    var contextReference: NativeComposerReference?
+    private var outgoingReferences: [NativeComposerReference] {
+        guard let contextReference, !references.contains(where: { $0.id == contextReference.id }) else { return references }
+        return references + [contextReference]
+    }
     @Published var outlinePresented = false
     @Published private(set) var outline: [ConversationOutlineEntry] = []
     @Published private(set) var outlineLoading = false
@@ -78,6 +85,12 @@ final class NativeConversationModel: ObservableObject {
     @Published private var uncertainHistory: Set<String> = []
     @Published private var uncertainPlanDecisions: Set<String> = []
     var historyUncertain: Bool { sessionID.map { uncertainHistory.contains($0) } ?? false }
+    private var timers: [String: NativeSessionTimerModel] = [:]
+    func timerModel(project: String, session: String) -> NativeSessionTimerModel {
+        let key = project + "\0" + session
+        if let model = timers[key] { return model }
+        let model = NativeSessionTimerModel(client: client, project: project, session: session); timers[key] = model; return model
+    }
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
@@ -314,17 +327,17 @@ final class NativeConversationModel: ObservableObject {
             return nil
         }
     }
-    var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
+    var canAttach: Bool { !restrictedAssistant && projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
     var canReference: Bool { canAttach && snapshot?.composer_references == true && connectionError == nil && !uncertainSend }
     var canQueueFollowUp: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && !historyUncertain && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
+        return contextReady && (hasText || !attachments.isEmpty || !references.isEmpty) && (snapshot?.queue != nil || legacyQueuedFollowUp == nil) && !uncertainQueue && !uncertainSend && !historyUncertain && snapshot?.running == true && snapshot?.read_only == false && (!isAcp || snapshot?.acp_agent_id != nil) && !busy && !showingHistory && connectionError == nil && (references.isEmpty || snapshot?.composer_references == true)
     }
     var queuedTurns: [ConversationQueueItem] { snapshot?.queue?.items ?? [] }
     var queuedFollowUp: String? { snapshot?.queue == nil ? legacyQueuedFollowUp : queuedTurns.first?.message }
     var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && !historyUncertain && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
+        return contextReady && (hasText || !attachments.isEmpty || !references.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && !uncertainQueue && !historyUncertain && !(sessionID.map { uncertainModes.contains($0) } ?? false) && connectionError == nil && !showingHistory && (references.isEmpty || snapshot?.composer_references == true)
     }
 
     func open(project: String, session: String) async {
@@ -501,7 +514,7 @@ final class NativeConversationModel: ObservableObject {
     func queueFollowUp() async {
         guard canQueueFollowUp, let project = projectID, let session = sessionID else { return }
         let text = draft
-        let selected = references
+        let selected = outgoingReferences
         let files = attachments.map(\.path)
         let id = UUID().uuidString
         let current = generation
@@ -509,9 +522,9 @@ final class NativeConversationModel: ObservableObject {
         operationError = nil
         defer { if generation == current { busy = false } }
         do {
-            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(NativeComposerReference.message(text, references: references))]
+            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(NativeComposerReference.message(text, references: outgoingReferences))]
             if !files.isEmpty { args["attachments"] = .array(files.map(SettingsValue.string)) }
-            if !references.isEmpty { args["references"] = .array(references.map(\.reference)) }
+            if !outgoingReferences.isEmpty { args["references"] = .array(outgoingReferences.map(\.reference)) }
             let receipt = try await client.invoke("native_conversation_enqueue", args: args, projectID: project)
             guard receipt["queued"].bool else { throw ProjectBrowserError.invalidResponse }
             stagedReferences[session]?.removeAll { selected.contains($0) }
@@ -564,12 +577,12 @@ final class NativeConversationModel: ObservableObject {
     func send() async {
         guard canSend, let project = projectID, let session = sessionID else { return }
         let text = draft; let files = attachments.map(\.path); let id = UUID().uuidString; let current = generation
-        sentReferences[id] = references
+        sentReferences[id] = outgoingReferences
         busy = true; operationError = nil; pending = (id, text); pendingSends[session] = pending; submittedDrafts[session] = pending
         do {
-            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(NativeComposerReference.message(text, references: references))]
+            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(NativeComposerReference.message(text, references: outgoingReferences))]
             if !files.isEmpty { args["attachments"] = .array(files.map(SettingsValue.string)) }
-            if !references.isEmpty { args["references"] = .array(references.map(\.reference)) }
+            if !outgoingReferences.isEmpty { args["references"] = .array(outgoingReferences.map(\.reference)) }
             _ = try await client.invoke("native_conversation_send", args: args, projectID: project)
             pendingSends[session] = nil
             if drafts[session] == text { drafts[session] = "" }

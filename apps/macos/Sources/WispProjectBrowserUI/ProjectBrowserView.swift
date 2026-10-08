@@ -21,6 +21,8 @@ public struct ProjectBrowserView: View {
                 NativeSettingsView(databaseURL: model.databaseURL, projects: model.projects, projectID: model.projectSettingsID ?? model.activeProjectID, editProject: model.projectSettingsID != nil, initialSection: NativeSettingsSection(rawValue: model.settingsSectionID ?? "") ?? .general) { model.settingsPresented = false; model.projectSettingsID = nil; model.settingsSectionID = nil; Task { await model.refresh() } }
             } else if calendar.presented {
                 NativeCalendarPage(model: model, calendar: calendar)
+            } else if model.assistantPresented {
+                NativeAssistantPage(browser: model, model: model.nativeAssistant())
             } else if let project = model.projects.first(where: { $0.id == model.activeProjectID }) {
                 ProjectWorkspace(model: model, project: project)
             } else {
@@ -126,6 +128,9 @@ private struct ProjectLanding: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
+            Button { model.assistantPresented = true } label: { WispIcon(name: "sparkles") }
+                .buttonStyle(WispButtonStyle()).help(localized("科研助理")).accessibilityLabel(localized("科研助理"))
+                .accessibilityIdentifier("home-assistant")
             Button { model.calendar.presented = true } label: { WispIcon(name: "calendar") }
                 .buttonStyle(WispButtonStyle()).help("研究日历").accessibilityLabel("研究日历")
                 .accessibilityIdentifier("home-calendar")

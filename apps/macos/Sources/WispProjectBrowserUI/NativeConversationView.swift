@@ -23,6 +23,7 @@ struct NativeConversationView: View {
     @State private var historyAction: NativeHistoryTarget?
     @State private var undoAction: NativeHistoryTarget?
     @State private var modelContext = false
+    @State private var timerPresented = false
     private func color(_ token: String) -> Color { WispDesign.color(token, scheme) }
     var body: some View {
         VStack(spacing: 0) {
@@ -87,10 +88,11 @@ struct NativeConversationView: View {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 if !Task.isCancelled { conversation.clearExcerpt(revision: revision) }
             }
-        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false; modelContext = false }
+        .onChange(of: sessionID) { _ in expandedTools = []; feedbackApproval = nil; referencePicker = false; runtimeActivity = nil; historyAction = nil; undoAction = nil; composerOptions = false; modelContext = false; timerPresented = false }
         .onChange(of: projectID) { _ in modelContext = false }
         .onChange(of: conversation.showingHistory) { _ in expandedTools = [] }
         .task(id: (sessionID ?? "") + ":" + (conversation.snapshot?.model_id ?? "") + ":" + String(conversation.models.count)) {
+            guard !conversation.restrictedAssistant else { return }
             await conversation.bindComposer()
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
@@ -115,6 +117,9 @@ struct NativeConversationView: View {
             if let projectID, let sessionID { NativeComposerOptionsSheet(conversation: conversation, project: projectID, session: sessionID) { composerOptions = false } }
         }
         .sheet(item: $undoAction) { target in NativeTurnUndoSheet(conversation: conversation, target: target) { undoAction = nil } }
+        .sheet(isPresented: $timerPresented) {
+            if let projectID, let sessionID { NativeSessionTimerSheet(model: conversation.timerModel(project: projectID, session: sessionID)) { timerPresented = false } }
+        }
         .sheet(isPresented: $modelContext) {
             if let projectID, let sessionID { NativeConversationContextSheet(conversation: conversation, project: projectID, session: sessionID) { modelContext = false } }
         }
@@ -233,11 +238,13 @@ struct NativeConversationView: View {
                 Text("该会话已归档或冻结，请新建会话继续。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 8) {
+                if !conversation.restrictedAssistant {
                 NativeComposerModes(conversation: conversation)
                 NativeAcpSettings(conversation: conversation)
                 NativeComposerEnvironment(model: conversation.composer, writable: composerWritable, openRuntime: {
                     runtimeActivity = .init(context: conversation.composer.contextID, runtimes: true)
                 }, openOptions: projectID != nil && sessionID != nil ? { composerOptions = true } : nil)
+                }
                 if !conversation.queuedTurns.isEmpty, let sessionID {
                     NativeConversationQueueView(conversation: conversation, session: sessionID).id((projectID ?? "") + ":" + sessionID)
                 } else if let queued = conversation.queuedFollowUp {
@@ -273,6 +280,7 @@ struct NativeConversationView: View {
                     .id((projectID ?? "") + ":" + (sessionID ?? ""))
                     .zIndex(10)
                 HStack {
+                    if !conversation.restrictedAssistant {
                     Button { attachFiles() } label: { WispIcon(name: "plus", size: 17).frame(width: 32, height: 32)
                         .background(color("bg-elev"), in: Circle()).overlay(Circle().strokeBorder(color("border-strong"))) }
                         .buttonStyle(.plain).help("添加到消息").accessibilityLabel("对话附件")
@@ -280,6 +288,11 @@ struct NativeConversationView: View {
                         .accessibilityIdentifier("composer-attach")
                     Button { conversation.completions.dismiss(); referencePicker = true } label: { WispIcon(name: "link", size: 16).frame(width: 32, height: 32) }
                         .buttonStyle(.plain).disabled(!conversation.canReference).help("添加产物、会话、环境或技能引用").accessibilityLabel("添加引用")
+                    }
+                    if !conversation.restrictedAssistant {
+                        Button { timerPresented = true } label: { WispIcon(name: "clock", size: 16).frame(width: 32, height: 32) }
+                            .buttonStyle(.plain).help(localized("会话定时器")).accessibilityLabel(localized("会话定时器")).disabled(conversation.snapshot?.read_only != false)
+                    }
                     Spacer(minLength: 8)
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
@@ -299,7 +312,7 @@ struct NativeConversationView: View {
                     }.menuStyle(.borderlessButton).padding(.horizontal, 10).frame(height: 32)
                         .background(color("bg-elev"), in: Capsule()).overlay(Capsule().strokeBorder(color("border")))
                         .frame(maxWidth: 180).disabled(conversation.busy || conversation.snapshot == nil || conversation.snapshot?.running == true || conversation.snapshot?.read_only == true)
-                    NativeComposerEffort(model: conversation.composer, enabled: composerWritable, acp: conversation.isAcp)
+                    if !conversation.restrictedAssistant { NativeComposerEffort(model: conversation.composer, enabled: composerWritable, acp: conversation.isAcp) }
                     if conversation.snapshot?.running == true {
                         Button(conversation.canRunComposerCommand(available: completionCommands) ? "执行命令" : "排队后续", action: queueComposer)
                             .disabled(!conversation.canQueueFollowUp && !conversation.canRunComposerCommand(available: completionCommands))
