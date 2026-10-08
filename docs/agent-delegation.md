@@ -417,7 +417,7 @@ pass/reject decision. See [map-items.md](map-items.md).
 A conversation's Agent can also start a **subagent**: a conversation of its own
 for one focused task, such as "open a new conversation and do X there". Unlike
 the temporary sub-Agents above, a subagent is unbounded by a task plan, visible
-in the sidebar under the conversation that started it (**Subagents**), and
+in the sidebar under the conversation that started it (marked with a robot icon), and
 watch-only for the researcher: opening it shows the live transcript, but the
 composer is locked and the backend refuses any message, queued follow-up,
 cut-in, timer, rewind or undo that does not come from the parent conversation.

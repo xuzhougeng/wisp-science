@@ -22,33 +22,42 @@ async function lastInvokeArgs(page: Page, cmd: string) {
   }, cmd);
 }
 
-test("sidebar exploration and branch groups collapse independently", async ({ page }) => {
-  await page.goto("/?mockExplorations=1&mockBranches=1");
+test("a sidebar parent folds its explorations and branches behind one chevron", async ({ page }) => {
+  await page.goto("/?mockExplorations=1&mockBranches=1&mockOtherExplorationSession=1");
   await page.locator(".proj-card-main").first().click();
 
-  const explorations = page.getByTestId("sidebar-explorations");
-  const explorationToggle = page.getByTestId("sidebar-exploration-toggle");
-  await expect(explorations.locator(".side-exploration")).toHaveCount(2);
-  await expect(explorationToggle).toHaveAttribute("aria-expanded", "true");
+  const nest = page.getByTestId("sidebar-nest");
+  const toggle = page.getByTestId("sidebar-nest-toggle");
+  const explorations = page.getByTestId("sidebar-explorations").locator(".side-exploration");
+  const branch = page.locator('.sidebar [data-session-id="conversation-branch"]');
+  const count = page.locator(".sidebar .side-nest-count");
 
-  await explorationToggle.click();
-  await expect(explorationToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(explorations.locator(".side-exploration")).toHaveCount(0);
-  await expect(explorations).toBeVisible();
-  await expect(page.locator('.sidebar [data-session-id="conversation-branch"]')).toBeVisible();
+  // The open conversation shows its whole family under one chevron, without per-kind headings.
+  await expect(toggle).toHaveCount(1);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(explorations).toHaveCount(2);
+  await expect(explorations.first()).toBeVisible();
+  await expect(branch).toBeVisible();
+  await expect(nest).not.toContainText("Explorations");
+  await expect(nest).not.toContainText("Branches");
+  await expect(count).toBeHidden();
 
-  await explorationToggle.click();
-  await expect(explorations.locator(".side-exploration")).toHaveCount(2);
+  // Leaving the family folds it down to a count.
+  await page.locator('.sidebar [data-session-id="session-b"]').click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(nest).toBeHidden();
+  await expect(count).toBeVisible();
+  await expect(count).toHaveText("3");
 
-  const branchToggle = page.getByTestId("sidebar-branch-toggle");
-  await expect(branchToggle).toHaveAttribute("aria-expanded", "true");
-  await branchToggle.click();
-  await expect(branchToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator('.sidebar [data-session-id="conversation-branch"]')).toHaveCount(0);
-  await expect(explorations.locator(".side-exploration")).toHaveCount(2);
-
-  await branchToggle.click();
-  await expect(page.locator('.sidebar [data-session-id="conversation-branch"]')).toBeVisible();
+  // A manual toggle wins over that default, in both directions.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(explorations.first()).toBeVisible();
+  await branch.click();
+  await expect(branch).toHaveClass(/active/);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(nest).toBeHidden();
 });
 
 test("inline exploration and branch cards collapse independently", async ({ page }) => {
