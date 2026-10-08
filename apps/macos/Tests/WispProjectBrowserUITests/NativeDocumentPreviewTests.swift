@@ -97,6 +97,20 @@ final class NativeDocumentPreviewTests: XCTestCase {
         model.dismissPreview(); await model.readFile("paper.pdf")
         XCTAssertNil(model.documentQuote(selection, original: pdf, identity: identity))
     }
+    @MainActor func testPDFNotificationsUpdateOnMainActorAndIgnoreRetiredView() async throws {
+        let model = NativePDFModel(content: try content("paper.pdf", bytes: Self.pdf()))
+        let surface = NativePDFSurface(model: model), coordinator = surface.makeCoordinator()
+        let view = PDFView(); view.document = model.document; model.view = view; coordinator.observe(view)
+        defer { coordinator.stop() }
+        view.go(to: try XCTUnwrap(model.document?.page(at: 1)))
+        NotificationCenter.default.post(name: .PDFViewPageChanged, object: view)
+        for _ in 0..<20 where model.page != 2 { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertEqual(model.page, 2)
+        NotificationCenter.default.post(name: .PDFViewPageChanged, object: view)
+        coordinator.stop(); model.view = nil; model.page = 1
+        try await Task.sleep(nanoseconds: 5_000_000)
+        XCTAssertEqual(model.page, 1)
+    }
     @MainActor func testHTMLImagesUseOnlyApprovedCompleteScopedBytes() async throws {
         let image = try imagePreview()
         let source = "<img src='plot.png'><img src=\"plot.png\"><img src='missing.png'><img src='data:image/png;base64,AA=='>"

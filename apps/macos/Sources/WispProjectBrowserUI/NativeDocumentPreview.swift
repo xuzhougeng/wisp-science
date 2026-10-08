@@ -111,7 +111,7 @@ final class NativePDFModel: ObservableObject {
     }
 }
 
-private struct NativePDFSurface: NSViewRepresentable {
+struct NativePDFSurface: NSViewRepresentable {
     @ObservedObject var model: NativePDFModel
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
     func makeNSView(context: Context) -> PDFView {
