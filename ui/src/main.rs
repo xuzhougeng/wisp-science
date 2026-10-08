@@ -7829,6 +7829,13 @@ fn App() -> impl IntoView {
         let approval_pending = approval_pending;
         Callback::new(
             move |(sid, approved, feedback, scope): (String, bool, Option<String>, String)| {
+                // The card's Full Permission shortcut: same warning as the
+                // agent-menu toggle. The backend approves the waiting request
+                // when the mode turns on, so the card stays until then.
+                if scope == "full" {
+                    ui_confirm.set(Some(UiConfirm::EnableFullPermission));
+                    return;
+                }
                 route_items(
                     active_session,
                     items,

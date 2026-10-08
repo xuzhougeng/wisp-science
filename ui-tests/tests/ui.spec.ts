@@ -11513,6 +11513,33 @@ test("native approval remains clickable while the agent turn is blocked", async 
   )).toBe(false);
 });
 
+test("approval card can enable Full Permission through the warning", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("BLOCKINGCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const shortcut = page.getByTestId("approval-full-permission");
+  await expect(shortcut).toBeVisible({ timeout: 10_000 });
+  await shortcut.click();
+  const warning = page.getByRole("heading", { name: "Enable Full Permission?" });
+  await expect(warning).toBeVisible();
+
+  // Escape closes only the warning: nothing is enabled or answered yet.
+  await page.keyboard.press("Escape");
+  await expect(warning).toHaveCount(0);
+  await expect(shortcut).toBeVisible();
+  expect(await invokeArgsList(page, "set_session_full_permission")).toHaveLength(0);
+
+  await shortcut.click();
+  await page.getByRole("button", { name: "Enable Full Permission" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_full_permission")).toMatchObject({
+    sessionId: expect.stringMatching(/^s-/),
+    enabled: true,
+  });
+  // The backend settles the waiting request itself when the mode turns on.
+  expect(await invokeArgsList(page, "confirm_response")).toHaveLength(0);
+});
+
 test("background approval targets its session after switching conversations", async ({ page }) => {
   await enterApp(page, "/?mockSessionModels=1&mockBackgroundApproval=1");
   await page.locator('[data-session-id="s-model-a"]').click();

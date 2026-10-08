@@ -1467,6 +1467,7 @@ pub(crate) fn ApprovalCard(
     };
     let sid_allow = session_id.clone();
     let sid_deny = session_id.clone();
+    let sid_full = session_id.clone();
     let sid_feedback = create_rw_signal(session_id);
     view! {
         <div class="approval-wrap">
@@ -1582,6 +1583,15 @@ pub(crate) fn ApprovalCard(
                             "confirm.deny"
                         })}
                     </button>
+                    {(!is_plan && !is_resource_conflict && !is_image_resize && !is_workflow).then(|| view! {
+                        // "full" is not a grant scope: the host opens the Full
+                        // Permission warning, and enabling it settles this card.
+                        <button type="button" data-testid="approval-full-permission"
+                            title=move || t(locale.get(), "full_permission.confirm_body")
+                            on:click=move |_| on_decide.call((sid_full.clone(), true, None, "full".into()))>
+                            {move || t(locale.get(), "composer.full_permission")}
+                        </button>
+                    })}
                     {is_plan.then(|| view! {
                         <button type="button" on:click=move |_| show_feedback.update(|open| *open = !*open)>
                             {move || t(locale.get(), "approval.plan_other")}
