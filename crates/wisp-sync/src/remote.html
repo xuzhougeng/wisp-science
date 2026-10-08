@@ -118,7 +118,8 @@ body[data-pane="panel"] #panel { display: flex; }
   padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--elev); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.list { display: grid; gap: 8px; }
+/* minmax(0, …): a long name or a wide table must not widen the column. */
+.list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .row {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
@@ -132,7 +133,7 @@ body[data-pane="panel"] #panel { display: flex; }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); white-space: nowrap; }
 .badge.running { background: var(--accent-soft); color: var(--accent-strong); }
 .badge.needs_you { background: var(--warn-soft); color: var(--warn); }
-.transcript { display: grid; gap: 12px; padding-bottom: 8px; }
+.transcript { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-bottom: 8px; }
 .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user {
   justify-self: end; max-width: 88%; background: var(--accent-soft); padding: 8px 12px;
@@ -156,7 +157,8 @@ body[data-pane="panel"] #panel { display: flex; }
 .md a { color: var(--accent-strong); }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
 .md .table-wrap { overflow: auto; }
-.md table { border-collapse: collapse; font-size: 13px; }
+/* Cells keep their words whole; a table too wide for the pane scrolls in its wrapper. */
+.md table { border-collapse: collapse; font-size: 13px; overflow-wrap: normal; }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
 .md th { background: var(--sunken); }
 .img { display: block; margin: 4px 0; white-space: normal; }
