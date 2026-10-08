@@ -276,7 +276,7 @@ public final class ProjectBrowserModel: ObservableObject {
         case "library": library.presented = true
         case "calendar": calendar.presented = true
         case "journey": if let activeProjectID { publication.dismiss(); journey.open(projectID: activeProjectID, day: nil) }
-        case "publication": if let activeProjectID { journey.dismiss(); publication.open(projectID: activeProjectID) }
+        case "publication": if let activeProjectID { journey.dismiss(); publication.open(projectID: activeProjectID, databaseURL: databaseURL) }
         case "import-project": importOptionsPresented = true
         default:
             if let activeProjectID { workspaceCommand = NativeWorkspaceCommand(action: command.id, project: activeProjectID, session: activeSessionID) }

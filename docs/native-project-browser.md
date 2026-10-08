@@ -293,8 +293,10 @@ The preview aligns the home/workspace shell and includes native settings, projec
 creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, and the conversation loop described below.
 The macOS workspace additionally connects terminal/files, Notebook, Highlights,
 Provenance, SideChat, contexts, Runs and Agent panels. Their implementation does
-not imply complete parity behind every entry: ACP main conversations, full
-publication editing and the project-folder workflow are tracked in the
+not imply complete parity behind every entry. The resumed assistant, publication,
+viewer and workflow work is tracked in the
+[2026-10-08 completion plan](superpowers/plans/2026-10-08-macos-workbench-completion.md).
+Earlier feature increments are recorded in the
 [2026-09-25 parity audit](superpowers/plans/2026-09-25-macos-native-parity-iteration.md)
 and [repair progress](superpowers/plans/2026-09-25-macos-native-parity-progress.md).
 
@@ -389,16 +391,42 @@ entry, artifact detail, and run detail stay out of this slice. WinUI connects th
 The sidebar **论文证据** button replaces the conversation column with the
 publication workspace for the open project. `native_publication_workspace`
 reads that project's papers. `native_publication_create` creates one paper and
-its first revision. Both commands require the project id, are announced as
+its first revision. `native_publication_sources` lists exact artifact versions,
+runs and message excerpts. `native_publication_mutate` uses the shared typed
+operation contract for editing, binding, checks and frozen outputs.
+All four commands require the project id, are announced as
 `publication` and `publication_schema` (`wisp.native-publication.v1`), and are
 not in the settings allowlist. They do not change the WebView's active project
 or session.
 
 An empty title or revision label keeps the draft and does not call the host.
-A lost create keeps the draft and is not retried. A reply that arrives after
-the workspace has closed does not open a project. Escape closes only the
-publication column and returns to the conversation. Evidence binding, readiness,
-and reproduction stay out of this slice. WinUI connects `INativePublicationClient` in the project column, retaining the sidebar and conversation draft.
+A lost write keeps the draft and blocks further writes to that project, including
+after closing and reopening the workspace. Refresh and inspect the latest paper
+and revision before explicitly allowing more edits. A pending write cannot be
+acknowledged. A reply that arrives after navigation does not restore its old view.
+Creation drafts are separate per project.
+
+On macOS, **新建论文** creates the initial revision. **编辑修订** adds outline items,
+associates evidence, copies a revision, checks/freezes a draft, and reproduces or
+exports a frozen revision. Select an outline item to edit its kind, parent, title,
+content and order. Select evidence to change its selection state or visibility.
+Message selection preserves UTF-8 byte offsets and the full message content hash;
+the source preview is bounded to 16 KiB. Advanced exact locators also support
+execution logs, tool calls, code cells and external resources. Existing evidence
+snapshots, lineage, newer-version drift, review records, waivers, readiness,
+reproduction results and capsule builds remain inspectable.
+
+Frozen/published revisions cannot be edited. Copy one to a new draft for further
+changes. Freeze requires a fresh check with the same visibility/review options
+and a confirmation for the selected revision; the backend checks readiness again.
+Reproduction uses the existing isolated runner and output comparators. Capsule
+export uses a native ZIP save dialog and the existing capsule builder.
+
+Escape closes the topmost editor without closing the publication column; dirty
+item/evidence/revision editors first ask before discarding edits. An active write
+temporarily consumes Escape. Escape on the column returns to the conversation.
+WinUI retains its read/create client in the project column; this macOS increment
+does not imply WinUI editing parity.
 
 ## Capabilities
 

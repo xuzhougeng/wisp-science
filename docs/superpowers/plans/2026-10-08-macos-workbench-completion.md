@@ -1,0 +1,55 @@
+# macOS workbench completion
+
+The user resumed implementation on 2026-10-08 with four required outcomes:
+research assistant, publication evidence editing, specialized viewers, and a
+workflow canvas. The historical pause in the 2026-10-06 parity plan does not
+apply to this work. Implement each group in reviewable increments; the overall
+goal remains open until all four groups pass their acceptance checks.
+
+## Outcomes and acceptance
+
+1. Publication: create papers and revisions; edit the outline; select exact
+   evidence sources and message excerpts; change evidence selection/visibility;
+   inspect readiness, lineage, drift and reproduction; check, waive, freeze,
+   verify and export capsules through the existing backend. Enforce revision
+   ownership, immutable frozen revisions, and unknown-write recovery. Preserve
+   drafts and discard late replies after navigation. Test immediate Escape on
+   nested editors without moving focus first.
+2. Assistant: open the existing assistant conversation with its restricted tool
+   set; select visible project context; show its plan and calendar; manage
+   persistent automations and conversation timers through the shared scheduler.
+   Privacy filtering must occur before project reads. Use fake transports in tests.
+3. Viewers: complete HTML, PDF/Office and scientific sequence/structure viewers
+   beside the existing Markdown, table and image previews. Include corresponding
+   WebView source inspection, navigation and quoting interactions where supported.
+   Keep large data bounded and validate file/project ownership.
+4. Workflows: render and edit stages and dependencies on a canvas; support node
+   selection, pan/zoom, validation, save/copy and conversion. Reuse execution and
+   approval paths rather than implementing a second runner.
+
+## Verification
+
+Run focused Swift and Rust tests per increment, render native layouts at normal
+and narrow widths, and inspect English/Chinese and light/dark variants. Before
+overall completion run the repository gates (`cargo fmt --all -- --check`,
+`cargo test --workspace`, UI wasm check, Playwright), the native Swift suite,
+contract/design sync checks, and paired current packaged-app smoke checks. No
+real credentials, network, cluster, or SSH host is required in automated tests.
+
+## Progress
+
+- Started from `5aec1c29` on `codex/macos-workbench-completion`, clean checkout.
+- Publication backend already exposes typed source and mutation commands. The
+  first increment connects the native editor to these existing commands.
+
+- Publication editing is implemented: exact UTF-8 message spans, scoped drafts
+  and unknown-write guards, check/freeze, clone, waiver, reproduction and ZIP
+  export. The isolated packaged app saved a Chinese/emoji outline, selected an
+  exact 0–19-byte excerpt, froze v1, exported a checksum-verified capsule and
+  cloned v2 as an editable draft. Native tests: 575 passed including rendered
+  variants; DTO and backend focused tests: 3 each. WebView: 1023 passed, 2
+  skipped, one startup timeout passed on isolated rerun. Workspace Rust unit
+  tests passed; the first doc-test run encountered dependency artifact drift
+  during a concurrent QA build, and the isolated doc test passed. A serialized
+  full rerun is in progress. Reproduction execution uses fake runners in tests;
+  the manual message-only fixture correctly offers no source run to reproduce.
