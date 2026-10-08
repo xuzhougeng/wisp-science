@@ -1,6 +1,7 @@
 # Native settings implementation
 
-The macOS Workflows editor opens a native canvas. Tasks are arranged in execution
+The macOS Workflows editor opens a native canvas. Node drags follow the pointer
+distance at every zoom level, including after panning. Tasks are arranged in execution
 stages with selectable dependency curves. Drag the background to pan, drag nodes
 to arrange them, use zoom/fit controls, or select a node to edit its instructions,
 capabilities, schema, executor, activity, timeout and budget. The inspector adds

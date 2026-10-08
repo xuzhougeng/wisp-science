@@ -139,7 +139,7 @@ struct NativeWorkflowGraph: View {
                     }.onEnded { _ in panOrigin = nil })
                     graph.scaleEffect(draft.zoom, anchor: .topLeading).offset(x: draft.camera.x, y: draft.camera.y)
                     toolbar(viewport.size).padding(10).frame(width: viewport.size.width, height: viewport.size.height, alignment: .bottomTrailing)
-                }.frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading).clipped().overlay(RoundedRectangle(cornerRadius: 10).stroke(WispDesign.color("border", scheme)))
+                }.frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading).coordinateSpace(name: "workflowCanvasViewport").clipped().overlay(RoundedRectangle(cornerRadius: 10).stroke(WispDesign.color("border", scheme)))
                     .simultaneousGesture(MagnificationGesture().onChanged { value in
                         if zoomOrigin == nil { zoomOrigin = draft.zoom }; draft.zoom = max(0.25, min(2, zoomOrigin! * value))
                     }.onEnded { _ in zoomOrigin = nil })
@@ -180,10 +180,9 @@ struct NativeWorkflowGraph: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .onTapGesture(count: 2) { draft.selectedNode = node.id; draft.selectedEdge = nil; edit(node.id) }
             .onTapGesture { draft.selectedNode = node.id; draft.selectedEdge = nil }
-            .gesture(DragGesture(minimumDistance: 4).onChanged { value in
+            .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("workflowCanvasViewport")).onChanged { value in
                 if dragOrigins[node.id] == nil { dragOrigins[node.id] = point }
-                let origin = dragOrigins[node.id]!
-                draft.positions[node.id] = CGPoint(x: origin.x + value.translation.width / draft.zoom, y: origin.y + value.translation.height / draft.zoom)
+                draft.moveNode(node.id, origin: dragOrigins[node.id]!, viewportTranslation: value.translation)
             }.onEnded { _ in dragOrigins[node.id] = nil })
             .position(x: point.x + 120, y: point.y + 70)
             .accessibilityElement(children: .combine).accessibilityLabel(task["id"].string + ", " + task["instruction"].string)

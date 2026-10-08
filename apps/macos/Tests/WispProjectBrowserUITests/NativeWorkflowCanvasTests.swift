@@ -52,6 +52,20 @@ final class NativeWorkflowCanvasTests: XCTestCase {
         let saved = await draft.save(); XCTAssertTrue(saved)
         let captured = await host.captured(); XCTAssertEqual(captured.0["conversionSourceSha256"], .string("verified-source-hash")); XCTAssertEqual(captured.1, "project-1"); XCTAssertEqual(captured.2, 1)
     }
+    @MainActor func testNodeDragPreservesViewportDistanceAcrossZoomAndPanWithoutChangingTemplate() throws {
+        let source = try fixture(), draft = NativeWorkflowDraft(template: source, client: WorkflowHost(), projectID: "p")
+        let origin = draft.layout.nodes[1].point
+        for zoom in [0.25, 0.69, 1.0, 2.0] {
+            draft.zoom = zoom; draft.camera = CGPoint(x: 130, y: -40)
+            draft.moveNode(1, origin: origin, viewportTranslation: CGSize(width: 120, height: -80))
+            let moved = try XCTUnwrap(draft.positions[1])
+            XCTAssertEqual((moved.x - origin.x) * zoom, 120, accuracy: 0.001)
+            XCTAssertEqual((moved.y - origin.y) * zoom, -80, accuracy: 0.001)
+            XCTAssertEqual(draft.template, source); XCTAssertFalse(draft.dirty)
+        }
+        draft.moveNode(99, origin: origin, viewportTranslation: CGSize(width: 20, height: 20))
+        XCTAssertNil(draft.positions[99])
+    }
     @MainActor func testBuiltInCopyUnknownWriteAndFreshReadRequireExplicitAcknowledgement() async throws {
         let host = WorkflowHost(); var source = try fixture(); source["builtin"] = .bool(true)
         let draft = NativeWorkflowDraft(template: source, client: host, projectID: "p")

@@ -86,6 +86,12 @@ final class NativeWorkflowDraft: ObservableObject, Identifiable {
     var canWrite: Bool { !readOnly && !busy && !uncertain }
     func close() { generation = UUID() }
     func point(_ node: NativeWorkflowLayout.Node) -> CGPoint { positions[node.id] ?? node.point }
+    func moveNode(_ index: Int, origin: CGPoint, viewportTranslation: CGSize) {
+        guard tasks.indices.contains(index) else { return }
+        // The gesture reports unscaled viewport distances; convert exactly once.
+        let delta = NativeWorkflowLayout.point(CGPoint(x: viewportTranslation.width, y: viewportTranslation.height), camera: .zero, zoom: zoom)
+        positions[index] = CGPoint(x: origin.x + delta.x, y: origin.y + delta.y)
+    }
     func fit(_ viewport: CGSize) { zoom = NativeWorkflowLayout.fit(size: layout.size, viewport: viewport); camera = CGPoint(x: 20, y: 20); positions = [:] }
     func binding(_ key: String, proposal: Bool = false) -> Binding<SettingsValue> {
         Binding(get: { proposal ? self.template["proposal"][key] : self.template[key] }, set: { value in
