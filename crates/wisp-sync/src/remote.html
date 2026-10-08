@@ -39,7 +39,7 @@ body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  display: flex; flex-direction: column; min-height: 100dvh;
+  display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
 }
 button, textarea, input { font: inherit; color: inherit; }
 button {
@@ -55,11 +55,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, .row:focus-vi
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .bar {
-  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+  flex: none; display: flex; align-items: center; gap: 8px;
   padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
   background: var(--bg); border-bottom: 1px solid var(--border);
 }
-.bar .icon { border: 0; background: transparent; padding: 8px; min-height: 40px; margin-left: -8px; }
+.icon { border: 0; background: transparent; padding: 8px; min-height: 40px; display: inline-flex; }
+.bar #back { margin-left: -8px; }
+.icon[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); }
 .bar .heading { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bar strong, .bar small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar small { color: var(--faint); font-size: 12px; }
@@ -67,7 +69,46 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .status[data-state="online"]::before { background: var(--ok); }
 .status[data-state="offline"]::before { background: var(--err); }
-main { flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; }
+/* The project's conversations on the left, the open conversation in the
+   middle, its files on the right; narrow screens show one pane at a time. */
+.shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); position: relative; }
+#side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.side-head { flex: none; display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+select {
+  font: inherit; color: inherit; width: 100%; min-height: 40px; padding: 8px 10px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--elev);
+}
+#sessions { flex: 1; overflow: auto; padding: 12px; align-content: start; }
+.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+main { flex: 1; min-height: 0; overflow: auto; padding: 16px max(16px, calc((100% - 760px) / 2)); }
+#panel { display: none; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--border); }
+.panel-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid var(--border); }
+.crumbs { flex: 1; min-width: 0; overflow: auto; white-space: nowrap; font-size: 13px; color: var(--faint); }
+.crumbs a { color: var(--muted); text-decoration: none; }
+.crumbs a:hover { color: var(--accent-strong); }
+.crumbs strong { color: var(--text); font-weight: 500; }
+#panel-body { flex: 1; overflow: auto; padding: 12px; }
+#panel-body .list { gap: 4px; }
+#panel-body .row { padding: 8px 10px; border-color: transparent; background: transparent; }
+#panel-body .row:hover { background: var(--elev); }
+.preview > img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; background: var(--elev); }
+.preview pre { max-height: none; border-radius: 8px; }
+.note { margin: 0 0 8px; color: var(--faint); font-size: 12px; }
+body[data-pane="home"] .shell { grid-template-columns: minmax(0, 1fr); }
+body[data-pane="home"] #side { display: none; }
+body[data-pane="panel"] .shell { grid-template-columns: 280px minmax(0, 1fr) minmax(320px, 40%); }
+body[data-pane="panel"] #panel { display: flex; }
+@media (max-width: 1099px) {
+  body[data-pane="panel"] .shell { grid-template-columns: minmax(0, 1fr) minmax(300px, 45%); }
+  body[data-pane="panel"] #side { display: none; }
+}
+@media (max-width: 759px) {
+  body[data-pane] .shell { grid-template-columns: minmax(0, 1fr); }
+  #side { border-right: 0; }
+  /* Files cover the conversation rather than replace it, so it keeps its place. */
+  #panel { border-left: 0; position: absolute; inset: 0; z-index: 1; background: var(--bg); }
+  body[data-pane="side"] .chat, body[data-pane="chat"] #side { display: none; }
+}
 .banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--text); }
 .empty { color: var(--faint); text-align: center; padding: 32px 0; }
 .connect { max-width: 420px; margin: 12vh auto 0; display: grid; gap: 12px; }
@@ -78,12 +119,13 @@ main { flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; }
   background: var(--elev); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .list { display: grid; gap: 8px; }
-.list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-.list-head h2 { margin: 0; font-size: 16px; }
 .row {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
+  color: inherit; text-decoration: none;
 }
+.row[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
+.row svg { color: var(--faint); }
 .row .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
 .row .sub { color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -97,6 +139,29 @@ main { flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; }
   border-radius: 12px 12px 4px 12px;
 }
 .msg.note { color: var(--faint); font-size: 13px; }
+/* Rendered Markdown: assistant replies and Markdown file previews. */
+.md { white-space: normal; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md li { white-space: pre-wrap; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .table-wrap { margin: 0 0 10px; }
+.md h3, .md h4, .md h5, .md h6 { margin: 16px 0 8px; line-height: 1.3; }
+.md h3 { font-size: 19px; } .md h4 { font-size: 17px; } .md h5, .md h6 { font-size: 15px; }
+.md ul, .md ol { padding-left: 22px; }
+.md li > ul, .md li > ol { margin: 4px 0 0; }
+.md code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sunken); padding: 1px 4px; border-radius: 4px; }
+.md pre { max-height: 480px; white-space: pre; overflow-wrap: normal; border-radius: 8px; }
+.md pre code { background: none; padding: 0; font-size: 12px; }
+.md blockquote { padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.md a { color: var(--accent-strong); }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+.md .table-wrap { overflow: auto; }
+.md table { border-collapse: collapse; font-size: 13px; }
+.md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { background: var(--sunken); }
+.img { display: block; margin: 4px 0; white-space: normal; }
+.img img { display: block; max-width: 100%; height: auto; border-radius: 8px; background: var(--elev); }
+.img .cap { display: block; color: var(--faint); font-size: 12px; margin-top: 4px; }
 details.tool { border: 1px solid var(--border); border-radius: 8px; background: var(--elev); }
 details.tool summary {
   cursor: pointer; padding: 6px 10px; font-size: 13px; color: var(--muted);
@@ -116,7 +181,7 @@ pre {
 .approval .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .activity { color: var(--faint); font-size: 13px; }
 .composer {
-  position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border);
+  flex: none; background: var(--bg); border-top: 1px solid var(--border);
   padding: 10px 16px; padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
 .composer .inner { max-width: 728px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
@@ -125,25 +190,43 @@ pre {
   border-radius: 10px; border: 1px solid var(--border); background: var(--elev);
 }
 .composer .hint { max-width: 728px; margin: 6px auto 0; color: var(--faint); font-size: 12px; }
-.older { justify-self: center; }
 [hidden] { display: none !important; }
 </style>
 </head>
-<body>
+<body data-pane="home">
 <header class="bar">
   <button type="button" class="icon" id="back" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
   <div class="heading"><strong id="title">Wisp</strong><small id="subtitle"></small></div>
+  <button type="button" class="icon" id="files" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
   <span class="status" id="status" data-state="idle"></span>
 </header>
-<main id="main"></main>
-<footer class="composer" id="composer" hidden>
-  <div class="inner">
-    <textarea id="draft" rows="1"></textarea>
-    <button type="button" class="primary" id="send"></button>
-    <button type="button" class="danger" id="stop" hidden></button>
-  </div>
-  <p class="hint" id="composer-hint" hidden></p>
-</footer>
+<div class="shell">
+  <aside id="side">
+    <div class="side-head">
+      <select id="project"></select>
+      <button type="button" class="primary" id="new"></button>
+    </div>
+    <nav class="list" id="sessions"></nav>
+  </aside>
+  <section class="chat">
+    <main id="main"></main>
+    <footer class="composer" id="composer" hidden>
+      <div class="inner">
+        <textarea id="draft" rows="1"></textarea>
+        <button type="button" class="primary" id="send"></button>
+        <button type="button" class="danger" id="stop" hidden></button>
+      </div>
+      <p class="hint" id="composer-hint" hidden></p>
+    </footer>
+  </section>
+  <aside id="panel">
+    <div class="panel-head">
+      <nav class="crumbs" id="crumbs"></nav>
+      <button type="button" class="icon" id="panel-close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
+</div>
 <script src="remote.js"></script>
 </body>
 </html>

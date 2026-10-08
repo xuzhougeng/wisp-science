@@ -24,7 +24,10 @@ use wisp_dto::native_conversations::{ApprovalRequest, ApprovalScope, CreateReque
 use wisp_dto::native_settings::{Request, Response, SCHEMA};
 use wisp_dto::RemoteAccessStatus;
 use wisp_store::secrets::Secret;
-use wisp_sync::{open_frame, seal_frame, HostFrame, RemoteCode, CLIENT_TO_HOST, HOST_TO_CLIENT};
+use wisp_sync::{
+    open_frame, seal_frame, HostFrame, RemoteCode, CLIENT_TO_HOST, HOST_TO_CLIENT,
+    REMOTE_HOST_MAX_FRAME_BYTES,
+};
 
 const ENABLED_KEY: &str = "remote_access_enabled";
 const URL_KEY: &str = "remote_relay_url";
@@ -33,6 +36,8 @@ const CODE_SECRET: &str = "remote_access_code";
 
 /// What a remote browser may run. Terminal input, kernel execution and file
 /// writes stay off the tunnel until identity, roles and audit exist (#1460).
+/// The file commands are read-only and local: a directory listing, a text
+/// preview and a bounded image thumbnail.
 const REMOTE_COMMANDS: &[&str] = &[
     "list_projects",
     "remote_sessions",
@@ -41,7 +46,13 @@ const REMOTE_COMMANDS: &[&str] = &[
     "native_conversation_send",
     "native_conversation_stop",
     "native_conversation_approve",
+    "native_conversation_seen",
+    "native_conversation_image",
+    "native_conversation_panel_file_directory",
+    "native_conversation_panel_file_read",
 ];
+/// Room for the relay envelope around a sealed reply.
+const MAX_REPLY_BYTES: usize = REMOTE_HOST_MAX_FRAME_BYTES - 1024;
 const MAX_CLIENTS: usize = 8;
 const HEARTBEAT: Duration = Duration::from_secs(25);
 const RELAY_SILENCE: Duration = Duration::from_secs(75);
@@ -323,13 +334,7 @@ async fn session(
                         let out = out_tx.clone();
                         tauri::async_runtime::spawn(async move {
                             let result = dispatch(&broker, &request).await;
-                            let response = Response {
-                                schema: SCHEMA.into(),
-                                id: request.id,
-                                result: result.as_ref().ok().cloned(),
-                                error: result.err(),
-                            };
-                            if let Ok(d) = seal(&key, &json!({"type": "response", "response": response})) {
+                            if let Ok(d) = seal_reply(&key, request.id, result) {
                                 let _ = out.send(HostFrame::Msg { c, d }).await;
                             }
                         });
@@ -363,6 +368,26 @@ async fn session(
 
 fn seal(key: &[u8; 32], value: &Value) -> Result<String, String> {
     seal_frame(key, HOST_TO_CLIENT, value.to_string().as_bytes()).map_err(|error| error.to_string())
+}
+
+/// The relay drops the whole tunnel on an oversized frame, so a reply that
+/// cannot fit becomes an error for that one request instead.
+fn seal_reply(key: &[u8; 32], id: String, result: Result<Value, String>) -> Result<String, String> {
+    let reply = |result: Result<Value, String>| {
+        let response = Response {
+            schema: SCHEMA.into(),
+            id: id.clone(),
+            result: result.as_ref().ok().cloned(),
+            error: result.err(),
+        };
+        seal(key, &json!({"type": "response", "response": response}))
+    };
+    match reply(result)? {
+        sealed if sealed.len() > MAX_REPLY_BYTES => {
+            reply(Err("This is too large to show remotely".into()))
+        }
+        sealed => Ok(sealed),
+    }
 }
 
 /// Requests are bound to the browser connection's hello nonce and strictly
@@ -404,7 +429,7 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
         )
         .await;
     }
-    crate::native_settings::dispatch(
+    let mut result = crate::native_settings::dispatch(
         broker,
         &Request {
             schema: SCHEMA.into(),
@@ -414,7 +439,19 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
             args: request.args.clone(),
         },
     )
-    .await
+    .await?;
+    if request.command == "native_conversation_panel_file_read" {
+        strip_file_bytes(&mut result);
+    }
+    Ok(result)
+}
+
+/// Text previews only: file bytes never leave the computer this way. Images
+/// go through the bounded thumbnail command instead.
+fn strip_file_bytes(preview: &mut Value) {
+    if let Some(content) = preview.get_mut("content").and_then(Value::as_object_mut) {
+        content.insert("base64".into(), Value::Null);
+    }
 }
 
 fn check(request: &RemoteRequest) -> Result<(), String> {
@@ -438,6 +475,13 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
             let args: CreateRequest = decode(&request.args)?;
             if args.acp_agent_id.is_some() {
                 return Err("ACP conversations can only be continued on the desktop".into());
+            }
+        }
+        "native_conversation_panel_file_directory" | "native_conversation_panel_file_read" => {
+            let args: wisp_dto::native_files::Request = decode(&request.args)?;
+            let local = args.context_id.as_deref().is_none_or(|id| id == "local");
+            if !local || args.render_pdf || args.render_office {
+                return Err("Only local project files can be previewed remotely, as text".into());
             }
         }
         _ => {}
@@ -469,11 +513,35 @@ mod tests {
             "native_conversation_panel_file_action",
             "native_conversation_enqueue",
             "native_conversation_attach",
+            "native_conversation_panel_file_upload",
+            "native_conversation_panel_file_download",
+            "native_conversation_panel_file_locations",
+            "native_conversation_panel_export",
+            "native_conversation_delete",
             "write_terminal",
             "channels_status",
         ] {
             assert!(check(&request(command, json!({}))).is_err(), "{command}");
         }
+        for command in [
+            "native_conversation_panel_file_directory",
+            "native_conversation_panel_file_read",
+        ] {
+            let file = |extra: Value| {
+                let mut args = json!({"session_id": "s", "path": "results"});
+                args.as_object_mut()
+                    .unwrap()
+                    .extend(extra.as_object().unwrap().clone());
+                check(&request(command, args))
+            };
+            assert!(file(json!({})).is_ok(), "{command}");
+            assert!(file(json!({"context_id": "local"})).is_ok(), "{command}");
+            assert!(file(json!({"context_id": "ssh:lab"})).is_err(), "{command}");
+            assert!(file(json!({"render_pdf": true})).is_err(), "{command}");
+            assert!(file(json!({"render_office": true})).is_err(), "{command}");
+        }
+        let image = json!({"session_id": "s", "resource_id": null, "path": "figures/a.png"});
+        assert!(check(&request("native_conversation_image", image)).is_ok());
         assert!(check(&request("list_projects", json!({}))).is_ok());
         assert!(check(&request("list_projects", json!([]))).is_err());
         let approve = |scope: &str| json!({"session_id": "s", "approval_id": "a", "approved": true, "scope": scope});
@@ -517,5 +585,44 @@ mod tests {
         let other = RemoteCode::generate().unwrap().key();
         let forged = seal_frame(&other, CLIENT_TO_HOST, b"{}").unwrap();
         assert!(open_request(&key, &forged, &mut peer).is_none());
+    }
+
+    #[test]
+    fn remote_file_previews_keep_text_and_drop_file_bytes() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-files/v1/browser.json"
+        ))
+        .unwrap();
+        let mut text = fixture["local_preview"].clone();
+        strip_file_bytes(&mut text);
+        assert_eq!(text, fixture["local_preview"]);
+
+        let mut binary = fixture["local_preview"].clone();
+        binary["content"]["text"] = Value::Null;
+        binary["content"]["base64"] = json!("AAEC");
+        strip_file_bytes(&mut binary);
+        let preview: wisp_dto::native_files::Preview = serde_json::from_value(binary).unwrap();
+        assert!(preview.content.base64.is_none() && preview.content.text.is_none());
+        assert_eq!(preview.requested_path, "results/QC.csv");
+    }
+
+    #[test]
+    fn an_oversized_reply_fails_one_request_instead_of_the_tunnel() {
+        let key = RemoteCode::generate().unwrap().key();
+        let open = |sealed: String| -> Value {
+            let plain = open_frame(&key, HOST_TO_CLIENT, &sealed).unwrap();
+            serde_json::from_slice::<Value>(&plain).unwrap()["response"].clone()
+        };
+        let small = open(seal_reply(&key, "1".into(), Ok(json!({"text": "ok"}))).unwrap());
+        assert_eq!(small["result"]["text"], "ok");
+        assert!(small["error"].is_null());
+
+        let huge = Value::String("x".repeat(REMOTE_HOST_MAX_FRAME_BYTES));
+        let sealed = seal_reply(&key, "2".into(), Ok(huge)).unwrap();
+        assert!(sealed.len() < MAX_REPLY_BYTES);
+        let reply = open(sealed);
+        assert_eq!(reply["id"], "2");
+        assert!(reply["result"].is_null());
+        assert_eq!(reply["error"], "This is too large to show remotely");
     }
 }
