@@ -694,11 +694,16 @@ fn live_agent_settings_refresh_max_iter_on_reused_agent() {
     );
     assert_eq!(agent.max_iter, 100);
 
-    super::apply_live_agent_settings(&mut agent, 0, true, true, 7);
+    super::apply_live_agent_settings(&mut agent, 0, true, 80, true, 7);
     assert_eq!(agent.max_iter, 0);
+    agent.ctx.append_user("u".repeat(280_000)); // ≈70K of the 128K window
+    assert!(!agent.ctx.needs_auto_compact());
 
-    super::apply_live_agent_settings(&mut agent, 50, false, false, 10);
+    super::apply_live_agent_settings(&mut agent, 50, true, 50, false, 10);
     assert_eq!(agent.max_iter, 50);
+    assert!(agent.ctx.needs_auto_compact());
+    assert_eq!(super::clamp_auto_compact_percent(0), 10);
+    assert_eq!(super::clamp_auto_compact_percent(500), 95);
 
     let _ = std::fs::remove_dir_all(root);
 }

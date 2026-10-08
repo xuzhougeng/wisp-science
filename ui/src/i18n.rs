@@ -2369,11 +2369,13 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.max_iter") => Some("Maximum agent iterations per turn"),
         (Locale::En, "settings.max_iter_hint") => Some("Limits model/tool rounds in one turn, followed by one tool-free summary. Default: 100; 0 means unlimited."),
         (Locale::En, "settings.auto_compact") => Some("Automatically compact long conversations"),
-        (Locale::En, "settings.auto_compact_hint") => Some("Enabled by default. Before each model call, Wisp archives and compacts the conversation when its estimated context reaches 80%. That path prunes tool output first and only writes a semantic checkpoint if the window is still full."),
+        (Locale::En, "settings.auto_compact_hint") => Some("Enabled by default. Before each model call, Wisp archives and compacts the conversation when its estimated context reaches the threshold below. That path prunes tool output first and only writes a semantic checkpoint if the window is still full."),
         (Locale::En, "settings.semantic_compact_on_model_switch") => {
             Some("Semantic compact when switching models")
         }
         (Locale::En, "settings.semantic_compact_on_model_switch_hint") => Some("Off by default. After you change this conversation's model, fold older turns into a checkpoint so the new model starts from a summary instead of the full history."),
+        (Locale::En, "settings.auto_compact_percent") => Some("Auto-compact threshold (%)"),
+        (Locale::En, "settings.auto_compact_percent_hint") => Some("Default: 80. Share of the model's context window that triggers the warning and automatic compaction. Allowed range 10–95; higher values leave less room for the reply."),
         (Locale::En, "settings.semantic_compact_idle_hours") => {
             Some("Prompt for semantic compact after idle hours")
         }
@@ -5440,9 +5442,11 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.max_iter") => Some("每轮最大 Agent 迭代次数"),
         (Locale::Zh, "settings.max_iter_hint") => Some("限制单轮对话中的模型/工具循环次数；达到上限后额外生成一次无工具收尾总结。默认 100，0 表示不限制。"),
         (Locale::Zh, "settings.auto_compact") => Some("自动压缩过长对话"),
-        (Locale::Zh, "settings.auto_compact_hint") => Some("默认开启。每次模型调用前，当预估上下文达到 80% 时，Wisp 会先归档完整对话，再自动压缩。该路径先收工具输出，只有窗口仍然不够时才写语义摘要。"),
+        (Locale::Zh, "settings.auto_compact_hint") => Some("默认开启。每次模型调用前，当预估上下文达到下方阈值时，Wisp 会先归档完整对话，再自动压缩。该路径先收工具输出，只有窗口仍然不够时才写语义摘要。"),
         (Locale::Zh, "settings.semantic_compact_on_model_switch") => Some("切换模型时自动语义压缩"),
         (Locale::Zh, "settings.semantic_compact_on_model_switch_hint") => Some("默认关闭。更换本对话模型后，把较早轮次折成摘要 checkpoint，让新模型从摘要而不是全量历史开始。"),
+        (Locale::Zh, "settings.auto_compact_percent") => Some("自动压缩阈值（%）"),
+        (Locale::Zh, "settings.auto_compact_percent_hint") => Some("默认 80。预估上下文占模型窗口的比例达到该值时，触发提醒和自动压缩。可设 10–95；数值越高，留给回复的空间越少。"),
         (Locale::Zh, "settings.semantic_compact_idle_hours") => Some("空闲多久后提示语义压缩"),
         (Locale::Zh, "settings.semantic_compact_idle_hours_hint") => Some("默认 24 小时。重新打开空闲这么久的对话时，询问是否写语义摘要。0 表示不提示。"),
         (Locale::Zh, "settings.auto_continue") => Some("截断后自动继续"),

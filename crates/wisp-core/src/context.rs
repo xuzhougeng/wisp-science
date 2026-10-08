@@ -85,7 +85,14 @@ pub fn repair_unpaired_tool_calls(messages: &mut Vec<Message>) -> usize {
 /// "the last N user turns" would protect the entire history of an autonomous
 /// session and leave nothing for the free pruning stage to remove.
 const PRUNE_PROTECT_ROUNDS: usize = 10;
-/// Automatic compaction triggers at 80% of the window. The target sits below
+/// Default share of the window at which the context warning and automatic
+/// compaction fire. Hosts may move it with `set_auto_compact_percent`.
+pub const DEFAULT_AUTO_COMPACT_PERCENT: u8 = 80;
+/// Bounds for a host-configured trigger. Below the floor the fixed prompt and
+/// tool schemas alone can sit over the trigger; above the ceiling too little of
+/// the window is left for the reply and for estimate error.
+pub const AUTO_COMPACT_PERCENT_RANGE: std::ops::RangeInclusive<u8> = 10..=95;
+/// Automatic compaction triggers at 80% of the window by default. The target sits below
 /// the trigger by an adaptive headroom derived from measured per-iteration
 /// growth, so a slow conversation keeps most of its context while a fast,
 /// tool-heavy loop still lands well clear of the next trigger. The headroom
@@ -343,7 +350,8 @@ fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
 pub struct ContextManager {
     pub messages: Vec<Message>,
     pub max_context: usize,
-    /// 80% of `max_context`; crossing it fires a one-time `context_warning`.
+    /// 80% of `max_context` unless the host moved it; crossing it fires a
+    /// one-time `context_warning`.
     warn_threshold: usize,
     /// Set once the warning fired; reset when back under the threshold.
     warned: bool,
@@ -397,7 +405,7 @@ impl ContextManager {
         Self {
             messages: vec![],
             max_context,
-            warn_threshold: (max_context as f64 * 0.8) as usize,
+            warn_threshold: max_context.saturating_mul(DEFAULT_AUTO_COMPACT_PERCENT as usize) / 100,
             warned: false,
             auto_compact: true,
             auto_continue: false,
@@ -438,6 +446,16 @@ impl ContextManager {
         self.auto_compact
     }
 
+    /// Move the shared warning/auto-compaction trigger to `percent` of the
+    /// window, clamped to [`AUTO_COMPACT_PERCENT_RANGE`].
+    pub fn set_auto_compact_percent(&mut self, percent: u8) {
+        let percent = percent.clamp(
+            *AUTO_COMPACT_PERCENT_RANGE.start(),
+            *AUTO_COMPACT_PERCENT_RANGE.end(),
+        );
+        self.warn_threshold = self.max_context.saturating_mul(percent as usize) / 100;
+    }
+
     pub fn set_auto_continue(&mut self, enabled: bool, limit: usize) {
         self.auto_continue = enabled;
         self.auto_continue_limit = limit;
@@ -447,8 +465,8 @@ impl ContextManager {
         self.auto_continue.then_some(self.auto_continue_limit)
     }
 
-    /// The threshold is intentionally the same 80% boundary used by the
-    /// warning. Checking this immediately before every model call also covers
+    /// The threshold is intentionally the same boundary (80% by default) used
+    /// by the warning. Checking this immediately before every model call also covers
     /// tool-heavy turns that grow substantially after the user's first send.
     pub fn needs_auto_compact(&self) -> bool {
         self.needs_auto_compact_with_reserve(0)
@@ -938,7 +956,7 @@ impl ContextManager {
         tools.iter().map(Self::estimated_tool_schema_tokens).sum()
     }
 
-    /// Post-compaction target: the 80% trigger minus an adaptive headroom.
+    /// Post-compaction target: the trigger minus an adaptive headroom.
     /// The headroom is twice the measured per-boundary growth EMA, floored at
     /// [`COMPACTION_MIN_HEADROOM_TOKENS`] so the first compaction buys real
     /// room, capped at [`COMPACTION_MAX_HEADROOM_PERCENT`] of the window (the
@@ -2550,6 +2568,22 @@ mod tests {
         ctx.append_assistant("a".repeat(800_000), vec![], None);
         ctx.note_request_boundary(0);
         assert_eq!(ctx.compaction_target(), 600_000);
+    }
+
+    #[test]
+    fn auto_compact_percent_moves_the_trigger_and_is_clamped() {
+        let mut ctx = ContextManager::new(100_000);
+        ctx.append_user("u".repeat(240_000)); // ≈60K tokens, under the default trigger
+        assert!(!ctx.needs_auto_compact());
+        ctx.set_auto_compact_percent(50);
+        assert!(ctx.needs_auto_compact());
+        assert!(ctx.compaction_target() < 50_000);
+        ctx.set_auto_compact_percent(90);
+        assert!(!ctx.needs_auto_compact());
+        ctx.set_auto_compact_percent(0);
+        assert_eq!(ctx.warn_threshold, 10_000);
+        ctx.set_auto_compact_percent(100);
+        assert_eq!(ctx.warn_threshold, 95_000);
     }
 
     #[test]

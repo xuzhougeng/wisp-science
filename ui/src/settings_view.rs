@@ -2966,6 +2966,17 @@ pub(super) fn SettingsView(
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                         </div>
+                        <label class="session-number-field"><span>{move || t(locale.get(), "settings.auto_compact_percent")}</span>
+                            <input data-testid="auto-compact-percent" type="number" min="10" max="95" step="1"
+                                prop:disabled=move || !settings.get().auto_compact
+                                on:input=move |ev| settings.update(|current| {
+                                    if let Ok(value) = event_target_input(&ev).value().parse() {
+                                        current.auto_compact_percent = value;
+                                    }
+                                })
+                                prop:value=move || settings.get().auto_compact_percent.to_string() />
+                            <span class="settings-field-hint">{move || t(locale.get(), "settings.auto_compact_percent_hint")}</span>
+                        </label>
                         <div class="appearance-config-row">
                             <div>
                                 <strong>{move || t(locale.get(), "settings.semantic_compact_on_model_switch")}</strong>

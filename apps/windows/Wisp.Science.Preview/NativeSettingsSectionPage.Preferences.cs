@@ -132,7 +132,7 @@ internal sealed partial class NativeSettingsSectionPage
         {
             Integer(d, "max_iter", "最大迭代次数（0 表示不限）");
             Boolean(d, "auto_continue", "达到迭代上限后自动继续"); Integer(d, "auto_continue_limit", "自动继续轮次");
-            Boolean(d, "auto_compact", "自动压缩上下文"); Boolean(d, "follow_up_questions", "建议后续问题");
+            Boolean(d, "auto_compact", "自动压缩上下文"); Integer(d, "auto_compact_percent", "自动压缩阈值（%）", 10, 95); Boolean(d, "follow_up_questions", "建议后续问题");
         });
         Immediate(Card("新会话默认设置"), "自动审核", "get_auto_review_enabled", "set_auto_review_enabled");
     }
