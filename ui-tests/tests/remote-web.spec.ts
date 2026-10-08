@@ -40,6 +40,14 @@ const REPLY = [
   '<img src=x onerror="document.title=\'pwned\'">',
 ].join("\n");
 
+// Wider than a phone: it has to scroll inside its own wrapper.
+const WIDE_TABLE = [
+  `| ${Array.from({ length: 12 }, (_, i) => `sample_${i}_abundance`).join(" | ")} |`,
+  `| ${Array.from({ length: 12 }, () => "---").join(" | ")} |`,
+  `| ${Array.from({ length: 12 }, (_, i) => `${i}.123456`).join(" | ")} |`,
+].join("\n");
+const LONG_TITLE = "Mass spec of the aging cohort plasma proteome, second batch, reanalysed with the corrected sample sheet";
+
 const snapshots: Record<string, any> = {
   "s-1": {
     items: [
@@ -56,14 +64,14 @@ const snapshots: Record<string, any> = {
     approvals: [{ approval_id: "ap-1", frame_id: "s-1", message: "Run a shell command", tool: "shell", preview: "rm -rf build" }],
   },
   "s-2": { items: [{ role: "assistant", text: "Second conversation.", tool_name: null, input: null, ok: null, status: null }], approvals: [] },
-  "s-9": { items: [{ role: "assistant", text: "Other project.", tool_name: null, input: null, ok: null, status: null }], approvals: [] },
+  "s-9": { items: [{ role: "assistant", text: `Other project.\n\n${WIDE_TABLE}`, tool_name: null, input: null, ok: null, status: null }], approvals: [] },
 };
 const sessions: Record<string, any[]> = {
   "p-1": [
     { id: "s-1", project_id: "p-1", project_name: "RNA-seq", title: "QC run", ts: 1750000000, activity_at: 1750000300, status: "needs_you" },
     { id: "s-2", project_id: "p-1", project_name: "RNA-seq", title: "Figure polish", ts: 1750000000, activity_at: 1750000200, status: "complete" },
   ],
-  "p-2": [{ id: "s-9", project_id: "p-2", project_name: "Proteomics", title: "Mass spec", ts: 1750000000, activity_at: 1750000100, status: "running" }],
+  "p-2": [{ id: "s-9", project_id: "p-2", project_name: "Proteomics", title: LONG_TITLE, ts: 1750000000, activity_at: 1750000100, status: "running" }],
 };
 const directories: Record<string, any[]> = {
   ".": [
@@ -374,6 +382,25 @@ test("a phone shows one pane at a time and Back steps out of it", async ({ page 
   await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
   await expect(page.locator("#main")).toContainText("Second conversation.");
   expect(problems).toEqual([]);
+});
+
+test("a long title and a wide table stay inside their pane on a phone", async ({ page }) => {
+  await remote(page);
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto(`/remote#${CODE}/p/p-2`);
+  const row = page.locator("#sessions a.row");
+  await expect(row).toContainText("Mass spec");
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth
+    && [...document.querySelectorAll("#sessions, #main")].every((pane) => pane.scrollWidth <= pane.clientWidth));
+  // The title is cut with an ellipsis; the row and its badge stay on screen.
+  expect(await fits()).toBe(true);
+  await expect(row.locator(".badge")).toBeInViewport({ ratio: 1 });
+
+  await row.click();
+  await expect(page.locator("#main th").first()).toBeVisible();
+  expect(await fits()).toBe(true);
+  // The table is the part that scrolls sideways, not the conversation.
+  expect(await page.locator("#main .table-wrap").evaluate((wrap) => wrap.scrollWidth > wrap.clientWidth)).toBe(true);
 });
 
 test("a missing or malformed code asks for one instead of connecting", async ({ page }) => {
