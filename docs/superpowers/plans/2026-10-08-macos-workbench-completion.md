@@ -78,8 +78,27 @@ real credentials, network, cluster, or SSH host is required in automated tests.
   requires a fresh read and acknowledgement. Five focused tests and the shared
   native/backend template fixture passed, including immediate nested Escape
   and normal/narrow English/Chinese light/dark rendering.
-- Final validation: the full Swift run passed 578 UI plus 19 core tests; a
-  later 13-test viewer/canvas rerun passed after layout/format refinements.
-  UI wasm check, design/contract sync, formatting and five fake-compiler build
-  routing tests passed. Rust workspace and Playwright suites are running;
-  packaged-app acceptance remains pending.
+- Final acceptance completed: all four outcomes are connected and verified.
+  The final Swift run passed 581 UI plus 19 core tests without skips, including
+  eight real WebKit renderer kinds, normal/narrow locale/theme renders and
+  zoom-independent node motion. Rust workspace passed 2679 tests including
+  doc tests. UI wasm, design/contract sync, formatting and six fake-compiler
+  build routing tests passed. Playwright passed 1021 with two skips and three
+  pre-behavior startup/wait timeouts; all three passed isolated serial reruns.
+- Paired current 1.18.0 packages passed strict code-signature verification and
+  real UI smoke on the same isolated fixture. Native assistant and timer writes
+  appeared in WebView as paused schedules. Publication frozen v1/draft v2 and
+  the renamed three-node/two-stage workflow read correctly in both clients.
+  Native PDF page search/quote, HTML/source/quote, XLSX formula/cell quote and
+  packaged RDKit rendering passed. Immediate Escape retained each parent layer.
+- Packaged smoke found and repaired node drag double-scaling and missing Office
+  layout activation. After rebuilding, a 120×80-pixel drag at 69% moved the node
+  exactly 120×80 pixels, pan worked, and the spreadsheet grid was visible.
+  The malformed historical zero-seq toolbar fixture was retained for its
+  existing evidence; valid empty-session data was used for timer acceptance.
+- Differences and limits are recorded in
+  [the paired comparison](../../macos-workbench-comparison-2026-10-08.md).
+  No real model/SSH/cluster/reproduction job was run; those paths use fake
+  transports/runners in automated tests. The message-only evidence fixture has
+  no source run to reproduce. The four-module completion does not claim full
+  product parity; Hooks and platform-specific layout differences remain.
