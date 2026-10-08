@@ -60,6 +60,7 @@ cargo run -p wisp-sync --bin wisp-relay --release
 ```
 
 如果其他设备需要访问，请在中继服务器前配置 HTTPS 反向代理。服务器把文件保存在 `WISP_RELAY_ROOT`，通过原子替换写入，并在提交前比较客户端提供的基础修订和当前项目头。请像备份其他应用数据一样备份这个目录。
+同一个中继也提供[网页远程访问](remote-access.md)，并且可以[用 Docker 运行](remote-access.md#run-the-relay-in-docker)。
 
 ### 百度网盘、坚果云或其他共享目录
 

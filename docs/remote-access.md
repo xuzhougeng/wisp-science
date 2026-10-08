@@ -47,6 +47,82 @@ The relay pings both sides every 25 seconds, under nginx's default idle
 timeout. A path prefix works (`https://example.com/wisp/` → page at
 `/wisp/remote`) as long as the proxy strips it.
 
+### Run the relay in Docker
+
+Each release publishes a small image for amd64 and arm64 servers: one static
+binary of about 2 MB, no shell, running as an unprivileged user.
+
+```bash
+docker pull ghcr.io/xuzhougeng/wisp-relay:latest
+```
+
+`latest` is the newest release, `:<version>` (for example `:1.19.0`) pins one,
+and `:main` follows the main branch between releases.
+
+To build it yourself instead, from a checkout:
+
+```bash
+docker build -f crates/wisp-sync/Dockerfile -t ghcr.io/xuzhougeng/wisp-relay .
+```
+
+A server that cannot reach the registry can receive the image from a machine
+with the same CPU architecture:
+
+```bash
+docker save ghcr.io/xuzhougeng/wisp-relay | gzip | ssh user@server 'gunzip | docker load'
+```
+
+The shortest complete setup is the relay plus Caddy, which obtains and renews
+the HTTPS certificate by itself. Point the domain at the server, open ports 80
+and 443, and save this as `compose.yaml` with your own domain:
+
+```yaml
+services:
+  relay:
+    image: ghcr.io/xuzhougeng/wisp-relay:latest
+    restart: unless-stopped
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+    volumes:
+      - relay-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from relay.example.com --to relay:8787
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+volumes:
+  relay-data:
+  caddy-data:
+```
+
+```bash
+echo "WISP_RELAY_TOKEN=$(openssl rand -hex 32)" > .env   # the desktop needs this token
+docker compose up -d
+```
+
+The relay URL to enter on the desktop is then `https://relay.example.com`.
+
+If the server already runs a reverse proxy, start only the relay and publish
+it on loopback for that proxy:
+
+```bash
+docker run -d --name wisp-relay --restart unless-stopped \
+  --env-file .env -p 127.0.0.1:8787:8787 -v wisp-relay-data:/data \
+  ghcr.io/xuzhougeng/wisp-relay:latest
+```
+
+- Project sync data lives in the `/data` volume; back it up like the plain
+  directory. Remote web access keeps nothing on disk.
+- The container runs as uid 10001. A named volume is writable as it is; a
+  bind-mounted host directory must be owned by that uid.
+- `GET /healthz` answers `ok` for monitoring.
+- To upgrade, run `docker compose pull` and `docker compose up -d`. Desktops
+  and browsers reconnect by themselves.
+
 ## Connect a computer
 
 1. Desktop: **Settings → Remote Access → Remote web access**.

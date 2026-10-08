@@ -1,0 +1,9 @@
+# Only what cargo needs to load the workspace and build the relay. Leaving out
+# rust-toolchain.toml keeps the build on the image's own toolchain.
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!src-tauri
+!vendor/tao
+src-tauri/gen
