@@ -49,7 +49,9 @@ python3 scripts/sync_native_design.py --check
 PDF uses PDFKit with pagination, zoom, text search and selected-text quotes carrying
 actual page positions. DOCX, XLSX and PPTX use the same offline renderer modules as
 the WebView: Word pages, spreadsheet sheets/cells/formulas and slide layouts remain
-available. HTML has source and reading modes, an opaque sandbox for inline scripts,
+available. The Office layout keeps spreadsheet grid lines, header backgrounds,
+selection outlines and a bounded scrolling surface in both light and dark
+appearances. HTML has source and reading modes, an opaque sandbox for inline scripts,
 and project-approved embedded images. Its preview cannot navigate to external
 sites or read unrelated local files. Quotes enter the existing side-chat draft;
 the owning native model supplies the source path and rejects stale preview replies.

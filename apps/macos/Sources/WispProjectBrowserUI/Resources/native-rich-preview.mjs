@@ -52,6 +52,7 @@ window.nativePreviewReceive = async ({ data }) => {
     const current = ++generation;
     cleanupPreview(content); clearDocumentSelection(content); htmlSelection = null; pending = false;
     currentKind = data.kind; canQuote = data.canQuote === true; rendering = true;
+    document.body.classList.toggle('office', Object.hasOwn(office, data.kind));
     content.replaceChildren(); status.textContent = data.loading;
     document.body.style.background = data.background; document.body.style.color = data.foreground;
     document.body.style.setProperty('--preview-bg', data.background); document.body.style.setProperty('--preview-fg', data.foreground);

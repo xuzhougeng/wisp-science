@@ -17,7 +17,7 @@ final class NativeRichPreviewIntegrationTests: XCTestCase {
         defer { window.contentView = nil; window.orderOut(nil) }
         let cases: [(NativeDocumentKind, String, String?, String)] = [
             (.docx, "office-preview.docx", nil, "!!document.querySelector('.rp-docx table')"),
-            (.xlsx, "office-preview.xlsx", nil, "!!document.querySelector('.rp-xlsx-cell')"),
+            (.xlsx, "office-preview.xlsx", nil, "!!document.querySelector('.rp-xlsx-cell') && getComputedStyle(document.querySelector('.rp-xlsx-content')).backgroundImage !== 'none' && getComputedStyle(document.querySelector('.rp-xlsx-col-head')).borderBottomStyle === 'solid' && document.querySelector('.rp-xlsx-grid').clientHeight > 400"),
             (.pptx, "office-preview.pptx", nil, "!!document.querySelector('.rp-pptx svg')"),
             (.fasta, "sequence.fa", ">sample\nACGT\n", "!!document.querySelector('.rp-fasta-hdr')"),
             (.molecule, "ethanol.smi", "CCO", "!!document.querySelector('svg.rp-molecule path')"),
