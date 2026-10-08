@@ -6729,6 +6729,10 @@ export function parallelMock(): void {
   }
   const folders: { id: string; name: string }[] = [];
   const queues: Record<string, Promise<void>> = {};
+  // Queue (#433): parked follow-ups by id, and the ones a cut-in already folded
+  // into the running turn so the FIFO drain skips them like the backend driver.
+  const parked: Record<number, { fid: string; msg: string }> = {};
+  const cutIns = new Set<number>();
 
   const project = { id: "default", name: "wisp-science", root: "/mock/root", skill_count: 12, mcp_server_count: 8, memory_file_count: 2, has_api_key: true };
 
@@ -6981,7 +6985,10 @@ export function parallelMock(): void {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             const msg = (args && args.message) || "";
             const queueId = Number(args && (args.id ?? args.queue_id));
+            parked[queueId] = { fid, msg };
             const run = async () => {
+              if (cutIns.delete(queueId)) return;
+              delete parked[queueId];
               emit("queued-turn-state", {
                 sessionId: fid,
                 id: queueId,
@@ -6997,7 +7004,23 @@ export function parallelMock(): void {
             queues[fid] = current.catch(() => undefined);
             return null;
           }
-          case "queued_turn_action": return null;
+          case "queued_turn_action": {
+            // Cut-in: the backend parks the text as guidance, then the running
+            // loop folds it in and announces `started` before the User event
+            // that carries the queue id (TauriOutput::on_guidance_message).
+            const queueId = Number(arg("id"));
+            const item = parked[queueId];
+            if (arg("action") !== "cutin" || !item) return null;
+            cutIns.add(queueId);
+            emit("queued-turn-state", { sessionId: item.fid, id: queueId, state: "cutin_pending" });
+            setTimeout(() => {
+              delete parked[queueId];
+              emit("queued-turn-state", { sessionId: item.fid, id: queueId, state: "started" });
+              emit("agent", { kind: "User", frame_id: item.fid, text: item.msg, queue_id: queueId });
+              emit("agent", { kind: "Text", frame_id: item.fid, delta: `echo:${item.msg}` });
+            }, 600);
+            return null;
+          }
           case "undo_compaction": {
             const frameId = String(arg("sessionId") ?? arg("session_id") ?? "");
             emit("agent", { kind: "CompactionUndone", frame_id: frameId, epoch: 1 });

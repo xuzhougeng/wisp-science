@@ -119,6 +119,28 @@ test("cut-in lifecycle shows its wait and reconciles only the exact queue ID", a
   await expect(row).toHaveCount(0);
 });
 
+test("a cut-in folded into the running turn clears its waiting row", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+  await page.locator("#composer-input").fill("alpha");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+  await page.locator("#composer-input").fill("Use the revised question");
+  await page.getByRole("button", { name: "Queue…", exact: true }).click();
+  const row = page.locator(".msg.user.queued", { hasText: "Use the revised question" });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Guide now", exact: true }).click();
+  await expect(row).toContainText("Sent · waiting for the current step");
+  // The loop folds the message into the running turn: the parked row and its
+  // waiting hint are gone and the text is an ordinary user turn, while the
+  // original turn is still running.
+  await expect(page.locator(".queue-state")).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  await expect(page.locator(".msg.user:not(.queued)", { hasText: "Use the revised question" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+});
+
 test("the row menu jumps the queue before it stops the running turn", async ({ page }) => {
   const row = await queueWithDelayedAcceptance(page);
   await page.evaluate(() => (window as any).__releaseEnqueue());

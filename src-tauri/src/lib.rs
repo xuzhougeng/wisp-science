@@ -3681,6 +3681,19 @@ impl Output for TauriOutput {
                 .position(|(guidance_id, _)| *guidance_id == id)
                 .map(|index| cutins.remove(index).1.id)
         };
+        if let Some(queue_id) = queue_id {
+            // The cut-in now runs inside this turn. Announce it on the queue
+            // lifecycle channel like a driver-run follow-up, so every surface
+            // drops its "waiting for the current step" row from this
+            // authoritative transition rather than only from the User event
+            // that follows through the coalescer.
+            crate::agent_turn::emit_queued_turn_state(
+                &self.app,
+                &self.frame_id,
+                queue_id,
+                "started",
+            );
+        }
         *self.queue_id.lock().unwrap() = queue_id;
         self.on_message(msg);
     }
