@@ -67,8 +67,11 @@ install -m 755 "$RUST_BIN/wisp-service" "$APP/Contents/MacOS/wisp-service"
 cp "$ROOT/src-tauri/icons/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$SWIFT_BIN/WispSciencePreview_WispProjectBrowserUI.bundle" "$APP/Contents/Resources/"
 # The document sandbox serves the same offline vendor modules as WebView/WinUI.
-rm -rf "$APP/Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle/vendor-runtime"
-cp -R "$ROOT/ui/vendor-src" "$APP/Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle/vendor-runtime"
+PREVIEW_BUNDLE="$APP/Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle"
+PREVIEW_RESOURCES="$PREVIEW_BUNDLE"
+if [[ -d "$PREVIEW_BUNDLE/Contents/Resources" ]]; then PREVIEW_RESOURCES="$PREVIEW_BUNDLE/Contents/Resources"; fi
+rm -rf "$PREVIEW_BUNDLE/vendor-runtime" "$PREVIEW_RESOURCES/vendor-runtime"
+cp -R "$ROOT/ui/vendor-src" "$PREVIEW_RESOURCES/vendor-runtime"
 cp -R "$SWIFT_BIN/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 cp -R "$SWIFT_BIN/SwiftMath_SwiftMath.bundle" "$APP/Contents/Resources/"
 # SwiftTerm 1.19 probes Contents/Resources itself. A resource symlink at the

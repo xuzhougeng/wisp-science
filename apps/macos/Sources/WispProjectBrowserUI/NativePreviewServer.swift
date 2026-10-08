@@ -83,11 +83,12 @@ final class NativePreviewServer {
 struct NativePreviewAssets {
     let presentation: URL
     let vendor: URL
+    static func developmentAssetsAllowed(in mainBundle: URL) -> Bool { mainBundle.pathExtension.lowercased() != "app" }
     static var bundled: Self {
         let presentation = Bundle.module.resourceURL!
         var vendor = presentation.appendingPathComponent("vendor-runtime", isDirectory: true)
         #if DEBUG
-        if !FileManager.default.fileExists(atPath: vendor.path) {
+        if !FileManager.default.fileExists(atPath: vendor.path), developmentAssetsAllowed(in: Bundle.main.bundleURL) {
             var root = URL(fileURLWithPath: #filePath)
             for _ in 0..<5 { root.deleteLastPathComponent() }
             vendor = root.appendingPathComponent("ui/vendor-src", isDirectory: true)

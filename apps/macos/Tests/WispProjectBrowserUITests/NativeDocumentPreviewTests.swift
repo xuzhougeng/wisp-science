@@ -48,6 +48,9 @@ final class NativeDocumentPreviewTests: XCTestCase {
         XCTAssertNil(NativeDocumentSelection.parse(parsed, expected: .pdf))
     }
     func testAssetRoutesRejectForeignTokensTraversalAndSymlinks() throws {
+        XCTAssertFalse(NativePreviewAssets.developmentAssetsAllowed(in: URL(fileURLWithPath: "/Apps/Wisp.app")))
+        XCTAssertFalse(NativePreviewAssets.developmentAssetsAllowed(in: URL(fileURLWithPath: "/Apps/Wisp.APP")))
+        XCTAssertTrue(NativePreviewAssets.developmentAssetsAllowed(in: URL(fileURLWithPath: "/tests/Preview.xctest")))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-preview-assets-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
