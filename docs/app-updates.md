@@ -97,26 +97,32 @@ The first updater-capable release must still be installed manually by users of
 an older build whose release feed has no updater manifest. Updates between later
 updater-capable releases use the in-app flow.
 
-## SwiftUI Preview alongside the macOS release
+<a id="swiftui-preview-alongside-the-macos-release"></a>
+
+## SwiftUI alongside the macOS release
 
 Starting with the next tag that includes this packaging change, **macOS Release**
-also attaches separate SwiftUI Preview installers and SHA-256 files:
+also attaches separate SwiftUI installers and SHA-256 files without the Preview label:
 
-- `Wisp-Science-SwiftUI-Preview_<version>_aarch64.dmg` for Apple Silicon.
-- `Wisp-Science-SwiftUI-Preview_<version>_x86_64.dmg` for Intel.
+- `Wisp-Science-SwiftUI_<version>_aarch64.dmg` for Apple Silicon.
+- `Wisp-Science-SwiftUI_<version>_x86_64.dmg` for Intel.
 - A matching `.dmg.sha256` file for each installer.
 
-The preview requires macOS 13 or later. Drag **Wisp Science Preview.app** to
+The SwiftUI app requires macOS 13 or later. Drag **Wisp Science SwiftUI.app** to
 Applications; its name allows it to coexist with **wisp-science.app**. The
-preview uses the existing desktop project database, settings and keyring by
+SwiftUI app uses the existing desktop project database, settings and keyring by
 default, so installing a separate app does **not** isolate user data. Use the
 documented QA build and isolated database for destructive testing.
 
-Preview updates are manual downloads from GitHub Releases. These installers do
+When upgrading from **Wisp Science Preview.app**, quit the old app, install
+**Wisp Science SwiftUI.app**, and remove the old app bundle to avoid duplicate
+launchers. The existing `science.wisp-science.native-preview` bundle identifier
+is retained to preserve preferences; no data migration is required.
+
+SwiftUI updates are manual downloads from GitHub Releases. These installers do
 not enter the stable Tauri `latest.json` feed, and the existing WebView installers
-and updater remain available. Preview publishing only attaches assets; it never
-rewrites the release title or notes. Mention SwiftUI Preview and its known
-limitations in the bilingual notes when cutting the next release.
+and updater remain available. SwiftUI publishing only attaches assets; it never
+rewrites the release title or notes.
 
 The release job builds optimized Swift and Rust executables for the same target,
 then validates the shell/helper versions, clean source stamp and all three
@@ -124,8 +130,8 @@ binary architectures. It reuses the existing Developer ID certificate and
 `APPLE_ID`, `APPLE_APP_PASSWORD`, and `APPLE_TEAM_ID` secrets. The service, embedded
 host and shell are signed inside out with hardened runtime; the app and DMG are
 notarized and stapled before upload. Any signing, notarization or validation
-failure stops preview upload. Notarization results are retained as Actions
-artifacts. The final verification job requires both preview installers and
+failure stops SwiftUI upload. Notarization results are retained as Actions
+artifacts. The final verification job requires both SwiftUI installers and
 checksums alongside the stable updater manifest.
 
 For a local optimized build (ad-hoc signed, not a distributable release):
@@ -135,19 +141,24 @@ bash scripts/build_native_macos.sh --release --target aarch64-apple-darwin
 # Or --target x86_64-apple-darwin, with that Rust target installed.
 ```
 
-The app is written to `target/native-macos-release/<target>/Wisp Science Preview.app`.
+The app is written to `target/native-macos-release/<target>/Wisp Science SwiftUI.app`.
 Omitting `--target` uses the host architecture and the parent output directory.
-Normal debug and `--qa` outputs keep their existing paths. The native-preview CI
+The debug app uses the same new name under `target/native-macos`; `--qa` keeps
+its existing app name and isolated identifier. The native-preview CI
 workflow uploads a separate, ad-hoc signed and **unnotarized** ZIP as an Actions
 artifact; that ZIP is not the GitHub Release installer. Rebuilding an older tag
-from the release workflow on `main` skips preview packaging when that tag lacks
-the packaging script.
+from the release workflow on `main` uses the tagged source's app and installer
+names (including Preview for older tags), and skips SwiftUI packaging when that
+tag lacks the packaging script.
 
-For the first published preview, verify each downloaded checksum, run
+For a published SwiftUI build, verify each downloaded checksum, run
 `codesign --verify --deep --strict` and `spctl --assess --type execute` on the
 installed app, and launch it from Finder on Apple Silicon and Intel. Confirm the
 embedded helper starts, projects and settings load, and the WebView app remains
-launchable. Actual Developer ID notarization and downloaded-app Gatekeeper
+launchable. Finder and the main window should show **Wisp Science SwiftUI**;
+the home footer should say **SwiftUI 原生版**. When upgrading from Preview,
+confirm the saved database selection and appearance preferences are retained.
+Actual Developer ID notarization and downloaded-app Gatekeeper
 behavior require this release CI/manual validation; local ad-hoc builds and
 mocked packaging tests do not establish them.
 

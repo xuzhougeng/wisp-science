@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo 'The SwiftUI preview must be built on macOS.' >&2
+  echo 'The SwiftUI app must be built on macOS.' >&2
   exit 1
 fi
 
@@ -25,7 +25,7 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 BUILD="$ROOT/target/native-macos"
-APP_NAME='Wisp Science Preview'
+APP_NAME='Wisp Science SwiftUI'
 if [[ "$QA_MODE" == 1 ]]; then
   BUILD="$ROOT/target/native-macos-qa"
   APP_NAME='Wisp Science QA'
@@ -62,12 +62,12 @@ swift build "${SWIFT_ARGS[@]}" --disable-sandbox
 SWIFT_BIN="$(swift build "${SWIFT_ARGS[@]}" --show-bin-path)"
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-install -m 755 "$SWIFT_BIN/WispSciencePreview" "$APP/Contents/MacOS/WispSciencePreview"
+install -m 755 "$SWIFT_BIN/WispScience" "$APP/Contents/MacOS/WispScience"
 install -m 755 "$RUST_BIN/wisp-service" "$APP/Contents/MacOS/wisp-service"
 cp "$ROOT/src-tauri/icons/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp -R "$SWIFT_BIN/WispSciencePreview_WispProjectBrowserUI.bundle" "$APP/Contents/Resources/"
+cp -R "$SWIFT_BIN/WispScience_WispProjectBrowserUI.bundle" "$APP/Contents/Resources/"
 # The document sandbox serves the same offline vendor modules as WebView/WinUI.
-PREVIEW_BUNDLE="$APP/Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle"
+PREVIEW_BUNDLE="$APP/Contents/Resources/WispScience_WispProjectBrowserUI.bundle"
 PREVIEW_RESOURCES="$PREVIEW_BUNDLE"
 if [[ -d "$PREVIEW_BUNDLE/Contents/Resources" ]]; then PREVIEW_RESOURCES="$PREVIEW_BUNDLE/Contents/Resources"; fi
 rm -rf "$PREVIEW_BUNDLE/vendor-runtime" "$PREVIEW_RESOURCES/vendor-runtime"

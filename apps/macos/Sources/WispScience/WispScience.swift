@@ -3,12 +3,12 @@ import SwiftUI
 import WispProjectBrowserUI
 
 @main
-struct WispSciencePreview: App {
+struct WispScience: App {
     @NSApplicationDelegateAdaptor(NativeApplicationDelegate.self) private var delegate
     @StateObject private var model = ProjectBrowserModel()
 
     var body: some Scene {
-        Window("Wisp Science — 原生预览", id: "workspace") {
+        Window("Wisp Science SwiftUI", id: "workspace") {
             WorkspaceRoot(model: model, delegate: delegate)
         }
         .defaultSize(width: 1120, height: 820)

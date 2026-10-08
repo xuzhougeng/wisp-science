@@ -410,7 +410,7 @@ switching conversations while a save/read is pending. Verify layout at 150%
 display scaling and in a short window. Mocked transport tests do not establish
 real-provider or SSH execution acceptance.
 
-The SwiftUI preview supports creating/opening HTTP-model and ACP conversations,
+The SwiftUI app supports creating/opening HTTP-model and ACP conversations,
 selecting an HTTP conversation's model, sending messages, seeing incremental text and tool
 results, approving/denying a tool once, stopping execution, and reopening saved
 history. Settings and conversations share the opt-in desktop host; the existing

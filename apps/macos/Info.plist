@@ -2,10 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key><string>WispSciencePreview</string>
+    <key>CFBundleExecutable</key><string>WispScience</string>
+    <!-- Keep the shipped identifier so existing preferences survive the rename. -->
     <key>CFBundleIdentifier</key><string>science.wisp-science.native-preview</string>
-    <key>CFBundleName</key><string>Wisp Science Preview</string>
-    <key>CFBundleDisplayName</key><string>Wisp Science Preview</string>
+    <key>CFBundleName</key><string>Wisp Science SwiftUI</string>
+    <key>CFBundleDisplayName</key><string>Wisp Science SwiftUI</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>

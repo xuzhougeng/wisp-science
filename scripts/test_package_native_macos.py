@@ -13,12 +13,12 @@ import package_native_macos as pkg
 from stamp_native_macos import stamp
 
 
-class PreviewPackagingTests(unittest.TestCase):
+class SwiftUIPackagingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.app = self.root / 'Wisp Science Preview.app'
+        self.app = self.root / 'Wisp Science SwiftUI.app'
         self.helper = self.app / 'Contents/Helpers/Wisp Desktop Host.app'
         for app, identifier in [(self.app, 'science.wisp-science.native-preview'),
                                 (self.helper, 'science.wisp-science')]:
@@ -26,7 +26,7 @@ class PreviewPackagingTests(unittest.TestCase):
             p = app / 'Contents/Info.plist'
             p.write_bytes(plistlib.dumps({'CFBundleIdentifier': identifier}))
             stamp(p, version='1.14.0', revision='a' * 40, dirty=False, configuration='release')
-        for p in ['Contents/MacOS/WispSciencePreview', 'Contents/MacOS/wisp-service',
+        for p in ['Contents/MacOS/WispScience', 'Contents/MacOS/wisp-service',
                   'Contents/Helpers/Wisp Desktop Host.app/Contents/MacOS/wisp-tauri']:
             (self.app / p).write_bytes(b'synthetic executable')
         self.calls = []
@@ -45,6 +45,7 @@ class PreviewPackagingTests(unittest.TestCase):
             Path(a[-1]).write_bytes(b'zip')
         elif a[0] == 'hdiutil':
             self.assertTrue((Path(a[a.index('-srcfolder') + 1]) / 'Applications').is_symlink())
+            self.assertEqual(a[a.index('-volname') + 1], 'Wisp Science SwiftUI')
             Path(a[-1]).write_bytes(b'synthetic notarized installer')
         elif a[:3] == ['xcrun', 'notarytool', 'submit']:
             status = self.dmg_notary_status if a[3].endswith('.dmg') else self.notary_status
@@ -65,13 +66,13 @@ class PreviewPackagingTests(unittest.TestCase):
 
     def test_signs_inside_out_and_staples_before_exposing_installer(self):
         dmg = self.publish()
-        self.assertEqual(dmg.name, 'Wisp-Science-SwiftUI-Preview_1.14.0_aarch64.dmg')
+        self.assertEqual(dmg.name, 'Wisp-Science-SwiftUI_1.14.0_aarch64.dmg')
         self.assertEqual(dmg.with_suffix('.dmg.sha256').read_text(),
                          f'{hashlib.sha256(dmg.read_bytes()).hexdigest()}  {dmg.name}\n')
         signed = [c[-1] for c in self.calls if c[:2] == ['codesign', '--force']]
         self.assertTrue(signed[0].endswith('/wisp-service'))
         self.assertTrue(signed[1].endswith('/Wisp Desktop Host.app'))
-        self.assertTrue(signed[2].endswith('/Wisp Science Preview.app'))
+        self.assertTrue(signed[2].endswith('/Wisp Science SwiftUI.app'))
         self.assertTrue(signed[3].endswith('.dmg'))
         self.assertEqual(len([c for c in self.calls if c[:3] == ['xcrun', 'stapler', 'validate']]), 2)
         self.assertEqual(len([c for c in self.calls if c[:3] == ['xcrun', 'notarytool', 'submit']]), 2)

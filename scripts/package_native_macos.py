@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign, notarize and package an optimized SwiftUI preview for GitHub Releases.
+"""Sign, notarize and package an optimized SwiftUI app for GitHub Releases.
 
 Uses the macOS release job's temporary Developer ID keychain and Apple secrets.
 Never changes release notes or the stable Tauri updater manifest.
@@ -34,7 +34,7 @@ def validate(app, target, tag):
     infos = [plistlib.loads((p / "Contents/Info.plist").read_bytes()) for p in (app, helper)]
     shell, host = infos
     if shell.get("CFBundleIdentifier") != "science.wisp-science.native-preview":
-        raise ValueError("Only the distributable preview bundle may be published (not QA).")
+        raise ValueError("Only the distributable SwiftUI bundle may be published (not QA).")
     if host.get("CFBundleIdentifier") != "science.wisp-science":
         raise ValueError("Unexpected embedded host identifier.")
     version = shell.get("CFBundleShortVersionString", "")
@@ -48,7 +48,7 @@ def validate(app, target, tag):
     for info in infos:
         if info.get("WispSourceDirty") is not False or info.get("WispBuildConfiguration") != "release":
             raise ValueError("Publishing requires clean source and an optimized release build.")
-    binaries = [app / "Contents/MacOS/WispSciencePreview", app / "Contents/MacOS/wisp-service",
+    binaries = [app / "Contents/MacOS/WispScience", app / "Contents/MacOS/wisp-service",
                 helper / "Contents/MacOS/wisp-tauri"]
     for binary in binaries:
         if run(["lipo", "-archs", binary]).split() != [ARCHES[target]]:
@@ -73,7 +73,7 @@ def package(app, target, tag, output):
         if not os.environ.get(key) or os.environ[key] == "-":
             raise ValueError(f"{key} is required; release packaging cannot use ad-hoc signing.")
     output.mkdir(parents=True, exist_ok=True)
-    stem = f"Wisp-Science-SwiftUI-Preview_{version}_{target.removesuffix('-apple-darwin')}"
+    stem = f"Wisp-Science-SwiftUI_{version}_{target.removesuffix('-apple-darwin')}"
     dmg = output / (stem + ".dmg")
     identity = os.environ["APPLE_SIGNING_IDENTITY"]
     # Work on a copy: never invalidate the CI/debug bundle if notarization fails.
@@ -95,7 +95,7 @@ def package(app, target, tag, output):
         run(["spctl", "--assess", "--type", "execute", staged])
         (payload / "Applications").symlink_to("/Applications")
         candidate = work / (stem + ".dmg")
-        run(["hdiutil", "create", "-volname", "Wisp Science SwiftUI Preview", "-srcfolder", payload,
+        run(["hdiutil", "create", "-volname", "Wisp Science SwiftUI", "-srcfolder", payload,
              "-format", "UDZO", candidate])
         run(["codesign", "--force", "--timestamp", "--sign", identity, candidate])
         notarize(candidate, output / (stem + "-dmg-notary.json"))
@@ -117,7 +117,7 @@ def main():
     try:
         print(package(args.app.resolve(), args.target, args.tag, args.output.resolve()))
     except (ValueError, RuntimeError, OSError, KeyError) as error:
-        parser.exit(1, f"SwiftUI preview packaging failed: {error}\n")
+        parser.exit(1, f"SwiftUI packaging failed: {error}\n")
 
 
 if __name__ == "__main__":

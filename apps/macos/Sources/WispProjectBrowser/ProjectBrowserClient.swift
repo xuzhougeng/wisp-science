@@ -81,7 +81,7 @@ public enum ProjectBrowserError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unavailable(let message), .service(let message): return message
-        case .invalidResponse: return "查询服务返回了不兼容的数据，请重新构建原生预览版。"
+        case .invalidResponse: return "查询服务返回了不兼容的数据，请重新构建原生应用。"
         }
     }
 }

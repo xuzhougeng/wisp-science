@@ -27,10 +27,10 @@ elif name=='cargo':
  (path/value('-p')).write_text('binary for '+(' '.join(args)))
 elif name=='swift':
  path=Path(value('--scratch-path'))/value('--configuration')/'bin';path.mkdir(parents=True,exist_ok=True)
- (path/'WispSciencePreview').write_text('swift binary')
- for n in ['WispSciencePreview_WispProjectBrowserUI.bundle','SwiftTerm_SwiftTerm.bundle','SwiftMath_SwiftMath.bundle']:
+ (path/'WispScience').write_text('swift binary')
+ for n in ['WispScience_WispProjectBrowserUI.bundle','SwiftTerm_SwiftTerm.bundle','SwiftMath_SwiftMath.bundle']:
   resource=path/n
-  if n=='WispSciencePreview_WispProjectBrowserUI.bundle' and os.environ.get('FAKE_FLAT_UI_BUNDLE')!='1':resource=resource/'Contents/Resources'
+  if n=='WispScience_WispProjectBrowserUI.bundle' and os.environ.get('FAKE_FLAT_UI_BUNDLE')!='1':resource=resource/'Contents/Resources'
   resource.mkdir(parents=True,exist_ok=True)
   (resource/'resource.txt').write_text(n)
  if '--show-bin-path' in args:print(path)
@@ -63,7 +63,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
         return [json.loads(x) for x in (self.root/'calls.jsonl').read_text().splitlines()]
 
     def assert_swift_resources(self, app):
-        for bundle in ['WispSciencePreview_WispProjectBrowserUI.bundle',
+        for bundle in ['WispScience_WispProjectBrowserUI.bundle',
                        'SwiftTerm_SwiftTerm.bundle', 'SwiftMath_SwiftMath.bundle']:
             with self.subTest(bundle=bundle):
                 directory = app / 'Contents/Resources' / bundle
@@ -77,7 +77,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assertFalse((vendor / 'vendor-src').exists())
 
     def vendor(self, app):
-        directory = app / 'Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle'
+        directory = app / 'Contents/Resources/WispScience_WispProjectBrowserUI.bundle'
         if (directory / 'Contents/Resources').is_dir(): directory = directory / 'Contents/Resources'
         return directory / 'vendor-runtime'
 
@@ -94,9 +94,16 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assert_swift_resources(app)
         self.assertFalse((vendor / 'obsolete.mjs').exists())
 
-    def test_default_debug_preview_packages_all_swift_resources(self):
+    def test_default_debug_app_packages_all_swift_resources(self):
         self.build()
-        self.assert_swift_resources(self.root/'target/native-macos/Wisp Science Preview.app')
+        app = self.root / 'target/native-macos/Wisp Science SwiftUI.app'
+        self.assert_swift_resources(app)
+        info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+        self.assertEqual(info['CFBundleName'], 'Wisp Science SwiftUI')
+        self.assertEqual(info['CFBundleDisplayName'], 'Wisp Science SwiftUI')
+        self.assertEqual(info['CFBundleExecutable'], 'WispScience')
+        self.assertTrue((app / 'Contents/MacOS' / info['CFBundleExecutable']).is_file())
+        self.assertEqual(info['CFBundleIdentifier'], 'science.wisp-science.native-preview')
 
     def test_both_release_architectures_route_all_three_binaries(self):
         for target, triple in [('aarch64-apple-darwin','arm64-apple-macosx13.0'),('x86_64-apple-darwin','x86_64-apple-macosx13.0')]:
@@ -109,13 +116,13 @@ class NativeBuildRoutingTests(unittest.TestCase):
                     self.assertIn('--release',call['args']);self.assertIn(target,call['args'])
                 for call in swift:
                     self.assertIn('release',call['args']);self.assertIn(triple,call['args'])
-                app=self.root/'target/native-macos-release'/target/'Wisp Science Preview.app'
+                app=self.root/'target/native-macos-release'/target/'Wisp Science SwiftUI.app'
                 self.assert_swift_resources(app)
                 info=plistlib.loads((app/'Contents/Info.plist').read_bytes())
                 self.assertEqual(info['WispBuildConfiguration'],'release')
                 self.assertIn(target,(app/'Contents/MacOS/wisp-service').read_text())
                 self.assertIn(target,(app/'Contents/Helpers/Wisp Desktop Host.app/Contents/MacOS/wisp-tauri').read_text())
-                self.assertFalse((self.root/'target/native-macos/Wisp Science Preview.app').exists())
+                self.assertFalse((self.root/'target/native-macos/Wisp Science SwiftUI.app').exists())
 
     def test_existing_qa_debug_mode_keeps_its_isolated_identifier_and_path(self):
         calls=self.build('--qa')
@@ -128,11 +135,11 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assertEqual(json.loads(host['config'])['identifier'],'science.wisp-science.native-toolbar-qa')
         self.assertNotIn('--release',host['args'])
 
-    def test_native_release_does_not_overwrite_the_running_debug_preview(self):
+    def test_native_release_does_not_overwrite_the_running_debug_app(self):
         self.build('--release')
-        self.assert_swift_resources(self.root/'target/native-macos-release/Wisp Science Preview.app')
-        self.assertTrue((self.root/'target/native-macos-release/Wisp Science Preview.app').exists())
-        self.assertFalse((self.root/'target/native-macos/Wisp Science Preview.app').exists())
+        self.assert_swift_resources(self.root/'target/native-macos-release/Wisp Science SwiftUI.app')
+        self.assertTrue((self.root/'target/native-macos-release/Wisp Science SwiftUI.app').exists())
+        self.assertFalse((self.root/'target/native-macos/Wisp Science SwiftUI.app').exists())
 
 
 if __name__ == '__main__':

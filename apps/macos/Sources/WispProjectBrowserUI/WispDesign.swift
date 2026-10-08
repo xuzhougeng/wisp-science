@@ -9,7 +9,7 @@ enum WispDesign {
     static let resources = resourceBundle(in: .main, module: { Bundle.module })
 
     static func resourceBundle(in main: Bundle, module: () -> Bundle) -> Bundle {
-        if let url = main.url(forResource: "WispSciencePreview_WispProjectBrowserUI", withExtension: "bundle"),
+        if let url = main.url(forResource: "WispScience_WispProjectBrowserUI", withExtension: "bundle"),
            let bundle = Bundle(url: url) { return bundle }
         // Keep this lazy: SwiftPM's accessor can trap in a relocated .app.
         return module()
@@ -143,7 +143,7 @@ struct WispUnavailableAction: View {
             }
         }
         .buttonStyle(WispButtonStyle(primary: primary, compact: expanded || compact)).disabled(true)
-        .help("\(title) · 原生预览尚未接入")
+        .help("\(title) · 原生版尚未接入")
         .accessibilityLabel("\(title)（尚未接入）")
     }
 }

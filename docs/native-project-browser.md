@@ -1,10 +1,10 @@
-# Native project browser preview
+# Native project browser
 
 Wisp has SwiftUI (macOS) and WinUI 3 (Windows) project browsers alongside the existing Tauri client.
 
 The next GitHub Release containing the packaging change also provides signed,
-notarized **SwiftUI Preview** DMGs for Apple Silicon and Intel, alongside the
-WebView installers. See [installation, shared data, and manual preview updates](app-updates.md#swiftui-preview-alongside-the-macos-release).
+notarized **SwiftUI** DMGs for Apple Silicon and Intel, alongside the
+WebView installers. See [installation, shared data, and manual SwiftUI updates](app-updates.md#swiftui-alongside-the-macos-release).
 
 For current Windows coverage of PRs #1332–#1351, validation, and remaining differences, see [Windows native parity](native-windows-parity.md). Earlier milestone sections below describe their original delivery boundaries.
 It lists real projects, preserves the desktop's ordering and metadata, searches
@@ -28,7 +28,7 @@ and recent sessions. Up/Down selects a result and Enter opens it; filtering
 resets selection. Escape closes only the topmost menu or search sheet, and IME
 candidate selection keeps its keyboard handling. Inside a project, the same
 search layer searches its saved conversations; Command-K also works with the
-sidebar collapsed. Database selection and refresh live in the preview footer,
+sidebar collapsed. Database selection and refresh live in the app footer,
 so they no longer occupy the WebView's primary project-action positions. The footer provides system/light/dark
 appearance choices and the successful-read time; hover over the database filename
 to see its full path.
@@ -82,19 +82,19 @@ Rust toolchain. No Swift package dependencies are downloaded.
 
 ```bash
 bash scripts/build_native_macos.sh
-open "target/native-macos/Wisp Science Preview.app"
+open "target/native-macos/Wisp Science SwiftUI.app"
 ```
 
 Both the SwiftUI shell and embedded host are stamped from the product version in
 `src-tauri/tauri.conf.json`. Their plists also contain `WispSourceRevision` and
-`WispSourceDirty`, so a local edited preview is distinguishable from a clean
+`WispSourceDirty`, so a local edited build is distinguishable from a clean
 commit. `scripts/test_stamp_native_macos.py` verifies the metadata and identifier
 preservation. The native shell uses one workspace scene: closing the last window
 keeps the app alive; opening it again from Finder/Dock restores a workspace with
 the same project model, without launching another host.
 
 This builds a debug app for the current architecture, bundles `wisp-service`, and
-applies an ad-hoc local signature. It is a local preview, not a notarized release
+applies an ad-hoc local signature. It is a local testing build, not a notarized release
 or universal installer. Its bundle ID is `science.wisp-science.native-preview`;
 it has separate preferences and no updater.
 
@@ -102,7 +102,7 @@ The default database matches the current desktop location:
 `~/Library/Application Support/science.wisp-science/wisp-science/wisp.sqlite`.
 Use **Choose database / 选择数据库** (Command-O) for another existing database;
 **Refresh / 刷新** (Command-R) reloads it. Database selection is remembered by the
-preview. For development, `WISP_BROWSER_DATABASE` overrides the path and
+app. For development, `WISP_BROWSER_DATABASE` overrides the path and
 `WISP_SERVICE_PATH` overrides the bundled service executable.
 
 Queries open SQLite read-only. Clicking a project-card star explicitly launches
@@ -276,7 +276,7 @@ swift test --package-path apps/macos --scratch-path target/native-macos/swift
 dotnet run --project apps/windows/Wisp.ProjectBrowser.ContractTests -- contracts/project-browser/v1/projects.json
 ```
 
-The Native Preview workflow runs the Swift build/tests on macOS and the C#
+The Native Apps workflow runs the Swift build/tests on macOS and the C#
 contract/transport/navigation checks, Rust service tests and full WinUI publish
 on Windows, uploading the runnable Windows directory as an artifact. Tests use temporary databases,
 shared JSON fixtures, and a fake child process; no API key, remote host, or model
@@ -608,7 +608,7 @@ formatting, with no interactive HTML or attachment rendering.
 
 ## Native settings
 
-The macOS preview now includes SwiftUI settings (Cmd+,) backed by the full
+The macOS app includes SwiftUI settings (Cmd+,) backed by the full
 desktop runtime. See [native-settings.md](native-settings.md) for scope,
 architecture, native/WebView differences, smoke steps and the WinUI 3 transport
 interface. The project-browser service remains focused on project/session reads

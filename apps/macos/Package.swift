@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "WispSciencePreview",
+    name: "WispScience",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "WispSciencePreview", targets: ["WispSciencePreview"]),
+        .executable(name: "WispScience", targets: ["WispScience"]),
         .library(name: "WispProjectBrowser", targets: ["WispProjectBrowser"]),
     ],
     dependencies: [
@@ -15,7 +15,7 @@ let package = Package(
     targets: [
         .target(name: "WispProjectBrowser"),
         .target(name: "WispProjectBrowserUI", dependencies: ["WispProjectBrowser", .product(name: "SwiftTerm", package: "SwiftTerm"), .product(name: "SwiftMath", package: "SwiftMath")], resources: [.process("Resources")]),
-        .executableTarget(name: "WispSciencePreview", dependencies: ["WispProjectBrowserUI"]),
+        .executableTarget(name: "WispScience", dependencies: ["WispProjectBrowserUI"]),
         .testTarget(name: "WispProjectBrowserTests", dependencies: ["WispProjectBrowser"]),
         .testTarget(name: "WispProjectBrowserUITests", dependencies: ["WispProjectBrowserUI"]),
     ]

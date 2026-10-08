@@ -171,7 +171,7 @@ without WinUI or a real backend process.
 
 ## Manual smoke procedure
 
-1. Build with `bash scripts/build_native_macos.sh`; open the resulting preview.
+1. Build with `bash scripts/build_native_macos.sh`; open the resulting app.
 2. Open Settings / Cmd+, and visit all 21 macOS sections. Check backend errors, project
    selection and consistency with the existing WebView values.
 3. In Models, open Add API access, press Escape immediately, and confirm only
@@ -202,8 +202,8 @@ without WinUI or a real backend process.
 - Native settings configure the existing runtime's pet/browser integrations.
   WinUI conversations connect to the desktop host for sending and queueing;
   see [native-conversations.md](native-conversations.md).
-- Update actions update the desktop host. Distribution/updating of the SwiftUI
-  preview itself remains a separate packaging task.
+- Update actions update the desktop host. The SwiftUI app itself updates through
+  [manual installer downloads](app-updates.md#swiftui-alongside-the-macos-release).
 - Long operations show busy/result states. Update/download and conversion events
   are not streamed into detailed native progress bars yet.
 - Feishu/Weixin binding uses native QR rendering with an explicit status check.

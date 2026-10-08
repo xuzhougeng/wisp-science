@@ -17,7 +17,8 @@ jobs:
   release:
     runs-on: macos-latest
     outputs:
-      swiftui-preview: ${{ steps.swiftui.outputs.enabled }}
+      swiftui: ${{ steps.swiftui.outputs.enabled }}
+      swiftui-asset-prefix: ${{ steps.swiftui-package.outputs.asset-prefix }}
     strategy:
       fail-fast: false
       # Serial so the two jobs merge latest.json in order instead of racing
@@ -40,7 +41,7 @@ jobs:
 
       # tauri-action writes the merged updater manifest to ./latest.json. Neither
       # it nor the orchestration checkout is source, so keep both out of the
-      # SwiftUI Preview's clean-source stamp. This lives here, not in .gitignore,
+      # SwiftUI's clean-source stamp. This lives here, not in .gitignore,
       # so rebuilds of existing tags (dispatched from main) get it too.
       - name: Exclude release byproducts from source stamp
         run: printf '%s\n' '/_release_ci/' '/latest.json' >> .git/info/exclude
@@ -124,16 +125,17 @@ jobs:
           uploadUpdaterSignatures: true
           args: --config tauri.updater.conf.json --target ${{ matrix.target }} --bundles app,dmg
 
-      # Additional manual-install preview; never replace stable updater assets.
-      # Older tags can still be rebuilt from main without preview tooling.
-      - name: Build SwiftUI Preview
+      # Additional manual-install app; never replace the WebView updater assets.
+      # Older tags can still be rebuilt from main without SwiftUI tooling.
+      - name: Build SwiftUI
         id: swiftui
         if: hashFiles('scripts/package_native_macos.py') != ''
         run: |
           bash scripts/build_native_macos.sh --release --target '${{ matrix.target }}'
           echo 'enabled=true' >> "$GITHUB_OUTPUT"
 
-      - name: Sign and notarize SwiftUI Preview
+      - name: Sign and notarize SwiftUI
+        id: swiftui-package
         if: steps.swiftui.outputs.enabled == 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
@@ -141,12 +143,16 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          python3 scripts/package_native_macos.py \
-            'target/native-macos-release/${{ matrix.target }}/Wisp Science Preview.app' \
+          # Read the tagged source's name so older Preview tags remain rebuildable.
+          app_name="$(python3 -c 'import plistlib; print(plistlib.load(open("apps/macos/Info.plist", "rb"))["CFBundleName"])')"
+          dmg="$(python3 scripts/package_native_macos.py \
+            "target/native-macos-release/${{ matrix.target }}/${app_name}.app" \
             --target '${{ matrix.target }}' --tag "$RELEASE_TAG" \
-            --output 'target/swiftui-release/${{ matrix.target }}'
+            --output 'target/swiftui-release/${{ matrix.target }}')"
+          asset="${dmg##*/}"
+          echo "asset-prefix=${asset%_"${RELEASE_TAG#v}"_*.dmg}" >> "$GITHUB_OUTPUT"
 
-      - name: Attach SwiftUI Preview installer
+      - name: Attach SwiftUI installer
         if: steps.swiftui.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,15 +200,17 @@ jobs:
             (.platforms["darwin-x86_64"].signature | length > 0)
           ' "${manifest_dir}/latest.json"
 
-      - name: Verify both SwiftUI Preview installers
-        if: needs.release.outputs.swiftui-preview == 'true'
+      - name: Verify both SwiftUI installers
+        if: needs.release.outputs.swiftui == 'true'
+        env:
+          SWIFTUI_ASSET_PREFIX: ${{ needs.release.outputs.swiftui-asset-prefix }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             > "${RUNNER_TEMP}/wisp-release-assets.json"
           for arch in aarch64 x86_64; do
-            asset="Wisp-Science-SwiftUI-Preview_${version}_${arch}.dmg"
+            asset="${SWIFTUI_ASSET_PREFIX}_${version}_${arch}.dmg"
             jq -e --arg name "$asset" \
               '.assets | any(.name == $name and .size > 0)' \
               "${RUNNER_TEMP}/wisp-release-assets.json"

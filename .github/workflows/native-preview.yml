@@ -1,4 +1,4 @@
-name: Native Preview
+name: Native Apps
 
 on:
   pull_request:
@@ -20,12 +20,12 @@ jobs:
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: swift test --package-path apps/macos --scratch-path target/native-macos/swift
       - run: bash scripts/build_native_macos.sh
-      - name: Archive unnotarized SwiftUI CI preview
-        run: ditto -c -k --keepParent 'target/native-macos/Wisp Science Preview.app' target/Wisp-Science-SwiftUI-Preview-CI.zip
+      - name: Archive unnotarized SwiftUI CI build
+        run: ditto -c -k --keepParent 'target/native-macos/Wisp Science SwiftUI.app' target/Wisp-Science-SwiftUI-CI.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: Wisp-Science-SwiftUI-Preview-CI-${{ runner.arch }}
-          path: target/Wisp-Science-SwiftUI-Preview-CI.zip
+          name: Wisp-Science-SwiftUI-CI-${{ runner.arch }}
+          path: target/Wisp-Science-SwiftUI-CI.zip
           if-no-files-found: error
 
   winui:

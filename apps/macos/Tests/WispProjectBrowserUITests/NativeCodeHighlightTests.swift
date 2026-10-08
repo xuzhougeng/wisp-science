@@ -7,14 +7,14 @@ final class NativeCodeHighlightTests: XCTestCase {
     func testRelocatedAppLoadsGrammarWithoutEvaluatingSwiftPMFallback() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let app = directory.appendingPathComponent("Relocated Preview.app")
+        let app = directory.appendingPathComponent("Relocated SwiftUI.app")
         let contents = app.appendingPathComponent("Contents")
         let resources = contents.appendingPathComponent("Resources")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         let info: [String: String] = ["CFBundleIdentifier": "science.wisp-science.resource-test", "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: contents.appendingPathComponent("Info.plist"))
-        let packaged = resources.appendingPathComponent("WispSciencePreview_WispProjectBrowserUI.bundle")
+        let packaged = resources.appendingPathComponent("WispScience_WispProjectBrowserUI.bundle")
         try FileManager.default.copyItem(at: WispDesign.resources.bundleURL, to: packaged)
         let main = try XCTUnwrap(Bundle(url: app))
         var fallbackCalled = false

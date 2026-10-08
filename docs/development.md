@@ -136,7 +136,7 @@ Prerequisites:
 ```bash
 cargo run build      # fast, one-shot desktop build; no watcher or installer
 cargo run build-win  # WinUI 3 preview, on Windows
-cargo run build-mac  # SwiftUI preview, on macOS
+cargo run build-mac  # SwiftUI app, on macOS
 cargo run dev        # hot-reload: Trunk serves the UI, Tauri opens the window
 cargo tauri dev      # hot-reload: Trunk serves the UI, Tauri opens the window
 cargo tauri build    # installers under target/release/bundle
@@ -157,9 +157,9 @@ build command again. No development server is needed to launch the result:
 | `cargo run build` (Linux/macOS) | `./target/debug/wisp-tauri` |
 | `cargo run build` (Windows) | `.\target\debug\wisp-tauri.exe` |
 | `cargo run build-win` (Windows) | `.\target\native-windows\Wisp.Science.Preview.exe` |
-| `cargo run build-mac` (macOS) | `open "target/native-macos/Wisp Science Preview.app"` |
+| `cargo run build-mac` (macOS) | `open "target/native-macos/Wisp Science SwiftUI.app"` |
 
-Keep the generated resource folders beside the executable. Native previews
+Keep the generated resource folders beside the executable. Native apps
 also package the Rust service and desktop helper; they use the existing native
 UI implementations and their current feature coverage. WinUI 3 needs Windows,
 .NET 8, the Windows SDK, the Rust MSVC toolchain, Python (`python` on PATH), and
@@ -171,7 +171,7 @@ WinUI 3 from Linux/macOS or SwiftUI from Linux/Windows.
 For optimized builds, use `cargo run build --release` (the existing Tauri
 installer pipeline), `cargo run build-win --release` (all three executables in
 `target/native-windows-release`), or `cargo run build-mac --release` (the app in
-`target/native-macos-release`). Native builds are local previews, without
+`target/native-macos-release`). Local native builds are for testing, without
 release signing/notarization. macOS also accepts `--qa` and
 `--target aarch64-apple-darwin|x86_64-apple-darwin`; architecture builds add that
 target directory under the native output folder. Plain desktop output paths
@@ -461,7 +461,7 @@ wisp-science/
 │  ├─ wisp-dto/     Shared data contracts for UI and application services
 │  └─ wisp-cli/     `wisp-science` headless binary
 ├─ src-tauri/       Tauri v2 desktop shell (commands + agent event stream)
-├─ apps/macos/      SwiftUI project browser preview + Foundation transport
+├─ apps/macos/      SwiftUI app + Foundation transport
 ├─ apps/windows/    WinUI 3 preview, JSONL client, workspace actions, navigation and contract tests
 ├─ ui/              Leptos CSR frontend (built by Trunk, loaded in WebView2)
 ├─ python/          kernel_worker.py + mock MCP server (uv-managed)
@@ -480,7 +480,7 @@ wisp-science/
   counts, stars, sync metadata, and best-effort enrichment fallbacks are preserved.
   `projects::project_status_counts` also serves the desktop's individual project
   summaries. This crate has no Tauri or Leptos dependency and does not open a
-  separate database. The SwiftUI and WinUI 3 previews use read-only `wisp-service`
+  separate database. The SwiftUI app and WinUI 3 preview use read-only `wisp-service`
   processes through the same versioned boundary. See
   [Native project browser](native-project-browser.md) for build instructions,
   status limitations, and the JSONL protocol. Verify the query boundary with
