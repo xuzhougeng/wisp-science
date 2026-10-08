@@ -11,13 +11,15 @@
         insecure: "浏览器只允许在 HTTPS 页面中使用加密，请通过 HTTPS 访问中继服务器。",
         online: "已连接", connecting: "连接中…", offline: "电脑离线",
         projects: "项目", conversations: "对话", newChat: "新对话", untitled: "未命名对话",
-        loading: "加载中…", none: "暂无内容", back: "返回",
+        loading: "加载中…", none: "暂无内容", back: "返回", pickChat: "选择一个对话，或开始新对话。",
         send: "发送", stop: "停止", running: "运行中", needsYou: "待处理", done: "完成", failed: "失败",
         reasoning: "思考", approvalTitle: "需要你批准：", approve: "批准", reject: "拒绝",
         readOnly: "这个对话是只读的。", acp: "ACP 会话请在桌面端继续。",
         remoteAsk: "远程发起的回合中，写文件、改文件和运行命令都需要你在这里批准。",
         disconnected: "连接已断开", timeout: "请求超时，请刷新确认结果后再操作。",
         placeholder: "给 Wisp 发消息", sessionsCount: (n) => `${n} 个对话`,
+        files: "文件", closeFiles: "关闭文件", noPreview: "这类文件无法在网页中预览，请在桌面端打开。",
+        truncated: (size) => `文件较大（${size}），只显示开头部分。`, imageFailed: "图片无法显示",
       }
     : {
         connectTitle: "Connect to your Wisp", connectHint: "Enter the code shown in desktop Settings → Channels → Remote web access, or open the link copied from the desktop.",
@@ -25,14 +27,17 @@
         insecure: "Browsers only allow encryption on HTTPS pages. Open the relay over HTTPS.",
         online: "Connected", connecting: "Connecting…", offline: "Computer offline",
         projects: "Projects", conversations: "Conversations", newChat: "New conversation", untitled: "Untitled",
-        loading: "Loading…", none: "Nothing here yet", back: "Back",
+        loading: "Loading…", none: "Nothing here yet", back: "Back", pickChat: "Pick a conversation or start a new one.",
         send: "Send", stop: "Stop", running: "Running", needsYou: "Needs you", done: "Done", failed: "Failed",
         reasoning: "Thinking", approvalTitle: "Approval needed: ", approve: "Approve", reject: "Reject",
         readOnly: "This conversation is read-only.", acp: "Continue ACP conversations on the desktop.",
         remoteAsk: "In remotely started turns, writing files, editing and running commands need your approval here.",
         disconnected: "Disconnected", timeout: "Request timed out. Refresh to check the result before retrying.",
         placeholder: "Message Wisp", sessionsCount: (n) => `${n} conversations`,
+        files: "Files", closeFiles: "Close files", noPreview: "This file type cannot be previewed here. Open it on the desktop.",
+        truncated: (size) => `Large file (${size}); only the beginning is shown.`, imageFailed: "Image unavailable",
       };
+  document.documentElement.lang = zh ? "zh-CN" : "en";
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   const H2C = enc.encode("wisp-remote/v1/h2c");
@@ -52,6 +57,24 @@
       if (child != null && child !== false) node.append(child instanceof Node ? child : String(child));
     }
     return node;
+  }
+
+  // Same 24×24 stroke paths as the desktop's compose_icon().
+  const ICONS = {
+    folder: ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"],
+    doc: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
+  };
+  function icon(name) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    for (const d of ICONS[name]) {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
+    }
+    return svg;
   }
 
   // ---------------------------------------------------------------- crypto
@@ -94,10 +117,12 @@
 
   // ------------------------------------------------------------ connection
   const state = {
-    sid: null, key: null, ws: null, nonce: null, seq: 0, retry: 0, host: null,
+    code: "", sid: null, key: null, ws: null, nonce: null, seq: 0, retry: 0, host: null,
     pending: new Map(), waiters: [], sendChain: Promise.resolve(), recvChain: Promise.resolve(),
-    view: null, gen: 0, wake: null,
+    route: {}, projects: [], sessions: [],
   };
+  // Each pane reloads on its own; a stale loop sees a newer generation and stops.
+  const gens = { side: 0, chat: 0, panel: 0 };
 
   function setStatus(kind) {
     const node = $("status");
@@ -144,7 +169,8 @@
       state.host = message;
       setStatus("online");
       for (const resolve of state.waiters.splice(0)) resolve();
-      load();
+      renderHeader();
+      refreshNow();
     } else if (message.type === "response" && message.response) {
       const response = message.response;
       const pending = state.pending.get(response.id);
@@ -182,50 +208,134 @@
     });
   }
 
+  // ----------------------------------------------------------------- route
+  // "#<code>/p/<project>/s/<session>/d/<directory>" (or "/f/<file>"). The whole
+  // fragment stays in the browser, so Back, reload and bookmarks work without
+  // the relay learning the code or what is open.
+  function safeDecode(text) {
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  }
+  function readRoute() {
+    const parts = location.hash.slice(1).split("/");
+    const route = { code: safeDecode(parts[0]), project: null, session: null, dir: null, file: null };
+    const keys = { p: "project", s: "session", d: "dir", f: "file" };
+    for (let i = 1; i + 1 < parts.length; i += 2) {
+      if (keys[parts[i]] && parts[i + 1]) route[keys[parts[i]]] = safeDecode(parts[i + 1]);
+    }
+    if (!route.project) route.session = null;
+    if (!route.session || route.file) route.dir = null;
+    if (!route.session) route.file = null;
+    return route;
+  }
+  function href(patch) {
+    const route = { ...state.route, ...patch };
+    let hash = `#${state.code}`;
+    if (!route.project) return hash;
+    hash += `/p/${encodeURIComponent(route.project)}`;
+    if (!route.session) return hash;
+    hash += `/s/${encodeURIComponent(route.session)}`;
+    if (route.file) return `${hash}/f/${encodeURIComponent(route.file)}`;
+    return route.dir ? `${hash}/d/${encodeURIComponent(route.dir)}` : hash;
+  }
+  const go = (patch) => (location.hash = href(patch));
+  const noFiles = { dir: null, file: null };
+  const parentDir = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".");
+  function resolvePath(dir, target) {
+    if (target.startsWith("/")) return target;
+    const parts = dir === "." ? [] : dir.split("/");
+    for (const part of target.split("/")) {
+      if (part === "..") parts.pop();
+      else if (part && part !== ".") parts.push(part);
+    }
+    return parts.join("/") || ".";
+  }
+  const baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
+
+  function applyRoute() {
+    const prev = state.route;
+    const route = (state.route = readRoute());
+    const filesOpen = route.dir != null || route.file != null;
+    document.body.dataset.pane = filesOpen ? "panel" : route.session ? "chat" : route.project ? "side" : "home";
+    if (route.project !== prev.project) sideView(++gens.side, route.project);
+    else markCurrent();
+    if (route.project !== prev.project || route.session !== prev.session) {
+      const gen = ++gens.chat;
+      if (!route.project) projectsView(gen);
+      else if (!route.session) idleView();
+      else chatView(gen, route.project, route.session);
+    }
+    if (route.session !== prev.session || route.dir !== prev.dir || route.file !== prev.file) {
+      panelView(++gens.panel, route);
+    }
+    renderHeader();
+  }
+
+  function renderHeader() {
+    const route = state.route;
+    const project = state.projects.find((item) => item.id === route.project);
+    const session = state.sessions.find((item) => item.id === route.session);
+    const host = state.host ? `${state.host.name} · Wisp ${state.host.version}` : "";
+    const filesOpen = route.dir != null || route.file != null;
+    let title = T.projects;
+    let subtitle = host;
+    let up = null;
+    if (route.file || (route.dir && route.dir !== ".")) {
+      const path = route.file || route.dir;
+      title = baseName(path);
+      subtitle = (session && session.title) || T.files;
+      up = { file: null, dir: parentDir(path) };
+    } else if (route.session) {
+      title = (session && session.title) || T.untitled;
+      subtitle = project ? project.name : host;
+      up = filesOpen ? noFiles : { session: null, ...noFiles };
+    } else if (route.project) {
+      title = project ? project.name : T.projects;
+      up = { project: null };
+    }
+    $("title").textContent = title;
+    $("subtitle").textContent = subtitle;
+    $("project").value = route.project || "";
+    document.title = `${title} · Wisp`;
+    const back = $("back");
+    back.hidden = !up;
+    back.onclick = up && (() => go(up));
+    back.setAttribute("aria-label", T.back);
+    const files = $("files");
+    files.hidden = !route.session;
+    files.setAttribute("aria-label", T.files);
+    files.setAttribute("aria-pressed", String(filesOpen));
+    files.onclick = () => go(filesOpen ? noFiles : { dir: "." });
+  }
+
   // ----------------------------------------------------------------- views
+  const wakes = new Set();
   function sleep(ms) {
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      state.wake = () => {
+      const wake = () => {
         clearTimeout(timer);
+        wakes.delete(wake);
         resolve();
       };
+      const timer = setTimeout(wake, ms);
+      wakes.add(wake);
     });
   }
-  const refreshNow = () => state.wake && state.wake();
-
-  function header(title, subtitle, back) {
-    $("title").textContent = title;
-    $("subtitle").textContent = subtitle || (state.host ? `${state.host.name} · Wisp ${state.host.version}` : "");
-    document.title = `${title} · Wisp`;
-    const button = $("back");
-    button.hidden = !back;
-    button.onclick = back || null;
-    button.setAttribute("aria-label", T.back);
-  }
-
-  function show(view) {
-    state.view = view;
-    window.scrollTo(0, 0);
-    load();
-  }
-
-  function load() {
-    const gen = ++state.gen;
-    const view = state.view;
-    $("composer").hidden = view.name !== "chat";
-    if (view.name === "projects") projectsView(gen);
-    else if (view.name === "sessions") sessionsView(gen, view.project);
-    else if (view.name === "chat") chatView(gen, view);
-  }
+  const refreshNow = () => [...wakes].forEach((wake) => wake());
 
   const banner = (error) => el("p", { class: "banner", role: "alert" }, error.message || String(error));
-  const live = (gen) => gen === state.gen;
 
   function when(ts) {
     if (!ts) return "";
     const date = new Date(ts > 1e12 ? ts : ts * 1000);
     return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  function bytes(size) {
+    if (size < 1024) return `${size} B`;
+    return size < 1048576 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1048576).toFixed(1)} MB`;
   }
 
   function statusBadge(status) {
@@ -234,65 +344,266 @@
     return null;
   }
 
+  async function refreshProjects() {
+    state.projects = await call("list_projects", null);
+    const select = $("project");
+    select.replaceChildren(...state.projects.map((project) => el("option", { value: project.id }, project.name)));
+    renderHeader();
+  }
+
   async function projectsView(gen) {
-    header(T.projects, null, null);
+    $("composer").hidden = true;
     main.replaceChildren(el("p", { class: "empty" }, T.loading));
-    while (live(gen)) {
+    let shown = "";
+    while (gen === gens.chat) {
       try {
-        const projects = await call("list_projects", null);
-        if (!live(gen)) return;
-        main.replaceChildren(
-          el("div", { class: "list" },
-            projects.length ? projects.map((project) =>
-              el("button", { type: "button", class: "row", onclick: () => show({ name: "sessions", project }) },
-                el("span", { class: "main" },
-                  el("span", { class: "name" }, project.name),
-                  el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0))),
-                project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null)
-            ) : el("p", { class: "empty" }, T.none)));
+        await refreshProjects();
+        if (gen !== gens.chat) return;
+        // An unchanged list keeps its nodes, and with them focus and scroll.
+        const data = JSON.stringify(state.projects);
+        if (data !== shown) {
+          shown = data;
+          main.replaceChildren(
+            el("div", { class: "list" },
+              state.projects.length ? state.projects.map((project) =>
+                el("a", { class: "row", href: href({ project: project.id, session: null, ...noFiles }) },
+                  el("span", { class: "main" },
+                    el("span", { class: "name" }, project.name),
+                    el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0))),
+                  project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null)
+              ) : el("p", { class: "empty" }, T.none)));
+        }
       } catch (error) {
-        if (live(gen)) main.replaceChildren(banner(error));
+        shown = "";
+        if (gen === gens.chat) main.replaceChildren(banner(error));
       }
       await sleep(15000);
     }
   }
 
-  async function sessionsView(gen, project) {
-    header(project.name, null, () => show({ name: "projects" }));
-    main.replaceChildren(el("p", { class: "empty" }, T.loading));
-    const create = async (event) => {
-      event.currentTarget.disabled = true;
+  function idleView() {
+    $("composer").hidden = true;
+    main.replaceChildren(el("p", { class: "empty" }, T.pickChat));
+  }
+
+  function markCurrent() {
+    for (const row of $("sessions").querySelectorAll("a.row")) {
+      if (row.dataset.id === state.route.session) row.setAttribute("aria-current", "page");
+      else row.removeAttribute("aria-current");
+    }
+  }
+
+  async function sideView(gen, projectId) {
+    const list = $("sessions");
+    state.sessions = [];
+    list.replaceChildren();
+    if (!projectId) return;
+    list.replaceChildren(el("p", { class: "empty" }, T.loading));
+    let shown = "";
+    while (gen === gens.side) {
       try {
-        const id = await call("native_conversation_create", project.id);
-        show({ name: "chat", project, session: { id, title: T.newChat } });
-      } catch (error) {
-        main.prepend(banner(error));
-      }
-    };
-    while (live(gen)) {
-      try {
-        const sessions = await call("remote_sessions", project.id);
-        if (!live(gen)) return;
-        main.replaceChildren(
-          el("div", { class: "list-head" },
-            el("h2", null, T.conversations),
-            el("button", { type: "button", class: "primary", onclick: create }, T.newChat)),
-          el("div", { class: "list" },
-            sessions.length ? sessions.map((session) =>
-              el("button", { type: "button", class: "row", onclick: () => show({ name: "chat", project, session }) },
+        if (!state.projects.length) refreshProjects().catch(() => {});
+        const sessions = await call("remote_sessions", projectId);
+        if (gen !== gens.side) return;
+        state.sessions = sessions;
+        const data = JSON.stringify(sessions);
+        if (data !== shown) {
+          shown = data;
+          list.replaceChildren(
+            ...(sessions.length ? sessions.map((session) =>
+              el("a", { class: "row", "data-id": session.id, href: href({ project: projectId, session: session.id, ...noFiles }) },
                 el("span", { class: "main" },
                   el("span", { class: "name" }, session.title || T.untitled),
                   el("span", { class: "sub" }, when(session.activity_at || session.ts))),
                 statusBadge(session.status))
-            ) : el("p", { class: "empty" }, T.none)));
+            ) : [el("p", { class: "empty" }, T.none)]));
+        }
+        markCurrent();
+        renderHeader();
       } catch (error) {
-        if (live(gen)) main.replaceChildren(banner(error));
+        shown = "";
+        if (gen === gens.side) list.replaceChildren(banner(error));
       }
       await sleep(8000);
     }
   }
 
-  function toolNode(item, key, opened) {
+  // -------------------------------------------------------------- markdown
+  // A small renderer for what replies actually contain: headings, lists,
+  // tables, code and links. It only ever builds text nodes and a fixed set
+  // of elements, so there is nothing to sanitize.
+  const LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+  const FENCE = /^\s*(`{3,}|~{3,})/;
+  const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  const INLINE = /(`+)(.+?)\1|!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^)\s]+))(?:\s+"[^"]*")?\s*\)|\[([^\]]+)\]\(\s*(?:<([^>]+)>|([^)\s]+))(?:\s+"[^"]*")?\s*\)|\*\*(.+?)\*\*|\*(?![\s*])([^*]+?)\*|~~(.+?)~~|(https?:\/\/[^\s<>]*[^\s<>.,;:!?)\]}'"])/g;
+
+  /// A project-relative path, or null for URLs and anything with a scheme.
+  function localPath(reference) {
+    const text = (reference || "").trim();
+    if (!text || text.startsWith("//") || text.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(text)) return null;
+    return safeDecode(text).replace(/^\.\//, "");
+  }
+
+  function mdInline(text, ctx) {
+    const out = [];
+    const plain = (value) => out.push(value.replace(/\\([\\`*_{}[\]()#+\-.!|~>])/g, "$1"));
+    let last = 0;
+    for (const m of text.matchAll(INLINE)) {
+      if (m.index > last) plain(text.slice(last, m.index));
+      last = m.index + m[0].length;
+      if (m[1]) out.push(el("code", null, m[2].trim() || m[2]));
+      else if (m[3] !== undefined) out.push(ctx.image ? ctx.image(m[4] || m[5], m[3]) : m[3]);
+      else if (m[6] !== undefined) {
+        const target = m[7] || m[8];
+        const path = localPath(target);
+        const label = mdInline(m[6], ctx);
+        if (/^(https?:|mailto:)/i.test(target)) out.push(el("a", { href: target, target: "_blank", rel: "noopener noreferrer" }, label));
+        else if (path && ctx.file) out.push(el("a", { href: ctx.file(path) }, label));
+        else out.push(...label);
+      } else if (m[9] !== undefined) out.push(el("strong", null, mdInline(m[9], ctx)));
+      else if (m[10] !== undefined) out.push(el("em", null, mdInline(m[10], ctx)));
+      else if (m[11] !== undefined) out.push(el("del", null, mdInline(m[11], ctx)));
+      else out.push(el("a", { href: m[12], target: "_blank", rel: "noopener noreferrer" }, m[12]));
+    }
+    if (last < text.length) plain(text.slice(last));
+    return out;
+  }
+
+  function markdown(source, ctx = {}) {
+    const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+    const out = el("div", { class: "md" });
+    const cells = (row) =>
+      row.trim().replace(/\\\|/g, "\u0000").replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim().replace(/\u0000/g, "|"));
+    // Consumes a fenced block starting at `at`; returns the node and next line.
+    const fence = (at) => {
+      const mark = lines[at].match(FENCE)[1];
+      const body = [];
+      let i = at + 1;
+      while (i < lines.length && !lines[i].trim().startsWith(mark)) body.push(lines[i++]);
+      return [el("pre", null, el("code", null, body.join("\n"))), i + 1];
+    };
+    const table = (i) => lines[i].includes("|") && (lines[i + 1] || "").includes("|") && TABLE_RULE.test(lines[i + 1]);
+    const blockStart = (i) => FENCE.test(lines[i]) || /^\s{0,3}(#{1,6}\s|>)/.test(lines[i]) || LIST.test(lines[i]) || table(i);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      let m;
+      if (!line.trim()) {
+        i++;
+      } else if (FENCE.test(line)) {
+        const [node, next] = fence(i);
+        out.append(node);
+        i = next;
+      } else if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/))) {
+        out.append(el(`h${Math.min(6, m[1].length + 2)}`, null, mdInline(m[2], ctx)));
+        i++;
+      } else if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+        out.append(el("hr"));
+        i++;
+      } else if (/^\s{0,3}>/.test(line)) {
+        const body = [];
+        while (i < lines.length && /^\s{0,3}>/.test(lines[i])) body.push(lines[i++].replace(/^\s{0,3}>\s?/, ""));
+        out.append(el("blockquote", null, ...markdown(body.join("\n"), ctx).childNodes));
+      } else if (LIST.test(line)) {
+        // Indentation decides nesting; `stack` is the open lists, outermost first.
+        const stack = [];
+        for (; i < lines.length; i++) {
+          const item = lines[i].match(LIST);
+          let top = stack[stack.length - 1];
+          if (item) {
+            const indent = item[1].replace(/\t/g, "    ").length;
+            while (stack.length > 1 && indent < top.indent) top = (stack.pop(), stack[stack.length - 1]);
+            if (!top || indent > top.indent) {
+              const ordered = /\d/.test(item[2]);
+              const list = el(ordered ? "ol" : "ul", ordered && parseInt(item[2], 10) !== 1 ? { start: parseInt(item[2], 10) } : null);
+              (top ? top.item : out).append(list);
+              stack.push((top = { indent, list, item: null }));
+            }
+            top.list.append((top.item = el("li", null, mdInline(item[3], ctx))));
+          } else if (!lines[i].trim()) {
+            const next = lines[i + 1];
+            if (next == null || !(LIST.test(next) || /^\s+\S/.test(next))) break;
+          } else if (/^\s/.test(lines[i]) && FENCE.test(lines[i])) {
+            const [node, next] = fence(i);
+            top.item.append(node);
+            i = next - 1;
+          } else if (/^\s/.test(lines[i])) {
+            top.item.append("\n", ...mdInline(lines[i].trim(), ctx));
+          } else break;
+        }
+      } else if (table(i)) {
+        const head = cells(line);
+        const body = el("tbody");
+        for (i += 2; i < lines.length && lines[i].includes("|") && lines[i].trim(); i++) {
+          const row = cells(lines[i]);
+          body.append(el("tr", null, head.map((_, column) => el("td", null, mdInline(row[column] || "", ctx)))));
+        }
+        const header = el("thead", null, el("tr", null, head.map((cell) => el("th", null, mdInline(cell, ctx)))));
+        out.append(el("div", { class: "table-wrap" }, el("table", null, header, body)));
+      } else {
+        const body = [line];
+        for (i++; i < lines.length && lines[i].trim() && !blockStart(i); i++) body.push(lines[i]);
+        out.append(el("p", null, mdInline(body.join("\n"), ctx)));
+      }
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- images
+  // The desktop only ever sends a bounded PNG thumbnail. Loaded images are
+  // remembered so a transcript refresh does not fetch or flash them again.
+  const imageCache = new Map();
+  const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]);
+  // Markdown itself, and the documents the desktop already converts to it.
+  const MARKDOWN_EXT = new Set(["md", "markdown", "pdf", "doc", "docx", "docm", "odt", "rtf", "epub", "ppt", "pptx", "odp", "xls", "xlsx", "ods"]);
+  const extension = (path) => (/\.([^./\\]+)$/.exec(path) || ["", ""])[1].toLowerCase();
+
+  function loadImage(project, session, source) {
+    const key = `${project}\n${session}\n${source.resource_id || ""}\n${source.path || ""}`;
+    let pending = imageCache.get(key);
+    if (!pending) {
+      pending = call("native_conversation_image", project, { session_id: session, resource_id: source.resource_id || null, path: source.path || null })
+        .then((content) => {
+          if (!content || !content.base64) throw new Error(T.imageFailed);
+          return `data:${content.mime || "image/png"};base64,${content.base64}`;
+        });
+      pending.catch(() => imageCache.delete(key));
+      imageCache.set(key, pending);
+      if (imageCache.size > 24) imageCache.delete(imageCache.keys().next().value);
+    }
+    return pending;
+  }
+
+  /// `pin` is asked before the picture takes up room and returns what to run
+  /// once it has, so a late image cannot push the newest text out of view.
+  function imageNode(project, session, source, label, pin) {
+    const caption = el("span", { class: "cap" }, label || T.loading);
+    const node = el("span", { class: "img" }, caption);
+    const fail = (error) => (caption.textContent = `${label ? `${label} · ` : ""}${(error && error.message) || T.imageFailed}`);
+    if (!source) fail();
+    else {
+      loadImage(project, session, source).then((url) => {
+        const image = el("img", { src: url, alt: label || "" });
+        if (pin) image.addEventListener("load", pin());
+        caption.textContent = label || "";
+        node.prepend(image);
+      }, fail);
+    }
+    return node;
+  }
+
+  /// A Markdown image is a captured message resource when the desktop bound
+  /// one, else a project file; remote URLs are never fetched.
+  function imageSource(item, reference) {
+    const path = localPath(reference);
+    const resource = (item.resources || []).find((entry) =>
+      entry.originalReference === reference || (path && localPath(entry.originalReference) === path));
+    if (resource) return resource.status === "ready" && resource.artifactVersionId ? { resource_id: resource.id } : null;
+    return path ? { path } : null;
+  }
+
+  // ------------------------------------------------------------ transcript
+  function toolNode(item, key, opened, extra) {
     const ok = item.ok === true ? T.done : item.ok === false ? T.failed : T.running;
     const body = [item.input, item.text].filter(Boolean).join("\n\n").slice(0, 20000);
     const node = el("details", { class: "tool", open: opened.has(key) },
@@ -301,19 +612,27 @@
         el("span", { class: item.ok === false ? "state fail" : "state" }, ok)),
       body ? el("pre", null, body) : null);
     node.addEventListener("toggle", () => (node.open ? opened.add(key) : opened.delete(key)));
-    return node;
+    return extra ? el("div", { class: "transcript" }, node, extra) : node;
   }
 
-  function itemNode(item, index, opened) {
+  function itemNode(item, index, opened, ctx) {
     const key = item.call_id || `i${index}`;
     switch (item.role) {
       case "user":
         return el("div", { class: "msg user" }, item.text);
       case "assistant":
-        return item.text ? el("div", { class: "msg" }, item.text) : null;
+        if (!item.text) return null;
+        return markdown(item.text, {
+          file: ctx.file,
+          image: (reference, alt) => ctx.image(imageSource(item, reference), alt || baseName(localPath(reference) || "")),
+        });
       case "tool":
-      case "acp_tool":
-        return toolNode(item, key, opened);
+      case "acp_tool": {
+        // A generated picture is the result worth seeing, as on the desktop.
+        const made = item.tool_name === "generate_image" && item.ok === true && localPath(item.input);
+        const picture = made && IMAGE_EXT.has(extension(made)) ? ctx.image({ path: made }, baseName(made)) : null;
+        return toolNode(item, key, opened, picture);
+      }
       case "reasoning":
         return toolNode({ ...item, tool_name: T.reasoning, ok: true }, key, opened);
       case "plan":
@@ -332,7 +651,7 @@
     const decide = (approved) => async (event) => {
       for (const button of event.currentTarget.parentElement.querySelectorAll("button")) button.disabled = true;
       try {
-        await call("native_conversation_approve", project.id, { session_id: session.id, approval_id: approval.approval_id, approved });
+        await call("native_conversation_approve", project, { session_id: session, approval_id: approval.approval_id, approved });
       } catch (error) {
         main.prepend(banner(error));
       }
@@ -347,31 +666,45 @@
         el("button", { type: "button", class: "primary", onclick: decide(true) }, T.approve)));
   }
 
-  async function chatView(gen, view) {
-    const { project, session } = view;
-    header(session.title || T.untitled, project.name, () => show({ name: "sessions", project }));
+  async function chatView(gen, project, session) {
+    const live = () => gen === gens.chat;
     main.replaceChildren(el("p", { class: "empty" }, T.loading));
+    $("composer").hidden = false;
     const draft = $("draft");
     const send = $("send");
     const stop = $("stop");
     const hint = $("composer-hint");
     // Keep a draft across reconnects, never across conversations.
-    if (draft.dataset.session !== session.id) {
+    if (draft.dataset.session !== session) {
       draft.value = "";
       draft.style.height = "";
-      draft.dataset.session = session.id;
+      draft.dataset.session = session;
     }
     draft.placeholder = T.placeholder;
     send.textContent = T.send;
     stop.textContent = T.stop;
     const opened = new Set();
+    const rendered = [];
     let lastItems = "";
     let snapshot = null;
     let sending = false;
+    let failed = false;
+    let wasRunning = false;
     const transcript = el("div", { class: "transcript" });
     const approvals = el("div", { class: "transcript" });
     const activity = el("p", { class: "activity" });
     const errors = el("div");
+    const nearBottom = () => main.scrollHeight - main.scrollTop - main.clientHeight < 120;
+    const toBottom = () => (main.scrollTop = main.scrollHeight);
+    const pin = () => {
+      const stick = nearBottom();
+      return () => stick && live() && toBottom();
+    };
+    const ctx = {
+      file: (path) => href({ dir: null, file: path }),
+      image: (source, label) => imageNode(project, session, source, label, pin),
+    };
+    const seen = () => call("native_conversation_seen", project, { session_id: session }).catch(() => {});
 
     const sync = () => {
       const blocked = !snapshot || snapshot.read_only || !!snapshot.acp_agent_id;
@@ -396,8 +729,8 @@
       sync();
       errors.replaceChildren();
       try {
-        await call("native_conversation_send", project.id, { session_id: session.id, request_id: crypto.randomUUID(), message });
-        if (live(gen)) {
+        await call("native_conversation_send", project, { session_id: session, request_id: crypto.randomUUID(), message });
+        if (live()) {
           draft.value = "";
           draft.oninput();
         }
@@ -405,13 +738,13 @@
         errors.replaceChildren(banner(error)); // The draft is kept.
       }
       sending = false;
-      sync();
+      if (live()) sync();
       refreshNow();
     };
     stop.onclick = async () => {
       stop.disabled = true;
       try {
-        await call("native_conversation_stop", project.id, { session_id: session.id });
+        await call("native_conversation_stop", project, { session_id: session });
       } catch (error) {
         errors.replaceChildren(banner(error));
       }
@@ -426,33 +759,130 @@
     sync();
 
     let first = true;
-    while (live(gen)) {
+    while (live()) {
       try {
-        const next = await call("native_conversation_snapshot", project.id, { session_id: session.id });
-        if (!live(gen)) return;
+        const next = await call("native_conversation_snapshot", project, { session_id: session });
+        if (!live()) return;
         snapshot = next;
-        const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+        const stick = first || nearBottom();
         const items = JSON.stringify(next.items);
         if (items !== lastItems) {
           lastItems = items;
-          transcript.replaceChildren(...next.items.map((item, i) => itemNode(item, i, opened)).filter(Boolean));
+          // Unchanged rows keep their nodes, so open details and loaded
+          // images survive the 1.5 s refresh of a running turn.
+          const nodes = next.items.map((item, index) => {
+            const json = JSON.stringify(item);
+            if (!rendered[index] || rendered[index].json !== json) rendered[index] = { json, node: itemNode(item, index, opened, ctx) };
+            return rendered[index].node;
+          });
+          rendered.length = next.items.length;
+          transcript.replaceChildren(...nodes.filter(Boolean));
         }
         approvals.replaceChildren(...(next.approvals || []).map((approval) => approvalNode(approval, session, project)));
         activity.textContent = next.running ? next.activity_status || T.running : next.error || "";
+        if (failed) errors.replaceChildren();
+        failed = false;
         if (first) main.replaceChildren(errors, transcript, approvals, activity);
         sync();
-        if (first || nearBottom) window.scrollTo(0, document.body.scrollHeight);
+        if (stick) toBottom();
+        // Reading a finished reply here clears its "needs you" flag everywhere.
+        if (!next.running && (first || wasRunning) && document.visibilityState === "visible") seen();
+        wasRunning = next.running;
         first = false;
       } catch (error) {
-        if (live(gen)) errors.replaceChildren(banner(error));
-        if (first && live(gen)) main.replaceChildren(errors);
+        if (!live()) return;
+        failed = true;
+        errors.replaceChildren(banner(error));
+        if (first) main.replaceChildren(errors);
       }
       await sleep(snapshot && (snapshot.running || (snapshot.approvals || []).length) ? 1500 : 4000);
     }
   }
 
+  // ----------------------------------------------------------------- files
+  // Read-only: a directory listing, text as text and pictures as thumbnails.
+  function directoryNode(listing) {
+    if (!listing.entries.length) return el("p", { class: "empty" }, T.none);
+    const join = (name) => (listing.path === "." ? name : `${listing.path}/${name}`);
+    return el("div", { class: "list" }, listing.entries.map((entry) =>
+      el("a", { class: "row", href: href(entry.is_dir ? { file: null, dir: join(entry.name) } : { dir: null, file: join(entry.name) }) },
+        icon(entry.is_dir ? "folder" : "doc"),
+        el("span", { class: "main" }, el("span", { class: "name" }, entry.name)),
+        entry.is_dir ? null : el("span", { class: "sub" }, bytes(entry.size)))));
+  }
+
+  async function fileNode(project, session, path) {
+    const kind = extension(path);
+    const name = baseName(path);
+    if (IMAGE_EXT.has(kind)) return el("div", { class: "preview" }, el("img", { src: await loadImage(project, session, { path }), alt: name }));
+    const { content } = await call("native_conversation_panel_file_read", project, { session_id: session, path });
+    let view = el("p", { class: "empty" }, T.noPreview);
+    if (content.text != null && kind === "svg") {
+      // An <img> never runs the scripts an SVG may carry.
+      view = el("img", { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content.text)}`, alt: name });
+    } else if (content.text != null && MARKDOWN_EXT.has(kind) && content.text.length <= 300000) {
+      // Larger documents stay plain text, so an odd one cannot stall the page.
+      // Links and pictures in a document are relative to its own folder.
+      const from = (target) => resolvePath(parentDir(path), target);
+      view = markdown(content.text, {
+        file: (target) => href({ dir: null, file: from(target) }),
+        image: (reference, alt) => imageNode(project, session, localPath(reference) && { path: from(localPath(reference)) }, alt),
+      });
+    } else if (content.text != null) {
+      view = el("pre", null, content.text);
+    }
+    return el("div", { class: "preview" },
+      content.truncated ? el("p", { class: "note" }, T.truncated(bytes(content.total_bytes || 0))) : null,
+      view);
+  }
+
+  async function panelView(gen, route) {
+    const body = $("panel-body");
+    const crumbs = $("crumbs");
+    const path = route.file || route.dir;
+    if (!path) return body.replaceChildren();
+    const { project, session } = route;
+    const parts = path === "." ? [] : path.split("/");
+    crumbs.replaceChildren(
+      parts.length ? el("a", { href: href({ file: null, dir: "." }) }, T.files) : el("strong", null, T.files),
+      ...parts.flatMap((name, index) => [
+        " / ",
+        index === parts.length - 1
+          ? el("strong", null, name)
+          : el("a", { href: href({ file: null, dir: parts.slice(0, index + 1).join("/") }) }, name),
+      ]));
+    crumbs.scrollLeft = crumbs.scrollWidth;
+    $("panel-close").setAttribute("aria-label", T.closeFiles);
+    $("panel-close").onclick = () => go(noFiles);
+    body.replaceChildren(el("p", { class: "empty" }, T.loading));
+    body.scrollTop = 0;
+    let shown = "";
+    while (gen === gens.panel) {
+      try {
+        if (route.dir) {
+          const listing = await call("native_conversation_panel_file_directory", project, { session_id: session, path });
+          const data = JSON.stringify(listing);
+          if (gen === gens.panel && data !== shown) {
+            shown = data;
+            body.replaceChildren(directoryNode(listing));
+          }
+        } else {
+          const view = await fileNode(project, session, path);
+          if (gen === gens.panel) body.replaceChildren(view);
+        }
+      } catch (error) {
+        shown = "";
+        if (gen === gens.panel) body.replaceChildren(banner(error));
+      }
+      // A folder keeps up with what the agent writes; a preview is a snapshot.
+      if (!route.dir) return;
+      await sleep(8000);
+    }
+  }
+
   function connectView(message) {
-    header("Wisp", "", null);
+    $("title").textContent = "Wisp";
+    $("subtitle").textContent = "";
     const input = el("input", { id: "code", autocomplete: "off", spellcheck: "false", placeholder: "xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx", "aria-label": T.code });
     const submit = () => {
       if (!parseCode(input.value)) {
@@ -460,7 +890,8 @@
         error.hidden = false;
         return;
       }
-      location.hash = input.value.trim();
+      // Only the digits: "/" separates the code from the route in the address.
+      location.hash = input.value.replace(/[^0-9a-f]/gi, "");
     };
     input.addEventListener("keydown", (event) => event.key === "Enter" && submit());
     const error = el("p", { class: "banner", role: "alert", hidden: !message }, message || "");
@@ -475,15 +906,35 @@
 
   async function start() {
     $("composer").hidden = true;
-    const secret = parseCode(decodeURIComponent(location.hash.slice(1)));
-    if (!secret) return connectView(location.hash.length > 1 ? T.badCode : "");
+    const route = readRoute();
+    const secret = parseCode(route.code);
+    // A different code is a different computer: start over rather than mix state.
+    window.addEventListener("hashchange", () => (state.key && readRoute().code === state.code ? applyRoute() : location.reload()));
+    if (!secret) return connectView(route.code ? T.badCode : "");
     if (!window.isSecureContext || !crypto.subtle) return connectView(T.insecure);
+    state.code = route.code;
     Object.assign(state, await derive(secret));
-    state.view = { name: "projects" };
-    load();
+    const select = $("project");
+    select.setAttribute("aria-label", T.projects);
+    $("sessions").setAttribute("aria-label", T.conversations);
+    $("crumbs").setAttribute("aria-label", T.files);
+    select.onchange = () => go({ project: select.value, session: null, ...noFiles });
+    const create = $("new");
+    create.textContent = T.newChat;
+    create.onclick = async () => {
+      const project = state.route.project;
+      create.disabled = true;
+      try {
+        go({ project, session: await call("native_conversation_create", project), ...noFiles });
+        refreshNow();
+      } catch (error) {
+        $("sessions").prepend(banner(error));
+      }
+      create.disabled = false;
+    };
+    applyRoute();
     connect();
   }
 
-  window.addEventListener("hashchange", () => location.reload());
   start();
 })();

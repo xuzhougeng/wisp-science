@@ -90,14 +90,14 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh release create vX.Y.Z --title $title --notes-file .github/release-notes/vX.Y.Z.md --target (git rev-parse HEAD)
    ```
 
-5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release):
+5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Relay Image):
 
    ```bash
    gh release view vX.Y.Z
    gh run list --branch vX.Y.Z
    ```
 
-   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Only watch those runs to completion when the user asked to ship or verify the published assets.
+   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
 
 Do not `git push origin vX.Y.Z` after `gh release create` — the tag already exists on GitHub. To fix notes on an existing release, edit the notes file and run the Create Release workflow with `overwrite_notes`, or `gh release edit`. Never use `tauri-action` / `action-gh-release` with a body on a published release.
 

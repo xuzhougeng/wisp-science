@@ -47,6 +47,82 @@ The relay pings both sides every 25 seconds, under nginx's default idle
 timeout. A path prefix works (`https://example.com/wisp/` → page at
 `/wisp/remote`) as long as the proxy strips it.
 
+### Run the relay in Docker
+
+Each release publishes a small image for amd64 and arm64 servers: one static
+binary of about 2 MB, no shell, running as an unprivileged user.
+
+```bash
+docker pull ghcr.io/xuzhougeng/wisp-relay:latest
+```
+
+`latest` is the newest release, `:<version>` (for example `:1.19.0`) pins one,
+and `:main` follows the main branch between releases.
+
+To build it yourself instead, from a checkout:
+
+```bash
+docker build -f crates/wisp-sync/Dockerfile -t ghcr.io/xuzhougeng/wisp-relay .
+```
+
+A server that cannot reach the registry can receive the image from a machine
+with the same CPU architecture:
+
+```bash
+docker save ghcr.io/xuzhougeng/wisp-relay | gzip | ssh user@server 'gunzip | docker load'
+```
+
+The shortest complete setup is the relay plus Caddy, which obtains and renews
+the HTTPS certificate by itself. Point the domain at the server, open ports 80
+and 443, and save this as `compose.yaml` with your own domain:
+
+```yaml
+services:
+  relay:
+    image: ghcr.io/xuzhougeng/wisp-relay:latest
+    restart: unless-stopped
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+    volumes:
+      - relay-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from relay.example.com --to relay:8787
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+volumes:
+  relay-data:
+  caddy-data:
+```
+
+```bash
+echo "WISP_RELAY_TOKEN=$(openssl rand -hex 32)" > .env   # the desktop needs this token
+docker compose up -d
+```
+
+The relay URL to enter on the desktop is then `https://relay.example.com`.
+
+If the server already runs a reverse proxy, start only the relay and publish
+it on loopback for that proxy:
+
+```bash
+docker run -d --name wisp-relay --restart unless-stopped \
+  --env-file .env -p 127.0.0.1:8787:8787 -v wisp-relay-data:/data \
+  ghcr.io/xuzhougeng/wisp-relay:latest
+```
+
+- Project sync data lives in the `/data` volume; back it up like the plain
+  directory. Remote web access keeps nothing on disk.
+- The container runs as uid 10001. A named volume is writable as it is; a
+  bind-mounted host directory must be owned by that uid.
+- `GET /healthz` answers `ok` for monitoring.
+- To upgrade, run `docker compose pull` and `docker compose up -d`. Desktops
+  and browsers reconnect by themselves.
+
 ## Connect a computer
 
 1. Desktop: **Settings → Remote Access → Remote web access**.
@@ -61,11 +137,35 @@ connected. **Reset code** generates a new code: every old link stops working
 and connected browsers are disconnected. The code survives restarts until
 reset.
 
-The page lists projects, then conversations, and shows the latest transcript
-page, live tool calls and pending approvals with the full command or diff.
-You can start a conversation, send a message, stop a turn and approve or reject
-a request. It polls every 1.5 s while a turn runs and every 4 s otherwise; it
-keeps unsent text after a failed send and never retries a mutation by itself.
+## Use the page
+
+The page is laid out like the desktop workspace, for the moments you are away
+from it rather than as a full client:
+
+- **Projects and conversations.** Pick a project, then a conversation from the
+  list on the left; the project picker above the list switches projects without
+  leaving the page. Rows show *Running* and *Needs you*, and opening a finished
+  conversation clears its *Needs you* flag on the desktop too.
+- **Conversation.** The latest transcript page with replies rendered as
+  Markdown (headings, lists, tables, code, links), pictures shown inline, live
+  tool calls, and pending approvals with the full command or diff. You can
+  start a conversation, send a message, stop a turn and approve or reject a
+  request.
+- **Files.** The folder button opens the conversation's project folder beside
+  it. Folders can be browsed; text files open as text, Markdown is rendered,
+  and images open as pictures. PDF and Office documents show the text the
+  desktop extracts from them, not their original layout. A file link in a
+  reply opens the same preview.
+
+On a phone the three panes are shown one at a time and the back arrow steps
+out of the current one. The address keeps track of where you are
+(`#<code>/p/<project>/s/<conversation>/f/<file>`), so the browser's Back and
+reload work and a bookmark returns to the same conversation. That address
+contains the connection code: treat a copied address like the link itself.
+
+The page polls every 1.5 s while a turn runs and every 4 s otherwise, and an
+open folder every 8 s. It keeps unsent text after a failed send and never
+retries a mutation by itself.
 
 ## Security model
 
@@ -82,10 +182,20 @@ keeps unsent text after a failed send and never retries a mutation by itself.
 - **Only the relay's token holder can register a computer**, so a public relay
   cannot be used by strangers as a free tunnel.
 - **Small allowlist.** Remote browsers can list projects and conversations,
-  read snapshots, create conversations, send, stop and approve. Terminal input,
-  kernel execution, file save and file actions, attachments, queued follow-ups
-  and ACP conversations are not available remotely. Approvals apply once; a
-  remote browser cannot grant session/project/global permissions.
+  read snapshots, create conversations, send, stop, approve and mark a
+  conversation as seen. Terminal input, kernel execution, file save and file
+  actions, attachments, queued follow-ups and ACP conversations are not
+  available remotely. Approvals apply once; a remote browser cannot grant
+  session/project/global permissions.
+- **Files are read-only and stay on the computer.** A browser can list folders
+  inside a conversation's project folder and read text previews (the first
+  1 MB of a large file). Pictures are sent as a re-encoded thumbnail of at most
+  1024 px. Other file bytes are never sent, so nothing can be downloaded, and
+  files on remote execution contexts are not reachable. Markdown is rendered from
+  text into a fixed set of elements; HTML inside a reply or a file is shown as
+  text, never interpreted.
+- **One oversized reply cannot drop the tunnel.** A reply that would exceed the
+  relay's frame limit is answered with an error for that request only.
 - **Remote turns always ask.** Messages sent from the web run with the same
   origin as IM channels: writing files, editing and running shell commands
   require approval even if the desktop default is Allow.
@@ -95,6 +205,10 @@ keeps unsent text after a failed send and never retries a mutation by itself.
 Anyone with the link can use the computer's projects: treat it like a password.
 
 ## Not yet included
+
+The page is deliberately not a full client. Rendered PDF and Office previews,
+downloads, earlier transcript pages, model and plan-mode controls, run cards,
+the terminal and notebooks stay on the desktop.
 
 Tracked in #1460: chunked attachment upload, command result lookup after a
 dropped reply, actor columns in the store, per-connection delivery tiers,
@@ -108,6 +222,7 @@ the desktop's outbound connection. The desktop host name comes from
 | --- | --- |
 | Relay rendezvous, page routes, code derivation, frame sealing | `crates/wisp-sync/src/remote.rs` |
 | Web client (vanilla JS, `textContent` only, strict CSP) | `crates/wisp-sync/src/remote.{html,js}` |
+| Browser test of that page against a fake sealed-frame host | `ui-tests/tests/remote-web.spec.ts` |
 | Desktop tunnel, allowlist, settings commands | `src-tauri/src/channels/remote.rs` |
 | Remote actor stamp and IM-origin turns | `Broker::remote` in `native_settings.rs`, `remote_turn` in `native_conversations.rs` |
 

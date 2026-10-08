@@ -130,7 +130,8 @@ Put an HTTPS reverse proxy in front of the relay for access from other devices.
 The relay stores files under `WISP_RELAY_ROOT`, uses atomic file replacement,
 and compares the submitted base revision with the current project head before
 committing. Back up this directory like any other application data.
-The same relay also serves [remote web access](remote-access.md).
+The same relay also serves [remote web access](remote-access.md), and can
+run [as a container](remote-access.md#run-the-relay-in-docker).
 
 ### Baidu Netdisk, Nutstore, or another shared folder
 
