@@ -189,6 +189,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_editor_mutation_fixture_uses_the_shared_contract() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-publication/v1/mutations.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["schema"], SCHEMA);
+        let operations = fixture["operations"].as_array().unwrap();
+        assert_eq!(operations.len(), 9);
+        for value in operations {
+            let operation: Operation = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(operation).unwrap(), *value);
+            let mut invalid = value.clone();
+            invalid["unexpected"] = true.into();
+            assert!(serde_json::from_value::<Operation>(invalid).is_err());
+        }
+    }
+
+    #[test]
     fn evidence_fixture_preserves_revision_item_and_source_identity() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/native-publication/v1/workspace-evidence.json"

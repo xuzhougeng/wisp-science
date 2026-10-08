@@ -62,6 +62,7 @@ final class NativeFilesModel: ObservableObject {
     private var directoryGeneration = UUID()
     private var searchGeneration = UUID()
     private var previewGeneration = UUID()
+    var previewIdentity: UUID { previewGeneration }
     private var copyGeneration = UUID()
     init(client: any NativeConversationQuerying, projectID: String, sessionID: String, readOnly: Bool, transfersSupported: Bool = false) {
         self.client = client; self.projectID = projectID; self.sessionID = sessionID; self.readOnly = readOnly
@@ -209,7 +210,7 @@ final class NativeFilesModel: ObservableObject {
         previewLoading = true; preview = nil; error = nil; saveUnconfirmed = false
         defer { if previewGeneration == current { previewLoading = false } }
         do {
-            let page = try NativeFilePreview.decode(await call("file_read", ["path": .string(row.path)], context: context), project: projectID, session: sessionID, context: context, requested: row.path, root: root)
+            let page = try NativeFilePreview.decode(await call("file_read", ["path": .string(row.path), "render_pdf": .bool(true), "render_office": .bool(true)], context: context), project: projectID, session: sessionID, context: context, requested: row.path, root: root)
             guard !closed, previewGeneration == current, generation == scope, contextID == context, !Task.isCancelled else { return }
             preview = page
         } catch { if !closed, previewGeneration == current, !Task.isCancelled { self.error = error.localizedDescription } }
@@ -239,6 +240,11 @@ final class NativeFilesModel: ObservableObject {
         guard try await call("file_action", args) == .bool(true) else { throw ProjectBrowserError.invalidResponse }
         guard !closed, generation == current, !Task.isCancelled else { throw ProjectBrowserError.unavailable("面板已关闭。") }
         actionUnconfirmed = false
+    }
+    func documentQuote(_ selection: NativeDocumentSelection, original: NativePanelFileContent, identity: UUID) -> NativeSideChatQuote? {
+        guard !closed, !saving, previewGeneration == identity, let content = preview?.content, content.path == original.path,
+              content.text == original.text, content.base64 == original.base64 else { return nil }
+        return selection.quote(from: original)
     }
     func quote(_ text: String, source: String) -> NativeSideChatQuote? {
         guard !closed, !saving, let content = preview?.content, content.path == source,

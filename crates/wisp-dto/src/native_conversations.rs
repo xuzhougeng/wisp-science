@@ -80,6 +80,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_delete",
     "native_conversation_exists",
     "native_conversation_snapshot",
+    "native_conversation_timer",
     "native_conversation_send",
     "native_conversation_attach",
     "native_conversation_enqueue",

@@ -118,11 +118,12 @@ pub(crate) async fn dispatch(
             } else {
                 require_ssh(&state.store, context).await?;
                 let reference = remote_reference(context, &path)?;
-                let mut content = crate::file_browser::read_remote_file(
+                let mut content = crate::file_browser::read_native_remote_preview(
                     state.clone(),
                     context.into(),
                     path.clone(),
-                    None,
+                    args.render_pdf,
+                    args.render_office,
                 )
                 .await?;
                 content.path = reference;

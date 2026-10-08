@@ -1,0 +1,77 @@
+{
+  "schema": "wisp.native-assistant.v1",
+  "open": {
+    "project_id": "assistant:research",
+    "session_id": "research-assistant"
+  },
+  "operations": [
+    {
+      "action": "create_schedule",
+      "project_id": "project-a",
+      "name": "Daily check",
+      "prompt": "Inspect records",
+      "interval_secs": 3600,
+      "session_id": null,
+      "skill": null,
+      "start_at": null
+    },
+    {
+      "action": "set_timer",
+      "project_id": "project-a",
+      "session_id": "session-a",
+      "expression": "60m Inspect records"
+    },
+    {
+      "action": "set_enabled",
+      "id": "schedule-a",
+      "enabled": false
+    },
+    {
+      "action": "delete",
+      "id": "schedule-a"
+    },
+    {
+      "action": "run_now",
+      "id": "schedule-a"
+    },
+    {
+      "action": "set_daily_recap",
+      "enabled": true,
+      "time": "09:00"
+    },
+    {
+      "action": "run_daily_recap"
+    }
+  ],
+  "workspace": {
+    "day": "2026-10-08",
+    "projects": [
+      {
+        "id": "project-a",
+        "name": "水稻研究",
+        "description": "Local scientific project"
+      }
+    ],
+    "plan": [
+      {
+        "id": "task-a",
+        "day": "2026-10-08",
+        "title": "检查质控记录",
+        "project_id": "project-a",
+        "project_name": "水稻研究",
+        "session_id": "session-a",
+        "status": "planned"
+      }
+    ],
+    "schedules": [],
+    "runs": [],
+    "daily_recap": {
+      "enabled": true,
+      "time": "09:00",
+      "last_run_at": null,
+      "drafted": 0,
+      "error": null,
+      "running": false
+    }
+  }
+}

@@ -29,8 +29,10 @@ elif name=='swift':
  path=Path(value('--scratch-path'))/value('--configuration')/'bin';path.mkdir(parents=True,exist_ok=True)
  (path/'WispSciencePreview').write_text('swift binary')
  for n in ['WispSciencePreview_WispProjectBrowserUI.bundle','SwiftTerm_SwiftTerm.bundle','SwiftMath_SwiftMath.bundle']:
-  (path/n).mkdir(exist_ok=True)
-  (path/n/'resource.txt').write_text(n)
+  resource=path/n
+  if n=='WispSciencePreview_WispProjectBrowserUI.bundle' and os.environ.get('FAKE_FLAT_UI_BUNDLE')!='1':resource=resource/'Contents/Resources'
+  resource.mkdir(parents=True,exist_ok=True)
+  (resource/'resource.txt').write_text(n)
  if '--show-bin-path' in args:print(path)
 '''
 
@@ -40,7 +42,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='wisp native routing ')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for folder in ['scripts', 'apps/macos', 'src-tauri/icons', 'ui', 'skills', 'python', 'r', 'browser-extension', 'seed', 'bin']:
+        for folder in ['scripts', 'apps/macos', 'src-tauri/icons', 'ui/vendor-src/office-chunks', 'skills', 'python', 'r', 'browser-extension', 'seed', 'bin']:
             (self.root / folder).mkdir(parents=True, exist_ok=True)
         for path in ['scripts/build_native_macos.sh', 'scripts/stamp_native_macos.py',
                      'apps/macos/Info.plist', 'apps/macos/HostInfo.plist']:
@@ -49,11 +51,13 @@ class NativeBuildRoutingTests(unittest.TestCase):
         (self.root / 'src-tauri/tauri.conf.json').write_text(json.dumps({'identifier':'science.wisp-science','version':'1.14.0'}))
         (self.root / 'src-tauri/icons/icon.icns').write_bytes(b'icon')
         (self.root / 'ui/native-host.html').write_text('<html></html>')
+        (self.root / 'ui/vendor-src/rdkit-worker.mjs').write_text('offline worker')
+        (self.root / 'ui/vendor-src/office-chunks/renderer.mjs').write_text('offline Office')
         for tool in ['uname','cargo','swift','git','codesign']:
             path=self.root/'bin'/tool;path.write_text(FAKE_TOOL);path.chmod(0o755)
 
-    def build(self, *args):
-        env=dict(os.environ,FAKE_ROOT=str(self.root),PATH=str(self.root/'bin')+os.pathsep+os.environ['PATH'])
+    def build(self, *args, flat=False):
+        env=dict(os.environ,FAKE_ROOT=str(self.root),FAKE_FLAT_UI_BUNDLE='1' if flat else '0',PATH=str(self.root/'bin')+os.pathsep+os.environ['PATH'])
         result=subprocess.run(['bash',str(self.root/'scripts/build_native_macos.sh'),*args],env=env,capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         return [json.loads(x) for x in (self.root/'calls.jsonl').read_text().splitlines()]
@@ -62,9 +66,33 @@ class NativeBuildRoutingTests(unittest.TestCase):
         for bundle in ['WispSciencePreview_WispProjectBrowserUI.bundle',
                        'SwiftTerm_SwiftTerm.bundle', 'SwiftMath_SwiftMath.bundle']:
             with self.subTest(bundle=bundle):
-                resource = app / 'Contents/Resources' / bundle / 'resource.txt'
+                directory = app / 'Contents/Resources' / bundle
+                if (directory / 'Contents/Resources').is_dir(): directory = directory / 'Contents/Resources'
+                resource = directory / 'resource.txt'
                 self.assertTrue(resource.is_file(), f'Missing packaged resource: {resource}')
                 self.assertEqual(resource.read_text(), bundle)
+        vendor = self.vendor(app)
+        self.assertEqual((vendor / 'rdkit-worker.mjs').read_text(), 'offline worker')
+        self.assertEqual((vendor / 'office-chunks/renderer.mjs').read_text(), 'offline Office')
+        self.assertFalse((vendor / 'vendor-src').exists())
+
+    def vendor(self, app):
+        directory = app / 'Contents/Resources/WispSciencePreview_WispProjectBrowserUI.bundle'
+        if (directory / 'Contents/Resources').is_dir(): directory = directory / 'Contents/Resources'
+        return directory / 'vendor-runtime'
+
+    def test_flat_swiftpm_bundles_also_receive_the_offline_assets(self):
+        self.build('--qa', flat=True)
+        self.assert_swift_resources(self.root / 'target/native-macos-qa/Wisp Science QA.app')
+
+    def test_rebuild_replaces_offline_assets_without_nesting_old_vendor_files(self):
+        self.build('--qa')
+        app = self.root / 'target/native-macos-qa/Wisp Science QA.app'
+        vendor = self.vendor(app)
+        (vendor / 'obsolete.mjs').write_text('old resource')
+        self.build('--qa')
+        self.assert_swift_resources(app)
+        self.assertFalse((vendor / 'obsolete.mjs').exists())
 
     def test_default_debug_preview_packages_all_swift_resources(self):
         self.build()

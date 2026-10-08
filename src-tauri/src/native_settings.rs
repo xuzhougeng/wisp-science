@@ -128,6 +128,8 @@ pub(crate) fn capabilities() -> Value {
         "project_schema": wisp_dto::native_projects::SCHEMA,
         "library": wisp_dto::native_library::COMMANDS,
         "library_schema": wisp_dto::native_library::SCHEMA,
+        "assistant": wisp_dto::native_assistant::COMMANDS,
+        "assistant_schema": wisp_dto::native_assistant::SCHEMA,
         "calendar": wisp_dto::native_calendar::COMMANDS,
         "calendar_schema": wisp_dto::native_calendar::SCHEMA,
         "journey": wisp_dto::native_journey::COMMANDS,
@@ -204,6 +206,9 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             crate::privacy_mode::read(&state.store, request.project_id.as_deref(), &request.args)
                 .await?;
         return serde_json::to_value(mode).map_err(|error| error.to_string());
+    }
+    if wisp_dto::native_assistant::COMMANDS.contains(&request.command.as_str()) {
+        return crate::native_assistant::execute(broker, request).await;
     }
     if wisp_dto::native_calendar::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();

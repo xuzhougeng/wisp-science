@@ -1,0 +1,14 @@
+{
+  "schema": "wisp.native-publication.v1",
+  "operations": [
+    {"action":"save_item","id":"item-1","parent_item_id":null,"kind":"claim","title":"中文 claim","content":"Evidence 🌱","ordinal":2},
+    {"action":"bind_evidence","item_id":"item-1","source_kind":"artifact_version","source_id":"version-17","purpose":"Support the result","supported_claim_item_id":"item-1","selection_state":"selected","visibility":"private"},
+    {"action":"update_binding","binding_id":"binding-1","selection_state":"rejected","visibility":"restricted"},
+    {"action":"clone_revision","label":"v2"},
+    {"action":"save_waiver","finding_code":"license","author":"Reviewer","reason":"Permission recorded"},
+    {"action":"check","policy":{"target_visibility":"private","phi_pii_reviewed":true,"redistribution_reviewed":false,"snapshot_restricted_bytes":false}},
+    {"action":"freeze","policy":{"target_visibility":"private","phi_pii_reviewed":true,"redistribution_reviewed":false,"snapshot_restricted_bytes":false}},
+    {"action":"verify","source_run_id":"run-1","comparisons":[]},
+    {"action":"build_capsule","destination":"/tmp/capsule.zip"}
+  ]
+}

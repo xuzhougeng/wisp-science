@@ -35,13 +35,40 @@ to see its full path.
 
 Brand SVGs, the existing `compose_icon()` glyphs, and semantic colors are exported
 from the WebView sources into the Swift resource bundle. There is no second icon
-set and no WebView embedded in the SwiftUI screen. After changing those shared
+set. The shell and controls are native; specialized document rendering uses a
+disposable, isolated WebKit surface. After changing those shared
 sources, run:
 
 ```bash
 python3 scripts/sync_native_design.py
 python3 scripts/sync_native_design.py --check
 ```
+
+## Specialized macOS document previews
+
+PDF uses PDFKit with pagination, zoom, text search and selected-text quotes carrying
+actual page positions. DOCX, XLSX and PPTX use the same offline renderer modules as
+the WebView: Word pages, spreadsheet sheets/cells/formulas and slide layouts remain
+available. The Office layout keeps spreadsheet grid lines, header backgrounds,
+selection outlines and a bounded scrolling surface in both light and dark
+appearances. HTML has source and reading modes, an opaque sandbox for inline scripts,
+and project-approved embedded images. Its preview cannot navigate to external
+sites or read unrelated local files. Quotes enter the existing side-chat draft;
+the owning native model supplies the source path and rejects stale preview replies.
+
+FASTA, Clustal/Stockholm alignments, PDB/mmCIF/MOL2 structures and SMILES use the
+shared sequence, WebGL and WASM renderers. Closing a preview releases its browser,
+workers and temporary origin. The localhost origin serves bundled renderer assets
+only; file contents enter the view through scoped host reads. PDF/Office byte reads
+remain bounded at 32 MiB for local and SSH contexts. Scientific format limits and
+malformed-input handling remain those of the shared renderer.
+
+Manual smoke: open each supported fixture from Files, switch HTML to source and
+back, search PDF text, quote a Word paragraph and an XLSX cell, then press Escape
+immediately after opening. The first press must close only the preview. Reopen
+the same path and verify that an old selection cannot be quoted into it. The opt-in
+`WISP_NATIVE_DOCUMENT_SMOKE=1` Swift test exercises real WebKit offline Office,
+worker/WASM, sequence and structure rendering with repository fixtures.
 
 CI and both app builds check for asset drift. WinUI links the same SVG and
 palette files into its output. The exporter handles UTF-8 source and Windows CRLF checkouts. Native system font rendering,
@@ -293,8 +320,10 @@ The preview aligns the home/workspace shell and includes native settings, projec
 creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, and the conversation loop described below.
 The macOS workspace additionally connects terminal/files, Notebook, Highlights,
 Provenance, SideChat, contexts, Runs and Agent panels. Their implementation does
-not imply complete parity behind every entry: ACP main conversations, full
-publication editing and the project-folder workflow are tracked in the
+not imply complete parity behind every entry. The resumed assistant, publication,
+viewer and workflow work is tracked in the
+[2026-10-08 completion plan](superpowers/plans/2026-10-08-macos-workbench-completion.md).
+Earlier feature increments are recorded in the
 [2026-09-25 parity audit](superpowers/plans/2026-09-25-macos-native-parity-iteration.md)
 and [repair progress](superpowers/plans/2026-09-25-macos-native-parity-progress.md).
 
@@ -389,16 +418,42 @@ entry, artifact detail, and run detail stay out of this slice. WinUI connects th
 The sidebar **论文证据** button replaces the conversation column with the
 publication workspace for the open project. `native_publication_workspace`
 reads that project's papers. `native_publication_create` creates one paper and
-its first revision. Both commands require the project id, are announced as
+its first revision. `native_publication_sources` lists exact artifact versions,
+runs and message excerpts. `native_publication_mutate` uses the shared typed
+operation contract for editing, binding, checks and frozen outputs.
+All four commands require the project id, are announced as
 `publication` and `publication_schema` (`wisp.native-publication.v1`), and are
 not in the settings allowlist. They do not change the WebView's active project
 or session.
 
 An empty title or revision label keeps the draft and does not call the host.
-A lost create keeps the draft and is not retried. A reply that arrives after
-the workspace has closed does not open a project. Escape closes only the
-publication column and returns to the conversation. Evidence binding, readiness,
-and reproduction stay out of this slice. WinUI connects `INativePublicationClient` in the project column, retaining the sidebar and conversation draft.
+A lost write keeps the draft and blocks further writes to that project, including
+after closing and reopening the workspace. Refresh and inspect the latest paper
+and revision before explicitly allowing more edits. A pending write cannot be
+acknowledged. A reply that arrives after navigation does not restore its old view.
+Creation drafts are separate per project.
+
+On macOS, **新建论文** creates the initial revision. **编辑修订** adds outline items,
+associates evidence, copies a revision, checks/freezes a draft, and reproduces or
+exports a frozen revision. Select an outline item to edit its kind, parent, title,
+content and order. Select evidence to change its selection state or visibility.
+Message selection preserves UTF-8 byte offsets and the full message content hash;
+the source preview is bounded to 16 KiB. Advanced exact locators also support
+execution logs, tool calls, code cells and external resources. Existing evidence
+snapshots, lineage, newer-version drift, review records, waivers, readiness,
+reproduction results and capsule builds remain inspectable.
+
+Frozen/published revisions cannot be edited. Copy one to a new draft for further
+changes. Freeze requires a fresh check with the same visibility/review options
+and a confirmation for the selected revision; the backend checks readiness again.
+Reproduction uses the existing isolated runner and output comparators. Capsule
+export uses a native ZIP save dialog and the existing capsule builder.
+
+Escape closes the topmost editor without closing the publication column; dirty
+item/evidence/revision editors first ask before discarding edits. An active write
+temporarily consumes Escape. Escape on the column returns to the conversation.
+WinUI retains its read/create client in the project column; this macOS increment
+does not imply WinUI editing parity.
 
 ## Capabilities
 
@@ -627,3 +682,35 @@ session. WinUI enables 排队后续 only for a writable running turn. An uncerta
 
 Sync errors wrap inside the native status and confirmation sheets, keeping both
 the backend explanation and the no-automatic-retry notice readable.
+
+### Native research assistant and timers
+
+The macOS home toolbar opens the persistent research assistant without rebinding
+the current project or a WebView window. It uses the existing restricted assistant
+tool set and shared conversation pipeline. Project context accompanies each new
+message; privacy-filtered plan items link back to their project conversations.
+The calendar resolves privacy before reading history, and its backend filters
+again in case privacy changed after the client read.
+
+The assistant's Automations sheet shows the built-in daily recap, persisted
+project schedules and recent execution reports. Create an interval, daily or
+weekly schedule, optionally naming an existing conversation and skill; toggle,
+run now or delete it through the existing scheduler. Daily and weekly options
+choose the next local start time and then use fixed intervals, matching WebView.
+The app must remain open for execution. Every ordinary conversation also has a
+clock button for its timer, including enable, update and cancel. Timers wait for
+busy work and replace their previous complete turn.
+
+Assistant and timer writes block replay after an unknown result. Refresh the
+records and explicitly acknowledge before continuing; drafts remain available.
+Editors register in the window Escape stack so immediate Escape dismisses only
+the top editor, with confirmation for changed automation drafts. Native command
+DTOs and a shared fixture live in `wisp-dto::native_assistant` and
+`contracts/native-assistant/v1/`.
+
+Manual smoke: open the assistant from home, select a visible project, inspect the
+date plan/calendar, and return without changing the original project. Create a
+future schedule, refresh/reopen to verify persistence, then disable/delete it.
+Open a project conversation's clock panel, save a long-interval timer, verify
+its persisted next run and cancel it. Press Escape immediately after each panel
+opens and check that only the top layer closes. Use an isolated QA database.

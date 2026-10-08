@@ -9,6 +9,20 @@
 use serde_json::json;
 
 #[test]
+fn native_workflow_canvas_fixture_preserves_all_task_metadata() {
+    let wire: serde_json::Value = serde_json::from_str(include_str!(
+        "../../contracts/native-workflows/v1/template.json"
+    ))
+    .unwrap();
+    let backend: crate::quick_actions::WorkflowTemplate =
+        serde_json::from_value(wire.clone()).unwrap();
+    crate::dynamic_workflow::validate_proposal(&backend.proposal).unwrap();
+    let dto: wisp_dto::WorkflowTemplate = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(dto).unwrap(), wire);
+    assert_eq!(serde_json::to_value(backend).unwrap(), wire);
+}
+
+#[test]
 fn local_file_upload_result_preserves_success_and_failure() {
     let wire = json!([
         {"source": "C:\\data\\input.csv", "path": "docs/input_1.csv", "error": null},

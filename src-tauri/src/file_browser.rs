@@ -1272,6 +1272,64 @@ pub(super) async fn read_remote_file(
     .map_err(|e| format!("Remote file task failed: {e}"))?
 }
 
+/// Native renderers request the same bounded, approved remote bytes as WebView.
+/// Preserve legacy document extraction for callers that do not opt in.
+pub(super) async fn read_native_remote_preview(
+    state: State<'_, AppState>,
+    context_id: String,
+    path: String,
+    render_pdf: bool,
+    render_office: bool,
+) -> Result<FileContent, String> {
+    crate::run_context::remote_files::refuse_if_context_path_discarded(
+        &state.store,
+        &context_id,
+        &path,
+    )
+    .await?;
+    let context = state
+        .store
+        .get_execution_context(&context_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Execution context not found: {context_id}"))?;
+    tokio::task::spawn_blocking(move || {
+        let mut runner = ProcessRemoteRunner;
+        read_native_remote_preview_with_runner(
+            &context,
+            &path,
+            render_pdf,
+            render_office,
+            &mut runner,
+        )
+    })
+    .await
+    .map_err(|e| format!("Remote file task failed: {e}"))?
+}
+
+fn read_native_remote_preview_with_runner(
+    context: &wisp_store::ExecutionContext,
+    path: &str,
+    render_pdf: bool,
+    render_office: bool,
+    runner: &mut dyn RemoteRunner,
+) -> Result<FileContent, String> {
+    let mime = mime_for_path(Path::new(path));
+    if !(render_pdf && mime == "application/pdf" || render_office && is_ooxml_path(Path::new(path)))
+    {
+        return read_remote_file_with_runner(context, path, None, runner);
+    }
+    let bytes = read_remote_file_bytes_with_runner(context, path, Some(32 * 1024 * 1024), runner)?;
+    let total = bytes.len() as u64;
+    Ok(file_content_from_bytes(
+        path.into(),
+        mime,
+        bytes,
+        Some(total),
+        false,
+    ))
+}
+
 #[tauri::command]
 pub(super) async fn read_remote_file_bytes(
     state: State<'_, AppState>,
@@ -1999,6 +2057,57 @@ mod tests {
         assert_eq!(content.path, "~/analysis.py");
         assert!(!content.truncated);
         assert_eq!(content.total_bytes, Some(12));
+    }
+
+    #[test]
+    fn native_remote_pdf_keeps_page_bytes_and_the_existing_transfer_ceiling() {
+        let identity = test_identity_file();
+        let bytes = b"%PDF-1.7\nscoped native page bytes\n";
+        let mut stdout = b"WISP_REMOTE_FILE_V1\0".to_vec();
+        stdout.extend_from_slice(bytes);
+        let mut runner = FakeRemoteRunner::returning(RemoteOutput {
+            status: 0,
+            stdout,
+            stderr: String::new(),
+        });
+        let content = read_native_remote_preview_with_runner(
+            &ssh_context(&identity),
+            "~/paper.pdf",
+            true,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+        assert_eq!(content.mime, "application/pdf");
+        assert!(content.text.is_none());
+        assert_eq!(content.total_bytes, Some(bytes.len() as u64));
+        assert!(!content.truncated);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(content.base64.unwrap())
+                .unwrap(),
+            bytes
+        );
+        assert_eq!(runner.commands.len(), 1);
+        assert!(runner.commands[0]
+            .args
+            .iter()
+            .any(|arg| arg.contains("33554432")));
+        let mut denied = FakeRemoteRunner::returning(RemoteOutput {
+            status: 67,
+            stdout: Vec::new(),
+            stderr: "Remote file exceeds 33554432 byte limit".into(),
+        });
+        assert!(read_native_remote_preview_with_runner(
+            &ssh_context(&identity),
+            "~/large.pdf",
+            true,
+            true,
+            &mut denied
+        )
+        .unwrap_err()
+        .contains("byte limit"));
+        let _ = std::fs::remove_file(identity);
     }
 
     #[test]

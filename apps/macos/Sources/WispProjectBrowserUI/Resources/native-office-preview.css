@@ -1,0 +1,45 @@
+/* Office layout shared with ui/src/styles/right-pane.css; local host sizing below. */
+/* docx-preview renders its own `.docx-wrapper` of white A4 "pages"; give it a
+   scroll surface and neutral gutter. Always light "paper" for print fidelity. */
+/* Base: flow at natural height so the right-pane preview scrolls via its own
+   .rp-view container (a fixed height here traps the scroll — #274). The modal
+   and center variants below re-bound it for internal scrolling. */
+.rp-docx { width: 100%; overflow: visible; background: var(--bg-sunken); }
+/* Keep docx text selectable inside the modal .overlay (which sets user-select:
+   none) so it can be added to chat like md/pdf. */
+.rp-docx, .rp-docx .docx-wrapper { user-select: text; -webkit-user-select: text; }
+.rp-docx .docx-wrapper { background: transparent; padding: 16px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+/* `margin: 0 auto` centers each fixed-width A4 page but collapses to 0 when the
+   page is wider than the pane, so it falls to flex-start instead of overflowing
+   into unreachable scroll space (which clipped the page's left edge). Auto
+   inline margins override align-items:center and work on every webview. */
+.rp-docx .docx-wrapper > section.docx { box-shadow: 0 1px 6px rgba(0, 0, 0, .2); margin: 0 auto !important; }
+.rp-xlsx { display: flex; width: 100%; min-width: 0; min-height: 240px; height: 100%; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); }
+.rp-xlsx-warning { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); background: color-mix(in srgb, var(--warn) 10%, var(--bg-elev)); color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.rp-xlsx-tabs { display: flex; flex: 0 0 auto; gap: 2px; padding: 5px 6px 0; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg-sunken); }
+.rp-xlsx-tabs button { max-width: 180px; padding: 5px 10px; overflow: hidden; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: transparent; color: var(--text-muted); font: inherit; font-size: calc(11px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.rp-xlsx-tabs button:hover { color: var(--text); background: var(--surface-hover); }
+.rp-xlsx-tabs button.active { border-color: var(--border); background: var(--bg-elev); color: var(--text); font-weight: 600; }
+.rp-xlsx-formula { display: flex; min-height: 30px; flex: 0 0 auto; align-items: center; border-bottom: 1px solid var(--border); background: var(--bg-elev); }
+.rp-xlsx-formula > span { align-self: stretch; display: flex; align-items: center; padding: 0 9px; border-right: 1px solid var(--border); color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; text-transform: uppercase; }
+.rp-xlsx-formula code { min-width: 0; padding: 0 9px; overflow: hidden; color: var(--text-muted); font: calc(11px * var(--ui-font-scale, 1))/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.rp-xlsx-grid { position: relative; min-width: 0; min-height: 180px; flex: 1 1 auto; overflow: auto; background: var(--bg-elev); scrollbar-gutter: stable; }
+.rp-xlsx-content { position: relative; min-width: 100%; min-height: 100%; background-image: linear-gradient(to right, transparent 139px, var(--border) 140px), linear-gradient(to bottom, transparent 27px, var(--border) 28px); background-position: 52px 28px; background-size: 140px 28px; }
+.rp-xlsx-cell, .rp-xlsx-row-head, .rp-xlsx-col-head, .rp-xlsx-corner { position: absolute; top: 0; left: 0; box-sizing: border-box; }
+.rp-xlsx-cell { width: 140px; height: 28px; padding: 5px 7px; overflow: hidden; color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 17px; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.rp-xlsx-cell:hover { background: color-mix(in srgb, var(--clay) 7%, var(--bg-elev)); }
+.rp-xlsx-cell.selected { outline: 2px solid var(--clay); outline-offset: -2px; z-index: 2; background: color-mix(in srgb, var(--clay) 9%, var(--bg-elev)); }
+.rp-xlsx-cell.merged { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-elev); }
+.rp-xlsx-cell a { color: var(--clay); text-decoration: underline; }
+.rp-xlsx-row-head { width: 52px; height: 28px; padding: 5px 7px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/17px var(--font-mono); text-align: right; z-index: 3; }
+.rp-xlsx-col-head { width: 140px; height: 28px; padding: 5px 7px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/17px var(--font-mono); text-align: center; z-index: 3; }
+.rp-xlsx-corner { width: 52px; height: 28px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-sunken); z-index: 4; }
+.rp-pptx { width: 100%; min-width: 0; min-height: 240px; height: 100%; padding: 16px 10px; overflow: auto; box-sizing: border-box; background: var(--bg-sunken); scrollbar-gutter: stable; }
+.rp-pptx [data-slide-index] { max-width: 100%; }
+
+
+html:has(body.office), body.office { height: 100%; }
+body.office { display:flex; flex-direction:column; --bg-sunken:var(--preview-bg); --bg-elev:var(--preview-bg); --text:var(--preview-fg); --text-muted:var(--preview-fg); --text-faint:var(--preview-fg); --border:color-mix(in srgb,var(--preview-fg) 25%,transparent); --clay:#b96145; --warn:#b98a21; --radius-sm:4px; --font-mono:monospace; }
+body.office #content { flex:1; min-height:0; width:100%; }
+.rp-docx { overflow:auto; height:100%; }
+.rp-error { padding:16px; }

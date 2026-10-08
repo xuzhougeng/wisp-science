@@ -534,7 +534,7 @@ struct ProjectWorkspace: View {
                 .help("研究历程")
                 .accessibilityLabel("研究历程")
                 .accessibilityIdentifier("sidebar-journey")
-                Button { journey.dismiss(); publication.open(projectID: project.id) } label: {
+                Button { journey.dismiss(); publication.open(projectID: project.id, databaseURL: model.databaseURL) } label: {
                     HStack { WispIcon(name: "book", size: 16); Text("论文证据"); Spacer() }
                 }
                 .buttonStyle(WispSidebarButtonStyle())

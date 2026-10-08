@@ -433,7 +433,7 @@ pub(crate) fn local_day(day: NaiveDate) -> Option<(i64, i64)> {
     Some((start(day)?, start(day.succ_opt()?)?))
 }
 
-async fn load_daily(store: &Store) -> DailyRecapAutomation {
+pub(crate) async fn load_daily(store: &Store) -> DailyRecapAutomation {
     let mut daily: DailyRecapAutomation = store
         .get_setting(DAILY_KEY)
         .await

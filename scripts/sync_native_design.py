@@ -31,6 +31,9 @@ def exports():
     # Use the same pinned language grammars as WebView; JavaScriptCore produces
     # token ranges while AppKit keeps the text selectable and renders it natively.
     yield "highlight.min.js", (ROOT / "ui/vendor-src/highlight.min.js").read_bytes()
+    rich = ROOT / "apps/windows/Wisp.Science.Preview/Assets/RichPreview"
+    for native, shared in (("native-rich-preview.css", "preview.css"), ("native-office-preview.css", "office.css"), ("native-preview-selection.mjs", "selection.mjs")):
+        yield native, (rich / shared).read_bytes()
     for theme in ("light", "dark"):
         yield f"wordmark-{theme}.svg", (ROOT / f"docs/assets/wordmark-{theme}.svg").read_bytes()
     source = (ROOT / "ui/src/app_support/messages.rs").read_text(encoding="utf-8")

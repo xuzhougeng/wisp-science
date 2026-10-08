@@ -251,7 +251,7 @@ pub(crate) async fn get_research_assistant_projects(
         .collect())
 }
 
-async fn visible_plan(
+pub(crate) async fn visible_plan(
     store: &Store,
     day: &str,
 ) -> Result<Vec<wisp_dto::ResearchAssistantPlanItem>, String> {

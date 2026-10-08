@@ -41,13 +41,20 @@ final class NativePublicationTests: XCTestCase {
         XCTAssertEqual(still, 1)
         await host.setMode("ok")
         await publication.create(host)
+        let blocked = await host.callCount()
+        XCTAssertEqual(blocked, 1)
+        XCTAssertFalse(publication.canCreate)
+        await publication.reload(host)
+        XCTAssertTrue(publication.canAcknowledge)
+        publication.acknowledgeResult()
+        await publication.create(host)
         let page = publication.workspace
         XCTAssertEqual(page.publication?.title, "RNA-seq paper")
         XCTAssertEqual(page.publication?.projectID, "research-1")
         XCTAssertEqual(page.items.map(\.kind), ["claim"])
         XCTAssertEqual(publication.draft.title, "")
         let calls = await host.callCount()
-        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(calls, 3)
     }
 
     @MainActor func testClosedWorkspaceDoesNotReadAndALateReplyDoesNotOpenAProject() async throws {
