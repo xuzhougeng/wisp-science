@@ -2172,10 +2172,15 @@ struct Settings {
     /// Maximum LLM/tool iterations in one agent turn.
     #[serde(default = "default_max_iter_setting")]
     max_iter: i64,
-    /// Compact long native-model conversations automatically at 80% of the
-    /// configured context budget. ACP agents own their remote context.
+    /// Compact long native-model conversations automatically once they reach
+    /// `auto_compact_percent` of the context budget. ACP agents own their
+    /// remote context.
     #[serde(default = "default_auto_compact")]
     auto_compact: bool,
+    /// Share of the context budget that triggers the warning and automatic
+    /// compaction. Clamped to `AUTO_COMPACT_PERCENT_RANGE`.
+    #[serde(default = "default_auto_compact_percent")]
+    auto_compact_percent: u64,
     /// After a user switches the session model, run semantic compaction.
     #[serde(default)]
     semantic_compact_on_model_switch: bool,
@@ -2258,6 +2263,16 @@ const fn default_send_user_agent_setting() -> bool {
 
 const fn default_auto_compact() -> bool {
     true
+}
+
+const fn default_auto_compact_percent() -> u64 {
+    wisp_core::context::DEFAULT_AUTO_COMPACT_PERCENT as u64
+}
+
+/// Clamp a stored or submitted percent into the range the compactor accepts.
+fn clamp_auto_compact_percent(percent: u64) -> u8 {
+    let range = wisp_core::context::AUTO_COMPACT_PERCENT_RANGE;
+    percent.clamp(*range.start() as u64, *range.end() as u64) as u8
 }
 
 const fn default_semantic_compact_idle_hours() -> u64 {
@@ -2383,11 +2398,13 @@ fn apply_live_agent_settings(
     agent: &mut wisp_core::Agent,
     max_iter: usize,
     auto_compact: bool,
+    auto_compact_percent: u8,
     auto_continue: bool,
     auto_continue_limit: usize,
 ) {
     agent.max_iter = max_iter;
     agent.set_auto_compact(auto_compact);
+    agent.set_auto_compact_percent(auto_compact_percent);
     agent.set_auto_continue(auto_continue, auto_continue_limit);
 }
 
@@ -5000,6 +5017,18 @@ async fn load_auto_compact_enabled(store: &Store) -> bool {
         .flatten()
         .map(|value| value != "false")
         .unwrap_or(true)
+}
+
+async fn load_auto_compact_percent(store: &Store) -> u8 {
+    clamp_auto_compact_percent(
+        store
+            .get_setting("auto_compact_percent")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default_auto_compact_percent()),
+    )
 }
 
 async fn load_semantic_compact_on_model_switch(store: &Store) -> bool {

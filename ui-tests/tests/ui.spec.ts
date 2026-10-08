@@ -15110,6 +15110,18 @@ test("session settings enable automatic context compaction by default", async ({
   });
 });
 
+test("session settings set the auto-compact threshold percent", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "Session");
+  const percent = page.getByTestId("auto-compact-percent");
+  await expect(percent).toHaveValue("80");
+  await percent.fill("60");
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+    settings: { auto_compact_percent: 60 },
+  });
+});
+
 test("session settings include model-switch semantic compact and idle hours", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "Session");

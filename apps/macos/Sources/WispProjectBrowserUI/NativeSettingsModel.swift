@@ -148,8 +148,8 @@ final class NativeSettingsModel: ObservableObject {
         })
     }
 
-    static let numberLabels = ["max_iter": "每轮最大 Agent 迭代次数", "auto_continue_limit": "自动继续次数上限", "semantic_compact_idle_hours": "空闲多久后提示语义压缩"]
-    static let numberDefaults: [String: Int64] = ["max_iter": 100, "auto_continue_limit": 10, "semantic_compact_idle_hours": 24]
+    static let numberLabels = ["max_iter": "每轮最大 Agent 迭代次数", "auto_continue_limit": "自动继续次数上限", "semantic_compact_idle_hours": "空闲多久后提示语义压缩", "auto_compact_percent": "自动压缩阈值（%）"]
+    static let numberDefaults: [String: Int64] = ["max_iter": 100, "auto_continue_limit": 10, "semantic_compact_idle_hours": 24, "auto_compact_percent": 80]
 
     func numberText(_ key: String) -> String {
         // Absent fields in an older host use the documented defaults; an edited
@@ -160,7 +160,8 @@ final class NativeSettingsModel: ObservableObject {
 
     func saveSettings() async {
         guard let document = values["get_settings"], !document.object.isEmpty, !loading, !busy else { return }
-        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours"] {
+        // auto_compact_percent only needs to be a non-negative integer here; the host clamps it to 10–95.
+        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours", "auto_compact_percent"] {
             guard let value = document.object[key] else { continue }
             let minimum: Int64 = key == "auto_continue_limit" ? 1 : 0
             guard case .integer(let number) = value, number >= minimum else {

@@ -104,6 +104,12 @@ const CATALOG: &[SettingSpec] = &[
         summary: "Automatically compact long conversations near the context limit.",
     },
     SettingSpec {
+        key: "auto_compact_percent",
+        kind: ValueKind::Int,
+        writable: true,
+        summary: "Percent of the context window that triggers automatic compaction. 10-95. Default 80.",
+    },
+    SettingSpec {
         key: "semantic_compact_on_model_switch",
         kind: ValueKind::Bool,
         writable: true,
@@ -703,6 +709,7 @@ async fn current_values(store: &Store) -> Result<Map<String, Value>, String> {
         .map_err(|error| error.to_string())?
         .map(|value| value != "false")
         .unwrap_or(true);
+    let auto_compact_percent = crate::load_auto_compact_percent(store).await;
     let semantic_compact_on_model_switch = store
         .get_setting("semantic_compact_on_model_switch")
         .await
@@ -768,6 +775,7 @@ async fn current_values(store: &Store) -> Result<Map<String, Value>, String> {
     values.insert("locale".into(), json!(locale));
     values.insert("max_iter".into(), json!(max_iter));
     values.insert("auto_compact".into(), json!(auto_compact));
+    values.insert("auto_compact_percent".into(), json!(auto_compact_percent));
     values.insert(
         "semantic_compact_on_model_switch".into(),
         json!(semantic_compact_on_model_switch),
@@ -999,6 +1007,21 @@ async fn apply_one(
             Ok(next.to_string())
         }
         "auto_compact" => write_bool_setting(store, "auto_compact", incoming).await,
+        "auto_compact_percent" => {
+            let current = crate::load_auto_compact_percent(store).await as i64;
+            let range = wisp_core::context::AUTO_COMPACT_PERCENT_RANGE;
+            let next = resolve_int(
+                incoming,
+                current,
+                *range.start() as i64,
+                *range.end() as i64,
+            )?;
+            store
+                .set_setting("auto_compact_percent", &next.to_string())
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(next.to_string())
+        }
         "semantic_compact_on_model_switch" => {
             write_bool_setting(store, "semantic_compact_on_model_switch", incoming).await
         }

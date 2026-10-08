@@ -342,6 +342,10 @@ impl Agent {
         self.ctx.set_auto_compact(enabled);
     }
 
+    pub fn set_auto_compact_percent(&mut self, percent: u8) {
+        self.ctx.set_auto_compact_percent(percent);
+    }
+
     pub fn set_auto_continue(&mut self, enabled: bool, limit: usize) {
         self.ctx.set_auto_continue(enabled, limit);
     }

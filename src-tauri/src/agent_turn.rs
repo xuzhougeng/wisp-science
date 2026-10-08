@@ -1152,6 +1152,7 @@ pub(crate) async fn send_message_inner(
         agent,
         max_iter,
         load_auto_compact_enabled(&state.store).await,
+        load_auto_compact_percent(&state.store).await,
         auto_continue,
         auto_continue_limit,
     );

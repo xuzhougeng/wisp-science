@@ -165,6 +165,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .unwrap_or_default();
     let notifications_enabled = super::load_notifications_enabled(&state.store).await;
     let auto_compact = super::load_auto_compact_enabled(&state.store).await;
+    let auto_compact_percent = super::load_auto_compact_percent(&state.store).await as u64;
     let semantic_compact_on_model_switch =
         super::load_semantic_compact_on_model_switch(&state.store).await;
     let semantic_compact_idle_hours = super::load_semantic_compact_idle_hours(&state.store).await;
@@ -205,6 +206,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         workspace_dir,
         max_iter,
         auto_compact,
+        auto_compact_percent,
         semantic_compact_on_model_switch,
         semantic_compact_idle_hours,
         auto_continue,
@@ -380,6 +382,14 @@ pub(super) async fn set_settings(
     state
         .store
         .set_setting("auto_compact", &settings.auto_compact.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting(
+            "auto_compact_percent",
+            &super::clamp_auto_compact_percent(settings.auto_compact_percent).to_string(),
+        )
         .await
         .map_err(|e| e.to_string())?;
     state

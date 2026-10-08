@@ -247,6 +247,7 @@ pub(crate) struct AppPrefsPatch {
     pub locale: Option<String>,
     pub max_iter: Option<i64>,
     pub auto_compact: Option<bool>,
+    pub auto_compact_percent: Option<u64>,
     pub semantic_compact_on_model_switch: Option<bool>,
     pub semantic_compact_idle_hours: Option<u64>,
     pub auto_continue: Option<bool>,
@@ -317,6 +318,9 @@ pub(crate) fn parse_app_prefs_payload(payload: &serde_json::Value) -> AppPrefsPa
         auto_compact: payload
             .get("auto_compact")
             .and_then(|value| value.as_bool()),
+        auto_compact_percent: payload
+            .get("auto_compact_percent")
+            .and_then(|value| value.as_u64()),
         semantic_compact_on_model_switch: payload
             .get("semantic_compact_on_model_switch")
             .and_then(|value| value.as_bool()),
@@ -405,6 +409,9 @@ pub(crate) fn apply_prefs_patch(
         }
         if let Some(value) = patch.auto_compact {
             cfg.auto_compact = value;
+        }
+        if let Some(value) = patch.auto_compact_percent {
+            cfg.auto_compact_percent = value;
         }
         if let Some(value) = patch.semantic_compact_on_model_switch {
             cfg.semantic_compact_on_model_switch = value;

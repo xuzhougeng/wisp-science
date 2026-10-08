@@ -1872,6 +1872,8 @@ pub struct Settings {
     pub max_iter: i64,
     #[serde(default = "default_auto_compact")]
     pub auto_compact: bool,
+    #[serde(default = "default_auto_compact_percent")]
+    pub auto_compact_percent: u64,
     #[serde(default)]
     pub semantic_compact_on_model_switch: bool,
     #[serde(default = "default_semantic_compact_idle_hours")]
@@ -2065,6 +2067,10 @@ fn default_auto_compact() -> bool {
     true
 }
 
+fn default_auto_compact_percent() -> u64 {
+    80
+}
+
 fn default_semantic_compact_idle_hours() -> u64 {
     24
 }
@@ -2249,6 +2255,7 @@ impl Default for Settings {
             workspace_dir: String::new(),
             max_iter: default_max_iter(),
             auto_compact: true,
+            auto_compact_percent: default_auto_compact_percent(),
             semantic_compact_on_model_switch: false,
             semantic_compact_idle_hours: default_semantic_compact_idle_hours(),
             auto_continue: false,

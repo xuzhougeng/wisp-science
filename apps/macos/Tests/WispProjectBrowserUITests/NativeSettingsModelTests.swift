@@ -69,6 +69,8 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.numberText("max_iter"), "100")
         XCTAssertEqual(model.numberText("auto_continue_limit"), "10")
         XCTAssertEqual(model.numberText("semantic_compact_idle_hours"), "24")
+        XCTAssertEqual(model.numberText("auto_compact_percent"), "80")
+        model.binding("get_settings", "auto_compact_percent").wrappedValue = .integer(60)
         model.binding("get_settings", "semantic_compact_on_model_switch").wrappedValue = .bool(true)
         model.binding("get_settings", "semantic_compact_idle_hours").wrappedValue = .integer(0)
         model.binding("get_settings", "max_iter").wrappedValue = .integer(0)
@@ -76,6 +78,7 @@ final class NativeSettingsModelTests: XCTestCase {
         await model.saveSettings()
         let write = await client.lastWrite()
         XCTAssertEqual(write?.1["settings"]?["semantic_compact_idle_hours"], .integer(0))
+        XCTAssertEqual(write?.1["settings"]?["auto_compact_percent"], .integer(60))
         XCTAssertEqual(write?.1["settings"]?["semantic_compact_on_model_switch"], .bool(true))
         XCTAssertEqual(write?.1["settings"]?["future_option"], .string("preserve"))
         XCTAssertFalse(model.hasUnsavedChanges)
@@ -85,7 +88,7 @@ final class NativeSettingsModelTests: XCTestCase {
     }
 
     @MainActor func testInvalidSessionNumbersDoNotReachHostOrDiscardDraft() async {
-        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours"] {
+        for key in ["max_iter", "auto_continue_limit", "semantic_compact_idle_hours", "auto_compact_percent"] {
             for invalid in [SettingsValue.null, .string("abc"), .string("1.5"), .string("9223372036854775808"), .integer(-1)] {
                 let client = SettingsFake(); let model = NativeSettingsModel(client: client, projectID: nil)
                 await model.load()
