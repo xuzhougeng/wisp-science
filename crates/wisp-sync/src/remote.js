@@ -13,7 +13,7 @@
         projects: "项目", conversations: "对话", newChat: "新对话", untitled: "未命名对话",
         loading: "加载中…", none: "暂无内容", back: "返回", pickChat: "选择一个对话，或开始新对话。",
         send: "发送", stop: "停止", running: "运行中", needsYou: "待处理", done: "完成", failed: "失败",
-        reasoning: "思考", approvalTitle: "需要你批准：", approve: "批准", reject: "拒绝",
+        reasoning: "思考", working: "执行中…", processed: "已处理", steps: (n) => `已执行 ${n} 步`, approvalTitle: "需要你批准：", approve: "批准", reject: "拒绝",
         readOnly: "这个对话是只读的。", acp: "ACP 会话请在桌面端继续。",
         remoteAsk: "远程发起的回合中，写文件、改文件和运行命令都需要你在这里批准。",
         disconnected: "连接已断开", timeout: "请求超时，请刷新确认结果后再操作。",
@@ -29,7 +29,7 @@
         projects: "Projects", conversations: "Conversations", newChat: "New conversation", untitled: "Untitled",
         loading: "Loading…", none: "Nothing here yet", back: "Back", pickChat: "Pick a conversation or start a new one.",
         send: "Send", stop: "Stop", running: "Running", needsYou: "Needs you", done: "Done", failed: "Failed",
-        reasoning: "Thinking", approvalTitle: "Approval needed: ", approve: "Approve", reject: "Reject",
+        reasoning: "Thinking", working: "Working…", processed: "Processed", steps: (n) => (n === 1 ? "Ran 1 step" : `Ran ${n} steps`), approvalTitle: "Approval needed: ", approve: "Approve", reject: "Reject",
         readOnly: "This conversation is read-only.", acp: "Continue ACP conversations on the desktop.",
         remoteAsk: "In remotely started turns, writing files, editing and running commands need your approval here.",
         disconnected: "Disconnected", timeout: "Request timed out. Refresh to check the result before retrying.",
@@ -603,16 +603,65 @@
   }
 
   // ------------------------------------------------------------ transcript
+  /// `opened` remembers only what the reader changed, so a disclosure that
+  /// opens by itself while it is live closes again once it settles.
+  function fold(key, opened, auto, cls, summary, body) {
+    const node = el("details", { class: cls, open: opened.get(key) ?? auto }, el("summary", null, summary), body);
+    node.addEventListener("toggle", () => (node.open === auto ? opened.delete(key) : opened.set(key, node.open)));
+    return node;
+  }
+
   function toolNode(item, key, opened, extra) {
     const ok = item.ok === true ? T.done : item.ok === false ? T.failed : T.running;
     const body = [item.input, item.text].filter(Boolean).join("\n\n").slice(0, 20000);
-    const node = el("details", { class: "tool", open: opened.has(key) },
-      el("summary", null,
-        el("span", null, item.tool_name || item.kind || item.role),
-        el("span", { class: item.ok === false ? "state fail" : "state" }, ok)),
-      body ? el("pre", null, body) : null);
-    node.addEventListener("toggle", () => (node.open ? opened.add(key) : opened.delete(key)));
+    const node = fold(key, opened, false, "tool", [
+      el("span", null, item.tool_name || item.kind || item.role),
+      el("span", { class: item.ok === false ? "state fail" : "state" }, ok),
+    ], body ? el("pre", null, body) : null);
     return extra ? el("div", { class: "transcript" }, node, extra) : node;
+  }
+
+  // Tools whose own row is the result worth seeing; they never fold away.
+  const SHOWN_TOOLS = new Set(["attempt_completion", "monitor_run", "wisp_monitor_run", "generate_image", "generate_video"]);
+  const isTool = (item) => (item.role === "tool" || item.role === "acp_tool") && !SHOWN_TOOLS.has(item.tool_name);
+
+  /// Assistant text that introduces more work, not the turn's answer.
+  function isCommentary(items, index) {
+    for (let next = index + 1; next < items.length; next++) {
+      const item = items[next];
+      if (item.role !== "reasoning" && (item.role !== "assistant" || item.text)) return isTool(item);
+    }
+    return false;
+  }
+
+  /// Folds process rows as the desktop does: a finished turn keeps one row for
+  /// all of its work; a running one keeps its commentary readable and folds
+  /// each run of steps, with the newest open. `nodes[i]` renders `items[i]`.
+  function foldSteps(items, nodes, running, opened) {
+    const liveFrom = running ? items.map((item) => item.role).lastIndexOf("user") : items.length;
+    const out = [];
+    for (let start = 0; start < items.length; ) {
+      const live = start > liveFrom;
+      let end = start;
+      for (; end < items.length; end++) {
+        const item = items[end];
+        if (item.role === "assistant" ? item.text && (live || !isCommentary(items, end)) : item.role !== "reasoning" && !isTool(item)) break;
+      }
+      const rows = nodes.slice(start, end).filter(Boolean);
+      if (rows.length < 2) {
+        end = Math.max(end, start + 1);
+        out.push(...nodes.slice(start, end));
+      } else {
+        // ponytail: position-keyed and rebuilt per refresh; the rows inside keep their nodes.
+        const auto = live && end === items.length;
+        const tools = items.slice(start, end).filter(isTool).length;
+        out.push(fold(`${live ? "steps" : "turn"}:${start}`, opened, auto, "tool steps",
+          el("span", null, auto ? T.working : tools ? T.steps(tools) : T.processed),
+          el("div", { class: "transcript" }, rows)));
+      }
+      start = end;
+    }
+    return out.filter(Boolean);
   }
 
   function itemNode(item, index, opened, ctx) {
@@ -683,7 +732,7 @@
     draft.placeholder = T.placeholder;
     send.textContent = T.send;
     stop.textContent = T.stop;
-    const opened = new Set();
+    const opened = new Map();
     const rendered = [];
     let lastItems = "";
     let snapshot = null;
@@ -765,7 +814,7 @@
         if (!live()) return;
         snapshot = next;
         const stick = first || nearBottom();
-        const items = JSON.stringify(next.items);
+        const items = `${next.running}${JSON.stringify(next.items)}`; // Folding follows `running` too.
         if (items !== lastItems) {
           lastItems = items;
           // Unchanged rows keep their nodes, so open details and loaded
@@ -776,7 +825,7 @@
             return rendered[index].node;
           });
           rendered.length = next.items.length;
-          transcript.replaceChildren(...nodes.filter(Boolean));
+          transcript.replaceChildren(...foldSteps(next.items, nodes, next.running, opened));
         }
         approvals.replaceChildren(...(next.approvals || []).map((approval) => approvalNode(approval, session, project)));
         activity.textContent = next.running ? next.activity_status || T.running : next.error || "";

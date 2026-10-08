@@ -64,6 +64,21 @@ const snapshots: Record<string, any> = {
     approvals: [{ approval_id: "ap-1", frame_id: "s-1", message: "Run a shell command", tool: "shell", preview: "rm -rf build" }],
   },
   "s-2": { items: [{ role: "assistant", text: "Second conversation.", tool_name: null, input: null, ok: null, status: null }], approvals: [] },
+  // A turn still at work: commentary between two runs of steps.
+  "s-3": {
+    running: true,
+    items: [
+      { role: "user", text: "Profile the uploads", tool_name: null, input: null, ok: null, status: null },
+      { role: "reasoning", text: "Look first.", tool_name: null, input: null, ok: null, status: null },
+      { role: "assistant", text: "Inspecting the files.", tool_name: null, input: null, ok: null, status: null },
+      { role: "tool", text: "no such file", tool_name: "shell", input: "head a.csv", ok: false, status: null, call_id: "t1" },
+      { role: "tool", text: "id,title", tool_name: "shell", input: "head uploads/a.csv", ok: true, status: null, call_id: "t2" },
+      { role: "assistant", text: "Now profiling.", tool_name: null, input: null, ok: null, status: null },
+      { role: "tool", text: "53 rows", tool_name: "shell", input: "wc -l uploads/a.csv", ok: true, status: null, call_id: "t3" },
+      { role: "tool", text: "", tool_name: "write", input: "profile.py", ok: null, status: null, call_id: "t4" },
+    ],
+    approvals: [],
+  },
   "s-9": { items: [{ role: "assistant", text: `Other project.\n\n${WIDE_TABLE}`, tool_name: null, input: null, ok: null, status: null }], approvals: [] },
 };
 const sessions: Record<string, any[]> = {
@@ -107,7 +122,7 @@ function answer({ command, project_id, args }: Call): any {
     case "remote_sessions":
       return sessions[project_id!];
     case "native_conversation_snapshot":
-      return { ...snapshots[session], project_id, session_id: session, running: false, stopping: false, read_only: false, model_id: "m", error: null, request_id: null };
+      return { running: false, ...snapshots[session], project_id, session_id: session, stopping: false, read_only: false, model_id: "m", error: null, request_id: null };
     case "native_conversation_image":
       if (args.resource_id !== "res-1" && !/\.png$/.test(args.path ?? "")) throw new Error("image preview unavailable");
       return { path: "thumbnail", mime: "image/png", text: null, base64: PNG, truncated: false, total_bytes: 68 };
@@ -277,6 +292,38 @@ test("replies render Markdown and conversation images without trusting their HTM
     { session_id: "s-1", approval_id: "ap-1", approved: true },
   ]);
   expect(calls.find((call) => call.command === "native_conversation_send")!.args.message).toBe("continue");
+  expect(problems).toEqual([]);
+});
+
+test("a turn's steps fold as on the desktop: newest open while running, one row once done", async ({ page }) => {
+  const problems = watchConsole(page);
+  await remote(page);
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-3`);
+
+  const folds = page.locator("#main > .transcript > details.steps");
+  const commentary = page.locator("#main > .transcript > .md");
+  await expect(folds.locator(":scope > summary")).toHaveText(["Ran 2 steps", "Working…"]);
+  await expect(commentary).toHaveText(["Inspecting the files.", "Now profiling."]);
+  await expect(folds.nth(0)).not.toHaveAttribute("open");
+  await expect(folds.nth(1)).toHaveAttribute("open", "");
+  await expect(folds.nth(1).locator("details.tool .state")).toHaveText(["Done", "Running"]);
+  // A lone step is its own row.
+  await expect(page.locator("#main > .transcript > details.tool:not(.steps) > summary")).toHaveText("ThinkingDone");
+
+  // Closing the live run survives the refresh that finishes its last step.
+  await folds.nth(1).locator(":scope > summary").click();
+  const live = snapshots["s-3"];
+  live.items[7] = { ...live.items[7], ok: true };
+  await expect(folds.nth(1).locator("details.tool .state")).toHaveText(["Done", "Done"]);
+  await expect(folds.nth(1)).not.toHaveAttribute("open");
+
+  snapshots["s-3"] = { ...live, running: false, items: [...live.items, { role: "assistant", text: "All done.", tool_name: null, input: null, ok: null, status: null }] };
+  await expect(folds.locator(":scope > summary")).toHaveText(["Ran 4 steps"]);
+  await expect(commentary).toHaveText(["All done."]);
+  await expect(folds).not.toHaveAttribute("open");
+  await folds.locator(":scope > summary").click();
+  await expect(folds.locator("details.tool .state")).toHaveText(["Done", "Failed", "Done", "Done", "Done"]);
+  await expect(folds.locator(".md")).toHaveText(["Inspecting the files.", "Now profiling."]);
   expect(problems).toEqual([]);
 });
 
