@@ -218,6 +218,13 @@ struct NativeAutomationsSheet: View {
     @State private var draft = NativeAutomationDraft()
     @State private var recapTime = "09:00"
     @State private var deletion: SettingsValue?
+    /// Built outside `body`: as one expression in the view builder it exceeds
+    /// the type checker's budget and the package stops compiling.
+    private func scheduleSummary(_ row: SettingsValue) -> String {
+        let project = model.projects.first { $0["id"] == row["project_id"] }?["name"].string ?? ""
+        let next = Date(timeIntervalSince1970: TimeInterval(row["next_run_at"].integer)).formatted()
+        return "\(project) · \(localized("下次运行")): \(next)"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack { Text(localized("自动化")).font(.title2.bold()); Spacer(); Button(localized("关闭"), action: close) }
@@ -250,7 +257,7 @@ struct NativeAutomationsSheet: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack { Text(row["name"].string).fontWeight(.semibold); Spacer(); Toggle(localized("启用"), isOn: Binding(get: { row["enabled"].bool }, set: { on in Task { await model.mutate(["action": .string("set_enabled"), "id": row["id"], "enabled": .bool(on)]) } })).disabled(!model.canWrite) }
                             Text(row["prompt"].string).textSelection(.enabled)
-                            Text((model.projects.first { $0["id"] == row["project_id"] }?["name"].string ?? "") + " · " + localized("下次运行") + ": " + Date(timeIntervalSince1970: TimeInterval(row["next_run_at"].integer)).formatted()).font(.caption).foregroundStyle(.secondary)
+                            Text(scheduleSummary(row)).font(.caption).foregroundStyle(.secondary)
                             HStack { Button(localized("立即运行")) { Task { await model.mutate(["action": .string("run_now"), "id": row["id"]]) } }; Button(localized("删除"), role: .destructive) { deletion = row } }.disabled(!model.canWrite)
                             ForEach(Array(model.workspace["runs"].array.filter { $0["schedule_id"] == row["id"] }.prefix(10).enumerated()), id: \.offset) { _, run in
                                 Text(localized(run["status"].string) + " · " + Date(timeIntervalSince1970: TimeInterval(run["fired_at"].integer)).formatted() + (run["error"].string.isEmpty ? "" : " · " + run["error"].string)).font(.caption).textSelection(.enabled)
