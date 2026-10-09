@@ -447,25 +447,61 @@ const WAIT_INTERRUPTED_NEXT_ACTION: &str = "The Run is still executing and was n
      log tails). Then call monitor_run again with the same run_id to resume waiting. Call \
      cancel_run only if the user asked to stop the Run.";
 
+/// Consecutive failed status reads a wait rides out. Each one can already block
+/// for the store pool's acquire timeout, so this spans a few minutes.
+const MAX_WAIT_READ_FAILURES: u32 = 5;
+
 async fn wait_for_terminal(
     store: &wisp_store::Store,
     run_id: &str,
     env: &dyn ToolEnv,
 ) -> Result<(wisp_store::RunRecord, WaitOutcome), String> {
+    wait_for_terminal_with(|| store.get_run(run_id), run_id, env).await
+}
+
+/// `read` is the status read, injected so a failing store can be tested.
+async fn wait_for_terminal_with<F, Fut, E>(
+    mut read: F,
+    run_id: &str,
+    env: &dyn ToolEnv,
+) -> Result<(wisp_store::RunRecord, WaitOutcome), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<wisp_store::RunRecord>, E>>,
+    E: std::fmt::Display,
+{
+    let mut read_failures = 0;
     loop {
-        let run = store
-            .get_run(run_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("Run not found: {run_id}"))?;
-        if run.status.is_terminal() {
-            return Ok((run, WaitOutcome::Terminal));
-        }
-        if env.is_cancelled() {
-            return Ok((run, WaitOutcome::Detached));
-        }
-        if env.guidance_pending() {
-            return Ok((run, WaitOutcome::GuidanceInterrupt));
+        match read().await {
+            Ok(run) => {
+                read_failures = 0;
+                let run = run.ok_or_else(|| format!("Run not found: {run_id}"))?;
+                if run.status.is_terminal() {
+                    return Ok((run, WaitOutcome::Terminal));
+                }
+                if env.is_cancelled() {
+                    return Ok((run, WaitOutcome::Detached));
+                }
+                if env.guidance_pending() {
+                    return Ok((run, WaitOutcome::GuidanceInterrupt));
+                }
+            }
+            // A failed read says nothing about the Run. Wait through a store
+            // stall instead of handing the model an error it answers by
+            // resubmitting.
+            Err(error) => {
+                read_failures += 1;
+                if read_failures >= MAX_WAIT_READ_FAILURES
+                    || env.is_cancelled()
+                    || env.guidance_pending()
+                {
+                    return Err(format!(
+                        "could not read the status of Run {run_id} ({error}). The Run itself \
+                         was not cancelled or changed. Call monitor_run again with this run_id; \
+                         do not resubmit it."
+                    ));
+                }
+            }
         }
         tokio::time::sleep(if cfg!(test) {
             std::time::Duration::from_millis(10)
@@ -897,5 +933,58 @@ impl Tool for CancelRunTool {
             },
             Err(error) => ToolResult::fail(format!("cancel_run error: {error}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Env;
+
+    #[async_trait::async_trait]
+    impl ToolEnv for Env {
+        fn project_root(&self) -> &std::path::Path {
+            std::path::Path::new(".")
+        }
+
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+
+        async fn emit(&self, _event: wisp_tools::ToolEvent) {}
+    }
+
+    #[tokio::test]
+    async fn wait_rides_out_transient_status_read_failures() {
+        let mut run = wisp_store::RunRecord::new("r", "p", "ssh:a", "Upload", "file_transfer");
+        run.status = wisp_store::RunStatus::Succeeded;
+        let mut reads = 0;
+        let (finished, _) = wait_for_terminal_with(
+            || {
+                reads += 1;
+                let read = if reads < MAX_WAIT_READ_FAILURES {
+                    Err("pool timed out")
+                } else {
+                    Ok(Some(run.clone()))
+                };
+                async move { read }
+            },
+            "r",
+            &Env,
+        )
+        .await
+        .unwrap();
+        assert_eq!(finished.status, wisp_store::RunStatus::Succeeded);
+
+        let error = wait_for_terminal_with(
+            || async { Err::<Option<wisp_store::RunRecord>, _>("pool timed out") },
+            "r",
+            &Env,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("pool timed out"), "{error}");
+        assert!(error.contains("do not resubmit"), "{error}");
     }
 }
