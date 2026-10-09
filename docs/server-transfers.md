@@ -53,6 +53,15 @@ failed, or cancelled transfer remains there for three seconds so its final
 state can be confirmed, then dismisses automatically without covering the
 conversation.
 
+When checking an existing transfer, its Run card keeps the last recorded
+status visible. If refreshing that status takes more than ten seconds, the
+card warns that the displayed status may be outdated. A failed refresh shows
+the error and retries automatically; a failure to read status does not mark
+the transfer itself failed. When no Run record is available, the card shows
+**Status unavailable**. Run-detail read failures also appear on the card and
+retry after five seconds. Slow status and detail requests are coalesced so
+repeated refresh ticks do not accumulate concurrent reads.
+
 ## Upload from the local machine
 
 From the Files panel, select an SSH context, open the destination folder, and

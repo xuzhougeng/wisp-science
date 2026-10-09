@@ -1,8 +1,8 @@
 use crate::app_support::{
     compose_icon, js_error_text, parse_redact_keywords, redact_text, refresh_execution_contexts,
     refresh_runs, refresh_runtimes, share_html_document, share_png_payload, share_png_row,
-    share_png_width, show_toast, ShareExportFormat, ShareHtmlRow, ShareHtmlTheme, ShareMessage,
-    ShareRole,
+    share_png_width, show_toast, RunRefreshHealth, ShareExportFormat, ShareHtmlRow, ShareHtmlTheme,
+    ShareMessage, ShareRole,
 };
 use crate::bindings::{invoke_checked, open_external_url, render_share_png, snapshot_share_theme};
 use crate::dto::*;
@@ -687,6 +687,7 @@ pub(super) fn RunReviewOverlay(
     modal: RwSignal<Option<String>>,
     runs: RwSignal<Vec<RunSummary>>,
 ) -> impl IntoView {
+    let run_refresh_health = use_context::<RunRefreshHealth>();
     let path = create_rw_signal(String::new());
     let filter = create_rw_signal(String::new());
     let entries = create_rw_signal(Vec::<WorkspaceEntry>::new());
@@ -838,7 +839,7 @@ pub(super) fn RunReviewOverlay(
             match invoke_checked("cleanup_run_workspace", args).await {
                 Ok(_) => {
                     show_toast(&t(locale.get_untracked(), "runs.cleanup_done"));
-                    refresh_runs(runs, locale);
+                    refresh_runs(runs, locale, run_refresh_health);
                     modal.set(None);
                 }
                 Err(value) => error.set(Some(localize_backend(

@@ -528,6 +528,8 @@ fn App() -> impl IntoView {
     let sync_actions_available = create_rw_signal(false);
     let pet_status = create_rw_signal(PetStatus::default());
     let run_records = create_rw_signal::<Vec<RunSummary>>(vec![]);
+    let run_refresh_health = RunRefreshHealth(create_rw_signal(RunRefreshState::default()));
+    provide_context(run_refresh_health);
     // A transcript row is remounted when a later turn changes its keyed
     // projection. Keep explicit Run-card dismissals above the card component
     // so a dismissed terminal Run cannot flash back during that remount.
@@ -9034,7 +9036,7 @@ fn App() -> impl IntoView {
         refresh_execution_contexts(execution_contexts);
     });
     refresh_runtimes(runtime_infos);
-    refresh_runs(run_records, locale);
+    refresh_runs(run_records, locale, Some(run_refresh_health));
     crate::bindings::start_ui_health();
     {
         // Keep liveness tied to the WASM app, while JS collects bounded metrics.
@@ -9068,7 +9070,7 @@ fn App() -> impl IntoView {
                     && run.progress_json != "{}"
             });
             if tick == 0 || busy.get_untracked() || transfer_active {
-                refresh_runs(run_records, locale);
+                refresh_runs(run_records, locale, Some(run_refresh_health));
             }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
@@ -11495,7 +11497,7 @@ fn App() -> impl IntoView {
                 ensure_right_tab(RightTab::Hosts, show_right, open_right_tabs, right_tab);
                 refresh_execution_contexts(execution_contexts);
                 refresh_runtimes(runtime_infos);
-                refresh_runs(run_records, locale);
+                refresh_runs(run_records, locale, Some(run_refresh_health));
             }
             "side-chat" => {
                 ensure_right_tab(RightTab::SideChat, show_right, open_right_tabs, right_tab)
@@ -14188,7 +14190,7 @@ fn App() -> impl IntoView {
                                                     spawn_local(async move {
                                                         let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
                                                         let _ = invoke("cancel_run", arg).await;
-                                                        refresh_runs(run_records, locale);
+                                                        refresh_runs(run_records, locale, Some(run_refresh_health));
                                                     });
                                                 }>{compose_icon("close")}</button>
                                             }
@@ -15049,7 +15051,7 @@ fn App() -> impl IntoView {
                                         refresh_memory();
                                         refresh_execution_contexts(execution_contexts);
                                         refresh_runtimes(runtime_infos);
-                                        refresh_runs(run_records, locale);
+                                        refresh_runs(run_records, locale, Some(run_refresh_health));
                                     }
                                 }>
                                 {compose_icon("controls")}
@@ -16261,7 +16263,7 @@ fn App() -> impl IntoView {
                                                     RightTab::Hosts => {
                                                         refresh_execution_contexts(execution_contexts);
                                                         refresh_runtimes(runtime_infos);
-                                                        refresh_runs(run_records, locale);
+                                                        refresh_runs(run_records, locale, Some(run_refresh_health));
                                                     }
                                                     RightTab::Agents => {
                                                         refresh_agent_workflows(agent_panel)
@@ -16325,7 +16327,7 @@ fn App() -> impl IntoView {
                                                         RightTab::Hosts => {
                                                             refresh_execution_contexts(execution_contexts);
                                                             refresh_runtimes(runtime_infos);
-                                                            refresh_runs(run_records, locale);
+                                                            refresh_runs(run_records, locale, Some(run_refresh_health));
                                                         }
                                                         RightTab::Agents => {
                                                             refresh_agent_workflows(agent_panel)

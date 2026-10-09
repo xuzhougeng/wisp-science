@@ -4,7 +4,56 @@ const SSH_RETRY_STOPPED_MARKER: &str = "ssh automatic retry stopped";
 
 thread_local! {
     static RUN_REFRESH_INITIALIZED: Cell<bool> = const { Cell::new(false) };
+    static RUN_REFRESH_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
     static SSH_RETRY_TOASTED_RUNS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct RunRefreshState {
+    pub pending_since: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RunRefreshHealth(pub RwSignal<RunRefreshState>);
+
+// The one-second ticker and explicit refresh buttons share this guard. A slow
+// database read must not queue another read on every tick and exhaust the pool.
+struct RunRefreshGuard;
+
+impl RunRefreshGuard {
+    fn acquire() -> Option<Self> {
+        RUN_REFRESH_IN_FLIGHT.with(|pending| {
+            if pending.replace(true) {
+                None
+            } else {
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for RunRefreshGuard {
+    fn drop(&mut self) {
+        RUN_REFRESH_IN_FLIGHT.with(|pending| pending.set(false));
+    }
+}
+
+pub(crate) fn run_refresh_warning(
+    state: &RunRefreshState,
+    now: i64,
+    locale: Locale,
+) -> Option<String> {
+    if let Some(error) = &state.error {
+        Some(tf(locale, "runs.refresh_failed", &[("error", error)]))
+    } else if state
+        .pending_since
+        .is_some_and(|started| now.saturating_sub(started) >= 10)
+    {
+        Some(t(locale, "runs.refresh_delayed"))
+    } else {
+        None
+    }
 }
 
 pub(crate) fn refresh_execution_contexts(into: RwSignal<Vec<ExecutionContext>>) {
@@ -169,10 +218,38 @@ pub(crate) fn refresh_runtime_environment_after_tool(
     });
 }
 
-pub(crate) fn refresh_runs(into: RwSignal<Vec<RunSummary>>, locale: RwSignal<Locale>) {
+pub(crate) fn refresh_runs(
+    into: RwSignal<Vec<RunSummary>>,
+    locale: RwSignal<Locale>,
+    health: Option<RunRefreshHealth>,
+) {
+    let Some(guard) = RunRefreshGuard::acquire() else {
+        return;
+    };
+    if let Some(health) = health {
+        health.0.try_update(|state| {
+            state.pending_since = Some(js_sys::Date::now() as i64 / 1000);
+        });
+    }
     spawn_local(async move {
-        let v = invoke("list_runs", JsValue::UNDEFINED).await;
-        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RunSummary>>(v) {
+        let _guard = guard;
+        let result = invoke_checked("list_runs", JsValue::UNDEFINED)
+            .await
+            .map_err(js_error_text)
+            .and_then(|value| {
+                serde_wasm_bindgen::from_value::<Vec<RunSummary>>(value)
+                    .map_err(|error| error.to_string())
+            });
+        if let Some(health) = health {
+            health.0.try_update(|state| {
+                state.pending_since = None;
+                state.error = result.as_ref().err().cloned();
+            });
+        }
+        if into.try_with_untracked(|_| ()).is_none() {
+            return;
+        }
+        if let Ok(list) = result {
             let initialized = RUN_REFRESH_INITIALIZED.with(Cell::get);
             let stopped_runs = list
                 .iter()
@@ -222,8 +299,34 @@ pub(crate) fn refresh_runs(into: RwSignal<Vec<RunSummary>>, locale: RwSignal<Loc
 
 #[cfg(test)]
 mod run_refresh_guard_tests {
-    use super::run_lists_render_eq;
+    use super::{run_lists_render_eq, run_refresh_warning, RunRefreshGuard, RunRefreshState};
     use crate::dto::RunSummary;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn pending_refreshes_are_coalesced_and_release_the_guard() {
+        let guard = RunRefreshGuard::acquire().unwrap();
+        assert!(RunRefreshGuard::acquire().is_none());
+        drop(guard);
+        assert!(RunRefreshGuard::acquire().is_some());
+    }
+
+    #[test]
+    fn refresh_feedback_distinguishes_slow_reads_from_errors() {
+        let mut state = RunRefreshState {
+            pending_since: Some(100),
+            error: None,
+        };
+        assert!(run_refresh_warning(&state, 109, Locale::En).is_none());
+        assert!(run_refresh_warning(&state, 110, Locale::En)
+            .unwrap()
+            .contains("taking longer"));
+        state.error = Some("pool timed out".into());
+        assert!(run_refresh_warning(&state, 101, Locale::En)
+            .unwrap()
+            .contains("pool timed out"));
+        assert!(run_refresh_warning(&RunRefreshState::default(), 110, Locale::En).is_none());
+    }
 
     fn summary(last_polled_at: Option<i64>) -> RunSummary {
         RunSummary {
@@ -2592,6 +2695,7 @@ pub(crate) fn run_status_label(locale: Locale, status: &str) -> String {
         "timed_out" => "runs.status.timed_out",
         "cancelled" => "runs.status.cancelled",
         "lost" => "runs.status.lost",
+        "unknown" => "runs.status.unknown",
         _ => return status.to_string(),
     };
     t(locale, key).to_string()
@@ -3082,6 +3186,7 @@ pub(crate) fn ContextDetailsOverlay(
     selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
     on_use_in_publication: Callback<PublicationEvidenceSource>,
 ) -> impl IntoView {
+    let run_refresh_health = use_context::<RunRefreshHealth>();
     // Run→artifact links live on the graph's `produced` edges, so the Runs view
     // needs a fresh graph each time it opens.
     create_effect(move |_| {
@@ -3245,7 +3350,7 @@ pub(crate) fn ContextDetailsOverlay(
                                                         title=t(locale.get(), "runs.refresh")
                                                         aria-label=t(locale.get(), "runs.refresh")
                                                         on:click=move |_| {
-                                                            refresh_runs(runs, locale);
+                                                            refresh_runs(runs, locale, run_refresh_health);
                                                             crate::research::refresh_research_graph(research_graph);
                                                         }>{compose_icon("sync")}</button>
                                                 </div>
@@ -3327,7 +3432,7 @@ pub(crate) fn ContextDetailsOverlay(
                                                                             spawn_local(async move {
                                                                                 let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
                                                                                 let _ = invoke("cancel_run", arg).await;
-                                                                                refresh_runs(runs, locale);
+                                                                                refresh_runs(runs, locale, run_refresh_health);
                                                                             });
                                                                         }>{compose_icon("close")}</button>
                                                                 }
@@ -3363,7 +3468,7 @@ pub(crate) fn ContextDetailsOverlay(
                                                                                         &js_error_text(error),
                                                                                     )),
                                                                                 }
-                                                                                refresh_runs(runs, locale);
+                                                                                refresh_runs(runs, locale, run_refresh_health);
                                                                             });
                                                                         }>{compose_icon("trash")}</button>
                                                                 }
