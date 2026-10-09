@@ -9,7 +9,9 @@ use super::Store;
 use anyhow::{ensure, Result};
 use sqlx::Row;
 
-pub use wisp_dto::{MandateRecord, MandateRound, MANDATE_STATUSES};
+pub use wisp_dto::{
+    MandateRecord, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS, MANDATE_STATUSES,
+};
 
 const MANDATE_COLUMNS: &str = "id,project_id,frame_id,name,goal,kpis,constraints,ends_at,\
     interval_secs,report_interval_secs,next_report_at,status,next_run_at,last_run_at,\
@@ -207,10 +209,12 @@ impl Store {
         if let Some(store) = self.route_entity("mandates", "id", id).await? {
             return Box::pin(store.delete_mandate(id)).await;
         }
-        sqlx::query("DELETE FROM mandate_rounds WHERE mandate_id=?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        for table in ["mandate_rounds", "mandate_requests"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE mandate_id=?"))
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
         sqlx::query("DELETE FROM mandates WHERE id=?")
             .bind(id)
             .execute(&self.pool)
@@ -385,6 +389,122 @@ impl Store {
     }
 }
 
+const REQUEST_COLUMNS: &str =
+    "id,mandate_id,kind,what,why,then_what,status,reply,created_at,answered_at";
+
+fn request_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MandateRequest> {
+    Ok(MandateRequest {
+        id: row.try_get("id")?,
+        mandate_id: row.try_get("mandate_id")?,
+        kind: row.try_get("kind")?,
+        what: row.try_get("what")?,
+        why: row.try_get("why")?,
+        then_what: row.try_get("then_what")?,
+        status: row.try_get("status")?,
+        reply: row.try_get("reply")?,
+        created_at: row.try_get("created_at")?,
+        answered_at: row.try_get("answered_at")?,
+    })
+}
+
+impl Store {
+    /// Open a request for the researcher. An earlier request still open is
+    /// withdrawn: the mandate waits on one thing at a time.
+    pub async fn open_mandate_request(&self, request: &MandateRequest) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("mandates", "id", &request.mandate_id)
+            .await?
+        {
+            return Box::pin(store.open_mandate_request(request)).await;
+        }
+        ensure!(
+            MANDATE_REQUEST_KINDS.contains(&request.kind.as_str()),
+            "Unknown request kind"
+        );
+        let mut tx = self.begin_write().await?;
+        sqlx::query(
+            "UPDATE mandate_requests SET status='withdrawn' WHERE mandate_id=? AND status='open'",
+        )
+        .bind(&request.mandate_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(&format!(
+            "INSERT INTO mandate_requests({REQUEST_COLUMNS}) VALUES(?,?,?,?,?,?,'open',NULL,?,NULL)"
+        ))
+        .bind(&request.id)
+        .bind(&request.mandate_id)
+        .bind(&request.kind)
+        .bind(request.what.trim())
+        .bind(request.why.trim())
+        .bind(request.then_what.trim())
+        .bind(request.created_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// The mandate's newest request, whatever its status.
+    pub async fn latest_mandate_request(&self, mandate_id: &str) -> Result<Option<MandateRequest>> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.latest_mandate_request(mandate_id)).await;
+        }
+        sqlx::query(&format!(
+            "SELECT {REQUEST_COLUMNS} FROM mandate_requests WHERE mandate_id=? \
+             ORDER BY created_at DESC, rowid DESC LIMIT 1"
+        ))
+        .bind(mandate_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(request_from_row)
+        .transpose()
+    }
+
+    /// Answer the mandate's open request. Returns it as answered, or `None`
+    /// when nothing was open — a second reply never overwrites the first.
+    pub async fn answer_mandate_request(
+        &self,
+        mandate_id: &str,
+        reply: &str,
+        now: i64,
+    ) -> Result<Option<MandateRequest>> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.answer_mandate_request(mandate_id, reply, now)).await;
+        }
+        sqlx::query(&format!(
+            "UPDATE mandate_requests SET status='answered', reply=?, answered_at=? \
+             WHERE mandate_id=? AND status='open' RETURNING {REQUEST_COLUMNS}"
+        ))
+        .bind(reply.trim())
+        .bind(now)
+        .bind(mandate_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(request_from_row)
+        .transpose()
+    }
+
+    /// Active mandates whose next round is waiting on a Run to finish.
+    pub async fn mandates_waiting_on_runs(&self) -> Result<Vec<MandateRecord>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                result.extend(Box::pin(store.mandates_waiting_on_runs()).await?);
+            }
+            return Ok(result);
+        }
+        sqlx::query(&format!(
+            "SELECT {MANDATE_COLUMNS} FROM mandates \
+             WHERE status='active' AND wait_run_id IS NOT NULL ORDER BY id"
+        ))
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(mandate_from_row)
+        .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,6 +607,94 @@ mod tests {
         store.delete_mandate("m1").await.unwrap();
         assert!(store.mandate_rounds("m1", 10).await.unwrap().is_empty());
         assert_eq!(store.mandate_rounds("m2", 10).await.unwrap().len(), 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn test_request(id: &str, mandate_id: &str, created_at: i64) -> MandateRequest {
+        MandateRequest {
+            id: id.into(),
+            mandate_id: mandate_id.into(),
+            kind: "login".into(),
+            what: " Sign in to the journal's submission system ".into(),
+            why: "The status page needs an account".into(),
+            then_what: "I will read the decision letter".into(),
+            created_at,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn one_request_is_open_at_a_time_and_is_answered_once() {
+        let (store, root) = test_store().await;
+        store
+            .create_mandate(&test_mandate("m1", "p1", 100))
+            .await
+            .unwrap();
+        assert_eq!(store.latest_mandate_request("m1").await.unwrap(), None);
+        assert_eq!(
+            store.answer_mandate_request("m1", "done", 5).await.unwrap(),
+            None,
+            "nothing is open yet"
+        );
+        store
+            .open_mandate_request(&test_request("r1", "m1", 10))
+            .await
+            .unwrap();
+        let mut bogus = test_request("r0", "m1", 11);
+        bogus.kind = "coffee".into();
+        assert!(store.open_mandate_request(&bogus).await.is_err());
+        store
+            .open_mandate_request(&test_request("r2", "m1", 20))
+            .await
+            .unwrap();
+        let open = store.latest_mandate_request("m1").await.unwrap().unwrap();
+        assert_eq!((open.id.as_str(), open.status.as_str()), ("r2", "open"));
+        assert_eq!(open.what, "Sign in to the journal's submission system");
+
+        let answered = store
+            .answer_mandate_request("m1", "  Signed in.  ", 30)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(answered.id, "r2", "the withdrawn r1 is not answered");
+        assert_eq!(answered.reply.as_deref(), Some("Signed in."));
+        assert_eq!(answered.answered_at, Some(30));
+        assert_eq!(
+            store
+                .answer_mandate_request("m1", "again", 40)
+                .await
+                .unwrap(),
+            None,
+            "a second reply never overwrites the first"
+        );
+        assert_eq!(
+            store.latest_mandate_request("m1").await.unwrap(),
+            Some(answered)
+        );
+
+        store.delete_mandate("m1").await.unwrap();
+        assert_eq!(store.latest_mandate_request("m1").await.unwrap(), None);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn only_active_mandates_with_a_run_are_waiting_on_runs() {
+        let (store, root) = test_store().await;
+        for (id, status, run) in [
+            ("plain", "active", None),
+            ("run", "active", Some("run-1")),
+            ("paused", "paused", Some("run-2")),
+        ] {
+            let mut mandate = test_mandate(id, "p1", 9_000);
+            mandate.status = status.into();
+            mandate.wait_run_id = run.map(str::to_string);
+            store.create_mandate(&mandate).await.unwrap();
+        }
+        let waiting = store.mandates_waiting_on_runs().await.unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].id, "run");
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }

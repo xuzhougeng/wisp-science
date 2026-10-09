@@ -67,6 +67,36 @@ pub(crate) async fn assistant_notification_binding(store: &Store) -> Option<weix
     }
     load_weixin_binding_for(store, destination).await
 }
+
+/// Tell the researcher something they did not ask for in that moment, on
+/// every channel they left enabled: the assistant's WeChat and the Feishu
+/// bot's bound owner. Channels that are off or unbound are skipped silently.
+/// WeChat delivery waits for iLink's reply window, like dispatch reports.
+pub(crate) async fn notify_owner(store: &Store, project_id: &str, text: &str) {
+    let text: String = text.chars().take(REPLY_MAX_CHARS).collect();
+    if let Some(binding) = assistant_notification_binding(store).await {
+        weixin::notify_assistant(binding, project_id.into(), text.clone());
+    }
+    if get_setting(store, "feishu_enabled").await != "true" {
+        return;
+    }
+    let Some(owner) = load_feishu_owner(store).await else {
+        return;
+    };
+    let app_id = get_setting(store, "feishu_app_id").await;
+    let secret = load_secret(FEISHU_SECRET).await;
+    if app_id.is_empty() || secret.is_empty() {
+        return;
+    }
+    let international = get_setting(store, "feishu_international").await == "true";
+    let sent = match feishu::FeishuRest::new(&app_id, &secret, international) {
+        Ok(client) => client.send_text_to_user(&owner, &text).await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = sent {
+        tracing::warn!(target: "wisp", %error, "failed to notify the Feishu owner");
+    }
+}
 #[derive(Clone, Copy)]
 struct WeixinKeys {
     enabled: &'static str,

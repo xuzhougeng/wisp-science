@@ -39,3 +39,19 @@ CREATE TABLE IF NOT EXISTS mandate_rounds (
     UNIQUE(mandate_id, seq)
 );
 CREATE INDEX IF NOT EXISTS ix_mandate_rounds_time ON mandate_rounds(mandate_id, created_at);
+
+-- What a mandate asked the researcher for: something only they can do. At
+-- most one request per mandate is open; a newer one withdraws it.
+CREATE TABLE IF NOT EXISTS mandate_requests (
+    id          TEXT PRIMARY KEY,
+    mandate_id  TEXT NOT NULL REFERENCES mandates(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK(kind IN ('login','materials','judgement','payment','release')),
+    what        TEXT NOT NULL CHECK(length(trim(what)) > 0),
+    why         TEXT NOT NULL DEFAULT '',
+    then_what   TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL CHECK(status IN ('open','answered','withdrawn')),
+    reply       TEXT,
+    created_at  INTEGER NOT NULL,
+    answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_mandate_requests ON mandate_requests(mandate_id, created_at);

@@ -163,3 +163,51 @@ test("Chinese mandate labels follow the locale", async ({ page }) => {
   await expect(round.locator(".mandate-round-blocked")).toHaveText("阻塞GPU 配额不足");
   await expect(round).not.toContainText("下一步");
 });
+
+test("a mandate that asks for help waits; replying on the card starts it again", async ({ page }) => {
+  const automation = await open(page);
+  await automation.locator(".mandate-template").filter({ hasText: "Submission follow-up" }).click();
+  await automation.getByTestId("mandate-save").click();
+  const card = automation.locator(".mandate-card");
+  await expect(card.getByTestId("mandate-request")).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__mandateAsk = {kind: "login", what: "Sign in to the journal's submission system", why: "The decision letter is behind the login", then_what: "I will draft the response letter"};
+  });
+  await card.getByRole("button", { name: /Run a round now/ }).click();
+  await expect(card).toHaveAttribute("data-status", "waiting");
+  await expect(card.locator(".mandate-status")).toHaveText("Needs you");
+  await expect(card).toContainText("wisp-science · Waiting for you");
+  const request = card.getByTestId("mandate-request");
+  await expect(request).toContainText("Sign-in · asked 2026-09-09 16:00");
+  await expect(request).toContainText("NeedsSign in to the journal's submission system");
+  await expect(request).toContainText("WhyThe decision letter is behind the login");
+  await expect(request).toContainText("ThenI will draft the response letter");
+  // An empty reply cannot be sent.
+  const send = request.getByTestId("mandate-reply-send");
+  await expect(send).toBeDisabled();
+  const reply = request.getByRole("textbox", { name: "Reply to Submission follow-up" });
+  await reply.fill("   ");
+  await expect(send).toBeDisabled();
+  await reply.fill("Signed in. The decision is major revision.");
+  await send.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__mandateReply)).toEqual({ id: "mandate-1", text: "Signed in. The decision is major revision." });
+  await expect(card.getByTestId("mandate-request")).toHaveCount(0);
+  await expect(card).toHaveAttribute("data-status", "active");
+  await expect(automation.locator(".automation-notice")).toContainText("continues in its conversation");
+});
+
+test("Chinese request labels follow the locale and omit empty fields", async ({ page }) => {
+  const automation = await open(page, "?mockLocale=zh");
+  await automation.locator(".mandate-template").filter({ hasText: "长期计算任务" }).click();
+  await automation.getByTestId("mandate-save").click();
+  await page.evaluate(() => { (window as any).__mandateAsk = {kind: "judgement", what: "是否剔除样本 S7"}; });
+  const card = automation.locator(".mandate-card");
+  await card.getByRole("button", { name: /立即运行一轮/ }).click();
+  await expect(card.locator(".mandate-status")).toHaveText("等你处理");
+  const request = card.getByTestId("mandate-request");
+  await expect(request).toContainText("需要你判断 · 提出于 2026-09-09 16:00");
+  await expect(request).toContainText("需要是否剔除样本 S7");
+  await expect(request).not.toContainText("原因");
+  await expect(request).not.toContainText("之后");
+  await expect(request.getByRole("button", { name: "回复", exact: true })).toBeDisabled();
+});

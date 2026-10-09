@@ -476,8 +476,12 @@ pub(crate) async fn send_message_inner(
         if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
             injected_context.push(memory);
         }
-        // ACP agents own their approvals, so only the brief applies here.
-        if let Some(mandate) = mandates::turn_context(&state.store, &ap.id, &frame_id).await {
+        // ACP agents own their approvals and tools, so only the brief (and
+        // the researcher's answer to a waiting mandate) applies here.
+        let human_message = (!resume && origin != TurnOrigin::Timer).then_some(message.as_str());
+        if let Some(mandate) =
+            mandates::turn_context(&state.store, &ap.id, &frame_id, human_message).await
+        {
             injected_context.push(mandate.brief);
         }
         let archive_index = state
@@ -868,7 +872,8 @@ pub(crate) async fn send_message_inner(
     let mandate_turn = if assistant {
         None
     } else {
-        mandates::turn_context(&state.store, &ap.id, &frame_id).await
+        let human_message = (!resume && origin != TurnOrigin::Timer).then_some(message.as_str());
+        mandates::turn_context(&state.store, &ap.id, &frame_id, human_message).await
     };
     if guard.as_ref().is_some_and(|agent| {
         agent.tools.get(wisp_app::mandates::END_ROUND).is_some() != mandate_turn.is_some()
@@ -1062,6 +1067,11 @@ pub(crate) async fn send_message_inner(
             agent.add_tool(Box::new(wisp_app::mandates::EndRoundTool::new(
                 state.store.clone(),
                 &mandate.mandate_id,
+            )));
+            agent.add_tool(Box::new(wisp_app::mandates::RequestAssistanceTool::new(
+                state.store.clone(),
+                &mandate.mandate_id,
+                Some(mandates::assistance_notifier(&app)),
             )));
         }
         if plan_mode_enabled {

@@ -77,7 +77,9 @@ pub use library::{
     LibraryItem, LibraryItemDetail, LibraryItemSummary, LibraryItemVersion, LibraryStore,
     NewLibraryItem,
 };
-pub use mandates::{MandateRecord, MandateRound, MANDATE_STATUSES};
+pub use mandates::{
+    MandateRecord, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS, MANDATE_STATUSES,
+};
 pub use method_search::{
     MethodCandidate, MethodCandidateBlob, MethodCandidateStatus, MethodSearchRunState,
     MethodStrategyStat,

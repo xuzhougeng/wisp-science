@@ -149,6 +149,16 @@ fn pick(loc: Locale, text: (&'static str, &'static str)) -> &'static str {
     j(loc, text.0, text.1)
 }
 
+fn request_kind_label(loc: Locale, kind: &str) -> &'static str {
+    match kind {
+        "login" => j(loc, "Sign-in", "登录"),
+        "materials" => j(loc, "Materials", "补充资料"),
+        "payment" => j(loc, "Payment", "付款授权"),
+        "release" => j(loc, "Release", "发布"),
+        _ => j(loc, "Your judgement", "需要你判断"),
+    }
+}
+
 fn status_label(loc: Locale, status: &str) -> &'static str {
     match status {
         "paused" => j(loc, "Paused", "已暂停"),
@@ -406,6 +416,7 @@ pub(crate) fn MandateSection(
                         }
                         rows.into_iter().map(|(o, project)| {
                             let last_round = o.last_round;
+                            let request = o.request;
                             let m = o.mandate;
                             let status = m.status.clone();
                             let running = matches!(status.as_str(), "active" | "waiting");
@@ -449,6 +460,27 @@ pub(crate) fn MandateSection(
                                         <p><b>{j(loc,"Done","已完成")}</b>{r.done}</p>
                                         {(!r.blockers.is_empty()).then(|| view! {<p class="mandate-round-blocked"><b>{j(loc,"Blocked","阻塞")}</b>{r.blockers}</p>})}
                                         {(!r.next_step.is_empty()).then(|| view! {<p><b>{j(loc,"Next","下一步")}</b>{r.next_step}</p>})}
+                                    </div>}
+                                })}
+                                {request.map(|r| {
+                                    let reply = create_rw_signal(String::new());
+                                    let (reply_id, name) = (m.id.clone(), m.name.clone());
+                                    let asked = format!("{} {}", day_key(r.created_at), clock(r.created_at));
+                                    let send = move |_| {
+                                        let text = reply.get_untracked();
+                                        if text.trim().is_empty() { return; }
+                                        act("reply_to_mandate", serde_json::json!({"id": reply_id.clone(), "text": text}));
+                                        notice.set(Some(j(locale.get_untracked(),"Sent. The mandate continues in its conversation.","已发送，职责在它的对话中继续。").into()));
+                                    };
+                                    view! {<div class="mandate-request" data-testid="mandate-request">
+                                        <small>{format!("{} · {} {asked}", request_kind_label(loc, &r.kind), j(loc,"asked","提出于"))}</small>
+                                        <p><b>{j(loc,"Needs","需要")}</b>{r.what}</p>
+                                        {(!r.why.is_empty()).then(|| view! {<p><b>{j(loc,"Why","原因")}</b>{r.why}</p>})}
+                                        {(!r.then_what.is_empty()).then(|| view! {<p><b>{j(loc,"Then","之后")}</b>{r.then_what}</p>})}
+                                        <div class="mandate-reply">
+                                            <textarea rows="2" aria-label=format!("{} {name}", j(loc,"Reply to","回复")) placeholder=j(loc,"What you did, decided or provided. Your reply starts the next round.","你做了什么、决定了什么或提供了什么。回复后立即开始下一轮。") prop:value=move || reply.get() on:input=move |ev| reply.set(event_target_value(&ev))></textarea>
+                                            <button type="button" class="btn-primary" data-testid="mandate-reply-send" prop:disabled=move || reply.with(|text| text.trim().is_empty()) on:click=send>{j(loc,"Reply","回复")}</button>
+                                        </div>
                                     </div>}
                                 })}
                             </article>}

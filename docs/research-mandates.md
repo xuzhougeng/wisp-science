@@ -38,6 +38,31 @@
 
 当天账本条目达到「每天最多回合」后，到点的自动回合顺延到本地次日零点。「立即运行一轮」不受此限制。
 
+### 等待一个 Run
+
+回合提交了长时间计算后，可以在 `end_round` 里给出那个 Run 的 ID（`wait_for_run_id`）。Run 一结束（成功、失败、取消、超时或失联），下一轮立刻开始，不需要 Agent 反复轮询；它选的下一轮时间作为最晚时间保留。Run 已经结束、不存在或属于别的项目时不等待，Agent 会被告知。
+
+## 需要你
+
+登录、身份确认、补资料、付款授权、发布，以及本该由你做的判断，Agent 不该猜，也不该反复重试。遇到这类情况它调用 `request_assistance`，写清三件事：需要你做什么、为什么卡住、你完成后它怎样继续。
+
+发出请求后：
+
+- 职责状态变为「等你处理」，**不再触发任何回合**，等待期间不消耗模型。
+- 请求会出现在职责卡片上，同时发到科研助理的对话；已启用的微信（科研助理入口）和飞书机器人的所有者也会收到同一段文字。微信受 iLink 回复窗口限制，窗口过期时消息保留在当前连接里，等你下一条消息到达后送出。隐私模式隐藏的项目不发任何通知。
+- 同一份职责同一时间只有一个未答复的请求；它再次求助时，旧请求自动撤回。
+
+在任意一处回复都会让职责继续：
+
+- 职责卡片上的回复框；
+- 直接在该项目的职责对话里发消息（桌面，或通过项目机器人 `/session` 切到这条对话后发送）。
+
+回复即答复：请求关闭，状态回到「进行中」，带着你的回复的这一轮马上开始，Agent 在简报里看到「研究者已答复」以及你的原话。原定的下一轮顺延一个默认间隔，避免紧接着再跑一轮。请求一旦答复，后来的消息只是普通反馈，不会改写答复内容。
+
+不想回答、想让它先做别的：把卡片上的开关关掉再打开，状态回到「进行中」，回合照常进行，请求仍留在简报里。
+
+`request_assistance` 和 `end_round` 一样只改动职责自身，不需要审批。
+
 ## 管理
 
 每份职责一张卡片，显示状态、所属项目、下一轮时间、截止日期、目标、KPI 当前值 / 目标值和最新一轮的账本记录。
@@ -47,7 +72,7 @@
 - 编辑：修改目标、KPI、约束、截止日期和节奏。项目不可更改。正在运行的回合按开始时的简报跑完。
 - 删除：再次点击确认。只删除职责，它的对话作为历史留在项目里。
 
-状态：进行中、已暂停、等你处理、已结束。隐私模式隐藏的项目，其职责也不显示。
+状态：进行中、已暂停、等你处理（有未答复的请求）、已结束。隐私模式隐藏的项目，其职责也不显示。
 
 ## 边界
 
@@ -63,6 +88,8 @@ A scheduled task answers "when is this prompt sent". A **research mandate** answ
 - **Define**: **New mandate**, or start from a template (literature watch, submission follow-up, long-running compute, method metric iteration). A mandate has a **goal**; **KPIs**, each with a name, how it is counted, a target and the period the target applies to; and **constraints** — what the agent may do on its own, what you review first, and when it should ask for help. *Ask me before anything that changes files, runs commands or submits work* is on by default: with it, every state-changing tool in the mandate's conversation asks for approval even where the project or session would allow it. An optional end date closes the mandate when that day is over. The rhythm fields set the default hours between rounds and the bounds (soonest, latest, rounds per day) for rounds the agent schedules itself.
 - **Rounds**: the first round starts right away. Each round sends `[Mandate round: name]` into the mandate's one conversation and runs as an ordinary turn. Every turn there — a due round or a message you type — is given the current brief (goal, period, KPI definitions, targets and current values, constraints, and the last three ledger entries) ahead of the request. The brief is read fresh each turn and is never saved into the transcript, so an edit applies from the next round and compaction cannot lose the mandate. A deleted or archived conversation is replaced on the next round.
 - **Ledger**: a round ends by calling `end_round` with what it did, the KPI values it measured, what is blocked, the next step, and when the next round should happen (minutes from now, or a local time). The next round is briefed from this ledger rather than the whole transcript. The requested time is kept within the mandate's soonest/latest bounds and never past its end date, and the agent is told when it was moved; without one, the default cadence applies. KPI names the mandate does not define are not recorded. `end_round` writes only the mandate's own ledger and schedule, so it needs no approval even when the mandate reviews every change. A round that ends without calling it (a model error, a stop, the iteration cap) is recorded by Wisp from its final answer and marked as unreported. Once a day's ledger entries reach **Rounds per day at most**, due rounds wait for local midnight; **Run a round now** is exempt.
+- **Waiting on a run**: `end_round` takes a `wait_for_run_id`. The next round starts as soon as that run reaches any final state, with the chosen time kept as the latest start, so the agent never polls. A run that has already ended, does not exist or belongs to another project is not waited on, and the agent is told.
+- **Asking for help**: for a sign-in, missing materials, a judgement that is yours, a payment or a release, the agent calls `request_assistance` with what it needs, why, and how it will continue, instead of guessing or retrying. The mandate becomes **Needs you** and no round runs — waiting costs no model calls. The request appears on the card and in the research assistant's conversation, and is sent to the assistant's WeChat and the Feishu bot's bound owner when those are enabled; WeChat delivery follows iLink's reply window. A hidden project sends nothing. Only one request is open per mandate; a newer one withdraws it. Reply on the card or by writing in the mandate's conversation: the reply closes the request, the mandate is active again, and the turn carrying your words is the next round. The scheduled round moves one default interval out. Later messages are ordinary feedback and never rewrite the answer. Toggling the card's switch off and on resumes rounds without answering. Like `end_round`, `request_assistance` needs no approval.
 - **Manage**: each card shows status, project, next round, end date, goal, each KPI's current value against its target, and the latest ledger entry. Pause or resume with the switch; **Run a round now** leaves the next scheduled round untouched; edit everything except the project; delete with a second click (the conversation stays in the project).
 - **Limits**: rounds run only while Wisp is open, and missed rounds collapse into one after the next launch. Mandates are machine-local like scheduled tasks: they are not exported, imported or synced, and are deleted with their project. Projects hidden by privacy mode hide their mandates. ACP conversations receive the brief but keep their own approvals and have no `end_round`, so Wisp records each of their rounds. The native macOS and Windows clients have no mandate surface yet.
 
@@ -76,8 +103,14 @@ A scheduled task answers "when is this prompt sent". A **research mandate** answ
 - 回合管线：`agent_turn.rs` 在每轮按 `(project_id, frame_id)` 查一次 `mandates::turn_context`，把简报作为运行时注入放在用户请求之前，并把 `review_mutations` 并入 `force_ask_mutations`（与 IM 回合的审批下限是同一个开关）。职责对话的 Agent 额外注册 `end_round`；对话成为或不再是职责对话时，缓存的 Agent 会重建。
 - `end_round` 声明为 `read_only`：它不触碰项目状态，因此不受审批下限、计划模式和探索冻结的拦截。
 - 回合结束后，`mandates::run_round` 检查本轮开始后是否有账本条目，没有则调用 `record_unreported_round`。每日上限按本地日内的账本条目数计算（`rounds_today`），超限时把 `next_run_at` 推到当日结束。
-- 命令：`list_all_mandates`、`create_mandate(draft)`、`update_mandate(id, draft)`、`set_mandate_status(id, status)`、`delete_mandate(id)`、`run_mandate_now(id)`。
+- 请求表 `mandate_requests`（`open` / `answered` / `withdrawn`）。`request_assistance` 写入请求并把职责置为 `waiting`；到点扫描只取 `active`，所以等待期间不会认领回合。工具通过宿主注入的 `AssistanceNotifier` 回调通知，`wisp-app` 自身不依赖任何通道。
+- 通知：`mandates::announce` 先核验项目可见性，再用 `dispatch::post_reply` 把文字作为独立的助理回复追加到助理对话（与派活完成回报同一条路径），并调用 `channels::notify_owner` 推送到助理微信绑定和飞书所有者（`FeishuRest::send_text_to_user`，按 `open_id` 发送）。通知在后台发出，提出请求的回合不等待网络。
+- 答复：`turn_context` 收到研究者本人发出的消息（非续跑、非 timer、非 `[Mandate round: …]`）且职责处于 `waiting` 时调用 `answer_request`，然后才生成简报。卡片的 `reply_to_mandate` 先同步答复，再把文字作为普通消息发进职责对话。`answer_mandate_request` 用 `UPDATE … WHERE status='open' RETURNING` 保证只答复一次。
+- 等待 Run：`mandates.wait_run_id`。调度轮询在到点扫描之前调用 `wake_on_finished_runs`，把已结束或已不存在的 Run 对应的职责的 `next_run_at` 提前到当前时刻。Run 状态由 `wisp-runs` 的后台对账更新。
+- 命令：`list_all_mandates`、`create_mandate(draft)`、`update_mandate(id, draft)`、`set_mandate_status(id, status)`、`delete_mandate(id)`、`run_mandate_now(id)`、`reply_to_mandate(id, text)`。
 
 手动检查：从「文献追踪」模板为第二个项目创建职责，确认卡片上的项目、下一轮时间和 KPI；约 30 秒内该项目出现以职责命名的对话并开始第一轮；回合结束后刷新，卡片出现「第 1 轮」记录、KPI 当前值和 Agent 选择的下一轮时间；在对话里让 Agent 把下一轮安排在 1 分钟后，确认时间被调整到最短间隔；编辑目标后「立即运行一轮」，确认新一轮使用新目标并在简报里看到上一轮账本；勾选「先问我」后让 Agent 写一个文件，确认出现审批，而 `end_round` 不需要审批；暂停、恢复、删除。打开表单后立即按 Escape，只关闭表单，自动化页保留。
 
-自动测试：`wisp-app` 用脚本化 Provider 让真实的 Agent 循环跑三轮，断言账本连续、下一轮时间跟随 Agent 的请求、越界时间被夹回边界；无头 eval 套件的 `mandate-rounds` 用例覆盖同一条路径。
+手动检查协助请求：在职责对话里让 Agent「需要我登录某个系统时向我求助」并运行一轮；确认卡片变为「等你处理」并显示请求，助理对话出现「职责需要你」，已启用的微信 / 飞书收到同一段文字；等待两分钟确认没有新回合；在卡片上回复，确认状态回到「进行中」、对话里立即开始新一轮并引用你的答复。
+
+自动测试：`wisp-app` 用脚本化 Provider 让真实的 Agent 循环跑三轮，断言账本连续、下一轮时间跟随 Agent 的请求、越界时间被夹回边界；同样通过真实循环调用 `request_assistance`，断言宿主只被通知一次、等待期间没有到点的职责、答复后恢复且不能重复答复；等待 Run 的唤醒用存储里的 Run 记录验证，不需要真实计算。无头 eval 套件的 `mandate-rounds` 用例覆盖账本路径。

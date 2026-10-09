@@ -6,8 +6,10 @@
 use async_trait::async_trait;
 use chrono::{Local, NaiveDateTime, TimeZone};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use wisp_dto::{
-    MandateConstraints, MandateDraft, MandateKpi, MandateKpiValue, MandateRecord, MandateRound,
+    MandateConstraints, MandateDraft, MandateKpi, MandateKpiValue, MandateRecord, MandateRequest,
+    MandateRound, MANDATE_REQUEST_KINDS,
 };
 use wisp_llm::ToolSchema;
 use wisp_store::Store;
@@ -22,6 +24,7 @@ const MAX_KPIS: usize = 12;
 pub const BRIEF_ROUNDS: usize = 3;
 const MAX_ROUND_FIELD_CHARS: usize = 2_000;
 pub const END_ROUND: &str = "end_round";
+pub const REQUEST_ASSISTANCE: &str = "request_assistance";
 
 fn clip(text: &str, chars: usize) -> String {
     text.trim().chars().take(chars).collect()
@@ -137,8 +140,13 @@ pub fn new_mandate(draft: MandateDraft, now: i64) -> Result<MandateRecord, Strin
 /// Host context for every turn in the mandate's conversation. It is injected
 /// fresh each turn, so an edit to the goal or a KPI takes effect at once and
 /// compaction can never lose the responsibility itself. `rounds` are the
-/// latest ledger entries, newest first.
-pub fn brief(mandate: &MandateRecord, rounds: &[MandateRound]) -> String {
+/// latest ledger entries, newest first; `request` is the mandate's newest
+/// request for the researcher's help.
+pub fn brief(
+    mandate: &MandateRecord,
+    rounds: &[MandateRound],
+    request: Option<&MandateRequest>,
+) -> String {
     let mut lines = vec![
         "<research_mandate>".to_string(),
         "You carry a long-running research mandate for the researcher. This conversation is its \
@@ -237,6 +245,40 @@ pub fn brief(mandate: &MandateRecord, rounds: &[MandateRound]) -> String {
         span(constraints.max_interval_secs),
         span(mandate.interval_secs),
     ));
+    lines.push(format!(
+        "Waiting on a run: pass its id as `wait_for_run_id` to `{END_ROUND}` and the next round \
+         starts as soon as that run finishes, instead of polling it."
+    ));
+    lines.push(format!(
+        "Asking for help: when the next step needs something only the researcher can do — signing \
+         in, supplying materials, a judgement call, a payment, releasing work — call \
+         `{REQUEST_ASSISTANCE}` instead of guessing or retrying. Say exactly what is needed, why, \
+         and how you will continue. The mandate then waits for their answer and no round runs \
+         until it comes. Still report the round with `{END_ROUND}`, naming the blocker."
+    ));
+    match request {
+        Some(request) if request.status == "open" => lines.push(format!(
+            "Open request to the researcher (asked {}, not answered yet) — [{}] {}. Do not ask \
+             again; do only what does not depend on it.",
+            local_minute(request.created_at),
+            request.kind,
+            request.what
+        )),
+        // An answer is news until a round has been reported after it.
+        Some(request)
+            if request.status == "answered"
+                && rounds
+                    .first()
+                    .is_none_or(|round| round.created_at <= request.answered_at.unwrap_or(0)) =>
+        {
+            lines.push(format!(
+                "The researcher answered your request \"{}\": {}\nAct on the answer now.",
+                request.what,
+                request.reply.as_deref().unwrap_or_default()
+            ))
+        }
+        _ => {}
+    }
     lines.push("</research_mandate>".into());
     lines.join("\n")
 }
@@ -250,6 +292,19 @@ pub struct RoundReport {
     pub next_step: String,
     /// When the round wants the next one; `None` uses the mandate's cadence.
     pub next_run_at: Option<i64>,
+    /// A Run whose completion should start the next round early.
+    pub wait_run_id: Option<String>,
+}
+
+/// What became of a round's `wait_for_run_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunWait {
+    /// The next round starts when this run finishes.
+    Waiting(String),
+    /// The run had already ended (with this status); nothing to wait for.
+    AlreadyFinished(String),
+    /// No such run in the mandate's project.
+    Unknown(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,6 +314,7 @@ pub struct RoundOutcome {
     pub moved_from: Option<i64>,
     /// Reported KPI names the mandate does not define.
     pub unknown_kpis: Vec<String>,
+    pub run_wait: Option<RunWait>,
 }
 
 /// The next round's time: the requested one, or the mandate's cadence, kept
@@ -338,15 +394,163 @@ pub async fn record_round(
         mandate.updated_at = now;
         store.update_mandate(&mandate).await.map_err(err)?;
     }
+    let run_wait = match report.wait_run_id.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(run_id) => Some(
+            match store
+                .get_run(run_id)
+                .await
+                .map_err(err)?
+                .filter(|run| run.project_id == mandate.project_id)
+            {
+                None => RunWait::Unknown(run_id.into()),
+                Some(run) if run.status.is_terminal() => {
+                    RunWait::AlreadyFinished(run.status.as_str().into())
+                }
+                Some(run) => RunWait::Waiting(run.id),
+            },
+        ),
+    };
+    let wait_run_id = match &run_wait {
+        Some(RunWait::Waiting(run_id)) => Some(run_id.as_str()),
+        _ => None,
+    };
     store
-        .schedule_mandate_round(&mandate.id, next, None, now)
+        .schedule_mandate_round(&mandate.id, next, wait_run_id, now)
         .await
         .map_err(err)?;
     Ok(RoundOutcome {
         round,
         moved_from: report.next_run_at.filter(|requested| *requested != next),
         unknown_kpis,
+        run_wait,
     })
+}
+
+/// Start the next round of every mandate whose awaited Run has finished (or
+/// no longer exists). Returns how many were woken; the caller's due scan
+/// then picks them up.
+pub async fn wake_on_finished_runs(store: &Store, now: i64) -> Result<usize, String> {
+    let err = |error: anyhow::Error| error.to_string();
+    let mut woken = 0;
+    for mandate in store.mandates_waiting_on_runs().await.map_err(err)? {
+        let Some(run_id) = mandate.wait_run_id.as_deref() else {
+            continue;
+        };
+        let running = store
+            .get_run(run_id)
+            .await
+            .map_err(err)?
+            .is_some_and(|run| !run.status.is_terminal());
+        if !running {
+            // Never later than the fallback time the round itself chose.
+            let at = now.min(mandate.next_run_at);
+            store
+                .schedule_mandate_round(&mandate.id, at, None, now)
+                .await
+                .map_err(err)?;
+            woken += 1;
+        }
+    }
+    Ok(woken)
+}
+
+/// What the agent asks the researcher for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AssistanceRequest {
+    pub kind: String,
+    pub what: String,
+    pub why: String,
+    pub then_what: String,
+}
+
+/// Record a request for the researcher's help and put the mandate on hold:
+/// no round runs until it is answered. Returns the mandate as it now stands.
+pub async fn request_assistance(
+    store: &Store,
+    mandate_id: &str,
+    ask: AssistanceRequest,
+    now: i64,
+) -> Result<(MandateRecord, MandateRequest), String> {
+    let err = |error: anyhow::Error| error.to_string();
+    let mandate = store
+        .get_mandate(mandate_id)
+        .await
+        .map_err(err)?
+        .ok_or("This mandate no longer exists.")?;
+    if mandate.status == "done" {
+        return Err("This mandate is closed; there is nothing to wait for.".into());
+    }
+    let kind = match ask.kind.trim().to_lowercase().as_str() {
+        "judgment" => "judgement".to_string(),
+        kind => kind.to_string(),
+    };
+    if !MANDATE_REQUEST_KINDS.contains(&kind.as_str()) {
+        return Err(format!(
+            "'kind' must be one of: {}.",
+            MANDATE_REQUEST_KINDS.join(", ")
+        ));
+    }
+    if ask.what.trim().is_empty() {
+        return Err("'what' cannot be empty: say exactly what the researcher should do.".into());
+    }
+    let request = MandateRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        mandate_id: mandate.id.clone(),
+        kind,
+        what: clip(&ask.what, MAX_ROUND_FIELD_CHARS),
+        why: clip(&ask.why, MAX_ROUND_FIELD_CHARS),
+        then_what: clip(&ask.then_what, MAX_ROUND_FIELD_CHARS),
+        status: "open".into(),
+        reply: None,
+        created_at: now,
+        answered_at: None,
+    };
+    store.open_mandate_request(&request).await.map_err(err)?;
+    store
+        .set_mandate_status(&mandate.id, "waiting", now)
+        .await
+        .map_err(err)?;
+    Ok((
+        MandateRecord {
+            status: "waiting".into(),
+            ..mandate
+        },
+        request,
+    ))
+}
+
+/// The researcher answered. The mandate's open request is closed with their
+/// words and the mandate is active again. The scheduled round moves a full
+/// interval out, because the turn carrying the answer is itself the next
+/// round. `None` when no request was open.
+pub async fn answer_request(
+    store: &Store,
+    mandate_id: &str,
+    reply: &str,
+    now: i64,
+) -> Result<Option<MandateRequest>, String> {
+    let err = |error: anyhow::Error| error.to_string();
+    let Some(request) = store
+        .answer_mandate_request(mandate_id, reply, now)
+        .await
+        .map_err(err)?
+    else {
+        return Ok(None);
+    };
+    if let Some(mandate) = store.get_mandate(mandate_id).await.map_err(err)? {
+        if mandate.status == "waiting" {
+            store
+                .set_mandate_status(mandate_id, "active", now)
+                .await
+                .map_err(err)?;
+        }
+        store
+            .schedule_mandate_round(mandate_id, next_run_at(&mandate, None, now), None, now)
+            .await
+            .map_err(err)?;
+    }
+    Ok(Some(request))
 }
 
 /// A round that ended without reporting still leaves a ledger entry, so the
@@ -423,6 +627,7 @@ fn report_from_args(args: &Value, now: i64) -> Result<RoundReport, String> {
         blockers: text("blockers"),
         next_step: text("next_step"),
         next_run_at,
+        wait_run_id: Some(text("wait_for_run_id")).filter(|id| !id.trim().is_empty()),
     })
 }
 
@@ -467,7 +672,8 @@ impl Tool for EndRoundTool {
                     "blockers": {"type": "string", "description": "What is blocked and on whom or what. Empty when nothing is."},
                     "next_step": {"type": "string", "description": "The first thing the next round should do."},
                     "next_round_in_minutes": {"type": "integer", "description": "Minutes until the next round. Omit to keep the mandate's usual cadence."},
-                    "next_round_at": {"type": "string", "description": "Alternative to next_round_in_minutes: a local time, YYYY-MM-DD HH:MM."}
+                    "next_round_at": {"type": "string", "description": "Alternative to next_round_in_minutes: a local time, YYYY-MM-DD HH:MM."},
+                    "wait_for_run_id": {"type": "string", "description": "A run that is still going: the next round starts as soon as it finishes, and at the scheduled time at the latest."}
                 },
                 "required": ["done", "next_step"]
             }),
@@ -519,18 +725,118 @@ pub fn round_receipt(outcome: &RoundOutcome) -> String {
             outcome.unknown_kpis.join(", ")
         ));
     }
+    match &outcome.run_wait {
+        Some(RunWait::Waiting(run_id)) => text.push_str(&format!(
+            " It starts earlier, as soon as run {run_id} finishes."
+        )),
+        Some(RunWait::AlreadyFinished(status)) => text.push_str(&format!(
+            " The run you wanted to wait for has already ended ({status}), so only the time above applies."
+        )),
+        Some(RunWait::Unknown(run_id)) => text.push_str(&format!(
+            " No run '{run_id}' exists in this project, so only the time above applies."
+        )),
+        None => {}
+    }
     text.push_str(" Now end your turn with a few lines for the researcher.");
     text
+}
+
+const ROUND_PROMPT_PREFIX: &str = "[Mandate round: ";
+
+/// Whether `message` is a round Wisp started, not something the researcher wrote.
+pub fn is_round_prompt(message: &str) -> bool {
+    message.trim_start().starts_with(ROUND_PROMPT_PREFIX)
 }
 
 /// What a scheduled round sends into the mandate's conversation.
 pub fn round_prompt(mandate: &MandateRecord) -> String {
     format!(
-        "[Mandate round: {}]\n\nContinue this mandate. Check where things stand, do the next \
+        "{ROUND_PROMPT_PREFIX}{}]\n\nContinue this mandate. Check where things stand, do the next \
          useful step toward the goal within your constraints, and report what you did, what is \
          blocked, and what should happen next.",
         mandate.name
     )
+}
+
+/// Told about a request once it is recorded, so the host can reach the
+/// researcher wherever they are.
+pub type AssistanceNotifier = Arc<dyn Fn(MandateRecord, MandateRequest) + Send + Sync>;
+
+/// `request_assistance`, registered only in a mandate's conversation.
+pub struct RequestAssistanceTool {
+    store: Store,
+    mandate_id: String,
+    notify: Option<AssistanceNotifier>,
+}
+
+impl RequestAssistanceTool {
+    pub fn new(
+        store: Store,
+        mandate_id: impl Into<String>,
+        notify: Option<AssistanceNotifier>,
+    ) -> Self {
+        Self {
+            store,
+            mandate_id: mandate_id.into(),
+            notify,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for RequestAssistanceTool {
+    fn name(&self) -> &str {
+        REQUEST_ASSISTANCE
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            REQUEST_ASSISTANCE,
+            "Ask the researcher for something only they can do, and put this mandate on hold until they answer. Use it instead of guessing, retrying, or working around a missing login, missing materials, a judgement that is theirs, a payment, or a release. They are notified wherever they are; their answer starts the next round.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": MANDATE_REQUEST_KINDS, "description": "login: sign in or confirm identity. materials: supply files, data or information. judgement: a decision that is theirs to make. payment: authorize a payment. release: publish, submit or merge prepared work."},
+                    "what": {"type": "string", "description": "Exactly what they should do or provide, in one or two sentences they can act on without opening the conversation."},
+                    "why": {"type": "string", "description": "Why the work cannot continue without it."},
+                    "then": {"type": "string", "description": "How you will continue once it is done."}
+                },
+                "required": ["kind", "what"]
+            }),
+        )
+    }
+
+    /// Like `end_round`, it changes only the mandate's own state, so a
+    /// mandate that reviews every change can still ask for help unattended.
+    fn read_only(&self) -> bool {
+        true
+    }
+
+    fn preview(&self, args: &Value) -> String {
+        clip(args["what"].as_str().unwrap_or_default(), 80)
+    }
+
+    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+        let text = |key: &str| args[key].as_str().unwrap_or_default().to_string();
+        let ask = AssistanceRequest {
+            kind: text("kind"),
+            what: text("what"),
+            why: text("why"),
+            then_what: text("then"),
+        };
+        let now = chrono::Utc::now().timestamp();
+        match request_assistance(&self.store, &self.mandate_id, ask, now).await {
+            Ok((mandate, request)) => {
+                if let Some(notify) = &self.notify {
+                    notify(mandate, request);
+                }
+                ToolResult::ok(format!(
+                    "The researcher has been asked. The mandate now waits: no round runs until they answer, and their answer starts the next one. If you have not reported this round yet, call `{END_ROUND}` and name this blocker. Then end your turn with one or two lines saying what you need from them."
+                ))
+            }
+            Err(error) => ToolResult::fail(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -601,7 +907,7 @@ mod tests {
     #[test]
     fn the_brief_states_goal_kpi_progress_and_constraints() {
         let mut mandate = new_mandate(draft(), 1_000).unwrap();
-        let text = brief(&mandate, &[]);
+        let text = brief(&mandate, &[], None);
         assert!(text.starts_with("<research_mandate>") && text.ends_with("</research_mandate>"));
         assert!(text.contains("Goal: Track new single-cell papers.\nReport weekly."));
         assert!(text.contains(
@@ -620,7 +926,7 @@ mod tests {
         mandate.kpis[0].current = Some("3".into());
         mandate.constraints.review_mutations = false;
         mandate.ends_at = None;
-        let text = brief(&mandate, &[]);
+        let text = brief(&mandate, &[], None);
         assert!(text.contains("current 3 (short by 2)"));
         assert!(text.contains("follow this project's approval settings"));
         assert!(text.contains("Period: open-ended"));
@@ -649,6 +955,7 @@ mod tests {
                 round(2, "Run finished", "", "host"),
                 round(1, "Searched PubMed", "Paywall on one paper", "agent"),
             ],
+            None,
         );
         let (first, second, third) = (
             text.find("#1 · ").unwrap(),
@@ -853,7 +1160,7 @@ mod tests {
                 .await
                 .unwrap();
             agent.ctx.clear_runtime_injections();
-            agent.ctx.inject_user(brief(&current, &rounds));
+            agent.ctx.inject_user(brief(&current, &rounds, None));
             agent.ctx.prefix_runtime_injections_to_user();
             agent
                 .run_with_images(
@@ -920,5 +1227,201 @@ mod tests {
         assert!(text(3).contains("defines no such KPI: Citations"));
         assert!(text(4).contains("#2 · ") && text(4).contains("Blocked: Preprint not yet posted"));
         assert!(text(5).contains("Round 3 recorded."));
+    }
+    #[tokio::test]
+    async fn asking_for_help_holds_the_mandate_until_the_researcher_answers() {
+        use wisp_llm::{ScriptedCompletion, ScriptedProvider, ScriptedToolCall};
+        let (store, dir, mandate) = store_with_mandate().await;
+        let ask = |kind: &str, what: &str| AssistanceRequest {
+            kind: kind.into(),
+            what: what.into(),
+            ..Default::default()
+        };
+        assert!(
+            request_assistance(&store, &mandate.id, ask("coffee", "x"), 2_000)
+                .await
+                .unwrap_err()
+                .contains("login, materials, judgement, payment, release")
+        );
+        assert!(
+            request_assistance(&store, &mandate.id, ask("login", " "), 2_000)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .get_mandate(&mandate.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "active",
+            "a refused request changes nothing"
+        );
+
+        // The agent asks through the real loop; the host is told once.
+        let notified = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = notified.clone();
+        let notify: AssistanceNotifier = Arc::new(move |mandate, request| {
+            sink.lock().unwrap().push((mandate.status, request.what));
+        });
+        let provider = ScriptedProvider::new(
+            "scripted-assistance",
+            vec![
+                ScriptedCompletion {
+                    tool_calls: vec![ScriptedToolCall {
+                        id: String::new(),
+                        name: REQUEST_ASSISTANCE.into(),
+                        arguments: json!({"kind": "Judgment", "what": "Decide whether to drop sample S7",
+                            "why": "It fails QC but is the only late timepoint", "then": "I rerun the model either way"}),
+                    }],
+                    ..Default::default()
+                },
+                ScriptedCompletion {
+                    content: "I need your call on sample S7.".into(),
+                    ..Default::default()
+                },
+            ],
+        );
+        let mut tools = wisp_tools::Registry::builtins().filtered(&[]);
+        tools.add(Box::new(RequestAssistanceTool::new(
+            store.clone(),
+            &mandate.id,
+            Some(notify),
+        )));
+        let mut agent = wisp_core::Agent::with_provider(
+            Box::new(provider.clone()),
+            None,
+            tools,
+            dir.path().to_path_buf(),
+            128_000,
+            8,
+        );
+        agent
+            .run_with_images("Continue.", &[], false, &wisp_core::NullOutput, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            *notified.lock().unwrap(),
+            [(
+                "waiting".to_string(),
+                "Decide whether to drop sample S7".to_string()
+            )]
+        );
+        let waiting = store.get_mandate(&mandate.id).await.unwrap().unwrap();
+        assert_eq!(waiting.status, "waiting");
+        assert!(
+            store.due_mandates(i64::MAX).await.unwrap().is_empty(),
+            "no round runs while the mandate waits"
+        );
+        let request = store
+            .latest_mandate_request(&mandate.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.kind, "judgement", "the US spelling is accepted");
+        assert_eq!(request.then_what, "I rerun the model either way");
+        let text = brief(&waiting, &[], Some(&request));
+        assert!(text.contains("not answered yet) — [judgement] Decide whether to drop sample S7"));
+        assert!(text.contains("Do not ask again"));
+
+        let now = request.created_at + 500;
+        let answered = answer_request(&store, &mandate.id, "Drop it, and say so in Methods.", now)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(answered.status, "answered");
+        let active = store.get_mandate(&mandate.id).await.unwrap().unwrap();
+        assert_eq!(active.status, "active");
+        assert_eq!(
+            active.next_run_at,
+            now + active.interval_secs,
+            "the answering turn is the next round, so the scheduled one moves out"
+        );
+        assert_eq!(
+            answer_request(&store, &mandate.id, "Second thoughts", now + 1)
+                .await
+                .unwrap(),
+            None,
+            "an answered request is not answered again"
+        );
+        let text = brief(&active, &[], Some(&answered));
+        assert!(text.contains(
+            "The researcher answered your request \"Decide whether to drop sample S7\": Drop it, and say so in Methods."
+        ));
+        // Once a round has been reported after the answer, it is no longer news.
+        let report = RoundReport {
+            done: "Dropped S7 and reran".into(),
+            ..Default::default()
+        };
+        record_round(&store, &mandate.id, report, now + 60)
+            .await
+            .unwrap();
+        let rounds = store
+            .mandate_rounds(&mandate.id, BRIEF_ROUNDS)
+            .await
+            .unwrap();
+        assert!(!brief(&active, &rounds, Some(&answered)).contains("The researcher answered"));
+    }
+
+    #[tokio::test]
+    async fn a_round_can_wait_for_a_run_and_wakes_when_it_has_finished() {
+        use wisp_store::{RunRecord, RunStatus};
+        let (store, _dir, mandate) = store_with_mandate().await;
+        store.create_project("p2", "Other", "").await.unwrap();
+        for (id, project, status) in [
+            ("running", "p1", RunStatus::Running),
+            ("finished", "p1", RunStatus::Succeeded),
+            ("foreign", "p2", RunStatus::Running),
+        ] {
+            let mut run = RunRecord::new(id, project, "local", "Align reads", "command");
+            run.status = status;
+            store.create_run(&run).await.unwrap();
+        }
+        let report = |run: &str| RoundReport {
+            done: "Submitted the alignment".into(),
+            next_run_at: Some(10_000 + 86_400),
+            wait_run_id: Some(run.into()),
+            ..Default::default()
+        };
+        let waiting = record_round(&store, &mandate.id, report("running"), 10_000)
+            .await
+            .unwrap();
+        assert_eq!(waiting.run_wait, Some(RunWait::Waiting("running".into())));
+        assert!(round_receipt(&waiting).contains("as soon as run running finishes"));
+        let saved = store.get_mandate(&mandate.id).await.unwrap().unwrap();
+        assert_eq!(saved.wait_run_id.as_deref(), Some("running"));
+        assert_eq!(
+            saved.next_run_at,
+            10_000 + 86_400,
+            "the chosen time is the fallback"
+        );
+        assert_eq!(wake_on_finished_runs(&store, 11_000).await.unwrap(), 0);
+
+        // A run that has ended, is unknown, or belongs to another project is not waited on.
+        for (run, expected) in [
+            ("finished", RunWait::AlreadyFinished("succeeded".into())),
+            ("missing", RunWait::Unknown("missing".into())),
+            ("foreign", RunWait::Unknown("foreign".into())),
+        ] {
+            let outcome = record_round(&store, &mandate.id, report(run), 12_000)
+                .await
+                .unwrap();
+            assert_eq!(outcome.run_wait, Some(expected));
+            assert!(round_receipt(&outcome).contains("only the time above applies"));
+            let saved = store.get_mandate(&mandate.id).await.unwrap().unwrap();
+            assert_eq!(saved.wait_run_id, None);
+        }
+
+        // The awaited run finishing pulls the next round forward to now.
+        store
+            .schedule_mandate_round(&mandate.id, 90_000, Some("finished"), 12_000)
+            .await
+            .unwrap();
+        assert_eq!(wake_on_finished_runs(&store, 13_000).await.unwrap(), 1);
+        let woken = store.get_mandate(&mandate.id).await.unwrap().unwrap();
+        assert_eq!((woken.next_run_at, woken.wait_run_id), (13_000, None));
+        assert_eq!(store.due_mandates(13_000).await.unwrap().len(), 1);
+        assert_eq!(wake_on_finished_runs(&store, 14_000).await.unwrap(), 0);
     }
 }

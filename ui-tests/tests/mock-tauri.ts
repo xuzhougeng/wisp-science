@@ -2023,7 +2023,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
           case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
-          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined}, last_round: m.rounds?.at(-1) ?? null})));
+          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined, request: undefined}, last_round: m.rounds?.at(-1) ?? null, request: m.request ?? null})));
           case "create_mandate": {
             const draft = plain(arg("draft")), now = Math.floor(Date.now() / 1000);
             (window as any).__mandateDraft = draft;
@@ -2057,7 +2057,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if (m.kpis[0]) m.kpis[0].current = "3";
             m.rounds = [...(m.rounds ?? []), {id: `round-${now}`, mandate_id: m.id, seq: (m.rounds?.length ?? 0) + 1, kpis, next_run_at: now + 7200, created_at: now, ...round}];
             m.next_run_at = now + 7200;
+            // The round may have called request_assistance: the mandate then waits.
+            const ask = (window as any).__mandateAsk;
+            if (ask) { m.request = {id: `request-${now}`, mandate_id: m.id, status: "open", reply: null, created_at: now, answered_at: null, why: "", then_what: "", ...ask}; m.status = "waiting"; }
             return null;
+          }
+          case "reply_to_mandate": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            (window as any).__mandateReply = {id: m.id, text: arg("text")};
+            m.request = null;
+            if (m.status === "waiting") m.status = "active";
+            return JSON.parse(JSON.stringify({...m, rounds: undefined, request: undefined}));
           }
           case "delete_mandate": automation.mandates = automation.mandates.filter((m: any) => m.id !== arg("id")); return null;
           case "generate_research_recap": {

@@ -7529,6 +7529,7 @@ pub fn run() {
             mandates::set_mandate_status,
             mandates::delete_mandate,
             mandates::run_mandate_now,
+            mandates::reply_to_mandate,
             research_recap::get_daily_recap_automation,
             research_recap::set_daily_recap_automation,
             research_recap::run_daily_recap_now,

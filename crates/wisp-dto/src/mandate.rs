@@ -132,12 +132,39 @@ pub struct MandateRound {
     pub created_at: i64,
 }
 
+/// What a mandate may ask the researcher for: things only they can do.
+pub const MANDATE_REQUEST_KINDS: &[&str] =
+    &["login", "materials", "judgement", "payment", "release"];
+
+/// A request for the researcher's help. While one is `open` the mandate
+/// waits and no round runs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MandateRequest {
+    pub id: String,
+    pub mandate_id: String,
+    /// One of [`MANDATE_REQUEST_KINDS`].
+    pub kind: String,
+    /// What is needed.
+    pub what: String,
+    pub why: String,
+    /// How the work continues once it is done.
+    pub then_what: String,
+    /// `open`, `answered`, or `withdrawn` by a newer request.
+    pub status: String,
+    pub reply: Option<String>,
+    pub created_at: i64,
+    pub answered_at: Option<i64>,
+}
+
 /// A mandate with what its card shows beside it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct MandateOverview {
     pub mandate: MandateRecord,
     pub last_round: Option<MandateRound>,
+    /// The request the mandate is waiting on, if any.
+    pub request: Option<MandateRequest>,
 }
 
 #[cfg(test)]

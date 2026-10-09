@@ -8,7 +8,7 @@
 
 use crate::{create_session_frame, send_message_inner, AppState};
 use tauri::{AppHandle, Manager, State};
-use wisp_dto::{MandateDraft, MandateOverview, MandateRecord};
+use wisp_dto::{MandateDraft, MandateOverview, MandateRecord, MandateRequest};
 use wisp_store::Store;
 
 fn err(error: anyhow::Error) -> String {
@@ -32,12 +32,17 @@ pub(crate) struct TurnContext {
     pub(crate) review_mutations: bool,
 }
 
+/// `human_message` is the turn's message when the researcher wrote it (not a
+/// resume or a timer). While the mandate waits on a request, such a message
+/// is the answer: it closes the request before the brief is built, so the
+/// turn that carries it is the round that acts on it.
 pub(crate) async fn turn_context(
     store: &Store,
     project_id: &str,
     frame_id: &str,
+    human_message: Option<&str>,
 ) -> Option<TurnContext> {
-    let mandate = match store.mandate_for_frame(project_id, frame_id).await {
+    let mut mandate = match store.mandate_for_frame(project_id, frame_id).await {
         Ok(mandate) => mandate?,
         Err(error) => {
             tracing::warn!(target: "wisp", %error, frame_id, "failed to load the conversation's mandate");
@@ -48,15 +53,94 @@ pub(crate) async fn turn_context(
     if mandate.status == "done" {
         return None;
     }
-    // The brief is still worth giving without its ledger.
+    if let Some(reply) = human_message
+        .filter(|text| mandate.status == "waiting" && !wisp_app::mandates::is_round_prompt(text))
+    {
+        let now = chrono::Utc::now().timestamp();
+        match wisp_app::mandates::answer_request(store, &mandate.id, reply, now).await {
+            Ok(Some(_)) => mandate.status = "active".into(),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to record the researcher's answer")
+            }
+        }
+    }
+    // The brief is still worth giving without its ledger or request.
     let rounds = store
         .mandate_rounds(&mandate.id, wisp_app::mandates::BRIEF_ROUNDS)
         .await
         .unwrap_or_default();
+    let request = store
+        .latest_mandate_request(&mandate.id)
+        .await
+        .unwrap_or_default();
     Some(TurnContext {
-        brief: wisp_app::mandates::brief(&mandate, &rounds),
+        brief: wisp_app::mandates::brief(&mandate, &rounds, request.as_ref()),
         review_mutations: mandate.constraints.review_mutations,
         mandate_id: mandate.id,
+    })
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "login" => "登录 / Sign-in",
+        "materials" => "补充资料 / Materials",
+        "payment" => "付款授权 / Payment",
+        "release" => "发布 / Release",
+        _ => "需要你判断 / Your judgement",
+    }
+}
+
+/// What the researcher reads on whichever channel reaches them. It has to
+/// be actionable without opening the conversation.
+fn request_notice(project: &str, mandate: &MandateRecord, request: &MandateRequest) -> String {
+    let mut lines = vec![
+        "职责需要你 / A mandate needs you".to_string(),
+        format!("{project} · {}", mandate.name),
+        format!("[{}] {}", kind_label(&request.kind), request.what),
+    ];
+    if !request.why.is_empty() {
+        lines.push(format!("原因 / Why: {}", request.why));
+    }
+    if !request.then_what.is_empty() {
+        lines.push(format!("之后 / Then: {}", request.then_what));
+    }
+    lines.push(
+        "在该项目的职责对话里回复，或在「自动化 → 研究职责」的卡片上回复，它就会继续。 / Reply in the mandate's conversation in that project, or on its card under Automation → Research mandates, and it continues."
+            .into(),
+    );
+    lines.join("\n")
+}
+
+/// Put `text` in front of the researcher: the assistant's conversation on
+/// the desktop, and every IM channel they enabled. Nothing is said about a
+/// project that privacy mode hides.
+async fn announce(app: &AppHandle, project_id: &str, text: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    require_visible_project(&state.store, project_id).await?;
+    crate::research_assistant::ensure(&state.store, &state.app_data).await?;
+    crate::dispatch::post_reply(app, crate::research_assistant::ASSISTANT_FRAME_ID, text).await?;
+    crate::channels::notify_owner(&state.store, project_id, text).await;
+    Ok(())
+}
+
+/// The mandate tools' way of reaching the researcher. The notice is sent in
+/// the background: the round that asked must not wait on a chat network.
+pub(crate) fn assistance_notifier(app: &AppHandle) -> wisp_app::mandates::AssistanceNotifier {
+    let app = app.clone();
+    std::sync::Arc::new(move |mandate, request| {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let store = app.state::<AppState>().store.clone();
+            let project = match store.get_project(&mandate.project_id).await {
+                Ok(Some((name, _))) => name,
+                _ => mandate.project_id.clone(),
+            };
+            let text = request_notice(&project, &mandate, &request);
+            if let Err(error) = announce(&app, &mandate.project_id, &text).await {
+                tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to announce a mandate request");
+            }
+        });
     })
 }
 
@@ -78,9 +162,15 @@ pub(crate) async fn visible_mandates(store: &Store) -> Result<Vec<MandateOvervie
                 .await
                 .map_err(err)?
                 .pop();
+            let request = store
+                .latest_mandate_request(&mandate.id)
+                .await
+                .map_err(err)?
+                .filter(|request| request.status == "open");
             all.push(MandateOverview {
                 mandate,
                 last_round,
+                request,
             });
         }
     }
@@ -183,10 +273,61 @@ pub(crate) async fn run_mandate_now(
     Ok(())
 }
 
+/// Answer the mandate's open request, or simply tell it something, and run
+/// the turn that acts on it. Returns once that turn is started.
+#[tauri::command]
+pub(crate) async fn reply_to_mandate(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+    text: String,
+) -> Result<MandateRecord, String> {
+    reply(&app, state.inner(), &id, &text).await
+}
+
+pub(crate) async fn reply(
+    app: &AppHandle,
+    state: &AppState,
+    id: &str,
+    text: &str,
+) -> Result<MandateRecord, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Write a reply first.".into());
+    }
+    let mandate = load(&state.store, id).await?;
+    if mandate.status == "done" {
+        return Err("This mandate is closed.".into());
+    }
+    // Answer before the turn starts, so the card stops waiting at once and a
+    // second reply cannot land on the same request.
+    wisp_app::mandates::answer_request(
+        &state.store,
+        &mandate.id,
+        &text,
+        chrono::Utc::now().timestamp(),
+    )
+    .await?;
+    let frame_id = round_frame(&state.store, &mandate).await?;
+    let app = app.clone();
+    let mandate_id = mandate.id.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if let Err(error) = send_to_frame(&app, &state, frame_id, text).await {
+            tracing::warn!(target: "wisp", %error, %mandate_id, "the turn answering a mandate failed");
+        }
+    });
+    load(&state.store, id).await
+}
+
 /// Called from the scheduler poll; returns once the due rounds are spawned.
 pub(crate) async fn fire_due_mandates(app: &AppHandle) {
     let state = app.state::<AppState>();
     let now = chrono::Utc::now().timestamp();
+    // A finished run pulls its mandate's next round forward into this scan.
+    if let Err(error) = wisp_app::mandates::wake_on_finished_runs(&state.store, now).await {
+        tracing::warn!(target: "wisp", %error, "failed to check the runs mandates wait on");
+    }
     let due = match state.store.due_mandates(now).await {
         Ok(due) => due,
         Err(error) => {
@@ -362,12 +503,27 @@ async fn send_round(
     mandate: &MandateRecord,
 ) -> Result<String, String> {
     let frame_id = round_frame(&state.store, mandate).await?;
+    send_to_frame(
+        app,
+        state,
+        frame_id,
+        wisp_app::mandates::round_prompt(mandate),
+    )
+    .await
+}
+
+async fn send_to_frame(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    frame_id: String,
+    message: String,
+) -> Result<String, String> {
     send_message_inner(
         state.inner(),
         app.clone(),
         "main",
         Some(frame_id),
-        wisp_app::mandates::round_prompt(mandate),
+        message,
         None,
         None,
         None,
@@ -461,7 +617,7 @@ mod tests {
         mandate.frame_id = Some("f1".into());
         store.create_mandate(&mandate).await.unwrap();
 
-        let context = turn_context(&store, "p1", "f1").await.unwrap();
+        let context = turn_context(&store, "p1", "f1", None).await.unwrap();
         assert_eq!(context.mandate_id, mandate.id);
         assert!(context
             .brief
@@ -471,23 +627,23 @@ mod tests {
         wisp_app::mandates::record_unreported_round(&store, &mandate.id, "Queued 3 runs", 1_500)
             .await
             .unwrap();
-        let context = turn_context(&store, "p1", "f1").await.unwrap();
+        let context = turn_context(&store, "p1", "f1", None).await.unwrap();
         assert!(context.brief.contains("Done: Queued 3 runs"));
-        assert!(turn_context(&store, "p1", "f2").await.is_none());
+        assert!(turn_context(&store, "p1", "f2", None).await.is_none());
 
         store
             .set_mandate_status(&mandate.id, "paused", 2_000)
             .await
             .unwrap();
         assert!(
-            turn_context(&store, "p1", "f1").await.is_some(),
+            turn_context(&store, "p1", "f1", None).await.is_some(),
             "the researcher can still work with a paused mandate"
         );
         store
             .set_mandate_status(&mandate.id, "done", 2_000)
             .await
             .unwrap();
-        assert!(turn_context(&store, "p1", "f1").await.is_none());
+        assert!(turn_context(&store, "p1", "f1", None).await.is_none());
     }
 
     #[tokio::test]
@@ -558,5 +714,105 @@ mod tests {
             serde_json::from_value::<Vec<MandateOverview>>(wire).unwrap(),
             visible
         );
+    }
+
+    #[tokio::test]
+    async fn a_message_in_the_conversation_answers_a_waiting_mandate() {
+        let (store, _dir) = store().await;
+        store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
+        let mut mandate = wisp_app::mandates::new_mandate(draft("p1"), 1_000).unwrap();
+        mandate.frame_id = Some("f1".into());
+        store.create_mandate(&mandate).await.unwrap();
+        let ask = wisp_app::mandates::AssistanceRequest {
+            kind: "login".into(),
+            what: "Sign in to the submission system".into(),
+            ..Default::default()
+        };
+        wisp_app::mandates::request_assistance(&store, &mandate.id, ask, 2_000)
+            .await
+            .unwrap();
+        let status = || async {
+            store
+                .get_mandate(&mandate.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+        };
+
+        // A round Wisp starts, a resume and a timer are not the researcher.
+        let round = wisp_app::mandates::round_prompt(&mandate);
+        let context = turn_context(&store, "p1", "f1", Some(&round))
+            .await
+            .unwrap();
+        assert!(context
+            .brief
+            .contains("not answered yet) — [login] Sign in"));
+        assert!(turn_context(&store, "p1", "f1", None).await.is_some());
+        assert_eq!(status().await, "waiting");
+        let visible = visible_mandates(&store).await.unwrap();
+        assert_eq!(
+            visible[0]
+                .request
+                .as_ref()
+                .map(|request| request.kind.as_str()),
+            Some("login")
+        );
+
+        // What the researcher writes there is the answer, and this turn acts on it.
+        let context = turn_context(&store, "p1", "f1", Some("Signed in, go ahead."))
+            .await
+            .unwrap();
+        assert!(context.brief.contains(
+            "The researcher answered your request \"Sign in to the submission system\": Signed in, go ahead."
+        ));
+        assert_eq!(status().await, "active");
+        assert_eq!(visible_mandates(&store).await.unwrap()[0].request, None);
+        // Ordinary feedback afterwards is just a message.
+        turn_context(&store, "p1", "f1", Some("Thanks."))
+            .await
+            .unwrap();
+        let request = store
+            .latest_mandate_request(&mandate.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.reply.as_deref(), Some("Signed in, go ahead."));
+    }
+
+    #[test]
+    fn the_notice_can_be_acted_on_without_opening_the_conversation() {
+        let mandate = MandateRecord {
+            name: "Submission follow-up".into(),
+            ..Default::default()
+        };
+        let mut request = MandateRequest {
+            kind: "payment".into(),
+            what: "Authorize the 1,900 USD article charge".into(),
+            why: "The journal holds the proofs until it is paid".into(),
+            then_what: "I will check the proofs when they arrive".into(),
+            ..Default::default()
+        };
+        let text = request_notice("RNA-seq", &mandate, &request);
+        assert_eq!(
+            text.lines().take(5).collect::<Vec<_>>(),
+            [
+                "职责需要你 / A mandate needs you",
+                "RNA-seq · Submission follow-up",
+                "[付款授权 / Payment] Authorize the 1,900 USD article charge",
+                "原因 / Why: The journal holds the proofs until it is paid",
+                "之后 / Then: I will check the proofs when they arrive",
+            ]
+        );
+        request.why.clear();
+        request.then_what.clear();
+        request.kind = "judgement".into();
+        let text = request_notice("RNA-seq", &mandate, &request);
+        assert_eq!(
+            text.lines().count(),
+            4,
+            "empty fields leave no blank labels"
+        );
+        assert!(text.contains("[需要你判断 / Your judgement]"));
     }
 }

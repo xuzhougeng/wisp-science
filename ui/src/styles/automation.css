@@ -74,3 +74,9 @@
 .mandate-round p { margin: 0; color: var(--text-muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .mandate-round b { font-weight: 600; color: var(--text); margin-right: 8px; }
 .mandate-round-blocked b { color: var(--err); }
+.mandate-request { display: grid; gap: 3px; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--err); border-radius: var(--radius-xs); }
+.mandate-request small { color: var(--err); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mandate-request p { margin: 0; overflow-wrap: anywhere; }
+.mandate-request b { font-weight: 600; margin-right: 8px; }
+.mandate-reply { display: flex; gap: 8px; align-items: flex-end; margin-top: 6px; }
+.mandate-reply textarea { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 6px 8px; resize: vertical; }

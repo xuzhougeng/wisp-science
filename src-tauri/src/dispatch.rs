@@ -281,23 +281,44 @@ async fn report(
         return Ok(());
     }
     // The parent conversation may have been deleted while the work ran.
-    let Some(parent_project) = state
+    if append_reply(app, &rt, parent, &text).await? {
+        dispatcher.delivered(&reference.project_id, &text);
+    }
+    Ok(())
+}
+
+/// Append `text` to `frame` as a separate assistant reply, once any turn it
+/// is running has finished. False when the conversation no longer exists.
+pub(crate) async fn post_reply(app: &AppHandle, frame: &str, text: &str) -> Result<bool, String> {
+    let rt = app.state::<AppState>().session_runtime(frame).await;
+    let _guard = rt.workflow.lock().await;
+    append_reply(app, &rt, frame, text).await
+}
+
+/// The caller holds `frame`'s workflow lock.
+async fn append_reply(
+    app: &AppHandle,
+    rt: &crate::SessionRuntime,
+    frame: &str,
+    text: &str,
+) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let Some(project) = state
         .store
-        .frame_project_id(parent)
+        .frame_project_id(frame)
         .await
         .map_err(|e| e.to_string())?
     else {
-        return Ok(());
+        return Ok(false);
     };
     let mut agent = rt.agent.lock().await;
-    let events = persist_report(&state.store, parent, &text).await?;
+    let events = persist_report(&state.store, frame, text).await?;
     *agent = None;
-    rt.sync_last_seq_from_store(&state.store, parent).await?;
+    rt.sync_last_seq_from_store(&state.store, frame).await?;
     for event in events {
-        crate::emit_agent_event_in(app, event, Some(&parent_project));
+        crate::emit_agent_event_in(app, event, Some(&project));
     }
-    dispatcher.delivered(&reference.project_id, &text);
-    Ok(())
+    Ok(true)
 }
 
 async fn persist_report(

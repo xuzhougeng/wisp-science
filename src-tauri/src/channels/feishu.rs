@@ -105,17 +105,26 @@ impl FeishuRest {
     }
 
     pub async fn send_text(&self, chat_id: &str, text: &str) -> Result<()> {
+        self.send_text_to("chat_id", chat_id, text).await
+    }
+
+    /// Message a user by `open_id`, outside any conversation they started.
+    pub async fn send_text_to_user(&self, open_id: &str, text: &str) -> Result<()> {
+        self.send_text_to("open_id", open_id, text).await
+    }
+
+    async fn send_text_to(&self, id_type: &str, id: &str, text: &str) -> Result<()> {
         let token = self.tenant_token().await?;
         let content = serde_json::to_string(&json!({ "text": text }))?;
         let resp: serde_json::Value = self
             .http
             .post(format!(
-                "{}/open-apis/im/v1/messages?receive_id_type=chat_id",
+                "{}/open-apis/im/v1/messages?receive_id_type={id_type}",
                 self.base
             ))
             .bearer_auth(token)
             .json(&json!({
-                "receive_id": chat_id,
+                "receive_id": id,
                 "msg_type": "text",
                 "content": content,
             }))
