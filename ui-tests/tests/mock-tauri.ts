@@ -1725,7 +1725,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     journeyEntry("progress-earlier", "progress", journeyText("Imported raw data and established an analysis baseline", "导入原始数据，建立分析基线"), 2, {manual: true}),
   ];
   const journeyRecaps: any[] = [];
-  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: []};
+  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: [], mandates: []};
+  // Mirrors `wisp_app::mandates::apply_draft`: what a draft may set on a mandate.
+  const applyMandateDraft = (mandate: any, draft: any) => {
+    const goal = String(draft.goal ?? "").trim();
+    if (!goal) throw new Error("A mandate needs a goal.");
+    const constraints = {...draft.constraints};
+    constraints.min_interval_secs = Math.min(Math.max(Number(constraints.min_interval_secs), 300), 30 * 86400);
+    constraints.max_interval_secs = Math.min(Math.max(Number(constraints.max_interval_secs), constraints.min_interval_secs), 30 * 86400);
+    Object.assign(mandate, {
+      name: String(draft.name ?? "").trim() || goal.split("\n")[0].slice(0, 80), goal,
+      kpis: (draft.kpis ?? []).filter((k: any) => String(k.name ?? "").trim()).map((k: any) => ({...k})),
+      constraints, ends_at: draft.ends_at ?? null,
+      interval_secs: Math.min(Math.max(Number(draft.interval_secs), constraints.min_interval_secs), constraints.max_interval_secs),
+      report_interval_secs: Number(draft.report_interval_secs) || 7 * 86400,
+    });
+    return mandate;
+  };
   const recapsIn = (from: number, until: number) => journeyRecaps.filter(r => r.day_start >= from && r.day_start < until);
   let publicationRevisionId = "publication-revision-1";
   let publicationRevisionState = mockPublication === "frozen" ? "frozen" : "draft";
@@ -2007,6 +2023,32 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
           case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
+          case "list_all_mandates": return automation.mandates.map((m: any) => ({mandate: JSON.parse(JSON.stringify(m))}));
+          case "create_mandate": {
+            const draft = plain(arg("draft")), now = Math.floor(Date.now() / 1000);
+            (window as any).__mandateDraft = draft;
+            const m = applyMandateDraft({id: `mandate-${automation.mandates.length + 1}`, project_id: draft.project_id, frame_id: null,
+              status: "active", last_run_at: null, next_report_at: null, wait_run_id: null, created_at: now, updated_at: now}, draft);
+            m.next_run_at = draft.start_at ?? now + m.interval_secs;
+            m.next_report_at = now + m.report_interval_secs;
+            automation.mandates.push(m);
+            return JSON.parse(JSON.stringify(m));
+          }
+          case "update_mandate": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            const draft = plain(arg("draft"));
+            (window as any).__mandateDraft = draft;
+            return JSON.parse(JSON.stringify(applyMandateDraft(m, draft)));
+          }
+          case "set_mandate_status": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            m.status = String(arg("status"));
+            return JSON.parse(JSON.stringify(m));
+          }
+          case "run_mandate_now": (window as any).__ranMandate = arg("id"); return null;
+          case "delete_mandate": automation.mandates = automation.mandates.filter((m: any) => m.id !== arg("id")); return null;
           case "generate_research_recap": {
             if ((window as any).__recapError) throw new Error((window as any).__recapError);
             const from = Number(arg("from")), until = Number(arg("until"));

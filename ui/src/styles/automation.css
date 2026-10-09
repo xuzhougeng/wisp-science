@@ -41,3 +41,31 @@
 .automation-span { grid-column: 1 / -1; }
 .automation-form-actions { justify-content: flex-end; margin-top: 0; }
 @media (max-width: 640px) { .automation-row { flex-direction: column; } .automation-heading-actions .btn-primary { padding: 8px; } }
+/* Research mandates share the automation card and form vocabulary. */
+.mandate-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mandate-section-head .btn-ghost, .mandate-add-kpi { display: inline-flex; align-items: center; gap: 6px; }
+.mandate-intro { margin: 0; }
+.mandate-card { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; background: var(--bg-elev); }
+.mandate-card.paused { opacity: .7; }
+.mandate-card > small { color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.mandate-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mandate-card-head > svg { color: var(--clay); flex: 0 0 auto; }
+.mandate-card-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mandate-card-head .automation-row-actions { margin-left: auto; }
+.mandate-status { flex: 0 0 auto; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.mandate-card[data-status="active"] .mandate-status { color: var(--clay-strong); background: var(--clay-soft); border-color: transparent; }
+.mandate-card[data-status="waiting"] .mandate-status { color: var(--err); border-color: currentColor; }
+.mandate-kpis { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.mandate-kpis li { display: grid; gap: 1px; border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 6px 10px; min-width: 140px; }
+.mandate-kpis span, .mandate-kpis small { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mandate-template { display: grid; gap: 8px; text-align: left; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); padding: 14px 16px; }
+.mandate-template:hover { border-color: var(--clay); }
+.mandate-template small { color: var(--text-faint); }
+.mandate-fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px 12px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.mandate-fieldset legend { padding: 0 6px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.mandate-fieldset .automation-meta { margin: 0; }
+.mandate-kpi-row { display: grid; grid-template-columns: minmax(120px, 1.2fr) minmax(160px, 2fr) minmax(70px, .6fr) minmax(100px, 1fr) auto; gap: 8px; align-items: center; }
+.mandate-add-kpi { justify-self: start; }
+.automation-form label.mandate-check { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.automation-form label.mandate-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--clay); flex: 0 0 auto; }
+@media (max-width: 640px) { .mandate-kpi-row { grid-template-columns: 1fr 1fr; } .mandate-card-head { flex-wrap: wrap; } }

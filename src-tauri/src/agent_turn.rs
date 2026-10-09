@@ -476,6 +476,10 @@ pub(crate) async fn send_message_inner(
         if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
             injected_context.push(memory);
         }
+        // ACP agents own their approvals, so only the brief applies here.
+        if let Some(mandate) = mandates::turn_context(&state.store, &ap.id, &frame_id).await {
+            injected_context.push(mandate.brief);
+        }
         let archive_index = state
             .store
             .research_archive_index(&ap.id)
@@ -1335,6 +1339,19 @@ pub(crate) async fn send_message_inner(
     if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
         agent.ctx.inject_user(memory);
     }
+    // A mandate's conversation carries its brief on every turn, whether a due
+    // round or the researcher started it.
+    let mandate_turn = if assistant {
+        None
+    } else {
+        mandates::turn_context(&state.store, &ap.id, &frame_id).await
+    };
+    let mandate_reviews_mutations = mandate_turn
+        .as_ref()
+        .is_some_and(|mandate| mandate.review_mutations);
+    if let Some(mandate) = mandate_turn {
+        agent.ctx.inject_user(mandate.brief);
+    }
     if let Some(injection) =
         exploration_commands::exploration_runtime_injection(&ap.root, &frame_scope)?
     {
@@ -1606,7 +1623,7 @@ pub(crate) async fn send_message_inner(
         prov: Some(prov_tx),
         provenance_scope,
         turn_id: browser_turn_id.clone(),
-        force_ask_mutations: origin.force_ask_mutations(),
+        force_ask_mutations: origin.force_ask_mutations() || mandate_reviews_mutations,
         last_compaction_strategy: StdMutex::new(None),
     };
 

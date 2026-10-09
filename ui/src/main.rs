@@ -4,6 +4,7 @@ mod app_overlays;
 mod assistant_remote;
 mod assistant_workspace;
 mod automation;
+mod mandates;
 mod bindings;
 mod channels_view;
 mod chat_find;

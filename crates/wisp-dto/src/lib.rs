@@ -5668,6 +5668,8 @@ mod research_journey;
 pub use research_journey::*;
 mod automation;
 pub use automation::*;
+mod mandate;
+pub use mandate::*;
 mod research_archive;
 pub use research_archive::*;
 /// Host-authored logical binding. Never accepts an iframe-supplied connector.

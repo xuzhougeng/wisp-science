@@ -7125,10 +7125,12 @@ name = "wisp-app"
 version = "1.19.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid",
  "wisp-dto",
  "wisp-llm",
  "wisp-store",

@@ -12,6 +12,10 @@
 - 模型在 **设置 → 专家 → Recap** 中更换；卡片上的链接直接打开该页。
 - 草稿只出现在研究历程和研究日历中，确认之前不算正式记录。
 
+## 研究职责
+
+把一份长期职责（目标、KPI、工作约束）交给项目里的 Agent，由它一轮轮推进。入口同在本页的「研究职责」区块，详见 [研究职责](research-mandates.md)。
+
 ## 定时任务
 
 ### 当前会话的 timer
@@ -41,6 +45,9 @@ Automation spans every project, so it opens from the research assistant: the
   that have recorded activity and no recap yet. Missed mornings catch up on the
   next launch; existing or dismissed recaps are never overwritten; quiet days make
   no model call. Change the model in Settings → Specialists → Recap.
+- **Research mandates**: hand a project agent a long-running responsibility — a
+  goal, KPIs and constraints — that it carries round by round. See
+  [Research mandates](research-mandates.md).
 - **Scheduled tasks**: send a prompt into a new session of a chosen project daily,
   weekly or every few hours. Pause, run now or delete each task. Templates prefill
   a literature watch, a run check and a weekly report. Tasks run only while Wisp is
