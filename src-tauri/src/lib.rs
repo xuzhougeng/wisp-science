@@ -5234,7 +5234,8 @@ fn default_api_url(provider: &str) -> &'static str {
 fn default_model(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "claude-sonnet-5",
-        "openai_responses" | "openai_codex" => "gpt-5.5",
+        "openai_responses" => "gpt-5.5",
+        "openai_codex" => wisp_llm::codex_auth::DEFAULT_MODEL,
         "openai_chatgpt" => wisp_llm::chatgpt_auth::DEFAULT_MODEL,
         "xai_oauth" => wisp_llm::xai_auth::DEFAULT_MODEL,
         _ => "deepseek-v4-flash",

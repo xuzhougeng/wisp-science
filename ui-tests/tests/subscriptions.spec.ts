@@ -146,7 +146,7 @@ for (const provider of ["codex", "xai"]) {
     for (const alias of ["Research", "Writing"]) {
       await page.getByTestId(`add-${provider}-model`).click();
       await expect(page.getByTestId("codex-login-form").locator("input")).toHaveCount(2);
-      await expect(page.getByTestId("codex-login-model")).toHaveValue(provider === "xai" ? "grok-4.6" : "gpt-5.5");
+      await expect(page.getByTestId("codex-login-model")).toHaveValue(provider === "xai" ? "grok-4.6" : "gpt-6.1-sol");
       await page.getByTestId("codex-login-label").fill(alias);
       await page.getByTestId("codex-login-save").click();
       await expect(page.getByTestId(`subscription-account-${provider}`)).toContainText(alias);
@@ -175,7 +175,7 @@ test("Sign in with ChatGPT is the first card, browser-only, and saves managed mo
   await page.getByTestId("codex-submit-redirect").click();
   await page.getByTestId("codex-login-save").click();
   await page.getByTestId("add-chatgpt-model").click();
-  await expect(page.getByTestId("codex-login-model")).toHaveValue("gpt-5.5");
+  await expect(page.getByTestId("codex-login-model")).toHaveValue("gpt-6.1-sol");
   await page.getByTestId("codex-login-label").fill("Plan GPT");
   await page.getByTestId("codex-login-save").click();
   const card = page.getByTestId("subscription-account-chatgpt");

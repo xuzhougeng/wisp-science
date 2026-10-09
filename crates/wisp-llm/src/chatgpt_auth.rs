@@ -27,7 +27,7 @@ pub const DIRECT_TOKEN_SCOPE: &str = "chatgpt.tokens.use.direct";
 pub const SCOPE: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 pub const DEFAULT_BASE_URL: &str = RESOURCE;
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
+pub const DEFAULT_MODEL: &str = "gpt-6.1-sol";
 pub const SUBSCRIPTION_SECRET: &str = "chatgpt_subscription";
 /// Stable installation id. OpenAI lists each host as one connected agent, so a
 /// new id per login would pile up agents in the user's ChatGPT settings.
