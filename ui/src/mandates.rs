@@ -405,6 +405,7 @@ pub(crate) fn MandateSection(
                             return view! {<div class="automation-empty" data-testid="mandate-empty">{j(loc,"No mandates yet. Start from a template below or define your own.","还没有职责。可以从下方模板开始，或自己定义一份。")}</div>}.into_view();
                         }
                         rows.into_iter().map(|(o, project)| {
+                            let last_round = o.last_round;
                             let m = o.mandate;
                             let status = m.status.clone();
                             let running = matches!(status.as_str(), "active" | "waiting");
@@ -440,6 +441,16 @@ pub(crate) fn MandateSection(
                                         view! {<li title=k.definition.clone()><span>{k.name.clone()}</span><strong>{value}</strong><small>{k.period.clone()}</small></li>}
                                     }).collect_view()}
                                 </ul>})}
+                                {last_round.map(|r| {
+                                    let at = format!("{} {}", day_key(r.created_at), clock(r.created_at));
+                                    let title = if loc == Locale::Zh { format!("第 {} 轮 · {at}", r.seq) } else { format!("Round {} · {at}", r.seq) };
+                                    view! {<div class="mandate-round" data-testid="mandate-last-round">
+                                        <small>{title}{(r.source == "host").then(|| j(loc," · ended without a report"," · 未提交回合报告"))}</small>
+                                        <p><b>{j(loc,"Done","已完成")}</b>{r.done}</p>
+                                        {(!r.blockers.is_empty()).then(|| view! {<p class="mandate-round-blocked"><b>{j(loc,"Blocked","阻塞")}</b>{r.blockers}</p>})}
+                                        {(!r.next_step.is_empty()).then(|| view! {<p><b>{j(loc,"Next","下一步")}</b>{r.next_step}</p>})}
+                                    </div>}
+                                })}
                             </article>}
                         }).collect_view()
                     }

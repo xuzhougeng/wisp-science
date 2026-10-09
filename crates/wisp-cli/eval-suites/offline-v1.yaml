@@ -404,3 +404,62 @@ cases:
     expect:
       completion_contains: [sandbox]
       required_tools: [read, attempt_completion]
+
+  - id: mandate-rounds
+    description: Carry a research mandate across three rounds, each briefed from the ledger the last one left and rescheduled within the mandate's bounds.
+    tags: [mandate, ledger]
+    fixture_mandate: true
+    allowed_tools: [end_round, attempt_completion]
+    script:
+      - tool_calls:
+          - id: round-1
+            name: end_round
+            arguments:
+              done: Filed 1 note on the baseline run
+              next_step: Check the rerun
+              kpis: [{name: notes filed, value: "1"}]
+              next_round_in_minutes: 120
+      - tool_calls:
+          - {id: done-1, name: attempt_completion, arguments: {result: round one reported}}
+      - tool_calls:
+          - id: round-2
+            name: end_round
+            arguments:
+              done: Rerun matched; filed 1 more note
+              blockers: Held-out split not yet published
+              next_step: Wait for the split
+              kpis: [{name: Notes filed, value: "2"}, {name: Citations, value: "9"}]
+              next_round_in_minutes: 43200
+      - tool_calls:
+          - {id: done-2, name: attempt_completion, arguments: {result: round two reported}}
+      - tool_calls:
+          - id: round-3
+            name: end_round
+            arguments: {done: Nothing new to file, next_step: Search again, next_round_in_minutes: 1}
+      - tool_calls:
+          - {id: done-3, name: attempt_completion, arguments: {result: round three reported}}
+    actions:
+      - {kind: send, prompt: "[Mandate round: Benchmark notes]\n\nContinue this mandate."}
+      - {kind: send, prompt: "[Mandate round: Benchmark notes]\n\nContinue this mandate."}
+      - {kind: send, prompt: "[Mandate round: Benchmark notes]\n\nContinue this mandate."}
+    limits: {max_tool_calls: 6}
+    expect:
+      completion_contains: [round three reported]
+      required_tools: [end_round, attempt_completion]
+      forbidden_tools: [write, edit, shell]
+      tool_order: [end_round, attempt_completion, end_round, attempt_completion, end_round, attempt_completion]
+      request_contains:
+        - "Goal: Keep the benchmark notes current."
+        - no round has reported yet
+        - Round 1 recorded.
+        - "#1 ·"
+        - "Done: Filed 1 note on the baseline run | Next: Check the rerun"
+        - current 1 (short by 2)
+        - Round 2 recorded.
+        - it was moved to stay within the mandate's bounds
+        - "defines no such KPI: Citations"
+        - "Blocked: Held-out split not yet published"
+      final_request_contains:
+        - Round 3 recorded.
+        - current 2 (short by 1)
+        - "#2 ·"

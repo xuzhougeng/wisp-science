@@ -58,9 +58,18 @@ test("a template becomes a mandate with its goal, KPI and constraints; run, paus
   await expect(card.locator(".mandate-status")).toHaveText("Active");
   await expect(card).toContainText("Other project · Next round 2026-09-09 16:00 · until 2027-09-09");
   await expect(card.locator(".mandate-kpis li")).toContainText("– / 12");
+  await expect(card.getByTestId("mandate-last-round")).toHaveCount(0);
   await card.getByRole("button", { name: "Run a round now Literature watch", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__ranMandate)).toBe("mandate-1");
   await expect(automation.locator(".automation-notice")).toContainText("mandate's conversation");
+  // The round's own report: what it did, the KPI it measured, and the time it chose.
+  const round = card.getByTestId("mandate-last-round");
+  await expect(round).toContainText("Round 1 · 2026-09-09 16:00");
+  await expect(round).toContainText("DoneScreened 12 new abstracts and filed 3");
+  await expect(round).toContainText("NextRead the two flagged reviews");
+  await expect(round.locator(".mandate-round-blocked")).toHaveCount(0);
+  await expect(card.locator(".mandate-kpis li")).toContainText("3 / 12");
+  await expect(card).toContainText("Next round 2026-09-09 18:00");
 
   await card.getByRole("switch").uncheck();
   await expect(card).toHaveAttribute("data-status", "paused");
@@ -146,4 +155,11 @@ test("Chinese mandate labels follow the locale", async ({ page }) => {
   await form.getByTestId("mandate-save").click();
   await expect(section.locator(".mandate-card .mandate-status")).toHaveText("进行中");
   await expect(section.locator(".mandate-card")).toContainText("下一轮 2026-09-09 16:00 · 截至 2026-12-08");
+  // A round that ended without calling end_round is shown as such.
+  await page.evaluate(() => { (window as any).__mandateRound = {done: "评测脚本超时", blockers: "GPU 配额不足", next_step: "", source: "host"}; });
+  await section.getByRole("button", { name: /立即运行一轮/ }).click();
+  const round = section.getByTestId("mandate-last-round");
+  await expect(round).toContainText("第 1 轮 · 2026-09-09 16:00 · 未提交回合报告");
+  await expect(round.locator(".mandate-round-blocked")).toHaveText("阻塞GPU 配额不足");
+  await expect(round).not.toContainText("下一步");
 });

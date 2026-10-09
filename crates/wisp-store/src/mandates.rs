@@ -9,7 +9,7 @@ use super::Store;
 use anyhow::{ensure, Result};
 use sqlx::Row;
 
-pub use wisp_dto::{MandateRecord, MANDATE_STATUSES};
+pub use wisp_dto::{MandateRecord, MandateRound, MANDATE_STATUSES};
 
 const MANDATE_COLUMNS: &str = "id,project_id,frame_id,name,goal,kpis,constraints,ends_at,\
     interval_secs,report_interval_secs,next_report_at,status,next_run_at,last_run_at,\
@@ -207,6 +207,10 @@ impl Store {
         if let Some(store) = self.route_entity("mandates", "id", id).await? {
             return Box::pin(store.delete_mandate(id)).await;
         }
+        sqlx::query("DELETE FROM mandate_rounds WHERE mandate_id=?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         sqlx::query("DELETE FROM mandates WHERE id=?")
             .bind(id)
             .execute(&self.pool)
@@ -272,11 +276,120 @@ impl Store {
     }
 }
 
+fn round_from_row(row: sqlx::sqlite::SqliteRow) -> Result<MandateRound> {
+    Ok(MandateRound {
+        id: row.try_get("id")?,
+        mandate_id: row.try_get("mandate_id")?,
+        seq: row.try_get("seq")?,
+        done: row.try_get("done")?,
+        kpis: serde_json::from_str(&row.try_get::<String, _>("kpis")?).unwrap_or_default(),
+        blockers: row.try_get("blockers")?,
+        next_step: row.try_get("next_step")?,
+        next_run_at: row.try_get("next_run_at")?,
+        source: row.try_get("source")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+impl Store {
+    /// Append a round to the mandate's ledger and return it with its `seq`,
+    /// the next number in the mandate's gapless sequence. `round.seq` is ignored.
+    pub async fn add_mandate_round(&self, round: &MandateRound) -> Result<MandateRound> {
+        if let Some(store) = self
+            .route_entity("mandates", "id", &round.mandate_id)
+            .await?
+        {
+            return Box::pin(store.add_mandate_round(round)).await;
+        }
+        // The write lock is taken at BEGIN, so two rounds cannot read the
+        // same MAX(seq).
+        let mut tx = self.begin_write().await?;
+        let seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq),0)+1 FROM mandate_rounds WHERE mandate_id=?",
+        )
+        .bind(&round.mandate_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO mandate_rounds(\
+             id,mandate_id,seq,done,kpis,blockers,next_step,next_run_at,source,created_at) \
+             VALUES(?,?,?,?,?,?,?,?,?,?)",
+        )
+        .bind(&round.id)
+        .bind(&round.mandate_id)
+        .bind(seq)
+        .bind(round.done.trim())
+        .bind(serde_json::to_string(&round.kpis)?)
+        .bind(round.blockers.trim())
+        .bind(round.next_step.trim())
+        .bind(round.next_run_at)
+        .bind(&round.source)
+        .bind(round.created_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(MandateRound {
+            seq,
+            done: round.done.trim().into(),
+            blockers: round.blockers.trim().into(),
+            next_step: round.next_step.trim().into(),
+            ..round.clone()
+        })
+    }
+
+    /// The mandate's latest rounds, newest first.
+    pub async fn mandate_rounds(
+        &self,
+        mandate_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MandateRound>> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.mandate_rounds(mandate_id, limit)).await;
+        }
+        sqlx::query(
+            "SELECT id,mandate_id,seq,done,kpis,blockers,next_step,next_run_at,source,created_at \
+             FROM mandate_rounds WHERE mandate_id=? ORDER BY seq DESC LIMIT ?",
+        )
+        .bind(mandate_id)
+        .bind(limit.clamp(1, 500) as i64)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(round_from_row)
+        .collect()
+    }
+
+    /// Rounds recorded in `[from, until)`, oldest first.
+    pub async fn mandate_rounds_between(
+        &self,
+        mandate_id: &str,
+        from: i64,
+        until: i64,
+    ) -> Result<Vec<MandateRound>> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.mandate_rounds_between(mandate_id, from, until)).await;
+        }
+        sqlx::query(
+            "SELECT id,mandate_id,seq,done,kpis,blockers,next_step,next_run_at,source,created_at \
+             FROM mandate_rounds WHERE mandate_id=? AND created_at>=? AND created_at<? \
+             ORDER BY seq LIMIT 500",
+        )
+        .bind(mandate_id)
+        .bind(from)
+        .bind(until)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(round_from_row)
+        .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use uuid::Uuid;
-    use wisp_dto::{MandateConstraints, MandateKpi};
+    use wisp_dto::{MandateConstraints, MandateKpi, MandateKpiValue};
 
     pub(crate) fn test_mandate(id: &str, project_id: &str, next_run_at: i64) -> MandateRecord {
         MandateRecord {
@@ -307,6 +420,75 @@ mod tests {
             created_at: 1,
             updated_at: 1,
         }
+    }
+
+    fn test_round(mandate_id: &str, created_at: i64) -> MandateRound {
+        MandateRound {
+            id: Uuid::new_v4().to_string(),
+            mandate_id: mandate_id.into(),
+            seq: 99,
+            done: "  Screened 12 abstracts  ".into(),
+            kpis: vec![MandateKpiValue {
+                name: "Papers filed".into(),
+                value: "3".into(),
+            }],
+            blockers: String::new(),
+            next_step: "Read the two flagged reviews".into(),
+            next_run_at: Some(created_at + 3_600),
+            source: "agent".into(),
+            created_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_ledger_numbers_rounds_without_gaps_per_mandate() {
+        let (store, root) = test_store().await;
+        store
+            .create_mandate(&test_mandate("m1", "p1", 100))
+            .await
+            .unwrap();
+        store
+            .create_mandate(&test_mandate("m2", "p1", 100))
+            .await
+            .unwrap();
+        let first = store
+            .add_mandate_round(&test_round("m1", 1_000))
+            .await
+            .unwrap();
+        assert_eq!(first.seq, 1, "the caller's seq is ignored");
+        assert_eq!(first.done, "Screened 12 abstracts");
+        let mut host = test_round("m1", 2_000);
+        host.source = "host".into();
+        assert_eq!(store.add_mandate_round(&host).await.unwrap().seq, 2);
+        assert_eq!(
+            store
+                .add_mandate_round(&test_round("m2", 1_500))
+                .await
+                .unwrap()
+                .seq,
+            1,
+            "each mandate has its own sequence"
+        );
+        let mut bogus = test_round("m1", 3_000);
+        bogus.source = "model".into();
+        assert!(store.add_mandate_round(&bogus).await.is_err());
+
+        let rounds = store.mandate_rounds("m1", 10).await.unwrap();
+        assert_eq!(rounds.iter().map(|r| r.seq).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(rounds[1], first);
+        assert_eq!(rounds[0].source, "host");
+        assert_eq!(store.mandate_rounds("m1", 1).await.unwrap().len(), 1);
+        let window = store
+            .mandate_rounds_between("m1", 1_000, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(window, vec![first], "the window is half-open");
+
+        store.delete_mandate("m1").await.unwrap();
+        assert!(store.mandate_rounds("m1", 10).await.unwrap().is_empty());
+        assert_eq!(store.mandate_rounds("m2", 10).await.unwrap().len(), 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     async fn test_store() -> (Store, std::path::PathBuf) {
@@ -431,9 +613,14 @@ mod tests {
         );
         assert!(store.due_mandates(9_999).await.unwrap().is_empty());
 
-        // Deleting the project takes its mandates with it.
+        // Deleting the project takes its mandates and their ledgers with it.
+        store
+            .add_mandate_round(&test_round("due", 600))
+            .await
+            .unwrap();
         store.delete_project("p1").await.unwrap();
         assert_eq!(store.get_mandate("due").await.unwrap(), None);
+        assert!(store.mandate_rounds("due", 10).await.unwrap().is_empty());
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }

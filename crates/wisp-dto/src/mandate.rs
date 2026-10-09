@@ -104,11 +104,40 @@ pub struct MandateDraft {
     pub start_at: Option<i64>,
 }
 
+/// A KPI value one round reported.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MandateKpiValue {
+    pub name: String,
+    pub value: String,
+}
+
+/// One ledger entry: what a round did and what it left for the next one.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MandateRound {
+    pub id: String,
+    pub mandate_id: String,
+    /// 1-based, gapless within a mandate.
+    pub seq: i64,
+    pub done: String,
+    pub kpis: Vec<MandateKpiValue>,
+    pub blockers: String,
+    pub next_step: String,
+    /// When this round scheduled the next one.
+    pub next_run_at: Option<i64>,
+    /// `agent` when the round reported itself; `host` when it ended without
+    /// a report and Wisp recorded its final answer instead.
+    pub source: String,
+    pub created_at: i64,
+}
+
 /// A mandate with what its card shows beside it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct MandateOverview {
     pub mandate: MandateRecord,
+    pub last_round: Option<MandateRound>,
 }
 
 #[cfg(test)]

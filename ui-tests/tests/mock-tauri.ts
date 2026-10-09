@@ -2023,7 +2023,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
           case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
-          case "list_all_mandates": return automation.mandates.map((m: any) => ({mandate: JSON.parse(JSON.stringify(m))}));
+          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined}, last_round: m.rounds?.at(-1) ?? null})));
           case "create_mandate": {
             const draft = plain(arg("draft")), now = Math.floor(Date.now() / 1000);
             (window as any).__mandateDraft = draft;
@@ -2047,7 +2047,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             m.status = String(arg("status"));
             return JSON.parse(JSON.stringify(m));
           }
-          case "run_mandate_now": (window as any).__ranMandate = arg("id"); return null;
+          case "run_mandate_now": {
+            // Stands in for a finished round: the agent's end_round report.
+            const m = automation.mandates.find((m: any) => m.id === arg("id")), now = Math.floor(Date.now() / 1000);
+            (window as any).__ranMandate = arg("id");
+            if (!m) throw new Error("The mandate no longer exists.");
+            const round = (window as any).__mandateRound ?? {done: "Screened 12 new abstracts and filed 3", blockers: "", next_step: "Read the two flagged reviews", source: "agent"};
+            const kpis = m.kpis.slice(0, 1).map((k: any) => ({name: k.name, value: "3"}));
+            if (m.kpis[0]) m.kpis[0].current = "3";
+            m.rounds = [...(m.rounds ?? []), {id: `round-${now}`, mandate_id: m.id, seq: (m.rounds?.length ?? 0) + 1, kpis, next_run_at: now + 7200, created_at: now, ...round}];
+            m.next_run_at = now + 7200;
+            return null;
+          }
           case "delete_mandate": automation.mandates = automation.mandates.filter((m: any) => m.id !== arg("id")); return null;
           case "generate_research_recap": {
             if ((window as any).__recapError) throw new Error((window as any).__recapError);

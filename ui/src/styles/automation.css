@@ -69,3 +69,8 @@
 .automation-form label.mandate-check { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .automation-form label.mandate-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--clay); flex: 0 0 auto; }
 @media (max-width: 640px) { .mandate-kpi-row { grid-template-columns: 1fr 1fr; } .mandate-card-head { flex-wrap: wrap; } }
+.mandate-round { display: grid; gap: 2px; margin-top: 4px; padding: 8px 10px; border-left: 2px solid var(--border); background: var(--bg-input); border-radius: 0 var(--radius-xs) var(--radius-xs) 0; }
+.mandate-round small { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mandate-round p { margin: 0; color: var(--text-muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.mandate-round b { font-weight: 600; color: var(--text); margin-right: 8px; }
+.mandate-round-blocked b { color: var(--err); }

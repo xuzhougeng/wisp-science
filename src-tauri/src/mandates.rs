@@ -25,6 +25,7 @@ async fn load(store: &Store, id: &str) -> Result<MandateRecord, String> {
 
 /// What a turn in `frame_id` is given when that conversation is a mandate's.
 pub(crate) struct TurnContext {
+    pub(crate) mandate_id: String,
     /// Injected before the turn's message; never part of the saved history.
     pub(crate) brief: String,
     /// The mandate asks for approval before anything that changes state.
@@ -44,9 +45,18 @@ pub(crate) async fn turn_context(
         }
     };
     // A closed mandate's conversation is an ordinary one again.
-    (mandate.status != "done").then(|| TurnContext {
-        brief: wisp_app::mandates::brief(&mandate),
+    if mandate.status == "done" {
+        return None;
+    }
+    // The brief is still worth giving without its ledger.
+    let rounds = store
+        .mandate_rounds(&mandate.id, wisp_app::mandates::BRIEF_ROUNDS)
+        .await
+        .unwrap_or_default();
+    Some(TurnContext {
+        brief: wisp_app::mandates::brief(&mandate, &rounds),
         review_mutations: mandate.constraints.review_mutations,
+        mandate_id: mandate.id,
     })
 }
 
@@ -55,15 +65,23 @@ pub(crate) async fn visible_mandates(store: &Store) -> Result<Vec<MandateOvervie
     let mut all = Vec::new();
     for project in crate::research_assistant::visible_projects(store).await? {
         // One offline project folder must not hide every other mandate.
-        match store.list_mandates(&project.0).await {
-            Ok(mandates) => all.extend(
-                mandates
-                    .into_iter()
-                    .map(|mandate| MandateOverview { mandate }),
-            ),
+        let mandates = match store.list_mandates(&project.0).await {
+            Ok(mandates) => mandates,
             Err(error) => {
-                tracing::warn!(target: "wisp", %error, project_id = %project.0, "failed to list mandates")
+                tracing::warn!(target: "wisp", %error, project_id = %project.0, "failed to list mandates");
+                continue;
             }
+        };
+        for mandate in mandates {
+            let last_round = store
+                .mandate_rounds(&mandate.id, 1)
+                .await
+                .map_err(err)?
+                .pop();
+            all.push(MandateOverview {
+                mandate,
+                last_round,
+            });
         }
     }
     all.sort_by(|a, b| {
@@ -190,13 +208,19 @@ pub(crate) async fn fire_due_mandates(app: &AppHandle) {
 enum Due {
     /// Its period is over: close it instead of running.
     Close,
+    /// Today's rounds are used up: come back when the local day ends.
+    Defer { until: i64 },
     /// Run a round; the default next round is at this time.
     Round { next_run_at: i64 },
 }
 
-fn due(mandate: &MandateRecord, now: i64) -> Due {
+/// `rounds_today` and `day_end` describe the local day `now` falls in.
+fn due(mandate: &MandateRecord, now: i64, rounds_today: usize, day_end: i64) -> Due {
     if mandate.ends_at.is_some_and(|end| end <= now) {
         return Due::Close;
+    }
+    if rounds_today >= mandate.constraints.max_rounds_per_day as usize {
+        return Due::Defer { until: day_end };
     }
     Due::Round {
         // From now, not from the missed slot: a mandate that slept through a
@@ -208,11 +232,32 @@ fn due(mandate: &MandateRecord, now: i64) -> Due {
     }
 }
 
+/// Ledger entries of the local day `now` falls in, and when that day ends.
+async fn rounds_today(store: &Store, mandate_id: &str, now: i64) -> (usize, i64) {
+    let today = chrono::DateTime::from_timestamp(now, 0)
+        .map(|t| t.with_timezone(&chrono::Local).date_naive())
+        .and_then(crate::research_recap::local_day);
+    let Some((start, end)) = today else {
+        return (0, now + 86_400);
+    };
+    let rounds = store
+        .mandate_rounds_between(mandate_id, start, end)
+        .await
+        .map_or(0, |rounds| rounds.len());
+    (rounds, end)
+}
+
 /// Run one round. With `advance`, the round is first claimed atomically so a
-/// mandate can never run the same slot twice; a manual round skips the claim.
+/// mandate can never run the same slot twice; a manual round skips the claim
+/// and the daily cap, because the researcher asked for it.
 async fn run_round(app: AppHandle, mandate: MandateRecord, now: i64, advance: bool) {
     let state = app.state::<AppState>();
-    let next_run_at = match due(&mandate, now) {
+    let (rounds, day_end) = if advance {
+        rounds_today(&state.store, &mandate.id, now).await
+    } else {
+        (0, now)
+    };
+    let next_run_at = match due(&mandate, now, rounds, day_end) {
         Due::Close => {
             if let Err(error) = state
                 .store
@@ -220,6 +265,16 @@ async fn run_round(app: AppHandle, mandate: MandateRecord, now: i64, advance: bo
                 .await
             {
                 tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to close an ended mandate");
+            }
+            return;
+        }
+        Due::Defer { until } => {
+            if let Err(error) = state
+                .store
+                .schedule_mandate_round(&mandate.id, until, mandate.wait_run_id.as_deref(), now)
+                .await
+            {
+                tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to defer a capped mandate");
             }
             return;
         }
@@ -239,8 +294,40 @@ async fn run_round(app: AppHandle, mandate: MandateRecord, now: i64, advance: bo
             }
         }
     }
-    if let Err(error) = send_round(&app, &state, &mandate).await {
+    let started = chrono::Utc::now().timestamp();
+    let result = send_round(&app, &state, &mandate).await;
+    if let Err(error) = &result {
         tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "mandate round failed");
+    }
+    // A round that never called end_round still leaves a ledger entry, so
+    // the next one is not briefed as if nothing happened.
+    let reported = state
+        .store
+        .mandate_rounds(&mandate.id, 1)
+        .await
+        .is_ok_and(|rounds| {
+            rounds
+                .first()
+                .is_some_and(|round| round.created_at >= started)
+        });
+    if reported {
+        return;
+    }
+    let answer = match &result {
+        Ok(frame_id) => crate::channels::last_assistant_text(&state.store, frame_id)
+            .await
+            .unwrap_or_default(),
+        Err(error) => format!("The round failed before finishing: {error}"),
+    };
+    if let Err(error) = wisp_app::mandates::record_unreported_round(
+        &state.store,
+        &mandate.id,
+        &answer,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+    {
+        tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to record an unreported round");
     }
 }
 
@@ -318,20 +405,51 @@ mod tests {
     fn a_due_mandate_runs_until_its_period_ends() {
         let mut mandate = wisp_app::mandates::new_mandate(draft("p1"), 1_000).unwrap();
         assert_eq!(
-            due(&mandate, 500_000),
+            due(&mandate, 500_000, 0, 600_000),
             Due::Round {
                 next_run_at: 500_000 + 86_400
             },
             "a missed slot owes one round, counted from now"
         );
-        mandate.ends_at = Some(500_000);
+        mandate.constraints.max_rounds_per_day = 2;
+        assert!(matches!(
+            due(&mandate, 500_000, 1, 600_000),
+            Due::Round { .. }
+        ));
         assert_eq!(
-            due(&mandate, 499_999),
-            Due::Round {
-                next_run_at: 499_999 + 86_400
-            }
+            due(&mandate, 500_000, 2, 600_000),
+            Due::Defer { until: 600_000 },
+            "today's rounds are used up"
         );
-        assert_eq!(due(&mandate, 500_000), Due::Close);
+        mandate.ends_at = Some(500_000);
+        assert!(matches!(
+            due(&mandate, 499_999, 0, 600_000),
+            Due::Round { .. }
+        ));
+        assert_eq!(
+            due(&mandate, 500_000, 2, 600_000),
+            Due::Close,
+            "the period ending wins over the cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn todays_rounds_are_counted_within_the_local_day() {
+        let (store, _dir) = store().await;
+        let mandate = wisp_app::mandates::new_mandate(draft("p1"), 1_000).unwrap();
+        store.create_mandate(&mandate).await.unwrap();
+        let now = chrono::Utc::now().timestamp();
+        assert_eq!(rounds_today(&store, &mandate.id, now).await.0, 0);
+        wisp_app::mandates::record_unreported_round(&store, &mandate.id, "Checked", now)
+            .await
+            .unwrap();
+        // Two days back is another local day in every timezone.
+        wisp_app::mandates::record_unreported_round(&store, &mandate.id, "Old", now - 2 * 86_400)
+            .await
+            .unwrap();
+        let (rounds, day_end) = rounds_today(&store, &mandate.id, now).await;
+        assert_eq!(rounds, 1);
+        assert!(day_end > now && day_end <= now + 25 * 3_600);
     }
 
     #[tokio::test]
@@ -344,10 +462,17 @@ mod tests {
         store.create_mandate(&mandate).await.unwrap();
 
         let context = turn_context(&store, "p1", "f1").await.unwrap();
+        assert_eq!(context.mandate_id, mandate.id);
         assert!(context
             .brief
             .contains("Goal: Track new single-cell papers."));
+        assert!(context.brief.contains("no round has reported yet"));
         assert!(context.review_mutations, "review is the default");
+        wisp_app::mandates::record_unreported_round(&store, &mandate.id, "Queued 3 runs", 1_500)
+            .await
+            .unwrap();
+        let context = turn_context(&store, "p1", "f1").await.unwrap();
+        assert!(context.brief.contains("Done: Queued 3 runs"));
         assert!(turn_context(&store, "p1", "f2").await.is_none());
 
         store
@@ -409,9 +534,23 @@ mod tests {
         crate::privacy_mode::save(&store, true, &["p2".into()])
             .await
             .unwrap();
+        let shown = visible_mandates(&store).await.unwrap()[0]
+            .mandate
+            .id
+            .clone();
+        wisp_app::mandates::record_unreported_round(&store, &shown, "Filed 2 papers", 1_500)
+            .await
+            .unwrap();
         let visible = visible_mandates(&store).await.unwrap();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].mandate.project_id, "p1");
+        assert_eq!(
+            visible[0]
+                .last_round
+                .as_ref()
+                .map(|round| round.done.as_str()),
+            Some("Filed 2 papers")
+        );
         assert!(require_visible_project(&store, "p2").await.is_err());
         // The payload round-trips through the shared UI contract.
         let wire = serde_json::to_value(&visible).unwrap();

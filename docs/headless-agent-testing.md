@@ -211,6 +211,11 @@ the last provider request only — sharper than `request_contains` after a
 compaction or restart. Scripted steps may fail deterministically with
 `api_error: {status, body}` to exercise provider error paths.
 
+The built-in suite's `mandate-rounds` case sets `fixture_mandate: true`: the
+eval project gets one [research mandate](research-mandates.md), the production
+`end_round` tool is registered against a real ledger, and the mandate's brief is
+injected fresh before every `send`, as the desktop host does before each turn.
+
 ### Cross-model compaction benchmark
 
 The repository includes `crates/wisp-cli/eval-suites/live-compaction-v1.yaml`

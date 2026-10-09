@@ -863,6 +863,19 @@ pub(crate) async fn send_message_inner(
         // tool set and prompt section selected by the user.
         *guard = None;
     }
+    // A mandate's conversation carries its brief on every turn, whether a due
+    // round or the researcher started it, and can close a round.
+    let mandate_turn = if assistant {
+        None
+    } else {
+        mandates::turn_context(&state.store, &ap.id, &frame_id).await
+    };
+    if guard.as_ref().is_some_and(|agent| {
+        agent.tools.get(wisp_app::mandates::END_ROUND).is_some() != mandate_turn.is_some()
+    }) {
+        // The conversation became a mandate's, or its mandate closed.
+        *guard = None;
+    }
     let reused_agent = guard.is_some();
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
@@ -1044,6 +1057,12 @@ pub(crate) async fn send_message_inner(
                     agent.add_tool(tool);
                 }
             }
+        }
+        if let Some(mandate) = &mandate_turn {
+            agent.add_tool(Box::new(wisp_app::mandates::EndRoundTool::new(
+                state.store.clone(),
+                &mandate.mandate_id,
+            )));
         }
         if plan_mode_enabled {
             // Only while planning: outside plan mode there is nothing to approve,
@@ -1339,13 +1358,6 @@ pub(crate) async fn send_message_inner(
     if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
         agent.ctx.inject_user(memory);
     }
-    // A mandate's conversation carries its brief on every turn, whether a due
-    // round or the researcher started it.
-    let mandate_turn = if assistant {
-        None
-    } else {
-        mandates::turn_context(&state.store, &ap.id, &frame_id).await
-    };
     let mandate_reviews_mutations = mandate_turn
         .as_ref()
         .is_some_and(|mandate| mandate.review_mutations);
