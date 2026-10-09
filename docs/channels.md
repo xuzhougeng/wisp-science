@@ -51,6 +51,10 @@ The IM target can be inspected and changed from either Feishu or WeChat:
 - `/new` prepares a fresh IM session in the selected project.
 - `/stop` cancels the shared target's running turn; `/help` shows the command
   list.
+- `/mandates` lists every visible [research mandate](research-mandates.md)
+  with its status, KPI values, latest round and anything waiting on you. It is
+  answered directly, without a model turn, and also works on the assistant's
+  WeChat entry.
 - WeChat additionally supports `/approval`, `/approve <code>`, and
   `/reject <code> [feedback]` for text-only tool approval.
 

@@ -48,7 +48,10 @@ Send a complete instruction and pass `plan_item_id` when appropriate. After the 
 the researcher the task has started and you will report its result, then end your turn. Completion is delivered \
 automatically: do not repeatedly poll or keep the assistant turn open waiting for project work.\n\
 - Follow up: `project_session_result` tells whether a dispatched conversation is still running and what it \
-answered.\n\n\
+answered.\n\
+- Mandates: `research_mandates` lists the long-running research mandates across projects with their status, \
+KPIs, latest round and anything they are waiting on. When the researcher answers what a mandate asked for, or \
+gives it feedback, pass their words on with `reply_to_mandate`; never answer a mandate's request yourself.\n\n\
 Rules:\n\
 - You cannot read or write files, run code, commands or analyses, or search literature. When the researcher \
 asks for such work, dispatch it to the right project (ask which one if unclear) instead of attempting it.\n\
@@ -56,6 +59,10 @@ asks for such work, dispatch it to the right project (ask which one if unclear) 
 - The latest message carries the current local date and time; resolve \"today\" and \"yesterday\" from it, \
 never from older messages.\n\
 - Be brief: short lists, the project name on each item, no filler. Reply in the researcher's language.";
+
+// Restated for existing assistant histories whose saved system prompt predates
+// research mandates.
+pub(crate) const MANDATE_POLICY: &str = "Research mandates: research_mandates lists the long-running mandates across projects (status, KPIs, latest round, what each is waiting on, and its id). Notices headed '职责需要你 / A mandate needs you' and '职责汇报 / Mandate report' in this conversation come from them. When the researcher answers a mandate's request or gives it feedback, call reply_to_mandate with that mandate's id and their own words, then say it was passed on. Never answer a mandate's request on the researcher's behalf.";
 
 /// Injected before each assistant turn's message (not persisted): a
 /// never-ending conversation has no fixed "today" to anchor dates to.
@@ -85,6 +92,8 @@ pub(crate) fn tools(app: &AppHandle, origin: crate::TurnOrigin, authorization: &
         authorization: authorization.into(),
     }));
     tools.add(Box::new(SessionResultTool { app: app.clone() }));
+    tools.add(Box::new(MandatesTool { store }));
+    tools.add(Box::new(MandateReplyTool { app: app.clone() }));
     tools
 }
 
@@ -1015,6 +1024,101 @@ impl Tool for SessionResultTool {
         let running = state.running_turns.lock().await.contains(session_id);
         match session_result(&state.store, session_id, running).await {
             Ok(text) => ToolResult::ok(text),
+            Err(error) => ToolResult::fail(error),
+        }
+    }
+}
+
+struct MandatesTool {
+    store: Store,
+}
+
+#[async_trait]
+impl Tool for MandatesTool {
+    fn name(&self) -> &str {
+        "research_mandates"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "research_mandates",
+            "List the researcher's long-running research mandates across visible projects: status, KPI values against targets, the latest round, the next round, and any request waiting on the researcher. Each line carries the mandate id for reply_to_mandate.",
+            json!({"type": "object", "properties": {}}),
+        )
+    }
+
+    fn read_only(&self) -> bool {
+        true
+    }
+
+    async fn run(&self, _args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+        match crate::mandates::summary_text(&self.store).await {
+            Ok(text) => ToolResult::ok(text),
+            Err(error) => ToolResult::fail(error),
+        }
+    }
+}
+
+struct MandateReplyTool {
+    app: AppHandle,
+}
+
+#[async_trait]
+impl Tool for MandateReplyTool {
+    fn name(&self) -> &str {
+        "reply_to_mandate"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "reply_to_mandate",
+            "Pass the researcher's own words to a research mandate: their answer to what it asked for, or feedback on how it should work. An open request is closed with the answer and the mandate's next round starts at once in its own conversation. Returns once that round has been started; do not wait for it.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "mandate_id": {"type": "string", "description": "From research_mandates."},
+                    "text": {"type": "string", "description": "What the researcher said, in their words. Do not add instructions of your own."}
+                },
+                "required": ["mandate_id", "text"]
+            }),
+        )
+    }
+
+    fn preview(&self, args: &Value) -> String {
+        clip(args["text"].as_str().unwrap_or_default(), 80)
+    }
+
+    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+        let state = self.app.state::<AppState>();
+        let id = args["mandate_id"].as_str().unwrap_or_default().trim();
+        // A hidden project's mandate does not exist as far as the assistant knows.
+        let visible = match crate::mandates::visible_mandates(&state.store).await {
+            Ok(mandates) => mandates,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let Some(overview) = visible.iter().find(|overview| overview.mandate.id == id) else {
+            return ToolResult::fail(format!(
+                "No visible mandate has id '{id}'. Call research_mandates first."
+            ));
+        };
+        let had_request = overview.request.is_some();
+        match crate::mandates::reply(
+            &self.app,
+            state.inner(),
+            id,
+            args["text"].as_str().unwrap_or_default(),
+        )
+        .await
+        {
+            Ok(mandate) => ToolResult::ok(format!(
+                "Passed on to '{}'. {} Its next round has started in its own conversation; tell the researcher it was passed on and finish this turn.",
+                mandate.name,
+                if had_request {
+                    "Its open request is answered."
+                } else {
+                    "It had no open request, so this is feedback for its next round."
+                }
+            )),
             Err(error) => ToolResult::fail(error),
         }
     }
