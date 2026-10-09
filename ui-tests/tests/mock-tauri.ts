@@ -1725,7 +1725,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     journeyEntry("progress-earlier", "progress", journeyText("Imported raw data and established an analysis baseline", "导入原始数据，建立分析基线"), 2, {manual: true}),
   ];
   const journeyRecaps: any[] = [];
-  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: []};
+  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: [], mandates: []};
+  // Mirrors `wisp_app::mandates::apply_draft`: what a draft may set on a mandate.
+  const applyMandateDraft = (mandate: any, draft: any) => {
+    const goal = String(draft.goal ?? "").trim();
+    if (!goal) throw new Error("A mandate needs a goal.");
+    const constraints = {...draft.constraints};
+    constraints.min_interval_secs = Math.min(Math.max(Number(constraints.min_interval_secs), 300), 30 * 86400);
+    constraints.max_interval_secs = Math.min(Math.max(Number(constraints.max_interval_secs), constraints.min_interval_secs), 30 * 86400);
+    Object.assign(mandate, {
+      name: String(draft.name ?? "").trim() || goal.split("\n")[0].slice(0, 80), goal,
+      kpis: (draft.kpis ?? []).filter((k: any) => String(k.name ?? "").trim()).map((k: any) => ({...k})),
+      constraints, ends_at: draft.ends_at ?? null,
+      interval_secs: Math.min(Math.max(Number(draft.interval_secs), constraints.min_interval_secs), constraints.max_interval_secs),
+      report_interval_secs: Number(draft.report_interval_secs) || 7 * 86400,
+    });
+    return mandate;
+  };
   const recapsIn = (from: number, until: number) => journeyRecaps.filter(r => r.day_start >= from && r.day_start < until);
   let publicationRevisionId = "publication-revision-1";
   let publicationRevisionState = mockPublication === "frozen" ? "frozen" : "draft";
@@ -2007,6 +2023,74 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
           case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
+          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined, request: undefined, reports: undefined}, last_round: m.rounds?.at(-1) ?? null, request: m.request ?? null, reports: m.reports ?? []})));
+          case "report_mandate_now": {
+            // Stands in for mandate_report::report: a quiet period needs no model.
+            const m = automation.mandates.find((m: any) => m.id === arg("id")), now = Math.floor(Date.now() / 1000);
+            if (!m) throw new Error("The mandate no longer exists.");
+            const from = m.reports?.[0]?.period_until ?? m.created_at - 7 * 86400;
+            const rounds = (m.rounds ?? []).filter((r: any) => !m.reports?.length || r.created_at >= from);
+            const cite = (text: string, index: number) => ({text, refs: [index]});
+            const body = rounds.length
+              ? {headline: (window as any).__mandateReportModel === false ? `${rounds.length} round(s) this period` : "Three papers filed, two short of target",
+                 done: rounds.map((r: any, i: number) => cite(r.done, i)), findings: [],
+                 issues: rounds.filter((r: any) => r.blockers).map((r: any, i: number) => cite(r.blockers, i)),
+                 next: rounds.at(-1).next_step ? [cite(rounds.at(-1).next_step, rounds.length - 1)] : [],
+                 sources: rounds.map((r: any) => ({kind: "round", id: r.id, title: `Round ${r.seq}`})),
+                 model: (window as any).__mandateReportModel === false ? "" : "recap-model"}
+              : {headline: "No rounds this period", done: [], findings: [], issues: [], next: [], sources: [], model: ""};
+            const report = {id: `report-${(m.reports?.length ?? 0) + 1}`, mandate_id: m.id, period_from: from, period_until: now, rounds: rounds.length,
+              kpis: m.kpis, body: {id: "", day_start: from, status: "report", generated_at: now, ...body}, created_at: now};
+            m.reports = [report, ...(m.reports ?? [])];
+            return JSON.parse(JSON.stringify(report));
+          }
+          case "create_mandate": {
+            const draft = plain(arg("draft")), now = Math.floor(Date.now() / 1000);
+            (window as any).__mandateDraft = draft;
+            const m = applyMandateDraft({id: `mandate-${automation.mandates.length + 1}`, project_id: draft.project_id, frame_id: null,
+              status: "active", last_run_at: null, next_report_at: null, wait_run_id: null, created_at: now, updated_at: now}, draft);
+            m.next_run_at = draft.start_at ?? now + m.interval_secs;
+            m.next_report_at = now + m.report_interval_secs;
+            automation.mandates.push(m);
+            return JSON.parse(JSON.stringify(m));
+          }
+          case "update_mandate": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            const draft = plain(arg("draft"));
+            (window as any).__mandateDraft = draft;
+            return JSON.parse(JSON.stringify(applyMandateDraft(m, draft)));
+          }
+          case "set_mandate_status": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            m.status = String(arg("status"));
+            return JSON.parse(JSON.stringify(m));
+          }
+          case "run_mandate_now": {
+            // Stands in for a finished round: the agent's end_round report.
+            const m = automation.mandates.find((m: any) => m.id === arg("id")), now = Math.floor(Date.now() / 1000);
+            (window as any).__ranMandate = arg("id");
+            if (!m) throw new Error("The mandate no longer exists.");
+            const round = (window as any).__mandateRound ?? {done: "Screened 12 new abstracts and filed 3", blockers: "", next_step: "Read the two flagged reviews", source: "agent"};
+            const kpis = m.kpis.slice(0, 1).map((k: any) => ({name: k.name, value: "3"}));
+            if (m.kpis[0]) m.kpis[0].current = "3";
+            m.rounds = [...(m.rounds ?? []), {id: `round-${now}`, mandate_id: m.id, seq: (m.rounds?.length ?? 0) + 1, kpis, next_run_at: now + 7200, created_at: now, ...round}];
+            m.next_run_at = now + 7200;
+            // The round may have called request_assistance: the mandate then waits.
+            const ask = (window as any).__mandateAsk;
+            if (ask) { m.request = {id: `request-${now}`, mandate_id: m.id, status: "open", reply: null, created_at: now, answered_at: null, why: "", then_what: "", ...ask}; m.status = "waiting"; }
+            return null;
+          }
+          case "reply_to_mandate": {
+            const m = automation.mandates.find((m: any) => m.id === arg("id"));
+            if (!m) throw new Error("The mandate no longer exists.");
+            (window as any).__mandateReply = {id: m.id, text: arg("text")};
+            m.request = null;
+            if (m.status === "waiting") m.status = "active";
+            return JSON.parse(JSON.stringify({...m, rounds: undefined, request: undefined, reports: undefined}));
+          }
+          case "delete_mandate": automation.mandates = automation.mandates.filter((m: any) => m.id !== arg("id")); return null;
           case "generate_research_recap": {
             if ((window as any).__recapError) throw new Error((window as any).__recapError);
             const from = Number(arg("from")), until = Number(arg("until"));

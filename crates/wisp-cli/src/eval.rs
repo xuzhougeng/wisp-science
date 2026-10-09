@@ -201,6 +201,11 @@ struct EvalCase {
     fixture_runtimes: bool,
     #[serde(default)]
     fixture_mcp: BTreeMap<String, String>,
+    /// Give the conversation a research mandate: its brief is injected fresh
+    /// before every send, as the desktop host does, and `end_round` reports
+    /// into a real ledger.
+    #[serde(default)]
+    fixture_mandate: bool,
     /// Register the project-memory `search_memory` tool, mirroring the host's
     /// memory setting. Seed notes with `files` under `.wisp/memory/*.md`.
     #[serde(default)]
@@ -794,6 +799,58 @@ struct FixtureMcpTool {
     result: String,
 }
 
+const FIXTURE_MANDATE_ID: &str = "eval-mandate";
+
+/// One active mandate in the eval project: a daily cadence the agent may
+/// move between 15 minutes and 2 days.
+async fn seed_fixture_mandate(store: &Store) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let mut mandate = wisp_app::mandates::new_mandate(
+        wisp_dto::MandateDraft {
+            project_id: "eval".into(),
+            name: "Benchmark notes".into(),
+            goal: "Keep the benchmark notes current.".into(),
+            kpis: vec![wisp_dto::MandateKpi {
+                name: "Notes filed".into(),
+                definition: "Notes written and checked against a run".into(),
+                target: "3".into(),
+                period: "per week".into(),
+                current: None,
+            }],
+            constraints: wisp_dto::MandateConstraints {
+                max_interval_secs: 2 * 86_400,
+                ..Default::default()
+            },
+            interval_secs: 86_400,
+            ..Default::default()
+        },
+        now,
+    )
+    .map_err(anyhow::Error::msg)?;
+    mandate.id = FIXTURE_MANDATE_ID.into();
+    store.create_mandate(&mandate).await
+}
+
+/// The mandate's current brief, ahead of the next user message.
+async fn inject_fixture_mandate(agent: &mut Agent, store: &Store) -> Result<()> {
+    let mandate = store
+        .get_mandate(FIXTURE_MANDATE_ID)
+        .await?
+        .context("the fixture mandate is missing")?;
+    let rounds = store
+        .mandate_rounds(FIXTURE_MANDATE_ID, wisp_app::mandates::BRIEF_ROUNDS)
+        .await?;
+    let request = store.latest_mandate_request(FIXTURE_MANDATE_ID).await?;
+    agent.ctx.clear_runtime_injections();
+    agent.ctx.inject_user(wisp_app::mandates::brief(
+        &mandate,
+        &rounds,
+        request.as_ref(),
+    ));
+    agent.ctx.prefix_runtime_injections_to_user();
+    Ok(())
+}
+
 #[derive(Default)]
 struct EvalRuntimeLauncher;
 
@@ -1219,6 +1276,9 @@ async fn run_case(
     let max_context = limits.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT);
     let max_rounds = limits.max_rounds.unwrap_or(DEFAULT_MAX_ROUNDS);
     let run_store = open_project_store(workspace.path(), "eval", &case.id).await?;
+    if case.fixture_mandate {
+        seed_fixture_mandate(&run_store).await?;
+    }
     let run_manager = RunManager::new();
     let mut agent = build_agent(
         &case,
@@ -1403,6 +1463,12 @@ fn build_agent(
     let memory = Arc::new(MemoryManager::new(root));
     let mut registry = wisp_core::build_registry(skills.clone(), memory, case.memory_enabled);
     registry.add(Box::new(wisp_tools::ask_user::AskUserTool));
+    if case.fixture_mandate {
+        registry.add(Box::new(wisp_app::mandates::EndRoundTool::new(
+            run_store.clone(),
+            FIXTURE_MANDATE_ID,
+        )));
+    }
     crate::runs::register_run_tools(&mut registry, run_store, run_manager, "eval");
     for (name, result) in &case.fixture_mcp {
         registry.add(Box::new(FixtureMcpTool {
@@ -1500,6 +1566,9 @@ async fn run_actions(
                         .map(|(index, value)| (index as u64 + 1, value.clone()))
                         .collect(),
                 );
+                if case.fixture_mandate {
+                    inject_fixture_mandate(agent, &run_store).await?;
+                }
                 let result = agent
                     .run_with_images(
                         prompt,
@@ -2258,6 +2327,7 @@ mod tests {
             "python",
             "r",
             "runs",
+            "mandate",
         ] {
             assert!(
                 tags.contains(required),
@@ -2742,6 +2812,7 @@ mod tests {
             map_script: vec![],
             fixture_runtimes: false,
             fixture_mcp: BTreeMap::new(),
+            fixture_mandate: false,
             memory_enabled: false,
             runtime_injections: vec![],
             context_seed: vec![],

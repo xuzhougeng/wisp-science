@@ -1,7 +1,8 @@
 //! Automation page, opened from the research assistant because it spans
-//! projects: the built-in daily recap plus every project's scheduled prompts,
-//! created from a template or from scratch. Schedules fire only while Wisp
-//! runs; a missed slot runs once on the next launch.
+//! projects: the built-in daily recap, research mandates (`mandates.rs`) and
+//! every project's scheduled prompts, created from a template or from
+//! scratch. All of it fires only while Wisp runs; a missed slot runs once on
+//! the next launch.
 use crate::app_support::compose_icon;
 use crate::dto::{DailyRecapAutomation, ProjectSummary, ScheduleRecord};
 use crate::i18n::Locale;
@@ -163,6 +164,8 @@ pub(crate) fn AutomationPage(
     };
     let draft = create_rw_signal(blank());
     let form_error = create_rw_signal(None::<String>);
+    // `form_open` is one Escape layer; this says which form it is showing.
+    let mandate_form = create_rw_signal(false);
     create_effect(move |_| {
         refresh.get();
         spawn_local(async move {
@@ -218,6 +221,7 @@ pub(crate) fn AutomationPage(
         }
         draft.set(next);
         form_error.set(None);
+        mandate_form.set(false);
         form_open.set(true);
     };
     let create = move |_| {
@@ -312,7 +316,8 @@ pub(crate) fn AutomationPage(
                     }.into_view()
                 }}
             </section>
-            {move || form_open.get().then(|| {
+            <crate::mandates::MandateSection locale=locale projects=projects form_open=form_open mandate_form=mandate_form refresh=refresh notice=notice/>
+            {move || (form_open.get() && !mandate_form.get()).then(|| {
                 let loc = locale.get();
                 view! {<section class="automation-card automation-form" data-testid="automation-form" aria-label=j(loc,"New scheduled task","创建定时任务")>
                     <h3>{j(loc,"New scheduled task","创建定时任务")}</h3>

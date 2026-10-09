@@ -7125,13 +7125,18 @@ name = "wisp-app"
 version = "1.19.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "chrono",
  "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
+ "uuid",
+ "wisp-core",
  "wisp-dto",
  "wisp-llm",
  "wisp-store",
+ "wisp-tools",
 ]
 
 [[package]]
@@ -7173,6 +7178,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "uuid",
+ "wisp-app",
  "wisp-bio",
  "wisp-core",
  "wisp-dto",
