@@ -8,7 +8,7 @@ use crate::text::{event_target_value, format_duration_ms, md_to_html, tool_card_
 use crate::window_capture_escape;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -2188,7 +2188,16 @@ pub(crate) fn RunMonitorCard(
     let locale = use_locale();
     let completed_cards = use_context::<CompletedRunCards>();
     let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
+    let monitor_query_failed =
+        tool_ok == Some(false) && fallback.is_none() && !tool_output.trim().is_empty();
     let detail = create_rw_signal(fallback.clone());
+    let detail_error = create_rw_signal(None::<String>);
+    let detail_retry_at = create_rw_signal(None::<i64>);
+    let run_refresh_health = use_context::<RunRefreshHealth>();
+    let refresh_warning = move || {
+        run_refresh_health
+            .and_then(|health| run_refresh_warning(&health.0.get(), clock.get(), locale.get()))
+    };
     let lookup_id = run_id.clone();
     let selected_id = run_id.clone();
     let fallback_for_selection = fallback.as_ref().map(RunSummary::from);
@@ -2205,23 +2214,61 @@ pub(crate) fn RunMonitorCard(
         .or_else(|| fallback_for_selection.clone())
     });
     let detail_epoch = Rc::new(Cell::new(0_u64));
+    let detail_pending = Rc::new(Cell::new(false));
+    let last_requested_summary = Rc::new(RefCell::new(None::<RunSummary>));
+    on_cleanup({
+        let detail_epoch = Rc::clone(&detail_epoch);
+        move || detail_epoch.set(detail_epoch.get().wrapping_add(1))
+    });
     create_effect({
         let detail_epoch = Rc::clone(&detail_epoch);
+        let detail_pending = Rc::clone(&detail_pending);
+        let last_requested_summary = Rc::clone(&last_requested_summary);
         move |_| {
             let Some(summary) = selected_run.get() else {
                 return;
             };
+            let retry_due = detail_retry_at
+                .get()
+                .is_some_and(|retry_at| clock.get() >= retry_at);
+            let summary_changed = last_requested_summary.borrow().as_ref() != Some(&summary);
+            if detail_pending.get() || (!summary_changed && !retry_due) {
+                return;
+            }
+            detail_pending.set(true);
+            *last_requested_summary.borrow_mut() = Some(summary.clone());
             let epoch = detail_epoch.get().wrapping_add(1);
             detail_epoch.set(epoch);
             let detail_epoch = Rc::clone(&detail_epoch);
+            let detail_pending = Rc::clone(&detail_pending);
             spawn_local(async move {
                 let args = to_value(&serde_json::json!({ "runId": &summary.id })).unwrap();
-                let Ok(value) = invoke_checked("get_run_detail", args).await else {
+                let result = invoke_checked("get_run_detail", args)
+                    .await
+                    .map_err(js_error_text)
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<RunRecord>(value)
+                            .map_err(|error| error.to_string())
+                    });
+                if detail_epoch.get() != epoch {
                     return;
+                }
+                detail_pending.set(false);
+                let record = match result {
+                    Ok(record) => record,
+                    Err(error) => {
+                        detail_error.try_update(|value| *value = Some(error));
+                        detail_retry_at.try_update(|value| {
+                            *value = Some(js_sys::Date::now() as i64 / 1000 + 5);
+                        });
+                        return;
+                    }
                 };
-                let Ok(record) = serde_wasm_bindgen::from_value::<RunRecord>(value) else {
+                detail_error.try_update(|value| *value = None);
+                detail_retry_at.try_update(|value| *value = None);
+                if selected_run.get_untracked().as_ref() != Some(&summary) {
                     return;
-                };
+                }
                 // A Run may settle between the summary poll and this detail
                 // read. Wait for the next summary instead of briefly rendering
                 // a newer lifecycle inside an older card and remounting it on
@@ -2230,7 +2277,7 @@ pub(crate) fn RunMonitorCard(
                     && record.ended_at == summary.ended_at
                     && record.exit_code == summary.exit_code;
                 let changed = detail.with_untracked(|current| current.as_ref() != Some(&record));
-                if detail_epoch.get() == epoch && same_lifecycle && changed {
+                if same_lifecycle && changed {
                     detail.set(Some(record));
                     schedule_run_output_follow();
                 }
@@ -2258,7 +2305,8 @@ pub(crate) fn RunMonitorCard(
             let run = selected_run.get();
             let Some(run) = run else {
                 let failed = tool_ok == Some(false);
-                let status = if failed { "failed" } else { "running" };
+                // A failed status lookup does not establish that the Run failed.
+                let status = "unknown";
                 let status_class = format!("run-status {status}");
                 let detail = if failed && !tool_output.trim().is_empty() {
                     tool_output.clone()
@@ -2276,6 +2324,9 @@ pub(crate) fn RunMonitorCard(
                             <span class=status_class>{run_status_label(locale.get(), status)}</span>
                         </div>
                         <div class="run-monitor-empty">{detail}</div>
+                        {move || refresh_warning().map(|warning| view! {
+                            <div class="context-error" data-testid="run-monitor-refresh-error">{warning}</div>
+                        })}
                     </article>
                 }.into_view();
             };
@@ -2471,6 +2522,19 @@ pub(crate) fn RunMonitorCard(
                         </details>
                     })}
                     {poll_error.map(|error| view! { <div class="context-error">{error}</div> })}
+                    {monitor_query_failed.then(|| view! {
+                        <div class="context-error" data-testid="run-monitor-tool-error">
+                            {tf(locale.get(), "runs.monitor_failed", &[("error", &tool_output)])}
+                        </div>
+                    })}
+                    {move || active.then(refresh_warning).flatten().map(|warning| view! {
+                        <div class="context-error" data-testid="run-monitor-refresh-error">{warning}</div>
+                    })}
+                    {move || detail_error.get().map(|error| view! {
+                        <div class="context-error" data-testid="run-monitor-detail-error">
+                            {tf(locale.get(), "runs.detail_failed", &[("error", &error)])}
+                        </div>
+                    })}
                 </article>
             }.into_view()
         }}
