@@ -13,6 +13,8 @@ enum Inbound {
     /// `/model` and its argument; an empty argument lists the models.
     Model(String),
     Resume,
+    /// `/mandates`: every visible research mandate at a glance.
+    Mandates,
     Message,
 }
 
@@ -32,13 +34,14 @@ fn classify(text: &str) -> Inbound {
     }
     let command = normalized.split_whitespace().next().unwrap_or_default();
     match command {
-        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入、模型和权限状态\n/model — 查看可用模型；/model <编号或名称> 切换助理模型\n/resume — 重跑上一轮失败的请求\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
+        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入、模型和权限状态\n/model — 查看可用模型；/model <编号或名称> 切换助理模型\n/resume — 重跑上一轮失败的请求\n/mandates — 查看全部研究职责的状态、KPI 和等你处理的事项\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
         "/status" => Inbound::Status,
         "/approval" | "/approvals" => Inbound::Approvals,
         "/stop" => Inbound::Stop,
         // The command is ASCII, so its length also indexes the original text.
         "/model" | "/models" => Inbound::Model(text.trim()[command.len()..].trim().into()),
         "/resume" => Inbound::Resume,
+        "/mandates" | "/mandate" => Inbound::Mandates,
         _ if command.starts_with('/') => Inbound::Reply("这里固定连接科研助理，不切换项目或新建助理会话。请直接说明项目和需求；发送 /help 查看帮助。".into()),
         _ => Inbound::Message,
     }
@@ -227,6 +230,11 @@ pub(super) async fn handle_inbound(
             return format!("已接入科研助理，与桌面科研助理共用同一条长期对话，可管理所有可见项目。\n模型：{model}（/model 切换）\n完全权限：{permission}");
         }
         Inbound::Model(argument) => return model_reply(&state, &argument).await,
+        Inbound::Mandates => {
+            return crate::mandates::summary_text(&state.store)
+                .await
+                .unwrap_or_else(|error| format!("读取研究职责失败: {error}"))
+        }
         Inbound::Approvals => {
             return pending_approval(&state)
                 .map(|request| approval_message(&request))
@@ -335,6 +343,11 @@ mod tests {
         assert!(matches!(classify("/stop"), Inbound::Stop));
         assert!(matches!(classify("汇报所有项目的进展"), Inbound::Message));
         assert!(matches!(classify("/status"), Inbound::Status));
+        // A read of every mandate, answered at once like /status.
+        for command in ["/mandates", " /Mandates ", "/mandate"] {
+            assert!(matches!(classify(command), Inbound::Mandates), "{command}");
+            assert!(is_control_text(command));
+        }
     }
 
     fn profile(id: &str, label: &str, model: &str) -> ModelProfile {

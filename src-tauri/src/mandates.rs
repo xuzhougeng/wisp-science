@@ -106,10 +106,106 @@ fn request_notice(project: &str, mandate: &MandateRecord, request: &MandateReque
         lines.push(format!("之后 / Then: {}", request.then_what));
     }
     lines.push(
-        "在该项目的职责对话里回复，或在「自动化 → 研究职责」的卡片上回复，它就会继续。 / Reply in the mandate's conversation in that project, or on its card under Automation → Research mandates, and it continues."
+        "把答复告诉科研助理，或在「自动化 → 研究职责」的卡片上、该项目的职责对话里回复，它就会继续。 / Tell the research assistant your answer, or reply on its card under Automation → Research mandates or in the mandate's conversation, and it continues."
             .into(),
     );
     lines.join("\n")
+}
+
+fn status_label(status: &str) -> &'static str {
+    match status {
+        "paused" => "已暂停 / paused",
+        "waiting" => "等你处理 / needs you",
+        "done" => "已结束 / closed",
+        _ => "进行中 / active",
+    }
+}
+
+fn local_minute(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+fn clip(text: &str, chars: usize) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(chars) {
+        Some((index, _)) => format!("{}…", &text[..index]),
+        None => text.to_string(),
+    }
+}
+
+/// Every visible mandate at a glance, for the assistant and for `/mandates`
+/// on IM: status, KPIs, the latest round, the next one, and what it waits
+/// on. Each carries its id so the assistant can pass an answer on.
+pub(crate) async fn summary_text(store: &Store) -> Result<String, String> {
+    let mandates = visible_mandates(store).await?;
+    if mandates.is_empty() {
+        return Ok("还没有研究职责。 / No research mandates yet.".into());
+    }
+    let names: std::collections::HashMap<_, _> = crate::research_assistant::visible_projects(store)
+        .await?
+        .into_iter()
+        .map(|project| (project.0, project.1))
+        .collect();
+    let mut lines = vec!["研究职责 / Research mandates".to_string()];
+    for (index, overview) in mandates.iter().enumerate() {
+        let mandate = &overview.mandate;
+        let project = names
+            .get(&mandate.project_id)
+            .map_or(mandate.project_id.as_str(), String::as_str);
+        lines.push(format!(
+            "{}. [{}] {project} · {} (id: {})",
+            index + 1,
+            status_label(&mandate.status),
+            mandate.name,
+            mandate.id
+        ));
+        for kpi in &mandate.kpis {
+            let mut line = format!(
+                "   KPI {}: {}",
+                kpi.name,
+                kpi.current.as_deref().unwrap_or("–")
+            );
+            if !kpi.target.is_empty() {
+                line.push_str(&format!(" / {} {}", kpi.target, kpi.period));
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        if let Some(round) = &overview.last_round {
+            let mut line = format!(
+                "   上一轮 / Last round #{} ({}): {}",
+                round.seq,
+                local_minute(round.created_at),
+                clip(&round.done, 200)
+            );
+            if !round.blockers.is_empty() {
+                line.push_str(&format!(
+                    " | 阻塞 / Blocked: {}",
+                    clip(&round.blockers, 200)
+                ));
+            }
+            lines.push(line);
+        }
+        if mandate.status == "active" {
+            lines.push(format!(
+                "   下一轮 / Next round: {}",
+                local_minute(mandate.next_run_at)
+            ));
+        }
+        if let Some(request) = &overview.request {
+            lines.push(format!(
+                "   等你处理 / Needs you: [{}] {}",
+                kind_label(&request.kind),
+                clip(&request.what, 300)
+            ));
+        }
+    }
+    Ok(lines.join("\n"))
 }
 
 /// Put `text` in front of the researcher: the assistant's conversation on
@@ -847,5 +943,84 @@ mod tests {
             "empty fields leave no blank labels"
         );
         assert!(text.contains("[需要你判断 / Your judgement]"));
+    }
+
+    #[tokio::test]
+    async fn the_summary_names_status_kpis_latest_round_and_what_each_waits_on() {
+        let (store, _dir) = store().await;
+        assert_eq!(
+            summary_text(&store).await.unwrap(),
+            "还没有研究职责。 / No research mandates yet."
+        );
+        let mut first = draft("p1");
+        first.name = "Literature watch".into();
+        first.kpis = vec![wisp_dto::MandateKpi {
+            name: "Papers filed".into(),
+            target: "5".into(),
+            period: "per week".into(),
+            ..Default::default()
+        }];
+        let first = wisp_app::mandates::new_mandate(first, 1_000).unwrap();
+        store.create_mandate(&first).await.unwrap();
+        let mut second = draft("p1");
+        second.name = "Submission follow-up".into();
+        let second = wisp_app::mandates::new_mandate(second, 2_000).unwrap();
+        store.create_mandate(&second).await.unwrap();
+        let report = wisp_app::mandates::RoundReport {
+            done: "Filed 3 papers".into(),
+            blockers: "One paper is paywalled".into(),
+            kpis: vec![wisp_dto::MandateKpiValue {
+                name: "Papers filed".into(),
+                value: "3".into(),
+            }],
+            ..Default::default()
+        };
+        wisp_app::mandates::record_round(&store, &first.id, report, 3_000)
+            .await
+            .unwrap();
+        let ask = wisp_app::mandates::AssistanceRequest {
+            kind: "payment".into(),
+            what: "Authorize the article charge".into(),
+            ..Default::default()
+        };
+        wisp_app::mandates::request_assistance(&store, &second.id, ask, 4_000)
+            .await
+            .unwrap();
+
+        let text = summary_text(&store).await.unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines[0], "研究职责 / Research mandates");
+        assert_eq!(
+            lines[1],
+            format!(
+                "1. [进行中 / active] RNA-seq · Literature watch (id: {})",
+                first.id
+            )
+        );
+        assert_eq!(lines[2], "   KPI Papers filed: 3 / 5 per week");
+        assert!(lines[3].starts_with("   上一轮 / Last round #1 ("));
+        assert!(lines[3].ends_with("): Filed 3 papers | 阻塞 / Blocked: One paper is paywalled"));
+        assert!(lines[4].starts_with("   下一轮 / Next round: "));
+        assert_eq!(
+            lines[5],
+            format!(
+                "2. [等你处理 / needs you] RNA-seq · Submission follow-up (id: {})",
+                second.id
+            )
+        );
+        assert_eq!(
+            lines[6],
+            "   等你处理 / Needs you: [付款授权 / Payment] Authorize the article charge"
+        );
+        assert_eq!(lines.len(), 7, "a waiting mandate shows no next round");
+
+        // A hidden project's mandates are not mentioned at all.
+        crate::privacy_mode::save(&store, true, &["p1".into()])
+            .await
+            .unwrap();
+        assert_eq!(
+            summary_text(&store).await.unwrap(),
+            "还没有研究职责。 / No research mandates yet."
+        );
     }
 }

@@ -1388,6 +1388,7 @@ pub(crate) async fn send_message_inner(
         if assistant {
             agent.ctx.inject_user(research_assistant::now_note());
             agent.ctx.inject_user(research_assistant::DISPATCH_POLICY);
+            agent.ctx.inject_user(research_assistant::MANDATE_POLICY);
         }
         if let Some(context) = rt.mcp_app_context_injection() {
             agent.ctx.inject_user(context);

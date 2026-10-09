@@ -56,7 +56,8 @@
 在任意一处回复都会让职责继续：
 
 - 职责卡片上的回复框；
-- 直接在该项目的职责对话里发消息（桌面，或通过项目机器人 `/session` 切到这条对话后发送）。
+- 直接在该项目的职责对话里发消息（桌面，或通过项目机器人 `/session` 切到这条对话后发送）；
+- 告诉科研助理（桌面或微信）：例如「告诉文献追踪那份职责：我已经登录了」。助理把你的原话转给这份职责，转达前需要你确认一次。
 
 回复即答复：请求关闭，状态回到「进行中」，带着你的回复的这一轮马上开始，Agent 在简报里看到「研究者已答复」以及你的原话。原定的下一轮顺延一个默认间隔，避免紧接着再跑一轮。请求一旦答复，后来的消息只是普通反馈，不会改写答复内容。
 
@@ -106,6 +107,12 @@
 - 结束后，职责对话恢复为普通对话，不再收到简报和职责工具。可以用现有的[研究阶段归档](research-archives.md)（`/archive`）把这条对话归档成结论。
 - 想继续：把卡片开关重新打开，状态回到「进行中」。
 
+## 科研助理、IM 与研究日历
+
+- **科研助理**能看到所有可见项目的职责。问它「各项职责进展如何」，它列出每份的状态、KPI、最近一轮、下一轮时间和等你处理的事项；求助和汇报本来就会出现在它的对话里，可以接着追问。它可以代你把答复或要求转给某份职责，但不会替你回答。
+- **`/mandates`**：在微信或飞书里发送，立即得到同一份清单，不调用模型。项目机器人和科研助理的微信入口都支持。
+- **研究历程与研究日历**：每份汇报在当天记为一条「进展」，每个求助请求记为一条「待继续」，所以在项目的研究历程、首页研究日历和科研助理的日历里都能看到哪天汇报了什么、哪天在等你。它们也进入每日研究回顾的输入。
+
 ## 管理
 
 每份职责一张卡片，显示状态、所属项目、下一轮时间、截止日期、目标、KPI 当前值 / 目标值、最新一轮的账本记录和历次汇报。
@@ -136,6 +143,7 @@ A scheduled task answers "when is this prompt sent". A **research mandate** answ
 - **Reports**: on the report cadence (7 days by default, 1–90) Wisp writes a report for the time since the last one: what was done, where each KPI stands and what the records say explains the gap, what is blocked (including a request still waiting on you), and what comes next. Every item cites the records behind it — the mandate's own rounds and the project's recorded runs, outputs, notes and conversations — and a citation of a record that does not exist is dropped. KPI values are listed as they stood, without going through a model. The Recap specialist's model drafts it from the period's ledger and research-journey digest, never the full transcript. A period with no rounds is reported without a model call, and a model failure falls back to the ledger's own words, marked *from the ledger* — so every period has a report and a waiting mandate keeps reminding you. Reports stay on the card (the latest five, expandable) and go to the assistant's conversation and the enabled WeChat/Feishu channels. **Write a report now** covers the time since the last report and leaves the cadence alone. Paused and closed mandates do not report.
 - **Feedback**: say how the mandate should go from now on ("from now on", "next time", "always", "never", 以后, 不要再…, or an explicit "remember") in its conversation, and the confirmation dialog that follows the turn offers a third place to save the draft: **This mandate**. Confirmed, it becomes one of the mandate's standing instructions and rides in every later brief, from the next round. Rounds Wisp starts never trigger it. Standing instructions can also be edited in the form, one per line, and are listed on the card (at most 20, 500 characters each). The dialog is part of memory and does not appear while memory is turned off.
 - **Closing**: when the goal is met the agent is told to stop spinning and ask you, with evidence, to close the mandate. **Close mandate** on the card (or reaching the end date) stops rounds and scheduled reports, withdraws an unanswered request and writes one closing report. The conversation becomes an ordinary one again and can be archived with `/archive`. The switch reopens a closed mandate.
+- **Assistant, IM and calendar**: the research assistant can list every visible mandate (status, KPI values against targets, latest round, next round, what waits on you) and pass your answer or feedback on to one, after a confirmation; it never answers a mandate's request for you. `/mandates` returns the same list at once on WeChat or Feishu, without a model turn. Each report is recorded as a *Progress* entry and each request as a *Next step* entry on its day, so the project's research journey, the home research calendar and the assistant's calendar show what was reported and what was waiting; both also feed the daily recap.
 - **Manage**: each card shows status, project, next round, end date, goal, standing instructions, each KPI's current value against its target, the latest ledger entry and past reports. Pause or resume with the switch; **Run a round now** leaves the next scheduled round untouched; edit everything except the project; delete with a second click (the conversation stays in the project).
 - **Limits**: rounds run only while Wisp is open, and missed rounds collapse into one after the next launch. Mandates are machine-local like scheduled tasks: they are not exported, imported or synced, and are deleted with their project. Projects hidden by privacy mode hide their mandates. ACP conversations receive the brief but keep their own approvals and have no `end_round`, so Wisp records each of their rounds. The native macOS and Windows clients have no mandate surface yet.
 
@@ -155,7 +163,11 @@ A scheduled task answers "when is this prompt sent". A **research mandate** answ
 - 汇报：`mandate_report.rs`。`build_report` 读取周期内的账本（最多最近 40 轮）和 `research_recap::day_digest` 的同期摘要，回合用 `T{seq}` 句柄、项目记录沿用回顾的 `R/O/N/S` 句柄；模型输出交给 `research_recap::to_recap` 解析并剔除未知引用，所以汇报正文就是一份 `ResearchRecap`（`findings` 作「进展」、`issues` 作「阻塞」）。模型调用以闭包注入，测试不触网。`ledger_body` 是无模型时的确定性正文。表 `mandate_reports` 把整份 `MandateReport` 存成一列 JSON。到期扫描 `mandates_due_for_report` 只取 `active` / `waiting`，`claim_mandate_report` 原子推进 `next_report_at`；进程内的 `Reporting` 守卫避免轮询与「立即生成」同时写同一周期。
 - 长期要求：`MandateConstraints.notes`。`turn_memory::candidate_prompts` / `parse_candidate` 在职责对话里多一个 `mandate` 作用域，`TurnMemoryProposal.mandate` 带上职责名称供弹窗显示；`confirm_turn_memory` 收到该作用域时调用 `wisp_app::mandates::add_note`（折成一行、去重、限 20 条）并保存。触发条件在 `propose_memory` 里：原有的「记住」类说法，或职责对话里的 `standing_instruction_intent`，且消息不是 Wisp 发起的回合。
 - 结束：`mandates::close` 置为 `done`、调用 `withdraw_mandate_requests`，并在后台调用 `mandate_report::report` 写收尾汇报。卡片的「结束职责」和到期自动结束走同一条路径；重复结束不会再写一份汇报。
+- 助理：`research_assistant.rs` 新增只读工具 `research_mandates`（`mandates::summary_text`）和需要确认的 `reply_to_mandate`（先核验职责属于可见项目，再走 `mandates::reply`）。旧的助理对话保存的系统提示词没有这部分，所以每轮额外注入 `MANDATE_POLICY`，与 `DISPATCH_POLICY` 同理。
+- IM：`/mandates` 在项目机器人（`channels::handle_inbound_observed`）和助理微信入口（`channels::assistant`，作为不排队的控制命令）里直接返回 `summary_text`。
+- 研究历程：`research_journey` 的投影多了两个只对主线生效的分支，把 `mandate_reports` 记为 `progress`、未撤回的 `mandate_requests` 记为 `next`。沿用既有的条目类型，因此界面、原生客户端和每日回顾都不需要改动。
 - 等待 Run：`mandates.wait_run_id`。调度轮询在到点扫描之前调用 `wake_on_finished_runs`，把已结束或已不存在的 Run 对应的职责的 `next_run_at` 提前到当前时刻。Run 状态由 `wisp-runs` 的后台对账更新。
+- 测试：`summary_text` 的输出格式和隐私过滤、`/mandates` 的命令识别、研究历程里的职责条目各有单元测试。
 - 命令：`list_all_mandates`、`create_mandate(draft)`、`update_mandate(id, draft)`、`set_mandate_status(id, status)`、`delete_mandate(id)`、`run_mandate_now(id)`、`reply_to_mandate(id, text)`、`report_mandate_now(id)`。
 
 手动检查：从「文献追踪」模板为第二个项目创建职责，确认卡片上的项目、下一轮时间和 KPI；约 30 秒内该项目出现以职责命名的对话并开始第一轮；回合结束后刷新，卡片出现「第 1 轮」记录、KPI 当前值和 Agent 选择的下一轮时间；在对话里让 Agent 把下一轮安排在 1 分钟后，确认时间被调整到最短间隔；编辑目标后「立即运行一轮」，确认新一轮使用新目标并在简报里看到上一轮账本；勾选「先问我」后让 Agent 写一个文件，确认出现审批，而 `end_round` 不需要审批；暂停、恢复、删除。打开表单后立即按 Escape，只关闭表单，自动化页保留。
