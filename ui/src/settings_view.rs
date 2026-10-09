@@ -733,7 +733,7 @@ fn blank_codex_login(provider: &str, profile_id: &str, model: &str, label: &str)
         } else if xai {
             "grok-4.6".into()
         } else {
-            "gpt-5.5".into()
+            "gpt-6.1-sol".into()
         },
         label: label.to_string(),
         status: "idle".into(),

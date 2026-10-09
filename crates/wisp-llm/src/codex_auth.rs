@@ -30,7 +30,10 @@ pub const ORIGINATOR: &str = "wisp";
 pub const DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api";
 /// Read-only quota lookup behind Codex CLI `/status`; it does not consume quota.
 pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
+pub const DEFAULT_MODEL: &str = "gpt-6.1-sol";
+/// Context the ChatGPT backend serves current Codex models with (Codex's own
+/// 272k catalog default), regardless of the model's public-API window.
+pub const CONTEXT_WINDOW: u64 = 272_000;
 pub const SUBSCRIPTION_SECRET: &str = "codex_subscription";
 const REFRESH_SKEW_MS: i64 = 5 * 60 * 1000;
 const DEVICE_TIMEOUT: Duration = Duration::from_secs(15 * 60);

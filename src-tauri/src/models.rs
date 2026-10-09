@@ -701,7 +701,7 @@ async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Resul
 async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = load_raw(store).await;
     if !profiles.is_empty() {
-        return profiles;
+        return profiles.into_iter().map(with_subscription_window).collect();
     }
     let provider = store
         .get_setting("provider")
@@ -1580,6 +1580,27 @@ pub async fn active_llm_advanced(
         None,
         String::new(),
     )
+}
+
+/// Subscription profiles have no editable context window (Wisp owns the
+/// endpoint), so the stored value is only the sign-in default. Resolve the
+/// ceiling from the provider instead: the ChatGPT backend serves Codex models
+/// with its own 272k limit, the other subscriptions ride the public API and
+/// take its catalog window.
+fn with_subscription_window(mut profile: ModelProfile) -> ModelProfile {
+    let window = match profile.provider.trim() {
+        // ponytail: one Codex ceiling; per-model (e.g. codex-spark 128k) if it ever matters.
+        "openai_codex" => Some(wisp_llm::codex_auth::CONTEXT_WINDOW),
+        p if is_subscription_provider(p) => {
+            crate::model_catalog::lookup(&profile.provider, &profile.api_url, &profile.model)
+                .map(|entry| entry.c)
+        }
+        _ => None,
+    };
+    if let Some(window) = window {
+        profile.context_window = window;
+    }
+    profile
 }
 
 fn effective_context_window(profile: &ModelProfile) -> u64 {
@@ -2651,6 +2672,26 @@ mod tests {
         clamp_to_catalog(&mut unknown);
         assert_eq!(unknown.context_window, 500_000);
         assert_eq!(unknown.max_tokens, 90_000);
+    }
+
+    #[test]
+    fn subscription_profiles_take_the_provider_window_not_the_stored_default() {
+        let mut codex = test_profile("c", "Codex", "gpt-6-astra");
+        codex.provider = "openai_codex".into();
+        codex.api_url = wisp_llm::codex_auth::DEFAULT_BASE_URL.into();
+        codex.context_window = DEFAULT_CONTEXT_WINDOW;
+        let codex = with_subscription_window(codex);
+        assert_eq!(codex.context_window, 272_000);
+        assert_eq!(effective_context_window(&codex), 272_000);
+        // Sign in with ChatGPT rides the public API: catalog window applies.
+        let mut chatgpt = test_profile("g", "ChatGPT", "gpt-6-astra");
+        chatgpt.provider = "openai_chatgpt".into();
+        chatgpt.api_url = "https://api.openai.com/v1".into();
+        assert_eq!(with_subscription_window(chatgpt).context_window, 1_050_000);
+        // API-key profiles keep what the user typed.
+        let mut api = test_profile("a", "API", "gpt-6-astra");
+        api.context_window = 200_000;
+        assert_eq!(with_subscription_window(api).context_window, 200_000);
     }
 
     #[test]
