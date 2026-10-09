@@ -840,10 +840,13 @@ async fn inject_fixture_mandate(agent: &mut Agent, store: &Store) -> Result<()> 
     let rounds = store
         .mandate_rounds(FIXTURE_MANDATE_ID, wisp_app::mandates::BRIEF_ROUNDS)
         .await?;
+    let request = store.latest_mandate_request(FIXTURE_MANDATE_ID).await?;
     agent.ctx.clear_runtime_injections();
-    agent
-        .ctx
-        .inject_user(wisp_app::mandates::brief(&mandate, &rounds));
+    agent.ctx.inject_user(wisp_app::mandates::brief(
+        &mandate,
+        &rounds,
+        request.as_ref(),
+    ));
     agent.ctx.prefix_runtime_injections_to_user();
     Ok(())
 }
