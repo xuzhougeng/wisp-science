@@ -12141,6 +12141,14 @@ fn App() -> impl IntoView {
             delete_sessions=Callback::new(move |ids: Vec<String>| {
                 ui_confirm.set(Some(UiConfirm::DeleteSessions(ids)));
             })
+            reorder_folders=Callback::new(move |ids: Vec<String>| {
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "ids": ids })).unwrap();
+                    if invoke_checked("reorder_folders", arg).await.is_ok() {
+                        refresh_folders(folders);
+                    }
+                });
+            })
             open_session_actions=Callback::new(move |(ev, id, title, pinned, is_branch, branch_merged, has_branch_family, has_exploration_round, stale_prompt): (web_sys::MouseEvent, String, String, bool, bool, bool, bool, bool, bool)| {
                 ctx_menu.set(Some(context_menu::session_menu(
                     ev.client_x() as f64,

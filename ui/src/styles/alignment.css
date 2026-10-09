@@ -105,6 +105,10 @@
 .side-folder-wrap { display: flex; flex-direction: column; gap: 1px; margin-bottom: 2px; border-radius: var(--radius-xs); border: 1px solid transparent; }
 .side-folder-wrap.drop-target { background: var(--clay-soft); border-color: var(--clay); }
 .side-folder-wrap.drop-target .side-folder { color: var(--text); }
+/* A dragged group shows where it will land as a line on that edge (inset: the list clips outer shadows). */
+.side-folder-wrap.reorder-before { border-radius: 0; box-shadow: inset 0 2px 0 var(--clay); }
+.side-folder-wrap.reorder-after { border-radius: 0; box-shadow: inset 0 -2px 0 var(--clay); }
+.side-folder.dragging { opacity: .45; }
 .side-folder {
   display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-xs);
   font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text-muted); cursor: pointer; user-select: none;

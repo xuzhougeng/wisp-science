@@ -135,21 +135,19 @@
 .side-sort-check.on { opacity: 1; }
 .side-sort-check svg { width: 15px; height: 15px; }
 .side-sort-sep { height: 1px; background: var(--border); margin: 7px 4px; }
-.side-bulk-actions { display: flex; flex-direction: column; gap: 5px; padding: 2px 8px 7px; }
-.side-bulk-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
-.side-bulk-link { border: 0; padding: 2px; background: transparent; color: var(--clay); font: inherit; font-size: inherit; cursor: pointer; }
-.side-bulk-link:hover { text-decoration: underline; }
-.side-bulk-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.side-bulk-controls select {
-  min-width: 0; flex: 1 1 auto; height: 29px; padding: 3px 6px;
-  border: 1px solid var(--border); border-radius: var(--radius-xs);
-  background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1));
+/* Selecting turns the head into the bulk toolbar: tick-all + count on the left, actions on the right. */
+.side-bulk-all {
+  display: inline-flex; align-items: center; gap: 9px; min-width: 0; padding: 4px 6px 4px 2px;
+  border: 0; border-radius: var(--radius-xs); background: transparent;
+  color: var(--text-muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); white-space: nowrap; cursor: pointer;
 }
-.side-bulk-delete {
-  height: 29px; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--radius-xs);
-  background: transparent; color: var(--err); font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1)); cursor: pointer;
-}
-.side-bulk-controls :disabled { cursor: default; opacity: .45; }
+.side-bulk-all:hover { color: var(--text); }
+.side-bulk-all .session-select-mark { display: inline-flex; }
+.side-sessions-head-actions .icon-btn:disabled { cursor: default; opacity: .4; background: transparent; color: var(--text-faint); }
+.side-bulk-delete:hover:not(:disabled) { color: var(--err); }
+.side-bulk-move-menu { max-width: calc(100% - 16px); }
+.side-bulk-move-menu .side-sort-opts { max-height: min(50vh, 320px); overflow-y: auto; }
+.side-bulk-move-menu .side-sort-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-item {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 10px; border-radius: var(--radius-sm);
@@ -167,7 +165,14 @@ button.side-item.ses.selecting { padding-right: 10px; }
 .side-item.ses.selecting .session-select-mark { display: inline-flex; }
 .side-item.ses.selecting .ses-status { display: none; }
 .side-item.ses.selected { background: var(--clay-soft); border-color: var(--clay); color: var(--text); }
-.side-item.ses.selected .session-select-mark { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
+.side-item.ses.selected .session-select-mark,
+.session-select-mark.on { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
+/* A group's tick box stands in for its folder icon while selecting. */
+button.session-select-mark { padding: 0; background: transparent; cursor: pointer; }
+button.session-select-mark:disabled { cursor: default; opacity: .4; }
+.side-folder.selecting .session-select-mark { display: inline-flex; }
+.side-folder.selecting > svg,
+.side-folder.selecting .folder-actions { display: none; }
 /* A nested row's kind icon rests in the status slot and yields to live status. */
 .session-branch-icon { display: inline-flex; color: var(--clay); }
 .ses-status .session-branch-icon svg { width: 15px; height: 15px; }
@@ -332,7 +337,6 @@ button.side-item.ses.selecting { padding-right: 10px; }
   .sidebar .proj-name,
   .sidebar .side-group-title,
   .sidebar .side-sessions-head,
-  .sidebar .side-bulk-actions,
   .sidebar .side-folder-caret,
   .sidebar .side-folder-name,
   .sidebar .side-folder-count,

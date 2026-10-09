@@ -2878,7 +2878,7 @@ impl Store {
             return Box::pin(store.list_folders(project_id)).await;
         }
         let rows = sqlx::query(
-            "SELECT id, name, created_at FROM folders WHERE project_id=? ORDER BY created_at ASC",
+            "SELECT id, name, created_at FROM folders WHERE project_id=? ORDER BY position ASC, created_at ASC",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -2903,16 +2903,38 @@ impl Store {
             anyhow::bail!("Folder name cannot be empty");
         }
         let now = chrono::Utc::now().timestamp();
+        // New folders land after every existing one, reordered or not.
         sqlx::query(
-            "INSERT INTO folders(id, project_id, name, created_at, updated_at) VALUES(?,?,?,?,?)",
+            "INSERT INTO folders(id, project_id, name, created_at, updated_at, position) \
+             VALUES(?,?,?,?,?,(SELECT COALESCE(MAX(position)+1, 0) FROM folders WHERE project_id=?))",
         )
         .bind(id)
         .bind(project_id)
         .bind(name)
         .bind(now)
         .bind(now)
+        .bind(project_id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Persist the sidebar's folder order: `ids` lists the project's folders
+    /// top to bottom. Unknown ids are ignored; folders left out keep their slot.
+    pub async fn reorder_folders(&self, project_id: &str, ids: &[String]) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.reorder_folders(project_id, ids)).await;
+        }
+        let mut tx = self.begin_write().await?;
+        for (position, id) in ids.iter().enumerate() {
+            sqlx::query("UPDATE folders SET position=? WHERE id=? AND project_id=?")
+                .bind(position as i64)
+                .bind(id)
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

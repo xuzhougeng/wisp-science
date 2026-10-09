@@ -5,7 +5,6 @@ use crate::app_support::{
 use crate::bindings::is_mac;
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
-use crate::text::dom_value;
 use crate::window_capture_escape;
 use leptos::*;
 use std::collections::{HashMap, HashSet};
@@ -123,6 +122,7 @@ pub(super) fn Sidebar(
     load_older_sessions: Callback<()>,
     move_sessions_to: Callback<(Vec<String>, Option<String>)>,
     delete_sessions: Callback<Vec<String>>,
+    reorder_folders: Callback<Vec<String>>,
     open_session_actions: Callback<(
         web_sys::MouseEvent,
         String,
@@ -191,7 +191,9 @@ pub(super) fn Sidebar(
     let nest_choice = create_rw_signal(HashMap::<String, bool>::new());
     let selecting_sessions = create_rw_signal(false);
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
-    let bulk_move_target = create_rw_signal(String::new());
+    let bulk_move_open = create_rw_signal(false);
+    // The group being dragged to a new slot, with its index in `folders`.
+    let drag_folder = create_rw_signal::<Option<(String, usize)>>(None);
     let new_session_shortcut = if is_mac() { "⌘N" } else { "Ctrl+N" };
     let search_shortcut = if is_mac() { "⌘K" } else { "Ctrl+K" };
     create_effect(move |_| {
@@ -199,10 +201,12 @@ pub(super) fn Sidebar(
         selected_sessions.update(|selected| selected.retain(|id| available.contains(id)));
     });
     window_capture_escape(move || {
-        if !sort_menu_open.get_untracked() {
+        // Only one of the two head menus is ever open.
+        if !sort_menu_open.get_untracked() && !bulk_move_open.get_untracked() {
             return false;
         }
         sort_menu_open.set(false);
+        bulk_move_open.set(false);
         true
     });
     // Short windows fold the tail of the nav into a "More" flyout instead of
@@ -335,37 +339,105 @@ pub(super) fn Sidebar(
                 let sort_opts = [("newest", "sidebar.sort_newest"), ("name", "sidebar.sort_name")];
                 view! {
                     <div class="side-sessions-head">
-                        <span class="side-sessions-title">{t(loc, "sidebar.sessions")}</span>
-                        <div class="side-sessions-head-actions">
-                            <button type="button" class="side-select-btn"
-                                disabled=move || sessions.get().is_empty()
-                                aria-pressed=move || selecting_sessions.get().to_string()
-                                on:click=move |_| {
-                                    let next = !selecting_sessions.get_untracked();
-                                    selecting_sessions.set(next);
-                                    selected_sessions.set(HashSet::new());
-                                    bulk_move_target.set(String::new());
-                                    sort_menu_open.set(false);
-                                }>
-                                {move || t(locale.get(), if selecting_sessions.get() { "settings.cancel" } else { "sidebar.select_sessions" })}
-                            </button>
-                            <button type="button" class="icon-btn side-shelved-btn"
-                                title=move || t(locale.get(), "session.shelved")
-                                aria-label=move || t(locale.get(), "session.shelved")
-                                on:click=move |ev| { sort_menu_open.set(false); open_shelved.call(ev); }>
-                                {compose_icon("eye-off")}
-                            </button>
-                            <button type="button" class="icon-btn side-sort-btn"
-                                class:active=move || sort_menu_open.get()
-                                title=move || t(locale.get(), "sidebar.sort_group")
-                                aria-label=move || t(locale.get(), "sidebar.sort_group")
-                                on:click=move |ev: web_sys::MouseEvent| {
-                                    ev.stop_propagation();
-                                    sort_menu_open.update(|v| *v = !*v);
-                                }>
-                                {compose_icon("adjustments")}
-                            </button>
-                        </div>
+                        // Selecting swaps the header for the bulk toolbar in place, so
+                        // the list below never shifts.
+                        {move || if selecting_sessions.get() {
+                            let count = selected_sessions.get().len();
+                            let all_selected = count > 0 && count == sessions.get().len();
+                            let delete_selected = bulk_delete_sessions.clone();
+                            let any_selected = count != 0;
+                            let checked = if all_selected { "true" } else if any_selected { "mixed" } else { "false" };
+                            view! {
+                                <button type="button" class="side-bulk-all" role="checkbox"
+                                    aria-checked=checked
+                                    aria-label=t(loc, "sidebar.select_all")
+                                    title=t(loc, if all_selected { "sidebar.clear_selection" } else { "sidebar.select_all" })
+                                    on:click=move |_| {
+                                        if all_selected {
+                                            selected_sessions.set(HashSet::new());
+                                        } else {
+                                            selected_sessions.set(sessions.get_untracked().into_iter().map(|s| s.id).collect());
+                                        }
+                                    }>
+                                    <span class="session-select-mark" class:on=any_selected aria-hidden="true">
+                                        {compose_icon(if any_selected && !all_selected { "minus" } else { "check" })}
+                                    </span>
+                                    <span>{if count == 0 {
+                                        t(loc, "sidebar.select_all").to_string()
+                                    } else {
+                                        tf(loc, "sidebar.selected_n", &[("n", &count.to_string())])
+                                    }}</span>
+                                </button>
+                                <div class="side-sessions-head-actions" role="toolbar"
+                                    aria-label=t(loc, "sidebar.bulk_actions")>
+                                    <button type="button" class="icon-btn side-sort-btn"
+                                        data-testid="bulk-move-sessions"
+                                        class:active=move || bulk_move_open.get()
+                                        disabled=count == 0
+                                        aria-haspopup="menu"
+                                        title=t(loc, "sidebar.move_selected")
+                                        aria-label=t(loc, "sidebar.move_selected")
+                                        on:click=move |ev: web_sys::MouseEvent| {
+                                            ev.stop_propagation();
+                                            bulk_move_open.update(|v| *v = !*v);
+                                        }>
+                                        {compose_icon("folder-move")}
+                                    </button>
+                                    <button type="button" class="icon-btn side-sort-btn side-bulk-delete"
+                                        data-testid="bulk-delete-sessions"
+                                        disabled=count == 0
+                                        title=t(loc, "ctx.delete_session")
+                                        aria-label=t(loc, "ctx.delete_session")
+                                        on:click=move |_| {
+                                            let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
+                                            if !ids.is_empty() {
+                                                delete_selected.call(ids);
+                                            }
+                                        }>
+                                        {compose_icon("trash")}
+                                    </button>
+                                    <button type="button" class="side-select-btn"
+                                        on:click=move |_| {
+                                            selecting_sessions.set(false);
+                                            selected_sessions.set(HashSet::new());
+                                            bulk_move_open.set(false);
+                                        }>
+                                        {t(loc, "settings.cancel")}
+                                    </button>
+                                </div>
+                            }.into_view()
+                        } else {
+                            view! {
+                                <span class="side-sessions-title">{t(loc, "sidebar.sessions")}</span>
+                                <div class="side-sessions-head-actions">
+                                    <button type="button" class="side-select-btn"
+                                        disabled=move || sessions.get().is_empty()
+                                        on:click=move |_| {
+                                            selecting_sessions.set(true);
+                                            selected_sessions.set(HashSet::new());
+                                            sort_menu_open.set(false);
+                                        }>
+                                        {t(loc, "sidebar.select_sessions")}
+                                    </button>
+                                    <button type="button" class="icon-btn side-shelved-btn"
+                                        title=move || t(locale.get(), "session.shelved")
+                                        aria-label=move || t(locale.get(), "session.shelved")
+                                        on:click=move |ev| { sort_menu_open.set(false); open_shelved.call(ev); }>
+                                        {compose_icon("eye-off")}
+                                    </button>
+                                    <button type="button" class="icon-btn side-sort-btn"
+                                        class:active=move || sort_menu_open.get()
+                                        title=move || t(locale.get(), "sidebar.sort_group")
+                                        aria-label=move || t(locale.get(), "sidebar.sort_group")
+                                        on:click=move |ev: web_sys::MouseEvent| {
+                                            ev.stop_propagation();
+                                            sort_menu_open.update(|v| *v = !*v);
+                                        }>
+                                        {compose_icon("adjustments")}
+                                    </button>
+                                </div>
+                            }.into_view()
+                        }}
                         {move || sort_menu_open.get().then(|| view! {
                             <div class="side-sort-backdrop" on:click=move |_| sort_menu_open.set(false)></div>
                             <div class="side-sort-menu" role="menu" on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
@@ -394,73 +466,46 @@ pub(super) fn Sidebar(
                                 </div>
                             </div>
                         })}
-                    </div>
-                    {move || selecting_sessions.get().then(|| {
-                        let count = selected_sessions.get().len();
-                        let all_selected = count > 0 && count == sessions.get().len();
-                        let move_selected = bulk_move_sessions.clone();
-                        let delete_selected = bulk_delete_sessions.clone();
-                        view! {
-                            <div class="side-bulk-actions" role="toolbar"
-                                aria-label=t(loc, "sidebar.bulk_actions")>
-                                <div class="side-bulk-summary">
-                                    <button type="button" class="side-bulk-link"
-                                        on:click=move |_| {
-                                            if all_selected {
-                                                selected_sessions.set(HashSet::new());
-                                            } else {
-                                                selected_sessions.set(sessions.get_untracked().into_iter().map(|s| s.id).collect());
-                                            }
-                                        }>
-                                        {t(loc, if all_selected { "sidebar.clear_selection" } else { "sidebar.select_all" })}
-                                    </button>
-                                    <span>{tf(loc, "sidebar.selected_n", &[("n", &count.to_string())])}</span>
-                                </div>
-                                <div class="side-bulk-controls">
-                                    <select data-testid="bulk-move-sessions"
-                                        aria-label=t(loc, "sidebar.move_selected")
-                                        disabled=count == 0
-                                        prop:value=move || bulk_move_target.get()
-                                        on:change=move |ev| {
-                                            let target = dom_value(&ev);
-                                            if target.is_empty() {
-                                                return;
-                                            }
-                                            let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
-                                            let folder_id = (target != "__ungrouped__").then_some(target);
-                                            bulk_move_target.set(String::new());
-                                            if !ids.is_empty() {
-                                                move_selected.call((ids, folder_id));
-                                                selected_sessions.set(HashSet::new());
-                                                selecting_sessions.set(false);
-                                            }
-                                        }>
-                                        <option value="" disabled=true>{t(loc, "sidebar.move_selected")}</option>
-                                        <option value="__ungrouped__">{t(loc, "ctx.move_to_ungrouped")}</option>
-                                        {move || folders.get().into_iter().map(|folder| {
+                        {move || bulk_move_open.get().then(|| {
+                            let move_selected = bulk_move_sessions.clone();
+                            let move_to = Callback::new(move |folder_id: Option<String>| {
+                                let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
+                                bulk_move_open.set(false);
+                                if !ids.is_empty() {
+                                    move_selected.call((ids, folder_id));
+                                    selected_sessions.set(HashSet::new());
+                                    selecting_sessions.set(false);
+                                }
+                            });
+                            view! {
+                                <div class="side-sort-backdrop" on:click=move |_| bulk_move_open.set(false)></div>
+                                <div class="side-sort-menu side-bulk-move-menu" role="menu" data-testid="bulk-move-menu">
+                                    <div class="side-sort-label">{t(loc, "sidebar.move_selected")}</div>
+                                    <div class="side-sort-opts">
+                                        <button type="button" class="side-sort-opt" role="menuitem" data-folder-id=""
+                                            on:click=move |_| move_to.call(None)>
+                                            <span>{t(loc, "ctx.move_to_ungrouped")}</span>
+                                        </button>
+                                        {folders.get().into_iter().map(|folder| {
                                             let name = if folder.name.trim().is_empty() {
-                                                t(locale.get(), "folder.untitled")
+                                                t(loc, "folder.untitled").to_string()
                                             } else {
                                                 folder.name
                                             };
-                                            view! { <option value=folder.id>{name}</option> }
-                                        }).collect_view()}
-                                    </select>
-                                    <button type="button" class="side-bulk-delete"
-                                        data-testid="bulk-delete-sessions"
-                                        disabled=count == 0
-                                        on:click=move |_| {
-                                            let ids: Vec<String> = selected_sessions.get_untracked().into_iter().collect();
-                                            if !ids.is_empty() {
-                                                delete_selected.call(ids);
+                                            let id = folder.id.clone();
+                                            view! {
+                                                <button type="button" class="side-sort-opt" role="menuitem"
+                                                    data-folder-id=folder.id title=name.clone()
+                                                    on:click=move |_| move_to.call(Some(id.clone()))>
+                                                    <span>{name}</span>
+                                                </button>
                                             }
-                                        }>
-                                        {t(loc, "ctx.delete_session")}
-                                    </button>
+                                        }).collect_view()}
+                                    </div>
                                 </div>
-                            </div>
-                        }
-                    })}
+                            }
+                        })}
+                    </div>
                 }
             })}
             <div class="side-list">
@@ -849,12 +894,37 @@ pub(super) fn Sidebar(
                         .collect();
                     let (today, earlier) = bucket_sessions_by_date(&ungrouped);
                     let move_to = move_sessions_to.clone();
-                    let folder_views = folder_list.into_iter().map(|f| {
+                    let folder_views = folder_list.into_iter().enumerate().map(|(idx, f)| {
                         let fid = f.id.clone();
                         let fid_toggle = fid.clone();
                         let fid_drop = fid.clone();
                         let fid_target = format!("folder:{fid_drop}");
-                        let fid_target_over = fid_target.clone();
+                        let reorder_before = format!("before:{fid}");
+                        let reorder_after = format!("after:{fid}");
+                        // A session hovers the group to move into it; another group
+                        // hovers it to take its slot, landing on the side it came from.
+                        let hover = {
+                            let fid = fid.clone();
+                            let (into, before, after) = (fid_target.clone(), reorder_before.clone(), reorder_after.clone());
+                            move |ev: web_sys::DragEvent| {
+                                let target = match drag_folder.get_untracked() {
+                                    Some((src, _)) if src == fid => None,
+                                    Some((_, from)) if from > idx => Some(before.clone()),
+                                    Some(_) => Some(after.clone()),
+                                    None => Some(into.clone()),
+                                };
+                                if target.is_some() {
+                                    allow_drop(&ev);
+                                }
+                                if drop_target.get_untracked() != target {
+                                    drop_target.set(target);
+                                }
+                            }
+                        };
+                        let hover_enter = hover.clone();
+                        let reorder = reorder_folders;
+                        let fid_drag = fid.clone();
+                        let fid_dragcls = fid.clone();
                         let fname = if f.name.trim().is_empty() {
                             t(loc, "folder.untitled").into()
                         } else {
@@ -867,8 +937,23 @@ pub(super) fn Sidebar(
                             .cloned()
                             .collect();
                         let fid_target_cls = fid_target.clone();
-                        let fid_target_over_enter = fid_target_over.clone();
                         let fid_rename = fid.clone();
+                        let folder_ids: Vec<String> = in_folder.iter().map(|s| s.id.clone()).collect();
+                        let folder_total = folder_ids.len();
+                        // How many of this group's own rows are ticked; nested rows are picked one by one.
+                        let folder_selected = {
+                            let ids = folder_ids.clone();
+                            Signal::derive(move || {
+                                let selected = selected_sessions.get();
+                                ids.iter().filter(|id| selected.contains(*id)).count()
+                            })
+                        };
+                        let folder_any = move || folder_selected.get() != 0;
+                        let folder_checked = move || match folder_selected.get() {
+                            0 => "false",
+                            n if n == folder_total => "true",
+                            _ => "mixed",
+                        };
                         let fname_rename = fname.clone();
                         let fid_actions = fid.clone();
                         let fname_actions = fname.clone();
@@ -876,33 +961,60 @@ pub(super) fn Sidebar(
                         view! {
                             <div class="side-folder-wrap"
                                 class:drop-target=move || drop_target.get().as_deref() == Some(fid_target_cls.as_str())
+                                class:reorder-before=move || drop_target.get().as_deref() == Some(reorder_before.as_str())
+                                class:reorder-after=move || drop_target.get().as_deref() == Some(reorder_after.as_str())
                                 data-folder-id=fid.clone()
-                                on:dragenter=move |ev: web_sys::DragEvent| {
-                                    allow_drop(&ev);
-                                    if drop_target.get().as_deref() != Some(fid_target_over_enter.as_str()) {
-                                        drop_target.set(Some(fid_target_over_enter.clone()));
-                                    }
-                                }
-                                on:dragover=move |ev: web_sys::DragEvent| {
-                                    allow_drop(&ev);
-                                    if drop_target.get().as_deref() != Some(fid_target_over.as_str()) {
-                                        drop_target.set(Some(fid_target_over.clone()));
-                                    }
-                                }
+                                on:dragenter=hover_enter
+                                on:dragover=hover
                                 on:drop=move |ev: web_sys::DragEvent| {
                                     ev.prevent_default();
                                     ev.stop_propagation();
-                                    let sid = drag_session_id(&ev, drag_session.get());
+                                    let dragged_folder = drag_folder.get_untracked();
+                                    drag_folder.set(None);
+                                    let sid = drag_session_id(&ev, drag_session.get_untracked());
                                     drag_session.set(None);
                                     drop_target.set(None);
-                                    if let Some(id) = sid {
+                                    if let Some((src, _)) = dragged_folder {
+                                        let mut ids: Vec<String> = folders.get_untracked().into_iter().map(|f| f.id).collect();
+                                        let from = ids.iter().position(|id| *id == src);
+                                        let to = ids.iter().position(|id| *id == fid_drop);
+                                        if let (Some(from), Some(to)) = (from, to) {
+                                            if from != to {
+                                                // Remove-then-insert at the target's old index, like the
+                                                // right-pane tab strip: after it going down, before it going up.
+                                                let moved = ids.remove(from);
+                                                ids.insert(to, moved);
+                                                reorder.call(ids);
+                                            }
+                                        }
+                                    } else if let Some(id) = sid {
                                         move_to.call((vec![id], Some(fid_drop.clone())));
                                     }
                                 }>
                                 <div class="side-folder"
+                                    class:dragging=move || drag_folder.get().is_some_and(|(id, _)| id == fid_dragcls)
+                                    class:selecting=move || selecting_sessions.get()
+                                    attr:draggable=move || if selecting_sessions.get() { "false" } else { "true" }
                                     title=fname_attr.clone()
                                     data-folder-id=fid.clone()
                                     data-folder-name=fname_attr
+                                    on:dragstart=move |ev: web_sys::DragEvent| {
+                                        if selecting_sessions.get_untracked() {
+                                            ev.prevent_default();
+                                            return;
+                                        }
+                                        ev.stop_propagation();
+                                        if let Some(dt) = ev.data_transfer() {
+                                            let _ = dt.set_effect_allowed("move");
+                                            // Not text/plain: session drop zones read that as a session id.
+                                            let _ = dt.set_data("application/x-wisp-folder", &fid_drag);
+                                        }
+                                        drag_folder.set(Some((fid_drag.clone(), idx)));
+                                    }
+                                    on:dragend=move |_| {
+                                        drag_folder.set(None);
+                                        drop_target.set(None);
+                                    }
                                     on:click=move |_| {
                                         collapsed_folders.update(|set| {
                                             if set.contains(&fid_toggle) { set.remove(&fid_toggle); }
@@ -916,6 +1028,27 @@ pub(super) fn Sidebar(
                                         folder_modal.set(Some(FolderModal::Rename(fid_rename.clone())));
                                     }>
                                     <span class="side-folder-caret" class:collapsed=collapsed>{compose_icon("chevron-down")}</span>
+                                    // Selecting swaps the folder icon for a tick box over the whole group.
+                                    <button type="button" class="session-select-mark" role="checkbox"
+                                        class:on=folder_any
+                                        aria-checked=folder_checked
+                                        aria-label=move || t(locale.get(), "sidebar.select_all")
+                                        disabled=folder_total == 0
+                                        on:dblclick=|ev: web_sys::MouseEvent| ev.stop_propagation()
+                                        on:click=move |ev: web_sys::MouseEvent| {
+                                            ev.stop_propagation();
+                                            selected_sessions.update(|selected| {
+                                                if folder_ids.iter().all(|id| selected.contains(id)) {
+                                                    for id in &folder_ids {
+                                                        selected.remove(id);
+                                                    }
+                                                } else {
+                                                    selected.extend(folder_ids.iter().cloned());
+                                                }
+                                            });
+                                        }>
+                                        {move || compose_icon(if (1..folder_total).contains(&folder_selected.get()) { "minus" } else { "check" })}
+                                    </button>
                                     {compose_icon("folder")}
                                     <span class="side-folder-name">{fname}</span>
                                     <span class="side-folder-count">{in_folder.len()}</span>
@@ -936,24 +1069,25 @@ pub(super) fn Sidebar(
                             </div>
                         }
                     }).collect_view();
+                    // Groups reorder among themselves only: over the ungrouped zone a
+                    // dragged group has no slot, so it just drops the insertion hint.
+                    let hover_ungrouped = move |ev: web_sys::DragEvent| {
+                        let target = drag_folder.get_untracked().is_none().then(|| "ungrouped".to_string());
+                        if target.is_some() {
+                            allow_drop(&ev);
+                        }
+                        if drop_target.get_untracked() != target {
+                            drop_target.set(target);
+                        }
+                    };
                     view! {
                         {pinned_view}
                         {folder_views}
                         {( !ungrouped.is_empty() || has_folders ).then(|| view! {
                             <div class="side-ungrouped"
                                 class:drop-target=move || drop_target.get().as_deref() == Some("ungrouped")
-                                on:dragenter=move |ev: web_sys::DragEvent| {
-                                    allow_drop(&ev);
-                                    if drop_target.get().as_deref() != Some("ungrouped") {
-                                        drop_target.set(Some("ungrouped".into()));
-                                    }
-                                }
-                                on:dragover=move |ev: web_sys::DragEvent| {
-                                    allow_drop(&ev);
-                                    if drop_target.get().as_deref() != Some("ungrouped") {
-                                        drop_target.set(Some("ungrouped".into()));
-                                    }
-                                }
+                                on:dragenter=hover_ungrouped
+                                on:dragover=hover_ungrouped
                                 on:drop=move |ev: web_sys::DragEvent| {
                                     ev.prevent_default();
                                     ev.stop_propagation();
