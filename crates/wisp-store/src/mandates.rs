@@ -445,6 +445,21 @@ impl Store {
         Ok(())
     }
 
+    /// Withdraw the mandate's unanswered request, if it has one: a closed
+    /// mandate asks for nothing.
+    pub async fn withdraw_mandate_requests(&self, mandate_id: &str) -> Result<()> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.withdraw_mandate_requests(mandate_id)).await;
+        }
+        sqlx::query(
+            "UPDATE mandate_requests SET status='withdrawn' WHERE mandate_id=? AND status='open'",
+        )
+        .bind(mandate_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// The mandate's newest request, whatever its status.
     pub async fn latest_mandate_request(&self, mandate_id: &str) -> Result<Option<MandateRequest>> {
         if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
@@ -768,6 +783,25 @@ mod tests {
         assert_eq!(
             store.latest_mandate_request("m1").await.unwrap(),
             Some(answered)
+        );
+
+        // Closing a mandate withdraws what it still asked for, and only that.
+        store
+            .open_mandate_request(&test_request("r3", "m1", 50))
+            .await
+            .unwrap();
+        store.withdraw_mandate_requests("m1").await.unwrap();
+        let withdrawn = store.latest_mandate_request("m1").await.unwrap().unwrap();
+        assert_eq!(
+            (withdrawn.id.as_str(), withdrawn.status.as_str()),
+            ("r3", "withdrawn")
+        );
+        assert_eq!(
+            store
+                .answer_mandate_request("m1", "too late", 60)
+                .await
+                .unwrap(),
+            None
         );
 
         store.delete_mandate("m1").await.unwrap();

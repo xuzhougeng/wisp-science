@@ -11738,14 +11738,22 @@ fn App() -> impl IntoView {
                     turn_memory_proposal.set(None);
                     turn_memory_editor.set(String::new());
                     turn_memory_replace_id.set(String::new());
-                    show_toast(&t(
-                        locale.get_untracked(),
-                        if global_scope {
-                            "memory.proposal.saved_global"
-                        } else {
-                            "memory.proposal.saved"
-                        },
-                    ));
+                    if scope == "mandate" {
+                        show_toast(research_journey::j(
+                            locale.get_untracked(),
+                            "Added to the mandate's standing instructions. It applies from the next round.",
+                            "已加入职责的长期要求，从下一轮起生效。",
+                        ));
+                    } else {
+                        show_toast(&t(
+                            locale.get_untracked(),
+                            if global_scope {
+                                "memory.proposal.saved_global"
+                            } else {
+                                "memory.proposal.saved"
+                            },
+                        ));
+                    }
                 }
                 Err(error) => turn_memory_error.set(Some(localize_backend(
                     locale.get_untracked(),

@@ -232,11 +232,37 @@ pub(crate) async fn update_mandate(
     load(&state.store, &id).await
 }
 
-/// Pause, resume or close a mandate. Resuming a mandate whose round came due
-/// while it was paused runs that round at the next poll.
+/// Close a mandate: no round or scheduled report runs again, an unanswered
+/// request is withdrawn, and one last report covers the time since the
+/// previous one. The report is written in the background.
+pub(crate) async fn close(app: &AppHandle, mandate_id: &str, now: i64) -> Result<(), String> {
+    let store = app.state::<AppState>().store.clone();
+    if !store
+        .set_mandate_status(mandate_id, "done", now)
+        .await
+        .map_err(err)?
+    {
+        return Err("The mandate no longer exists.".into());
+    }
+    store
+        .withdraw_mandate_requests(mandate_id)
+        .await
+        .map_err(err)?;
+    let (app, mandate_id) = (app.clone(), mandate_id.to_string());
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = crate::mandate_report::report(&app, &mandate_id).await {
+            tracing::warn!(target: "wisp", %error, %mandate_id, "failed to write a mandate's closing report");
+        }
+    });
+    Ok(())
+}
+
+/// Pause, resume, close or reopen a mandate. Resuming a mandate whose round
+/// came due while it was paused runs that round at the next poll.
 #[tauri::command]
 pub(crate) async fn set_mandate_status(
     state: State<'_, AppState>,
+    app: AppHandle,
     id: String,
     status: String,
 ) -> Result<MandateRecord, String> {
@@ -244,9 +270,15 @@ pub(crate) async fn set_mandate_status(
         return Err("A mandate can be set to active, paused or done.".into());
     }
     let now = chrono::Utc::now().timestamp();
-    if !state
+    let mandate = load(&state.store, &id).await?;
+    if status == "done" {
+        // Closing twice must not write a second closing report.
+        if mandate.status != "done" {
+            close(&app, &mandate.id, now).await?;
+        }
+    } else if !state
         .store
-        .set_mandate_status(id.trim(), &status, now)
+        .set_mandate_status(&mandate.id, &status, now)
         .await
         .map_err(err)?
     {
@@ -405,11 +437,7 @@ async fn run_round(app: AppHandle, mandate: MandateRecord, now: i64, advance: bo
     };
     let next_run_at = match due(&mandate, now, rounds, day_end) {
         Due::Close => {
-            if let Err(error) = state
-                .store
-                .set_mandate_status(&mandate.id, "done", now)
-                .await
-            {
+            if let Err(error) = close(&app, &mandate.id, now).await {
                 tracing::warn!(target: "wisp", %error, mandate_id = %mandate.id, "failed to close an ended mandate");
             }
             return;

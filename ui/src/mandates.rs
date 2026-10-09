@@ -32,8 +32,9 @@ struct Form {
     min_minutes: i64,
     max_days: i64,
     max_rounds: u32,
-    /// Confirmed standing instructions ride along untouched.
-    notes: Vec<String>,
+    /// Standing instructions, one per line: confirmed from feedback in the
+    /// mandate's conversation, or written here.
+    notes: String,
 }
 
 struct Template {
@@ -232,7 +233,7 @@ fn form_from(mandate: &MandateRecord) -> Form {
         min_minutes: (c.min_interval_secs / 60).max(1),
         max_days: (c.max_interval_secs / DAY).max(1),
         max_rounds: c.max_rounds_per_day,
-        notes: c.notes.clone(),
+        notes: c.notes.join("\n"),
     }
 }
 
@@ -250,7 +251,12 @@ fn draft_from(form: &Form) -> MandateDraft {
             min_interval_secs: form.min_minutes.max(1) * 60,
             max_interval_secs: form.max_days.max(1) * DAY,
             max_rounds_per_day: form.max_rounds.max(1),
-            notes: form.notes.clone(),
+            notes: form
+                .notes
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect(),
         },
         ends_at: end_of_day(&form.end_date),
         interval_secs: form.hours.max(1) * 3600,
@@ -415,6 +421,7 @@ pub(crate) fn MandateSection(
                         <label class="automation-span">{j(loc,"May do on its own","可自行完成")}<textarea rows="2" prop:value=move || form.with(|f| f.autonomous.clone()) on:input=move |ev| form.update(|f| f.autonomous = event_target_value(&ev))></textarea></label>
                         <label class="automation-span">{j(loc,"Needs your review first","需要先审核")}<textarea rows="2" prop:value=move || form.with(|f| f.review_first.clone()) on:input=move |ev| form.update(|f| f.review_first = event_target_value(&ev))></textarea></label>
                         <label class="automation-span">{j(loc,"Ask for help when","何时请求协助")}<textarea rows="2" prop:value=move || form.with(|f| f.ask_for_help.clone()) on:input=move |ev| form.update(|f| f.ask_for_help = event_target_value(&ev))></textarea></label>
+                        <label class="automation-span">{j(loc,"Standing instructions (one per line)","长期要求（每行一条）")}<textarea rows="3" data-testid="mandate-notes" placeholder=j(loc,"How the work should go from now on. Feedback you confirm in the mandate's conversation is added here.","之后的工作应当怎样做。在职责对话里确认过的反馈会加到这里。") prop:value=move || form.with(|f| f.notes.clone()) on:input=move |ev| form.update(|f| f.notes = event_target_value(&ev))></textarea></label>
                         <label class="mandate-check automation-span"><input type="checkbox" data-testid="mandate-review-mutations" prop:checked=move || form.with(|f| f.review_mutations) on:change=move |ev| form.update(|f| f.review_mutations = event_target_checked(&ev))/>{j(loc,"Ask me before anything that changes files, runs commands or submits work","修改文件、运行命令或提交任何内容之前先问我")}</label>
                     </div>
                 </fieldset>
@@ -467,6 +474,8 @@ pub(crate) fn MandateSection(
                             let until = m.ends_at.map(|end| format!(" · {} {}", j(loc,"until","截至"), day_key(end))).unwrap_or_default();
                             let (toggle_id, run_id, delete_id, confirm_id, remove_id) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
                             let report_id = m.id.clone();
+                            let close_id = m.id.clone();
+                            let notes = m.constraints.notes.clone();
                             let edit = m.clone();
                             let closed = status == "done";
                             view! {<article class="mandate-card" data-mandate-id=m.id.clone() data-status=status.clone() class:paused=!running>
@@ -476,6 +485,7 @@ pub(crate) fn MandateSection(
                                         <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", j(loc,"Enable","启用"), m.name) prop:checked=running on:change=move |ev| act("set_mandate_status", serde_json::json!({"id":toggle_id,"status": if event_target_checked(&ev) {"active"} else {"paused"}}))/></label>
                                         <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Run a round now","立即运行一轮") aria-label=format!("{} {}", j(loc,"Run a round now","立即运行一轮"), m.name) on:click=move |_| { act("run_mandate_now", serde_json::json!({"id":run_id})); notice.set(Some(j(locale.get_untracked(),"Started a round. It runs in the mandate's conversation in that project.","已开始一轮，在该项目的职责对话中运行。").into())); }>{compose_icon("play")}</button>
                                         <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Write a report now","立即生成汇报") aria-label=format!("{} {}", j(loc,"Write a report now","立即生成汇报"), m.name) on:click=move |_| { act("report_mandate_now", serde_json::json!({"id":report_id})); notice.set(Some(j(locale.get_untracked(),"Writing the report. It appears on the card when it is ready.","正在生成汇报，完成后显示在卡片上。").into())); }>{compose_icon("clipboard")}</button>
+                                        <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Close mandate","结束职责") aria-label=format!("{} {}", j(loc,"Close mandate","结束职责"), m.name) on:click=move |_| { act("set_mandate_status", serde_json::json!({"id":close_id,"status":"done"})); notice.set(Some(j(locale.get_untracked(),"Closed. A final report is being written; switch it back on to reopen.","已结束，正在生成收尾汇报；重新打开开关即可恢复。").into())); }>{compose_icon("circle-check")}</button>
                                         <button type="button" class="calendar-icon" title=j(loc,"Edit","编辑") aria-label=format!("{} {}", j(loc,"Edit","编辑"), m.name) on:click=move |_| open_form(form_from(&edit))>{compose_icon("edit")}</button>
                                         <button type="button" class="calendar-icon automation-delete" class:confirming=move || deleting.get().as_ref() == Some(&confirm_id)
                                             title=move || if deleting.get().as_ref() == Some(&delete_id) {j(locale.get(),"Click again to delete","再次点击确认删除")} else {j(locale.get(),"Delete","删除")}
@@ -485,6 +495,9 @@ pub(crate) fn MandateSection(
                                 </div>
                                 <small>{format!("{project} · {when}{until}")}</small>
                                 <p class="automation-prompt">{m.goal.clone()}</p>
+                                {(!notes.is_empty()).then(|| view! {<ul class="mandate-notes" data-testid="mandate-notes-list" aria-label=j(loc,"Standing instructions","长期要求")>
+                                    {notes.iter().map(|note| view! {<li>{note.clone()}</li>}).collect_view()}
+                                </ul>})}
                                 {(!m.kpis.is_empty()).then(|| view! {<ul class="mandate-kpis">
                                     {m.kpis.iter().map(|k| {
                                         let current = k.current.clone().unwrap_or_else(|| "–".into());

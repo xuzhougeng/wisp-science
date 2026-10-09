@@ -20,6 +20,9 @@ pub const MIN_ROUND_INTERVAL_SECS: i64 = 5 * 60;
 pub const MAX_ROUND_INTERVAL_SECS: i64 = 30 * 86_400;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_KPIS: usize = 12;
+/// Standing instructions ride in every brief, so they stay few and short.
+pub const MAX_NOTES: usize = 20;
+const MAX_NOTE_CHARS: usize = 500;
 /// Rounds the brief carries: enough to continue, small enough to stay cheap.
 pub const BRIEF_ROUNDS: usize = 3;
 const MAX_ROUND_FIELD_CHARS: usize = 2_000;
@@ -67,10 +70,42 @@ pub fn normalize_constraints(mut constraints: MandateConstraints) -> MandateCons
     constraints.notes = constraints
         .notes
         .iter()
-        .map(|note| note.trim().to_string())
+        .map(|note| one_line(note))
         .filter(|note| !note.is_empty())
+        .take(MAX_NOTES)
         .collect();
     constraints
+}
+
+/// One brief line: whitespace collapsed, bounded length.
+fn one_line(note: &str) -> String {
+    clip(
+        &note.split_whitespace().collect::<Vec<_>>().join(" "),
+        MAX_NOTE_CHARS,
+    )
+}
+
+/// Add a standing instruction the researcher confirmed from their feedback.
+/// Returns false when the mandate already carries it.
+pub fn add_note(mandate: &mut MandateRecord, note: &str) -> Result<bool, String> {
+    let note = one_line(note);
+    if note.is_empty() {
+        return Err("Write the instruction first.".into());
+    }
+    let notes = &mut mandate.constraints.notes;
+    if notes
+        .iter()
+        .any(|existing| existing.to_lowercase() == note.to_lowercase())
+    {
+        return Ok(false);
+    }
+    if notes.len() >= MAX_NOTES {
+        return Err(format!(
+            "This mandate already has {MAX_NOTES} standing instructions. Edit the mandate to remove one first."
+        ));
+    }
+    notes.push(note);
+    Ok(true)
 }
 
 fn normalize_kpis(kpis: Vec<MandateKpi>) -> Vec<MandateKpi> {
@@ -255,6 +290,11 @@ pub fn brief(
          `{REQUEST_ASSISTANCE}` instead of guessing or retrying. Say exactly what is needed, why, \
          and how you will continue. The mandate then waits for their answer and no round runs \
          until it comes. Still report the round with `{END_ROUND}`, naming the blocker."
+    ));
+    lines.push(format!(
+        "Finishing: when the goal is reached or its acceptance criteria are met, do not keep \
+         running rounds to look busy. Call `{REQUEST_ASSISTANCE}` with kind `judgement`, give the \
+         evidence, and ask the researcher to close the mandate. Closing it is their decision."
     ));
     match request {
         Some(request) if request.status == "open" => lines.push(format!(
@@ -1045,6 +1085,42 @@ mod tests {
         let mandate = new_mandate(d, 1_000).unwrap();
         store.create_mandate(&mandate).await.unwrap();
         (store, dir, mandate)
+    }
+
+    #[test]
+    fn a_standing_instruction_is_added_once_as_one_bounded_line() {
+        let mut mandate = new_mandate(draft(), 1_000).unwrap();
+        assert_eq!(mandate.constraints.notes, ["Lead with methods"]);
+        assert_eq!(
+            add_note(&mut mandate, "  Report  in Chinese,\n and keep it\tshort. "),
+            Ok(true)
+        );
+        assert_eq!(
+            mandate.constraints.notes[1],
+            "Report in Chinese, and keep it short."
+        );
+        assert_eq!(
+            add_note(&mut mandate, "lead with METHODS"),
+            Ok(false),
+            "already there"
+        );
+        assert!(add_note(&mut mandate, " \n ").is_err());
+        assert_eq!(mandate.constraints.notes.len(), 2);
+        assert!(brief(&mandate, &[], None).contains("  - Report in Chinese, and keep it short."));
+
+        let long = "x".repeat(MAX_NOTE_CHARS + 50);
+        add_note(&mut mandate, &long).unwrap();
+        assert_eq!(mandate.constraints.notes[2].chars().count(), MAX_NOTE_CHARS);
+        for n in mandate.constraints.notes.len()..MAX_NOTES {
+            add_note(&mut mandate, &format!("instruction {n}")).unwrap();
+        }
+        assert!(add_note(&mut mandate, "one too many")
+            .unwrap_err()
+            .contains("already has 20 standing instructions"));
+        // A form cannot smuggle in more than the cap either.
+        let mut constraints = mandate.constraints.clone();
+        constraints.notes.push("extra".into());
+        assert_eq!(normalize_constraints(constraints).notes.len(), MAX_NOTES);
     }
 
     #[tokio::test]

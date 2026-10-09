@@ -92,6 +92,44 @@ test("the built-in daily recap is on by default; switch, time and run-now persis
   await expect(card.getByTestId("daily-recap-status")).toContainText("2 drafted");
 });
 
+test("the memory tidy is on by default; a run proposes, and apply or dismiss settles one proposal", async ({ page }) => {
+  const automation = await open(page);
+  const card = automation.getByTestId("automation-memory-tidy");
+  await expect(card.getByTestId("memory-tidy-enabled")).toBeChecked();
+  await expect(card.getByTestId("memory-tidy-status")).toHaveText("Not run yet");
+  const proposals = card.getByTestId("memory-tidy-proposal");
+  await expect(proposals).toHaveCount(0);
+
+  await card.getByTestId("memory-tidy-run").click();
+  await expect(card.getByTestId("memory-tidy-status")).toHaveText("Running now…");
+  await expect(card.getByTestId("memory-tidy-status")).toHaveText("Last run: 2026-09-09 16:00 · 2 proposal(s) to review");
+  await expect(proposals).toHaveCount(2);
+  const merge = proposals.first();
+  await expect(merge).toHaveAttribute("data-action", "merge");
+  await expect(merge.locator("strong")).toHaveText("Merge 2 memories");
+  await expect(merge.locator("small")).toHaveText("Both set the reply language");
+  await expect(merge.locator("li")).toHaveText(["Reply in Chinese", "Always answer in Chinese, briefly"]);
+  await expect(merge.locator(".memory-tidy-merged")).toHaveText("BecomesAnswer in Chinese, briefly");
+  await merge.getByTestId("memory-tidy-apply").click();
+  await expect(proposals).toHaveCount(1);
+  expect(await page.evaluate(() => (window as any).__memoryTidy)).toEqual({ applied: ["tidy-1"], dismissed: [] });
+
+  // A retirement has no merged text; dismissing it applies nothing.
+  const retire = proposals.first();
+  await expect(retire).toHaveAttribute("data-action", "retire");
+  await expect(retire.locator("strong")).toHaveText("Retire 1 memory(ies)");
+  await expect(retire.locator(".memory-tidy-merged")).toHaveCount(0);
+  await retire.getByTestId("memory-tidy-dismiss").click();
+  await expect(proposals).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).__memoryTidy)).toEqual({ applied: ["tidy-1"], dismissed: ["tidy-2"] });
+  await expect(card.getByTestId("memory-tidy-status")).toHaveText("Last run: 2026-09-09 16:00 · 0 proposal(s) to review");
+
+  await card.getByTestId("memory-tidy-enabled").uncheck();
+  await expect(card.locator(".automation-toggle")).toContainText("Off");
+  await automation.getByRole("button", { name: "Refresh automation", exact: true }).click();
+  await expect(card.getByTestId("memory-tidy-enabled")).not.toBeChecked();
+});
+
 test("a template prefills a task listed with its project and cadence; run, pause and delete", async ({ page }) => {
   const automation = await open(page);
   await expect(automation.getByTestId("automation-empty")).toBeVisible();
@@ -141,6 +179,8 @@ test("Chinese automation page labels follow the locale", async ({ page }) => {
   await expect(automation.getByRole("heading", { name: "自动化", exact: true })).toBeVisible();
   await expect(automation.getByTestId("automation-daily-recap")).toContainText("每日研究回顾");
   await expect(automation.getByTestId("automation-daily-recap")).toContainText("内置");
+  await expect(automation.getByTestId("automation-memory-tidy")).toContainText("记忆整理");
+  await expect(automation.getByTestId("automation-memory-tidy")).toContainText("尚未运行");
   await expect(automation.locator(".automation-template")).toHaveCount(3);
   await expect(automation.locator(".automation-template").first()).toContainText("文献追踪");
   await expect(automation.locator(".automation-template").first()).toContainText("周一 09:00");

@@ -4129,6 +4129,10 @@ pub struct TurnMemoryProposal {
     pub failure_rate: f64,
     #[serde(default)]
     pub global_memories: Vec<GlobalMemory>,
+    /// The research mandate this conversation carries, by name. When present
+    /// the draft can also be saved as one of its standing instructions.
+    #[serde(default)]
+    pub mandate: Option<String>,
 }
 
 /// Paths found without launching interpreters or installing packages.

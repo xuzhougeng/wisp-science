@@ -4,7 +4,7 @@
 //! scratch. All of it fires only while Wisp runs; a missed slot runs once on
 //! the next launch.
 use crate::app_support::compose_icon;
-use crate::dto::{DailyRecapAutomation, ProjectSummary, ScheduleRecord};
+use crate::dto::{DailyRecapAutomation, MemoryTidyAutomation, ProjectSummary, ScheduleRecord};
 use crate::i18n::Locale;
 use crate::research_journey::{call, clock, date, day_key, j, now};
 use leptos::*;
@@ -146,6 +146,7 @@ pub(crate) fn AutomationPage(
 ) -> impl IntoView {
     let refresh = create_rw_signal(0u32);
     let daily = create_rw_signal(None::<DailyRecapAutomation>);
+    let tidy = create_rw_signal(None::<MemoryTidyAutomation>);
     let schedules = create_rw_signal(None::<Result<Vec<ScheduleRecord>, String>>);
     let notice = create_rw_signal(None::<String>);
     let deleting = create_rw_signal(None::<String>);
@@ -177,11 +178,28 @@ pub(crate) fn AutomationPage(
             schedules.set(Some(
                 call::<Vec<ScheduleRecord>>("list_all_schedules", serde_json::json!({})).await,
             ));
+            tidy.set(
+                call::<MemoryTidyAutomation>("get_memory_tidy_automation", serde_json::json!({}))
+                    .await
+                    .ok(),
+            );
         });
     });
-    // While a recap run is in flight, look again shortly.
+    // Every memory tidy command answers with the automation's new state.
+    let tidy_act = move |command: &'static str, args: serde_json::Value| {
+        spawn_local(async move {
+            match call::<MemoryTidyAutomation>(command, args).await {
+                Ok(value) => tidy.set(Some(value)),
+                Err(e) => {
+                    notice.set(Some(e));
+                    refresh.update(|n| *n += 1);
+                }
+            }
+        });
+    };
+    // While a recap or tidy run is in flight, look again shortly.
     create_effect(move |_| {
-        if daily.get().is_some_and(|d| d.running) {
+        if daily.get().is_some_and(|d| d.running) || tidy.get().is_some_and(|t| t.running) {
             set_timeout(
                 move || refresh.update(|n| *n += 1),
                 std::time::Duration::from_secs(3),
@@ -312,6 +330,54 @@ pub(crate) fn AutomationPage(
                                 if let Ok(value) = call::<DailyRecapAutomation>("run_daily_recap_now", serde_json::json!({})).await { daily.set(Some(value)); }
                             })>{compose_icon("play")}{j(loc,"Run now","立即运行")}</button>
                             <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{j(loc,"Change model in Settings → Specialists → Recap","在 设置 → 专家 → Recap 中更换模型")}</button>
+                        </div>
+                    }.into_view()
+                }}
+            </section>
+            <section class="automation-card automation-builtin" data-testid="automation-memory-tidy">
+                {move || {
+                    let loc = locale.get();
+                    let Some(t) = tidy.get() else { return view! {<p class="automation-meta" role="status">{j(loc,"Loading…","正在读取…")}</p>}.into_view(); };
+                    let count = t.proposals.len();
+                    let status = if t.running {
+                        j(loc,"Running now…","正在运行…").to_string()
+                    } else if let Some(at) = t.last_run_at {
+                        let when = format!("{} {}", day_key(at), clock(at));
+                        if loc == Locale::Zh { format!("上次运行：{when} · {count} 条建议待处理") } else { format!("Last run: {when} · {count} proposal(s) to review") }
+                    } else {
+                        j(loc,"Not run yet","尚未运行").to_string()
+                    };
+                    view! {
+                        <div class="automation-card-head">{compose_icon("memory")}<h3>{j(loc,"Memory tidy","记忆整理")}</h3><span class="automation-tag">{j(loc,"Built-in","内置")}</span>
+                            <label class="automation-toggle"><input type="checkbox" role="switch" data-testid="memory-tidy-enabled" prop:checked=t.enabled on:change=move |ev| tidy_act("set_memory_tidy_automation", serde_json::json!({"enabled":event_target_checked(&ev)}))/><span>{if t.enabled {j(loc,"On","已开启")} else {j(loc,"Off","已关闭")}}</span></label>
+                        </div>
+                        <p class="automation-desc">{j(loc,"Once a week it looks over your global habits and proposes merging entries that say the same thing or retiring one that a newer entry replaces. Nothing changes until you apply a proposal.","每周检查一次全局习惯，提出合并意思相同的条目，或淘汰已被新条目取代的条目。在你应用某条建议之前，不会改动任何记忆。")}</p>
+                        <p class="automation-meta" data-testid="memory-tidy-status">{status}</p>
+                        {t.error.map(|e| view! {<p class="automation-error" role="alert">{e}</p>})}
+                        {t.proposals.into_iter().map(|p| {
+                            let merge = p.action == "merge";
+                            let n = p.memories.len();
+                            let title = match (merge, loc == Locale::Zh) {
+                                (true, true) => format!("合并 {n} 条记忆"),
+                                (true, false) => format!("Merge {n} memories"),
+                                (false, true) => format!("淘汰 {n} 条记忆"),
+                                (false, false) => format!("Retire {n} memory(ies)"),
+                            };
+                            let (apply_id, dismiss_id) = (p.id.clone(), p.id.clone());
+                            view! {<article class="memory-tidy-proposal" data-testid="memory-tidy-proposal" data-action=p.action.clone()>
+                                <strong>{title}</strong>
+                                {(!p.reason.is_empty()).then(|| view! {<small>{p.reason.clone()}</small>})}
+                                <ul>{p.memories.iter().map(|m| view! {<li>{m.content.clone()}</li>}).collect_view()}</ul>
+                                {merge.then(|| view! {<p class="memory-tidy-merged"><b>{j(loc,"Becomes","合并为")}</b>{p.text.clone()}</p>})}
+                                <div class="automation-actions">
+                                    <button type="button" class="btn-primary" data-testid="memory-tidy-apply" on:click=move |_| tidy_act("apply_memory_tidy_proposal", serde_json::json!({"id":apply_id.clone()}))>{j(loc,"Apply","应用")}</button>
+                                    <button type="button" class="btn-ghost" data-testid="memory-tidy-dismiss" on:click=move |_| tidy_act("dismiss_memory_tidy_proposal", serde_json::json!({"id":dismiss_id.clone()}))>{j(loc,"Dismiss","忽略")}</button>
+                                </div>
+                            </article>}
+                        }).collect_view()}
+                        <div class="automation-actions">
+                            <button type="button" class="btn-ghost" data-testid="memory-tidy-run" prop:disabled=t.running on:click=move |_| tidy_act("run_memory_tidy_now", serde_json::json!({}))>{compose_icon("play")}{j(loc,"Run now","立即运行")}</button>
+                            <button type="button" class="journey-link" on:click=move |_| on_open_specialists.call(())>{compose_icon("gear")}{j(loc,"It uses the Recap specialist's model","使用 Recap 专家的模型")}</button>
                         </div>
                     }.into_view()
                 }}

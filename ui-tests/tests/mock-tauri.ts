@@ -594,6 +594,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       failed_tool_calls: failure ? 2 : 0,
       failure_rate: failure ? 66.7 : 0,
       global_memories: globalMemories,
+      // Set by a spec when the conversation is a research mandate's.
+      mandate: (window as any).__mockMandateName ?? null,
     };
   };
   const memoryFilesFor = (projectId: string) => {
@@ -1725,7 +1727,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     journeyEntry("progress-earlier", "progress", journeyText("Imported raw data and established an analysis baseline", "导入原始数据，建立分析基线"), 2, {manual: true}),
   ];
   const journeyRecaps: any[] = [];
-  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: [], mandates: []};
+  const automation: any = {daily: {enabled: true, time: "09:00", last_run_at: null, drafted: 0, error: null, running: false}, schedules: [], mandates: [],
+    tidy: {enabled: true, last_run_at: null, error: null, running: false, proposals: []}};
   // Mirrors `wisp_app::mandates::apply_draft`: what a draft may set on a mandate.
   const applyMandateDraft = (mandate: any, draft: any) => {
     const goal = String(draft.goal ?? "").trim();
@@ -2065,7 +2068,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const m = automation.mandates.find((m: any) => m.id === arg("id"));
             if (!m) throw new Error("The mandate no longer exists.");
             m.status = String(arg("status"));
-            return JSON.parse(JSON.stringify(m));
+            // Closing withdraws whatever the mandate was still asking for.
+            if (m.status === "done") m.request = null;
+            return JSON.parse(JSON.stringify({...m, rounds: undefined, request: undefined, reports: undefined}));
+          }
+          case "get_memory_tidy_automation": return JSON.parse(JSON.stringify(automation.tidy));
+          case "set_memory_tidy_automation":
+            automation.tidy.enabled = Boolean(arg("enabled"));
+            return JSON.parse(JSON.stringify(automation.tidy));
+          case "run_memory_tidy_now":
+            // Stands in for a finished tidy run: the validated proposals.
+            automation.tidy.last_run_at = Math.floor(Date.now() / 1000);
+            automation.tidy.proposals = [
+              {id: "tidy-1", action: "merge", text: "Answer in Chinese, briefly", reason: "Both set the reply language",
+               memories: [{id: "m-old", content: "Reply in Chinese"}, {id: "m-new", content: "Always answer in Chinese, briefly"}]},
+              {id: "tidy-2", action: "retire", text: "", reason: "Replaced by the plotting habit saved last week",
+               memories: [{id: "m-stale", content: "Prefer matplotlib"}]},
+            ];
+            return JSON.parse(JSON.stringify({...automation.tidy, running: true}));
+          case "apply_memory_tidy_proposal":
+          case "dismiss_memory_tidy_proposal": {
+            const settled = ((window as any).__memoryTidy ??= {applied: [], dismissed: []});
+            if (!automation.tidy.proposals.some((p: any) => p.id === arg("id"))) throw new Error("This proposal is no longer there.");
+            (cmd === "apply_memory_tidy_proposal" ? settled.applied : settled.dismissed).push(arg("id"));
+            automation.tidy.proposals = automation.tidy.proposals.filter((p: any) => p.id !== arg("id"));
+            return JSON.parse(JSON.stringify(automation.tidy));
           }
           case "run_mandate_now": {
             // Stands in for a finished round: the agent's end_round report.

@@ -125,3 +125,48 @@ impl Default for DailyRecapAutomation {
         }
     }
 }
+
+/// A memory as it read when a tidy proposal was made.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MemoryTidyEntry {
+    pub id: String,
+    pub content: String,
+}
+
+/// One change the memory tidy proposes. Nothing changes until it is applied.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MemoryTidyProposal {
+    pub id: String,
+    /// `merge`: replace `memories` with one memory reading `text`.
+    /// `retire`: remove `memories`.
+    pub action: String,
+    pub memories: Vec<MemoryTidyEntry>,
+    pub text: String,
+    pub reason: String,
+}
+
+/// The built-in memory tidy: once a week it looks over the global habits and
+/// proposes merging duplicates or retiring entries a newer one replaces.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MemoryTidyAutomation {
+    pub enabled: bool,
+    pub last_run_at: Option<i64>,
+    pub error: Option<String>,
+    pub running: bool,
+    pub proposals: Vec<MemoryTidyProposal>,
+}
+
+impl Default for MemoryTidyAutomation {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            last_run_at: None,
+            error: None,
+            running: false,
+            proposals: Vec::new(),
+        }
+    }
+}

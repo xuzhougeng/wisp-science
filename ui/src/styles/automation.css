@@ -88,3 +88,12 @@
 .mandate-report-section ul { margin: 2px 0 0; padding-left: 18px; }
 .mandate-report-section li { overflow-wrap: anywhere; }
 .mandate-cite { margin-left: 8px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mandate-notes { margin: 2px 0 0; padding-left: 18px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.mandate-notes li { overflow-wrap: anywhere; }
+.memory-tidy-proposal { display: grid; gap: 4px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-xs); }
+.memory-tidy-proposal small { color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.memory-tidy-proposal ul { margin: 2px 0 0; padding-left: 18px; color: var(--text-muted); }
+.memory-tidy-proposal li, .memory-tidy-merged { overflow-wrap: anywhere; }
+.memory-tidy-merged { margin: 2px 0 0; }
+.memory-tidy-merged b { font-weight: 600; margin-right: 8px; }
+.memory-tidy-proposal .automation-actions { margin-top: 6px; }

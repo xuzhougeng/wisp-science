@@ -80,6 +80,7 @@ pub(crate) fn TurnMemoryOverlay(
                 t(locale.get(), "memory.proposal.manual_hint")
             };
             let global_memories = draft.global_memories.clone();
+            let mandate = draft.mandate.clone();
             view! {
                 <div class="overlay turn-memory-overlay" data-testid="turn-memory-overlay">
                     <div class="modal turn-memory-modal" role="dialog" aria-modal="true"
@@ -105,6 +106,11 @@ pub(crate) fn TurnMemoryOverlay(
                                 <option value="global" prop:selected=move || scope.get() == "global">
                                     {move || t(locale.get(), "memory.proposal.scope_global")}
                                 </option>
+                                {mandate.map(|name| view! {
+                                    <option value="mandate" prop:selected=move || scope.get() == "mandate">
+                                        {move || format!("{}: {name}", crate::research_journey::j(locale.get(), "This mandate", "当前职责"))}
+                                    </option>
+                                })}
                             </select>
                         </label>
                         {move || {
