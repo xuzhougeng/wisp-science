@@ -211,3 +211,52 @@ test("Chinese request labels follow the locale and omit empty fields", async ({ 
   await expect(request).not.toContainText("之后");
   await expect(request.getByRole("button", { name: "回复", exact: true })).toBeDisabled();
 });
+
+test("reports are written on demand, kept on the card, and cite the rounds they summarize", async ({ page }) => {
+  const automation = await open(page);
+  await automation.locator(".mandate-template").filter({ hasText: "Literature watch" }).click();
+  await automation.getByTestId("mandate-save").click();
+  const card = automation.locator(".mandate-card");
+  await expect(card.getByTestId("mandate-reports")).toHaveCount(0);
+  const reportNow = card.getByRole("button", { name: "Write a report now Literature watch", exact: true });
+
+  // A quiet period is still reported, without a model.
+  await reportNow.click();
+  await expect(automation.locator(".automation-notice")).toContainText("Writing the report");
+  const reports = card.getByTestId("mandate-reports");
+  await expect(reports.locator("summary")).toHaveText("Reports (1) · latest 2026-09-09");
+  await expect(reports).not.toHaveAttribute("open", "");
+  await reports.locator("summary").click();
+  const quiet = reports.getByTestId("mandate-report").first();
+  await expect(quiet).toContainText("2026-09-02 – 2026-09-09 · 0 round(s)");
+  await expect(quiet.locator("strong")).toHaveText("No rounds this period");
+  await expect(quiet.locator(".mandate-report-section")).toHaveCount(0);
+  await expect(quiet).not.toContainText("from the ledger");
+
+  // After a round, the next report covers it and names its source.
+  await page.evaluate(() => { (window as any).__mandateRound = {done: "Screened 12 abstracts and filed 3", blockers: "One paper is paywalled", next_step: "Read the two flagged reviews", source: "agent"}; });
+  await card.getByRole("button", { name: /Run a round now/ }).click();
+  await expect(card.getByTestId("mandate-last-round")).toContainText("Round 1");
+  await reportNow.click();
+  await expect(reports.locator("summary")).toHaveText("Reports (2) · latest 2026-09-09");
+  await reports.locator("summary").click();
+  const latest = reports.getByTestId("mandate-report").first();
+  await expect(latest).toContainText("1 round(s)");
+  await expect(latest.locator("strong")).toHaveText("Three papers filed, two short of target");
+  const sections = latest.locator(".mandate-report-section");
+  await expect(sections).toHaveCount(3);
+  await expect(sections.nth(0)).toContainText("Done");
+  await expect(sections.nth(0).locator("li")).toContainText("Screened 12 abstracts and filed 3");
+  await expect(sections.nth(0).locator(".mandate-cite")).toHaveText("Round 1");
+  await expect(sections.nth(1)).toContainText("Blocked");
+  await expect(sections.nth(2)).toContainText("Next");
+  await expect(reports.getByTestId("mandate-report")).toHaveCount(2);
+
+  // A model failure still leaves a report, marked as assembled from the ledger.
+  await page.evaluate(() => { (window as any).__mandateReportModel = false; });
+  await card.getByRole("button", { name: /Run a round now/ }).click();
+  await reportNow.click();
+  await expect(reports.locator("summary")).toHaveText("Reports (3) · latest 2026-09-09");
+  await reports.locator("summary").click();
+  await expect(reports.getByTestId("mandate-report").first()).toContainText("from the ledger");
+});

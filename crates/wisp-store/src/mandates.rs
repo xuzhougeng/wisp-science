@@ -10,7 +10,8 @@ use anyhow::{ensure, Result};
 use sqlx::Row;
 
 pub use wisp_dto::{
-    MandateRecord, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS, MANDATE_STATUSES,
+    MandateRecord, MandateReport, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS,
+    MANDATE_STATUSES,
 };
 
 const MANDATE_COLUMNS: &str = "id,project_id,frame_id,name,goal,kpis,constraints,ends_at,\
@@ -209,7 +210,7 @@ impl Store {
         if let Some(store) = self.route_entity("mandates", "id", id).await? {
             return Box::pin(store.delete_mandate(id)).await;
         }
-        for table in ["mandate_rounds", "mandate_requests"] {
+        for table in ["mandate_rounds", "mandate_requests", "mandate_reports"] {
             sqlx::query(&format!("DELETE FROM {table} WHERE mandate_id=?"))
                 .bind(id)
                 .execute(&self.pool)
@@ -484,6 +485,102 @@ impl Store {
         .transpose()
     }
 
+    pub async fn save_mandate_report(&self, report: &MandateReport) -> Result<()> {
+        if let Some(store) = self
+            .route_entity("mandates", "id", &report.mandate_id)
+            .await?
+        {
+            return Box::pin(store.save_mandate_report(report)).await;
+        }
+        sqlx::query(
+            "INSERT INTO mandate_reports(id,mandate_id,period_from,period_until,report_json,created_at) \
+             VALUES(?,?,?,?,?,?)",
+        )
+        .bind(&report.id)
+        .bind(&report.mandate_id)
+        .bind(report.period_from)
+        .bind(report.period_until)
+        .bind(serde_json::to_string(report)?)
+        .bind(report.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The mandate's latest reports, newest first.
+    pub async fn mandate_reports(
+        &self,
+        mandate_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MandateReport>> {
+        if let Some(store) = self.route_entity("mandates", "id", mandate_id).await? {
+            return Box::pin(store.mandate_reports(mandate_id, limit)).await;
+        }
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT report_json FROM mandate_reports WHERE mandate_id=? \
+             ORDER BY period_until DESC, created_at DESC, rowid DESC LIMIT ?",
+        )
+        .bind(mandate_id)
+        .bind(limit.clamp(1, 200) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        // A report from a future version is skipped, not fatal.
+        Ok(rows
+            .iter()
+            .filter_map(|raw| serde_json::from_str(raw).ok())
+            .collect())
+    }
+
+    /// Mandates still being carried (active or waiting) whose report is due.
+    /// A paused or closed mandate reports nothing.
+    pub async fn mandates_due_for_report(&self, now: i64) -> Result<Vec<MandateRecord>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                result.extend(Box::pin(store.mandates_due_for_report(now)).await?);
+            }
+            return Ok(result);
+        }
+        sqlx::query(&format!(
+            "SELECT {MANDATE_COLUMNS} FROM mandates \
+             WHERE status IN ('active','waiting') AND next_report_at IS NOT NULL \
+             AND next_report_at<=? \
+             AND EXISTS (SELECT 1 FROM projects WHERE id=mandates.project_id) \
+             ORDER BY next_report_at,id"
+        ))
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(mandate_from_row)
+        .collect()
+    }
+
+    /// Atomically move the report slot on. False when another tick took it.
+    pub async fn claim_mandate_report(
+        &self,
+        id: &str,
+        expected_next_report_at: i64,
+        new_next_report_at: i64,
+    ) -> Result<bool> {
+        if let Some(store) = self.route_entity("mandates", "id", id).await? {
+            return Box::pin(store.claim_mandate_report(
+                id,
+                expected_next_report_at,
+                new_next_report_at,
+            ))
+            .await;
+        }
+        let result =
+            sqlx::query("UPDATE mandates SET next_report_at=? WHERE id=? AND next_report_at=?")
+                .bind(new_next_report_at)
+                .bind(id)
+                .bind(expected_next_report_at)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     /// Active mandates whose next round is waiting on a Run to finish.
     pub async fn mandates_waiting_on_runs(&self) -> Result<Vec<MandateRecord>> {
         if let Some(stores) = self.available_projects().await? {
@@ -675,6 +772,73 @@ mod tests {
 
         store.delete_mandate("m1").await.unwrap();
         assert_eq!(store.latest_mandate_request("m1").await.unwrap(), None);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reports_are_kept_newest_first_and_claimed_once_per_slot() {
+        let (store, root) = test_store().await;
+        for (id, status) in [("m1", "active"), ("held", "waiting"), ("off", "paused")] {
+            let mut mandate = test_mandate(id, "p1", 9_000);
+            mandate.status = status.into();
+            mandate.next_report_at = Some(500);
+            store.create_mandate(&mandate).await.unwrap();
+        }
+        let due = store.mandates_due_for_report(600).await.unwrap();
+        assert_eq!(
+            due.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["held", "m1"],
+            "a waiting mandate still reports; a paused one does not"
+        );
+        assert!(store.mandates_due_for_report(499).await.unwrap().is_empty());
+        assert!(store.claim_mandate_report("m1", 500, 1_100).await.unwrap());
+        assert!(!store.claim_mandate_report("m1", 500, 1_100).await.unwrap());
+        assert_eq!(
+            store
+                .get_mandate("m1")
+                .await
+                .unwrap()
+                .unwrap()
+                .next_report_at,
+            Some(1_100)
+        );
+
+        let report = |id: &str, until: i64| MandateReport {
+            id: id.into(),
+            mandate_id: "m1".into(),
+            period_from: until - 100,
+            period_until: until,
+            rounds: 2,
+            kpis: test_mandate("m1", "p1", 0).kpis,
+            body: wisp_dto::ResearchRecap {
+                headline: format!("Report {id}"),
+                done: vec![wisp_dto::ResearchRecapItem {
+                    text: "Filed 3 papers".into(),
+                    refs: vec![0],
+                }],
+                sources: vec![wisp_dto::ResearchRecapSource {
+                    kind: "round".into(),
+                    id: "r1".into(),
+                    title: "Round 1".into(),
+                }],
+                ..Default::default()
+            },
+            created_at: until,
+        };
+        store
+            .save_mandate_report(&report("a", 1_000))
+            .await
+            .unwrap();
+        store
+            .save_mandate_report(&report("b", 2_000))
+            .await
+            .unwrap();
+        let reports = store.mandate_reports("m1", 10).await.unwrap();
+        assert_eq!(reports, vec![report("b", 2_000), report("a", 1_000)]);
+        assert_eq!(store.mandate_reports("m1", 1).await.unwrap().len(), 1);
+        store.delete_mandate("m1").await.unwrap();
+        assert!(store.mandate_reports("m1", 10).await.unwrap().is_empty());
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }

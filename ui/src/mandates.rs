@@ -3,7 +3,8 @@
 //! project conversation. Rounds run only while Wisp is open.
 use crate::app_support::compose_icon;
 use crate::dto::{
-    MandateConstraints, MandateDraft, MandateKpi, MandateOverview, MandateRecord, ProjectSummary,
+    MandateConstraints, MandateDraft, MandateKpi, MandateOverview, MandateRecord, MandateReport,
+    ProjectSummary, ResearchRecapItem,
 };
 use crate::i18n::Locale;
 use crate::research_journey::{call, clock, day_key, j, now};
@@ -157,6 +158,42 @@ fn request_kind_label(loc: Locale, kind: &str) -> &'static str {
         "release" => j(loc, "Release", "发布"),
         _ => j(loc, "Your judgement", "需要你判断"),
     }
+}
+
+/// One report: its period, headline, and each section's items with the
+/// records they cite.
+fn report_view(loc: Locale, report: MandateReport) -> impl IntoView {
+    let period = format!(
+        "{} – {}",
+        day_key(report.period_from),
+        day_key(report.period_until)
+    );
+    let rounds = if loc == Locale::Zh {
+        format!("{} 轮", report.rounds)
+    } else {
+        format!("{} round(s)", report.rounds)
+    };
+    // A period with rounds but no model was assembled from the ledger.
+    let ledger = (report.rounds > 0 && report.body.model.is_empty())
+        .then(|| j(loc, " · from the ledger", " · 由账本整理"));
+    let sources = report.body.sources;
+    let section = move |label: &'static str, items: Vec<ResearchRecapItem>| {
+        let sources = sources.clone();
+        (!items.is_empty()).then(|| view! {<div class="mandate-report-section"><b>{label}</b><ul>
+            {items.into_iter().map(|item| {
+                let cited: Vec<_> = item.refs.iter().filter_map(|i| sources.get(*i)).map(|s| s.title.clone()).collect();
+                view! {<li>{item.text}{(!cited.is_empty()).then(|| view! {<span class="mandate-cite">{cited.join(", ")}</span>})}</li>}
+            }).collect_view()}
+        </ul></div>})
+    };
+    view! {<article class="mandate-report" data-testid="mandate-report">
+        <small>{format!("{period} · {rounds}")}{ledger}</small>
+        <strong>{report.body.headline}</strong>
+        {section.clone()(j(loc,"Done","已完成"), report.body.done)}
+        {section.clone()(j(loc,"Progress","进展"), report.body.findings)}
+        {section.clone()(j(loc,"Blocked","阻塞"), report.body.issues)}
+        {section(j(loc,"Next","下一步"), report.body.next)}
+    </article>}
 }
 
 fn status_label(loc: Locale, status: &str) -> &'static str {
@@ -417,6 +454,7 @@ pub(crate) fn MandateSection(
                         rows.into_iter().map(|(o, project)| {
                             let last_round = o.last_round;
                             let request = o.request;
+                            let reports = o.reports;
                             let m = o.mandate;
                             let status = m.status.clone();
                             let running = matches!(status.as_str(), "active" | "waiting");
@@ -428,6 +466,7 @@ pub(crate) fn MandateSection(
                             };
                             let until = m.ends_at.map(|end| format!(" · {} {}", j(loc,"until","截至"), day_key(end))).unwrap_or_default();
                             let (toggle_id, run_id, delete_id, confirm_id, remove_id) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
+                            let report_id = m.id.clone();
                             let edit = m.clone();
                             let closed = status == "done";
                             view! {<article class="mandate-card" data-mandate-id=m.id.clone() data-status=status.clone() class:paused=!running>
@@ -436,6 +475,7 @@ pub(crate) fn MandateSection(
                                     <div class="automation-row-actions">
                                         <label class="automation-toggle"><input type="checkbox" role="switch" aria-label=format!("{} {}", j(loc,"Enable","启用"), m.name) prop:checked=running on:change=move |ev| act("set_mandate_status", serde_json::json!({"id":toggle_id,"status": if event_target_checked(&ev) {"active"} else {"paused"}}))/></label>
                                         <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Run a round now","立即运行一轮") aria-label=format!("{} {}", j(loc,"Run a round now","立即运行一轮"), m.name) on:click=move |_| { act("run_mandate_now", serde_json::json!({"id":run_id})); notice.set(Some(j(locale.get_untracked(),"Started a round. It runs in the mandate's conversation in that project.","已开始一轮，在该项目的职责对话中运行。").into())); }>{compose_icon("play")}</button>
+                                        <button type="button" class="calendar-icon" prop:disabled=closed title=j(loc,"Write a report now","立即生成汇报") aria-label=format!("{} {}", j(loc,"Write a report now","立即生成汇报"), m.name) on:click=move |_| { act("report_mandate_now", serde_json::json!({"id":report_id})); notice.set(Some(j(locale.get_untracked(),"Writing the report. It appears on the card when it is ready.","正在生成汇报，完成后显示在卡片上。").into())); }>{compose_icon("clipboard")}</button>
                                         <button type="button" class="calendar-icon" title=j(loc,"Edit","编辑") aria-label=format!("{} {}", j(loc,"Edit","编辑"), m.name) on:click=move |_| open_form(form_from(&edit))>{compose_icon("edit")}</button>
                                         <button type="button" class="calendar-icon automation-delete" class:confirming=move || deleting.get().as_ref() == Some(&confirm_id)
                                             title=move || if deleting.get().as_ref() == Some(&delete_id) {j(locale.get(),"Click again to delete","再次点击确认删除")} else {j(locale.get(),"Delete","删除")}
@@ -478,10 +518,19 @@ pub(crate) fn MandateSection(
                                         {(!r.why.is_empty()).then(|| view! {<p><b>{j(loc,"Why","原因")}</b>{r.why}</p>})}
                                         {(!r.then_what.is_empty()).then(|| view! {<p><b>{j(loc,"Then","之后")}</b>{r.then_what}</p>})}
                                         <div class="mandate-reply">
-                                            <textarea rows="2" aria-label=format!("{} {name}", j(loc,"Reply to","回复")) placeholder=j(loc,"What you did, decided or provided. Your reply starts the next round.","你做了什么、决定了什么或提供了什么。回复后立即开始下一轮。") prop:value=move || reply.get() on:input=move |ev| reply.set(event_target_value(&ev))></textarea>
+                                            <textarea rows="2" data-testid="mandate-reply-text" aria-label=format!("{} {name}", j(loc,"Reply to","回复")) placeholder=j(loc,"What you did, decided or provided. Your reply starts the next round.","你做了什么、决定了什么或提供了什么。回复后立即开始下一轮。") prop:value=move || reply.get() on:input=move |ev| reply.set(event_target_value(&ev))></textarea>
                                             <button type="button" class="btn-primary" data-testid="mandate-reply-send" prop:disabled=move || reply.with(|text| text.trim().is_empty()) on:click=send>{j(loc,"Reply","回复")}</button>
                                         </div>
                                     </div>}
+                                })}
+                                {(!reports.is_empty()).then(|| {
+                                    let latest = reports.first().map(|r| day_key(r.period_until)).unwrap_or_default();
+                                    let count = reports.len();
+                                    let title = if loc == Locale::Zh { format!("汇报（{count}）· 最近 {latest}") } else { format!("Reports ({count}) · latest {latest}") };
+                                    view! {<details class="mandate-reports" data-testid="mandate-reports">
+                                        <summary>{title}</summary>
+                                        {reports.into_iter().map(|r| report_view(loc, r)).collect_view()}
+                                    </details>}
                                 })}
                             </article>}
                         }).collect_view()

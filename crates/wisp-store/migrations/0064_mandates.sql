@@ -55,3 +55,15 @@ CREATE TABLE IF NOT EXISTS mandate_requests (
     answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_mandate_requests ON mandate_requests(mandate_id, created_at);
+
+-- Progress reports written on the mandate's report cadence. The whole
+-- report is one JSON document: it is read back as written, never queried.
+CREATE TABLE IF NOT EXISTS mandate_reports (
+    id           TEXT PRIMARY KEY,
+    mandate_id   TEXT NOT NULL REFERENCES mandates(id) ON DELETE CASCADE,
+    period_from  INTEGER NOT NULL,
+    period_until INTEGER NOT NULL,
+    report_json  TEXT NOT NULL,
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_mandate_reports ON mandate_reports(mandate_id, period_until);

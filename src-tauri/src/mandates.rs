@@ -115,7 +115,7 @@ fn request_notice(project: &str, mandate: &MandateRecord, request: &MandateReque
 /// Put `text` in front of the researcher: the assistant's conversation on
 /// the desktop, and every IM channel they enabled. Nothing is said about a
 /// project that privacy mode hides.
-async fn announce(app: &AppHandle, project_id: &str, text: &str) -> Result<(), String> {
+pub(crate) async fn announce(app: &AppHandle, project_id: &str, text: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     require_visible_project(&state.store, project_id).await?;
     crate::research_assistant::ensure(&state.store, &state.app_data).await?;
@@ -167,10 +167,15 @@ pub(crate) async fn visible_mandates(store: &Store) -> Result<Vec<MandateOvervie
                 .await
                 .map_err(err)?
                 .filter(|request| request.status == "open");
+            let reports = store
+                .mandate_reports(&mandate.id, crate::mandate_report::CARD_REPORTS)
+                .await
+                .map_err(err)?;
             all.push(MandateOverview {
                 mandate,
                 last_round,
                 request,
+                reports,
             });
         }
     }

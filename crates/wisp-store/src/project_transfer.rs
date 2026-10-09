@@ -928,6 +928,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM schedules WHERE project_id=?",
         "DELETE FROM mandate_rounds WHERE mandate_id IN (SELECT id FROM mandates WHERE project_id=?)",
         "DELETE FROM mandate_requests WHERE mandate_id IN (SELECT id FROM mandates WHERE project_id=?)",
+        "DELETE FROM mandate_reports WHERE mandate_id IN (SELECT id FROM mandates WHERE project_id=?)",
         "DELETE FROM mandates WHERE project_id=?",
         "DELETE FROM project_plugins WHERE project_id=?",
         "DELETE FROM context_storage_prefs WHERE project_id=?",

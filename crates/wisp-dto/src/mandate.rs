@@ -157,6 +157,25 @@ pub struct MandateRequest {
     pub answered_at: Option<i64>,
 }
 
+/// A progress report on one period of a mandate.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MandateReport {
+    pub id: String,
+    pub mandate_id: String,
+    pub period_from: i64,
+    pub period_until: i64,
+    /// Rounds the period had. Zero means a quiet period, reported without a model.
+    pub rounds: usize,
+    /// KPI definitions and values as they stood when the report was written.
+    pub kpis: Vec<MandateKpi>,
+    /// The sections, in a daily recap's shape: `done`, `findings` (progress
+    /// against the KPIs), `issues` (blockers) and `next`, each item citing
+    /// `sources`. `model` is empty when it was assembled from the ledger.
+    pub body: crate::ResearchRecap,
+    pub created_at: i64,
+}
+
 /// A mandate with what its card shows beside it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -165,6 +184,8 @@ pub struct MandateOverview {
     pub last_round: Option<MandateRound>,
     /// The request the mandate is waiting on, if any.
     pub request: Option<MandateRequest>,
+    /// The latest reports, newest first.
+    pub reports: Vec<MandateReport>,
 }
 
 #[cfg(test)]

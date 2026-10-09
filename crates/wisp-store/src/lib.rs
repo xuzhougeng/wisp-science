@@ -78,7 +78,8 @@ pub use library::{
     NewLibraryItem,
 };
 pub use mandates::{
-    MandateRecord, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS, MANDATE_STATUSES,
+    MandateRecord, MandateReport, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS,
+    MANDATE_STATUSES,
 };
 pub use method_search::{
     MethodCandidate, MethodCandidateBlob, MethodCandidateStatus, MethodSearchRunState,

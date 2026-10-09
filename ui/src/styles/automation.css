@@ -80,3 +80,11 @@
 .mandate-request b { font-weight: 600; margin-right: 8px; }
 .mandate-reply { display: flex; gap: 8px; align-items: flex-end; margin-top: 6px; }
 .mandate-reply textarea { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 6px 8px; resize: vertical; }
+.mandate-reports { margin-top: 4px; }
+.mandate-reports summary { cursor: pointer; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.mandate-report { display: grid; gap: 4px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-xs); }
+.mandate-report > small { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mandate-report-section b { font-weight: 600; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
+.mandate-report-section ul { margin: 2px 0 0; padding-left: 18px; }
+.mandate-report-section li { overflow-wrap: anywhere; }
+.mandate-cite { margin-left: 8px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }

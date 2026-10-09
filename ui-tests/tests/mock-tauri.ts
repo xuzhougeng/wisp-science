@@ -2023,7 +2023,27 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "run_schedule_now": (window as any).__ranSchedule = arg("id"); return null;
           case "delete_schedule": automation.schedules = automation.schedules.filter((s: any) => s.id !== arg("id")); return null;
-          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined, request: undefined}, last_round: m.rounds?.at(-1) ?? null, request: m.request ?? null})));
+          case "list_all_mandates": return automation.mandates.map((m: any) => JSON.parse(JSON.stringify({mandate: {...m, rounds: undefined, request: undefined, reports: undefined}, last_round: m.rounds?.at(-1) ?? null, request: m.request ?? null, reports: m.reports ?? []})));
+          case "report_mandate_now": {
+            // Stands in for mandate_report::report: a quiet period needs no model.
+            const m = automation.mandates.find((m: any) => m.id === arg("id")), now = Math.floor(Date.now() / 1000);
+            if (!m) throw new Error("The mandate no longer exists.");
+            const from = m.reports?.[0]?.period_until ?? m.created_at - 7 * 86400;
+            const rounds = (m.rounds ?? []).filter((r: any) => !m.reports?.length || r.created_at >= from);
+            const cite = (text: string, index: number) => ({text, refs: [index]});
+            const body = rounds.length
+              ? {headline: (window as any).__mandateReportModel === false ? `${rounds.length} round(s) this period` : "Three papers filed, two short of target",
+                 done: rounds.map((r: any, i: number) => cite(r.done, i)), findings: [],
+                 issues: rounds.filter((r: any) => r.blockers).map((r: any, i: number) => cite(r.blockers, i)),
+                 next: rounds.at(-1).next_step ? [cite(rounds.at(-1).next_step, rounds.length - 1)] : [],
+                 sources: rounds.map((r: any) => ({kind: "round", id: r.id, title: `Round ${r.seq}`})),
+                 model: (window as any).__mandateReportModel === false ? "" : "recap-model"}
+              : {headline: "No rounds this period", done: [], findings: [], issues: [], next: [], sources: [], model: ""};
+            const report = {id: `report-${(m.reports?.length ?? 0) + 1}`, mandate_id: m.id, period_from: from, period_until: now, rounds: rounds.length,
+              kpis: m.kpis, body: {id: "", day_start: from, status: "report", generated_at: now, ...body}, created_at: now};
+            m.reports = [report, ...(m.reports ?? [])];
+            return JSON.parse(JSON.stringify(report));
+          }
           case "create_mandate": {
             const draft = plain(arg("draft")), now = Math.floor(Date.now() / 1000);
             (window as any).__mandateDraft = draft;
@@ -2068,7 +2088,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             (window as any).__mandateReply = {id: m.id, text: arg("text")};
             m.request = null;
             if (m.status === "waiting") m.status = "active";
-            return JSON.parse(JSON.stringify({...m, rounds: undefined, request: undefined}));
+            return JSON.parse(JSON.stringify({...m, rounds: undefined, request: undefined, reports: undefined}));
           }
           case "delete_mandate": automation.mandates = automation.mandates.filter((m: any) => m.id !== arg("id")); return null;
           case "generate_research_recap": {

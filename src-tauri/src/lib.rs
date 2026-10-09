@@ -85,6 +85,7 @@ mod model_catalog;
 // The runtime only uses lookup()/types; build.rs uses distill() instead.
 #[cfg(test)]
 mod dto_contract_tests;
+mod mandate_report;
 mod mandates;
 #[allow(dead_code)]
 mod model_catalog_shared;
@@ -7530,6 +7531,7 @@ pub fn run() {
             mandates::delete_mandate,
             mandates::run_mandate_now,
             mandates::reply_to_mandate,
+            mandate_report::report_mandate_now,
             research_recap::get_daily_recap_automation,
             research_recap::set_daily_recap_automation,
             research_recap::run_daily_recap_now,
