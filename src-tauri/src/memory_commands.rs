@@ -48,6 +48,10 @@ pub(super) struct TurnMemoryProposal {
     failed_tool_calls: usize,
     failure_rate: f64,
     global_memories: Vec<wisp_store::GlobalMemory>,
+    /// The name of the research mandate this conversation carries. When
+    /// present, the draft can also be saved as an instruction for it.
+    #[serde(default)]
+    mandate: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -156,8 +160,9 @@ async fn generate_turn_memory_candidate(
     frame_id: &str,
     snapshot: &turn_memory::TurnSnapshot,
     trigger: turn_memory::ProposalTrigger,
+    mandate: bool,
 ) -> Result<turn_memory::ParsedCandidate, String> {
-    let (system_prompt, user_prompt) = turn_memory::candidate_prompts(trigger, snapshot);
+    let (system_prompt, user_prompt) = turn_memory::candidate_prompts(trigger, snapshot, mandate);
     let completion = turn_hooks::side_complete(
         state,
         frame_id,
@@ -168,7 +173,21 @@ async fn generate_turn_memory_candidate(
         None,
     )
     .await?;
-    turn_memory::parse_candidate(&completion.text)
+    turn_memory::parse_candidate(&completion.text, mandate)
+}
+
+/// The live mandate whose conversation `frame_id` is, if any.
+async fn frame_mandate(
+    store: &Store,
+    project_id: &str,
+    frame_id: &str,
+) -> Option<wisp_store::MandateRecord> {
+    store
+        .mandate_for_frame(project_id, frame_id)
+        .await
+        .ok()
+        .flatten()
+        .filter(|mandate| mandate.status != "done")
 }
 
 fn bounded_confirmed_memory(content: &str) -> Result<String, String> {
@@ -459,11 +478,18 @@ async fn propose_memory(
         .ok_or_else(|| "Session project was not found.".to_string())?;
     let _project_activity = state.begin_project_activity(&project_id)?;
     let snapshot = memory_turn_snapshot(&state.store, frame_id, turn_index, running).await?;
+    let mandate = frame_mandate(&state.store, &project_id, frame_id).await;
     let trigger = if automatic {
         let settings = load_auto_failure_analysis_settings(&state.store).await;
+        // A round Wisp started is not the researcher speaking.
+        let human = !wisp_app::mandates::is_round_prompt(&snapshot.user_text);
         if settings.should_analyze(&snapshot) {
             turn_memory::ProposalTrigger::ToolFailures
-        } else if turn_memory::explicit_memory_intent(&snapshot.user_text) {
+        } else if human
+            && (turn_memory::explicit_memory_intent(&snapshot.user_text)
+                || (mandate.is_some()
+                    && turn_memory::standing_instruction_intent(&snapshot.user_text)))
+        {
             turn_memory::ProposalTrigger::Explicit
         } else {
             return Ok(None);
@@ -471,7 +497,9 @@ async fn propose_memory(
     } else {
         turn_memory::ProposalTrigger::Manual
     };
-    let candidate = generate_turn_memory_candidate(state, frame_id, &snapshot, trigger).await?;
+    let candidate =
+        generate_turn_memory_candidate(state, frame_id, &snapshot, trigger, mandate.is_some())
+            .await?;
     let trigger = match trigger {
         turn_memory::ProposalTrigger::Manual => "manual",
         turn_memory::ProposalTrigger::Explicit => "explicit",
@@ -494,6 +522,7 @@ async fn propose_memory(
         failed_tool_calls: snapshot.failed_tool_calls,
         failure_rate,
         global_memories,
+        mandate: mandate.map(|mandate| mandate.name),
     }))
 }
 
@@ -518,6 +547,25 @@ pub(super) async fn confirm_turn_memory(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Session project was not found.".to_string())?;
     let _project_activity = state.begin_project_activity(&project_id)?;
+    if scope.eq_ignore_ascii_case("mandate") {
+        // Feedback about how the mandate should be carried out becomes one of
+        // its standing instructions, which every later brief repeats.
+        let mut mandate = frame_mandate(&state.store, &project_id, frame_id)
+            .await
+            .ok_or_else(|| "This conversation no longer carries an open mandate.".to_string())?;
+        if wisp_app::mandates::add_note(&mut mandate, &content)? {
+            mandate.updated_at = chrono::Utc::now().timestamp();
+            state
+                .store
+                .update_mandate(&mandate)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        return Ok(ConfirmedMemory {
+            id: Some(mandate.id),
+            scope: "mandate".into(),
+        });
+    }
     if scope.eq_ignore_ascii_case("global") {
         let now = chrono::Utc::now().timestamp();
         if let Some(replace_id) = replace_id

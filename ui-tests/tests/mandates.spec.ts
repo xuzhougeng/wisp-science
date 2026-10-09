@@ -260,3 +260,56 @@ test("reports are written on demand, kept on the card, and cite the rounds they 
   await reports.locator("summary").click();
   await expect(reports.getByTestId("mandate-report").first()).toContainText("from the ledger");
 });
+
+test("standing instructions are edited in the form and shown on the card", async ({ page }) => {
+  const automation = await open(page);
+  await automation.locator(".mandate-template").filter({ hasText: "Literature watch" }).click();
+  const form = automation.getByTestId("mandate-form");
+  await expect(form.getByTestId("mandate-notes")).toHaveValue("");
+  await form.getByTestId("mandate-save").click();
+  const card = automation.locator(".mandate-card");
+  await expect(card.getByTestId("mandate-notes-list")).toHaveCount(0);
+
+  await card.getByRole("button", { name: "Edit Literature watch", exact: true }).click();
+  await form.getByTestId("mandate-notes").fill("Lead each report with methods papers\n\n   Report in Chinese  \n");
+  await form.getByTestId("mandate-save").click();
+  await expect(form).toHaveCount(0);
+  // Blank lines are not instructions.
+  expect(await page.evaluate(() => (window as any).__mandateDraft.constraints.notes)).toEqual([
+    "Lead each report with methods papers",
+    "Report in Chinese",
+  ]);
+  await expect(card.getByTestId("mandate-notes-list").locator("li")).toHaveText([
+    "Lead each report with methods papers",
+    "Report in Chinese",
+  ]);
+  // Reopening the form shows them one per line, ready to edit or remove.
+  await card.getByRole("button", { name: "Edit Literature watch", exact: true }).click();
+  await expect(form.getByTestId("mandate-notes")).toHaveValue("Lead each report with methods papers\nReport in Chinese");
+});
+
+test("closing a mandate withdraws its request and stops its actions; the switch reopens it", async ({ page }) => {
+  const automation = await open(page);
+  await automation.locator(".mandate-template").filter({ hasText: "Submission follow-up" }).click();
+  await automation.getByTestId("mandate-save").click();
+  const card = automation.locator(".mandate-card");
+  await page.evaluate(() => { (window as any).__mandateAsk = {kind: "judgement", what: "The paper is accepted. Close this mandate?"}; });
+  await card.getByRole("button", { name: /Run a round now/ }).click();
+  await expect(card).toHaveAttribute("data-status", "waiting");
+  await expect(card.getByTestId("mandate-request")).toContainText("Close this mandate?");
+
+  const close = card.getByRole("button", { name: "Close mandate Submission follow-up", exact: true });
+  await close.click();
+  await expect(card).toHaveAttribute("data-status", "done");
+  await expect(card.locator(".mandate-status")).toHaveText("Closed");
+  await expect(card.getByTestId("mandate-request")).toHaveCount(0);
+  await expect(automation.locator(".automation-notice")).toContainText("A final report is being written");
+  await expect(close).toBeDisabled();
+  await expect(card.getByRole("button", { name: /Run a round now/ })).toBeDisabled();
+  await expect(card.getByRole("button", { name: /Write a report now/ })).toBeDisabled();
+  await expect(card.getByRole("switch")).not.toBeChecked();
+
+  await card.getByRole("switch").check();
+  await expect(card).toHaveAttribute("data-status", "active");
+  await expect(close).toBeEnabled();
+});
