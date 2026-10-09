@@ -57,7 +57,8 @@ docker pull ghcr.io/xuzhougeng/wisp-relay:latest
 ```
 
 `latest` is the newest release, `:<version>` (for example `:1.19.0`) pins one,
-and `:main` follows the main branch between releases.
+and `:main` follows the main branch between releases. A pull that fails with
+`latest: not found` means no release has published the image yet; use `:main`.
 
 To build it yourself instead, from a checkout:
 

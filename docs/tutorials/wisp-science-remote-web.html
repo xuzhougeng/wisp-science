@@ -127,7 +127,7 @@ volumes:
 docker compose up -d
 </code></pre>
 <p><code>.env</code> 里的令牌稍后要填进桌面端，请像密码一样保管。只有持有令牌的电脑才能登记到这台中继，陌生人无法把它当作免费的隧道。</p>
-<p>镜像同时支持 x86 和 ARM 服务器。<code>latest</code> 对应最新正式版；如果桌面端是从开发分支构建的，把镜像标签换成 <code>:main</code>。服务器上已经有 nginx 等反向代理，或者想自己构建镜像时，参见文末的参考文档。</p>
+<p>镜像同时支持 x86 和 ARM 服务器。<code>latest</code> 对应最新正式版；如果桌面端是从开发分支构建的，或者拉取时提示 <code>latest: not found</code>（该标签要等下一个正式版发布后才会出现），把镜像标签换成 <code>:main</code>。服务器上已经有 nginx 等反向代理，或者想自己构建镜像时，参见文末的参考文档。</p>
 <p><strong>第二步：在桌面端开启远程访问。</strong></p>
 <p>打开 <strong>设置 → 远程接入 → 网页远程访问</strong>，填写中继服务器地址（<code>https://你的域名</code>）和刚才的访问令牌，勾选 <strong>启用网页远程访问</strong>。</p>
 <p><img src="../assets/tutorials/remote-web/01-settings.png" alt="网页远程访问设置：中继服务器地址、访问令牌、联机码和可复制的链接" loading="lazy" width="1440" height="1000" /></p>
@@ -327,7 +327,7 @@ volumes:
 docker compose up -d
 </code></pre>
 <p>The token in <code>.env</code> goes into the desktop app next; treat it like a password. Only a computer that holds the token can register with this relay, so strangers cannot use it as a free tunnel.</p>
-<p>The image runs on both x86 and ARM servers. <code>latest</code> is the newest release; if your desktop app was built from the development branch, change the image tag to <code>:main</code>. If the server already runs a reverse proxy such as nginx, or you want to build the image yourself, see the reference linked at the end.</p>
+<p>The image runs on both x86 and ARM servers. <code>latest</code> is the newest release; if your desktop app was built from the development branch, or the pull fails with <code>latest: not found</code> (the tag appears with the next release), change the image tag to <code>:main</code>. If the server already runs a reverse proxy such as nginx, or you want to build the image yourself, see the reference linked at the end.</p>
 <p><strong>Step 2: turn on remote access in the desktop app.</strong></p>
 <p>Open <strong>Settings → Remote Access → Remote web access</strong>, enter the relay server URL (<code>https://your-domain</code>) and the access token from the previous step, then check <strong>Enable remote web access</strong>.</p>
 <p><img src="../assets/tutorials/en/remote-web/01-settings.png" alt="Remote web access settings with the relay server URL, access token, connection code and a link to copy" loading="lazy" width="1440" height="1000" /></p>

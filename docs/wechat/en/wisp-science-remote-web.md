@@ -60,7 +60,7 @@ docker compose up -d
 
 The token in `.env` goes into the desktop app next; treat it like a password. Only a computer that holds the token can register with this relay, so strangers cannot use it as a free tunnel.
 
-The image runs on both x86 and ARM servers. `latest` is the newest release; if your desktop app was built from the development branch, change the image tag to `:main`. If the server already runs a reverse proxy such as nginx, or you want to build the image yourself, see the reference linked at the end.
+The image runs on both x86 and ARM servers. `latest` is the newest release; if your desktop app was built from the development branch, or the pull fails with `latest: not found` (the tag appears with the next release), change the image tag to `:main`. If the server already runs a reverse proxy such as nginx, or you want to build the image yourself, see the reference linked at the end.
 
 **Step 2: turn on remote access in the desktop app.**
 
