@@ -165,6 +165,20 @@ impl Registry {
         self.tools.push(tool);
     }
 
+    /// Refresh host-bound state on a cached agent without duplicating schemas
+    /// or leaving execution attached to the previous turn's tool instance.
+    pub fn replace(&mut self, tool: Box<dyn Tool>) {
+        if let Some(existing) = self
+            .tools
+            .iter_mut()
+            .find(|entry| entry.name() == tool.name())
+        {
+            *existing = tool;
+        } else {
+            self.add(tool);
+        }
+    }
+
     /// Keep only tools named by a host-resolved capability grant.
     pub fn filtered(mut self, allowed: &[String]) -> Self {
         self.tools
@@ -826,6 +840,31 @@ mod approval_tests {
         assert!(!result.success);
         assert_eq!(result.control, ToolControl::StopBatch);
         assert!(!RAN.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn replacing_a_tool_uses_current_host_state_without_duplicate_schemas() {
+        static OLD: AtomicBool = AtomicBool::new(false);
+        static CURRENT: AtomicBool = AtomicBool::new(false);
+        let mut registry = Registry { tools: vec![] };
+        registry.add(Box::new(SpyTool(&OLD)));
+        registry.replace(Box::new(SpyTool(&CURRENT)));
+        let env = PolicyEnv {
+            root: PathBuf::from("."),
+            mode: Approval::Allow,
+            confirm_ok: true,
+            bypass: false,
+            force_ask: false,
+        };
+        assert!(
+            registry
+                .run("spy", &serde_json::json!({}), &env)
+                .await
+                .success
+        );
+        assert!(CURRENT.load(Ordering::SeqCst));
+        assert!(!OLD.load(Ordering::SeqCst));
+        assert_eq!(registry.schemas().len(), 1);
     }
 
     #[tokio::test]

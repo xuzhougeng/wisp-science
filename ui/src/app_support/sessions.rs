@@ -194,6 +194,7 @@ pub(crate) fn refresh_explorations(explorations: RwSignal<Vec<ExplorationSummary
 /// same folder; otherwise it stays top-level, so nothing silently disappears
 /// when the source is on an older page or was dragged elsewhere. Branches of
 /// branches flatten onto the topmost visible source: one level of indent only.
+/// Subagents follow their owner even when legacy folder metadata differs.
 pub(crate) fn nest_branch_sessions(
     list: &[SessionInfo],
 ) -> (Vec<SessionInfo>, HashMap<String, Vec<SessionInfo>>) {
@@ -211,8 +212,10 @@ pub(crate) fn nest_branch_sessions(
             else {
                 break;
             };
-            if src.folder_id != cur.folder_id {
-                return None;
+            if cur.dispatched_from.is_none() && src.folder_id != cur.folder_id {
+                // This ancestor is a separate top-level row in its folder;
+                // keep any children already attached to it, including subagents.
+                break;
             }
             cur = src;
             hops += 1;

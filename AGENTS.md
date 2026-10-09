@@ -35,27 +35,30 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - Do not refactor or split modules solely because a file is long. Require a concrete reason tied to the active change, such as mixed responsibilities causing repeated edits, a needed dependency or test boundary, or a measured maintenance problem, and stop once that problem is solved. Large composition/root modules are acceptable; do not pursue arbitrary line-count targets or speculative abstractions.
 - Every dismissible overlay, dialog, menu, and popover must participate in a window-level Escape stack ordered from the visually topmost surface down. Root-owned state belongs in the app stack; component-local state may use a scoped window listener that is removed on cleanup. Do not rely on a DOM `keydown` handler receiving a bubbled event or on `autofocus`. A local handler is only appropriate when an inner state must consume Escape before its parent; it must prevent propagation. Tests must press Escape immediately after opening, without first moving focus inside, and verify that one press closes only the topmost layer while its parent remains open.
 - UI icons come from one shared set: `compose_icon()` in `ui/src/app_support/messages.rs` (Lucide-style 24×24 stroke SVGs, `stroke="currentColor"`). Never introduce icon fonts, emoji/unicode glyphs, or per-component CSS mask icons (the removed `.gi` system); add a new `compose_icon` kind instead. Give each action a distinct, semantically matching icon — do not reuse the same icon for two different entries in one menu. Size icons via a component-scoped `svg` CSS selector, not by adding wrapper classes to the shared set.
-- Add or update tests with every behavior change.
+- Do not run local tests without the user's explicit permission. This includes unit, integration, end-to-end, smoke, and evaluation tests, plus scripts or development servers started to execute them. A request to implement, fix, commit, or push changes is not permission to run tests. Once authorized, stay within the approved scope; do not automatically expand to the full suite.
+- Add or update test code with every behavior change. Writing tests does not authorize running them.
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing a release (see Cutting a release).
 - If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
 ## Verification Commands
 
-Run the narrowest relevant checks first, then the full suite before declaring done:
+The commands below are references, not authorization to run local tests. Ask for explicit permission before executing tests unless the user has already authorized them in the current task. After approval, start with the narrowest relevant tests and run broader suites only within the approved scope. If permission has not been granted, continue implementation and source/diff review, and report that tests were not run.
+
+Workspace formatting and test commands:
 
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace
 ```
 
-For UI or Tauri command changes, also run:
+For UI or Tauri command changes, relevant checks and tests (subject to the permission rule above):
 
 ```bash
 cd ui && cargo check --target wasm32-unknown-unknown
 cd ../ui-tests && npm ci && npx playwright test
 ```
 
-For MCP-related changes, also run:
+For MCP-related changes, the smoke test (subject to the same permission rule):
 
 ```bash
 cargo run -p wisp-mcp --example smoke

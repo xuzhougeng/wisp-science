@@ -39,7 +39,7 @@ pub(crate) struct SessionTransfer {
 
 #[derive(Clone)]
 pub(crate) enum UiConfirm {
-    EnableFullPermission,
+    EnableFullPermission(Option<String>),
     DeleteFolder(String),
     DeleteSessions(Vec<String>),
     AbandonExploration(String),

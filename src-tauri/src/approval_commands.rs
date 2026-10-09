@@ -591,6 +591,36 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn subagent_full_permission_releases_only_its_waiting_operation_and_is_revocable() {
+        let sessions = std::sync::RwLock::new(std::collections::HashSet::new());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut child = pending("child-approval");
+        child.request.frame_id = "child".into();
+        child.tx = tx;
+        let mut entries = HashMap::from([
+            ("child".into(), child),
+            ("parent".into(), pending("parent-approval")),
+            ("sibling".into(), pending("sibling-approval")),
+        ]);
+        let taken = update_session_full_permission(&mut entries, &sessions, "child", true)
+            .unwrap()
+            .unwrap();
+        taken
+            .tx
+            .send(wisp_tools::ConfirmDecision::Approved)
+            .unwrap();
+        assert!(rx.await.unwrap().approved());
+        assert_eq!(
+            *sessions.read().unwrap(),
+            std::collections::HashSet::from(["child".to_string()])
+        );
+        assert!(entries.contains_key("parent") && entries.contains_key("sibling"));
+        update_session_full_permission(&mut entries, &sessions, "child", false).unwrap();
+        assert!(sessions.read().unwrap().is_empty());
+        assert_eq!(entries.len(), 2);
+    }
+
     #[test]
     fn remote_approval_selector_is_case_insensitive_and_requires_safe_prefix() {
         let requests = HashMap::from([(

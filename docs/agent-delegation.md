@@ -421,23 +421,63 @@ in the sidebar under the conversation that started it (marked with a robot icon)
 watch-only for the researcher: opening it shows the live transcript, but the
 composer is locked and the backend refuses any message, queued follow-up,
 cut-in, timer, rewind or undo that does not come from the parent conversation.
-Tool approvals still appear in the subagent's own transcript.
+Subagents inherit their parent's folder, and moving the parent moves its
+persisted subagent/branch subtree, including conversations outside the loaded
+sidebar page. Older subagents with mismatched folder metadata still nest under
+their visible parent.
+
+Each initial dispatch and follow-up also synchronizes the parent's selected
+execution contexts and resolved default compute target to the child. A server
+selected in the parent, such as `ssh:CPU3`, is therefore available for explicit
+`run_in_context`, Python and R calls in the child. Parent context removals take
+effect on the next dispatch; unrelated child selections and the global default
+captured when the child was created are replaced. This copies context selection,
+not credentials or Full Permission. A follow-up refreshes an existing child's
+runtime wiring, so the parent can resolve missing context without asking the
+researcher to configure the watched child manually.
+
+The parent's model reviews subagent tool approvals against the originating
+user request and exact operation. Routine operations within that authorization
+can be approved once automatically. Missing details, ambiguous effects or an
+unavailable reviewer produce a confirmation card in the parent conversation;
+the original card remains actionable in the child. Decisions are bound to the
+exact approval ID, and resolving either card clears its counterpart.
+
+The child stays watch-only for messages, but its **Full Permission** control
+above the composer and in **Agent options** remains available. Enabling it
+requires the usual confirmation and applies only to that child until revoked
+or the app restarts; it also releases an already waiting ordinary approval.
+The confirmation keeps its target conversation if the user navigates while
+it is open. The parent's Full Permission does not grant it to the child.
 
 The parent conversation gets three tools:
 
 - `dispatch_subagent` starts a subagent with a self-contained instruction, or
   sends a follow-up to an idle one it started (`session_id`). It returns once the
-  subagent accepts the instruction.
+  subagent accepts the instruction, after synchronizing execution contexts.
 - `subagent_status` reports whether a subagent is running and its latest
   answer; without `session_id` it lists this conversation's subagents.
 - `stop_subagent` cancels a subagent's running turn.
 
 When a dispatched turn ends, including when it ends with a question, a
 background callback reviews the result with the parent's model and appends a
-separate summary to the parent conversation; no polling is needed. The parent
-is not resumed automatically. A subagent has no `ask_user` and cannot start
-subagents; exploration conversations cannot start them either. A subagent
-dispatched from a WeChat-originated turn keeps that turn's approval floor for
+separate summary to the parent conversation; no polling is needed. After a
+normal child turn, the parent automatically continues under its conversation
+lock to handle the child's questions, missing resources and follow-up work.
+The parent uses available context and existing user authorization first, and
+asks the researcher in the parent conversation only when new information or
+authority is required. The continuation keeps the original user request
+separate from the child's result; it does not create a synthetic human message
+or treat the child's proposed actions as permission. It retains the original
+remote-message approval policy.
+
+Cancelled, failed or iteration-limited turns produce a report without an
+automatic restart. A cancelled parent, a deleted conversation, changed ownership,
+or a child that has already started newer work does not act on a delayed request. An
+archived parent keeps the report without resuming; automatic continuation also
+requires that the parent still uses the built-in Agent. A subagent has no
+`ask_user` and cannot start subagents; exploration conversations cannot start
+them either. A subagent dispatched from a WeChat-originated turn keeps that turn's approval floor for
 mutating tools. The parent link is stored on the conversation
 (`frames.dispatched_from`) and survives restart; a turn that was running at
 shutdown is not resumed.
@@ -446,6 +486,16 @@ Subagents share their mechanism with the research assistant's
 `dispatch_to_project`: both implement `Dispatcher` in
 `src-tauri/src/dispatch.rs`, which owns the startup acknowledgement, turn
 observation and result delivery.
+
+Manual smoke steps (run only with user permission): select `ssh:CPU3` in a
+parent conversation and dispatch a child that uses that context explicitly.
+Verify the child inherits the selection. Have it return a missing-information
+request and verify the parent answers and sends the follow-up without a human
+message in the child. Remove or change the parent's context and verify the
+next follow-up picks up the change. Cancel a child or start a newer child turn
+while an earlier result is being reviewed; the older report must not restart
+the task. These steps require an already configured host; automated regressions
+use a temporary store and a fake tool, with no SSH connection or real model.
 
 ## Persistence and safety
 

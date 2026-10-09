@@ -2993,7 +2993,7 @@ fn native_tool_allowlist(request: &AgentDelegationRequest) -> Vec<String> {
     allowed
 }
 
-async fn sync_child_execution_contexts(
+pub(crate) async fn sync_child_execution_contexts(
     store: &Store,
     parent_frame_id: Option<&str>,
     child_frame_id: &str,
