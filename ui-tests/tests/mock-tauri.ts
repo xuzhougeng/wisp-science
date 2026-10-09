@@ -2912,6 +2912,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "create_folder":
           case "rename_folder":
+          case "reorder_folders":
           case "delete_folder":
           case "move_session":
             return null;
@@ -6770,6 +6771,11 @@ export function parallelMock(): void {
           case "rename_folder": {
             const folder = folders.find((entry) => entry.id === arg("id"));
             if (folder) folder.name = String(arg("name") ?? folder.name);
+            return null;
+          }
+          case "reorder_folders": {
+            const ids = (arg("ids") ?? []) as string[];
+            folders.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
             return null;
           }
           case "delete_folder": {

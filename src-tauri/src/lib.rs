@@ -7629,6 +7629,7 @@ pub fn run() {
             session_commands::list_folders,
             session_commands::create_folder,
             session_commands::rename_folder,
+            session_commands::reorder_folders,
             session_commands::delete_folder,
             session_commands::move_session,
             session_commands::list_recent_sessions,

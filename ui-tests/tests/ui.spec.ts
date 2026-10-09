@@ -4041,7 +4041,15 @@ test("conversations can be selected and moved or deleted together", async ({ pag
   await expect(second).toHaveAttribute("aria-pressed", "true");
   await expect(sidebar.getByText("2 selected", { exact: true })).toBeVisible();
 
-  await sidebar.getByTestId("bulk-move-sessions").selectOption("folder-1");
+  // The move menu is the topmost layer: Escape closes it and leaves selecting on.
+  const moveMenu = sidebar.getByTestId("bulk-move-menu");
+  await sidebar.getByTestId("bulk-move-sessions").click();
+  await expect(moveMenu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(moveMenu).toHaveCount(0);
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  await sidebar.getByTestId("bulk-move-sessions").click();
+  await moveMenu.locator('[data-folder-id="folder-1"]').click();
   await expect.poll(() => page.evaluate(({ firstId, secondId }) => {
     const calls = ((window as any).__sendInvokeLog ?? [])
       .filter((call: any) => call.cmd === "move_session")
@@ -4081,6 +4089,68 @@ test("conversations can be selected and moved or deleted together", async ({ pag
       .map((args: any) => args.id);
     return [firstId, secondId].every((id) => ids.includes(id));
   }, { firstId, secondId })).toBe(true);
+});
+
+test("groups reorder by dragging and tick all their conversations at once", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+
+  const folderInput = page.locator("#folder-modal-input");
+  for (const name of ["Alpha", "Beta", "Gamma"]) {
+    await page.getByRole("button", { name: "New group" }).click();
+    await folderInput.fill(name);
+    await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
+    await expect(page.locator(".side-folder", { hasText: name })).toBeVisible();
+  }
+  const sidebar = page.locator(".sidebar");
+  const order = () => sidebar.locator(".side-folder").evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("data-folder-name")));
+  const group = (name: string) => sidebar.locator(`.side-folder[data-folder-name="${name}"]`);
+  const lastReorder = () => page.evaluate(() => {
+    const call = ((window as any).__sendInvokeLog ?? []).filter((entry: any) => entry.cmd === "reorder_folders").at(-1);
+    return call ? (call.args instanceof Map ? Object.fromEntries(call.args) : call.args).ids : null;
+  });
+  expect(await order()).toEqual(["Alpha", "Beta", "Gamma"]);
+
+  // Dragged down, a group lands after the one it is dropped on; dragged up, before it.
+  await group("Alpha").dragTo(group("Gamma"));
+  await expect.poll(order).toEqual(["Beta", "Gamma", "Alpha"]);
+  expect(await lastReorder()).toEqual(["folder-2", "folder-3", "folder-1"]);
+  await group("Alpha").dragTo(group("Beta"));
+  await expect.poll(order).toEqual(["Alpha", "Beta", "Gamma"]);
+  expect(await lastReorder()).toEqual(["folder-1", "folder-2", "folder-3"]);
+  // A group is not a conversation: dropping one never moves a session.
+  expect(await page.evaluate(() =>
+    ((window as any).__sendInvokeLog ?? []).some((entry: any) => entry.cmd === "move_session"))).toBe(false);
+
+  const titles = ["group-tick-one", "group-tick-two"];
+  for (const title of titles) {
+    await newSessionButton(page).click();
+    await composer(page).fill(title);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(sidebar.locator(".side-item.ses", { hasText: title })).toBeVisible({ timeout: 10_000 });
+  }
+  await sidebar.getByRole("button", { name: "Select", exact: true }).click();
+  for (const title of titles) await sidebar.locator(".side-item.ses", { hasText: title }).click();
+  await sidebar.getByTestId("bulk-move-sessions").click();
+  await sidebar.getByTestId("bulk-move-menu").locator('[data-folder-id="folder-2"]').click();
+  await expect(group("Beta")).toContainText("2");
+
+  // While selecting, the group's tick box covers its conversations and groups stay put.
+  await sidebar.getByRole("button", { name: "Select", exact: true }).click();
+  await expect(group("Beta")).toHaveAttribute("draggable", "false");
+  const tick = group("Beta").getByRole("checkbox");
+  await expect(tick).toHaveAttribute("aria-checked", "false");
+  await tick.click();
+  await expect(tick).toHaveAttribute("aria-checked", "true");
+  await expect(sidebar.getByText("2 selected", { exact: true })).toBeVisible();
+  await sidebar.locator(".side-item.ses", { hasText: titles[0] }).click();
+  await expect(tick).toHaveAttribute("aria-checked", "mixed");
+  await tick.click();
+  await tick.click();
+  await expect(tick).toHaveAttribute("aria-checked", "false");
+  await expect(sidebar.getByTestId("bulk-delete-sessions")).toBeDisabled();
 });
 
 test("group action button visibly renames and deletes groups", async ({ page }) => {

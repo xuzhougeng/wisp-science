@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS folders (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_folders_project ON folders(project_id);
 

@@ -4501,6 +4501,24 @@ async fn folder_crud_and_move() {
     let folders = store.list_folders("p").await.unwrap();
     assert_eq!(folders[0].1, "Analysis");
 
+    // Reordering sticks, ignores other projects' ids, and new folders append.
+    store.create_folder("d2", "p", "Figures").await.unwrap();
+    let order =
+        |folders: Vec<(String, String, i64)>| folders.into_iter().map(|f| f.0).collect::<Vec<_>>();
+    assert_eq!(order(store.list_folders("p").await.unwrap()), ["d1", "d2"]);
+    store
+        .reorder_folders("p", &["d2".into(), "missing".into(), "d1".into()])
+        .await
+        .unwrap();
+    assert_eq!(order(store.list_folders("p").await.unwrap()), ["d2", "d1"]);
+    store.create_folder("d3", "p", "Tables").await.unwrap();
+    assert_eq!(
+        order(store.list_folders("p").await.unwrap()),
+        ["d2", "d1", "d3"]
+    );
+    store.delete_folder("d2", "p").await.unwrap();
+    store.delete_folder("d3", "p").await.unwrap();
+
     store.delete_folder("d1", "p").await.unwrap();
     assert!(store.list_folders("p").await.unwrap().is_empty());
     let sessions = store.list_sessions("p").await.unwrap();

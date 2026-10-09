@@ -675,6 +675,22 @@ pub(super) async fn rename_folder(
 }
 
 #[tauri::command]
+pub(super) async fn reorder_folders(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let ap = state.require_active(window.label())?;
+    let _project_activity = state.begin_project_activity(&ap.id)?;
+    state
+        .store
+        .reorder_folders(&ap.id, &ids)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(super) async fn delete_folder(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,

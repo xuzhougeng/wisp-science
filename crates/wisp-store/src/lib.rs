@@ -909,13 +909,20 @@ impl Store {
              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, \
              name TEXT NOT NULL, \
              created_at INTEGER NOT NULL, \
-             updated_at INTEGER NOT NULL)",
+             updated_at INTEGER NOT NULL, \
+             position INTEGER NOT NULL DEFAULT 0)",
         )
         .execute(pool)
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS ix_folders_project ON folders(project_id)")
             .execute(pool)
             .await?;
+        Self::add_columns_if_missing(
+            pool,
+            "folders",
+            &[("position", "INTEGER NOT NULL DEFAULT 0")],
+        )
+        .await?;
 
         Self::add_columns_if_missing(
             pool,
