@@ -55,7 +55,7 @@ impl Tool for EditTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "edit",
-            "Edit a text file up to 10 MiB by replacing an exact string. Read the file immediately before editing so `old` matches its current contents. The result must remain within 10 MiB, and `old` must be unique unless `all` is true.",
+            "Edit a text file up to 10 MiB by replacing an exact string. Read the file immediately before editing so `old` matches its current contents. The result must remain within 10 MiB, and `old` must be unique unless `all` is true. A call's arguments count against the model's output limit: in a long document, change one paragraph or section per call instead of one large replacement.",
             json!({
                 "type": "object",
                 "properties": {

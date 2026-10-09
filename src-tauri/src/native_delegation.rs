@@ -59,6 +59,10 @@ impl Provider for BudgetedProvider<'_> {
         self.inner.model()
     }
 
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.inner.max_output_tokens()
+    }
+
     async fn complete(
         &self,
         messages: &[Message],

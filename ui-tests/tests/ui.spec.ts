@@ -9815,7 +9815,7 @@ test("advanced identity controls persist and validate a custom session header", 
   await expect(page.getByTestId("model-user-agent")).toBeDisabled();
   await page.getByTestId("model-send-session-id").check();
   await page.getByTestId("model-session-header-name").fill("x-custom-session");
-  await page.getByRole("button", { name: "Valid", exact: true }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({ settings: {
     send_user_agent: false, send_session_id: true, session_header_name: "x-custom-session",
   }});
@@ -9871,7 +9871,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   await expect(userAgent).toHaveValue("");
   await expect(userAgent).toHaveAttribute("placeholder", "wisp-science");
   await userAgent.fill("research-client/1.0");
-  await page.getByRole("button", { name: "Valid", exact: true }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "validate_settings"))
     .toMatchObject({ settings: { user_agent: "research-client/1.0" } });
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -9901,7 +9901,7 @@ test("new API access applies its advanced User-Agent to every added model", asyn
   await expect(page.getByTestId("model-user-agent")).toBeHidden();
   await page.getByTestId("model-advanced-options").locator("summary").click();
   await page.getByTestId("model-user-agent").fill("research-client/2.0");
-  await page.getByRole("button", { name: "Valid", exact: true }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "validate_settings"))
     .toMatchObject({ settings: { user_agent: "research-client/2.0" } });
   await page.getByTestId("save-provider").click();

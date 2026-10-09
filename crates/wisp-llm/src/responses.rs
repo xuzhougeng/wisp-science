@@ -360,6 +360,10 @@ impl Provider for OpenAiResponsesProvider {
     fn model(&self) -> &str {
         &self.cfg.model
     }
+    fn max_output_tokens(&self) -> Option<u64> {
+        // Subscription endpoints reject the parameter, so no cap is sent.
+        (!self.is_subscription()).then_some(self.cfg.max_tokens)
+    }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
         if self.is_subscription() {

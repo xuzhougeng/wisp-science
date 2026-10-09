@@ -2595,12 +2595,9 @@ impl AgentDelegator for NativeDelegator {
             &api_url,
             &api_key,
             &model,
-            request
-                .spec
-                .budget
-                .max_tokens
-                .map(u64::from)
-                .unwrap_or(max_tokens),
+            // The model profile's output cap. `budget.max_tokens` bounds the
+            // whole run (input + output) and is enforced by BudgetedProvider.
+            max_tokens,
             &reasoning_effort,
             &service_tier,
             &user_agent,

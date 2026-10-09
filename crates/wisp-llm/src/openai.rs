@@ -577,6 +577,9 @@ impl Provider for OpenAiProvider {
     fn model(&self) -> &str {
         &self.cfg.model
     }
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some(self.cfg.max_tokens)
+    }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
         let body = self.build_body(messages, tools, false);

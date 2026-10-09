@@ -636,6 +636,11 @@ impl StreamSink for NullSink {
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     fn model(&self) -> &str;
+    /// Output-token cap this provider sends with each request, when it sends
+    /// one. Lets a truncation report name the real limit.
+    fn max_output_tokens(&self) -> Option<u64> {
+        None
+    }
     /// Non-streaming completion.
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion>;
     /// Streaming completion; deltas go to `sink`, the assembled result is returned.

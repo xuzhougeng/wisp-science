@@ -16,7 +16,7 @@ impl Tool for WriteTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "write",
-            "Write content to a file, overwriting if it exists. The path must be inside the project root.",
+            "Write content to a file, overwriting if it exists. The path must be inside the project root. `content` counts against the model's output limit, so an oversized call is cut off and discarded: revise an existing long document with edit, section by section, instead of rewriting it.",
             json!({
                 "type": "object",
                 "properties": {

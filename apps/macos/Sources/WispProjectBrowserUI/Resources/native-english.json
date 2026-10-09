@@ -3600,7 +3600,6 @@
   "飞书机器人": "Feishu bot",
   "首条消息后锁定": "Locked after the first message",
   "首选文献库": "Preferred literature source",
-  "验证": "Valid",
   "验证失败：{msg}": "Validation failed: {msg}",
   "验证成功": "Validation succeeded",
   "验证超时（30 秒）": "Validation timed out after 30s",
