@@ -776,6 +776,91 @@ pub fn diff(
     (written, read)
 }
 
+/// The workspace state captured before a producing tool call, closed by
+/// [`Capture::finish`] once the call returns. Both halves run the directory
+/// walk on the blocking pool so the agent loop never stalls on I/O.
+pub struct Capture {
+    root: PathBuf,
+    source: String,
+    window: ProducingWindow,
+    before: BTreeMap<PathBuf, SystemTime>,
+    preimages: BTreeMap<PathBuf, TextPreimage>,
+}
+
+impl Capture {
+    /// Register the window before the pre-snapshot so concurrent sessions of
+    /// the same workspace can tell which of each other's writes are theirs.
+    pub async fn begin(root: &Path, scope: Option<&str>, source: &str) -> Self {
+        let window = begin_window(root, scope);
+        let root = root.to_path_buf();
+        let before = {
+            let root = root.clone();
+            tokio::task::spawn_blocking(move || snapshot(&root))
+                .await
+                .unwrap_or_default()
+        };
+        let preimages = {
+            let (before, root, source) = (before.clone(), root.clone(), source.to_string());
+            tokio::task::spawn_blocking(move || capture_text_preimages(&before, &root, &source))
+                .await
+                .unwrap_or_default()
+        };
+        Self {
+            root,
+            source: source.to_string(),
+            window,
+            before,
+            preimages,
+        }
+    }
+
+    /// Diff against the post-call workspace. `reported` are the paths the
+    /// kernel itself reported writing; they survive an ambiguity drop but
+    /// never widen what the window check kept for unreported paths. Returns
+    /// `None` when the call wrote nothing attributable.
+    pub async fn finish(
+        self,
+        tool: &str,
+        output: &str,
+        success: bool,
+        reported: &[String],
+    ) -> Option<ProvenanceRecord> {
+        let Self {
+            root,
+            source,
+            window,
+            before,
+            preimages,
+        } = self;
+        let after = {
+            let root = root.clone();
+            tokio::task::spawn_blocking(move || snapshot(&root))
+                .await
+                .unwrap_or_default()
+        };
+        let finished = window.finish();
+        let (mut written, mut read) = diff(&before, &after, &root, &source);
+        retain_unambiguous_writes(&mut written, &after, &root, &source, &finished);
+        augment_written_paths(tool, &root, &source, success, &preimages, &mut written);
+        union_reported_writes(&mut written, reported);
+        read.retain(|path| !written.contains(path));
+        if written.is_empty() {
+            return None;
+        }
+        let file_changes = undo_file_changes(&before, &root, &written, &preimages);
+        Some(ProvenanceRecord {
+            tool: tool.to_string(),
+            language: language_of(tool),
+            source,
+            output: output.to_string(),
+            success,
+            files_written: written,
+            files_read: read,
+            file_changes,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
