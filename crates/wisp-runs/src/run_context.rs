@@ -596,6 +596,9 @@ struct ActiveRun {
 pub struct RunManager {
     runner: Arc<dyn RunCommandRunner>,
     active: Arc<Mutex<HashMap<String, ActiveRun>>>,
+    // Serializes upload admission and retains targets until aborted/completed
+    // lifecycle tasks have actually drained. Clones share the same reservations.
+    upload_targets: Arc<Mutex<HashMap<String, transfer::UploadTarget>>>,
     owner_id: String,
     reconciler_started: Arc<AtomicBool>,
     last_retention_sweep: Arc<Mutex<Option<Instant>>>,
@@ -640,6 +643,7 @@ impl RunManager {
         Self {
             runner,
             active: Arc::new(Mutex::new(HashMap::new())),
+            upload_targets: Arc::new(Mutex::new(HashMap::new())),
             owner_id: uuid::Uuid::new_v4().to_string(),
             reconciler_started: Arc::new(AtomicBool::new(false)),
             last_retention_sweep: Arc::new(Mutex::new(None)),
