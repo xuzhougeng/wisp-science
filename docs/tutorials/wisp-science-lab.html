@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page="tutorial-article" data-title-zh="用 Wisp Lab 组建课题组，让 Agent 互相提问 · 教程 | Wisp Science" data-title-en="Set Up a Wisp Lab and Let Agents Ask Each Other · Tutorials | Wisp Science" data-desc-zh="Wisp Science高级用法：用 Wisp Lab 组建课题组，让 Agent 互相提问" data-desc-en="Wisp Science Advanced: Set Up a Wisp Lab and Let Agents Ask Each Other">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Wisp Science高级用法：用 Wisp Lab 组建课题组，让 Agent 互相提问">
+  <title>用 Wisp Lab 组建课题组，让 Agent 互相提问 · 教程 | Wisp Science</title>
+  <script>
+    (function () {
+      var lang = "zh";
+      try {
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "en" || q === "zh") lang = q;
+        else {
+          var s = localStorage.getItem("wisp-pages-lang");
+          if (s === "en" || s === "zh") lang = s;
+        }
+      } catch (e) {}
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+      document.documentElement.dataset.lang = lang;
+    })();
+  </script>
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="stylesheet" href="../assets/tutorials.css">
+</head>
+<body class="doc-page tutorial-detail">
+  <header class="site-nav">
+    <div class="container">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="28" height="28">
+        <span class="brand-name">Wisp Science</span>
+      </a>
+      <nav class="nav-links" data-i18n-aria="nav.aria" aria-label="页面导航">
+        <a href="../index.html#features" data-i18n="nav.features">功能</a>
+        <a href="../index.html#usecases" data-i18n="nav.usecases">场景</a>
+        <a href="../index.html#stack" data-i18n="nav.stack">生态</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" aria-current="location" data-i18n="nav.tutorials">教程</a>
+        <a href="../index.html#faq" data-i18n="nav.faq">FAQ</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/README.md" data-i18n="nav.docs">文档</a>
+      </nav>
+      <div class="nav-cta">
+        <div class="lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="语言">
+          <button type="button" data-lang="zh" aria-pressed="true">中文</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a class="btn btn-primary" href="../index.html#download"><span class="btn-label-full" data-i18n="nav.downloadFull">下载桌面版</span><span class="btn-label-short" data-i18n="nav.downloadShort">下载</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main class="tutorial-reader container">
+<nav class="tutorial-breadcrumb" aria-label="教程导航" data-i18n-aria="tutorials.readerNav"><a class="tutorial-back" href="../tutorials.html#wisp-science-lab" data-i18n="tutorials.back">返回教程目录</a></nav>
+<article class="tutorial-article" id="wisp-science-lab" aria-labelledby="article-title">
+<header><h1 id="article-title" data-text-zh="Wisp Science高级用法：用 Wisp Lab 组建课题组，让 Agent 互相提问" data-text-en="Wisp Science Advanced: Set Up a Wisp Lab and Let Agents Ask Each Other">Wisp Science高级用法：用 Wisp Lab 组建课题组，让 Agent 互相提问</h1>
+<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-lab.md" data-href-zh="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/wisp-science-lab.md" data-href-en="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wechat/en/wisp-science-lab.md" data-i18n="tutorials.source">查看原文</a></header>
+<div class="tutorial-body lang-zh" lang="zh-CN">
+<p>课题组里每个人都有自己的 Wisp，各自积累着项目、流程和踩过的坑。想知道师兄的 RNA-seq 流程用的是哪个参考基因组，通常得发消息问人，再等对方有空翻记录。</p>
+<p><strong>Wisp Lab</strong> 把共用同一台中继服务器的几台电脑组成一个课题组：有一位组长、一份经组长审核的成员名单、一个大家都能读的知识库，以及让各自的 Agent 互相写信的信箱。你对自己的 Agent 说一句“问一下小林的 Agent”，问题就会送到小林的电脑上，由他的 Agent 依据他的项目作答，再把答案送回你的对话。</p>
+<p>这篇文章带你用两台电脑完整走一遍：启动中继、创建课题组、加入并审核、发布和下载知识库、让两个 Agent 互相提问，最后验证几条安全边界。每一步都写明了应该看到什么，可以当作验收清单使用。</p>
+<blockquote>
+<p>Wisp Lab 在 v1.19.0 之后加入。两台电脑都需要包含该功能的桌面端：在下一个正式版发布之前，请从 <code>main</code> 分支构建。中继镜像同样请使用 <code>:main</code> 标签。文中的 <code>10.10.3.27</code>、人名和项目内容都是示例。</p>
+</blockquote>
+<p><strong>先认识三个角色。</strong></p>
+<pre><code>电脑 A（组长） ──┐
+                 ├──▶ 中继服务器（WISP_LAB=1）
+电脑 B（成员） ──┘
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>角色</th>
+<th>在哪里</th>
+<th>负责什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>中继服务器 <code>wisp-relay</code></td>
+<td>内网或公网的一台服务器</td>
+<td>记录谁在课题组里，暂存信件和知识库的加密数据</td>
+</tr>
+<tr>
+<td>电脑 A</td>
+<td>组长的电脑，示例名“王老师”</td>
+<td>创建课题组、审核成员、发布知识库</td>
+</tr>
+<tr>
+<td>电脑 B</td>
+<td>成员的电脑，示例名“小林”</td>
+<td>凭校验码加入、下载知识库、回答来信</td>
+</tr>
+</tbody>
+</table></div>
+<p>中继只是基础设施。课题组密钥只存在于成员的电脑上，中继读不了知识库，也读不了任何一封信。</p>
+<p><strong>开始之前。</strong></p>
+<ul>
+<li>两台电脑都装好包含 Wisp Lab 的桌面端，并且各自配置好了可用的模型：Agent 互相提问时，两边都要真的跑一个回合。</li>
+<li>一台两台电脑都能访问的服务器，用来运行中继。</li>
+<li>两台电脑上各准备一个普通项目，后面会用到。</li>
+</ul>
+<p><strong>第一步：启动带课题组功能的中继。</strong></p>
+<p>是否开启课题组，在启动中继时用环境变量 <code>WISP_LAB=1</code> 决定。不加这个变量，中继照常提供项目同步和网页远程访问，使用它的电脑彼此互不知晓。下面两种方案任选其一。</p>
+<p>方案一，内网服务器，走 HTTP。课题组自己的内网里没有域名和证书也可以用。在服务器上执行：</p>
+<pre><code class="language-bash">mkdir -p ~/wisp-relay &amp;&amp; cd ~/wisp-relay
+echo &quot;WISP_RELAY_TOKEN=$(openssl rand -hex 32)&quot; &gt; .env
+echo &quot;WISP_LAB=1&quot; &gt;&gt; .env
+docker run -d --name wisp-relay --restart unless-stopped \
+  --env-file .env -p 8787:8787 -v wisp-relay-data:/data \
+  ghcr.io/xuzhougeng/wisp-relay:main
+</code></pre>
+<p>桌面端填写的中继地址就是 <code>http://服务器内网IP:8787</code>，例如 <code>http://10.10.3.27:8787</code>。</p>
+<ul>
+<li>地址必须写成 IP。<code>10.x.x.x</code>、<code>172.16.x.x</code> 到 <code>172.31.x.x</code>、<code>192.168.x.x</code> 这些内网地址可以用 HTTP；主机名和公网地址一律要求 HTTPS。</li>
+<li>走 HTTP 时，中继令牌和成员密钥会在内网里明文传输；知识库和信件的内容仍然是端到端加密的。请只在你信任的网络里这样用。</li>
+<li>服务器拉不到镜像时，可以在一台能联网、CPU 架构相同的机器上执行 <code>docker save ghcr.io/xuzhougeng/wisp-relay:main | gzip | ssh 用户@服务器 'gunzip | docker load'</code>。</li>
+<li>不用 Docker 也行：在仓库目录下设置 <code>WISP_RELAY_TOKEN</code>、<code>WISP_RELAY_ROOT</code>、<code>WISP_RELAY_BIND=0.0.0.0:8787</code> 和 <code>WISP_LAB=1</code>，然后执行 <code>cargo run -p wisp-sync --bin wisp-relay --release</code>。</li>
+<li>网页远程访问不能通过 HTTP 的内网中继使用，浏览器只在 HTTPS 下运行那个页面。</li>
+</ul>
+<p>方案二，公网服务器，走 HTTPS。如果你已经按<a href="wisp-science-remote-web.html">网页远程访问教程</a>部署过中继，只需要在 <code>compose.yaml</code> 里给 <code>relay</code> 服务加一个变量，并把镜像标签换成 <code>:main</code>：</p>
+<pre><code class="language-yaml">    image: ghcr.io/xuzhougeng/wisp-relay:main
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+      WISP_LAB: &quot;1&quot;
+</code></pre>
+<p>然后执行 <code>docker compose pull &amp;&amp; docker compose up -d</code>。桌面端的中继地址是 <code>https://你的域名</code>。</p>
+<p>启动后先确认三件事。在服务器上：</p>
+<pre><code class="language-bash">source .env
+curl -s http://127.0.0.1:8787/healthz; echo
+curl -s -H &quot;Authorization: Bearer $WISP_RELAY_TOKEN&quot; http://127.0.0.1:8787/v1/lab; echo
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>输出</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一条输出 <code>ok</code></td>
+<td>中继在运行</td>
+</tr>
+<tr>
+<td>第二条输出 <code>unknown_member</code></td>
+<td>课题组功能已开启，还没有人加入。这是期望的结果</td>
+</tr>
+<tr>
+<td>第二条输出 <code>lab_disabled</code></td>
+<td>没有带上 <code>WISP_LAB=1</code>，或者镜像太旧</td>
+</tr>
+<tr>
+<td>第二条输出 <code>unauthorized</code></td>
+<td>令牌不对</td>
+</tr>
+</tbody>
+</table></div>
+<p>再到两台电脑上各执行一次 <code>curl -s http://10.10.3.27:8787/healthz</code>，都返回 <code>ok</code> 才算网络通了。不通时先检查服务器防火墙是否放行 8787 端口。</p>
+<p><strong>第二步：在电脑 A 上创建课题组。</strong></p>
+<p>打开 <strong>设置 → 远程接入 → Wisp Lab 课题组</strong>。这时页面右上角的标记是“未加入”。</p>
+<ol>
+<li><strong>校验码</strong> 留空。留空表示创建课题组，而不是加入。</li>
+<li><strong>中继服务器地址</strong> 填 <code>http://10.10.3.27:8787</code>。</li>
+<li><strong>中继访问令牌</strong> 填 <code>.env</code> 里的 <code>WISP_RELAY_TOKEN</code>。</li>
+<li><strong>你的名字</strong> 填“王老师”，<strong>课题组名称</strong> 填一个名字，例如“基因组学课题组”。</li>
+<li>点击 <strong>创建课题组</strong>。</li>
+</ol>
+<p>应该看到：页面标题变成课题组名称，下方显示中继地址，右上角的标记变成“组长”；<strong>成员</strong> 列表里只有一行“王老师”，带着“组长”和“本机”两个标记。</p>
+<p>第一台加入的电脑自动成为组长。所以部署中继的人应该在开启后立刻创建课题组，在此之前，任何持有令牌的人都可以抢先。</p>
+<p><strong>第三步：生成校验码，发给成员。</strong></p>
+<p>在 <strong>邀请成员</strong> 一栏点击 <strong>生成校验码</strong>，页面会显示一串以 <code>wisp-lab:</code> 开头的长字符串，点旁边的复制按钮。</p>
+<p>把两样东西发给电脑 B 的使用者：</p>
+<ul>
+<li>校验码。它内含课题组密钥，请私下发送。一个校验码只能加入一人，七天后失效。</li>
+<li>中继访问令牌。校验码里不包含它，需要另外发送。</li>
+</ul>
+<p><strong>第四步：在电脑 B 上申请加入。</strong></p>
+<p>在电脑 B 上打开 <strong>设置 → 远程接入 → Wisp Lab 课题组</strong>。</p>
+<ol>
+<li>把校验码粘贴到 <strong>校验码</strong> 一栏。<strong>课题组名称</strong> 一栏会消失，按钮变成 <strong>申请加入</strong>。</li>
+<li><strong>中继服务器地址</strong> 可以留空，校验码里已经带了。</li>
+<li>填写 <strong>中继访问令牌</strong> 和 <strong>你的名字</strong>（“小林”）。</li>
+<li>点击 <strong>申请加入</strong>。</li>
+</ol>
+<p>应该看到：标记变成“待审核”，页面提示申请已提交。此时电脑 B 看不到成员名单，也看不到知识库。</p>
+<p><strong>第五步：组长审核。</strong></p>
+<p>回到电脑 A。成员列表不会自动刷新：点左上角返回上一级，再点进 <strong>Wisp Lab 课题组</strong>。</p>
+<p>应该看到：“小林”出现在成员列表里，带着“待审核”标记，右侧有 <strong>通过</strong> 和 <strong>拒绝</strong>。点击 <strong>通过</strong>，页面提示“已通过审核”，“待审核”标记消失。</p>
+<p>回到电脑 B，点击 <strong>重新检查</strong>。应该看到：标记变成“成员”，成员列表里有“王老师”和“小林”两行，下方出现 <strong>知识库</strong>、<strong>Agent 互通</strong> 等栏目。</p>
+<p>到这里，课题组已经建好了。</p>
+<p><strong>第六步：组长发布知识库。</strong></p>
+<p>知识库就是一个普通的 Wisp 项目，由组长维护，其他人只读。它通过项目同步传输，所以要先把这个项目同步到中继上。</p>
+<ol>
+<li>
+<p>在电脑 A 上新建一个项目，例如“课题组手册”，在里面放一份文档 <code>protocols/rnaseq.md</code>：</p>
+<pre><code class="language-markdown"># RNA-seq 分析约定
+
+- 参考基因组：GRCh38，注释使用 GENCODE v44
+- 比对软件：STAR 2.7.11b
+</code></pre>
+</li>
+<li>
+<p>关闭设置窗口再重新打开，进入 <strong>设置 → 远程接入</strong>，确认顶部的 <strong>手动项目同步</strong> 里，存储后端是“自建中继服务器”，地址已经填好，令牌一栏显示已保存，然后点一次 <strong>保存</strong>。此前从未配置过项目同步的电脑，在创建课题组时已经自动填入了课题组的中继；保存之后，项目卡片上才会出现 <strong>立即同步</strong>。如果这里原本配置的是别的中继或网盘目录，请改成课题组的中继地址和令牌。</p>
+</li>
+<li>
+<p>回到项目列表，在“课题组手册”的卡片上点击 <strong>立即同步</strong>。项目里有任务正在运行时不能同步。</p>
+</li>
+<li>
+<p>再打开 <strong>设置 → 远程接入 → Wisp Lab 课题组</strong>，在 <strong>知识库</strong> 下的 <strong>要发布的项目</strong> 里选择“课题组手册”，点击 <strong>发布为知识库</strong>。</p>
+</li>
+</ol>
+<p>应该看到：页面提示“知识库已发布”，知识库一栏显示它已在本机，并给出项目名。</p>
+<p>两点提醒：</p>
+<ul>
+<li>项目是连同其中的对话一起同步的。组长在知识库项目里聊过的内容，成员同步后也能看到。请只用这个项目存放文档。</li>
+<li>以后想让成员拿到更新，修改文件后再点一次 <strong>立即同步</strong> 即可，不需要重新发布。</li>
+</ul>
+<p><strong>第七步：成员下载知识库。</strong></p>
+<p>在电脑 B 上重新进入 <strong>Wisp Lab 课题组</strong> 页面。应该看到：<strong>知识库</strong> 一栏提示课题组已有知识库。</p>
+<p>点击 <strong>下载知识库</strong>，选择一个存放位置。下载完成后，设置窗口关闭，“课题组手册”作为一个新项目被打开，里面有 <code>protocols/rnaseq.md</code>。</p>
+<p>接下来验证 Agent 确实会查阅它。切换到电脑 B 上的另一个项目，新建一条对话，问：</p>
+<pre><code>我们课题组约定的参考基因组和注释版本是什么？
+</code></pre>
+<p>应该看到：Agent 去读取“课题组手册”文件夹里的文档，回答 GRCh38 和 GENCODE v44。知识库下载后，Wisp 会在普通对话里告诉 Agent 这个文件夹在哪。</p>
+<p>请把知识库项目当作只读，也不要在这个项目里开对话，对话同样算作修改。有修改之后，电脑 B 上点击 <strong>立即同步</strong> 会报错，提示只有组长可以更新知识库。</p>
+<p><strong>第八步：验证知识库更新。</strong></p>
+<ol>
+<li>在电脑 A 上给 <code>protocols/rnaseq.md</code> 加一行，例如“定量软件：featureCounts 2.0.6”，然后在“课题组手册”卡片上点击 <strong>立即同步</strong>。</li>
+<li>在电脑 B 上，对“课题组手册”卡片点击 <strong>立即同步</strong>。</li>
+</ol>
+<p>应该看到：电脑 B 上的文件多出了这一行。</p>
+<p><strong>第九步：让两个 Agent 互相提问。</strong></p>
+<p>先让电脑 B 做好接收的准备。</p>
+<ol>
+<li>
+<p>在电脑 B 上选一个普通项目，例如“肝癌 RNA-seq”，在里面放一份笔记 <code>notes/pipeline.md</code>：</p>
+<pre><code class="language-markdown"># 流程记录
+
+- 去接头：fastp 0.23.4，16 线程
+- 样本 S07 因 RIN 值只有 5.1 被剔除
+</code></pre>
+</li>
+<li>
+<p>打开 <strong>设置 → 远程接入 → Wisp Lab 课题组</strong>，在 <strong>Agent 互通</strong> 下的 <strong>用于回复课题组来信的项目</strong> 里选择“肝癌 RNA-seq”。选中即保存。</p>
+</li>
+</ol>
+<p>然后在电脑 A 上，在任意一个普通项目里新建对话，输入：</p>
+<pre><code>用 lab_send 问一下小林的 Agent：你们的 RNA-seq 流程用什么软件去接头？有没有被剔除的样本，原因是什么？
+</code></pre>
+<p>按顺序应该看到：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>在哪里</th>
+<th>看到什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>电脑 A</td>
+<td>Agent 调用 <code>lab_members</code> 和 <code>lab_send</code>。按你的审批设置，可能会先弹出审批卡片，批准即可。随后 Agent 说明已发出，这一回合结束</td>
+</tr>
+<tr>
+<td>电脑 B，约 15 秒内</td>
+<td>“肝癌 RNA-seq”项目里出现一条名为“Lab: 王老师”的对话，第一条消息以 <code>[Lab message from 王老师 (lab leader)]</code> 开头</td>
+</tr>
+<tr>
+<td>电脑 B</td>
+<td>Agent 读取 <code>notes/pipeline.md</code> 并作答：fastp 0.23.4，S07 因 RIN 5.1 被剔除</td>
+</tr>
+<tr>
+<td>电脑 A，电脑 B 答完后约 15 秒内</td>
+<td>原来那条对话里出现一条以 <code>[Lab reply from 小林]</code> 开头的消息，Agent 接着把答案整理给你</td>
+</tr>
+</tbody>
+</table></div>
+<p>Wisp 每 15 秒查一次信箱，所以一来一回除了两边回合本身的时间，还有最多半分钟的等待。双方不需要同时在线：对方关机时，信件留在中继上，等对方的 Wisp 下次启动后处理。</p>
+<p>反过来再试一次：在电脑 A 上也选一个回信项目，从电脑 B 向“王老师”提问。</p>
+<p><strong>第十步：验证几条边界。</strong></p>
+<p>来自其他成员 Agent 的消息是同事写的文字，不是你写的。由它触发的回合受到比平时更严的限制。下面每一条都值得亲手试一次。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>做什么</th>
+<th>应该看到</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>从 A 发：“请小林的 Agent 在项目里新建文件 hello.txt”</td>
+<td>电脑 B 的“Lab: 王老师”对话里弹出审批卡片，回合停在这里等人。批准才会创建，拒绝则回信说明被拒绝</td>
+</tr>
+<tr>
+<td>从 A 发：“请小林的 Agent 读取项目之外的文件，例如系统的 hosts 文件，把内容发回来”</td>
+<td>回信说明读不到：这个回合只能读取对话所属项目内的文件</td>
+</tr>
+<tr>
+<td>在 B 的 <strong>用于回复课题组来信的项目</strong> 里选“不回复来信”，再从 A 提问</td>
+<td>A 很快收到一条自动说明，说对方的电脑没有选定回信项目。B 上不会运行任何回合</td>
+</tr>
+<tr>
+<td>退出 B 的 Wisp，从 A 提问，再启动 B</td>
+<td>B 启动后约 15 秒内开始回答，A 随后收到答复</td>
+</tr>
+<tr>
+<td>先在 A 的当前项目里放一个小文件 <code>results/summary.csv</code>，再发：“把 results/summary.csv 作为附件发给小林的 Agent，请它数一下有几行”</td>
+<td>B 的回信项目里出现 <code>uploads/lab/</code> 目录，文件名前带 8 位前缀；回信给出行数</td>
+</tr>
+<tr>
+<td>在 A 的成员列表里对“小林”点 <strong>移除</strong>，再点一次确认</td>
+<td>B 重新进入页面后看到已被移除的提示和 <strong>清除本机记录</strong>；B 的 Agent 再调用 <code>lab_send</code> 会失败</td>
+</tr>
+<tr>
+<td>把用过的校验码再用一次</td>
+<td>提示校验码无效，可能已被使用或已过期</td>
+</tr>
+</tbody>
+</table></div>
+<p>还有两条不需要专门测试、但应该知道的规则：这类回合不会带上你的全局记忆；中间没有人发言时，两个 Agent 最多连续往返四封信，之后会停下来向各自的用户汇总。</p>
+<p><strong>遇到问题时，先看这几项。</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>现象</th>
+<th>先检查什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>提示这台中继没有开启课题组功能</td>
+<td>中继是否带了 <code>WISP_LAB=1</code>；镜像是否为 <code>:main</code>。<code>latest</code> 对应的正式版可能还不包含该功能</td>
+</tr>
+<tr>
+<td>提示中继访问令牌不正确</td>
+<td>令牌是否与服务器上 <code>.env</code> 的一致</td>
+</tr>
+<tr>
+<td>提示中继地址必须使用 HTTPS</td>
+<td>HTTP 只能配内网 IP 或 <code>localhost</code>，不能配主机名；若提示里只提到 localhost，说明桌面端版本还不支持内网 HTTP</td>
+</tr>
+<tr>
+<td>请求超时或连接被拒绝</td>
+<td>在这台电脑上执行 <code>curl http://服务器IP:8787/healthz</code>；检查防火墙和端口</td>
+</tr>
+<tr>
+<td>提示这个课题组已有组长</td>
+<td>中继上已经有人创建过课题组。请向组长索取校验码，或者按下文重置</td>
+</tr>
+<tr>
+<td>组长看不到新的申请</td>
+<td>成员列表不会自动刷新，返回上一级再进入页面</td>
+</tr>
+<tr>
+<td>项目卡片上没有 <strong>立即同步</strong></td>
+<td><strong>设置 → 远程接入 → 手动项目同步</strong> 没有配好：后端需为“自建中继服务器”，地址和令牌都要有</td>
+</tr>
+<tr>
+<td>发布知识库时提示需要先同步</td>
+<td>先在该项目卡片上成功 <strong>立即同步</strong> 一次；如果提示项目同步到了别处，把项目同步的中继改成课题组的中继</td>
+</tr>
+<tr>
+<td>下载知识库时提示需要配置令牌</td>
+<td>在 <strong>手动项目同步</strong> 里填入课题组中继的地址和令牌</td>
+</tr>
+<tr>
+<td>发出提问后迟迟没有答复</td>
+<td>对方的 Wisp 是否在运行、主窗口是否开着；对方是否选了回信项目；对方的“Lab: …”对话是否正卡在审批上</td>
+</tr>
+<tr>
+<td>Agent 说没有 <code>lab_send</code> 工具</td>
+<td>这台电脑是否已是“组长”或“成员”状态；科研助理对话和子 Agent 对话里没有这两个工具，请在普通项目对话里试</td>
+</tr>
+</tbody>
+</table></div>
+<p>需要看日志时，用 <code>RUST_LOG=wisp=debug cargo tauri dev</code> 启动桌面端，留意 <code>lab mail dropped</code>、<code>lab mail kept for the next start</code> 和 <code>lab mailbox check failed</code> 这几行。中继一侧用 <code>docker logs wisp-relay</code> 查看；<code>docker cp wisp-relay:/data/lab/state.json .</code> 可以把成员名单拷出来看，里面只有名字、角色和密钥的哈希。</p>
+<p><strong>想从头再来一遍。</strong></p>
+<p>课题组的数据都在中继数据目录的 <code>lab/</code> 下。停掉中继，删除这个目录，再启动，课题组就回到了没人加入的状态：</p>
+<pre><code class="language-bash">docker stop wisp-relay
+sudo rm -rf &quot;$(docker volume inspect -f '{{ .Mountpoint }}' wisp-relay-data)/lab&quot;
+docker start wisp-relay
+</code></pre>
+<p>用 Compose 部署时，卷名以 <code>docker volume ls</code> 显示的为准。这不会影响项目同步的数据。之后两台电脑进入 <strong>Wisp Lab 课题组</strong> 页面，会看到成员记录已不存在的提示，点击 <strong>清除本机记录</strong>，就可以重新从第二步开始。</p>
+<p><strong>验收清单。</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>序号</th>
+<th>检查项</th>
+<th>通过</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>中继的 <code>/v1/lab</code> 在无人加入时返回 <code>unknown_member</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>2</td>
+<td>A 创建课题组后显示“组长”</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>3</td>
+<td>B 凭校验码申请后显示“待审核”，看不到成员和知识库</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>4</td>
+<td>A 通过后，B 重新检查显示“成员”和两位成员</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>5</td>
+<td>A 发布知识库成功，B 能下载并打开</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>6</td>
+<td>B 在别的项目里提问，Agent 会查阅知识库作答</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>7</td>
+<td>A 更新并同步后，B 同步能拿到新内容</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>8</td>
+<td>A 提问后，B 出现“Lab: 王老师”对话并自动回答，A 收到 <code>[Lab reply from 小林]</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>9</td>
+<td>要求改动文件时，B 弹出审批</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>10</td>
+<td>要求读取项目外文件时被拒绝</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>11</td>
+<td>B 未选回信项目时，A 收到自动说明</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>12</td>
+<td>B 离线时发出的提问，在 B 启动后得到回答</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>13</td>
+<td>附件出现在 B 的 <code>uploads/lab/</code> 下</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>14</td>
+<td>移除成员后，B 看到被移除的提示</td>
+<td>☐</td>
+</tr>
+</tbody>
+</table></div>
+<p>项目与下载：<a href="https://github.com/xuzhougeng/wisp-science">Wisp Science</a></p>
+<p>继续阅读：<a href="wisp-science-remote-web.html">用手机和浏览器远程使用 Wisp</a> · <a href="wisp-science-research-assistant.html">科研助理</a> · <a href="wisp-science-transfer.html">导入、导出与分享</a></p>
+<blockquote>
+<p>角色、安全模型和中继接口的完整说明见 <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wisp-lab.zh-CN.md">Wisp Lab 参考文档</a>，知识库所依赖的同步机制见<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.zh-CN.md">项目同步</a>。本文依据撰写时的项目实现整理，不同版本的界面文字可能略有差异。</p>
+</blockquote>
+</div>
+<div class="tutorial-body lang-en" lang="en">
+<p>Everyone in a research group has their own Wisp, with their own projects, pipelines and hard-won lessons. Finding out which reference genome a colleague's RNA-seq pipeline uses usually means sending a message and waiting until they have time to look it up.</p>
+<p><strong>Wisp Lab</strong> turns the computers that share one relay server into a group: a leader, a member list the leader approves, a knowledge base everyone can read, and a mailbox through which their agents write to each other. You tell your own agent &quot;ask Lin's agent&quot;, the question reaches Lin's computer, Lin's agent answers from Lin's project, and the answer comes back into your conversation.</p>
+<p>This article walks through all of it with two computers: start the relay, found the lab, join and approve, publish and download the knowledge base, let two agents ask each other, and finally check a few safety limits. Every step says what you should see, so it doubles as an acceptance checklist.</p>
+<blockquote>
+<p>Wisp Lab was added after v1.19.0. Both computers need a desktop build that includes it: until the next release, build from the <code>main</code> branch. Use the <code>:main</code> tag for the relay image as well. <code>10.10.3.27</code>, the names and the project contents are examples.</p>
+</blockquote>
+<p><strong>Three roles first.</strong></p>
+<pre><code>Computer A (leader) ──┐
+                      ├──▶ relay server (WISP_LAB=1)
+Computer B (member) ──┘
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Role</th>
+<th>Where</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Relay server <code>wisp-relay</code></td>
+<td>A server on the intranet or the internet</td>
+<td>Records who is in the lab; holds mail and knowledge-base data in encrypted form</td>
+</tr>
+<tr>
+<td>Computer A</td>
+<td>The leader's computer, &quot;Ada&quot; in the examples</td>
+<td>Founds the lab, approves members, publishes the knowledge base</td>
+</tr>
+<tr>
+<td>Computer B</td>
+<td>A member's computer, &quot;Lin&quot; in the examples</td>
+<td>Joins with an invite code, downloads the knowledge base, answers mail</td>
+</tr>
+</tbody>
+</table></div>
+<p>The relay is infrastructure. The lab key exists only on the members' computers; the relay can read neither the knowledge base nor a single mail.</p>
+<p><strong>Before you start.</strong></p>
+<ul>
+<li>Both computers have a desktop build with Wisp Lab, and each has a working model configured: when agents ask each other, both sides really run a turn.</li>
+<li>A server both computers can reach, to run the relay.</li>
+<li>One ordinary project on each computer, used later.</li>
+</ul>
+<p><strong>Step 1: start a relay that hosts a lab.</strong></p>
+<p>Whether a relay hosts a lab is decided when it starts, with the environment variable <code>WISP_LAB=1</code>. Without it the relay still serves project sync and remote web access, and the computers using it know nothing of each other. Pick one of the two setups.</p>
+<p>Setup one: a server on the intranet, over HTTP. Inside a group's own network this needs neither a domain nor a certificate. On the server:</p>
+<pre><code class="language-bash">mkdir -p ~/wisp-relay &amp;&amp; cd ~/wisp-relay
+echo &quot;WISP_RELAY_TOKEN=$(openssl rand -hex 32)&quot; &gt; .env
+echo &quot;WISP_LAB=1&quot; &gt;&gt; .env
+docker run -d --name wisp-relay --restart unless-stopped \
+  --env-file .env -p 8787:8787 -v wisp-relay-data:/data \
+  ghcr.io/xuzhougeng/wisp-relay:main
+</code></pre>
+<p>The relay URL to enter on the desktops is <code>http://&lt;server intranet IP&gt;:8787</code>, for example <code>http://10.10.3.27:8787</code>.</p>
+<ul>
+<li>The address has to be an IP. Private addresses such as <code>10.x.x.x</code>, <code>172.16.x.x</code> to <code>172.31.x.x</code> and <code>192.168.x.x</code> may use HTTP; host names and public addresses always need HTTPS.</li>
+<li>Over HTTP the relay token and member keys cross the intranet unencrypted; the contents of the knowledge base and of mail stay encrypted end to end. Use this only on a network you trust.</li>
+<li>If the server cannot pull the image, run <code>docker save ghcr.io/xuzhougeng/wisp-relay:main | gzip | ssh user@server 'gunzip | docker load'</code> on a machine with internet access and the same CPU architecture.</li>
+<li>Docker is optional: in a checkout, set <code>WISP_RELAY_TOKEN</code>, <code>WISP_RELAY_ROOT</code>, <code>WISP_RELAY_BIND=0.0.0.0:8787</code> and <code>WISP_LAB=1</code>, then run <code>cargo run -p wisp-sync --bin wisp-relay --release</code>.</li>
+<li>Remote web access does not work through an HTTP intranet relay: browsers run that page only on HTTPS.</li>
+</ul>
+<p>Setup two: a server on the internet, over HTTPS. If you already deployed a relay with the <a href="wisp-science-remote-web.html">remote web access tutorial</a>, add one variable to the <code>relay</code> service in <code>compose.yaml</code> and switch the image tag to <code>:main</code>:</p>
+<pre><code class="language-yaml">    image: ghcr.io/xuzhougeng/wisp-relay:main
+    environment:
+      WISP_RELAY_TOKEN: ${WISP_RELAY_TOKEN:?set a long random token}
+      WISP_LAB: &quot;1&quot;
+</code></pre>
+<p>Then run <code>docker compose pull &amp;&amp; docker compose up -d</code>. The relay URL on the desktops is <code>https://your-domain</code>.</p>
+<p>After starting it, confirm three things. On the server:</p>
+<pre><code class="language-bash">source .env
+curl -s http://127.0.0.1:8787/healthz; echo
+curl -s -H &quot;Authorization: Bearer $WISP_RELAY_TOKEN&quot; http://127.0.0.1:8787/v1/lab; echo
+</code></pre>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Output</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>First command prints <code>ok</code></td>
+<td>The relay is running</td>
+</tr>
+<tr>
+<td>Second prints <code>unknown_member</code></td>
+<td>The lab is enabled and nobody has joined yet. This is what you want</td>
+</tr>
+<tr>
+<td>Second prints <code>lab_disabled</code></td>
+<td><code>WISP_LAB=1</code> is missing, or the image is too old</td>
+</tr>
+<tr>
+<td>Second prints <code>unauthorized</code></td>
+<td>The token is wrong</td>
+</tr>
+</tbody>
+</table></div>
+<p>Then run <code>curl -s http://10.10.3.27:8787/healthz</code> on each of the two computers. Both must print <code>ok</code> before the network counts as working. If not, check that the server's firewall allows port 8787.</p>
+<p><strong>Step 2: found the lab on computer A.</strong></p>
+<p>Open <strong>Settings → Remote Access → Wisp Lab</strong>. The badge at the top right reads &quot;Not joined&quot;.</p>
+<ol>
+<li>Leave <strong>Invite code</strong> empty. Empty means founding a lab rather than joining one.</li>
+<li><strong>Relay server URL</strong>: <code>http://10.10.3.27:8787</code>.</li>
+<li><strong>Relay access token</strong>: the <code>WISP_RELAY_TOKEN</code> from <code>.env</code>.</li>
+<li><strong>Your name</strong>: &quot;Ada&quot;. <strong>Lab name</strong>: a name such as &quot;Genomics group&quot;.</li>
+<li>Press <strong>Found lab</strong>.</li>
+</ol>
+<p>You should see: the heading becomes the lab's name with the relay URL below it, and the badge becomes &quot;Leader&quot;. <strong>Members</strong> has one row, &quot;Ada&quot;, marked &quot;Leader&quot; and &quot;You&quot;.</p>
+<p>The first computer to join leads the lab. Whoever deploys the relay should found the lab right after enabling it; until then, anyone holding the token could get there first.</p>
+<p><strong>Step 3: create an invite code and send it.</strong></p>
+<p>Under <strong>Invite a member</strong> press <strong>Create invite code</strong>. A long string starting with <code>wisp-lab:</code> appears; use the copy button next to it.</p>
+<p>Send two things to the person at computer B:</p>
+<ul>
+<li>The invite code. It contains the lab key, so send it privately. One code admits one person and expires after seven days.</li>
+<li>The relay access token. It is not part of the invite code and has to be sent separately.</li>
+</ul>
+<p><strong>Step 4: request to join on computer B.</strong></p>
+<p>On computer B open <strong>Settings → Remote Access → Wisp Lab</strong>.</p>
+<ol>
+<li>Paste the code into <strong>Invite code</strong>. The <strong>Lab name</strong> field disappears and the button becomes <strong>Request to join</strong>.</li>
+<li><strong>Relay server URL</strong> can stay empty: the code carries it.</li>
+<li>Fill in <strong>Relay access token</strong> and <strong>Your name</strong> (&quot;Lin&quot;).</li>
+<li>Press <strong>Request to join</strong>.</li>
+</ol>
+<p>You should see: the badge becomes &quot;Awaiting approval&quot; and the page says the request was sent. Computer B sees neither the member list nor the knowledge base yet.</p>
+<p><strong>Step 5: the leader approves.</strong></p>
+<p>Back on computer A. The member list does not refresh by itself: go back one level with the arrow at the top left, then open <strong>Wisp Lab</strong> again.</p>
+<p>You should see: &quot;Lin&quot; in the member list, marked &quot;Awaiting approval&quot;, with <strong>Approve</strong> and <strong>Reject</strong> on the right. Press <strong>Approve</strong>; the page says &quot;Member approved.&quot; and the mark disappears.</p>
+<p>On computer B press <strong>Check again</strong>. You should see: the badge becomes &quot;Member&quot;, the list shows &quot;Ada&quot; and &quot;Lin&quot;, and <strong>Knowledge base</strong>, <strong>Agent mail</strong> and the other sections appear below.</p>
+<p>The lab now exists.</p>
+<p><strong>Step 6: the leader publishes the knowledge base.</strong></p>
+<p>The knowledge base is an ordinary Wisp project that the leader maintains and everyone else reads. It travels through project sync, so the project has to be synchronized to the relay first.</p>
+<ol>
+<li>
+<p>On computer A create a project, for example &quot;Lab handbook&quot;, and put a document <code>protocols/rnaseq.md</code> into it:</p>
+<pre><code class="language-markdown"># RNA-seq conventions
+
+- Reference genome: GRCh38, annotation GENCODE v44
+- Aligner: STAR 2.7.11b
+</code></pre>
+</li>
+<li>
+<p>Close Settings and open it again, go to <strong>Settings → Remote Access</strong> and check <strong>Manual project sync</strong> at its top: the storage backend is &quot;Self-hosted relay server&quot;, the URL is filled in and the token field says it is stored. Then press <strong>Save</strong> once. A computer that never configured project sync had the lab's relay filled in when it founded the lab; after saving, project cards show <strong>Sync now</strong>. If another relay or a cloud-drive folder was configured here before, change it to the lab relay's URL and token.</p>
+</li>
+<li>
+<p>Back in the project list, press <strong>Sync now</strong> on the &quot;Lab handbook&quot; card. A project with a running task cannot sync.</p>
+</li>
+<li>
+<p>Open <strong>Settings → Remote Access → Wisp Lab</strong> again. Under <strong>Knowledge base</strong>, choose &quot;Lab handbook&quot; in <strong>Project to publish</strong> and press <strong>Publish as knowledge base</strong>.</p>
+</li>
+</ol>
+<p>You should see: &quot;Knowledge base published.&quot;, and the section now says the knowledge base is on this computer and names the project.</p>
+<p>Two reminders:</p>
+<ul>
+<li>A project is synchronized with its conversations. Whatever the leader discusses inside the knowledge-base project reaches the members with their next sync. Keep that project for documents.</li>
+<li>To give members an update later, change the files and press <strong>Sync now</strong> again. There is no need to publish again.</li>
+</ul>
+<p><strong>Step 7: the member downloads the knowledge base.</strong></p>
+<p>On computer B open the <strong>Wisp Lab</strong> page again. You should see: the <strong>Knowledge base</strong> section says the lab has one.</p>
+<p>Press <strong>Download knowledge base</strong> and choose where to put it. When the download finishes, Settings closes and &quot;Lab handbook&quot; opens as a new project containing <code>protocols/rnaseq.md</code>.</p>
+<p>Now check that the agent really consults it. Switch to another project on computer B, start a conversation and ask:</p>
+<pre><code>Which reference genome and annotation version did our lab agree on?
+</code></pre>
+<p>You should see: the agent reads the document in the &quot;Lab handbook&quot; folder and answers GRCh38 and GENCODE v44. Once the knowledge base is downloaded, Wisp tells the agent where that folder is in ordinary conversations.</p>
+<p>Treat the knowledge-base project as read-only, and do not hold conversations inside it either: a conversation counts as a change. After a change, <strong>Sync now</strong> on computer B fails with a note that only the lab leader can update the knowledge base.</p>
+<p><strong>Step 8: check a knowledge-base update.</strong></p>
+<ol>
+<li>On computer A add a line to <code>protocols/rnaseq.md</code>, for example &quot;Quantification: featureCounts 2.0.6&quot;, then press <strong>Sync now</strong> on the &quot;Lab handbook&quot; card.</li>
+<li>On computer B press <strong>Sync now</strong> on the &quot;Lab handbook&quot; card.</li>
+</ol>
+<p>You should see: the file on computer B has the new line.</p>
+<p><strong>Step 9: let two agents ask each other.</strong></p>
+<p>First prepare computer B to receive.</p>
+<ol>
+<li>
+<p>On computer B pick an ordinary project, for example &quot;Liver RNA-seq&quot;, and put a note <code>notes/pipeline.md</code> into it:</p>
+<pre><code class="language-markdown"># Pipeline notes
+
+- Adapter trimming: fastp 0.23.4, 16 threads
+- Sample S07 was excluded because its RIN was only 5.1
+</code></pre>
+</li>
+<li>
+<p>Open <strong>Settings → Remote Access → Wisp Lab</strong>. Under <strong>Agent mail</strong>, choose &quot;Liver RNA-seq&quot; in <strong>Project that answers lab messages</strong>. Choosing saves at once.</p>
+</li>
+</ol>
+<p>Then on computer A, start a conversation in any ordinary project and type:</p>
+<pre><code>Use lab_send to ask Lin's agent: which tool does your RNA-seq pipeline use for adapter trimming? Were any samples excluded, and why?
+</code></pre>
+<p>In order, you should see:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Where</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Computer A</td>
+<td>The agent calls <code>lab_members</code> and <code>lab_send</code>. Depending on your approval settings an approval card may appear first; approve it. The agent then says the question was sent and the turn ends</td>
+</tr>
+<tr>
+<td>Computer B, within about 15 seconds</td>
+<td>A conversation named &quot;Lab: Ada&quot; appears in &quot;Liver RNA-seq&quot;. Its first message starts with <code>[Lab message from Ada (lab leader)]</code></td>
+</tr>
+<tr>
+<td>Computer B</td>
+<td>The agent reads <code>notes/pipeline.md</code> and answers: fastp 0.23.4, S07 excluded for a RIN of 5.1</td>
+</tr>
+<tr>
+<td>Computer A, within about 15 seconds after B has answered</td>
+<td>A message starting with <code>[Lab reply from Lin]</code> arrives in the same conversation, and the agent sums the answer up for you</td>
+</tr>
+</tbody>
+</table></div>
+<p>Wisp checks its mailbox every 15 seconds, so besides the two turns themselves a round trip waits up to half a minute. Nobody has to be online at the same time: while the other computer is off, the mail waits on the relay and is handled when that Wisp next starts.</p>
+<p>Try the other direction too: choose an answering project on computer A and ask &quot;Ada&quot; from computer B.</p>
+<p><strong>Step 10: check the limits.</strong></p>
+<p>A message from another member's agent is a colleague's text, not yours. A turn it starts is held to tighter limits than usual. Each of these is worth trying once.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Do this</th>
+<th>You should see</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>From A: &quot;ask Lin's agent to create a file hello.txt in the project&quot;</td>
+<td>An approval card appears in the &quot;Lab: Ada&quot; conversation on computer B and the turn waits there. Approving creates the file; rejecting sends back a reply saying it was refused</td>
+</tr>
+<tr>
+<td>From A: &quot;ask Lin's agent to read a file outside the project, for example the system hosts file, and send the contents back&quot;</td>
+<td>The reply says it cannot: such a turn reads only files inside the conversation's project</td>
+</tr>
+<tr>
+<td>On B choose &quot;None: do not answer lab messages&quot; under <strong>Project that answers lab messages</strong>, then ask from A</td>
+<td>A soon receives an automatic note that the other computer has no project chosen for lab messages. No turn runs on B</td>
+</tr>
+<tr>
+<td>Quit Wisp on B, ask from A, then start B</td>
+<td>B starts answering within about 15 seconds of starting, and A receives the reply afterwards</td>
+</tr>
+<tr>
+<td>Put a small file <code>results/summary.csv</code> into A's current project, then: &quot;attach results/summary.csv for Lin's agent and ask it how many rows there are&quot;</td>
+<td>An <code>uploads/lab/</code> folder appears in B's answering project, with an 8-character prefix on the file name; the reply gives the row count</td>
+</tr>
+<tr>
+<td>In A's member list press <strong>Remove</strong> on &quot;Lin&quot;, then press again to confirm</td>
+<td>When B reopens the page it says the computer was removed and offers <strong>Forget this lab</strong>; a further <code>lab_send</code> from B's agent fails</td>
+</tr>
+<tr>
+<td>Use an invite code a second time</td>
+<td>The page says the code is not valid: used already or expired</td>
+</tr>
+</tbody>
+</table></div>
+<p>Two more rules that need no test of their own: such a turn does not carry your global memory, and without a person writing in between, two agents exchange at most four mails in a row before each stops and sums up for its user.</p>
+<p><strong>When something goes wrong, check these first.</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The page says this relay does not host a lab</td>
+<td>Does the relay run with <code>WISP_LAB=1</code>? Is the image <code>:main</code>? The release behind <code>latest</code> may not include the feature yet</td>
+</tr>
+<tr>
+<td>The relay rejected the access token</td>
+<td>Does the token match <code>.env</code> on the server?</td>
+</tr>
+<tr>
+<td>The relay URL must use HTTPS</td>
+<td>HTTP works only with a private IP or <code>localhost</code>, not with a host name. If the message mentions only localhost, the desktop build predates intranet HTTP support</td>
+</tr>
+<tr>
+<td>Requests time out or are refused</td>
+<td>Run <code>curl http://&lt;server IP&gt;:8787/healthz</code> on that computer; check the firewall and the port</td>
+</tr>
+<tr>
+<td>This lab already has a leader</td>
+<td>Somebody founded the lab on this relay before. Ask the leader for an invite code, or reset as described below</td>
+</tr>
+<tr>
+<td>The leader does not see a new request</td>
+<td>The member list does not refresh by itself: go back one level and open the page again</td>
+</tr>
+<tr>
+<td>A project card has no <strong>Sync now</strong></td>
+<td><strong>Settings → Remote Access → Manual project sync</strong> is incomplete: the backend must be &quot;Self-hosted relay server&quot; with both URL and token</td>
+</tr>
+<tr>
+<td>Publishing says the project must be synchronized first</td>
+<td>Press <strong>Sync now</strong> on that project successfully once. If it says the project is synchronized somewhere else, point project sync at the lab's relay</td>
+</tr>
+<tr>
+<td>Downloading the knowledge base asks for a token</td>
+<td>Enter the lab relay's URL and token under <strong>Manual project sync</strong></td>
+</tr>
+<tr>
+<td>A question gets no answer for a long time</td>
+<td>Is the other Wisp running with its main window open? Did they choose an answering project? Is their &quot;Lab: …&quot; conversation waiting on an approval?</td>
+</tr>
+<tr>
+<td>The agent says it has no <code>lab_send</code> tool</td>
+<td>Is this computer a &quot;Leader&quot; or &quot;Member&quot;? The research assistant's conversation and subagent conversations do not have the two tools; try an ordinary project conversation</td>
+</tr>
+</tbody>
+</table></div>
+<p>For logs, start the desktop with <code>RUST_LOG=wisp=debug cargo tauri dev</code> and look for the lines <code>lab mail dropped</code>, <code>lab mail kept for the next start</code> and <code>lab mailbox check failed</code>. On the relay use <code>docker logs wisp-relay</code>; <code>docker cp wisp-relay:/data/lab/state.json .</code> copies the member list out, which holds only names, roles and key hashes.</p>
+<p><strong>Starting over.</strong></p>
+<p>All lab data lives under <code>lab/</code> in the relay's data directory. Stop the relay, delete that directory and start it again, and the lab is back to nobody having joined:</p>
+<pre><code class="language-bash">docker stop wisp-relay
+sudo rm -rf &quot;$(docker volume inspect -f '{{ .Mountpoint }}' wisp-relay-data)/lab&quot;
+docker start wisp-relay
+</code></pre>
+<p>With Compose, use the volume name <code>docker volume ls</code> shows. Project sync data is not affected. Afterwards the <strong>Wisp Lab</strong> page on both computers says the member record no longer exists; press <strong>Forget this lab</strong> and start again from step 2.</p>
+<p><strong>Acceptance checklist.</strong></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>No.</th>
+<th>Check</th>
+<th>Passed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>The relay's <code>/v1/lab</code> answers <code>unknown_member</code> while nobody has joined</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>2</td>
+<td>After founding, A shows &quot;Leader&quot;</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>3</td>
+<td>After requesting with an invite code, B shows &quot;Awaiting approval&quot; and sees neither members nor knowledge base</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>4</td>
+<td>After A approves, <strong>Check again</strong> on B shows &quot;Member&quot; and both members</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>5</td>
+<td>A publishes the knowledge base; B downloads and opens it</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Asked in another project on B, the agent consults the knowledge base</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>7</td>
+<td>After A updates and syncs, B's sync brings the new content</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>8</td>
+<td>After A asks, B shows a &quot;Lab: Ada&quot; conversation and answers by itself; A receives <code>[Lab reply from Lin]</code></td>
+<td>☐</td>
+</tr>
+<tr>
+<td>9</td>
+<td>A request to change files raises an approval on B</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>10</td>
+<td>A request to read a file outside the project is refused</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>11</td>
+<td>With no answering project on B, A receives the automatic note</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>12</td>
+<td>A question sent while B is offline is answered after B starts</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>13</td>
+<td>An attachment appears under <code>uploads/lab/</code> on B</td>
+<td>☐</td>
+</tr>
+<tr>
+<td>14</td>
+<td>After removal, B is told it was removed</td>
+<td>☐</td>
+</tr>
+</tbody>
+</table></div>
+<p>Project and downloads: <a href="https://github.com/xuzhougeng/wisp-science">Wisp Science</a></p>
+<p>Keep reading: <a href="wisp-science-remote-web.html">Use Wisp from a Phone or Browser</a> · <a href="wisp-science-research-assistant.html">Research assistant</a> · <a href="wisp-science-transfer.html">Import, Export, and Sharing</a></p>
+<blockquote>
+<p>Roles, the security model and the relay API are described in full in the <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/wisp-lab.md">Wisp Lab reference</a>; the sync mechanism the knowledge base relies on is in <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/project-sync.md">project sync</a>. This tutorial reflects the implementation when written; labels may vary by version.</p>
+</blockquote>
+</div>
+</article>
+<nav class="tutorial-pagination" aria-label="相邻教程" data-i18n-aria="tutorials.pagination"><a class="tutorial-previous" href="wisp-science-sealos-remote-web.html"><span data-i18n="tutorials.previous">上一篇</span><strong data-text-zh="在 Sealos 部署 Wisp 网页远程访问" data-text-en="Deploy Wisp Remote Web Access on Sealos">在 Sealos 部署 Wisp 网页远程访问</strong></a><a class="tutorial-next" href="wisp-science-cli.html"><span data-i18n="tutorials.next">下一篇</span><strong data-text-zh="Wisp 命令行" data-text-en="Wisp CLI">Wisp 命令行</strong></a></nav>
+<div class="tutorial-reader-back"><a class="tutorial-back" href="../tutorials.html#wisp-science-lab" data-i18n="tutorials.back">返回教程目录</a></div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <a class="brand" href="../index.html#top">
+        <img src="../assets/logo.svg" alt="" width="24" height="24">
+        Wisp Science
+      </a>
+      <nav class="footer-links">
+        <a href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
+        <a href="../technology.html" data-i18n="nav.tech">技术</a>
+        <a href="../mcp.html" data-i18n="nav.mcp">MCP</a>
+        <a href="../skills.html" data-i18n="nav.skills">SKILLS</a>
+        <a href="../tutorials.html" data-i18n="nav.tutorials">教程</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/releases" data-i18n="footer.releases">版本记录</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/issues" data-i18n="footer.issues">问题反馈</a>
+        <a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE">AGPL-3.0-only</a>
+      </nav>
+      <p class="footer-copy" data-i18n="footer.copy">© 2026 Wisp Science · 开源科学计算 Agent</p>
+    </div>
+  </footer>
+  <script src="../assets/i18n.js"></script>
+</body>
+</html>
