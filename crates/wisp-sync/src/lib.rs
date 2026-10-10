@@ -1,12 +1,13 @@
 //! End-to-end encrypted, manual snapshot sync for Wisp projects, plus the
-//! remote web access rendezvous.
+//! remote web access rendezvous and the optional Wisp Lab membership layer.
 //!
 //! The relay only stores opaque content-addressed blobs and immutable revision
-//! descriptors, and only forwards opaque remote frames. Project keys and remote
-//! access codes never leave clients.
+//! descriptors, and only forwards opaque remote frames. Project keys, remote
+//! access codes and lab keys never leave clients.
 
 mod crypto;
 mod http;
+mod lab;
 mod protocol;
 mod relay;
 mod remote;
@@ -16,6 +17,11 @@ pub use crypto::{
     PROJECT_KEY_BYTES,
 };
 pub use http::{relay_router, HttpRelay, RelayHttpState, MAX_RELAY_BODY_BYTES};
+pub use lab::{
+    lab_mail_aad, Lab, LabInvite, LabJoinRequest, LabKnowledgeBase, LabMail, LabMember,
+    LabMemberStatus, LabRejection, LabRole, LabView, LAB_KB_AAD, LAB_MEMBER_HEADER,
+    MAX_LAB_MAIL_BYTES,
+};
 pub use protocol::{
     CommitOutcome, CommitRequest, SyncHead, SyncRevision, WorkspaceFile, WorkspaceManifest,
     SYNC_PROTOCOL_VERSION,

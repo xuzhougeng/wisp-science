@@ -12,7 +12,8 @@ browser ──HTTPS/WSS──> wisp-relay (ciphertext only) <──outbound WSS�
 ## Deploy the relay
 
 Remote access uses the same `wisp-relay` binary as [project sync](project-sync.md#self-hosted-relay);
-one deployment serves both.
+one deployment serves both. Add `WISP_LAB=1` to also host a
+[Wisp Lab](wisp-lab.md) for the computers that share it.
 
 ```bash
 export WISP_RELAY_TOKEN="replace-with-a-long-random-token"

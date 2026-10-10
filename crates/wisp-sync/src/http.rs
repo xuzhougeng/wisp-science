@@ -22,6 +22,8 @@ pub struct RelayHttpState {
     relay: FileRelay,
     bearer_token: Arc<str>,
     pub(crate) remote: Arc<crate::remote::RemoteHub>,
+    /// Present only when the operator enabled Wisp Lab.
+    pub(crate) lab: Option<Arc<crate::lab::Lab>>,
 }
 
 impl RelayHttpState {
@@ -34,7 +36,14 @@ impl RelayHttpState {
             relay,
             bearer_token: bearer_token.into(),
             remote: Default::default(),
+            lab: None,
         })
+    }
+
+    /// Turns on the `/v1/lab/*` routes, which answer 404 otherwise.
+    pub fn with_lab(mut self, lab: crate::lab::Lab) -> Self {
+        self.lab = Some(Arc::new(lab));
+        self
     }
 }
 
@@ -68,6 +77,7 @@ pub fn relay_router(state: RelayHttpState) -> Router {
         )
         .route("/v1/remote/host/{sid}", get(crate::remote::host_socket))
         .route("/v1/remote/client/{sid}", get(crate::remote::client_socket))
+        .merge(crate::lab::routes())
         .layer(DefaultBodyLimit::max(MAX_RELAY_BODY_BYTES))
         .with_state(state)
 }
@@ -188,6 +198,18 @@ async fn commit(
     if !authorized(&headers, &state) {
         return unauthorized();
     }
+    if let Some(lab) = &state.lab {
+        if !lab
+            .may_commit(&project_id, crate::lab::member_key(&headers))
+            .await
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                "only the lab leader can update the lab knowledge base",
+            )
+                .into_response();
+        }
+    }
     match state.relay.commit(&project_id, request).await {
         Ok(CommitOutcome::Committed(head)) => Json(head).into_response(),
         Ok(CommitOutcome::Conflict(head)) => (StatusCode::CONFLICT, Json(head)).into_response(),
@@ -199,6 +221,8 @@ async fn commit(
 pub struct HttpRelay {
     base_url: Url,
     bearer_token: Arc<str>,
+    /// Sent as `x-wisp-member` when this computer belongs to the relay's lab.
+    member_key: Option<Arc<str>>,
     client: reqwest::Client,
 }
 
@@ -228,6 +252,7 @@ impl HttpRelay {
         Ok(Self {
             base_url,
             bearer_token: bearer_token.into(),
+            member_key: None,
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(30))
                 .read_timeout(Duration::from_secs(60))
@@ -236,9 +261,19 @@ impl HttpRelay {
         })
     }
 
+    /// Identifies this computer as a lab member. Lab calls need it, and so
+    /// does the leader's commit to the lab knowledge base.
+    pub fn with_lab_member(mut self, member_key: impl Into<String>) -> Self {
+        self.member_key = Some(member_key.into().into());
+        self
+    }
+
     /// Buffer at most `cap` bytes. Checked per chunk, so a chunked or lying
     /// `Content-Length` response from a hostile relay cannot exhaust memory.
-    async fn bounded_body(mut response: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
+    pub(crate) async fn bounded_body(
+        mut response: reqwest::Response,
+        cap: usize,
+    ) -> Result<Vec<u8>> {
         if response.content_length().is_some_and(|n| n > cap as u64) {
             anyhow::bail!("relay response exceeds the client size limit");
         }
@@ -252,7 +287,7 @@ impl HttpRelay {
         Ok(body)
     }
 
-    async fn bounded_json<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn bounded_json<T: serde::de::DeserializeOwned>(
         response: reqwest::Response,
     ) -> Result<T> {
         let body = Self::bounded_body(response, MAX_RELAY_JSON_BYTES).await?;
@@ -263,7 +298,7 @@ impl HttpRelay {
         self.base_url.join(path).context("invalid relay endpoint")
     }
 
-    fn component(value: &str, name: &str) -> Result<()> {
+    pub(crate) fn component(value: &str, name: &str) -> Result<()> {
         if value.is_empty()
             || value.len() > 128
             || !value
@@ -286,11 +321,19 @@ impl HttpRelay {
         Ok(())
     }
 
-    fn request(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder> {
-        Ok(self
+    pub(crate) fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<reqwest::RequestBuilder> {
+        let request = self
             .client
             .request(method, self.endpoint(path)?)
-            .bearer_auth(&*self.bearer_token))
+            .bearer_auth(&*self.bearer_token);
+        Ok(match &self.member_key {
+            Some(key) => request.header(crate::lab::LAB_MEMBER_HEADER, &**key),
+            None => request,
+        })
     }
 
     async fn response_error(response: reqwest::Response) -> anyhow::Error {
