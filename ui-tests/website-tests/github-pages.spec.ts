@@ -108,6 +108,21 @@ async function serveTutorialSite(page: import("@playwright/test").Page) {
   });
 }
 
+// Tutorials are described by their Markdown sources, so adding or reordering
+// one needs no edit here: ids are the file names, titles each file's first line.
+type Lang = "zh" | "en";
+const tutorialIds = readdirSync(resolve(repositoryRoot, "docs/wechat"))
+  .filter((name) => name.endsWith(".md"))
+  .map((name) => name.replace(/\.md$/, ""));
+const tutorialTitle = (id: string, lang: Lang) =>
+  readRepositoryFile(`docs/wechat/${lang === "en" ? "en/" : ""}${id}.md`).split("\n")[0].replace(/^# /, "").trim();
+// A directory card drops the series prefix ("Wisp Science基础入门：快速开始" → "快速开始").
+const cardTitle = (id: string, lang: Lang) => {
+  const title = tutorialTitle(id, lang);
+  const separator = title.indexOf(lang === "en" ? ":" : "：");
+  return separator < 0 ? title : title.slice(separator + 1).trim();
+};
+
 test("Skills follows MCP in navigation and presents every bundled skill in both languages", async ({ page }) => {
   await serveTutorialSite(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -154,14 +169,20 @@ test("tutorial directory stays compact and links to independent articles", async
   await page.goto("https://tutorials.test/wisp-science/index.html");
   await page.locator('.nav-links a[href^="tutorials.html"]').click();
   await expect(page).toHaveTitle("教程 | Wisp Science");
-  const sources = readdirSync(resolve(repositoryRoot, "docs/wechat")).filter((name) => name.endsWith(".md"));
-  await expect(page.locator(".tutorial-card")).toHaveCount(sources.length);
   await expect(page.locator(".tutorial-article")).toHaveCount(0);
-  await expect(page.locator(".tutorial-card h3").first()).toHaveText("快速开始");
   await expect(page.locator(".tutorial-group-title")).toHaveText(["基础入门", "使用技巧", "进阶"]);
-  await expect(page.locator("#basics .tutorial-card")).toHaveCount(7);
-  await expect(page.locator("#tips .tutorial-card")).toHaveCount(4);
-  await expect(page.locator("#advanced .tutorial-card h3")).toHaveText(["完成转录组上游分析", "完成转录组下游分析", "Agent Workflow", "创建 Agent Workflow", "用 map_items 批量处理文献", "科研版的个人助理来！", "用手机和浏览器远程使用 Wisp", "在 Sealos 部署 Wisp 网页远程访问", "用 Wisp Lab 组建课题组，让 Agent 互相提问", "Wisp 命令行", "ACP配置"]);
+  // Every source has one card, inside a group, titled from that source.
+  const cards = page.locator(".tutorial-card");
+  await expect(cards).toHaveCount(tutorialIds.length);
+  await expect(page.locator(".tutorial-group .tutorial-card")).toHaveCount(tutorialIds.length);
+  const order = await cards.evaluateAll((elements) => elements.map((element) => element.id));
+  expect([...order].sort()).toEqual([...tutorialIds].sort());
+  expect(order[0]).toBe("wisp-science-quick-start");
+  await expect(cards.locator("h3")).toHaveText(order.map((id) => cardTitle(id, "zh")));
+  for (const group of ["basics", "tips", "advanced"]) {
+    expect(await page.locator(`#${group} .tutorial-card`).count(), group).toBeGreaterThan(0);
+  }
+  const firstAdvanced = (await page.locator("#advanced .tutorial-card").first().getAttribute("id"))!;
   await page.screenshot({ path: test.info().outputPath("tutorials-desktop.png") });
   for (const width of [1440, 1280, 1120, 1101, 1100, 980, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
@@ -172,7 +193,7 @@ test("tutorial directory stays compact and links to independent articles", async
         lang === "en" ? ["Basics", "Tips", "Advanced"] : ["基础入门", "使用技巧", "进阶"],
       );
       await expect(page.locator("#advanced .tutorial-card h3").first()).toHaveText(
-        lang === "en" ? "Complete an Upstream RNA-seq Analysis" : "完成转录组上游分析",
+        cardTitle(firstAdvanced, lang as Lang),
       );
       const basics = (await page.locator("#basics").boundingBox())!;
       const tips = (await page.locator("#tips").boundingBox())!;
@@ -194,14 +215,13 @@ test("tutorial directory stays compact and links to independent articles", async
   await page.screenshot({ path: test.info().outputPath("tutorials-mobile.png") });
 });
 
-for (const name of readdirSync(resolve(repositoryRoot, "docs/wechat")).filter((name) => name.endsWith(".md"))) {
-  const id = name.replace(/\.md$/, "");
+for (const id of tutorialIds) {
   test(`tutorial ${id} opens alone, keeps its images, and returns to the directory`, async ({ page }) => {
     await serveTutorialSite(page);
     await page.goto("https://tutorials.test/wisp-science/tutorials.html");
     await page.locator(`.tutorial-card#${id}`).click();
     await expect(page).toHaveURL(new RegExp(`/tutorials/${id}\\.html\\?lang=zh$`));
-    const title = readRepositoryFile(`docs/wechat/${name}`).split("\n")[0].replace(/^# /, "");
+    const title = tutorialTitle(id, "zh");
     await expect(page.locator(".tutorial-article")).toHaveCount(1);
     await expect(page.locator("h1")).toHaveText(title);
     if (id === "wisp-science-rnaseq-downstream" || id === "wisp-science-transcriptome-upstream") {
@@ -214,7 +234,7 @@ for (const name of readdirSync(resolve(repositoryRoot, "docs/wechat")).filter((n
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.locator('.lang-switch [data-lang="en"]').click();
-    const englishTitle = readRepositoryFile(`docs/wechat/en/${name}`).split("\n")[0].replace(/^# /, "");
+    const englishTitle = tutorialTitle(id, "en");
     await expect(page.locator("h1")).toHaveText(englishTitle);
     await expect(page.locator('.tutorial-body[lang="en"]')).toBeVisible();
     await expect(page.locator('.tutorial-body[lang="zh-CN"]')).toBeHidden();
@@ -229,7 +249,7 @@ for (const name of readdirSync(resolve(repositoryRoot, "docs/wechat")).filter((n
     }
     expect(await page.locator(".tutorial-body:visible").innerText()).not.toMatch(/[\p{Script=Han}]/u);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await expect(page.locator('[data-href-en]')).toHaveAttribute("href", new RegExp(`/wechat/en/${name}$`));
+    await expect(page.locator('[data-href-en]')).toHaveAttribute("href", new RegExp(`/wechat/en/${id}\\.md$`));
     await expect(page.locator(".tutorial-breadcrumb a")).toHaveText("Back to tutorials");
     const browserTitle = await page.title();
     await page.reload();
@@ -244,52 +264,33 @@ for (const name of readdirSync(resolve(repositoryRoot, "docs/wechat")).filter((n
 
 test("article links, previous and next navigation, and browser back stay within the series", async ({ page }) => {
   await serveTutorialSite(page);
-  await page.goto("https://tutorials.test/wisp-science/tutorials/wisp-science-quick-start.html");
+  // The directory defines the reading order; previous/next must walk exactly it.
+  await page.goto("https://tutorials.test/wisp-science/tutorials.html");
+  const order = await page.locator(".tutorial-card").evaluateAll((cards) => cards.map((card) => card.id));
+  expect(order).toHaveLength(tutorialIds.length);
+  const heading = page.locator("h1");
+  const expectArticle = async (id: string) => {
+    await expect(page).toHaveURL(new RegExp(`/tutorials/${id}\\.html`));
+    await expect(heading).toHaveText(tutorialTitle(id, "zh"));
+  };
+  await page.goto(`https://tutorials.test/wisp-science/tutorials/${order[0]}.html`);
   await expect(page.locator(".tutorial-previous")).toHaveCount(0);
-  await page.locator(".tutorial-next").click();
-  await expect(page.locator("h1")).toContainText("模型配置");
-  await page.locator(".tutorial-next").click();
-  await expect(page.locator("h1")).toContainText("浏览器使用");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toContainText("模型配置");
-  await page.goto("https://tutorials.test/wisp-science/tutorials/wisp-science-acp.html");
+  for (const id of order.slice(1)) {
+    await page.locator(".tutorial-next").click();
+    await expectArticle(id);
+  }
   await expect(page.locator(".tutorial-next")).toHaveCount(0);
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级：ACP配置");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp 命令行");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：用 Wisp Lab 组建课题组，让 Agent 互相提问");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("在 Sealos 部署 Wisp 网页远程访问");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：用手机和浏览器远程使用 Wisp");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("科研版的个人助理来！");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：用 map_items 批量处理文献");
-  await page.locator(".tutorial-next").click();
-  await expect(page.locator("h1")).toHaveText("科研版的个人助理来！");
-  await page.locator(".tutorial-previous").click();
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：创建 Agent Workflow");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science高级用法：Agent Workflow");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science实战：完成转录组下游分析");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toHaveText("Wisp Science： 完成转录组上游分析");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toContainText("快捷动作");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toContainText("专家");
-  await page.locator(".tutorial-previous").click();
-  await expect(page.locator("h1")).toContainText("研究历程");
-  await page.locator(".tutorial-previous").click();
+  for (const id of order.slice(0, -1).reverse()) {
+    await page.locator(".tutorial-previous").click();
+    await expectArticle(id);
+  }
+  // A link inside an article opens the linked tutorial, and Back returns.
+  await page.goto("https://tutorials.test/wisp-science/tutorials/wisp-science-trajectory.html");
   await page.locator('.tutorial-body:visible p a[href^="wisp-science-skills.html"]').click();
-  await expect(page.locator("h1")).toContainText("Skills");
+  await expectArticle("wisp-science-skills");
   await expect(page.locator(".tutorial-body:visible pre").filter({ hasText: "name: lab-paper-note" })).toContainText("# 实验室论文阅读笔记");
   await page.goBack();
-  await expect(page.locator("h1")).toContainText("轨迹");
+  await expectArticle("wisp-science-trajectory");
   await page.screenshot({ path: test.info().outputPath("tutorial-article.png") });
 });
 

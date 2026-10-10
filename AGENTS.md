@@ -58,6 +58,15 @@ cd ui && cargo check --target wasm32-unknown-unknown
 cd ../ui-tests && npm ci && npx playwright test
 ```
 
+For website changes under `docs/` (subject to the same permission rule). These run in their own CI workflow, `.github/workflows/website.yml`, and need no Trunk:
+
+```bash
+npm test --prefix docs
+python3 -m unittest discover -s docs -p 'test_build_*.py'
+npm run build --prefix docs
+cd ui-tests && npm ci && npx playwright test --config playwright.website.config.ts
+```
+
 For MCP-related changes, the smoke test (subject to the same permission rule):
 
 ```bash

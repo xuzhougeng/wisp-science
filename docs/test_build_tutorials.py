@@ -51,12 +51,19 @@ class TutorialBuildTests(unittest.TestCase):
 
     def test_sibling_navigation_follows_reading_order(self):
         pages = build_tutorials.render_tutorials()
-        first = pages["tutorials/wisp-science-quick-start.html"]
-        last = pages["tutorials/wisp-science-acp.html"]
+        # The directory lists cards in reading order; previous/next must walk it.
+        order = re.findall(r'<a class="tutorial-card" id="([^"]+)"', pages["tutorials.html"])
+        self.assertEqual(order[0], "wisp-science-quick-start")
+        first = pages[f"tutorials/{order[0]}.html"]
+        last = pages[f"tutorials/{order[-1]}.html"]
         self.assertNotIn('class="tutorial-previous"', first)
-        self.assertIn('class="tutorial-next" href="wisp-science-models.html"', first)
         self.assertNotIn('class="tutorial-next"', last)
-        self.assertIn('class="tutorial-previous" href="wisp-science-cli.html"', last)
+        for previous, following in zip(order, order[1:]):
+            with self.subTest(previous=previous, following=following):
+                self.assertIn(f'class="tutorial-next" href="{following}.html"',
+                              pages[f"tutorials/{previous}.html"])
+                self.assertIn(f'class="tutorial-previous" href="{previous}.html"',
+                              pages[f"tutorials/{following}.html"])
         self.assertIn('<title>快速开始 · 教程 | Wisp Science</title>', first)
         self.assertIn('src="../assets/i18n.js"', first)
 
@@ -79,18 +86,25 @@ class TutorialBuildTests(unittest.TestCase):
         groups = re.findall(r'<section class="tutorial-group" id="([^"]+)".*?</section>',
                             directory, re.DOTALL)
         self.assertEqual(groups, ["basics", "tips", "advanced"])
-        expected = [build_tutorials.READING_ORDER[:7], build_tutorials.READING_ORDER[7:11],
-                    build_tutorials.READING_ORDER[11:]]
-        for (group, zh, en), article_ids in zip(build_tutorials.TUTORIAL_GROUPS, expected):
+        listed = []
+        for group, zh, en in build_tutorials.TUTORIAL_GROUPS:
             section = re.search(rf'<section class="tutorial-group" id="{group}".*?</section>',
                                 directory, re.DOTALL).group()
             self.assertIn(f'aria-labelledby="{group}-title"', section)
             self.assertIn(f'data-text-zh="{zh}" data-text-en="{en}"', section)
-            self.assertEqual(re.findall(r'<a class="tutorial-card" id="([^"]+)"', section),
-                             article_ids)
+            article_ids = re.findall(r'<a class="tutorial-card" id="([^"]+)"', section)
+            self.assertTrue(article_ids, group)
             self.assertEqual(section.count('<h3 '), len(article_ids))
+            # Every card in a group carries that group's label.
+            self.assertEqual(section.count(build_tutorials.localized("span", zh, en)),
+                             len(article_ids))
+            listed += article_ids
+        # Each source appears once, and a group never interrupts the reading
+        # order: card numbers count up from 01 down the whole page.
+        sources = sorted(path.stem for path in (build_tutorials.DOCS / "wechat").glob("*.md"))
+        self.assertEqual(sorted(listed), sources)
         self.assertEqual(re.findall(r'<span class="tutorial-number">(\d+)</span>', directory),
-                         [f"{number:02d}" for number in range(1, len(build_tutorials.READING_ORDER) + 1)])
+                         [f"{number:02d}" for number in range(1, len(sources) + 1)])
 
     def test_specialists_and_quick_actions_are_adjacent_bilingual_tips(self):
         pages = build_tutorials.render_tutorials()

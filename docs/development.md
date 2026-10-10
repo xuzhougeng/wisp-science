@@ -43,9 +43,15 @@ python3 docs/build_tutorials.py --check
 python3 -m unittest discover -s docs -p 'test_build_tutorials.py'
 ```
 
+No test needs editing for a new or reordered article. The build tests and the
+browser tests take the article list, titles and order from `docs/wechat/` and
+from the generated directory.
+
 Each article must start with a level-one title. `READING_ORDER` in the generator
 puts Quick Start first, then the four introductory tutorials, MCP, Skills, trajectories,
 research journey, and the advanced CLI and ACP tutorials; other articles are appended alphabetically.
+List a new Basics or Tips article in `READING_ORDER`: an unlisted article goes after the
+last Advanced one, and the build tests fail when that leaves the card numbers out of order.
 `TUTORIAL_GROUPS` defines the directory sections. Chinese title prefixes select Basics
 or Tips; other articles appear in Advanced. Filenames determine
 stable article URLs and directory card anchors. Edit the page shell outside the generated

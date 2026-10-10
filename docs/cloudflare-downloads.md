@@ -111,6 +111,10 @@ Tests use fake releases and R2 objects, temporary files, and a mocked browser
 manifest. They require no Cloudflare account or real upload. Browser tests use
 a local Python HTTP server on port 1433.
 
+CI runs the same four steps in `.github/workflows/website.yml`, only when
+`docs/`, `skills/`, a README or the website tests change. The browser tests
+live in `ui-tests/website-tests/` and do not need Trunk or the app UI.
+
 After deployment, open `https://wispscience.com/#download` and click the homepage
 download action to verify it stays on the homepage. Select
 every system/processor/format, switch languages and check a narrow viewport.
