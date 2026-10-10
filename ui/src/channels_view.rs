@@ -68,6 +68,9 @@ fn state_tone(state: &str) -> &'static str {
 pub(super) fn ChannelsPane(
     locale: RwSignal<Locale>,
     open: RwSignal<Option<String>>,
+    /// Opens a project and leaves Settings, after the lab's knowledge base
+    /// was downloaded.
+    on_open_project: Callback<String>,
 ) -> impl IntoView {
     let status = create_rw_signal(None::<ChannelsStatus>);
     let feishu_app_id = create_rw_signal(String::new());
@@ -1178,6 +1181,9 @@ pub(super) fn ChannelsPane(
                 </div>
             </div>
         }.into_view(),
+        Some("lab") => view! {
+            <crate::lab_view::LabPane locale=locale on_open_project=on_open_project/>
+        }.into_view(),
         Some(_) => view! { <div></div> }.into_view(),
         None => view! {
             <div class="settings-card channels-overview" data-testid="channels-overview">
@@ -1308,6 +1314,20 @@ pub(super) fn ChannelsPane(
                                     on:change=move |ev| save_remote.call(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
+                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                        </div>
+                    </div>
+                    <div class="settings-list-row settings-list-row-link" data-testid="lab-channel-row"
+                        on:click=move |_| open.set(Some("lab".into()))>
+                        <div class="settings-list-main">
+                            <span class="settings-list-title">
+                                {move || t(locale.get(), "channels.lab.title")}
+                            </span>
+                            <span class="settings-list-sub">
+                                {move || t(locale.get(), "channels.lab.subtitle")}
+                            </span>
+                        </div>
+                        <div class="settings-list-actions">
                             <span class="settings-list-chevron" aria-hidden="true">"›"</span>
                         </div>
                     </div>

@@ -13,6 +13,7 @@ mod context_menu;
 mod dto;
 mod hooks_settings;
 mod i18n;
+mod lab_view;
 mod library;
 mod mcp_app;
 mod network_settings;

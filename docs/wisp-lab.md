@@ -9,9 +9,8 @@ The relay stays infrastructure. It stores who belongs to the lab and who wrote
 to whom. The lab key never reaches it, so it cannot read the knowledge base
 or a single mail.
 
-> This page currently covers the relay side. The desktop screens for joining a
-> lab, reviewing members, publishing the knowledge base and agent mail are
-> added in follow-up changes and documented here as they land.
+> Agent mail between members is added in a follow-up change and documented
+> here when it lands.
 
 ## Enable it on the relay
 
@@ -49,6 +48,62 @@ Turning the variable off later hides the lab without deleting it.
 An invite code admits one member and expires after seven days. It contains
 the lab key, so treat it like a password. It does not contain the relay
 token: hand that over separately, as with a project device code.
+
+## Found a lab
+
+1. Deploy the relay with `WISP_LAB=1`.
+2. On your desktop open **Settings → Remote Access → Wisp Lab**.
+3. Leave **Invite code** empty. Enter the relay URL, the relay's
+   `WISP_RELAY_TOKEN`, your name and a name for the lab, then press
+   **Found lab**.
+
+Your computer generates the lab key and its own member key and keeps both in
+the OS keyring. You are now the leader.
+
+To add someone, press **Create invite code**, send them the code privately and
+send them the relay token separately. They appear in **Members** as *Awaiting
+approval*; press **Approve** to let them in or **Reject** to turn them away.
+**Remove** takes a member out later. Reject and Remove ask for a second click.
+
+## Join a lab
+
+1. Open **Settings → Remote Access → Wisp Lab**.
+2. Paste the invite code. The relay URL is part of it, so that field can stay
+   empty. Enter the relay token and your name, then press **Request to join**.
+3. The page shows *Awaiting approval*. Once the leader has approved you,
+   **Check again** shows the members and the knowledge base.
+
+**Leave lab** removes you from the member list and deletes the lab key from
+this computer. Rejoining needs a new invite code.
+
+If the relay's operator changes `WISP_RELAY_TOKEN`, enter the new one under
+**Relay access token** and press **Update token**. If the leader removed this
+computer, the page says so and offers **Forget this lab**, which only clears
+this computer's copy of the keys.
+
+## Knowledge base
+
+The knowledge base is an ordinary Wisp project that the leader keeps and
+everyone else reads.
+
+**Leader.** Put the group's protocols, reference notes and shared scripts into
+a project, press **Sync now** on its project card so it exists on the relay,
+then choose it under **Knowledge base** and press **Publish as knowledge
+base**. From then on the relay accepts changes to that project from you only.
+Press **Sync now** again whenever you want members to get an update.
+
+**Members.** Press **Download knowledge base** and choose where to put it. It
+becomes a project on your computer, and **Sync now** on its card pulls the
+leader's later changes. Edits you make there stay local: the relay refuses a
+member's push, and choosing **Use remote version** in the sync dialog brings
+the leader's version back. To contribute, send the material to the leader.
+
+The knowledge base travels through [project sync](project-sync.md), which
+reads the relay token from **Settings → General → Manual project sync**. A
+computer that never configured project sync gets the lab's relay URL and
+token filled in there when it joins, so **Sync now** works right away. An
+existing sync configuration is not changed: if it points at a different
+relay, the knowledge base cannot be downloaded until it points at the lab's.
 
 ## Security model
 

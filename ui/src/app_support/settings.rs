@@ -1384,6 +1384,7 @@ pub(crate) fn settings_subpage_label(
             "weixin" => t(loc, "channels.weixin.title").into(),
             "sticks3" => t(loc, "channels.device.title").into(),
             "remote" => t(loc, "channels.remote.title").into(),
+            "lab" => t(loc, "channels.lab.title").into(),
             other => other.to_string(),
         }),
         _ => None,

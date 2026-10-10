@@ -374,9 +374,13 @@ async fn transport_for(kind: &str, location: &str) -> Result<Arc<dyn SyncTranspo
             let token = read_secret(RELAY_TOKEN_SECRET.into()).await.map_err(|_| {
                 "Configure the relay token in Settings before synchronizing.".to_string()
             })?;
-            Ok(Arc::new(
-                HttpRelay::new(location, token).map_err(|error| error.to_string())?,
-            ))
+            let mut relay = HttpRelay::new(location, token).map_err(|error| error.to_string())?;
+            // The lab leader's commits to the knowledge base carry the member
+            // key; a relay that hosts no lab for this computer never sees it.
+            if let Some(member_key) = crate::channels::lab::member_key_for(location).await {
+                relay = relay.with_lab_member(member_key);
+            }
+            Ok(Arc::new(relay))
         }
         "folder" => {
             let folder = PathBuf::from(location);
@@ -1629,14 +1633,9 @@ pub(super) async fn resolve_project_sync(
     Ok(result)
 }
 
-#[tauri::command]
-pub(super) async fn project_sync_code(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<String, String> {
-    let cursor = state
-        .store
-        .get_project_sync_state(&id)
+async fn join_code_for(store: &Store, id: &str) -> Result<JoinCode, String> {
+    let cursor = store
+        .get_project_sync_state(id)
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| {
@@ -1648,25 +1647,45 @@ pub(super) async fn project_sync_code(
     if cursor.base_revision.is_none() {
         return Err("Synchronize this project successfully before copying its device code.".into());
     }
-    let (name, _) = state
-        .store
-        .get_project(&id)
+    let (name, _) = store
+        .get_project(id)
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Project not found.".to_string())?;
-    let code = JoinCode {
+    Ok(JoinCode {
         version: SYNC_PROTOCOL_VERSION,
-        project_id: id.clone(),
+        project_id: id.to_string(),
         project_name: name,
-        project_key: encode_key(&load_project_key(&id).await?),
+        project_key: encode_key(&load_project_key(id).await?),
         transport_kind: cursor.transport_kind.clone(),
         relay_url: (cursor.transport_kind == "relay").then_some(cursor.transport_location),
-    };
-    let bytes = serde_json::to_vec(&code).map_err(|error| error.to_string())?;
+    })
+}
+
+fn encode_join_code(code: &JoinCode) -> Result<String, String> {
+    let bytes = serde_json::to_vec(code).map_err(|error| error.to_string())?;
     Ok(format!(
         "{JOIN_CODE_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(bytes)
     ))
+}
+
+#[tauri::command]
+pub(super) async fn project_sync_code(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    encode_join_code(&join_code_for(&state.store, &id).await?)
+}
+
+/// The relay URL and device code of a project synchronized through a relay.
+/// Wisp Lab publishes the code, sealed, as the lab's knowledge base.
+pub(crate) async fn relay_device_code(store: &Store, id: &str) -> Result<(String, String), String> {
+    let code = join_code_for(store, id).await?;
+    let relay_url = code.relay_url.clone().ok_or_else(|| {
+        "Synchronize this project through the lab's relay before publishing it.".to_string()
+    })?;
+    Ok((relay_url, encode_join_code(&code)?))
 }
 
 fn decode_join_code(raw: &str) -> Result<JoinCode, String> {

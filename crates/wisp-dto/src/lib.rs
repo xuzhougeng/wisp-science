@@ -2144,6 +2144,58 @@ pub struct ChannelsStatus {
     pub remote: RemoteAccessStatus,
 }
 
+/// This computer's membership in a Wisp Lab (docs/wisp-lab.md), as the
+/// settings pane shows it.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LabStatus {
+    /// "none" | "pending" | "active" | "removed" | "error"
+    #[serde(default)]
+    pub state: String,
+    /// Why `state` is "error": a `lab:<code>` refusal or a transport message.
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub relay_url: String,
+    #[serde(default)]
+    pub has_token: bool,
+    #[serde(default)]
+    pub member_name: String,
+    #[serde(default)]
+    pub member_id: String,
+    #[serde(default)]
+    pub lab_name: String,
+    #[serde(default)]
+    pub leader: bool,
+    /// Active members, plus the ones awaiting review when `leader`.
+    #[serde(default)]
+    pub members: Vec<LabMemberInfo>,
+    #[serde(default)]
+    pub knowledge_base: Option<LabKnowledgeBaseInfo>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LabMemberInfo {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub leader: bool,
+    #[serde(default)]
+    pub pending: bool,
+}
+
+/// The lab's knowledge base: a synced project the leader publishes.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LabKnowledgeBaseInfo {
+    pub project_id: String,
+    /// Whether that project already exists on this computer.
+    #[serde(default)]
+    pub local: bool,
+    /// Its local name; empty until the project was downloaded.
+    #[serde(default)]
+    pub project_name: String,
+}
+
 /// Remote web access (#1460): the desktop dials out to a self-hosted relay
 /// and browsers open `link`, whose fragment carries the connection code.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]

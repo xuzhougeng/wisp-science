@@ -17277,6 +17277,129 @@ test("remote web access needs a relay, then shows the connection link and resets
   await expect(page.getByTestId("remote-state")).toHaveText("Stopped");
 });
 
+test("the first computer founds a lab, then reviews members, invites and publishes the knowledge base", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Remote Access");
+  await page.getByTestId("lab-channel-row").click();
+  await expect(page.getByTestId("lab-channel-card")).toBeVisible();
+  await expect(page.getByTestId("lab-state")).toHaveText("Not joined");
+
+  // Without an invite code this computer founds the lab, so it names it.
+  await expect(page.getByTestId("lab-join")).toHaveText("Found lab");
+  await expect(page.getByTestId("lab-join")).toBeDisabled();
+  await page.getByTestId("lab-relay-url").fill("https://relay.example.test");
+  await page.getByTestId("lab-relay-token").fill("relay-secret");
+  await page.getByTestId("lab-member-name").fill("Ada");
+  await page.getByTestId("lab-name").fill("Genomics");
+  await page.getByTestId("lab-join").click();
+  await expect.poll(() => lastInvokeArgs(page, "lab_join")).toMatchObject({
+    relayUrl: "https://relay.example.test",
+    relayToken: "relay-secret",
+    name: "Ada",
+    labName: "Genomics",
+    invite: "",
+  });
+  await expect(page.getByTestId("lab-heading")).toHaveText("Genomics");
+  await expect(page.getByTestId("lab-state")).toHaveText("Leader");
+  await expect(page.getByTestId("lab-member-row")).toHaveCount(1);
+  await expect(page.getByTestId("lab-member-row")).toContainText("Ada");
+  // The leader cannot leave, and has nobody to remove yet.
+  await expect(page.getByTestId("lab-leave")).toHaveCount(0);
+  await expect(page.getByTestId("lab-remove")).toHaveCount(0);
+
+  await page.getByTestId("lab-invite-create").click();
+  await expect(page.getByTestId("lab-invite-code")).toHaveText("wisp-lab:invite-1");
+
+  // Somebody used that code: they wait for review. Reopening the page reloads.
+  await page.evaluate(() => {
+    (window as any).__mockLab.members.push({ id: "m2", name: "Lin", leader: false, pending: true });
+  });
+  await page.locator(".settings-head-back").click();
+  await page.getByTestId("lab-channel-row").click();
+  const lin = page.getByTestId("lab-member-row").filter({ hasText: "Lin" });
+  await expect(lin).toContainText("Awaiting approval");
+  await lin.getByTestId("lab-approve").click();
+  await expect.poll(() => lastInvokeArgs(page, "lab_approve_member")).toMatchObject({ memberId: "m2" });
+  await expect(lin).not.toContainText("Awaiting approval");
+  await expect(page.getByTestId("lab-message")).toHaveText("Member approved.");
+
+  // Removing takes two clicks on the same button.
+  await lin.getByTestId("lab-remove").click();
+  await expect(lin.getByTestId("lab-remove")).toHaveText("Click again to confirm");
+  await expect(page.getByTestId("lab-member-row")).toHaveCount(2);
+  await lin.getByTestId("lab-remove").click();
+  await expect.poll(() => lastInvokeArgs(page, "lab_remove_member")).toMatchObject({ memberId: "m2" });
+  await expect(page.getByTestId("lab-member-row")).toHaveCount(1);
+
+  await expect(page.getByTestId("lab-kb-summary")).toHaveText("The leader has not published a knowledge base yet.");
+  await expect(page.getByTestId("lab-kb-publish")).toBeDisabled();
+  await page.getByTestId("lab-kb-project").selectOption({ label: "Other project" });
+  await page.getByTestId("lab-kb-publish").click();
+  await expect.poll(() => lastInvokeArgs(page, "lab_publish_knowledge_base")).toMatchObject({ projectId: "other" });
+  await expect(page.getByTestId("lab-kb-summary")).toContainText('On this computer as the project "Other project"');
+});
+
+test("a member joins a lab with an invite code, waits for approval and downloads the knowledge base", async ({ page }) => {
+  await enterApp(page, "/?mockLabFounded=1");
+  await openSettingsSection(page, "Remote Access");
+  await page.getByTestId("lab-channel-row").click();
+  await page.getByTestId("lab-relay-url").fill("https://relay.example.test");
+  await page.getByTestId("lab-relay-token").fill("relay-secret");
+  await page.getByTestId("lab-member-name").fill("Lin");
+  // The lab already has a leader, so founding it is refused with a reason.
+  await page.getByTestId("lab-join").click();
+  await expect(page.getByTestId("lab-message")).toHaveText(
+    "This lab already has a leader. Ask them for an invite code.",
+  );
+  await expect(page.getByTestId("lab-state")).toHaveText("Not joined");
+
+  await page.getByTestId("lab-invite").fill("wisp-lab:spent");
+  // With an invite code the lab already has its name.
+  await expect(page.getByTestId("lab-name")).toHaveCount(0);
+  await expect(page.getByTestId("lab-join")).toHaveText("Request to join");
+  await page.getByTestId("lab-join").click();
+  await expect(page.getByTestId("lab-message")).toHaveText(
+    "This invite code is not valid. It may have been used already or have expired.",
+  );
+
+  await page.getByTestId("lab-invite").fill("wisp-lab:valid");
+  await page.getByTestId("lab-join").click();
+  await expect(page.getByTestId("lab-state")).toHaveText("Awaiting approval");
+  await expect(page.getByTestId("lab-pending-note")).toBeVisible();
+  // A pending member sees neither members nor the knowledge base.
+  await expect(page.getByTestId("lab-members")).toHaveCount(0);
+  await expect(page.getByTestId("lab-kb-summary")).toHaveCount(0);
+
+  // The leader approves on their computer.
+  await page.evaluate(() => {
+    Object.assign((window as any).__mockLab, {
+      state: "active",
+      members: [
+        { id: "m1", name: "Ada", leader: true, pending: false },
+        { id: "me", name: "Lin", leader: false, pending: false },
+      ],
+      knowledge_base: { project_id: "other", local: false, project_name: "" },
+    });
+  });
+  await page.getByTestId("lab-refresh").click();
+  await expect(page.getByTestId("lab-state")).toHaveText("Member");
+  await expect(page.getByTestId("lab-member-row")).toHaveCount(2);
+  // Members review nobody, invite nobody and publish nothing.
+  await expect(page.getByTestId("lab-approve")).toHaveCount(0);
+  await expect(page.getByTestId("lab-remove")).toHaveCount(0);
+  await expect(page.getByTestId("lab-invite-create")).toHaveCount(0);
+  await expect(page.getByTestId("lab-kb-publish")).toHaveCount(0);
+  await expect(page.getByTestId("lab-leave")).toHaveText("Leave lab");
+
+  await expect(page.getByTestId("lab-kb-summary")).toHaveText(
+    "The lab has a knowledge base. Download it to read it on this computer.",
+  );
+  await page.getByTestId("lab-kb-download").click();
+  await expect.poll(() => invokeCount(page, "lab_join_knowledge_base")).toBe(1);
+  // The downloaded project opens and Settings closes.
+  await expect(page.getByTestId("lab-channel-card")).toHaveCount(0);
+});
+
 test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescanning", async ({ page }) => {
   await enterApp(page);
   await expect(page.locator(".sidebar").getByRole("button", { name: "Import from Codex" })).toHaveCount(0);
