@@ -63,6 +63,16 @@ the transfer itself failed. When no Run record is available, the card shows
 retry after five seconds. Slow status and detail requests are coalesced so
 repeated refresh ticks do not accumulate concurrent reads.
 
+A copy in progress is not stopped because Wisp could not reach its own
+database for a while or the machine slept: the Run takes its lease back and
+keeps going. `monitor_run` waits through a short run of failed status reads;
+if they persist, it reports that the status could not be read and that the Run
+itself was not changed. A transfer that had not started copying is retried
+after a restart. One whose copy process is gone, for example because Wisp
+restarted mid-copy, is marked failed with a note to submit it again instead of
+staying `running`; rsync with `resume=true` then continues from the bytes
+already copied.
+
 ## Upload from the local machine
 
 From the Files panel, select an SSH context, open the destination folder, and
@@ -82,9 +92,9 @@ as a persisted `file_transfer` Run, preserving cancellation, timeout, progress, 
 audit records. The destination is ledgered when the attempt starts, so a
 failed or cancelled partial stays visible and can be deleted. A successful
 upload stays active on that server (it is project data, not sweep fodder).
-Restarting Wisp retries a persisted transfer handle instead of marking the Run
-lost. Recovery reuses partial bytes with rsync; scp recovery removes the recorded
-partial destination and starts copying again.
+After a restart, Wisp retries an upload that had not started copying instead of
+marking the Run lost. An upload interrupted mid-copy is marked failed; submit it
+again with rsync and `resume=true` to continue from the partial bytes.
 
 ### Overlapping uploads
 

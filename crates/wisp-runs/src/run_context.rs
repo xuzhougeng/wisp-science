@@ -3640,7 +3640,14 @@ async fn run_with_lifecycle_lease(
     let mut updates_open = true;
     loop {
         tokio::select! {
-            output = &mut operation => return output,
+            output = &mut operation => {
+                // The lease can lapse while the store or the machine was
+                // stalled; the caller's terminal write still needs it.
+                let _ = store
+                    .claim_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
+                    .await;
+                return output;
+            }
             update = updates_rx.recv(), if updates_open => {
                 match update {
                     Some(update) => {
@@ -3657,43 +3664,52 @@ async fn run_with_lifecycle_lease(
             _ = output_flush.tick(), if output_dirty => {
                 let stdout = String::from_utf8_lossy(&stdout_tail);
                 let stderr = String::from_utf8_lossy(&stderr_tail);
-                let owned = store
-                    .record_run_poll_owned(
-                        run_id,
-                        owner_id,
-                        (!stdout.is_empty()).then_some(stdout.as_ref()),
-                        (!stderr.is_empty()).then_some(stderr.as_ref()),
-                        None,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !owned {
-                    return Err("Run lifecycle lease was lost".into());
-                }
-                output_dirty = false;
+                // Stays dirty until a write lands; the heartbeat below decides
+                // whether the lease is really gone.
+                output_dirty = !matches!(
+                    store
+                        .record_run_poll_owned(
+                            run_id,
+                            owner_id,
+                            (!stdout.is_empty()).then_some(stdout.as_ref()),
+                            (!stderr.is_empty()).then_some(stderr.as_ref()),
+                            None,
+                        )
+                        .await,
+                    Ok(true)
+                );
             }
             _ = heartbeat.tick() => {
-                let status = store
-                    .get_run(run_id)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .map(|run| run.status);
-                if status == Some(wisp_store::RunStatus::Cancelling) {
-                    return Err("run_in_context cancelled".into());
+                // Only a lease another owner took, or a Run that is no longer
+                // active, stops the process. A store that cannot be reached
+                // or a lease that merely lapsed must not kill a transfer that
+                // is still copying.
+                let beat = async {
+                    let held = store
+                        .renew_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
+                        .await?
+                        || store
+                            .claim_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
+                            .await?;
+                    if !held {
+                        return Ok(Some("Run lifecycle lease was lost"));
+                    }
+                    let run = store.get_run(run_id).await?;
+                    if run.is_some_and(|run| run.status == wisp_store::RunStatus::Cancelling) {
+                        return Ok(Some("run_in_context cancelled"));
+                    }
+                    store
+                        .record_run_poll_owned(run_id, owner_id, None, None, None)
+                        .await?;
+                    anyhow::Ok(None)
                 }
-                let owned = store
-                    .renew_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !owned {
-                    return Err("Run lifecycle lease was lost".into());
-                }
-                let owned = store
-                    .record_run_poll_owned(run_id, owner_id, None, None, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if !owned {
-                    return Err("Run lifecycle lease was lost".into());
+                .await;
+                match beat {
+                    Ok(Some(stop)) => return Err(stop.into()),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(run_id, "Run heartbeat could not reach the store: {error}");
+                    }
                 }
             }
         }

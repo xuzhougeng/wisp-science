@@ -1479,6 +1479,42 @@ impl RunManager {
                 .await;
             return Ok(());
         };
+        // The lifecycles below only start a `submitted` Run. One that already
+        // began copying has lost its process: end it, or it stays `running`
+        // for a wait that never returns. A Run this recent may simply not be
+        // registered in `active` by its own submission yet.
+        if matches!(
+            run.status,
+            wisp_store::RunStatus::Running | wisp_store::RunStatus::Cancelling
+        ) && !matches!(handle, TransferHandle::Harvest { .. })
+        {
+            let last_seen = run
+                .last_polled_at
+                .or(run.started_at)
+                .unwrap_or(run.created_at);
+            if chrono::Utc::now().timestamp() - last_seen < ACTIVE_LEASE_SECS {
+                return Ok(());
+            }
+            if run.status == wisp_store::RunStatus::Cancelling {
+                let _ = store
+                    .finish_active_run_owned(
+                        &run.id,
+                        &self.owner_id,
+                        wisp_store::RunStatus::Cancelled,
+                        None,
+                    )
+                    .await;
+                return Ok(());
+            }
+            return self
+                .fail_transfer(
+                    &store,
+                    &run.id,
+                    "transfer was interrupted before it finished; submit it again \
+                     (transport=rsync with resume=true continues from the bytes already copied)",
+                )
+                .await;
+        }
         let timeout = Duration::from_secs(run.timeout_secs.unwrap_or(4 * 60 * 60) as u64);
         let started = Instant::now();
         match handle {
@@ -4162,6 +4198,92 @@ mod tests {
             .iter()
             .any(|arg| arg == "alice@a.example:/data/result.txt"));
         drop(commands);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn interrupted_upload_ends_instead_of_staying_running() {
+        let (root, store) = test_store().await;
+        let runner = Arc::new(RecordingRunner {
+            outputs: StdMutex::new(VecDeque::new()),
+            commands: StdMutex::new(Vec::new()),
+        });
+        let manager = RunManager::with_runner(runner.clone());
+        for (id, status, expected) in [
+            (
+                "was-running",
+                wisp_store::RunStatus::Running,
+                wisp_store::RunStatus::Failed,
+            ),
+            (
+                "was-cancelling",
+                wisp_store::RunStatus::Cancelling,
+                wisp_store::RunStatus::Cancelled,
+            ),
+        ] {
+            let mut run = wisp_store::RunRecord::new(id, "p", "ssh:a", "Upload", "file_transfer");
+            run.frame_id = Some("f".into());
+            run.status = status;
+            // Silent for longer than a lease: its process is gone.
+            run.created_at -= 3600;
+            run.remote_handle_json = Some(
+                serde_json::to_string(&TransferHandle::LocalUpload {
+                    source_path: root.join("R1.fastq.gz").to_string_lossy().into_owned(),
+                    destination_context_id: "ssh:a".into(),
+                    destination_path: "/data/R1.fastq.gz".into(),
+                    transport: "rsync".into(),
+                    resume: true,
+                })
+                .unwrap(),
+            );
+            store.create_run(&run).await.unwrap();
+            manager.recover(&store).await.unwrap();
+            let run = store.get_run(id).await.unwrap().unwrap();
+            assert_eq!(run.status, expected, "{id}: {:?}", run.last_poll_error);
+        }
+        let failed = store.get_run("was-running").await.unwrap().unwrap();
+        assert!(failed
+            .last_poll_error
+            .is_some_and(|error| error.contains("interrupted")));
+        assert!(runner.commands.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn unheld_lease_is_reclaimed_instead_of_killing_the_command() {
+        let (root, store) = test_store().await;
+        // Never claimed: to a renewal this reads the same as a lease that
+        // lapsed during a store stall or while the machine slept.
+        let mut run = wisp_store::RunRecord::new("lapsed", "p", "ssh:a", "Upload", "file_transfer");
+        run.frame_id = Some("f".into());
+        run.status = wisp_store::RunStatus::Running;
+        store.create_run(&run).await.unwrap();
+        let runner = RelayRunner {
+            commands: StdMutex::new(Vec::new()),
+        };
+        let output = run_with_lifecycle_lease(
+            &store,
+            "lapsed",
+            "owner",
+            &runner,
+            RunCommand {
+                context_id: "ssh:a".into(),
+                program: "rsync".into(),
+                args: Vec::new(),
+                script: "local upload".into(),
+                cwd: None,
+                stdin: None,
+                envs: Vec::new(),
+            },
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.exit_code, 0);
+        assert!(store
+            .finish_active_run_owned("lapsed", "owner", wisp_store::RunStatus::Succeeded, Some(0))
+            .await
+            .unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
 }
