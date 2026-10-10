@@ -26,13 +26,14 @@ route adds `--delete`.
 Set `destination_context_id` to `local` and provide the exact new absolute
 local file or directory path. If the user has not chosen that path, ask before
 calling the tool. Local downloads accept `route=auto|relay` and
-`transport=auto|scp`.
+`transport=auto|scp|rsync`. `auto` uses scp; explicit rsync requires rsync on
+both ends.
 
-Wisp authenticates through the selected source context once and downloads with
-scp into a private staging directory beside the destination. After a complete
-download, it renames the staged item to the requested path. Existing
-destinations are rejected and partial downloads are removed after failure,
-cancellation, or timeout.
+Wisp authenticates through the selected source context and downloads into a
+staging directory beside the destination. After a complete download, it renames
+the staged item to the requested path. Existing final destinations are rejected.
+scp staging is removed after failure, cancellation, or timeout; rsync retains a
+deterministic `.wisp-partial-*` directory for a later retry to reuse.
 
 The composer tray shows transfer progress while work is active. Transports
 that report bytes show the transferred size, percentage, speed, and ETA. The
@@ -80,17 +81,43 @@ the agent: it submits the same `file_transfer` Run used by the tool.
 
 The agent can still call `transfer_between_contexts`. Set `source_context_id`
 to `local`, provide an exact existing absolute local path, and select an SSH
-destination. Local uploads accept `route=auto|relay` and `transport=auto|scp`.
+destination. Local uploads accept `route=auto|relay` and
+`transport=auto|scp|rsync`. `auto` uses scp; explicit rsync requires rsync on
+both ends and supports `resume=true` for an interrupted transfer.
 Globs, roots, missing paths, symbolic links, and special files are rejected.
 
-Before uploading, Wisp checks through the configured SSH connection that the
-exact remote destination does not exist. It then uploads with scp as a
-persisted `file_transfer` Run, preserving cancellation, timeout, progress, and
+For a newly submitted upload, Wisp checks through the configured SSH connection
+that the exact remote destination does not exist, unless resuming with rsync. It uploads
+as a persisted `file_transfer` Run, preserving cancellation, timeout, progress, and
 audit records. The destination is ledgered when the attempt starts, so a
 failed or cancelled partial stays visible and can be deleted. A successful
 upload stays active on that server (it is project data, not sweep fodder).
-Existing remote destinations are never silently overwritten. Restarting Wisp
-retries a persisted transfer handle instead of marking the Run lost.
+Restarting Wisp retries a persisted transfer handle instead of marking the Run
+lost. Recovery reuses partial bytes with rsync; scp recovery removes the recorded
+partial destination and starts copying again.
+
+### Overlapping uploads
+
+Wisp refuses a new local-to-SSH upload when an existing local upload to the same
+SSH context has an overlapping destination. This includes the same file and a
+directory with any of its child paths; sibling files can still upload in
+parallel. Changing the source file, choosing another transport, or setting
+`resume=true` does not bypass this check. The error identifies the existing
+Run so you can inspect it, or cancel it and wait for it to stop before retrying.
+If Wisp cannot check existing Runs, it does not start another upload.
+
+The check includes persisted submitted, running, and cancelling uploads and
+also applies when recovering uploads after an application restart. An
+overlapping recovery fails with the conflicting Run ID instead of starting
+another writer. A stopped upload keeps its destination reserved until its
+lifecycle task has finished cleaning up.
+
+The admission check coordinates one Wisp Run manager and its stored Runs. It
+does not lock the remote filesystem against other applications or another
+Wisp instance. Use one SSH context and a consistent destination spelling:
+different aliases, symlinks, and `~/` versus an absolute home path are not
+resolved as the same location. Local-to-SSH upload destinations with a `..`
+path component are rejected; use a direct destination path.
 
 ## User-approved trust
 
@@ -114,8 +141,8 @@ themselves; it does not generate or copy a key.
 ## Current limitations
 
 - Direct rsync is resumable at rsync's file-transfer level; scp relay is not.
-- SSH-to-local downloads use scp and are not resumable yet.
-- Local-to-SSH uploads use scp and are not resumable yet.
+- Local-to-SSH uploads and SSH-to-local downloads support explicit rsync
+  resumption; their default scp transport does not reuse partial bytes.
 - Relay temporarily needs local free space approximately equal to the source.
 - scp recursive copies follow symlinks according to the installed OpenSSH
   implementation.
