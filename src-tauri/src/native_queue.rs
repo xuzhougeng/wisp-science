@@ -61,7 +61,7 @@ fn row(item: &QueuedItem, state: &str) -> QueueItem {
         references: item.references.clone(),
     }
 }
-fn items(runtime: &SessionRuntime) -> Vec<QueueItem> {
+pub(crate) fn items(runtime: &SessionRuntime) -> Vec<QueueItem> {
     let queued = runtime.queued.lock().unwrap();
     let cutins = runtime.queued_cutins.lock().unwrap();
     cutins

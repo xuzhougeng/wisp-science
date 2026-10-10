@@ -1330,6 +1330,9 @@ fn App() -> impl IntoView {
     // excluded from reconciliation because equal bodies can carry different
     // attachments and still be separate intents.
     let queue_states = create_rw_signal::<HashMap<(String, u64), String>>(HashMap::new());
+    // Queue ids whose `enqueue_turn` has not returned: the backend queue does
+    // not list them yet, so a session load must not reconcile them away.
+    let enqueueing = store_value(HashSet::<u64>::new());
     // Native ask_user option clicks stage an editable answer here. The tuple
     // stores the last generated draft so selecting another option can replace
     // it without overwriting text the user has already edited.
@@ -4915,6 +4918,9 @@ fn App() -> impl IntoView {
             });
             force_chat_bottom();
             let enqueue_msg = display_message.clone();
+            enqueueing.update_value(|ids| {
+                ids.insert(qid);
+            });
             spawn_local(async move {
                 let args = to_value(&EnqueueTurnArgs {
                     session_id: session.clone(),
@@ -4924,7 +4930,16 @@ fn App() -> impl IntoView {
                     references: reference_args,
                 })
                 .unwrap();
-                if let Err(error) = invoke_checked("enqueue_turn", args).await {
+                let enqueued = invoke_checked("enqueue_turn", args).await;
+                enqueueing.update_value(|ids| {
+                    ids.remove(&qid);
+                });
+                // A session load that straddled this acknowledgement read the
+                // backend queue before the item was parked; make it retry.
+                transcript_event_revisions.update(|all| {
+                    *all.entry(session.clone()).or_default() += 1;
+                });
+                if let Err(error) = enqueued {
                     mcp_app_context.set(saved_mcp_app_context.clone());
                     queue_states.update(|states| {
                         states.remove(&(session.clone(), qid));
@@ -6858,6 +6873,19 @@ fn App() -> impl IntoView {
                                 })
                                 .cloned(),
                         );
+                    });
+                }
+                // While this window showed another project it received neither
+                // the queue lifecycle nor the User event of a follow-up that
+                // started, so its cached row would stay parked beside the sent
+                // message. Keep only rows the backend still holds.
+                if let Some(live) = &page.queued_turn_ids {
+                    chats.retain(|row| match row {
+                        ChatItem::QueuedUser { id: queue_id, .. } => {
+                            live.contains(&queue_id.to_string())
+                                || enqueueing.with_value(|ids| ids.contains(queue_id))
+                        }
+                        _ => true,
                     });
                 }
                 chats.retain(|row| !matches!(row, ChatItem::ApprovalPending { .. }));
