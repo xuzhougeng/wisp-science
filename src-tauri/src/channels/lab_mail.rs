@@ -187,15 +187,27 @@ async fn remember_ask(store: &Store, ask_id: &str, frame_id: &str) -> Result<(),
     save_json(store, PENDING_ASKS_KEY, &asks).await
 }
 
-/// The conversation that sent `ask_id`, if it still exists. Each ask is
-/// answered once.
-async fn take_ask(store: &Store, ask_id: &str) -> Option<String> {
+/// The conversation that sent `ask_id`, if it is still open. Looking does not
+/// forget the ask: a reply whose turn could not start is tried again and must
+/// still find its way back.
+async fn asking_conversation(store: &Store, ask_id: &str) -> Option<String> {
+    let asks: Vec<(String, String)> = {
+        let _guard = ROUTES.lock().await;
+        load_json(store, PENDING_ASKS_KEY).await
+    };
+    let (_, frame_id) = asks.into_iter().find(|(id, _)| id == ask_id)?;
+    open_conversation(store, &frame_id).await.map(|_| frame_id)
+}
+
+/// Called once the reply to `ask_id` was delivered: each ask is answered once.
+async fn forget_ask(store: &Store, ask_id: &str) {
     let _guard = ROUTES.lock().await;
     let mut asks: Vec<(String, String)> = load_json(store, PENDING_ASKS_KEY).await;
-    let position = asks.iter().position(|(id, _)| id == ask_id)?;
-    let (_, frame_id) = asks.remove(position);
-    let _ = save_json(store, PENDING_ASKS_KEY, &asks).await;
-    open_conversation(store, &frame_id).await.map(|_| frame_id)
+    let before = asks.len();
+    asks.retain(|(id, _)| id != ask_id);
+    if asks.len() != before {
+        let _ = save_json(store, PENDING_ASKS_KEY, &asks).await;
+    }
 }
 
 // ------------------------------------------------------------------ sending
@@ -432,7 +444,7 @@ async fn handle(
     };
     let project_id = get_setting(store, INBOX_PROJECT_KEY).await;
     let asked_from = match (envelope.kind, &envelope.reply_to) {
-        (MailKind::Reply, Some(ask_id)) => take_ask(store, ask_id).await,
+        (MailKind::Reply, Some(ask_id)) => asking_conversation(store, ask_id).await,
         _ => None,
     };
     let frame_id = match asked_from {
@@ -476,7 +488,11 @@ async fn handle(
         // A reply ends in the asking conversation. Its turn's own answer is
         // for the user here, not for the lab. A reply whose turn could not
         // run is kept, so its text is not lost.
-        return answer.map(drop).map_err(Failure::Keep);
+        answer.map_err(Failure::Keep)?;
+        if let Some(ask_id) = &envelope.reply_to {
+            forget_ask(store, ask_id).await;
+        }
+        return Ok(());
     }
     let text = match answer {
         Ok(text) => clip(&text),
@@ -1008,7 +1024,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reply_returns_to_the_conversation_that_asked_exactly_once() {
+    async fn a_reply_finds_the_conversation_that_asked_until_it_was_delivered() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("wisp.sqlite")).await.unwrap();
         store.create_project("p1", "RNA-seq", "").await.unwrap();
@@ -1017,11 +1033,19 @@ mod tests {
         remember_ask(&store, "ask-gone", "deleted-frame")
             .await
             .unwrap();
-        assert_eq!(take_ask(&store, "ask-1").await, Some(asking));
-        assert_eq!(take_ask(&store, "ask-1").await, None);
+        assert_eq!(
+            asking_conversation(&store, "ask-1").await,
+            Some(asking.clone())
+        );
+        // Its turn could not start: the next attempt still finds the way back.
+        assert_eq!(asking_conversation(&store, "ask-1").await, Some(asking));
+        // Delivered: a second reply to the same ask goes nowhere special.
+        forget_ask(&store, "ask-1").await;
+        assert_eq!(asking_conversation(&store, "ask-1").await, None);
         // The asking conversation was deleted meanwhile, or nobody asked.
-        assert_eq!(take_ask(&store, "ask-gone").await, None);
-        assert_eq!(take_ask(&store, "never-sent").await, None);
+        assert_eq!(asking_conversation(&store, "ask-gone").await, None);
+        assert_eq!(asking_conversation(&store, "never-sent").await, None);
+        forget_ask(&store, "never-sent").await;
     }
 
     #[tokio::test]
