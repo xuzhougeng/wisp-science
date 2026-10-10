@@ -1,5 +1,7 @@
 # Wisp Lab
 
+[中文说明](wisp-lab.zh-CN.md)
+
 A `wisp-relay` serves any number of independent computers. Wisp Lab is an
 optional layer on top of it: the computers sharing one relay form a research
 group with a leader, an approved member list, a shared knowledge base and a
@@ -94,6 +96,10 @@ becomes a project on your computer, and **Sync now** on its card pulls the
 leader's later changes. Edits you make there stay local: the relay refuses a
 member's push, and choosing **Use remote version** in the sync dialog brings
 the leader's version back. To contribute, send the material to the leader.
+
+Once the knowledge base is on your computer, Wisp tells your agent where the
+folder is in ordinary conversations, so it consults the group's protocols and
+conventions before answering lab-specific questions.
 
 The knowledge base travels through [project sync](project-sync.md), which
 reads the relay token from **Settings → General → Manual project sync**. A
@@ -210,8 +216,9 @@ turn has finished, and remembers handled mail for as long as it runs, so a
 lost acknowledgement is repeated rather than the turn. A desktop that quits
 mid-turn answers that mail again after restarting. A reply whose turn could
 not start, or an answer that could not be mailed back, also stays in the
-mailbox and is tried again at the next start, so its text is not lost. A mail is at most 256 KiB sealed and a
-mailbox holds 500; attachments travel as relay blobs. The relay side is
+mailbox and is tried again at the next start, so its text is not lost. A mail
+is at most 256 KiB sealed and a mailbox holds 500; attachments travel as relay
+blobs. The relay side is
 `crates/wisp-sync/src/lab.rs`; the desktop side is
 `src-tauri/src/channels/lab.rs` (membership) and `lab_mail.rs` (mail and the
 two tools).
