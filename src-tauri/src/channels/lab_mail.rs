@@ -130,6 +130,14 @@ async fn save_json<T: Serialize>(store: &Store, key: &str, value: &T) -> Result<
         .map_err(|error| error.to_string())
 }
 
+/// The project of a conversation that can still take a message: one that was
+/// neither deleted (its row stays behind as a tombstone) nor archived.
+async fn open_conversation(store: &Store, frame_id: &str) -> Option<String> {
+    let project_id = store.live_frame_project_id(frame_id).await.ok().flatten()?;
+    store.require_unarchived_session(frame_id).await.ok()?;
+    Some(project_id)
+}
+
 /// The conversation this computer keeps for one sender, in the inbox project.
 async fn sender_session(
     store: &Store,
@@ -139,14 +147,8 @@ async fn sender_session(
     let _guard = ROUTES.lock().await;
     let mut sessions: HashMap<String, String> = load_json(store, SESSIONS_KEY).await;
     if let Some(frame_id) = sessions.get(&sender.id) {
-        // Still there, and still in the project that answers lab mail.
-        if store
-            .frame_project_id(frame_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .as_deref()
-            == Some(project_id)
-        {
+        // Still open, and still in the project that answers lab mail.
+        if open_conversation(store, frame_id).await.as_deref() == Some(project_id) {
             return Ok(frame_id.clone());
         }
     }
@@ -177,12 +179,7 @@ async fn take_ask(store: &Store, ask_id: &str) -> Option<String> {
     let position = asks.iter().position(|(id, _)| id == ask_id)?;
     let (_, frame_id) = asks.remove(position);
     let _ = save_json(store, PENDING_ASKS_KEY, &asks).await;
-    store
-        .frame_project_id(&frame_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|_| frame_id)
+    open_conversation(store, &frame_id).await.map(|_| frame_id)
 }
 
 // ------------------------------------------------------------------ sending
@@ -443,9 +440,9 @@ async fn handle(
     };
     let turn_lock = chat_turn_lock(&format!("lab:{frame_id}"));
     let _turn = turn_lock.lock().await;
-    let root = match store.frame_project_id(&frame_id).await {
-        Ok(Some(owner)) => store.get_project(&owner).await.ok().flatten(),
-        _ => None,
+    let root = match open_conversation(store, &frame_id).await {
+        Some(owner) => store.get_project(&owner).await.ok().flatten(),
+        None => None,
     }
     .map(|(_, root)| root)
     .ok_or_else(|| Failure::Drop("the receiving project no longer exists".into()))?;
@@ -1005,8 +1002,12 @@ mod tests {
         let moved = sender_session(&store, "p2", ada).await.unwrap();
         assert_ne!(moved, first);
         assert_eq!(
-            store.frame_project_id(&moved).await.unwrap().as_deref(),
+            open_conversation(&store, &moved).await.as_deref(),
             Some("p2")
+        );
+        assert_eq!(
+            open_conversation(&store, "no-such-conversation").await,
+            None
         );
     }
 }
