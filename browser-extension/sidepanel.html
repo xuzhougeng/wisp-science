@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wisp</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff; --fg: #202124; --muted: #5f6368; --line: #dadce0;
+        --bubble: #f1f3f4; --accent: #1a73e8; --bad: #b3261e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #202124; --fg: #e8eaed; --muted: #9aa0a6; --line: #3c4043;
+          --bubble: #303134; --accent: #8ab4f8; --bad: #f28b82;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0; display: flex; flex-direction: column;
+        font: 13px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg);
+      }
+      header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px; border-bottom: 1px solid var(--line);
+      }
+      #page { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #log { flex: 1; overflow-y: auto; padding: 12px; }
+      .empty { color: var(--muted); }
+      .turn { margin-bottom: 14px; }
+      .question { background: var(--bubble); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .meta { color: var(--muted); font-size: 12px; margin: 3px 2px 8px; overflow-wrap: anywhere; }
+      .answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .status { color: var(--muted); font-size: 12px; margin-top: 4px; }
+      .error { color: var(--bad); }
+      .approval { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+      .approval pre {
+        margin: 6px 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+        font: 12px ui-monospace, monospace; color: var(--muted);
+      }
+      form { border-top: 1px solid var(--line); padding: 10px 12px; }
+      textarea {
+        width: 100%; resize: vertical; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+        font: inherit; background: var(--bg); color: var(--fg);
+      }
+      textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+      button {
+        font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px;
+        background: var(--bg); color: var(--fg); cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+      button:disabled { opacity: 0.5; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div id="page"></div>
+      <button id="new" type="button"></button>
+    </header>
+    <main id="log" aria-live="polite"></main>
+    <form id="form">
+      <textarea id="question" rows="3"></textarea>
+      <div class="actions">
+        <button id="stop" type="button" hidden></button>
+        <button id="send" type="submit" class="primary"></button>
+      </div>
+    </form>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

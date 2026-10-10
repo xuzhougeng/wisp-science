@@ -23,6 +23,13 @@ async function refresh() {
   });
 }
 
+let currentWindowId = null;
+chrome.windows.getCurrent().then((win) => { currentWindowId = win.id; });
+document.getElementById("ask").addEventListener("click", () => {
+  // No await before open(): Chrome only opens the panel inside the click gesture.
+  if (chrome.sidePanel && currentWindowId !== null) chrome.sidePanel.open({ windowId: currentWindowId });
+  window.close();
+});
 document.getElementById("reconnect").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "wisp_bridge_connect" });
   setTimeout(refresh, 250);

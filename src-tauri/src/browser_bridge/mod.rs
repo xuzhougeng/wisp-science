@@ -44,6 +44,7 @@ mod chat_site;
 mod errors;
 mod extension_manager;
 mod project_workspace;
+pub(crate) mod side_panel;
 mod workspace;
 
 const BRIDGE_ADDR: &str = "127.0.0.1:18765";
@@ -186,6 +187,9 @@ pub struct BrowserBridge {
     /// take them, and so the UI can remind the user independently of the LLM.
     needs_human: Mutex<HashMap<(String, i64), BrowserNeedsHumanTab>>,
     needs_human_tx: Mutex<Option<mpsc::UnboundedSender<Vec<BrowserNeedsHumanTab>>>>,
+    /// Where the extension's side panel requests go. They start agent turns,
+    /// which the bridge cannot do itself.
+    side_panel_tx: Mutex<Option<mpsc::UnboundedSender<side_panel::SideRequest>>>,
     /// One lease per real browser session. Occupancy is held from the first
     /// browser tool of a project+turn until `complete_turn`, not per tool call
     /// — two tools in the same turn must not open a gap a foreign project can
@@ -330,6 +334,7 @@ impl BrowserBridge {
             pending_cleanups: Mutex::new(HashMap::new()),
             needs_human: Mutex::new(HashMap::new()),
             needs_human_tx: Mutex::new(None),
+            side_panel_tx: Mutex::new(None),
             occupancy: StdMutex::new(HashMap::new()),
         }
     }
@@ -399,6 +404,7 @@ impl BrowserBridge {
             pending_cleanups: Mutex::new(HashMap::new()),
             needs_human: Mutex::new(HashMap::new()),
             needs_human_tx: Mutex::new(None),
+            side_panel_tx: Mutex::new(None),
             occupancy: StdMutex::new(HashMap::new()),
         });
         bridge.load_pending_cleanups().await;
@@ -718,6 +724,11 @@ impl BrowserBridge {
             return;
         };
         let message_type = message.get("type").and_then(Value::as_str).unwrap_or("");
+        if message_type.starts_with("side_") {
+            self.forward_side_panel(connection_id, session, message)
+                .await;
+            return;
+        }
         let mut state = self.state.lock().await;
         let Some(slot) = state.sessions.get_mut(session) else {
             return;
@@ -1470,6 +1481,31 @@ impl BrowserBridge {
         tx: mpsc::UnboundedSender<Vec<BrowserNeedsHumanTab>>,
     ) {
         *self.needs_human_tx.lock().await = Some(tx);
+    }
+
+    pub(crate) async fn set_side_panel_sink(
+        &self,
+        tx: mpsc::UnboundedSender<side_panel::SideRequest>,
+    ) {
+        *self.side_panel_tx.lock().await = Some(tx);
+    }
+
+    /// Hand a side panel message to the app together with the sending
+    /// connection, so the turn's events return to the extension that asked.
+    async fn forward_side_panel(&self, connection_id: u64, session: &str, message: Value) {
+        let reply = self
+            .state
+            .lock()
+            .await
+            .sessions
+            .get(session)
+            .and_then(|slot| slot.client.as_ref())
+            .filter(|client| client.connection_id == connection_id)
+            .map(|client| client.tx.clone());
+        let sink = self.side_panel_tx.lock().await.clone();
+        if let (Some(reply), Some(sink)) = (reply, sink) {
+            let _ = sink.send(side_panel::SideRequest { reply, message });
+        }
     }
 
     pub(crate) async fn list_needs_human(&self) -> BrowserNeedsHumanPrompt {
@@ -4118,8 +4154,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.3.1");
-        assert_eq!(info["extension_version"], "0.3.1");
+        assert_eq!(info["bundled_extension_version"], "0.4.0");
+        assert_eq!(info["extension_version"], "0.4.0");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -4321,6 +4357,32 @@ mod tests {
         let result = running.await.unwrap().unwrap();
         assert_eq!(result.tab_id, 42);
         assert_eq!(result.value, "Example");
+    }
+
+    #[tokio::test]
+    async fn side_panel_messages_go_to_the_app_with_the_asking_connection() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (client_tx, mut client_rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, client_tx).await;
+        let (sink, mut requests) = mpsc::unbounded_channel();
+        bridge.set_side_panel_sink(sink).await;
+
+        let ask = json!({ "type": "side_ask", "id": "a1", "question": "Is the data public?" });
+        // A connection that was replaced must not start turns.
+        bridge.handle_text(2, &ask.to_string()).await;
+        assert!(requests.try_recv().is_err());
+
+        bridge.handle_text(1, &ask.to_string()).await;
+        let request = requests.try_recv().unwrap();
+        assert_eq!(request.message, ask);
+        request
+            .reply
+            .send(Message::Text(r#"{"type":"side_done","id":"a1"}"#.into()))
+            .unwrap();
+        let reply = client_rx.recv().await.unwrap().into_text().unwrap();
+        assert!(reply.as_str().contains("side_done"));
+        // Side panel traffic never resolves a pending browser command.
+        assert!(client_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -4907,7 +4969,7 @@ mod tests {
         let status = bridge.extension_status().await;
         assert!(status.connected);
         assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.3.1"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.4.0"));
         assert!(status.update_required);
         assert!(!status.automatic_reload_available);
         assert!(status.integrity_verified);
@@ -4968,7 +5030,7 @@ mod tests {
                 &json!({
                     "type": "ext_ready",
                     "protocol_version": 2,
-                    "extension_version": "0.3.1",
+                    "extension_version": "0.4.0",
                     "capabilities": ["runtime_reload", "article_scan"],
                     "tabs": []
                 })
@@ -4980,7 +5042,7 @@ mod tests {
         assert_eq!(update.outcome, "updated");
         assert!(update.status.connected);
         assert!(!update.status.update_required);
-        assert_eq!(update.status.current_version.as_deref(), Some("0.3.1"));
+        assert_eq!(update.status.current_version.as_deref(), Some("0.4.0"));
     }
 
     #[test]
