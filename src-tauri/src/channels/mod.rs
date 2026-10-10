@@ -1039,15 +1039,7 @@ async fn route_status_text(store: &Store, route: &SharedRoute) -> String {
 /// the last non-empty assistant text for turns that end in plain text.
 pub(crate) async fn last_assistant_text(store: &Store, frame_id: &str) -> Option<String> {
     let msgs = store.load_messages(frame_id).await.ok()?;
-    msgs.iter()
-        .rev()
-        .filter(|m| {
-            m.role == wisp_llm::Role::Assistant
-                || (m.role == wisp_llm::Role::Tool
-                    && m.tool_name.as_deref() == Some("attempt_completion"))
-        })
-        .map(|m| m.content.as_text())
-        .find(|t| !t.trim().is_empty())
+    crate::subagent_activity::final_answer(&msgs)
 }
 
 const HELP_TEXT: &str = "可用命令:\n/status — 查看 IM 目标项目和会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换 IM 目标项目\n/session — 列出当前 IM 项目的最近会话\n/session <序号|标题|ID> — 切换 IM 会话\n/new — 在当前 IM 项目开启新会话\n/approval — 查看待审批请求（微信）\n/approve <编号> — 批准一次（微信）\n/reject <编号> [原因] — 拒绝（微信）\n/mandates — 查看全部研究职责的状态、KPI 和等你处理的事项\n/stop — 停止当前任务\n/help — 显示本帮助\n\n微信和飞书共用同一个 IM 目标项目。桌面端在某个项目里发言只会更新该项目的最近会话，不会把 IM 目标抢走。/project、/session 和 /new 会显式切换这个 IM 目标。";

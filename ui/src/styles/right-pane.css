@@ -688,6 +688,51 @@ button.run-status:hover { filter:brightness(0.96); }
 .agents-manage-workflows { display: inline-flex; align-items: center; gap: 6px; justify-self: start; margin-top: 5px; }
 .agents-manage-workflows svg { width: 14px; height: 14px; }
 .agents-disabled { border-color: color-mix(in srgb, var(--clay) 28%, var(--border)); background: var(--clay-soft); }
+/* Subagent activity (list + detail) */
+.agent-activity-list { display: grid; gap: 12px; }
+.agent-activity-group { display: grid; gap: 6px; }
+.agent-activity-group h2, .agent-activity-heading { display: flex; align-items: baseline; gap: 6px; margin: 0; padding: 0 2px; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.agent-activity-group h2 small, .agent-activity-heading small { font-weight: 500; font-size: inherit; }
+.agent-activity-heading { margin-bottom: 6px; }
+.agent-activity-none { margin: 0; padding: 4px 2px; color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.agent-activity-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font: inherit; text-align: left; cursor: pointer; box-shadow: var(--shadow-sm); }
+.agent-activity-row:hover { background: var(--surface-hover); }
+.agent-activity-row:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.agent-activity-icon { display: inline-flex; flex: 0 0 auto; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg-sunken); color: var(--text-muted); }
+.agent-activity-icon svg { width: 15px; height: 15px; }
+.agent-activity-body { display: grid; gap: 2px; min-width: 0; }
+.agent-activity-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 1.35; }
+.agent-activity-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.4; }
+.agent-activity-status { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap; }
+.agent-activity-status.running { background: color-mix(in srgb, var(--clay) 14%, var(--bg-elev)); color: var(--clay-strong); }
+.agent-activity-status.completed { background: color-mix(in srgb, var(--ok) 12%, var(--bg-elev)); color: var(--ok); }
+.agent-activity-status.failed { background: color-mix(in srgb, var(--err) 10%, var(--bg-elev)); color: var(--err); }
+.agent-explore-group { display: grid; gap: 6px; }
+.agent-explore-group > summary { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 600; cursor: pointer; list-style: none; }
+.agent-explore-group > summary::-webkit-details-marker { display: none; }
+.agent-explore-group > summary svg { width: 14px; height: 14px; }
+.agent-explore-group[open] > summary { border-style: solid; }
+.agent-explore-group .agent-activity-row { margin-left: 12px; width: calc(100% - 12px); }
+.agent-activity-detail { display: grid; gap: 12px; }
+.agent-activity-detail-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-activity-detail-head strong { overflow-wrap: anywhere; color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.35; }
+.agent-activity-back { display: inline-flex; flex: 0 0 auto; width: 26px; height: 26px; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); cursor: pointer; }
+.agent-activity-back:hover { background: var(--surface-hover); color: var(--text); }
+.agent-activity-back svg { width: 16px; height: 16px; }
+.agent-activity-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.agent-activity-facts .agent-activity-meta { white-space: normal; }
+.agent-activity-facts button { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.agent-activity-facts button svg { width: 13px; height: 13px; }
+.agent-activity-facts button + button { margin-left: 0; }
+.agent-activity-section { display: grid; gap: 6px; padding: 10px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); }
+.agent-activity-section > h3, .agent-activity-section > summary { margin: 0; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; cursor: default; }
+.agent-activity-section > summary { cursor: pointer; }
+.agent-activity-section .agent-task-instruction { margin: 0; overflow-wrap: anywhere; }
+.agent-activity-section .agent-result-markdown { color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.55; }
+.agent-activity-trace { display: grid; gap: 3px; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.agent-activity-trace code { overflow-wrap: anywhere; color: var(--text-muted); font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.agents-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+.agents-footer-hint { flex: 1 1 160px; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.4; }
 .agent-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .dynamic-roundtable { padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--clay) 28%, var(--border)); border-radius: var(--radius-xs); background: var(--clay-soft); }
 .dynamic-roundtable > summary { cursor: pointer; color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 700; }

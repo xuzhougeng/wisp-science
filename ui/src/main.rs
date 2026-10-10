@@ -16675,6 +16675,7 @@ fn App() -> impl IntoView {
                                 open_settings_fn(Some("workflows".into()));
                                 refresh_agent_resources(workflow_studio_state, specialists);
                             }),
+                            load_session,
                         ).into_view(),
                         RightTab::Notebook => {
                             view! {

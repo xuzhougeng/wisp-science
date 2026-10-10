@@ -248,6 +248,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           { id: "subagent-parent", title: "Main analysis", ts: 2100, running: false, folder_id: query.get("mockSubagentFolder") === "1" ? "subagent-folder" : null,
             branched_from: query.get("mockSubagentParentBranch") === "1" ? "subagent-root" : null },
           { id: "subagent-child", title: "Align the reads", ts: 2090, running: false, dispatched_from: "subagent-parent" },
+          ...(query.get("mockSubagentActivity") === "1" ? [{ id: "subagent-done", title: "Summarize QC metrics", ts: 2085, running: false, dispatched_from: "subagent-parent" }] : []),
           ...(query.get("mockSubagentParentBranch") === "1" ? [{ id: "subagent-root", title: "Original analysis", ts: 2080, running: false }] : []),
         ]
     : mockPlanFlow
@@ -3607,6 +3608,25 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               workflow: snapshot,
               started: true,
             };
+          }
+          case "list_subagent_activity": {
+            if (query.get("mockSubagentActivity") !== "1" || arg("sessionId") !== "subagent-parent") return [];
+            return [
+              { id: "subagent-child", kind: "conversation", title: "Align the reads", status: "running",
+                instruction: "Align the reads to GRCh38 and report mapping rates.", summary: "", answer: "",
+                started_at: 1_700_000_000, ended_at: null, tool_calls: 3, session_id: "subagent-child", trace_path: null },
+              { id: "subagent-done", kind: "conversation", title: "Summarize QC metrics", status: "completed",
+                instruction: "Summarize the FastQC reports under qc/.", summary: "12 samples pass, 1 fails.",
+                answer: "## QC summary\n\n- 12 samples pass\n- 1 sample fails adapter content",
+                started_at: 1_699_999_000, ended_at: 1_699_999_245, tool_calls: 7, session_id: "subagent-done", trace_path: null },
+              { id: "explore:e1", kind: "explore", title: "Where is the alignment step configured?", status: "completed",
+                instruction: "Where is the alignment step configured?", summary: "claim: STAR params | path: config/align.yaml | lines: 3-9",
+                answer: "findings:\n- claim: STAR params | path: config/align.yaml | lines: 3-9\nsummary: alignment is configured in config/align.yaml.",
+                started_at: 1_699_998_000, ended_at: 1_699_998_012, tool_calls: 4, session_id: null, trace_path: "/proj/.wisp/subagents/explore-1.txt" },
+              { id: "explore:e2", kind: "explore", title: "Which samples failed QC?", status: "failed",
+                instruction: "Which samples failed QC?", summary: "Error: provider timeout", answer: "Error: provider timeout",
+                started_at: 1_699_997_000, ended_at: 1_699_997_030, tool_calls: 0, session_id: null, trace_path: "/proj/.wisp/subagents/explore-2.txt" },
+            ];
           }
           case "list_agent_workflows": {
             const sessionId = String(arg("sessionId") ?? "");
