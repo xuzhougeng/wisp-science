@@ -1497,8 +1497,10 @@ impl RunManager {
         // began copying has lost its process: end it, or it stays `running`
         // for a wait that never returns. A Run this recent may simply not be
         // registered in `active` by its own submission yet.
-        if run.status != wisp_store::RunStatus::Submitted
-            && !matches!(handle, TransferHandle::Harvest { .. })
+        if matches!(
+            run.status,
+            wisp_store::RunStatus::Running | wisp_store::RunStatus::Cancelling
+        ) && !matches!(handle, TransferHandle::Harvest { .. })
         {
             let last_seen = run
                 .last_polled_at

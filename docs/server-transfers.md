@@ -92,9 +92,9 @@ as a persisted `file_transfer` Run, preserving cancellation, timeout, progress, 
 audit records. The destination is ledgered when the attempt starts, so a
 failed or cancelled partial stays visible and can be deleted. A successful
 upload stays active on that server (it is project data, not sweep fodder).
-Restarting Wisp retries a persisted transfer handle instead of marking the Run
-lost. Recovery reuses partial bytes with rsync; scp recovery removes the recorded
-partial destination and starts copying again.
+After a restart, Wisp retries an upload that had not started copying instead of
+marking the Run lost. An upload interrupted mid-copy is marked failed; submit it
+again with rsync and `resume=true` to continue from the partial bytes.
 
 ### Overlapping uploads
 
