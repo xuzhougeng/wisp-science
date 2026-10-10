@@ -16503,8 +16503,7 @@ test("Agents panel is activity-only and opens the standalone Workflow Studio", a
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
 
-  await expect(panel).toContainText("Agent workflow activity");
-  await expect(panel).toContainText("Create and edit reusable workflows in Workflow Studio");
+  await expect(panel).toContainText("No subagents in this conversation yet");
   await expect(panel).toContainText("Delegation is off for this conversation");
   await expect(panel.getByTestId("dynamic-agent-editor")).toHaveCount(0);
   await expect(panel.getByTestId("agent-create")).toHaveCount(0);

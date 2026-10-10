@@ -459,6 +459,16 @@ The parent conversation gets three tools:
   answer; without `session_id` it lists this conversation's subagents.
 - `stop_subagent` cancels a subagent's running turn.
 
+The right-panel **Agents** view lists every subagent of the current
+conversation, whichever mechanism ran it: child conversations started with
+`dispatch_subagent`, `explore` runs (folded into one "Quick explorations"
+group once finished, since they take seconds), and `delegate_tasks` workflows
+below them. Rows split into in progress and completed. Opening a row shows the
+subagent's status, instruction and final answer in place; a child conversation
+can be stopped or opened in the chat from there, and an explore run names its
+archived trace file. Escape returns to the list. The pane never switches to
+itself when a subagent starts.
+
 When a dispatched turn ends, including when it ends with a question, a
 background callback reviews the result with the parent's model and appends a
 separate summary to the parent conversation; no polling is needed. After a

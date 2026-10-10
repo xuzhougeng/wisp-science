@@ -145,6 +145,7 @@ mod clipboard_files;
 mod mcp_app_child_commands;
 mod mcp_app_children;
 mod storage_prefs;
+mod subagent_activity;
 mod subagent_tool;
 mod terminal_sessions;
 mod trajectory;
@@ -7540,6 +7541,7 @@ pub fn run() {
             acp::set_acp_session_mode,
             test_reviewer_backend,
             delegation_runtime::list_agent_workflows,
+            subagent_activity::list_subagent_activity,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
             plan_mode::get_session_plan_mode,

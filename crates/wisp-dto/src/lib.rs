@@ -4588,6 +4588,35 @@ pub struct QuickActionRun {
     pub started: bool,
 }
 
+/// One subagent the conversation started, whichever mechanism ran it: a
+/// watch-only child conversation (`dispatch_subagent`, #1061) or an in-process
+/// `explore` run whose anchor lives in the parent transcript. The Agents pane
+/// lists these beside `delegate_tasks` workflows.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SubagentActivity {
+    pub id: String,
+    /// `conversation` or `explore`.
+    pub kind: String,
+    pub title: String,
+    /// `running`, `completed`, `failed` or `idle` (ended without an answer).
+    pub status: String,
+    pub instruction: String,
+    /// First line of the answer, for the list row.
+    pub summary: String,
+    /// Markdown; empty until the subagent answers.
+    pub answer: String,
+    pub started_at: i64,
+    #[serde(default)]
+    pub ended_at: Option<i64>,
+    pub tool_calls: u32,
+    /// Child conversation to open in the chat, for `conversation` kind.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Archived full trace on disk, for `explore` kind.
+    #[serde(default)]
+    pub trace_path: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AgentWorkflowSnapshot {
     pub workflow: AgentWorkflow,
