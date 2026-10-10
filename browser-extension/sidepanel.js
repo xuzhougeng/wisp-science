@@ -148,7 +148,8 @@ function showApproval(message) {
   allow.addEventListener("click", () => decide(true));
   actions.append(deny, allow);
   card.append(actions);
-  pending.turn.insertBefore(card, pending.status);
+  // Above the answer, so the finished turn reads: question, approval, answer.
+  pending.turn.insertBefore(card, pending.answer);
   pending.status.textContent = "";
   scrollToEnd();
 }
