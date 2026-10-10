@@ -17337,6 +17337,15 @@ test("the first computer founds a lab, then reviews members, invites and publish
   await page.getByTestId("lab-kb-publish").click();
   await expect.poll(() => lastInvokeArgs(page, "lab_publish_knowledge_base")).toMatchObject({ projectId: "other" });
   await expect(page.getByTestId("lab-kb-summary")).toContainText('On this computer as the project "Other project"');
+
+  // No project answers lab mail until one is chosen; choosing saves at once.
+  await expect(page.getByTestId("lab-inbox-project")).toHaveValue("");
+  await page.getByTestId("lab-inbox-project").selectOption({ label: "Other project" });
+  await expect.poll(() => lastInvokeArgs(page, "lab_set_inbox_project")).toMatchObject({ projectId: "other" });
+  await expect(page.getByTestId("lab-message")).toHaveText("Lab mail setting saved.");
+  await expect(page.getByTestId("lab-inbox-project")).toHaveValue("other");
+  await page.getByTestId("lab-inbox-project").selectOption("");
+  await expect.poll(() => lastInvokeArgs(page, "lab_set_inbox_project")).toMatchObject({ projectId: "" });
 });
 
 test("a member joins a lab with an invite code, waits for approval and downloads the knowledge base", async ({ page }) => {

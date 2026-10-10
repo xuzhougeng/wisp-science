@@ -954,6 +954,24 @@ async fn send_message_inner_with_continuation(
         // The conversation became a mandate's, or its mandate closed.
         *guard = None;
     }
+    // Lab members' agents can write to each other (docs/wisp-lab.md). Not the
+    // assistant, which works across projects, and not a subagent, whose
+    // answers return to the conversation that started it.
+    let lab_member = !assistant
+        && channels::lab::is_member(&state.store).await
+        && state
+            .store
+            .session_dispatched_from(&frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none();
+    if guard
+        .as_ref()
+        .is_some_and(|agent| agent.tools.get(channels::lab_mail::LAB_SEND).is_some() != lab_member)
+    {
+        // This computer joined or left a lab since the agent was built.
+        *guard = None;
+    }
     let reused_agent = guard.is_some();
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
@@ -1135,6 +1153,13 @@ async fn send_message_inner_with_continuation(
                     agent.add_tool(tool);
                 }
             }
+        }
+        if lab_member {
+            agent.add_tool(Box::new(channels::lab_mail::LabMembersTool));
+            agent.add_tool(Box::new(channels::lab_mail::LabSendTool::new(
+                state.store.clone(),
+                frame_id.clone(),
+            )));
         }
         if let Some(mandate) = &mandate_turn {
             agent.add_tool(Box::new(wisp_app::mandates::EndRoundTool::new(
@@ -1445,8 +1470,19 @@ async fn send_message_inner_with_continuation(
             agent.ctx.inject_user(archive_index);
         }
     }
-    if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
-        agent.ctx.inject_user(memory);
+    // A turn started by another lab member's mail is answered from this
+    // project alone: the user's global memory is not part of what the lab may
+    // ask about, and the answer is mailed back without anyone reading it.
+    let lab_turn = channels::lab_mail::turn_hop(&frame_id).is_some();
+    if !lab_turn {
+        if let Some(memory) = memory_commands::global_memory_runtime_injection(&state.store).await {
+            agent.ctx.inject_user(memory);
+        }
+    }
+    if lab_member {
+        agent
+            .ctx
+            .inject_user(channels::lab::turn_context(&state.store, lab_turn).await);
     }
     let mandate_reviews_mutations = mandate_turn
         .as_ref()
@@ -1714,7 +1750,7 @@ async fn send_message_inner_with_continuation(
         model: model.clone(),
         project_id: ap.id.clone(),
         project_root: ap.root.clone(),
-        restrict_read_paths_to_project: exploration_isolation.is_some(),
+        restrict_read_paths_to_project: exploration_isolation.is_some() || lab_turn,
         exploration_isolation,
         store: state.store.clone(),
         resource_leases: state.resource_leases.clone(),

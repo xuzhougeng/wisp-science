@@ -7492,6 +7492,7 @@ pub fn run() {
             channels::lab::lab_join,
             channels::lab::lab_set_relay_token,
             channels::lab::lab_leave,
+            channels::lab::lab_set_inbox_project,
             channels::lab::lab_create_invite,
             channels::lab::lab_approve_member,
             channels::lab::lab_remove_member,

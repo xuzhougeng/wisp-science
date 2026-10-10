@@ -9,9 +9,6 @@ The relay stays infrastructure. It stores who belongs to the lab and who wrote
 to whom. The lab key never reaches it, so it cannot read the knowledge base
 or a single mail.
 
-> Agent mail between members is added in a follow-up change and documented
-> here when it lands.
-
 ## Enable it on the relay
 
 The lab is chosen when the relay is deployed. Add one variable to the
@@ -105,6 +102,58 @@ token filled in there when it joins, so **Sync now** works right away. An
 existing sync configuration is not changed: if it points at a different
 relay, the knowledge base cannot be downloaded until it points at the lab's.
 
+## Agent mail
+
+Members' agents can ask each other questions. Nobody has to be online at the
+same time: a message waits in the recipient's mailbox on the relay until
+their computer fetches it.
+
+**Receiving.** Under **Agent mail**, choose the **Project that answers lab
+messages**. Until you do, a question sent to this computer gets an automatic
+note that it does not take lab mail, so nobody waits for an answer that will
+not come. Each sender gets one conversation in that project, named
+*Lab: <name>*. When a message arrives, your agent runs one turn there and its
+answer is mailed back automatically. Attached files are saved under
+`uploads/lab/` in that project.
+
+**Asking.** Your agent has two tools once this computer is in a lab:
+
+- `lab_members` lists the members.
+- `lab_send` sends a question to one member, optionally with up to four files
+  from the current project. The other agent sees only that message and those
+  files, not your conversation.
+
+So you can write "ask Lin's agent which reference genome their RNA-seq
+pipeline uses" in any project conversation. The answer arrives later in the
+same conversation as a message starting with `[Lab reply from Lin]`, and your
+agent continues from it.
+
+Wisp checks the mailbox every 15 seconds while it is running. If your
+computer was off, waiting messages are answered when it starts again.
+
+### What a lab message may do
+
+A message from another member's agent is a colleague's text, not yours. A
+turn it starts, on either side, is held to these limits:
+
+- **Changes ask first.** Writing or editing files, shell commands, kernels and
+  every other changing tool need your approval on the desktop, even if your
+  default is Allow. This is the same floor as for IM channels.
+- **Reads stay inside the project.** The agent can read and search only the
+  project the conversation belongs to: the one you chose for lab mail, or, for
+  a reply, the one that asked.
+- **No global memory.** Your global memory is left out of that turn.
+- **Further mail asks first.** `lab_send` is a changing tool, so an agent that
+  wants to write to the lab from such a turn needs your approval.
+- **Four in a row at most.** Without a person writing in between, an exchange
+  can go ask, reply, ask, reply and then stops: the agent is told to summarize
+  for its user instead. This bounds two computers that both run with Full
+  Permission.
+
+The automatic answer to a question is the one thing that leaves without your
+review. It is your agent's reply text, written from the project you chose.
+Choose a project whose contents you are willing to discuss with the lab.
+
 ## Security model
 
 - **Two secrets per member.** The relay token proves a computer may use the
@@ -125,6 +174,11 @@ relay, the knowledge base cannot be downloaded until it points at the lab's.
   [synced project](project-sync.md). Once the leader registers it, the relay
   refuses commits to that project from anyone else. Members read it with the
   project key they receive through the sealed pointer.
+- **Attachments are encrypted blobs.** A file sent with `lab_send` is
+  encrypted with the lab key and stored like a sync blob; the mail carries
+  its hash, size and name. The receiving desktop checks all three and writes
+  the file under `uploads/lab/` with a name it sanitized itself. The relay
+  keeps blobs indefinitely, as it does for project sync.
 - **Removal revokes the member key, not the lab key.** A removed member can no
   longer list members, read new mail or send any. They still hold the lab key
   and the relay token, so they could keep pulling knowledge-base revisions.
@@ -151,6 +205,22 @@ key in `x-wisp-member`. A refusal carries a short code as its body, such as
 | `DELETE /v1/lab/mail/{id}` | active member | Acknowledge one mail |
 
 Mail stays in the mailbox until it is acknowledged, so a mail whose delivery
-was interrupted is delivered again. A mail is at most 256 KiB sealed and a
-mailbox holds 500; attachments travel as relay blobs. The implementation is
-`crates/wisp-sync/src/lab.rs`.
+was interrupted is delivered again. The desktop acknowledges a mail once its
+turn has finished, and remembers handled mail for as long as it runs, so a
+lost acknowledgement is repeated rather than the turn. A desktop that quits
+mid-turn answers that mail again after restarting. A reply whose turn could
+not start, or an answer that could not be mailed back, also stays in the
+mailbox and is tried again at the next start, so its text is not lost. A mail is at most 256 KiB sealed and a
+mailbox holds 500; attachments travel as relay blobs. The relay side is
+`crates/wisp-sync/src/lab.rs`; the desktop side is
+`src-tauri/src/channels/lab.rs` (membership) and `lab_mail.rs` (mail and the
+two tools).
+
+## Not yet included
+
+- Leadership cannot be transferred, and the leader cannot leave.
+- There are no group messages: `lab_send` writes to one member.
+- The desktop polls for mail; nothing is pushed.
+- A pending member learns of approval by pressing **Check again**.
+- Members cannot push to the knowledge base; contributions go through the
+  leader.

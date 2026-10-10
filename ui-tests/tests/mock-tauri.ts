@@ -1297,6 +1297,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     leader: false,
     members: [] as { id: string; name: string; leader: boolean; pending: boolean }[],
     knowledge_base: null as { project_id: string; local: boolean; project_name: string } | null,
+    inbox_project_id: "",
   };
   (window as any).__mockLab = mockLab;
   let mockLabInviteSequence = 0;
@@ -3859,6 +3860,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               state: "none", detail: "", relay_url: "", member_name: "", member_id: "",
               lab_name: "", leader: false, members: [], knowledge_base: null,
             });
+            return null;
+          case "lab_set_inbox_project":
+            mockLab.inbox_project_id = String(arg("projectId") ?? "");
             return null;
           case "lab_create_invite":
             mockLabInviteSequence += 1;
