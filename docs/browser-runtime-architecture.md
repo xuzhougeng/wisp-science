@@ -1,6 +1,6 @@
 # Browser Runtime architecture
 
-Wisp extension 0.3.1 treats the Chrome extension as a **controlled access adapter**.
+Wisp extension 0.4.0 treats the Chrome extension as a **controlled access adapter**.
 The desktop process owns sessions, waits, staging, and approval.
 
 ```
@@ -105,6 +105,10 @@ read *Connected to Wisp* while Wisp reports `connected=false`.
 - Host-permission asset download into `Downloads/WispBrowserStaging`
 - Viewport / full-page / selector capture
 - Pause control from the popup (`USER_CONTROLLING`)
+- Side panel (`side_panel`): on the user's request it reads the active tab's
+  text and selection, sends the question as `side_ask`, and renders the
+  `side_*` events of the resulting turn. It is the only traffic the extension
+  initiates; pausing agent control does not disable it.
 
 The extension never writes project directories and never returns large base64 files as the archive path.
 
@@ -121,10 +125,24 @@ The extension never writes project directories and never returns large base64 fi
   handshake after every update attempt
 - In-browser chat one-shot (`web_agent_send` / `wait` / `read`) on an
   already-logged-in ChatGPT, Gemini, or Google AI Mode tab
+- Runs a side panel question as an IM-origin agent turn in the main window's
+  project (`browser_bridge/side_panel.rs`). A new panel conversation creates a
+  session titled after the page; `side_started`, `side_delta`, `side_tool`,
+  `side_approval`, and `side_done` / `side_error` return on the connection that
+  asked.
 
 Playwright is not used. The user's daily Chrome User Data directory is never passed as `--user-data-dir`.
 
 ## Safety checks
+
+- `side_*` messages are honoured only from the live, origin-checked extension
+  connection of their session. The panel can stop a turn or answer an approval
+  only in conversations it has sent a message to since Wisp started, and an
+  approval needs its exact id. Page text and the selection are length-capped,
+  quoted as untrusted content, and cannot close their own quoting block. The
+  panel receives tool names, never tool arguments or results. It renders the
+  reply's Markdown into a fixed set of tags built node by node (`markdown.js`),
+  never through `innerHTML`; links are limited to `http(s)` and `mailto`.
 
 - `web_agent_*` accepts only already-open HTTPS tabs at `chatgpt.com` /
   `chat.openai.com`, `gemini.google.com`, or `google.com` with `udm=50`

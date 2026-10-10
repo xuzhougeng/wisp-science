@@ -7346,6 +7346,8 @@ pub fn run() {
             });
             let (needs_human_tx, mut needs_human_rx) = tokio::sync::mpsc::unbounded_channel();
             tauri::async_runtime::block_on(browser_bridge.set_needs_human_sink(needs_human_tx));
+            let (side_panel_tx, side_panel_rx) = tokio::sync::mpsc::unbounded_channel();
+            tauri::async_runtime::block_on(browser_bridge.set_side_panel_sink(side_panel_tx));
             let device_hub = Arc::new(device_hub::DeviceHub::default());
             let device_bridge = Arc::new(device_bridge::DeviceBridge::new(
                 device_hub.clone(),
@@ -7402,6 +7404,10 @@ pub fn run() {
                     }
                 });
             }
+            tauri::async_runtime::spawn(browser_bridge::side_panel::serve(
+                app.handle().clone(),
+                side_panel_rx,
+            ));
             app.manage(app_updates::PendingAppUpdate::default());
             app.manage(terminal_sessions::TerminalManager::new());
             app.manage(channels::ChannelManager::new());

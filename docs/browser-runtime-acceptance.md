@@ -1,6 +1,6 @@
 # Browser Runtime acceptance
 
-Use a Wisp build that bundles extension **0.3.1**. Load the unpacked extension from `browser_setup.extension_path` before testing.
+Use a Wisp build that bundles extension **0.4.0**. Load the unpacked extension from `browser_setup.extension_path` before testing.
 
 For #1107, test on Windows, macOS, and Linux with automatic launch enabled:
 close daily Chrome, call `browser_setup` with no action, and verify its normal
@@ -13,7 +13,7 @@ action must behave like an omitted action. Existing blank/new-tab pages are neve
 cleaned up by startup; ordinary per-turn cleanup still applies only to recorded
 tool-created tabs.
 
-1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.3.1, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.3.1. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.3.1, and `required_protocol` 2.
+1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.4.0, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.4.0. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.4.0, and `required_protocol` 2.
 2. Open a WeChat article, `web_scan` with `mode=article`, confirm `images[]` includes the body figures, then `web_save_assets` copies them under the project `browser-assets/` with SHA-256. Do not use page `fetch`.
 3. `web_open_tab` on a GitHub repo and a Zenodo DOI returns a non-empty final `tab.url` / `tab.title`.
 4. `browser_setup` `action=start_workspace` opens a second Chrome only when the user explicitly requests isolation. Both sessions stay connected, and omitting `session` still uses `shared`; pass `session=workspace` to target the isolated browser.
@@ -29,6 +29,17 @@ Popup **Pause control** must fail later automations with `USER_CONTROLLING`.
 
 6. Open several tabs with `web_open_tab` in one turn. With **Settings → Browser → Automatically close browser tabs** off, the turn-end dialog lists only those tabs (not ones already open). Unchecking one and confirming closes the rest. Enabling the setting closes this turn's tabs without a dialog.
 7. Open ScienceDirect (or any Cloudflare **Are you a robot?** page). `web_scan` must show the in-app **Human verification needed** prompt, keep that tab open when auto-close is on, and refuse click/JS on that tab until **I completed verification** succeeds.
+8. Side panel. With Wisp running in the background and a project open, open an
+   article tab, choose **Ask about this page** in the popup and ask a question.
+   The answer streams into the panel and a conversation titled after the page
+   appears in that project. A follow-up shows only the page title under the
+   question (the text is not resent). Select a paragraph and ask again: the
+   line shows the selection length. Open a PDF URL and ask: the line says there
+   is no readable text, and an approval card appears when the agent reaches
+   for a tool; **Allow once** continues the turn and **Deny** makes the agent
+   answer without it. **Stop** cancels a running turn. The context menu and
+   `Alt+Shift+W` open the same panel. Quit Wisp and ask: the panel reports that
+   Wisp is not running.
 
 ## Project workspace isolation (#1325)
 

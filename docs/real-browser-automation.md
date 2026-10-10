@@ -95,6 +95,40 @@ reconnects to `ws://127.0.0.1:18765` when Wisp is running. Only loopback
 connections whose WebSocket origin is a Chrome extension with Wisp's bundled,
 stable extension ID are accepted.
 
+## Ask about the current page (side panel)
+
+Extension 0.4.0 adds a Chrome side panel that answers questions about the tab
+you are looking at with Wisp's own agent loop. You do not have to switch to the
+Wisp window, paste the URL into a chat site, or download the PDF first.
+
+Open it in any of these ways:
+
+- the extension popup → **Ask about this page**
+- right-click the page or a selection → **Ask Wisp about this page**
+- `Alt+Shift+W` (change it at `chrome://extensions/shortcuts`)
+
+How it behaves:
+
+- Wisp must be running; its window can stay in the background.
+- The first question of a panel conversation creates an ordinary conversation
+  in the project open in Wisp's main window, titled after the page. Follow-up
+  questions continue it and **New chat** starts another. The conversation is
+  visible in the desktop app and can be continued there.
+- The first question about a URL carries the page's visible text (up to 50,000
+  characters). Text you selected beforehand (up to 20,000 characters) is sent
+  as well, and the question is taken to be about that passage first.
+- A tab whose text cannot be read, such as Chrome's PDF viewer, sends only its
+  URL. The agent then reads the document with its own tools.
+- Side panel turns have the approval floor of an IM message: every tool that
+  changes something asks first, as does every page-access tool. The request
+  appears in the panel with **Allow once** and **Deny**, and in the desktop app.
+- Page text is quoted as untrusted content and is never treated as
+  instructions.
+- **Stop** cancels the running turn.
+- The reply is rendered as Markdown: headings, lists, tables, block quotes,
+  code, emphasis, and `http(s)` / `mailto` links. HTML in a reply is shown as
+  text, never interpreted.
+
 ## Human-verification handoff
 
 When `web_scan` detects an **Are you a robot?** page together with a request to
@@ -188,8 +222,9 @@ HTTP(S) tab in that Chrome profile.
 
 ## Security and limits
 
-- The extension asks only for `tabs`, `scripting`, `debugger`, and the alarm used
-  to reconnect. It has no dedicated cookie-export API, does not remove page CSP,
+- The extension asks for `tabs`, `scripting`, `debugger`, `downloads`, `storage`,
+  `sidePanel`, `contextMenus`, and the alarm used to reconnect. It has no
+  dedicated cookie-export API, does not remove page CSP,
   disable dialogs, or change content settings. Approved page JavaScript or raw
   CDP commands are still powerful and should be treated as access to the tab.
 - Ordinary execution uses Chrome's scripting API. Wisp falls back to a temporary

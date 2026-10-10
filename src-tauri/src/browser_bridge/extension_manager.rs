@@ -13,11 +13,15 @@ const REQUIRED_FILES: &[&str] = &[
     "chat_adapter.js",
     "downloads.js",
     "manifest.json",
+    "markdown.js",
     "popup.html",
     "popup.js",
     "protocol.js",
     "scan_page.js",
     "session_config.js",
+    "side_relay.js",
+    "sidepanel.html",
+    "sidepanel.js",
     "tab_ops.js",
     "wait_engine.js",
     "wait_tab.js",
@@ -272,7 +276,7 @@ mod tests {
         let destination = root.join("browser-extension");
 
         let package = sync(&source, &destination, EXTENSION_ID).unwrap();
-        assert_eq!(package.version, "0.3.1");
+        assert_eq!(package.version, "0.4.0");
         assert_eq!(
             verify(&source, &destination, EXTENSION_ID).unwrap(),
             package

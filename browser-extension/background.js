@@ -11,7 +11,8 @@ importScripts(
   "scan_page.js",
   "downloads.js",
   "capture.js",
-  "chat_adapter.js"
+  "chat_adapter.js",
+  "side_relay.js"
 );
 
 var cfg = readBridgeConfig();
@@ -89,7 +90,8 @@ function connect() {
   socket.onmessage = async function (event) {
     try {
       var request = JSON.parse(event.data);
-      if (request.id) await handleRequest(request);
+      if (isSideMessage(request)) sideRelay.broadcast(request);
+      else if (request.id) await handleRequest(request);
     } catch (error) {
       lastError = error.message;
     }
@@ -102,6 +104,40 @@ function connect() {
     keepAliveTimer = null;
     socket = null;
   };
+}
+
+// The side panel can wake a sleeping service worker, so give the socket a
+// moment to open before reporting Wisp as offline.
+async function socketReady() {
+  connect();
+  for (var waited = 0; waited < 3000; waited += 100) {
+    if (socket && socket.readyState === WebSocket.OPEN) return true;
+    await new Promise(function (resolve) { setTimeout(resolve, 100); });
+  }
+  return !!(socket && socket.readyState === WebSocket.OPEN);
+}
+
+var sideRelay = createSideRelay(chrome, { send: send, ready: socketReady, isScriptable: isScriptable });
+
+function openSidePanel(tab) {
+  if (!tab || !chrome.sidePanel) return;
+  // Must stay synchronous: Chrome only opens the panel inside the user gesture.
+  chrome.sidePanel.open({ windowId: tab.windowId }).catch(function () {});
+}
+
+function createSideMenus() {
+  var zh = /^zh/i.test(chrome.i18n.getUILanguage());
+  var ignoreDuplicate = function () { void chrome.runtime.lastError; };
+  chrome.contextMenus.create({
+    id: "wisp-side-panel-page",
+    title: zh ? "用 Wisp 询问当前页面" : "Ask Wisp about this page",
+    contexts: ["page"]
+  }, ignoreDuplicate);
+  chrome.contextMenus.create({
+    id: "wisp-side-panel-selection",
+    title: zh ? "用 Wisp 询问“%s”" : "Ask Wisp about “%s”",
+    contexts: ["selection"]
+  }, ignoreDuplicate);
 }
 
 async function runPageCode(code) {
@@ -415,11 +451,21 @@ chrome.alarms.onAlarm.addListener(function (alarm) {
 });
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
+chrome.runtime.onInstalled.addListener(createSideMenus);
 chrome.tabs.onCreated.addListener(function () { sendHandshake(); });
 chrome.tabs.onRemoved.addListener(function () { sendHandshake(); });
 chrome.tabs.onActivated.addListener(function () { sendHandshake(); });
 chrome.tabs.onUpdated.addListener(function (_id, change) {
   if (change.status === "complete" || change.url) sendHandshake();
+});
+chrome.runtime.onConnect.addListener(function (port) {
+  if (port.name === "wisp_side_panel") sideRelay.attach(port);
+});
+chrome.commands.onCommand.addListener(function (command, tab) {
+  if (command === "open-side-panel") openSidePanel(tab);
+});
+chrome.contextMenus.onClicked.addListener(function (info, tab) {
+  if (String(info.menuItemId).indexOf("wisp-side-panel") === 0) openSidePanel(tab);
 });
 chrome.runtime.onMessage.addListener(function (message, _sender, reply) {
   if (message && message.type === "wisp_bridge_status") {
