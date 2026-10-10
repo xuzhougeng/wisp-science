@@ -1931,6 +1931,7 @@ pub(super) fn SettingsView(
     set_default_compute_resource: Callback<Option<String>>,
     open_terminal_session: Callback<TerminalSessionSummary>,
     save_auto_failure_analysis: Callback<AutoFailureAnalysisSettings>,
+    sync_settings_changed: Callback<()>,
 ) -> impl IntoView {
     let expanded_connector_tools = create_rw_signal(HashSet::<(String, String)>::new());
     let SettingsViewState {
@@ -7462,7 +7463,8 @@ pub(super) fn SettingsView(
                             on_open_project=Callback::new(move |id: String| {
                                 show_settings.set(false);
                                 open_project.call(id);
-                            })/>
+                            })
+                            on_sync_settings_changed=sync_settings_changed/>
                         </div>
                     </div>
                 }.into_view())}

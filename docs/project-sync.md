@@ -108,7 +108,7 @@ known revision, preventing silent descriptor tampering or rollback.
 
 ## Choose a backend
 
-Open **Settings → General → Manual project sync**.
+Open **Settings → Remote Access → Manual project sync**.
 
 ### Self-hosted relay
 
@@ -167,7 +167,7 @@ compare-and-swap behavior than a cloud-synchronized folder.
 ## Additional device
 
 1. Configure the relay token, or select that device's local cloud-drive folder.
-2. Open **Settings → General → Manual project sync**, press
+2. Open **Settings → Remote Access → Manual project sync**, press
    **Join synced project**, and paste the device code.
 3. Choose a new local parent directory. Wisp downloads into staging, verifies
    every encrypted blob and plaintext checksum, then imports the project under

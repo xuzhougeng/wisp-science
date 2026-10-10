@@ -28,7 +28,13 @@ fn lab_error(locale: Locale, text: &str) -> String {
 }
 
 #[component]
-pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String>) -> impl IntoView {
+pub(super) fn LabPane(
+    locale: RwSignal<Locale>,
+    on_open_project: Callback<String>,
+    /// Joining a lab can fill in the project sync relay. The app reloads
+    /// those settings so **Sync now** appears without a restart.
+    on_sync_settings_changed: Callback<()>,
+) -> impl IntoView {
     let status = create_rw_signal(None::<LabStatus>);
     let msg = create_rw_signal(None::<(bool, String)>);
     let busy = create_rw_signal(false);
@@ -79,6 +85,10 @@ pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String
             match invoke_checked(command, args).await {
                 Ok(_) => {
                     let _ = msg.try_set(done.map(|key| (true, t(locale.get_untracked(), key))));
+                    if command == "lab_join" {
+                        // Owned by the app, so it outlives this pane.
+                        on_sync_settings_changed.call(());
+                    }
                 }
                 Err(error) => {
                     let text = lab_error(locale.get_untracked(), &js_error_text(error));

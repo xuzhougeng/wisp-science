@@ -1301,6 +1301,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   };
   (window as any).__mockLab = mockLab;
   let mockLabInviteSequence = 0;
+  // Set when a lab join filled in a sync backend that had no relay yet.
+  let mockLabSeededSync = "";
   let mockRemoteCodeSequence = 0;
   const mockRemoteCode = () =>
     `${String(mockRemoteCodeSequence).padStart(4, "0")}-0203-0405-0607-0809-0a0b-0c0d-0e0f`;
@@ -3289,10 +3291,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               reasoning_effort: "",
               supports_vision: true,
               sync_backend: "relay",
-              sync_relay_url: mockSyncUnconfigured ? "" : "https://relay.example.test",
+              sync_relay_url: mockSyncUnconfigured ? mockLabSeededSync : "https://relay.example.test",
               sync_folder: "",
               sync_relay_token: "",
-              has_sync_relay_token: !mockSyncUnconfigured,
+              has_sync_relay_token: !mockSyncUnconfigured || mockLabSeededSync !== "",
               pet_enabled: mockPetEnabled,
               pet_directory: mockPetDirectory,
             };
@@ -3850,6 +3852,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             mockLab.leader = !invite;
             mockLab.state = invite ? "pending" : "active";
             mockLab.members = invite ? [] : [{ id: "me", name, leader: true, pending: false }];
+            mockLabSeededSync = mockLab.relay_url;
             return { ...mockLab };
           }
           case "lab_set_relay_token":
