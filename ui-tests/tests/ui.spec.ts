@@ -10330,7 +10330,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
     await expect(page.getByTestId("image-size")).toBeVisible();
     await page.getByTestId("image-size").selectOption("1536x1024");
-    await page.getByRole("button", { name: "Valid" }).click();
+    await page.getByRole("button", { name: "Test connection", exact: true }).click();
     await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
       useForImageGeneration: true,
       settings: { provider: "openai", model: modelId, supports_vision: false },
@@ -10443,7 +10443,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await page.getByTestId("image-size").selectOption("1536x1024");
   await page.getByTestId("image-quality").selectOption("high");
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
     "Validated openai_responses with gpt-image-2",
   );
@@ -10491,7 +10491,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await page.getByTestId("image-resolution").selectOption("2k");
   await page.getByTestId("image-quality").selectOption("low");
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
     "Validated openai with grok-imagine-image-2.0",
   );
@@ -10540,7 +10540,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
   await page.getByTestId("video-aspect-ratio").selectOption("9:16");
   await page.getByTestId("video-resolution").selectOption("1080p");
   await expect(page.getByTestId("use-for-video-generation")).toBeChecked();
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
     "Validated openai with grok-imagine-video",
   );
@@ -10574,7 +10574,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
   await enterApp(page);
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
@@ -10583,7 +10583,7 @@ test("editing Base URL keeps protocol state and display aligned", async ({ page 
   await openModelsSettings(page);
   await page.getByLabel("Base URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
 });
 
@@ -10603,7 +10603,7 @@ test("model Base URL explains per-model endpoint suffixes", async ({ page }) => 
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   // The mock profile has "supports images" on, so validation probes with a
   // test image and says so.
   await expect(page.locator(".settings-status")).toHaveText(
@@ -10611,7 +10611,7 @@ test("settings can validate current API config", async ({ page }) => {
   );
 
   await page.getByLabel("Supports image input").uncheck();
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
@@ -10623,7 +10623,7 @@ test("editing a saved model validates with that model profile id", async ({ page
   await expect(providerSelect(page)).toBeVisible();
   await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
 
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
     profileId: "opus",
@@ -11536,7 +11536,7 @@ test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
   await page.getByLabel("Base URL").fill("");
-  await page.getByRole("button", { name: "Valid" }).click();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
 });
 
