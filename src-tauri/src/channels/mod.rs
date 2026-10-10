@@ -20,6 +20,7 @@ mod assistant;
 pub mod feishu;
 pub mod feishu_card;
 pub mod feishu_registration;
+pub mod lab;
 pub mod pbbp2;
 pub mod remote;
 pub mod weixin;

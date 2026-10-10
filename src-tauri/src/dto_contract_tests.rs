@@ -653,6 +653,41 @@ fn channels_status_contract_includes_feishu_owner() {
 }
 
 #[test]
+fn lab_status_contract_keeps_members_and_the_knowledge_base() {
+    let backend = wisp_dto::LabStatus {
+        state: "active".into(),
+        relay_url: "https://relay.example.test".into(),
+        has_token: true,
+        member_name: "Ada".into(),
+        member_id: "m1".into(),
+        lab_name: "Genomics".into(),
+        leader: true,
+        members: vec![wisp_dto::LabMemberInfo {
+            id: "m2".into(),
+            name: "Lin".into(),
+            leader: false,
+            pending: true,
+        }],
+        knowledge_base: Some(wisp_dto::LabKnowledgeBaseInfo {
+            project_id: "kb".into(),
+            local: true,
+            project_name: "Lab handbook".into(),
+        }),
+        ..Default::default()
+    };
+    let json = serde_json::to_value(&backend).unwrap();
+    // The settings pane reads these exact snake_case fields.
+    assert_eq!(json["members"][0]["pending"], true);
+    assert_eq!(json["knowledge_base"]["project_name"], "Lab handbook");
+    let dto: wisp_dto::LabStatus = roundtrip(&backend);
+    assert_eq!(dto, backend);
+    // A computer that never joined sends almost nothing; defaults fill in.
+    let empty: wisp_dto::LabStatus =
+        serde_json::from_value(serde_json::json!({ "state": "none" })).unwrap();
+    assert!(empty.members.is_empty() && empty.knowledge_base.is_none());
+}
+
+#[test]
 fn research_journey_contract_preserves_version_and_occurrence_time() {
     let backend = wisp_dto::ResearchJourney {
         entries: vec![wisp_dto::ResearchJourneyEntry {

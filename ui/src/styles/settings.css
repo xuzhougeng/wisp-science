@@ -2548,6 +2548,7 @@ button.workflow-graph-port.output {
 .device-token-row p { margin: 4px 0 0; color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .device-token-row .row { flex: 0 0 auto; margin: 0; }
 .device-token-row .danger { color: var(--err); }
+.lab-invite-code { overflow-wrap: anywhere; user-select: all; }
 .device-security-note { padding: 10px 12px; border-left: 3px solid var(--warn); background: var(--bg-sunken); }
 .settings-field-error { margin: 0; color: var(--err); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.45; }
 @media (max-width: 520px) {

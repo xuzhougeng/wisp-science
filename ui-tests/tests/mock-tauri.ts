@@ -1284,6 +1284,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       clients: 0,
     },
   };
+  // Wisp Lab. `?mockLabFounded=1` is a relay whose lab already has a leader.
+  // Tests reach in through `__mockLab` to play the other members' part.
+  const mockLab = {
+    state: "none",
+    detail: "",
+    relay_url: "",
+    has_token: false,
+    member_name: "",
+    member_id: "",
+    lab_name: "",
+    leader: false,
+    members: [] as { id: string; name: string; leader: boolean; pending: boolean }[],
+    knowledge_base: null as { project_id: string; local: boolean; project_name: string } | null,
+  };
+  (window as any).__mockLab = mockLab;
+  let mockLabInviteSequence = 0;
   let mockRemoteCodeSequence = 0;
   const mockRemoteCode = () =>
     `${String(mockRemoteCodeSequence).padStart(4, "0")}-0203-0405-0607-0809-0a0b-0c0d-0e0f`;
@@ -3812,6 +3828,58 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               : null;
             return null;
           }
+          case "lab_status":
+            return {
+              ...mockLab,
+              members: mockLab.members.map((member) => ({ ...member })),
+              knowledge_base: mockLab.knowledge_base ? { ...mockLab.knowledge_base } : null,
+            };
+          case "lab_join": {
+            const invite = String(arg("invite") ?? "").trim();
+            const name = String(arg("name") ?? "").trim();
+            if (String(arg("relayToken") ?? "").trim()) mockLab.has_token = true;
+            if (!mockLab.has_token) throw new Error("Enter the relay access token.");
+            const founded = query.get("mockLabFounded") === "1";
+            if (!invite && founded) throw new Error("lab:invite_required");
+            if (invite && invite !== "wisp-lab:valid") throw new Error("lab:invalid_invite");
+            mockLab.relay_url = String(arg("relayUrl") ?? "").trim() || "https://relay.example.test";
+            mockLab.member_name = name;
+            mockLab.member_id = "me";
+            mockLab.lab_name = invite ? "Genomics" : String(arg("labName") ?? "").trim() || "Wisp Lab";
+            mockLab.leader = !invite;
+            mockLab.state = invite ? "pending" : "active";
+            mockLab.members = invite ? [] : [{ id: "me", name, leader: true, pending: false }];
+            return { ...mockLab };
+          }
+          case "lab_set_relay_token":
+            mockLab.has_token = true;
+            return null;
+          case "lab_leave":
+            Object.assign(mockLab, {
+              state: "none", detail: "", relay_url: "", member_name: "", member_id: "",
+              lab_name: "", leader: false, members: [], knowledge_base: null,
+            });
+            return null;
+          case "lab_create_invite":
+            mockLabInviteSequence += 1;
+            return `wisp-lab:invite-${mockLabInviteSequence}`;
+          case "lab_approve_member": {
+            const member = mockLab.members.find((item) => item.id === arg("memberId"));
+            if (!member) throw new Error("lab:member_not_found");
+            member.pending = false;
+            return null;
+          }
+          case "lab_remove_member":
+            mockLab.members = mockLab.members.filter((item) => item.id !== arg("memberId"));
+            return null;
+          case "lab_publish_knowledge_base":
+            if (arg("projectId") !== "other") throw new Error("lab:knowledge_base_other_relay");
+            mockLab.knowledge_base = { project_id: "other", local: true, project_name: "Other project" };
+            return null;
+          case "lab_join_knowledge_base":
+            if (!mockLab.knowledge_base) throw new Error("lab:no_knowledge_base");
+            mockLab.knowledge_base = { ...mockLab.knowledge_base, local: true, project_name: "Other project" };
+            return { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 2, running_count: 0, needs_you_count: 0 };
           case "reset_remote_access_code":
             mockRemoteCodeSequence += 1;
             mockChannels.remote.code = mockRemoteCode();

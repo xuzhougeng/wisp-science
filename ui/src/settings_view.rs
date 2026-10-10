@@ -7458,7 +7458,11 @@ pub(super) fn SettingsView(
                                 </div>
                             </section>
                         })}
-                        <crate::channels_view::ChannelsPane locale=locale open=channels_open/>
+                        <crate::channels_view::ChannelsPane locale=locale open=channels_open
+                            on_open_project=Callback::new(move |id: String| {
+                                show_settings.set(false);
+                                open_project.call(id);
+                            })/>
                         </div>
                     </div>
                 }.into_view())}
