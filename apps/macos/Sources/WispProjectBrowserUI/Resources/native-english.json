@@ -386,6 +386,7 @@
   "中继上的课题组": "Research group on a relay",
   "中继保存失败，请检查其数据目录。": "The relay could not save the change. Check its data directory.",
   "中继地址必须使用 HTTPS（仅 localhost 允许 HTTP）。": "The relay URL must use HTTPS (HTTP is allowed only for localhost).",
+  "中继地址必须使用 HTTPS；只有 localhost 和内网 IP（如 10.x.x.x、192.168.x.x）可以使用 HTTP。": "The relay URL must use HTTPS. Plain HTTP is allowed only for localhost and private network addresses such as 10.x.x.x or 192.168.x.x.",
   "中继服务器": "Relay server",
   "中继服务器地址": "Relay URL",
   "中继的 WISP_RELAY_TOKEN": "The relay's WISP_RELAY_TOKEN",

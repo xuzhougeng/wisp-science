@@ -28,6 +28,6 @@ pub use protocol::{
 };
 pub use relay::{FileRelay, SyncTransport};
 pub use remote::{
-    open_frame, relay_base, remote_endpoints, seal_frame, HostFrame, RemoteCode, CLIENT_TO_HOST,
-    HOST_OFFLINE_CLOSE, HOST_TO_CLIENT, REMOTE_HOST_MAX_FRAME_BYTES,
+    open_frame, relay_base, remote_endpoints, remote_relay_base, seal_frame, HostFrame, RemoteCode,
+    CLIENT_TO_HOST, HOST_OFFLINE_CLOSE, HOST_TO_CLIENT, REMOTE_HOST_MAX_FRAME_BYTES,
 };

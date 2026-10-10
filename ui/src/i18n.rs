@@ -2077,6 +2077,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "channels.lab.error.knowledge_base_unreadable") => Some("The knowledge base cannot be opened with this computer's lab key."),
         (Locale::En, "err.remote_relay") => Some("Enter the relay server URL and access token before enabling remote access."),
         (Locale::En, "err.relay_https") => Some("The relay URL must use HTTPS (HTTP is allowed only for localhost)."),
+        (Locale::En, "err.relay_https_private") => Some("The relay URL must use HTTPS. Plain HTTP is allowed only for localhost and private network addresses such as 10.x.x.x or 192.168.x.x."),
         (Locale::En, "channels.state.stopped") => Some("Stopped"),
         (Locale::En, "channels.state.connecting") => Some("Connecting…"),
         (Locale::En, "channels.state.running") => Some("Running"),
@@ -5224,6 +5225,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "channels.lab.error.knowledge_base_unreadable") => Some("本机的课题组密钥无法打开知识库。"),
         (Locale::Zh, "err.remote_relay") => Some("启用前请先填写中继服务器地址与访问令牌。"),
         (Locale::Zh, "err.relay_https") => Some("中继地址必须使用 HTTPS（仅 localhost 允许 HTTP）。"),
+        (Locale::Zh, "err.relay_https_private") => Some("中继地址必须使用 HTTPS；只有 localhost 和内网 IP（如 10.x.x.x、192.168.x.x）可以使用 HTTP。"),
         (Locale::Zh, "channels.state.stopped") => Some("已停止"),
         (Locale::Zh, "channels.state.connecting") => Some("连接中…"),
         (Locale::Zh, "channels.state.running") => Some("运行中"),
@@ -6972,6 +6974,9 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         }
         "relay URL must use HTTPS (HTTP is allowed only for localhost)" => {
             t(locale, "err.relay_https")
+        }
+        "relay URL must use HTTPS (HTTP is allowed only for localhost and private network addresses)" => {
+            t(locale, "err.relay_https_private")
         }
         "Configure the relay token in Settings before synchronizing." => {
             t(locale, "err.sync_relay_token")

@@ -228,23 +228,8 @@ pub struct HttpRelay {
 
 impl HttpRelay {
     pub fn new(base_url: &str, bearer_token: impl Into<String>) -> Result<Self> {
-        let mut base_url = Url::parse(base_url.trim()).context("invalid relay URL")?;
-        let secure = base_url.scheme() == "https";
-        let local_http = base_url.scheme() == "http"
-            && base_url
-                .host_str()
-                .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
-        if !secure && !local_http {
-            anyhow::bail!("relay URL must use HTTPS (HTTP is allowed only for localhost)");
-        }
-        if base_url.cannot_be_a_base() {
-            anyhow::bail!("invalid relay base URL");
-        }
-        base_url.set_query(None);
-        base_url.set_fragment(None);
-        if !base_url.path().ends_with('/') {
-            base_url.set_path(&format!("{}/", base_url.path()));
-        }
+        // HTTPS, or HTTP to this computer or a private network address.
+        let base_url = crate::remote::relay_base(base_url)?;
         let bearer_token = bearer_token.into();
         if bearer_token.trim().is_empty() {
             anyhow::bail!("relay token is not configured");
@@ -455,7 +440,12 @@ mod tests {
     fn client_requires_tls_except_for_loopback() {
         assert!(HttpRelay::new("https://relay.example.test", "token").is_ok());
         assert!(HttpRelay::new("http://127.0.0.1:8787", "token").is_ok());
+        assert!(HttpRelay::new("http://[::1]:8787", "token").is_ok());
+        // A relay on the lab's own network may be reached without TLS.
+        assert!(HttpRelay::new("http://192.168.1.20:8787", "token").is_ok());
+        assert!(HttpRelay::new("http://10.20.30.40:8787/wisp", "token").is_ok());
         assert!(HttpRelay::new("http://relay.example.test", "token").is_err());
+        assert!(HttpRelay::new("http://8.8.8.8:8787", "token").is_err());
         assert!(HttpRelay::new("https://relay.example.test", "").is_err());
     }
 
