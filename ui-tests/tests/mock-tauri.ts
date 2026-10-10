@@ -6864,7 +6864,16 @@ export function parallelMock(): void {
             // the UI, so tests can wait for the late snapshot instead of sleeping.
             (window as any).__parallelLoadsResolved =
               ((window as any).__parallelLoadsResolved ?? 0) + 1;
-            return { items: [], next_before_seq: null, user_offset: 0 };
+            return {
+              items: [],
+              next_before_seq: null,
+              user_offset: 0,
+              // The backend lists what is still parked so the UI can drop rows
+              // whose lifecycle events it missed.
+              queued_turn_ids: Object.entries(parked)
+                .filter(([, item]) => item.fid === String(arg("id") ?? ""))
+                .map(([queueId]) => queueId),
+            };
           }
           case "list_sessions_page": return {
             items: sessions.slice(),

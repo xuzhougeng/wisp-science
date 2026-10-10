@@ -2812,6 +2812,10 @@ pub struct LoadedSessionPage {
     /// `None` when the session has no compaction or `first_kept_seq` is unknown.
     #[serde(default)]
     pub in_context_from_user_index: Option<usize>,
+    /// Ids still parked in the backend turn queue. `None` from a host that
+    /// predates the field, which keeps every optimistic queue row.
+    #[serde(default)]
+    pub queued_turn_ids: Option<Vec<String>>,
 }
 
 /// Current compaction metadata, refreshed without loading or replacing history.

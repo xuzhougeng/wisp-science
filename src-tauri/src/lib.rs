@@ -1058,6 +1058,11 @@ struct SessionTranscriptPage {
     head_epoch: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     in_context_from_user_index: Option<usize>,
+    /// Ids still parked in this session's turn queue, on the first page only.
+    /// A window that showed another project missed their lifecycle events, so
+    /// it reconciles its optimistic queue rows against this list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queued_turn_ids: Option<Vec<String>>,
 }
 
 use wisp_dto::SessionOutlineItem;

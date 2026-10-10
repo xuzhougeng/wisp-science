@@ -1772,11 +1772,26 @@ pub(super) async fn load_session(
     } else {
         Vec::new()
     };
+    let mut queued_turn_ids: Option<Vec<String>> = None;
     if before_seq.is_none() {
         let (project, _) = exploration_commands::working_project_for_frame(&state, &id).await?;
         state.set_active(window.label(), project);
         state.set_active_frame(window.label(), Some(id.clone()));
         let _ = state.store.mark_frame_seen(&id).await;
+        // Read the queue only now that this window is bound to the session:
+        // every later transition reaches it as an event. Looked up again
+        // because a first enqueue may have created the runtime meanwhile.
+        let queue_runtime = state.sessions.lock().await.get(&id).cloned();
+        queued_turn_ids = Some(
+            queue_runtime
+                .map(|runtime| {
+                    crate::native_queue::items(&runtime)
+                        .into_iter()
+                        .map(|item| item.id)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
     }
     let mut items = transcript_page_items(&page)?;
     if before_seq.is_none() {
@@ -1803,6 +1818,7 @@ pub(super) async fn load_session(
         context_epochs,
         head_epoch,
         in_context_from_user_index,
+        queued_turn_ids,
         pending_approvals: if before_seq.is_none() {
             state
                 .confirms
