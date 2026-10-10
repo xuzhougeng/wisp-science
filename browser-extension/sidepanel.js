@@ -1,6 +1,6 @@
 // Wisp side panel: ask Wisp's local agent loop about the page in this window.
 // The service worker reads the tab and owns the bridge socket (side_relay.js);
-// this page only renders the conversation.
+// this page only renders the conversation, with answers as Markdown (markdown.js).
 
 const zh = /^zh/i.test(navigator.language || "");
 const T = zh
@@ -173,13 +173,16 @@ function onMessage(message) {
       break;
     case "side_delta":
       pending.status.textContent = "";
-      pending.answer.textContent += message.text;
+      pending.text += message.text;
+      // ponytail: the whole answer is parsed again on every delta; render once
+      // per animation frame if long answers stutter.
+      renderMarkdown(pending.answer, pending.text);
       scrollToEnd();
       break;
     case "side_tool":
       if (message.state === "started") {
-        const text = pending.answer.textContent;
-        if (text && !text.endsWith("\n")) pending.answer.textContent = text + "\n\n";
+        // Text written after the tool call starts a new paragraph.
+        if (pending.text && !pending.text.endsWith("\n")) pending.text += "\n\n";
         pending.status.textContent = T.running(message.name);
       } else {
         pending.status.textContent = T.thinking;
@@ -191,8 +194,7 @@ function onMessage(message) {
     case "side_done":
       // The page text is in the conversation only once the turn was accepted.
       if (pending.sentUrl) conv.sentUrl = pending.sentUrl;
-      // ponytail: the reply is shown as plain text; add a Markdown renderer if raw Markdown reads badly.
-      pending.answer.textContent = message.answer || pending.answer.textContent || T.noReply;
+      renderMarkdown(pending.answer, message.answer || pending.text || T.noReply);
       finish();
       scrollToEnd();
       break;
@@ -220,6 +222,7 @@ function submit() {
     meta,
     answer,
     status,
+    text: "",
     sentUrl: null,
     timer: setTimeout(() => {
       if (pending && pending.id === id) fail(T.timeout);

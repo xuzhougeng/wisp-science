@@ -140,7 +140,9 @@ Playwright is not used. The user's daily Chrome User Data directory is never pas
   only in conversations it has sent a message to since Wisp started, and an
   approval needs its exact id. Page text and the selection are length-capped,
   quoted as untrusted content, and cannot close their own quoting block. The
-  panel receives tool names, never tool arguments or results.
+  panel receives tool names, never tool arguments or results. It renders the
+  reply's Markdown into a fixed set of tags built node by node (`markdown.js`),
+  never through `innerHTML`; links are limited to `http(s)` and `mailto`.
 
 - `web_agent_*` accepts only already-open HTTPS tabs at `chatgpt.com` /
   `chat.openai.com`, `gemini.google.com`, or `google.com` with `udm=50`

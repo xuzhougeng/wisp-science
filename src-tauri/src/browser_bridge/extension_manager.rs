@@ -13,6 +13,7 @@ const REQUIRED_FILES: &[&str] = &[
     "chat_adapter.js",
     "downloads.js",
     "manifest.json",
+    "markdown.js",
     "popup.html",
     "popup.js",
     "protocol.js",

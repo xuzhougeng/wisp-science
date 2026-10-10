@@ -124,7 +124,10 @@ How it behaves:
   appears in the panel with **Allow once** and **Deny**, and in the desktop app.
 - Page text is quoted as untrusted content and is never treated as
   instructions.
-- **Stop** cancels the running turn. The reply is shown as plain text.
+- **Stop** cancels the running turn.
+- The reply is rendered as Markdown: headings, lists, tables, block quotes,
+  code, emphasis, and `http(s)` / `mailto` links. HTML in a reply is shown as
+  text, never interpreted.
 
 ## Human-verification handoff
 
