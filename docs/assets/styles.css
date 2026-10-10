@@ -977,6 +977,320 @@ html:not([data-lang="en"]) .lang-en {
 
 .btn-label-short { display: none; }
 
+/* ---------- Agent loop event stream ---------- */
+/* Everything is lit by default (no JS, reduced motion). `.is-live` is added by
+   main.js and hides rows until the animation reaches them. */
+.engine-stage {
+  --ev-read: var(--text-faint);
+  --ev-think: var(--warm);
+  --ev-act: var(--accent);
+  --ev-verify: var(--clay);
+  --rail: rgba(28, 25, 23, 0.12);
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 40px;
+  align-items: center;
+  padding: 36px 40px;
+  background:
+    radial-gradient(circle at 17% 50%, var(--clay-soft), transparent 42%),
+    var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: var(--shadow);
+}
+
+.engine-ring svg { width: 100%; height: auto; overflow: visible; }
+
+.engine-track {
+  fill: none;
+  stroke: var(--clay);
+  stroke-width: 1.5;
+  opacity: 0.45;
+  transition: opacity 0.6s, stroke 0.6s;
+}
+
+.engine-flow path {
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.55;
+}
+
+.engine-stop circle {
+  fill: var(--clay);
+  stroke: var(--clay);
+  stroke-width: 1.5;
+  transition: fill 0.4s, stroke 0.4s;
+}
+
+.engine-stop-name {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--text);
+  transition: fill 0.4s;
+}
+
+.engine-stop-cap,
+.engine-lap-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  fill: var(--text-faint);
+}
+
+.engine-runner {
+  transform: rotate(var(--engine-angle, 0deg));
+  transform-origin: 170px 170px;
+  transition: transform 1s cubic-bezier(0.45, 0.05, 0.2, 1);
+}
+
+.engine-tail {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.engine-tail-stop { stop-color: var(--clay); }
+.engine-dot { fill: var(--clay); }
+.engine-halo { fill: var(--clay); opacity: 0.16; transform-origin: 170px 74px; }
+
+.engine-lap { opacity: 0; transition: opacity 0.35s; }
+.engine-stage[data-lap="1"] .engine-lap[data-lap="1"],
+.engine-stage[data-lap="2"] .engine-lap[data-lap="2"],
+.engine-stage[data-lap="done"] .engine-lap[data-lap="done"] { opacity: 1; }
+
+.engine-lap-name {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 600;
+  fill: var(--text);
+}
+
+.engine-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.engine-bar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.engine-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--clay);
+}
+
+.engine-toggle {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.engine-toggle:hover { color: var(--text); background: var(--bg-muted); }
+.engine-toggle:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.engine-toggle .when-paused,
+.engine-stage.is-paused .engine-toggle .when-playing { display: none; }
+.engine-stage.is-paused .engine-toggle .when-paused { display: inline; }
+
+.engine-stream {
+  --ev-time: 52px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev {
+  --ev-color: var(--ev-read);
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--ev-time) 20px 148px minmax(0, 1fr);
+  align-items: baseline;
+  padding: 7px 0;
+  font-size: 13.5px;
+  line-height: 22px;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.ev[data-stop="think"] { --ev-color: var(--ev-think); }
+.ev[data-stop="act"] { --ev-color: var(--ev-act); }
+.ev[data-stop="verify"],
+.ev[data-stop="done"] { --ev-color: var(--ev-verify); }
+
+/* Node on the rail. */
+.ev::before {
+  content: "";
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: center;
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 6.5px;
+  border-radius: 50%;
+  background: var(--ev-color);
+  box-shadow: 0 0 0 3px var(--bg-elev);
+  transition: box-shadow 0.4s;
+}
+
+/* Rail segment from this node down to the next one. */
+.ev:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--ev-time) + 9.5px);
+  top: 18px;
+  width: 1px;
+  height: 100%;
+  background-color: var(--rail);
+  background-image: linear-gradient(var(--clay), var(--clay));
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  opacity: 0.6;
+  transition: background-size 0.6s ease;
+}
+
+.ev-time {
+  grid-column: 1;
+  grid-row: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.ev-tag {
+  grid-column: 3;
+  grid-row: 1;
+  padding-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  color: var(--ev-color);
+}
+
+.ev-text {
+  grid-column: 4;
+  grid-row: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  transition: color 0.45s;
+}
+
+code.ev-text { font-size: 12.5px; color: #334155; }
+
+.ev-final .ev-text { font-weight: 500; }
+
+.ev-chips {
+  grid-column: 4;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ev-chips span {
+  padding: 2px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--clay);
+  background: var(--clay-soft);
+  border-radius: 999px;
+}
+
+.engine-note {
+  margin: 20px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-faint);
+}
+
+.engine-note a { color: var(--accent); font-weight: 500; white-space: nowrap; }
+.engine-note a:hover { text-decoration: underline; }
+
+/* --- Live: rows wait for the runner. --- */
+.engine-stage.is-live .engine-track { stroke: var(--text-faint); stroke-dasharray: 2 6; opacity: 0.7; }
+.engine-stage.is-live[data-lap="done"] .engine-track { stroke: var(--clay); stroke-dasharray: none; opacity: 0.45; }
+.engine-stage.is-live:not([data-lap="done"]) .engine-tail { opacity: 1; }
+.engine-stage.is-live:not(.is-paused) .engine-halo { animation: engine-pulse 1.8s ease-in-out infinite; }
+.engine-stage.is-live:not(.is-paused):not([data-lap="done"]) .engine-live { animation: engine-blink 1.4s ease-in-out infinite; }
+.engine-stage.is-paused .engine-live { background: var(--text-faint); }
+
+.engine-stage.is-live:not([data-lap="done"]) .engine-stop circle { fill: var(--bg-elev); stroke: var(--text-faint); }
+.engine-stage.is-live:not([data-lap="done"]) .engine-stop-name { fill: var(--text-faint); }
+.engine-stage.is-live[data-stop="read"] .engine-stop[data-for="read"] circle,
+.engine-stage.is-live[data-stop="think"] .engine-stop[data-for="think"] circle,
+.engine-stage.is-live[data-stop="act"] .engine-stop[data-for="act"] circle,
+.engine-stage.is-live[data-stop="verify"] .engine-stop[data-for="verify"] circle { fill: var(--clay); stroke: var(--clay); }
+.engine-stage.is-live[data-stop="read"] .engine-stop[data-for="read"] .engine-stop-name,
+.engine-stage.is-live[data-stop="think"] .engine-stop[data-for="think"] .engine-stop-name,
+.engine-stage.is-live[data-stop="act"] .engine-stop[data-for="act"] .engine-stop-name,
+.engine-stage.is-live[data-stop="verify"] .engine-stop[data-for="verify"] .engine-stop-name { fill: var(--text); }
+
+.engine-stage.is-live .ev:not(.is-on) { opacity: 0; transform: translateY(8px); }
+.engine-stage.is-live .ev:not(.is-past)::after { background-size: 100% 0; }
+.engine-stage.is-live .ev.is-past .ev-text { color: var(--text-muted); }
+.engine-stage.is-live .ev.is-now::before {
+  box-shadow: 0 0 0 3px var(--bg-elev), 0 0 0 7px color-mix(in srgb, var(--ev-color) 22%, transparent);
+}
+
+@keyframes engine-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.16; }
+  50% { transform: scale(1.35); opacity: 0.06; }
+}
+
+@keyframes engine-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (max-width: 960px) {
+  .engine-stage { grid-template-columns: 1fr; gap: 20px; padding: 28px 24px; background: var(--bg-elev); }
+  .engine-ring { width: min(280px, 100%); margin-inline: auto; }
+  /* The ring is drawn smaller here; keep its labels at a readable size. */
+  .engine-stop-name { font-size: 17px; }
+  .engine-stop-cap, .engine-lap-sub { font-size: 12px; }
+}
+
+@media (max-width: 560px) {
+  .engine-stage { padding: 20px 16px; }
+  .engine-stream { --ev-time: 0px; }
+  .ev { grid-template-columns: 20px minmax(0, 1fr); font-size: 13px; }
+  .ev::before { grid-column: 1; }
+  .ev-time { display: none; }
+  .ev-tag { grid-column: 2; }
+  .ev-text { grid-column: 2; grid-row: 2; padding-left: 8px; }
+  .ev-chips { grid-column: 2; grid-row: 3; padding-left: 8px; }
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1280px) {
   html[data-lang="en"] .nav-cta .btn-secondary { display: none; }

@@ -214,6 +214,140 @@
         </div>
       </div>
     </section>
+    <section id="engine" class="engine" aria-labelledby="engine-heading">
+      <div class="container">
+        <div class="section-label">
+          <span class="idx">[ 001c ]</span>
+          <span data-i18n="engine.kicker">工作原理</span>
+        </div>
+        <div class="section-head">
+          <h2 id="engine-heading" data-i18n="engine.heading">每个任务，都由同一个循环推进</h2>
+          <p data-i18n="engine.lead">Wisp 读取上下文，让模型思考，调用工具，再核对结果。结果写回上下文，循环继续，直到给出答案。下面是一个任务跑完两轮的事件流。</p>
+        </div>
+
+        <div class="engine-stage" data-engine data-lap="done">
+          <div class="engine-ring" aria-hidden="true">
+            <svg viewBox="0 0 340 340" focusable="false">
+              <defs>
+                <linearGradient id="engine-tail" gradientUnits="userSpaceOnUse" x1="86.86" y1="122" x2="170" y2="74">
+                  <stop offset="0" class="engine-tail-stop" stop-opacity="0"/>
+                  <stop offset="1" class="engine-tail-stop" stop-opacity="0.9"/>
+                </linearGradient>
+              </defs>
+              <circle class="engine-track" cx="170" cy="170" r="96"/>
+              <g class="engine-flow">
+                <path d="M-3 -3.5L1.5 0L-3 3.5" transform="translate(237.88 102.12) rotate(45)"/>
+                <path d="M-3 -3.5L1.5 0L-3 3.5" transform="translate(237.88 237.88) rotate(135)"/>
+                <path d="M-3 -3.5L1.5 0L-3 3.5" transform="translate(102.12 237.88) rotate(225)"/>
+                <path d="M-3 -3.5L1.5 0L-3 3.5" transform="translate(102.12 102.12) rotate(315)"/>
+              </g>
+              <g class="engine-stop" data-for="read">
+                <circle cx="170" cy="74" r="5"/>
+                <text class="engine-stop-name" x="170" y="36" text-anchor="middle" data-i18n="engine.read">读取</text>
+                <text class="engine-stop-cap" x="170" y="52" text-anchor="middle">context</text>
+              </g>
+              <g class="engine-stop" data-for="think">
+                <circle cx="266" cy="170" r="5"/>
+                <text class="engine-stop-name" x="286" y="167" data-i18n="engine.think">思考</text>
+                <text class="engine-stop-cap" x="286" y="183">model</text>
+              </g>
+              <g class="engine-stop" data-for="act">
+                <circle cx="170" cy="266" r="5"/>
+                <text class="engine-stop-name" x="170" y="302" text-anchor="middle" data-i18n="engine.act">行动</text>
+                <text class="engine-stop-cap" x="170" y="318" text-anchor="middle">tools</text>
+              </g>
+              <g class="engine-stop" data-for="verify">
+                <circle cx="74" cy="170" r="5"/>
+                <text class="engine-stop-name" x="54" y="167" text-anchor="end" data-i18n="engine.verify">核对</text>
+                <text class="engine-stop-cap" x="54" y="183" text-anchor="end">result</text>
+              </g>
+              <g class="engine-runner">
+                <path class="engine-tail" d="M86.86 122A96 96 0 0 1 170 74" stroke="url(#engine-tail)"/>
+                <circle class="engine-halo" cx="170" cy="74" r="11"/>
+                <circle class="engine-dot" cx="170" cy="74" r="5"/>
+              </g>
+              <g class="engine-lap" data-lap="1">
+                <text class="engine-lap-name" x="170" y="168" text-anchor="middle" data-i18n="engine.lap1">第 1 轮</text>
+                <text class="engine-lap-sub" x="170" y="190" text-anchor="middle">12.4k tokens</text>
+              </g>
+              <g class="engine-lap" data-lap="2">
+                <text class="engine-lap-name" x="170" y="168" text-anchor="middle" data-i18n="engine.lap2">第 2 轮</text>
+                <text class="engine-lap-sub" x="170" y="190" text-anchor="middle">12.6k tokens</text>
+              </g>
+              <g class="engine-lap" data-lap="done">
+                <text class="engine-lap-name" x="170" y="168" text-anchor="middle" data-i18n="engine.done">完成</text>
+                <text class="engine-lap-sub" x="170" y="190" text-anchor="middle" data-i18n="engine.doneSub">2 轮 · 9.4 s</text>
+              </g>
+            </svg>
+          </div>
+
+          <div class="engine-feed">
+            <div class="engine-bar">
+              <span class="engine-bar-title"><i class="engine-live" aria-hidden="true"></i>event stream</span>
+              <button type="button" class="engine-toggle" hidden>
+                <span class="when-playing" data-i18n="engine.pause">暂停</span>
+                <span class="when-paused" data-i18n="engine.play">播放</span>
+              </button>
+            </div>
+            <ol class="engine-stream" data-i18n-aria="engine.streamAria" aria-label="一个任务在 Agent 循环中产生的事件">
+              <li class="ev" data-stop="read" data-lap="1">
+                <span class="ev-time">0.0 s</span>
+                <span class="ev-tag">user</span>
+                <span class="ev-text" data-i18n="engine.e1">检查 PBMC 3k 的数据质量，并给出筛选方案。</span>
+              </li>
+              <li class="ev" data-stop="read" data-lap="1">
+                <span class="ev-time">0.0 s</span>
+                <span class="ev-tag">context</span>
+                <span class="ev-text" data-i18n="engine.e2">载入项目、会话记录与技能索引 · 12.4k tokens</span>
+              </li>
+              <li class="ev" data-stop="think" data-lap="1">
+                <span class="ev-time">2.1 s</span>
+                <span class="ev-tag">thinking</span>
+                <span class="ev-text" data-i18n="engine.e3">先读入数据，确认细胞数与基因数。</span>
+              </li>
+              <li class="ev" data-stop="act" data-lap="1">
+                <span class="ev-time">2.4 s</span>
+                <span class="ev-tag">tool_call</span>
+                <code class="ev-text">python · sc.read_h5ad("pbmc3k.h5ad")</code>
+              </li>
+              <li class="ev" data-stop="verify" data-lap="1">
+                <span class="ev-time">4.2 s</span>
+                <span class="ev-tag">tool_result</span>
+                <span class="ev-text" data-i18n="engine.e5">2,700 个细胞 × 32,738 个基因 · 1.8 s</span>
+              </li>
+              <li class="ev" data-stop="read" data-lap="2">
+                <span class="ev-time">4.2 s</span>
+                <span class="ev-tag">context</span>
+                <span class="ev-text" data-i18n="engine.e6">结果写回上下文，进入下一轮 · 12.6k tokens</span>
+              </li>
+              <li class="ev" data-stop="think" data-lap="2">
+                <span class="ev-time">6.0 s</span>
+                <span class="ev-tag">thinking</span>
+                <span class="ev-text" data-i18n="engine.e7">数据完整。计算 QC 指标，看线粒体比例的分布。</span>
+              </li>
+              <li class="ev" data-stop="act" data-lap="2">
+                <span class="ev-time">6.3 s</span>
+                <span class="ev-tag">tool_call</span>
+                <code class="ev-text">python · sc.pp.calculate_qc_metrics(adata)</code>
+              </li>
+              <li class="ev" data-stop="verify" data-lap="2">
+                <span class="ev-time">7.8 s</span>
+                <span class="ev-tag">tool_result</span>
+                <span class="ev-text" data-i18n="engine.e9">QC 指标与小提琴图已生成 · 写入 2 个文件 · 1.5 s</span>
+              </li>
+              <li class="ev ev-final" data-stop="done" data-lap="done">
+                <span class="ev-time">9.4 s</span>
+                <span class="ev-tag">attempt_completion</span>
+                <span class="ev-text" data-i18n="engine.e10">保留基因数 200–2,500、线粒体低于 5% 的细胞，共 2,638 个。</span>
+                <span class="ev-chips"><span>qc_violin.png</span><span>qc_metrics.csv</span><span>qc_filter.py</span></span>
+              </li>
+            </ol>
+          </div>
+        </div>
+        <p class="engine-note"><span data-i18n="engine.note">这是示意。实际运行中还会压缩上下文、请求操作审批，并记录每个产物的来源。</span> <a href="technology.html" data-i18n="engine.more">了解技术细节</a></p>
+      </div>
+    </section>
+
     <section id="features">
       <div class="container">
         <div class="section-label">
