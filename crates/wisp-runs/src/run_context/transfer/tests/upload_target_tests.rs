@@ -175,12 +175,9 @@ fn persisted_upload_target_falls_back_to_snapshot_and_fails_closed() {
     run.remote_handle_json = Some(r#"{"kind":"local_upload"}"#.into());
     assert!(UploadTarget::from_run(&run).unwrap().is_some());
     for snapshot in [
-        "{}",
-        "invalid json",
         r#"{"source_context_id":"local","destination_context_id":"ssh:a"}"#,
         r#"{"source_context_id":"local","destination_context_id":"ssh:b","destination_path":"/results/sample"}"#,
         r#"{"source_context_id":"local","destination_context_id":"ssh:a","destination_path":"/results/../sample"}"#,
-        r#"{"route":"local","source_context_id":"","destination_context_id":"ssh:a","destination_path":"/results/sample"}"#,
     ] {
         run.env_snapshot_json = snapshot.into();
         let error = UploadTarget::from_run(&run).unwrap_err();
@@ -197,15 +194,18 @@ fn persisted_upload_target_falls_back_to_snapshot_and_fails_closed() {
     );
     assert!(UploadTarget::from_run(&run).unwrap().is_none());
     run.remote_handle_json = None;
+    // Not marked as coming from `local`: another kind of transfer, not an
+    // upload whose target could not be read.
     for snapshot in [
+        "{}",
+        "invalid json",
         r#"{"route":"local","source_context_id":"ssh:a","destination_context_id":"local"}"#,
         r#"{"route":"relay","source_context_id":"ssh:a","destination_context_id":"ssh:b"}"#,
+        r#"{"route":"local","source_context_id":"","destination_context_id":"ssh:a","destination_path":"/results/sample"}"#,
     ] {
         run.env_snapshot_json = snapshot.into();
         assert!(UploadTarget::from_run(&run).unwrap().is_none());
     }
-    run.env_snapshot_json = r#"{"route":"local","source_context_id":"","destination_context_id":"ssh:a","destination_path":"/results/sample"}"#.into();
-    assert!(UploadTarget::from_run(&run).unwrap_err().contains(&run.id));
 }
 
 #[tokio::test]
@@ -316,6 +316,33 @@ async fn malformed_active_upload_metadata_prevents_launch() {
     assert!(error.contains("malformed"), "{error}");
     assert_eq!(store.list_runs_by_project("p").await.unwrap().len(), 1);
     assert!(runner.commands.lock().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn another_transfer_on_the_same_server_does_not_block_an_upload() {
+    let (root, store) = test_store().await;
+    let source = root.join("R1");
+    std::fs::write(&source, b"data").unwrap();
+    // A Files-panel download: an active `file_transfer` Run on the SSH context
+    // with no snapshot and no handle.
+    let download = RunRecord::new("download", "p", "ssh:a", "Download", "file_transfer");
+    seed_active(&store, &download, "previous-owner").await;
+    let runner = ControlledUploadRunner::new();
+    let manager = RunManager::with_runner(runner.clone());
+    let accepted = upload(
+        &manager,
+        &store,
+        &source,
+        "ssh:a",
+        "/results/sample",
+        TransferTransport::Scp,
+        false,
+    )
+    .await
+    .unwrap();
+    runner.wait_started().await;
+    cancel_and_drain(&manager, &store, &accepted.run_id).await;
     let _ = std::fs::remove_dir_all(root);
 }
 

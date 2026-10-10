@@ -235,31 +235,17 @@ impl UploadTarget {
         }
         // Activation precedes handle persistence. The immutable submission
         // snapshot already identifies an upload if the process stopped there.
-        let snapshot = serde_json::from_str::<serde_json::Value>(&run.env_snapshot_json)
-            .map_err(|error| format!("invalid transfer snapshot for Run {}: {error}", run.id))?;
-        match snapshot
+        // A transfer it does not mark as coming from `local` is a download,
+        // relay or harvest (a Files-panel download writes no snapshot at all)
+        // and reserves no upload target.
+        let snapshot =
+            serde_json::from_str::<serde_json::Value>(&run.env_snapshot_json).unwrap_or_default();
+        if snapshot
             .get("source_context_id")
             .and_then(|value| value.as_str())
+            != Some("local")
         {
-            Some("local") => {}
-            Some(source)
-                if !source.is_empty()
-                    && run.remote_handle_json.is_none()
-                    && (snapshot
-                        .get("destination_context_id")
-                        .and_then(|value| value.as_str())
-                        == Some("local")
-                        || snapshot.get("route").and_then(|value| value.as_str())
-                            == Some("relay")) =>
-            {
-                return Ok(None)
-            }
-            _ => {
-                return Err(format!(
-                    "Cannot verify transfer target for Run {}: missing or invalid upload metadata",
-                    run.id
-                ))
-            }
+            return Ok(None);
         }
         let context_id = snapshot
             .get("destination_context_id")
