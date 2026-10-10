@@ -1771,6 +1771,7 @@ async fn send_message_inner_with_continuation(
         provenance_scope,
         turn_id: browser_turn_id.clone(),
         force_ask_mutations: origin.force_ask_mutations() || mandate_reviews_mutations,
+        lab_turn,
         last_compaction_strategy: StdMutex::new(None),
     };
 

@@ -33,6 +33,22 @@ use wisp_tools::{Tool, ToolEnv, ToolResult};
 
 pub(crate) const LAB_MEMBERS: &str = "lab_members";
 pub(crate) const LAB_SEND: &str = "lab_send";
+/// What a turn another member's mail started may run without asking: read
+/// this project's files, load a skill, list the lab, finish. Everything else
+/// asks first, read-only or not. Memory search, the browser bridge and the
+/// user's connectors answer to the user, not to the lab.
+pub(crate) const UNATTENDED_TOOLS: &[&str] = &[
+    "read",
+    "search",
+    "grep",
+    "view_image",
+    "update_plan",
+    "search_skills",
+    "use_skill",
+    "ask_user",
+    "attempt_completion",
+    LAB_MEMBERS,
+];
 /// The project whose conversations answer lab mail. Empty: questions are
 /// answered with a note that this computer does not take lab mail.
 pub(crate) const INBOX_PROJECT_KEY: &str = "lab_inbox_project";
@@ -917,6 +933,27 @@ mod tests {
         assert_eq!(safe_file_name(""), "file");
         assert_eq!(safe_file_name("数据表.tsv"), "数据表.tsv");
         assert_eq!(safe_file_name(&"x".repeat(300)).chars().count(), 100);
+    }
+
+    #[test]
+    fn a_lab_turn_runs_unasked_only_what_reads_its_own_project() {
+        for tool in ["read", "search", "grep", "attempt_completion", LAB_MEMBERS] {
+            assert!(UNATTENDED_TOOLS.contains(&tool), "{tool}");
+        }
+        // Read-only elsewhere, but not the lab's to query; and nothing that
+        // sends, writes or executes.
+        for tool in [
+            "search_memory",
+            "web_scan",
+            "web_open_tab",
+            "get_run",
+            LAB_SEND,
+            "write",
+            "shell",
+            "python",
+        ] {
+            assert!(!UNATTENDED_TOOLS.contains(&tool), "{tool}");
+        }
     }
 
     #[test]

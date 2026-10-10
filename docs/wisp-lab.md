@@ -148,13 +148,17 @@ turn it starts, on either side, is held to these limits:
 - **Reads stay inside the project.** The agent can read and search only the
   project the conversation belongs to: the one you chose for lab mail, or, for
   a reply, the one that asked.
+- **Only a few tools run unasked.** Reading, searching and viewing the
+  project's files, loading a skill, listing lab members and finishing the
+  answer. Everything else asks first, including tools that only read: memory
+  search, the browser, Run status and every connector, bundled or your own.
 - **No global memory.** Your global memory is left out of that turn.
-- **Further mail asks first.** `lab_send` is a changing tool, so an agent that
-  wants to write to the lab from such a turn needs your approval.
+- **Further mail asks first.** An agent that wants to write to the lab from
+  such a turn needs your approval, Full Permission or not.
 - **Four in a row at most.** Without a person writing in between, an exchange
   can go ask, reply, ask, reply and then stops: the agent is told to summarize
-  for its user instead. This bounds two computers that both run with Full
-  Permission.
+  for its user instead. Since every further mail already needs approval, this
+  is a second line behind that rule.
 
 The automatic answer to a question is the one thing that leaves without your
 review. It is your agent's reply text, written from the project you chose.

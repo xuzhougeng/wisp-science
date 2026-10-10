@@ -258,6 +258,15 @@ pub trait ToolEnv: Send + Sync {
     fn force_ask_mutations(&self) -> bool {
         false
     }
+    /// The only tools that run without asking while
+    /// [`Self::force_ask_mutations`] is set. `None`, the default, lets every
+    /// tool classified read-only through, which suits a turn the user started
+    /// from somewhere else. A turn started by someone other than the user
+    /// names its few tools here: "read-only" also covers memory search, the
+    /// browser bridge and private connectors, which are not theirs to query.
+    fn unattended_tools(&self) -> Option<&'static [&'static str]> {
+        None
+    }
     /// Whether this session is in plan mode: the agent researches and drafts a
     /// plan, so `Registry::run` refuses every tool outside
     /// [`crate::PLAN_MODE_READ_ONLY`]. Default `false`.
