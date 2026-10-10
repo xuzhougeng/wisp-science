@@ -2171,6 +2171,10 @@ pub struct LabStatus {
     pub members: Vec<LabMemberInfo>,
     #[serde(default)]
     pub knowledge_base: Option<LabKnowledgeBaseInfo>,
+    /// The project whose conversations answer other members' agents. Empty:
+    /// their questions get a note that this computer takes no lab mail.
+    #[serde(default)]
+    pub inbox_project_id: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]

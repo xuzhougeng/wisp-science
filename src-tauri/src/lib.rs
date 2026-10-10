@@ -3160,6 +3160,10 @@ struct TauriOutput {
     /// IM turns force Ask unless the assistant's owner explicitly enables
     /// its session Full Permission. Dispatched project turns still ask.
     force_ask_mutations: bool,
+    /// The turn was started by another lab member's mail: beyond asking
+    /// before changes, it may run unasked only what
+    /// `channels::lab_mail::UNATTENDED_TOOLS` names.
+    lab_turn: bool,
     /// Strategy label of the last compaction the agent loop reported during
     /// this turn (`auto` / `overflow`); read when the turn's context epoch is
     /// persisted.
@@ -3657,6 +3661,10 @@ impl Output for TauriOutput {
     }
     fn force_ask_mutations(&self) -> bool {
         self.requires_im_approval()
+    }
+    fn unattended_tools(&self) -> Option<&'static [&'static str]> {
+        self.lab_turn
+            .then_some(channels::lab_mail::UNATTENDED_TOOLS)
     }
     fn plan_mode(&self) -> bool {
         self.plan_mode
@@ -7492,6 +7500,7 @@ pub fn run() {
             channels::lab::lab_join,
             channels::lab::lab_set_relay_token,
             channels::lab::lab_leave,
+            channels::lab::lab_set_inbox_project,
             channels::lab::lab_create_invite,
             channels::lab::lab_approve_member,
             channels::lab::lab_remove_member,

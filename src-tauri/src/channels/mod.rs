@@ -21,6 +21,7 @@ pub mod feishu;
 pub mod feishu_card;
 pub mod feishu_registration;
 pub mod lab;
+pub mod lab_mail;
 pub mod pbbp2;
 pub mod remote;
 pub mod weixin;
@@ -143,6 +144,8 @@ pub struct ChannelManager {
     feishu_registrations:
         tokio::sync::Mutex<HashMap<String, feishu_registration::RegistrationFlow>>,
     remote: StdMutex<Option<watch::Sender<bool>>>,
+    /// The lab mailbox poller, running only while this computer is a member.
+    lab: StdMutex<Option<watch::Sender<bool>>>,
     remote_status: Arc<StdMutex<ChannelStatus>>,
     remote_clients: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -248,6 +251,7 @@ pub async fn autostart(app: AppHandle) {
     }
     drop(_guard);
     remote::autostart(&app).await;
+    lab::autostart(&app).await;
 }
 
 // ------------------------------------------------------------------- helpers

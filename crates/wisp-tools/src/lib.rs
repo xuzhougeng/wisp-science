@@ -419,10 +419,16 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
     // `Ask` shows the card then routes through `confirm`; `Allow` runs as before.
     let host_approval = env.approval_mode(name).await;
     let mutating = plan_mode_blocks(name) && !tool.read_only();
+    // An unattended turn asks before anything that changes state. One started
+    // for someone other than the user asks before everything it did not list.
+    let unattended_ask = env.force_ask_mutations()
+        && env
+            .unattended_tools()
+            .map_or(mutating, |allowed| !allowed.contains(&name));
     let approval = if host_approval == env::Approval::Deny {
         // An explicit block remains a hard policy even in Full Permission.
         env::Approval::Deny
-    } else if env.force_ask_mutations() && mutating {
+    } else if unattended_ask {
         // IM turns must not inherit an unattended Allow default, including
         // Full Permission / skip-connector bypass.
         env::Approval::Ask
@@ -907,6 +913,69 @@ mod approval_tests {
         assert!(registry.run("read", &read, &env).await.success);
         let blocked = registry.run("write", &write, &env).await;
         assert!(!blocked.success);
+        assert!(!dir.join("gated.txt").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// An unattended turn whose host names the tools it may run unasked.
+    struct ListedEnv(PathBuf);
+    #[async_trait::async_trait]
+    impl ToolEnv for ListedEnv {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            false
+        }
+        fn force_ask_mutations(&self) -> bool {
+            true
+        }
+        fn unattended_tools(&self) -> Option<&'static [&'static str]> {
+            Some(&["read"])
+        }
+        async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    #[tokio::test]
+    async fn an_unattended_turn_with_a_tool_list_asks_before_other_read_only_tools() {
+        let dir = std::env::temp_dir().join(format!(
+            "wisp-unattended-list-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("note.txt"), "hello").unwrap();
+        let mut registry = Registry::builtins();
+        registry.add(Box::new(DeferredTool));
+        let read = serde_json::json!({ "path": "note.txt" });
+        let query = serde_json::json!({ "query": "BRCA1" });
+
+        // Without a list, a read-only connector tool runs in an IM turn.
+        let im = PolicyEnv {
+            root: dir.clone(),
+            mode: Approval::Allow,
+            confirm_ok: false,
+            bypass: false,
+            force_ask: true,
+        };
+        assert!(
+            registry
+                .run("pubmed_search_articles", &query, &im)
+                .await
+                .success
+        );
+
+        // With one, the listed tool still runs and the connector asks first.
+        let listed = ListedEnv(dir.clone());
+        assert!(registry.run("read", &read, &listed).await.success);
+        let asked = registry
+            .run("pubmed_search_articles", &query, &listed)
+            .await;
+        assert!(!asked.success);
+        assert_eq!(asked.control, ToolControl::StopBatch);
+        // Tools that change state ask as before.
+        let write = serde_json::json!({ "path": "gated.txt", "content": "no" });
+        assert!(!registry.run("write", &write, &listed).await.success);
         assert!(!dir.join("gated.txt").exists());
         let _ = std::fs::remove_dir_all(dir);
     }

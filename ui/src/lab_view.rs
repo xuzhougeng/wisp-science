@@ -148,6 +148,10 @@ pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String
             Some("channels.lab.kb_published"),
         );
     };
+    let set_inbox = move |project_id: String| {
+        let args = to_value(&serde_json::json!({ "projectId": project_id })).unwrap();
+        run("lab_set_inbox_project", args, Some("channels.lab.inbox_saved"));
+    };
     let join_kb = move |_: web_sys::MouseEvent| {
         if busy.get_untracked() {
             return;
@@ -400,6 +404,33 @@ pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String
         }
     };
 
+    let mail_view = move || {
+        let current = status.get().unwrap_or_default().inbox_project_id;
+        let none_selected = current.is_empty();
+        view! {
+            <h4>{move || t(locale.get(), "channels.lab.mail_title")}</h4>
+            <div class="settings-form-grid">
+                <label class="span-2">
+                    <span>{move || t(locale.get(), "channels.lab.inbox_project")}</span>
+                    <select data-testid="lab-inbox-project"
+                        prop:disabled=move || busy.get()
+                        on:change=move |ev| set_inbox(event_target_value(&ev))>
+                        <option value="" selected=none_selected>
+                            {move || t(locale.get(), "channels.lab.inbox_none")}
+                        </option>
+                        {projects.get().into_iter().map(|project| {
+                            let selected = project.id == current;
+                            view! {
+                                <option value=project.id selected=selected>{project.name}</option>
+                            }
+                        }).collect_view()}
+                    </select>
+                </label>
+            </div>
+            <p class="settings-note">{move || t(locale.get(), "channels.lab.mail_note")}</p>
+        }
+    };
+
     let invite_view = move || {
         view! {
             <div class="device-token-row">
@@ -480,6 +511,7 @@ pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String
                     <div class="settings-list" data-testid="lab-members">{members_view}</div>
                     {move || status.get().unwrap_or_default().leader.then(invite_view)}
                     {knowledge_base_view}
+                    {mail_view}
                     {token_row}
                     {move || (!status.get().unwrap_or_default().leader).then(|| view! {
                         <div class="row settings-footer">

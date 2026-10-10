@@ -4,10 +4,12 @@
 //! The relay knows who belongs to the lab. The lab key stays on the members'
 //! computers: it arrives inside the leader's invite code and seals the
 //! knowledge-base pointer and every mail before they leave this process.
-use super::load_secret;
+use super::lab_mail::INBOX_PROJECT_KEY;
+use super::{get_setting, load_secret, ChannelManager};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
+use tokio::sync::watch;
 use wisp_dto::{LabKnowledgeBaseInfo, LabMemberInfo, LabStatus};
 use wisp_store::secrets::Secret;
 use wisp_store::Store;
@@ -22,6 +24,11 @@ const IDENTITY_SECRET: &str = "lab_identity";
 /// ordinary synced project, so it is read with this one.
 const SYNC_TOKEN_SECRET: &str = "sync_relay_token";
 const SYNC_URL_KEY: &str = "sync_relay_url";
+/// "1" while this computer holds a lab identity. Read on every turn, so the
+/// keyring is only opened when an agent actually uses the lab.
+const MEMBER_KEY: &str = "lab_member";
+/// The knowledge-base project as last seen on the relay.
+const KB_PROJECT_KEY: &str = "lab_knowledge_base_project";
 
 /// Everything that makes this computer a member. One secret, written whole,
 /// so a crash cannot leave a member key without the lab key it belongs to.
@@ -69,6 +76,62 @@ async fn forget_identity() -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+pub(crate) async fn is_member(store: &Store) -> bool {
+    get_setting(store, MEMBER_KEY).await == "1"
+}
+
+async fn set_member(store: &Store, member: bool) {
+    let _ = store
+        .set_setting(MEMBER_KEY, if member { "1" } else { "" })
+        .await;
+    if !member {
+        let _ = store.set_setting(KB_PROJECT_KEY, "").await;
+    }
+}
+
+/// What a lab member's agent is told each turn. A turn another member's mail
+/// started reads only its own project, so it is not pointed at the knowledge
+/// base folder.
+pub(crate) async fn turn_context(store: &Store, lab_turn: bool) -> String {
+    let knowledge_base = match get_setting(store, KB_PROJECT_KEY).await {
+        id if !lab_turn && !id.is_empty() => store.get_project(&id).await.ok().flatten(),
+        _ => None,
+    };
+    super::lab_mail::turn_context(knowledge_base.as_ref().map(|(_, root)| root.as_str()))
+}
+
+impl ChannelManager {
+    pub fn stop_lab(&self) {
+        if let Some(tx) = self.lab.lock().unwrap().take() {
+            let _ = tx.send(true);
+        }
+    }
+
+    /// Starts fetching lab mail. Does nothing on a computer without a lab.
+    pub async fn start_lab(&self, app: &AppHandle) {
+        self.stop_lab();
+        let Some(identity) = load_identity().await else {
+            return;
+        };
+        // The token is read once here, not on every mailbox check.
+        let Ok(client) = identity.client().await else {
+            return;
+        };
+        let (tx, rx) = watch::channel(false);
+        *self.lab.lock().unwrap() = Some(tx);
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            super::lab_mail::run(app, identity, client, rx).await;
+        });
+    }
+}
+
+pub(super) async fn autostart(app: &AppHandle) {
+    if is_member(&app.state::<AppState>().store).await {
+        app.state::<ChannelManager>().start_lab(app).await;
+    }
+}
+
 fn same_relay(left: &str, right: &str) -> bool {
     matches!(
         (wisp_sync::relay_base(left), wisp_sync::relay_base(right)),
@@ -95,7 +158,7 @@ pub(crate) fn explain(error: anyhow::Error) -> String {
     }
 }
 
-fn is_rejection(error: &anyhow::Error, code: &str) -> bool {
+pub(super) fn is_rejection(error: &anyhow::Error, code: &str) -> bool {
     error
         .downcast_ref::<LabRejection>()
         .is_some_and(|rejection| rejection.code == code)
@@ -123,6 +186,14 @@ async fn status_from_view(store: &Store, mut status: LabStatus, view: LabView) -
     status.member_id = view.me.id.clone();
     status.leader = active && view.me.role == LabRole::Leader;
     status.members = view.members.iter().map(member_info).collect();
+    let _ = store
+        .set_setting(
+            KB_PROJECT_KEY,
+            view.knowledge_base
+                .as_ref()
+                .map_or("", |knowledge_base| knowledge_base.project_id.as_str()),
+        )
+        .await;
     if let Some(knowledge_base) = view.knowledge_base {
         let local = store
             .get_project(&knowledge_base.project_id)
@@ -145,8 +216,13 @@ async fn status(store: &Store) -> LabStatus {
         ..Default::default()
     };
     let Some(identity) = load_identity().await else {
+        set_member(store, false).await;
         return status;
     };
+    // Settings and keyring can drift apart, for instance after restoring the
+    // application database. The keyring decides.
+    set_member(store, true).await;
+    status.inbox_project_id = get_setting(store, INBOX_PROJECT_KEY).await;
     status.relay_url = identity.relay_url.clone();
     status.member_name = identity.name.clone();
     let view = match identity.client().await {
@@ -194,6 +270,8 @@ async fn seed_project_sync(store: &Store, relay_url: &str, token: &str) {
 #[tauri::command]
 pub(crate) async fn lab_join(
     state: State<'_, AppState>,
+    mgr: State<'_, ChannelManager>,
+    app: AppHandle,
     relay_url: String,
     relay_token: String,
     name: String,
@@ -259,7 +337,10 @@ pub(crate) async fn lab_join(
         }
     };
     seed_project_sync(&state.store, &relay_url, &token).await;
+    set_member(&state.store, true).await;
+    mgr.start_lab(&app).await;
     let status = LabStatus {
+        inbox_project_id: get_setting(&state.store, INBOX_PROJECT_KEY).await,
         relay_url,
         has_token: true,
         member_name: identity.name,
@@ -270,18 +351,29 @@ pub(crate) async fn lab_join(
 
 /// Replace the relay token after the operator rotated it.
 #[tauri::command]
-pub(crate) async fn lab_set_relay_token(relay_token: String) -> Result<(), String> {
+pub(crate) async fn lab_set_relay_token(
+    mgr: State<'_, ChannelManager>,
+    app: AppHandle,
+    relay_token: String,
+) -> Result<(), String> {
     let token = relay_token.trim().to_string();
     if token.is_empty() {
         return Err("Enter the relay access token.".into());
     }
-    write_secret(TOKEN_SECRET, token).await
+    write_secret(TOKEN_SECRET, token).await?;
+    // The mailbox poller holds the old token.
+    mgr.start_lab(&app).await;
+    Ok(())
 }
 
 /// Leave the lab and drop its keys from this computer. `forget` skips the
 /// relay, for a lab that removed this computer or can no longer be reached.
 #[tauri::command]
-pub(crate) async fn lab_leave(forget: bool) -> Result<(), String> {
+pub(crate) async fn lab_leave(
+    state: State<'_, AppState>,
+    mgr: State<'_, ChannelManager>,
+    forget: bool,
+) -> Result<(), String> {
     let Some(identity) = load_identity().await else {
         return Ok(());
     };
@@ -293,7 +385,37 @@ pub(crate) async fn lab_leave(forget: bool) -> Result<(), String> {
             Err(error) => return Err(explain(error)),
         }
     }
-    forget_identity().await
+    forget_identity().await?;
+    mgr.stop_lab();
+    set_member(&state.store, false).await;
+    Ok(())
+}
+
+/// Choose the project whose conversations answer other members' agents. An
+/// empty id stops this computer from receiving lab mail; it then waits on the
+/// relay.
+#[tauri::command]
+pub(crate) async fn lab_set_inbox_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
+    let project_id = project_id.trim();
+    if !project_id.is_empty()
+        && (wisp_store::is_assistant_project_id(project_id)
+            || state
+                .store
+                .get_project(project_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .is_none())
+    {
+        return Err("Project not found.".into());
+    }
+    state
+        .store
+        .set_setting(INBOX_PROJECT_KEY, project_id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// A new single-use invite code. It carries the lab key: the leader hands it
