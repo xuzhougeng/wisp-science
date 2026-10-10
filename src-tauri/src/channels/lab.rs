@@ -538,6 +538,20 @@ mod tests {
             "https://relay.example.test/team"
         ));
         assert!(!same_relay("", ""));
+        // A relay inside the lab's own network, reached without TLS.
+        assert!(same_relay(
+            "http://10.10.3.27:8787",
+            "http://10.10.3.27:8787/"
+        ));
+        assert!(!same_relay(
+            "http://10.10.3.27:8787",
+            "http://10.10.3.28:8787"
+        ));
+        // Plain HTTP to a name or a public address is no relay at all.
+        assert!(!same_relay(
+            "http://relay.example.test",
+            "http://relay.example.test"
+        ));
     }
 
     #[test]

@@ -26,6 +26,35 @@ Without the variable every `/v1/lab/*` route answers 404, nothing is written
 under `lab/`, and the computers using the relay know nothing of each other.
 Project sync and remote web access behave the same either way.
 
+### A relay inside the lab's network, over HTTP
+
+A lab relay does not have to be on the internet. On a server inside the
+group's own network it needs neither a domain nor a certificate:
+
+```bash
+echo "WISP_RELAY_TOKEN=$(openssl rand -hex 32)" > .env
+echo "WISP_LAB=1" >> .env
+docker run -d --name wisp-relay --restart unless-stopped \
+  --env-file .env -p 8787:8787 -v wisp-relay-data:/data \
+  ghcr.io/xuzhougeng/wisp-relay:main
+```
+
+On the desktops enter the server's address as the relay URL, for example
+`http://10.10.3.27:8787`. Plain HTTP is accepted for private network
+addresses written as IP literals (`10.x.x.x`, `172.16.x.x` to `172.31.x.x`,
+`192.168.x.x`, link-local, and their IPv6 counterparts) and for `localhost`.
+A host name always needs HTTPS.
+
+Over HTTP the relay token and each member key cross that network unencrypted.
+What they give access to stays encrypted end to end: the knowledge base, lab
+mail and its attachments. Somebody who can read the network's traffic could
+therefore act as a member towards the relay, for instance delete waiting
+mail, but could not read or forge its contents. Use HTTP only on a network
+you trust, and put a TLS proxy in front otherwise.
+
+[Remote web access](remote-access.md) does not work through such a relay:
+browsers run its page only on HTTPS.
+
 Lab data lives in `lab/` inside `WISP_RELAY_ROOT`: `state.json` holds the
 members, outstanding invites and the knowledge-base pointer, and `inbox/`
 holds undelivered mail. Back it up with the rest of the relay directory.
@@ -93,9 +122,20 @@ Press **Sync now** again whenever you want members to get an update.
 
 **Members.** Press **Download knowledge base** and choose where to put it. It
 becomes a project on your computer, and **Sync now** on its card pulls the
-leader's later changes. Edits you make there stay local: the relay refuses a
-member's push, and choosing **Use remote version** in the sync dialog brings
-the leader's version back. To contribute, send the material to the leader.
+leader's later changes. To contribute, send the material to the leader.
+
+Treat that project as read-only. Anything you change in it stays on your
+computer, and a conversation held inside it counts as a change too: **Sync
+now** then fails with a note that only the lab leader can update the
+knowledge base. Once the leader has published a newer version, **Sync now**
+reports a conflict instead, and **Use remote version** in that dialog brings
+the leader's version back and discards your local changes. Ask your questions
+about the knowledge base from another project; your agent reads the folder
+from there.
+
+A project is synchronized with its conversations. Whatever the leader
+discusses inside the knowledge-base project reaches every member with the
+next **Sync now**, so keep that project for documents.
 
 Once the knowledge base is on your computer, Wisp tells your agent where the
 folder is in ordinary conversations, so it consults the group's protocols and

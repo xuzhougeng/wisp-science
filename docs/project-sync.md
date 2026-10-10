@@ -114,8 +114,15 @@ Open **Settings → General → Manual project sync**.
 
 Set **Storage backend** to **Self-hosted relay server**, then enter its HTTPS
 URL and bearer token. The token is stored in the operating-system keyring and
-is not included in project data or device codes. Plain HTTP is accepted only
-for `localhost`, for local development.
+is not included in project data or device codes.
+
+Plain HTTP is accepted for `localhost` and for private network addresses:
+`10.x.x.x`, `172.16.x.x` to `172.31.x.x`, `192.168.x.x`, link-local addresses
+and their IPv6 counterparts. A relay inside a lab's own network therefore
+needs no domain or certificate: enter `http://10.10.3.27:8787`. The address
+has to be an IP literal; a host name always needs HTTPS, because whoever
+answers DNS decides where a name leads. Over HTTP the bearer token crosses
+that network unencrypted, while project contents stay encrypted end to end.
 
 Run the bundled relay with:
 

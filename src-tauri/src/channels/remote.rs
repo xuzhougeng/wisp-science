@@ -178,7 +178,8 @@ pub(crate) async fn set_remote_access(
 ) -> Result<(), String> {
     let relay_url = relay_url.trim().to_string();
     if !relay_url.is_empty() {
-        wisp_sync::relay_base(&relay_url).map_err(|error| error.to_string())?;
+        // Stricter than sync and the lab: the browser page needs HTTPS.
+        wisp_sync::remote_relay_base(&relay_url).map_err(|error| error.to_string())?;
     }
     state
         .store

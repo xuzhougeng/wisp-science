@@ -448,7 +448,7 @@ pub(super) fn LabPane(locale: RwSignal<Locale>, on_open_project: Callback<String
                                 copy_text(code.clone());
                                 msg.set(Some((true, t(locale.get_untracked(), "channels.remote.copied"))));
                             }>
-                            {move || t(locale.get(), "channels.remote.copy_code")}
+                            {move || t(locale.get(), "channels.lab.invite_copy")}
                         </button>
                     })}
                     <button type="button" data-testid="lab-invite-create"

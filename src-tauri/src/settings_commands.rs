@@ -260,17 +260,9 @@ pub(super) async fn set_settings(
     }
     let sync_relay_url = settings.sync_relay_url.trim();
     if !sync_relay_url.is_empty() {
-        let url = url::Url::parse(sync_relay_url)
-            .map_err(|_| "Sync relay URL is invalid.".to_string())?;
-        let local_http = url.scheme() == "http"
-            && url
-                .host_str()
-                .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
-        if url.scheme() != "https" && !local_http {
-            return Err(
-                "Sync relay URL must use HTTPS (HTTP is allowed only for localhost).".into(),
-            );
-        }
+        // The same rule the sync transport applies: HTTPS, or HTTP to this
+        // computer or a private network address.
+        wisp_sync::relay_base(sync_relay_url).map_err(|error| error.to_string())?;
     }
     let sync_folder = settings.sync_folder.trim();
     if !sync_folder.is_empty() && !Path::new(sync_folder).is_absolute() {

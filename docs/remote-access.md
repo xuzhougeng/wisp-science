@@ -130,6 +130,9 @@ docker run -d --name wisp-relay --restart unless-stopped \
 1. Desktop: **Settings → Remote Access → Remote web access**.
 2. Enter the relay URL and the relay's `WISP_RELAY_TOKEN`, then enable it.
    The token is stored in the OS keyring. HTTP is accepted only for `localhost`.
+   This also holds for a relay inside a private network: project sync and
+   Wisp Lab accept `http://` to a private address, but a browser runs the
+   page's encryption only on HTTPS, so remote web access needs a certificate.
 3. Wisp shows a **connection code** (`xxxx-xxxx-…`, 128 random bits, kept in
    the OS keyring) and a link `https://relay.example.com/remote#<code>`.
 4. Open the link on the phone, or open `/remote` and type the code.

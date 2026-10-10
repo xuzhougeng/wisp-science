@@ -144,14 +144,46 @@ pub fn open_frame(key: &[u8; 32], aad: &[u8], frame: &str) -> Result<Vec<u8>> {
     Ok(body)
 }
 
-/// Normalized relay base URL: HTTPS, or HTTP on loopback only.
+fn loopback_host(host: Option<url::Host<&str>>) -> bool {
+    match host {
+        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
+/// Whether plain HTTP to `host` is acceptable: this computer, or an address
+/// that only exists inside a private network (RFC 1918, link-local, IPv6
+/// unique local). On such a link the relay token and a lab member key travel
+/// unencrypted, while everything they give access to is still end-to-end
+/// encrypted: sync blobs, the lab knowledge base and lab mail.
+// ponytail: address literals only. A host name is never enough, since whoever
+// answers DNS decides where it leads, and the carrier-grade NAT range
+// (100.64.0.0/10) is shared with strangers on some networks. Add an explicit
+// per-relay opt-in if an intranet name or an overlay network needs HTTP.
+pub(crate) fn plain_http_host(host: Option<url::Host<&str>>) -> bool {
+    match host {
+        Some(url::Host::Ipv4(address)) => {
+            address.is_loopback() || address.is_private() || address.is_link_local()
+        }
+        Some(url::Host::Ipv6(address)) => {
+            let head = address.segments()[0];
+            address.is_loopback() || head & 0xfe00 == 0xfc00 || head & 0xffc0 == 0xfe80
+        }
+        host => loopback_host(host),
+    }
+}
+
+pub(crate) const HTTPS_OR_PRIVATE: &str =
+    "relay URL must use HTTPS (HTTP is allowed only for localhost and private network addresses)";
+
+/// Normalized relay base URL for project sync and Wisp Lab: HTTPS, or HTTP
+/// to this computer or to a private network address.
 pub fn relay_base(relay_url: &str) -> Result<Url> {
     let mut base = Url::parse(relay_url.trim()).context("invalid relay URL")?;
-    let loopback = base
-        .host_str()
-        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
-    if base.scheme() != "https" && !(base.scheme() == "http" && loopback) {
-        anyhow::bail!("relay URL must use HTTPS (HTTP is allowed only for localhost)");
+    if base.scheme() != "https" && !(base.scheme() == "http" && plain_http_host(base.host())) {
+        anyhow::bail!(HTTPS_OR_PRIVATE);
     }
     if base.cannot_be_a_base() {
         anyhow::bail!("invalid relay base URL");
@@ -164,9 +196,20 @@ pub fn relay_base(relay_url: &str) -> Result<Url> {
     Ok(base)
 }
 
+/// Relay base URL for remote web access, which is stricter: a browser gives
+/// the page its encryption (WebCrypto) only in a secure context, so an
+/// intranet relay reached over HTTP would hand out links that cannot work.
+pub fn remote_relay_base(relay_url: &str) -> Result<Url> {
+    let base = relay_base(relay_url)?;
+    if base.scheme() == "http" && !loopback_host(base.host()) {
+        anyhow::bail!("relay URL must use HTTPS (HTTP is allowed only for localhost)");
+    }
+    Ok(base)
+}
+
 /// Host WebSocket URL and the shareable browser link for `relay_url`.
 pub fn remote_endpoints(relay_url: &str, code: &RemoteCode) -> Result<(Url, String)> {
-    let base = relay_base(relay_url)?;
+    let base = remote_relay_base(relay_url)?;
     let mut host = base.join(&format!("v1/remote/host/{}", code.sid()))?;
     host.set_scheme(if base.scheme() == "https" {
         "wss"
@@ -528,6 +571,59 @@ mod tests {
         let (host, _) = remote_endpoints("http://127.0.0.1:8787", &code).unwrap();
         assert_eq!(host.scheme(), "ws");
         assert!(remote_endpoints("http://relay.example.test", &code).is_err());
+        // An intranet relay over HTTP serves sync and the lab, but not the
+        // browser page: its link would open in an insecure context.
+        assert!(relay_base("http://192.168.1.20:8787").is_ok());
+        let refused = remote_endpoints("http://192.168.1.20:8787", &code).unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            "relay URL must use HTTPS (HTTP is allowed only for localhost)"
+        );
+        assert!(remote_relay_base("https://192.168.1.20").is_ok());
+    }
+
+    #[test]
+    fn plain_http_is_for_this_computer_and_private_network_addresses_only() {
+        for allowed in [
+            "http://localhost:8787",
+            "http://LOCALHOST:8787",
+            "http://127.0.0.1:8787",
+            "http://127.8.9.10",
+            "http://[::1]:8787",
+            "http://10.0.0.5:8787",
+            "http://10.10.3.27:8787",
+            "http://172.16.0.1",
+            "http://172.31.255.254:8787/wisp",
+            "http://192.168.1.20:8787",
+            "http://169.254.10.20:8787",
+            "http://[fd12:3456:789a::1]:8787",
+            "http://[fe80::1]:8787",
+        ] {
+            assert!(relay_base(allowed).is_ok(), "{allowed}");
+        }
+        for refused in [
+            "http://relay.example.test",
+            // A name can point anywhere, even one that looks internal.
+            "http://relay.lab.internal:8787",
+            "http://nas.local",
+            "http://8.8.8.8",
+            // Just outside 172.16.0.0/12, and the carrier-grade NAT range.
+            "http://172.32.0.1",
+            "http://172.15.255.255",
+            "http://100.64.0.1:8787",
+            "http://192.169.1.1",
+            "http://[2001:db8::1]:8787",
+            "ftp://192.168.1.20",
+        ] {
+            let error = relay_base(refused).unwrap_err();
+            assert_eq!(error.to_string(), HTTPS_OR_PRIVATE, "{refused}");
+        }
+        assert_eq!(
+            relay_base(" http://192.168.1.20:8787/wisp?x=1#frag ")
+                .unwrap()
+                .as_str(),
+            "http://192.168.1.20:8787/wisp/"
+        );
     }
 
     async fn next_text(

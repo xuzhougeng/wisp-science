@@ -2033,6 +2033,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "channels.lab.invite_title") => Some("Invite a member"),
         (Locale::En, "channels.lab.invite_hint") => Some("Each code admits one person and expires after seven days. It contains the lab key, so send it privately, and send the relay token separately."),
         (Locale::En, "channels.lab.invite_create") => Some("Create invite code"),
+        (Locale::En, "channels.lab.invite_copy") => Some("Copy invite code"),
         (Locale::En, "channels.lab.kb_title") => Some("Knowledge base"),
         (Locale::En, "channels.lab.kb_none") => Some("The leader has not published a knowledge base yet."),
         (Locale::En, "channels.lab.kb_remote") => Some("The lab has a knowledge base. Download it to read it on this computer."),
@@ -2077,6 +2078,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "channels.lab.error.knowledge_base_unreadable") => Some("The knowledge base cannot be opened with this computer's lab key."),
         (Locale::En, "err.remote_relay") => Some("Enter the relay server URL and access token before enabling remote access."),
         (Locale::En, "err.relay_https") => Some("The relay URL must use HTTPS (HTTP is allowed only for localhost)."),
+        (Locale::En, "err.relay_https_private") => Some("The relay URL must use HTTPS. Plain HTTP is allowed only for localhost and private network addresses such as 10.x.x.x or 192.168.x.x."),
         (Locale::En, "channels.state.stopped") => Some("Stopped"),
         (Locale::En, "channels.state.connecting") => Some("Connecting…"),
         (Locale::En, "channels.state.running") => Some("Running"),
@@ -5180,6 +5182,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "channels.lab.invite_title") => Some("邀请成员"),
         (Locale::Zh, "channels.lab.invite_hint") => Some("每个校验码只能加入一人，七天后失效。校验码内含课题组密钥，请私下发送；中继令牌请另外发送。"),
         (Locale::Zh, "channels.lab.invite_create") => Some("生成校验码"),
+        (Locale::Zh, "channels.lab.invite_copy") => Some("复制校验码"),
         (Locale::Zh, "channels.lab.kb_title") => Some("知识库"),
         (Locale::Zh, "channels.lab.kb_none") => Some("组长还没有发布知识库。"),
         (Locale::Zh, "channels.lab.kb_remote") => Some("课题组已有知识库，下载后即可在本机查阅。"),
@@ -5224,6 +5227,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "channels.lab.error.knowledge_base_unreadable") => Some("本机的课题组密钥无法打开知识库。"),
         (Locale::Zh, "err.remote_relay") => Some("启用前请先填写中继服务器地址与访问令牌。"),
         (Locale::Zh, "err.relay_https") => Some("中继地址必须使用 HTTPS（仅 localhost 允许 HTTP）。"),
+        (Locale::Zh, "err.relay_https_private") => Some("中继地址必须使用 HTTPS；只有 localhost 和内网 IP（如 10.x.x.x、192.168.x.x）可以使用 HTTP。"),
         (Locale::Zh, "channels.state.stopped") => Some("已停止"),
         (Locale::Zh, "channels.state.connecting") => Some("连接中…"),
         (Locale::Zh, "channels.state.running") => Some("运行中"),
@@ -6972,6 +6976,9 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         }
         "relay URL must use HTTPS (HTTP is allowed only for localhost)" => {
             t(locale, "err.relay_https")
+        }
+        "relay URL must use HTTPS (HTTP is allowed only for localhost and private network addresses)" => {
+            t(locale, "err.relay_https_private")
         }
         "Configure the relay token in Settings before synchronizing." => {
             t(locale, "err.sync_relay_token")
