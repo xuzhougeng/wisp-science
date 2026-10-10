@@ -13,6 +13,7 @@
 - **完成回报**：项目 Agent 的本轮工作结束后，助理使用自己的模型阅读本轮结果，对照原任务汇总成果、输出文件及未完成事项，再回复到同一条助理对话。失败、取消和达到轮次上限会明确报告，不把“回合结束”视作“科研任务成功”。微信发起的工作会向原绑定账号回传摘要。
 - **代为判断审批**：助理派发的项目任务遇到确认时，会在后台对照你的原始请求和具体操作判断。授权范围内、详情充分的操作批准一次；拿不准、详情不足或判断失败时，会在助理对话和原微信入口显示项目、对话、操作和原因，由你回复 `yes` / `no` 或点击桌面按钮。选择按原审批 ID 转交；已在项目里处理的请求会自动撤销，不会误批下一步。项目自己的完全权限可用于普通操作，助理完全权限不会继承到项目，也不创建新的项目或全局放行规则。
 - **跟进**：「刚才那个任务跑完没？」——也可随时主动查看派出会话是否仍在运行，以及它的最终回答。
+- **研究职责**：「各项职责现在怎么样？」——汇总所有可见项目的[研究职责](research-mandates.md)：状态、KPI 当前值 / 目标值、最近一轮做了什么、下一轮时间，以及哪些在等你处理。职责的求助和定期汇报会主动出现在这条对话里。你回答了某份职责的请求，或想给它提要求时，直接告诉助理，它把你的原话转给那份职责（需要你确认一次），职责随即在自己的对话里开始下一轮。助理只转达，不会替你回答职责的请求。
 
 ## 使用
 
@@ -44,6 +45,7 @@
 只处理扫码所有者的一对一文本消息（以及微信提供转写的语音）。助理入口的 `/help` 提供说明，`/status` 显示助理接入、当前模型和完全权限状态，`/stop` 停止助理当前回复；这些命令不会修改项目机器人的目标。助理不会通过 `/new` 新建第二条对话。
 
 - `/model`：列出可用于对话的模型并标出当前模型；`/model <编号或名称>` 切换。名称不区分大小写，可以是模型配置的名称、模型 ID 或其中唯一匹配的一段；匹配到多个时请改用编号。切换只影响科研助理这条对话（与桌面助理输入框里的模型选择是同一个设置），下一轮回复起生效，正在进行的回复仍用原模型。
+- `/mandates`：立即列出全部可见职责的状态、KPI、最近一轮和等你处理的事项，不经过模型。
 - `/resume`（或直接回复 `resume`）：重跑上一轮失败的请求。助理回复「处理失败」后发送即可，常与 `/model` 配合：模型或服务不可用时先切换模型，再 `/resume`。已经写入对话的请求会从失败处继续，不会重复发送；连对话都没进入的请求（例如模型没有配置密钥）会按原文重发。上一轮没有失败时只会提示，不会发给模型；助理正在回复时请等这一轮结束。
 
 保存计划、派活等需要确认的操作会同时显示在桌面助理对话和微信中。收到「科研助理等待审批」后，直接回复以下完整文本（不区分大小写，无需斜杠或编号）：
@@ -64,7 +66,7 @@
 
 ## English
 
-**Research assistant** on the home screen opens one conversation that belongs to no project and never splits into new ones. It reports recorded activity across projects (the same records and daily recaps as the research calendar, up to 7 days per read), keeps a dated plan (open / done / dropped; unfinished items carry forward to today), lists project conversations, and dispatches work into an existing or new conversation. A requested server such as CPU2 is enabled and set as that conversation's default before dispatch. Busy conversations are rejected without changing their server. After the project agent accepts the instruction, the assistant acknowledges startup and finishes its turn. A background completion callback then uses the assistant's model to review the actual turn result and append a separate summary, including failures and unfinished work. WeChat-originated tasks also send the summary to the original binding. No assistant polling is needed. It cannot read or write files, run code or commands, or search literature — it organizes, project conversations do the work. Escape closes it; a running reply continues in the background. Projects hidden by privacy mode are invisible to it.
+**Research assistant** on the home screen opens one conversation that belongs to no project and never splits into new ones. It reports recorded activity across projects (the same records and daily recaps as the research calendar, up to 7 days per read), keeps a dated plan (open / done / dropped; unfinished items carry forward to today), lists project conversations, and dispatches work into an existing or new conversation. A requested server such as CPU2 is enabled and set as that conversation's default before dispatch. Busy conversations are rejected without changing their server. After the project agent accepts the instruction, the assistant acknowledges startup and finishes its turn. A background completion callback then uses the assistant's model to review the actual turn result and append a separate summary, including failures and unfinished work. WeChat-originated tasks also send the summary to the original binding. No assistant polling is needed. It cannot read or write files, run code or commands, or search literature — it organizes, project conversations do the work. It also lists the [research mandates](research-mandates.md) across projects (status, KPI values, latest round, what each waits on), receives their requests for help and their reports in this conversation, and passes your answer or feedback on to a mandate after a confirmation; it never answers a mandate's request for you. `/mandates` on WeChat returns the same list without a model turn. Escape closes it; a running reply continues in the background. Projects hidden by privacy mode are invisible to it.
 
 The assistant page has independently collapsible project and calendar sidebars around its existing conversation. Selecting a project attaches context to future messages without navigating away. The calendar separates saved plans from recorded activity, retains its date when hidden, and refreshes after an assistant turn. Planning and activity buttons append questions to the draft for review before sending. Desktop sidebar preferences persist; narrow windows use drawers, with Escape dismissing the topmost surface first.
 
@@ -75,7 +77,7 @@ The top toolbar provides the project and calendar visibility toggles. Sidebar he
 ## 实现说明
 
 - 对话存放在隐藏项目 `assistant:research` 的固定会话 `research-assistant` 中，不出现在项目列表、最近会话、搜索或用量统计里，也不会被清理。
-- 该会话的回合使用独立的系统提示词和 6 个工具（`research_projects`、`research_activity`、`project_conversations`、`research_plan`、`dispatch_to_project`、`project_session_result`），不加载文件/Shell 工具、Python/R 运行时、MCP、Skill 或 ACP 外部 Agent。
+- 该会话的回合使用独立的系统提示词和 8 个工具（`research_projects`、`research_activity`、`project_conversations`、`research_plan`、`dispatch_to_project`、`project_session_result`、`research_mandates`、`reply_to_mandate`），不加载文件/Shell 工具、Python/R 运行时、MCP、Skill 或 ACP 外部 Agent。
 - 计划保存在全局表 `assistant_tasks`（迁移 `0063_assistant_tasks`，幂等），不属于任何项目，不随项目导入导出。
 - 命令：`open_research_assistant`（绑定当前窗口，记住要恢复的项目）、`close_research_assistant`（恢复）；`get_research_assistant_projects` 和 `get_research_assistant_plan` 在服务端核验隐私设置后提供侧栏数据。为该项目新建会话、分支或开启探索的请求会被后端拒绝。
 - 微信状态命令：`assistant_weixin_status`；绑定、启用和解除绑定复用微信命令并传 `destination: "assistant"`，缺省仍为原项目入口。助理配置使用 `assistant_weixin_*` 设置键，token 单独存在系统 keyring；助理消息不写入原 IM 共享路由，也不改变桌面当前项目。

@@ -12,6 +12,28 @@
 - 模型在 **设置 → 专家 → Recap** 中更换；卡片上的链接直接打开该页。
 - 草稿只出现在研究历程和研究日历中，确认之前不算正式记录。
 
+## 内置：记忆整理
+
+默认开启，每周运行一次（上次运行满 7 天后，在下一次轮询时触发）。它把全部全局习惯交给 **设置 → 专家 → Recap** 的模型检查，提出两类建议：
+
+- **合并**：几条意思相同、或一条只是另一条的细化。建议里给出合并后的文字，不会加入原条目没说过的内容。
+- **淘汰**：已被更新的条目否定或取代的旧条目。
+
+它只提建议。每条建议列出涉及的记忆原文、理由和（合并时）合并后的文字，由你决定：
+
+- 「应用」：合并时保留其中最近更新的那条并改为合并后的文字，删除其余；淘汰时删除所列条目。
+- 「忽略」：建议消失，任何记忆都不改动。
+
+建议记下的是提出时的记忆原文。之后你改过或删过其中任何一条，这条建议就不再显示，也无法应用，不会覆盖你的修改；重新运行即可得到新的建议。
+
+全局习惯少于 2 条时不调用模型。模型返回的建议若引用了不存在的记忆、同一条记忆出现在两条建议里、或合并缺少文字，会被直接丢弃。运行失败时保留之前待处理的建议，并在卡片上显示错误。关闭记忆功能（设置 → 记忆）后不再运行。
+
+只整理全局习惯。项目记忆是按天追加的自由文本，一条「记住的事」不是可以安全合并或删除的单位，仍在 **设置 → 记忆** 中手动编辑。
+
+## 研究职责
+
+把一份长期职责（目标、KPI、工作约束）交给项目里的 Agent，由它一轮轮推进。入口同在本页的「研究职责」区块，详见 [研究职责](research-mandates.md)。
+
 ## 定时任务
 
 ### 当前会话的 timer
@@ -41,6 +63,19 @@ Automation spans every project, so it opens from the research assistant: the
   that have recorded activity and no recap yet. Missed mornings catch up on the
   next launch; existing or dismissed recaps are never overwritten; quiet days make
   no model call. Change the model in Settings → Specialists → Recap.
+- **Memory tidy** (built-in, on by default): once a week the Recap specialist's
+  model looks over the global habits and proposes merging entries that say the
+  same thing or retiring one a newer entry replaces. It only proposes: **Apply**
+  carries one proposal out (a merge keeps the most recently updated entry with
+  the merged text and removes the rest), **Dismiss** changes nothing. A proposal
+  records the entries as they read when it was made; edit or delete one of them
+  and the proposal disappears instead of overwriting your change. Fewer than two
+  habits make no model call; proposals naming an unknown entry, reusing an entry
+  or lacking merged text are dropped. It does not run while memory is turned
+  off, and it leaves project memory alone.
+- **Research mandates**: hand a project agent a long-running responsibility — a
+  goal, KPIs and constraints — that it carries round by round. See
+  [Research mandates](research-mandates.md).
 - **Scheduled tasks**: send a prompt into a new session of a chosen project daily,
   weekly or every few hours. Pause, run now or delete each task. Templates prefill
   a literature watch, a run check and a weekly report. Tasks run only while Wisp is
@@ -55,6 +90,11 @@ Automation spans every project, so it opens from the research assistant: the
   is rebuilt from the pre-timer epoch plus subsequent ordinary turns. Settings
   survive restart; deleting the conversation deletes its timer. ACP conversations and
   watch-only subagent conversations are unsupported.
+
+Memory tidy commands: `get_memory_tidy_automation`, `set_memory_tidy_automation(enabled)`,
+`run_memory_tidy_now`, `apply_memory_tidy_proposal(id)` and
+`dismiss_memory_tidy_proposal(id)`; state and pending proposals live in the
+`automation_memory_tidy` settings row (`src-tauri/src/memory_tidy.rs`).
 
 Commands: `get_daily_recap_automation`, `set_daily_recap_automation(enabled, time)`,
 `run_daily_recap_now`, `list_all_schedules`, and `create_schedule` with an explicit

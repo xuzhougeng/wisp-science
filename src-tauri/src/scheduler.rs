@@ -31,7 +31,10 @@ pub(crate) fn start_scheduler(app: &AppHandle) {
         loop {
             tick.tick().await;
             fire_due_schedules(&app).await;
+            crate::mandates::fire_due_mandates(&app).await;
+            crate::mandate_report::report_due_mandates(&app).await;
             crate::research_recap::daily_recap_tick(&app).await;
+            crate::memory_tidy::memory_tidy_tick(&app).await;
         }
     });
 }

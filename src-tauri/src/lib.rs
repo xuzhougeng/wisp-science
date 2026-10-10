@@ -85,6 +85,9 @@ mod model_catalog;
 // The runtime only uses lookup()/types; build.rs uses distill() instead.
 #[cfg(test)]
 mod dto_contract_tests;
+mod mandate_report;
+mod mandates;
+mod memory_tidy;
 #[allow(dead_code)]
 mod model_catalog_shared;
 mod models;
@@ -7522,6 +7525,19 @@ pub fn run() {
             scheduler::delete_schedule,
             scheduler::run_schedule_now,
             scheduler::list_all_schedules,
+            mandates::list_all_mandates,
+            mandates::create_mandate,
+            mandates::update_mandate,
+            mandates::set_mandate_status,
+            mandates::delete_mandate,
+            mandates::run_mandate_now,
+            mandates::reply_to_mandate,
+            mandate_report::report_mandate_now,
+            memory_tidy::get_memory_tidy_automation,
+            memory_tidy::set_memory_tidy_automation,
+            memory_tidy::run_memory_tidy_now,
+            memory_tidy::apply_memory_tidy_proposal,
+            memory_tidy::dismiss_memory_tidy_proposal,
             research_recap::get_daily_recap_automation,
             research_recap::set_daily_recap_automation,
             research_recap::run_daily_recap_now,

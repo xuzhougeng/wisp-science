@@ -21,7 +21,8 @@ use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv, ToolResult};
 const RETRY_DELAYS: [u64; 5] = [2_000, 10_000, 30_000, 60_000, 120_000];
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const STOPPED_BY_USER: &str = "stopped by user";
-const TRUNCATED_OUTPUT_MESSAGE: &str = "模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)";
+/// Bytes of a discarded tool call's arguments kept in history.
+const DISCARDED_ARGS_EXCERPT_BYTES: usize = 300;
 const AUTO_CONTINUE_PROMPT: &str =
     "Continue from where the previous response was truncated. Do not repeat completed work. The partial response already shown to the user was:\n\n";
 const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到结束标记），已生成的部分内容不完整、不会计入上下文。常见原因：网络不稳定、代理/中转站切断连接，或同一 API key 的并发请求达到上限（例如多个会话同时使用同一模型）。可重发消息重试；需要并行会话时建议错开请求或使用不同的 API key。(stream cut mid-response, #437)";
@@ -351,6 +352,7 @@ async fn agent_loop_inner(
     };
     let mut iteration = 0usize;
     let mut auto_continues = 0usize;
+    let mut last_cut_tool: Option<String> = None;
     let mut recent_observations: VecDeque<[u8; 32]> = VecDeque::with_capacity(STUCK_WINDOW);
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
@@ -446,9 +448,23 @@ async fn agent_loop_inner(
             anyhow::bail!("stopped by user");
         }
         if is_truncated(comp.finish_reason.as_deref()) {
+            let cut_tool = comp.tool_calls.last().map(|tc| tc.function.name.clone());
+            if cut_tool.is_some() {
+                record_discarded_tool_calls(
+                    ctx,
+                    tools,
+                    output,
+                    &comp,
+                    provider.max_output_tokens(),
+                );
+            }
+            // The same tool cut off twice running will not fit a third time
+            // either: stop instead of spending the remaining auto-continues.
+            let repeated_cut = cut_tool.is_some() && cut_tool == last_cut_tool;
+            last_cut_tool = cut_tool;
             if let Some(limit) = ctx
                 .auto_continue_limit()
-                .filter(|limit| auto_continues < *limit)
+                .filter(|limit| !repeated_cut && auto_continues < *limit)
             {
                 auto_continues += 1;
                 let context_usage = ctx.context_usage(&schemas, &schema_origins);
@@ -463,11 +479,15 @@ async fn agent_loop_inner(
                     context_usage,
                 );
                 output.compaction(auto_continues, limit, "auto_continue");
-                ctx.inject_user(format!("{AUTO_CONTINUE_PROMPT}{}", comp.content));
+                // A discarded tool call already left its own durable result.
+                if comp.tool_calls.is_empty() {
+                    ctx.inject_user(format!("{AUTO_CONTINUE_PROMPT}{}", comp.content));
+                }
                 continue;
             }
-            anyhow::bail!(TRUNCATED_OUTPUT_MESSAGE);
+            anyhow::bail!(truncated_output_message(provider, &comp));
         }
+        last_cut_tool = None;
         if is_unsuccessful_finish(comp.finish_reason.as_deref()) {
             anyhow::bail!(ABNORMAL_FINISH_MESSAGE);
         }
@@ -740,6 +760,88 @@ fn append_synthetic_tool_results(
     }
 }
 
+/// Arguments of a call dropped at the output limit are usually cut mid-string
+/// (not valid JSON) and as large as the whole output budget. Keep a parseable
+/// head excerpt: enough for the model to recognise what it was attempting.
+fn discarded_call_arguments(arguments: &str) -> String {
+    if arguments.len() <= DISCARDED_ARGS_EXCERPT_BYTES
+        && serde_json::from_str::<serde_json::Value>(arguments).is_ok()
+    {
+        return arguments.to_string();
+    }
+    serde_json::json!({
+        "discarded_arguments": ContextManager::compact_text(
+            arguments,
+            DISCARDED_ARGS_EXCERPT_BYTES,
+            0,
+        )
+    })
+    .to_string()
+}
+
+/// Persist tool calls dropped at the output limit as failed calls. Resuming a
+/// turn replays the stored context, so without a durable record the model sees
+/// nothing new and re-emits the same oversized call on every retry.
+fn record_discarded_tool_calls(
+    ctx: &mut ContextManager,
+    tools: &Registry,
+    output: &dyn Output,
+    comp: &Completion,
+    limit: Option<u64>,
+) {
+    let calls: Vec<ToolCall> = comp
+        .tool_calls
+        .iter()
+        .cloned()
+        .map(|mut call| {
+            call.function.arguments = discarded_call_arguments(&call.function.arguments);
+            call
+        })
+        .collect();
+    ctx.append_assistant(comp.content.clone(), calls.clone(), comp.reasoning.clone());
+    if let Some(message) = ctx.messages.last() {
+        output.on_message(message);
+    }
+    let limit = limit
+        .map(|limit| format!(" ({limit} tokens)"))
+        .unwrap_or_default();
+    append_synthetic_tool_results(
+        ctx,
+        tools,
+        output,
+        &calls,
+        &format!(
+            "Not executed: the response hit the model's output limit{limit} before its tool calls were complete, so the arguments were cut off and the whole batch was discarded. Do not retry at the same size. Split the work into several smaller calls (for a long document, one `edit` per paragraph or section) and keep each call well under the limit."
+        ),
+    );
+}
+
+/// User-facing report for a response cut off at the output limit. It names the
+/// model and the limit actually sent: a session stays bound to one model
+/// profile, which is not necessarily the one the user last edited in Settings.
+fn truncated_output_message(provider: &dyn Provider, comp: &Completion) -> String {
+    let limit = provider
+        .max_output_tokens()
+        .map(|limit| format!("，当前 max_tokens={limit}"))
+        .unwrap_or_default();
+    let cause = if let Some(call) = comp.tool_calls.last() {
+        format!(
+            "被截断的是一次 `{}` 工具调用，该调用没有执行；已提示模型改用更小的分段调用，点击“继续执行”即可接着做。",
+            call.function.name
+        )
+    } else if comp.content.trim().is_empty()
+        && (comp.reasoning.is_some() || comp.usage.reasoning_tokens > 0)
+    {
+        "本次输出额度全部用在了思考上，没有产生正文或工具调用；可调低该模型的推理强度，或把任务拆小后继续。".to_string()
+    } else {
+        "任务可能尚未完成，可直接继续对话让我接着做。".to_string()
+    };
+    format!(
+        "模型输出在达到 max_tokens 上限时被截断（模型 {}{limit}）。{cause}如需调高上限，请在 设置 → 模型 中修改这个模型的「最大输出 tokens」并保存。(output truncated at max_tokens)",
+        provider.model()
+    )
+}
+
 fn append_skipped_tool_results(
     ctx: &mut ContextManager,
     tools: &Registry,
@@ -855,7 +957,7 @@ async fn summarize_at_iteration_limit(
             anyhow::bail!(STOPPED_BY_USER);
         }
         if is_truncated(comp.finish_reason.as_deref()) {
-            anyhow::bail!(TRUNCATED_OUTPUT_MESSAGE);
+            anyhow::bail!(truncated_output_message(provider, &comp));
         }
         if is_unsuccessful_finish(comp.finish_reason.as_deref()) {
             anyhow::bail!(ABNORMAL_FINISH_MESSAGE);
@@ -1260,6 +1362,10 @@ mod tests {
 
         fn model(&self) -> &str {
             "fixed"
+        }
+
+        fn max_output_tokens(&self) -> Option<u64> {
+            Some(8192)
         }
 
         async fn complete(
@@ -2682,13 +2788,78 @@ mod tests {
         .await
         .unwrap_err();
 
+        let err = err.to_string();
         assert!(
-            err.to_string().contains("output truncated at max_tokens"),
+            err.contains("output truncated at max_tokens"),
             "unexpected error: {err}"
         );
+        // The report names the model, the limit actually sent, and what was cut.
+        assert!(err.contains("fixed") && err.contains("max_tokens=8192") && err.contains("`spy`"));
         assert!(!spy_ran.load(Ordering::SeqCst), "truncated tool ran");
-        assert_eq!(ctx.messages.len(), 1, "only the user message is persisted");
+        // The dropped call stays in history as a failed call, so a resumed
+        // turn does not replay an identical context.
+        assert_eq!(ctx.messages.len(), 3);
+        assert_eq!(ctx.messages[1].tool_calls.len(), 1);
+        assert_eq!(ctx.messages[2].role, Role::Tool);
+        let result = ctx.messages[2].content.as_text();
+        assert!(result.contains("Not executed") && result.contains("8192 tokens"));
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn repeated_truncated_tool_call_stops_auto_continue() {
+        // Cut mid-string inside multi-byte text: not valid JSON, far over budget.
+        let cut_edit = || Completion {
+            tool_calls: vec![ToolCall {
+                id: "call_1".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "edit".into(),
+                    arguments: format!(
+                        r#"{{"path":"thesis.md","old":"a","new":"{}"#,
+                        "润".repeat(2000)
+                    ),
+                },
+            }],
+            finish_reason: Some("length".into()),
+            ..Completion::default()
+        };
+        let provider = SequenceProvider::new((0..5).map(|_| cut_edit()));
+        let output = AutoContinueCounter(AtomicUsize::new(0));
+        let mut ctx = ContextManager::new(100_000);
+        ctx.set_auto_continue(true, 10);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &output,
+            "polish the thesis",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("output truncated at max_tokens"));
+        // One auto-continue, then the second identical cut ends the turn
+        // instead of burning the remaining eight.
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(output.0.load(Ordering::SeqCst), 1);
+        // The guidance travels in the durable tool result, not an injection.
+        assert!(ctx.runtime_injections.is_empty());
+        assert_eq!(ctx.messages.len(), 5);
+        for message in ctx.messages.iter().filter(|m| m.role == Role::Assistant) {
+            let arguments = &message.tool_calls[0].function.arguments;
+            assert!(arguments.len() < 500, "arguments not bounded");
+            let value: serde_json::Value = serde_json::from_str(arguments).unwrap();
+            assert!(value["discarded_arguments"]
+                .as_str()
+                .unwrap()
+                .contains("thesis.md"));
+        }
     }
 
     #[tokio::test]

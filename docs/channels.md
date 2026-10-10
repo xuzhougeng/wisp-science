@@ -29,6 +29,12 @@ summary remains on the desktop and waits in the active connection until a fresh
 owner message permits delivery. Pending remote notices do not survive disconnect
 or restart. Failures and interrupted turns are reported without claiming success.
 
+A [research mandate](research-mandates.md) that needs the researcher sends
+its request to the same places without being asked: the assistant's
+conversation, the assistant's WeChat binding, and the Feishu bot's bound owner
+(a direct message by `open_id`). Channels that are disabled or unbound are
+skipped; a project hidden by privacy mode sends nothing.
+
 Desktop, Feishu, and WeChat share one durable **IM target project**. Ordinary
 IM messages continue that project's current IM session. Starting work on the
 desktop in another project does **not** move Feishu or WeChat to that project —
@@ -45,6 +51,10 @@ The IM target can be inspected and changed from either Feishu or WeChat:
 - `/new` prepares a fresh IM session in the selected project.
 - `/stop` cancels the shared target's running turn; `/help` shows the command
   list.
+- `/mandates` lists every visible [research mandate](research-mandates.md)
+  with its status, KPI values, latest round and anything waiting on you. It is
+  answered directly, without a model turn, and also works on the assistant's
+  WeChat entry.
 - WeChat additionally supports `/approval`, `/approve <code>`, and
   `/reject <code> [feedback]` for text-only tool approval.
 

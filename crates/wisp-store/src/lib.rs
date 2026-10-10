@@ -19,6 +19,7 @@ mod external_session_cache;
 mod global_memories;
 mod library;
 mod lineage;
+mod mandates;
 pub mod mcp_secrets;
 mod method_search;
 mod models;
@@ -75,6 +76,10 @@ pub use global_memories::GlobalMemory;
 pub use library::{
     LibraryItem, LibraryItemDetail, LibraryItemSummary, LibraryItemVersion, LibraryStore,
     NewLibraryItem,
+};
+pub use mandates::{
+    MandateRecord, MandateReport, MandateRequest, MandateRound, MANDATE_REQUEST_KINDS,
+    MANDATE_STATUSES,
 };
 pub use method_search::{
     MethodCandidate, MethodCandidateBlob, MethodCandidateStatus, MethodSearchRunState,
@@ -901,6 +906,10 @@ impl Store {
             .await?;
         // The research assistant's dated plan items.
         sqlx::raw_sql(include_str!("../migrations/0063_assistant_tasks.sql"))
+            .execute(pool)
+            .await?;
+        // Research mandates and their round ledger.
+        sqlx::raw_sql(include_str!("../migrations/0064_mandates.sql"))
             .execute(pool)
             .await?;
         sqlx::query(

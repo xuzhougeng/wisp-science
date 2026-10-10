@@ -67,6 +67,36 @@ pub(crate) async fn assistant_notification_binding(store: &Store) -> Option<weix
     }
     load_weixin_binding_for(store, destination).await
 }
+
+/// Tell the researcher something they did not ask for in that moment, on
+/// every channel they left enabled: the assistant's WeChat and the Feishu
+/// bot's bound owner. Channels that are off or unbound are skipped silently.
+/// WeChat delivery waits for iLink's reply window, like dispatch reports.
+pub(crate) async fn notify_owner(store: &Store, project_id: &str, text: &str) {
+    let text: String = text.chars().take(REPLY_MAX_CHARS).collect();
+    if let Some(binding) = assistant_notification_binding(store).await {
+        weixin::notify_assistant(binding, project_id.into(), text.clone());
+    }
+    if get_setting(store, "feishu_enabled").await != "true" {
+        return;
+    }
+    let Some(owner) = load_feishu_owner(store).await else {
+        return;
+    };
+    let app_id = get_setting(store, "feishu_app_id").await;
+    let secret = load_secret(FEISHU_SECRET).await;
+    if app_id.is_empty() || secret.is_empty() {
+        return;
+    }
+    let international = get_setting(store, "feishu_international").await == "true";
+    let sent = match feishu::FeishuRest::new(&app_id, &secret, international) {
+        Ok(client) => client.send_text_to_user(&owner, &text).await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = sent {
+        tracing::warn!(target: "wisp", %error, "failed to notify the Feishu owner");
+    }
+}
 #[derive(Clone, Copy)]
 struct WeixinKeys {
     enabled: &'static str,
@@ -1015,7 +1045,7 @@ pub(crate) async fn last_assistant_text(store: &Store, frame_id: &str) -> Option
         .find(|t| !t.trim().is_empty())
 }
 
-const HELP_TEXT: &str = "可用命令:\n/status — 查看 IM 目标项目和会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换 IM 目标项目\n/session — 列出当前 IM 项目的最近会话\n/session <序号|标题|ID> — 切换 IM 会话\n/new — 在当前 IM 项目开启新会话\n/approval — 查看待审批请求（微信）\n/approve <编号> — 批准一次（微信）\n/reject <编号> [原因] — 拒绝（微信）\n/stop — 停止当前任务\n/help — 显示本帮助\n\n微信和飞书共用同一个 IM 目标项目。桌面端在某个项目里发言只会更新该项目的最近会话，不会把 IM 目标抢走。/project、/session 和 /new 会显式切换这个 IM 目标。";
+const HELP_TEXT: &str = "可用命令:\n/status — 查看 IM 目标项目和会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换 IM 目标项目\n/session — 列出当前 IM 项目的最近会话\n/session <序号|标题|ID> — 切换 IM 会话\n/new — 在当前 IM 项目开启新会话\n/approval — 查看待审批请求（微信）\n/approve <编号> — 批准一次（微信）\n/reject <编号> [原因] — 拒绝（微信）\n/mandates — 查看全部研究职责的状态、KPI 和等你处理的事项\n/stop — 停止当前任务\n/help — 显示本帮助\n\n微信和飞书共用同一个 IM 目标项目。桌面端在某个项目里发言只会更新该项目的最近会话，不会把 IM 目标抢走。/project、/session 和 /new 会显式切换这个 IM 目标。";
 
 /// Route one inbound IM text: chat commands are handled locally, everything
 /// else drives an agent turn. Returns the reply to send back (may be empty).
@@ -1054,6 +1084,11 @@ pub(crate) async fn handle_inbound_observed(
     let argument = parts.next().unwrap_or_default().trim();
     match command.as_str() {
         "/help" => return HELP_TEXT.to_string(),
+        "/mandates" | "/mandate" => {
+            return crate::mandates::summary_text(&state.store)
+                .await
+                .unwrap_or_else(|error| format!("读取研究职责失败: {error}"))
+        }
         "/approval" | "/approvals" => {
             if channel != "weixin" {
                 return "文本审批命令目前仅支持绑定 owner 的微信一对一会话。".into();

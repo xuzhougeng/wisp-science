@@ -194,7 +194,7 @@ struct DraftItem {
 
 /// Parse the model's JSON and resolve its citations. Unknown handles are
 /// dropped; only cited sources are kept.
-fn to_recap(
+pub(crate) fn to_recap(
     raw: &str,
     handles: &HashMap<String, ResearchRecapSource>,
     day_start: i64,
@@ -263,9 +263,12 @@ fn to_recap(
     })
 }
 
-async fn complete(
+/// One tool-free completion on the Recap specialist's model. Returns the
+/// text and the model that wrote it.
+pub(crate) async fn complete(
     store: &Store,
     project_id: &str,
+    system: &str,
     input: &str,
 ) -> Result<(String, String), String> {
     let recap = crate::specialists::get(store, "recap")
@@ -289,7 +292,7 @@ async fn complete(
         &header,
         project_id,
     )?);
-    let messages = [Message::system(RECAP_SYSTEM), Message::user(input)];
+    let messages = [Message::system(system), Message::user(input)];
     let completion = tokio::time::timeout(RECAP_TIMEOUT, llm.complete(&messages, &[]))
         .await
         .map_err(|_| "Recap drafting timed out".to_string())?
@@ -320,7 +323,7 @@ pub(crate) async fn draft_recap(
     let Some((input, handles)) = day_digest(store, project_id, day_start, day_end).await? else {
         return Ok(None);
     };
-    let (raw, model) = complete(store, project_id, &input.to_string()).await?;
+    let (raw, model) = complete(store, project_id, RECAP_SYSTEM, &input.to_string()).await?;
     let recap = to_recap(&raw, &handles, day_start, &model)?;
     store
         .save_research_recap(project_id, &recap, replace)

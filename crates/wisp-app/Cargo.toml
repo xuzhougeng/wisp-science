@@ -7,12 +7,17 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+wisp-tools = { workspace = true }
 wisp-dto = { workspace = true }
 wisp-store = { workspace = true }
 wisp-llm = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 sqlx = { workspace = true }
+wisp-core = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true }
