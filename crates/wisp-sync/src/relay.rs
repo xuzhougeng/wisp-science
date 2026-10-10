@@ -34,7 +34,7 @@ impl FileRelay {
         })
     }
 
-    fn validate_component(value: &str, name: &str) -> Result<()> {
+    pub(crate) fn validate_component(value: &str, name: &str) -> Result<()> {
         if value.is_empty()
             || value.len() > 128
             || !value
@@ -67,7 +67,7 @@ impl FileRelay {
         Ok(self.root.join("blobs").join(blob_id))
     }
 
-    async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    pub(crate) async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         let parent = path.parent().context("relay path has no parent")?;
         tokio::fs::create_dir_all(parent).await?;
         let tmp = parent.join(format!(
