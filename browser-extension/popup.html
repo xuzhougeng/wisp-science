@@ -5,29 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Wisp Browser Bridge</title>
     <style>
-      body { font: 13px system-ui, sans-serif; margin: 14px; min-width: 300px; color: #202124; }
-      h1 { font-size: 15px; margin: 0 0 8px; }
-      #status { margin-bottom: 6px; }
-      .ok { color: #137333; }
-      .bad { color: #b3261e; }
-      small, .meta { color: #5f6368; display: block; margin: 4px 0; }
-      button { margin: 8px 8px 0 0; }
-      ul { padding-left: 18px; margin: 6px 0 0; max-height: 140px; overflow: auto; }
-      li { margin: 2px 0; }
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff; --fg: #202124; --muted: #5f6368; --line: #dadce0;
+        --bubble: #f1f3f4; --accent: #1a73e8; --accent-fg: #ffffff;
+        --ok: #137333; --bad: #b3261e; --warn: #b06000;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #202124; --fg: #e8eaed; --muted: #9aa0a6; --line: #3c4043;
+          --bubble: #303134; --accent: #8ab4f8; --accent-fg: #202124;
+          --ok: #81c995; --bad: #f28b82; --warn: #fdd663;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 320px; margin: 0; padding: 12px 14px 14px;
+        font: 13px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg);
+      }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      h1 { font-size: 14px; font-weight: 600; margin: 0; }
+      #status {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+        background: var(--bubble); color: var(--muted); white-space: nowrap;
+      }
+      #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      #status.ok { color: var(--ok); }
+      #status.warn { color: var(--warn); }
+      #status.bad { color: var(--bad); }
+      .meta { color: var(--muted); font-size: 11.5px; margin: 6px 0 0; overflow-wrap: anywhere; }
+      .meta.error { color: var(--bad); }
+      .primary {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        width: 100%; margin: 12px 0 0; padding: 8px 12px;
+        border: 0; border-radius: 8px; cursor: pointer;
+        font: inherit; font-weight: 600; background: var(--accent); color: var(--accent-fg);
+      }
+      .primary:hover { filter: brightness(1.08); }
+      .primary:disabled { opacity: 0.5; cursor: default; }
+      kbd {
+        font: 11px ui-monospace, monospace; padding: 1px 6px; border-radius: 4px;
+        background: rgba(255, 255, 255, 0.22); color: inherit;
+      }
+      .shortcut { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; margin: 6px 2px 0; }
+      .link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; white-space: nowrap; }
+      .link:hover { text-decoration: underline; }
+      h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 4px; }
+      ul { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+      li { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--line); }
+      li:first-child { border-top: 0; }
+      li span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      li .empty { color: var(--muted); }
+      .tag { flex: none; font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 999px; background: var(--bubble); color: var(--accent); }
+      .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+      .actions button {
+        font: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer;
+        border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+      }
+      .actions button:hover { background: var(--bubble); }
+      .actions button:disabled { opacity: 0.45; cursor: default; }
+      .actions button.danger { color: var(--bad); }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
-    <h1>Wisp Real Browser Bridge</h1>
-    <div id="status">Checking…</div>
-    <small id="meta"></small>
-    <small>Uses tabs in this Chrome profile. Wisp must be running.</small>
+    <header>
+      <h1>Wisp Browser Bridge</h1>
+      <span id="status">Checking…</span>
+    </header>
+    <p class="meta" id="meta"></p>
+    <p class="meta error" id="error" hidden></p>
+    <p class="meta">Uses tabs in this Chrome profile. Wisp must be running.</p>
+
+    <button id="ask" class="primary" type="button">
+      <span>Ask about this page</span>
+      <kbd id="key" hidden></kbd>
+    </button>
+    <div class="shortcut">
+      <span id="key-hint">Shortcut not set</span>
+      <button id="key-edit" class="link" type="button">Change shortcut</button>
+    </div>
+
+    <h2>Tabs</h2>
     <ul id="tabs"></ul>
-    <button id="ask" type="button">Ask about this page</button>
-    <button id="reconnect" type="button">Reconnect</button>
-    <button id="pause" type="button">Pause control</button>
-    <button id="resume" type="button">Resume control</button>
-    <button id="release" type="button">Release managed tabs</button>
-    <button id="disconnect" type="button">Disconnect Wisp</button>
+
+    <div class="actions">
+      <button id="reconnect" type="button">Reconnect</button>
+      <button id="pause" type="button">Pause control</button>
+      <button id="resume" type="button" hidden>Resume control</button>
+      <button id="release" type="button">Release managed tabs</button>
+      <button id="disconnect" class="danger" type="button">Disconnect Wisp</button>
+    </div>
     <script src="popup.js"></script>
   </body>
 </html>
