@@ -17348,6 +17348,29 @@ test("the first computer founds a lab, then reviews members, invites and publish
   await expect.poll(() => lastInvokeArgs(page, "lab_set_inbox_project")).toMatchObject({ projectId: "" });
 });
 
+test("founding a lab on an intranet relay makes Sync now available without a restart", async ({ page }) => {
+  await page.goto("/?mockSyncUnconfigured=1");
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await expect(projectCard.getByRole("button", { name: "Sync now" })).toHaveCount(0);
+
+  await openSettingsSection(page, "Remote Access");
+  await expect(page.getByTestId("sync-relay-url")).toHaveValue("");
+  await page.getByTestId("lab-channel-row").click();
+  await page.getByTestId("lab-relay-url").fill("http://10.10.3.27:8787");
+  await page.getByTestId("lab-relay-token").fill("relay-secret");
+  await page.getByTestId("lab-member-name").fill("Ada");
+  await page.getByTestId("lab-join").click();
+  await expect(page.getByTestId("lab-state")).toHaveText("Leader");
+
+  // The lab filled in the project sync relay; the open form shows it, so a
+  // later Save cannot blank it again.
+  await page.locator(".settings-head-back").click();
+  await expect(page.getByTestId("sync-relay-url")).toHaveValue("http://10.10.3.27:8787");
+  // Closing without saving is enough for the project card to offer sync.
+  await page.locator(".settings-head-close").click();
+  await expect(projectCard.getByRole("button", { name: "Sync now" })).toBeVisible();
+});
+
 test("a member joins a lab with an invite code, waits for approval and downloads the knowledge base", async ({ page }) => {
   await enterApp(page, "/?mockLabFounded=1");
   await openSettingsSection(page, "Remote Access");

@@ -142,7 +142,7 @@ folder is in ordinary conversations, so it consults the group's protocols and
 conventions before answering lab-specific questions.
 
 The knowledge base travels through [project sync](project-sync.md), which
-reads the relay token from **Settings → General → Manual project sync**. A
+reads the relay token from **Settings → Remote Access → Manual project sync**. A
 computer that never configured project sync gets the lab's relay URL and
 token filled in there when it joins, so **Sync now** works right away. An
 existing sync configuration is not changed: if it points at a different

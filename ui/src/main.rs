@@ -18464,6 +18464,22 @@ fn App() -> impl IntoView {
             })
             open_terminal_session=activate_terminal_session
             save_auto_failure_analysis=save_auto_failure_analysis
+            // Joining a lab can fill in the project sync relay on the backend.
+            // Reload just those fields: the open form may hold other unsaved
+            // edits, and saving it with a stale empty URL would undo the fill.
+            sync_settings_changed=Callback::new(move |_: ()| {
+                spawn_local(async move {
+                    let value = invoke("get_settings", JsValue::UNDEFINED).await;
+                    if let Ok(saved) = serde_wasm_bindgen::from_value::<Settings>(value) {
+                        sync_actions_available.set(project_sync_backend_configured(&saved));
+                        settings.update(|form| {
+                            form.sync_backend = saved.sync_backend;
+                            form.sync_relay_url = saved.sync_relay_url;
+                            form.has_sync_relay_token = saved.has_sync_relay_token;
+                        });
+                    }
+                });
+            })
         />
 
         {(!is_windows()).then(|| view! {

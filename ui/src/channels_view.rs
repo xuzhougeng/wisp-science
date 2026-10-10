@@ -71,6 +71,8 @@ pub(super) fn ChannelsPane(
     /// Opens a project and leaves Settings, after the lab's knowledge base
     /// was downloaded.
     on_open_project: Callback<String>,
+    /// Reloads the project sync settings after the lab filled them in.
+    on_sync_settings_changed: Callback<()>,
 ) -> impl IntoView {
     let status = create_rw_signal(None::<ChannelsStatus>);
     let feishu_app_id = create_rw_signal(String::new());
@@ -1182,7 +1184,8 @@ pub(super) fn ChannelsPane(
             </div>
         }.into_view(),
         Some("lab") => view! {
-            <crate::lab_view::LabPane locale=locale on_open_project=on_open_project/>
+            <crate::lab_view::LabPane locale=locale on_open_project=on_open_project
+                on_sync_settings_changed=on_sync_settings_changed/>
         }.into_view(),
         Some(_) => view! { <div></div> }.into_view(),
         None => view! {
