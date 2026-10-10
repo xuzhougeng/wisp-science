@@ -1,0 +1,69 @@
+name: Website
+
+# Checks for the public site in docs/. They read only docs/, skills/ and the
+# two READMEs, so they run when those change and stay out of app-only pull
+# requests. Keep the two path lists identical.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - skills/**
+      - README.md
+      - README_zh.md
+      - ui-tests/website-tests/**
+      - ui-tests/playwright.website.config.ts
+      - ui-tests/package.json
+      - ui-tests/package-lock.json
+      - .github/workflows/website.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - docs/**
+      - skills/**
+      - README.md
+      - README_zh.md
+      - ui-tests/website-tests/**
+      - ui-tests/playwright.website.config.ts
+      - ui-tests/package.json
+      - ui-tests/package-lock.json
+      - .github/workflows/website.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download worker and catalog tests
+        run: |
+          npm ci --prefix docs
+          npm test --prefix docs
+
+      # Fails with the page name when tutorials.html, an article or skills.html
+      # was not regenerated after its source changed.
+      - name: Generated pages match their sources
+        run: |
+          python -m pip install -r docs/requirements-pages.txt
+          python -m unittest discover -s docs -p 'test_build_*.py'
+
+      - name: Build the site
+        run: npm run build --prefix docs
+
+      - name: Browser tests
+        working-directory: ui-tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test --config playwright.website.config.ts
