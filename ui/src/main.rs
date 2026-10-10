@@ -7572,7 +7572,7 @@ fn App() -> impl IntoView {
                         if full_permission_enabled.get_untracked() {
                             show_toast(&t(locale.get_untracked(), "permission.full_already"));
                         } else {
-                            ui_confirm.set(Some(UiConfirm::EnableFullPermission));
+                            ui_confirm.set(Some(UiConfirm::EnableFullPermission(active_session.get_untracked())));
                         }
                     }
                     "ask" => {
@@ -7864,7 +7864,7 @@ fn App() -> impl IntoView {
                 // agent-menu toggle. The backend approves the waiting request
                 // when the mode turns on, so the card stays until then.
                 if scope == "full" {
-                    ui_confirm.set(Some(UiConfirm::EnableFullPermission));
+                    ui_confirm.set(Some(UiConfirm::EnableFullPermission(Some(sid))));
                     return;
                 }
                 route_items(
@@ -14482,6 +14482,24 @@ fn App() -> impl IntoView {
                 {move ||active_archived.get().then(||view!{
                     <div class="archive-readonly" data-testid="archive-readonly"><span>{research_journey::j(locale.get(),"Archived notebook · read only","实验记录本已归档 · 只读")}</span><button class="btn-ghost" on:click=move |_|archive_frame.set(active_session.get_untracked())>{research_journey::j(locale.get(),"View milestone / Continue research","查看归档 / 继续研究")}</button></div>
                 })}
+                {move || (active_subagent.get() && !active_archived.get() && !demo_mode.get()).then(|| view! {
+                    <div class="subagent-permissions" data-testid="subagent-permissions">
+                        <span>{move || t(locale.get(), "subagent.read_only_placeholder")}</span>
+                        <button type="button" class="btn-ghost" data-testid="subagent-full-permission"
+                            aria-pressed=move || full_permission_enabled.get().to_string()
+                            disabled=move || full_permission_busy.get()
+                            title=move || t(locale.get(), "full_permission.confirm_body")
+                            on:click=move |_| {
+                                if full_permission_enabled.get_untracked() {
+                                    disable_full_permission.call(());
+                                } else {
+                                    ui_confirm.set(Some(UiConfirm::EnableFullPermission(active_session.get_untracked())));
+                                }
+                            }>
+                            {move || t(locale.get(), "composer.full_permission")}
+                        </button>
+                    </div>
+                })}
                 {move || next_stopping_session(
                     stopping_session.get(),
                     active_session.get().as_deref(),
@@ -15164,7 +15182,7 @@ fn App() -> impl IntoView {
                                                                 input.set_checked(false);
                                                             }
                                                         }
-                                                        ui_confirm.set(Some(UiConfirm::EnableFullPermission));
+                                                        ui_confirm.set(Some(UiConfirm::EnableFullPermission(active_session.get_untracked())));
                                                         return;
                                                     }
                                                     disable_full_permission.call(());
@@ -18007,7 +18025,7 @@ fn App() -> impl IntoView {
 
         {move || ui_confirm.get().map(|action| {
             let action_ok = action.clone();
-            let is_full_permission = matches!(&action, UiConfirm::EnableFullPermission);
+            let is_full_permission = matches!(&action, UiConfirm::EnableFullPermission(_));
             let is_delete_session = matches!(&action, UiConfirm::DeleteSessions(_));
             let title_key = if is_full_permission {
                 "full_permission.confirm_title"
@@ -18015,7 +18033,7 @@ fn App() -> impl IntoView {
                 "confirm.title"
             };
             let message = match &action {
-                UiConfirm::EnableFullPermission => t(locale.get(), "full_permission.confirm_body").to_string(),
+                UiConfirm::EnableFullPermission(_) => t(locale.get(), "full_permission.confirm_body").to_string(),
                 UiConfirm::DeleteFolder(_) => t(locale.get(), "folder.delete_confirm").to_string(),
                 UiConfirm::DeleteSessions(ids) if ids.len() == 1 => t(locale.get(), "session.delete_confirm").to_string(),
                 UiConfirm::DeleteSessions(ids) => tf(
@@ -18033,7 +18051,7 @@ fn App() -> impl IntoView {
                 UiConfirm::SaveAgentContext => t(locale.get(), "proj_settings.agent_context_confirm").to_string(),
             };
             let action_key = match &action {
-                UiConfirm::EnableFullPermission => "full_permission.confirm_action",
+                UiConfirm::EnableFullPermission(_) => "full_permission.confirm_action",
                 UiConfirm::DeleteFolder(_) => "ctx.delete_folder",
                 UiConfirm::DeleteSessions(_) => "ctx.delete_session",
                 UiConfirm::AbandonExploration(_) => "exploration.abandon",
@@ -18059,11 +18077,11 @@ fn App() -> impl IntoView {
                             let artifact_previews = delete_artifacts.previews.get_untracked();
                             ui_confirm.set(None);
                             match action_ok.clone() {
-                                UiConfirm::EnableFullPermission => {
+                                UiConfirm::EnableFullPermission(target_session) => {
                                     full_permission_busy.set(true);
                                     let loc = locale.get_untracked();
                                     spawn_local(async move {
-                                        let (session_id, created_session) = match active_session.get_untracked() {
+                                        let (session_id, created_session) = match target_session {
                                             Some(session_id) => (session_id, false),
                                             None => {
                                                 let Some(session_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {

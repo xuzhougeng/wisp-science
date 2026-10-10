@@ -3003,11 +3003,16 @@ impl Store {
         if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
             return Box::pin(store.set_session_dispatched_from(frame_id, parent_id)).await;
         }
-        sqlx::query("UPDATE frames SET dispatched_from=? WHERE id=?")
-            .bind(parent_id)
-            .bind(frame_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE frames SET dispatched_from=?, \
+             folder_id=(SELECT parent.folder_id FROM frames parent \
+                        WHERE parent.id=? AND parent.project_id=frames.project_id) WHERE id=?",
+        )
+        .bind(parent_id)
+        .bind(parent_id)
+        .bind(frame_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -3342,11 +3347,13 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         let n = sqlx::query(
             // Move the persisted subtree, including descendants outside the loaded
-            // sidebar page. UNION also terminates malformed cyclic branch links.
+            // sidebar page. Subagents move with their parent just like branches.
+            // UNION also terminates malformed cyclic links.
             "WITH RECURSIVE family(id) AS ( \
                 SELECT id FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id \
                 UNION \
-                SELECT f.id FROM frames f JOIN family ON f.branched_from=family.id \
+                SELECT f.id FROM frames f JOIN family \
+                    ON f.branched_from=family.id OR f.dispatched_from=family.id \
                 WHERE f.project_id=? AND f.parent_frame_id=f.id AND f.exploration_id IS NULL \
              ) UPDATE frames SET folder_id=?, updated_at=? WHERE id IN (SELECT id FROM family)",
         )

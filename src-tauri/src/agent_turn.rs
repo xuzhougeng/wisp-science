@@ -52,7 +52,7 @@ pub(crate) enum TurnOrigin {
 
 impl TurnOrigin {
     pub(crate) fn for_dispatch(self) -> Self {
-        if matches!(self, Self::Im | Self::QueuedUnattended(_)) {
+        if self.force_ask_mutations() {
             Self::Im
         } else {
             Self::Desktop
@@ -333,7 +333,80 @@ pub(crate) async fn send_message_inner(
     workflow_guard: Option<&tokio::sync::OwnedMutexGuard<()>>,
     origin: TurnOrigin,
 ) -> Result<String, String> {
+    send_message_inner_with_continuation(
+        state,
+        app,
+        window_label,
+        session_id,
+        message,
+        attachments,
+        references,
+        resume,
+        acp_agent_id,
+        progress_observer_id,
+        guide,
+        replace,
+        workflow_guard,
+        origin,
+        None,
+    )
+    .await
+}
+
+/// Resume under the parent's existing workflow reservation, without inventing
+/// a human message. Follow-up dispatches retain the original user's authority.
+pub(crate) async fn resume_subagent_parent(
+    state: &AppState,
+    app: AppHandle,
+    parent: &str,
+    continuation: &crate::dispatch::ParentContinuation,
+    workflow_guard: &tokio::sync::OwnedMutexGuard<()>,
+) -> Result<String, String> {
+    if acp::session_agent_id(&state.store, parent).await?.is_some() {
+        return Err("The parent now uses an external agent; its subagent result remains in the conversation.".into());
+    }
+    send_message_inner_with_continuation(
+        state,
+        app,
+        "main",
+        Some(parent.into()),
+        String::new(),
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        Some(workflow_guard),
+        continuation.origin,
+        Some(continuation),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_message_inner_with_continuation(
+    state: &AppState,
+    app: AppHandle,
+    window_label: &str,
+    session_id: Option<String>,
+    message: String,
+    attachments: Option<Vec<String>>,
+    references: Option<Vec<ComposerReferenceArg>>,
+    resume: Option<bool>,
+    acp_agent_id: Option<String>,
+    progress_observer_id: Option<u64>,
+    guide: Option<bool>,
+    replace: Option<bool>,
+    workflow_guard: Option<&tokio::sync::OwnedMutexGuard<()>>,
+    origin: TurnOrigin,
+    continuation: Option<&crate::dispatch::ParentContinuation>,
+) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
+    let authorization = continuation
+        .map(|context| context.authorization.as_str())
+        .unwrap_or(&message);
     // Automatic delegation resume carries an owned workflow guard and uses the
     // synthetic "main" route. It must preserve the window that launched the
     // parent task; every direct/queued user turn may claim its actual window.
@@ -1058,7 +1131,7 @@ pub(crate) async fn send_message_inner(
             // One level only: a subagent starts no subagents of its own, and
             // an exploration's work stays inside its isolated scope.
             if matches!(frame_scope, wisp_store::StateScope::Mainline { .. }) {
-                for tool in subagent_tool::tools(&app, &ap.id, &frame_id) {
+                for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization) {
                     agent.add_tool(tool);
                 }
             }
@@ -1185,7 +1258,14 @@ pub(crate) async fn send_message_inner(
     // The singleton agent is reused by desktop and WeChat; dispatch policy must
     // follow this turn's origin, not whichever client first constructed it.
     if assistant {
-        agent.tools = research_assistant::tools(&app, origin, &message);
+        agent.tools = research_assistant::tools(&app, origin, authorization);
+    } else if agent.tools.get("dispatch_subagent").is_some() {
+        // Cached agents use the current user's request, or the host-captured
+        // original request during a child's automatic return. A generated
+        // continuation must never become fresh user authorization.
+        for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization) {
+            agent.tools.replace(tool);
+        }
     }
     let (auto_continue, auto_continue_limit) = load_auto_continue_settings(&state.store).await;
     apply_live_agent_settings(
@@ -1383,6 +1463,14 @@ pub(crate) async fn send_message_inner(
         agent.ctx.inject_user(
             "An active isolated exploration has frozen project state for possible promotion. This separate mainline conversation remains available for normal discussion and read-only inspection, but project-mutating tools are unavailable. Do not attempt to write files, run commands or jobs, change project records, or call mutating external tools until the exploration round finishes.",
         );
+    }
+    if let Some(continuation) = continuation {
+        // Runtime-only context is not persisted as a new user message, and is
+        // never used as the authority for reviewing another child's request.
+        agent.ctx.inject_user(continuation.prompt.clone());
+        if let Some(compute) = ssh_hosts::stored_compute_section(&state.store, &frame_id).await {
+            agent.ctx.inject_user(compute);
+        }
     }
     if !resume {
         if assistant {

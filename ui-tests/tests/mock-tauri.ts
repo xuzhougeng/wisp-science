@@ -245,8 +245,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
         ]
     : query.get("mockSubagent") === "1"
       ? [
-          { id: "subagent-parent", title: "Main analysis", ts: 2100, running: false },
+          { id: "subagent-parent", title: "Main analysis", ts: 2100, running: false, folder_id: query.get("mockSubagentFolder") === "1" ? "subagent-folder" : null,
+            branched_from: query.get("mockSubagentParentBranch") === "1" ? "subagent-root" : null },
           { id: "subagent-child", title: "Align the reads", ts: 2090, running: false, dispatched_from: "subagent-parent" },
+          ...(query.get("mockSubagentParentBranch") === "1" ? [{ id: "subagent-root", title: "Original analysis", ts: 2080, running: false }] : []),
         ]
     : mockPlanFlow
     ? [{ id: "s1", title: "Plan mode regression", ts: 2000, running: false }]
@@ -399,7 +401,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     last_active_at: 1752000000 - index,
     state: "new",
   }));
-  const mockFolders: Array<{ id: string; name: string }> = [];
+  const mockFolders: Array<{ id: string; name: string }> = query.get("mockSubagentFolder") === "1"
+    ? [{ id: "subagent-folder", name: "Analysis" }]
+    : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {

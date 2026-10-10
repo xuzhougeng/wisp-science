@@ -733,6 +733,81 @@ async fn subagent_conversations_stay_listed_and_remember_their_parent() {
 }
 
 #[tokio::test]
+async fn subagents_inherit_folders_and_move_with_the_persisted_family() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subagent-folders.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    for project in ["p", "other"] {
+        store.create_project(project, project, "").await.unwrap();
+    }
+    for folder in ["a", "b"] {
+        store.create_folder(folder, "p", folder).await.unwrap();
+    }
+    for (id, project) in [
+        ("parent", "p"),
+        ("sub", "p"),
+        ("branch", "p"),
+        ("unrelated", "p"),
+        ("foreign", "other"),
+    ] {
+        store
+            .create_frame(id, project, "OPERON", "m")
+            .await
+            .unwrap();
+        store.rename_session(id, project, id).await.unwrap();
+    }
+    store
+        .move_session_to_folder("parent", "p", Some("a"))
+        .await
+        .unwrap();
+    store
+        .set_session_dispatched_from("sub", "parent")
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_sessions("p")
+            .await
+            .unwrap()
+            .iter()
+            .find(|s| s.0 == "sub")
+            .unwrap()
+            .3
+            .as_deref(),
+        Some("a")
+    );
+    store
+        .set_session_branched_from("branch", "sub")
+        .await
+        .unwrap();
+    store
+        .set_session_dispatched_from("foreign", "parent")
+        .await
+        .unwrap();
+    store.set_session_pinned("sub", "p", true).await.unwrap();
+    for folder in [Some("b"), None, Some("a")] {
+        store
+            .move_session_to_folder("parent", "p", folder)
+            .await
+            .unwrap();
+        let reopened = Store::open(&path).await.unwrap();
+        for row in reopened.list_sessions("p").await.unwrap() {
+            assert_eq!(
+                row.3.as_deref(),
+                if row.0 == "unrelated" { None } else { folder },
+                "{}",
+                row.0
+            );
+        }
+        assert!(reopened.list_sessions("other").await.unwrap()[0]
+            .3
+            .is_none());
+        reopened.pool.close().await;
+    }
+    store.pool.close().await;
+}
+
+#[tokio::test]
 async fn child_agent_frames_stay_out_of_top_level_session_history() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_child_frames_{}.sqlite",
