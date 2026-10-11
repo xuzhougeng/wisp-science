@@ -283,6 +283,13 @@ html[data-lang="en"]:not(.i18n-ready) [data-i18n-html] {
   text-wrap: balance;
 }
 
+.community-milestones .milestone-period {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .milestone-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

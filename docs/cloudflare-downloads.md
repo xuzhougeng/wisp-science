@@ -6,11 +6,17 @@ and hero download buttons scroll to that section without leaving the homepage.
 Users choose their operating system, processor and format in Chinese or English.
 The old `download.html` URL redirects to the homepage section, preserving language.
 
-The homepage also displays cumulative community milestones since the first v0.1
-release: 19K downloads, 50K+ reads of related tutorials and articles, and 1,000+
-GitHub Stars. These are maintainer-provided milestones, not live API counters.
-Update the values in `docs/index.html` when new milestones are confirmed; the
-Chinese and English labels live in `docs/assets/i18n.js`. The Stars label links
+The homepage also displays cumulative community milestones from 2026-07-02 to
+2026-10-11: 19K downloads, 50K+ reads of related tutorials and articles, and 1,000+
+GitHub Stars within 101 elapsed calendar days. The start date is the publication
+date of [v0.1.0](https://github.com/xuzhougeng/wisp-science/releases/tag/v0.1.0)
+(`published_at: 2026-07-02T09:26:52Z`); the end date is the milestone snapshot date.
+These are maintainer-provided milestones, not live API counters. The date range
+and duration stay fixed with the snapshot instead of increasing every day.
+Update the dates and values in `docs/index.html` when new milestones are confirmed,
+along with the duration in both Chinese and English in `docs/assets/i18n.js`.
+The duration is the difference between the two dates, excluding the start day.
+The Stars label links
 to the repository's stargazers. The three metrics remain visible on mobile and
 without JavaScript.
 
