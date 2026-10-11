@@ -269,6 +269,49 @@ html[data-lang="en"]:not(.i18n-ready) [data-i18n-html] {
   margin-bottom: 56px;
 }
 
+.community-milestones {
+  max-width: 800px;
+  margin: 0 auto 40px;
+  padding: 24px 0;
+  border-block: 1px solid var(--border);
+}
+
+.community-milestones > p {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-wrap: balance;
+}
+
+.milestone-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.milestone-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 16px;
+}
+
+.milestone-stats > div + div { border-left: 1px solid var(--border); }
+.milestone-stats dt { color: var(--text-muted); font-size: 13px; }
+.milestone-stats dt a { text-decoration: underline; text-underline-offset: 4px; }
+.milestone-stats dt a:hover { color: var(--clay); }
+.milestone-stats dt a:focus-visible { outline: 2px solid var(--clay); outline-offset: 4px; }
+.milestone-stats dd {
+  order: -1;
+  margin: 0;
+  color: var(--clay);
+  font-size: clamp(1.6rem, 4vw, 2.5rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  letter-spacing: -0.03em;
+}
+
 .hero-visual {
   position: relative;
   max-width: 960px;
@@ -1362,6 +1405,10 @@ code.ev-text { font-size: 12.5px; color: #334155; }
     margin-bottom: 32px;
   }
   .doc-page .hero-actions { align-items: stretch; }
+  .community-milestones { margin-bottom: 28px; padding: 20px 0; }
+  .milestone-stats > div { padding: 0 6px; }
+  .milestone-stats dt { font-size: 12px; overflow-wrap: anywhere; }
+  .milestone-stats dd { font-size: clamp(1.25rem, 6vw, 1.6rem); }
   .hero-actions .btn {
     width: 100%;
     min-height: 48px;

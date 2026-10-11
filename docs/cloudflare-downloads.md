@@ -6,6 +6,14 @@ and hero download buttons scroll to that section without leaving the homepage.
 Users choose their operating system, processor and format in Chinese or English.
 The old `download.html` URL redirects to the homepage section, preserving language.
 
+The homepage also displays cumulative community milestones since the first v0.1
+release: 19K downloads, 50K+ reads of related tutorials and articles, and 1,000+
+GitHub Stars. These are maintainer-provided milestones, not live API counters.
+Update the values in `docs/index.html` when new milestones are confirmed; the
+Chinese and English labels live in `docs/assets/i18n.js`. The Stars label links
+to the repository's stargazers. The three metrics remain visible on mobile and
+without JavaScript.
+
 Installer downloads and the release manifest use the Cloudflare Worker at
 `https://wisp-science.sfl.bio` and its private `wisp-science-downloads` R2 bucket.
 GitHub Releases remains the fallback and the home for older releases.

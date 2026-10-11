@@ -55,6 +55,9 @@ const WISP_PAGES_I18N = {
     "hero.download": "下载桌面安装包",
     "hero.source": "从源码构建",
     "hero.quickStart": "快速开始",
+    "milestones.heading": "从 v0.1 首次发布至今，感谢每一份使用、分享与支持。",
+    "milestones.downloads": "累计下载",
+    "milestones.reads": "相关教程与文章阅读",
     "hero.mockUser": "检索 PubMed 上 CRISPR 筛选的最新方法，并画一张流程图。",
     "hero.mockAssistant":
       "已检索 12 篇候选文献，并整理为带来源的报告。绘图代码与结果已保存到项目中。",
@@ -389,6 +392,9 @@ const WISP_PAGES_I18N = {
     "hero.download": "Download the desktop app",
     "hero.source": "Build from source",
     "hero.quickStart": "Quick Start",
+    "milestones.heading": "From the first v0.1 release to today, thank you for using, sharing, and supporting Wisp Science.",
+    "milestones.downloads": "Total downloads",
+    "milestones.reads": "Reads of tutorials & articles",
     "hero.mockUser": "Search PubMed for recent CRISPR screen methods and draft a flowchart.",
     "hero.mockAssistant":
       "Called mcp_pubmed on 12 papers and drafted a Markdown report plus Python plotting code. Tables and equations are already extracted as artifacts.",
