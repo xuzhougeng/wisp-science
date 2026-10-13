@@ -10,6 +10,8 @@ struct AttachedPhoto: Identifiable {
     let data: Data
 }
 
+enum QuestionSubmission: Equatable { case sent, uncertain }
+
 enum WorkspaceSheet: Identifiable {
     case connection, inbox, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
@@ -58,6 +60,7 @@ enum WorkspaceSheet: Identifiable {
     @Published var drafts: [ConversationRoute: String] = [:]
     @Published var photos: [ConversationRoute: [AttachedPhoto]] = [:]
     @Published var busy: Set<ConversationRoute> = []
+    @Published private(set) var questionSubmissions: [String: QuestionSubmission] = [:]
     @Published var loadingEarlier = false
     @Published var creating = false
     var visibleRoute: ConversationRoute?
@@ -185,7 +188,7 @@ enum WorkspaceSheet: Identifiable {
         selectedProject = nil; selectedSession = nil
         projects = []; sessions = []; inbox = []; drafts = [:]; photos = [:]
         busy = []; loadingEarlier = false; creating = false
-        history = RemoteHistory(); seen = []; error = nil
+        history = RemoteHistory(); seen = []; error = nil; questionSubmissions = [:]
     }
 
     func cachedRead(_ command: String, project: String? = nil, args: [String: RemoteValue] = [:]) async -> RemoteReadCache.Entry? {
@@ -358,6 +361,53 @@ enum WorkspaceSheet: Identifiable {
             await refreshSelection()
         } catch { if self.identity == identity { self.error = error.localizedDescription } }
     }
+    func question(at index: Int, item: RemoteValue) -> RemoteQuestion? {
+        let items = history.older + (snapshot?.items ?? [])
+        let offset = index + history.older.count
+        guard items.indices.contains(offset), items[offset] == item else { return nil }
+        return RemoteQuestion(item, hasLaterUser: items.dropFirst(offset + 1).contains { $0["role"].string == "user" })
+    }
+
+    func questionID(at index: Int, item: RemoteValue, route: ConversationRoute) -> String {
+        RemoteReadCache.key(scope: snapshot?.epoch ?? "", command: "question", project: route.project,
+            args: route.args.merging(["index": .integer(Int64(index)), "before": snapshot?.before ?? .null, "item": item]) { _, v in v })
+    }
+
+    func canAnswerQuestion(at index: Int, item: RemoteValue, route: ConversationRoute) -> Bool {
+        guard canActOnSnapshot, self.route == route, let snapshot, snapshot.writable, !snapshot.running,
+              !busy.contains(route), connection.supports("native_conversation_send"),
+              let question = question(at: index, item: item), question.isNative, question.state == .pending else { return false }
+        return questionSubmissions[questionID(at: index, item: item, route: route)] == nil
+    }
+
+    func answerQuestion(at index: Int, item: RemoteValue, id: String, route: ConversationRoute,
+                        option: Int?, freeform: String) async {
+        guard id == questionID(at: index, item: item, route: route),
+              canAnswerQuestion(at: index, item: item, route: route),
+              let answer = question(at: index, item: item)?.answer(option: option, freeform: freeform) else { return }
+        let identity = self.identity
+        busy.insert(route)
+        defer { if self.identity == identity { busy.remove(route) } }
+        do {
+            // Keep the composer's draft and attachments untouched. This answer
+            // is a separate user message and is never queued or auto-replayed.
+            _ = try await connection.call("native_conversation_send", project: route.project,
+                args: route.args.merging(["request_id": .string(UUID().uuidString), "message": .string(answer),
+                                         "attachments": .array([])]) { _, v in v })
+            guard self.identity == identity else { return }
+            questionSubmissions[id] = .sent
+            if self.route == route { try await refreshConversation() }
+            if isDemo { try await refreshSidebar() }
+        } catch {
+            guard self.identity == identity else { return }
+            if questionSubmissions[id] == nil,
+               let remote = error as? RemoteError, [.outcomeUnknown, .disconnected].contains(remote) {
+                questionSubmissions[id] = .uncertain
+            }
+            self.error = error.localizedDescription
+        }
+    }
+
     func send(_ route: ConversationRoute) async {
         guard canActOnSnapshot, self.route == route, let snapshot, snapshot.writable, !busy.contains(route) else { return }
         let identity = self.identity

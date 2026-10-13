@@ -365,6 +365,54 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["批准一次"].waitForExistence(timeout: 5))
     }
 
+    func testDemoQuestionChoiceAndFreeformSubmitWithoutRemote() {
+        verifyDemoQuestion(darkAndLarge: false)
+    }
+
+    func testDemoQuestionWithDarkAppearanceAndAccessibilityText() {
+        verifyDemoQuestion(darkAndLarge: true)
+    }
+
+    private func verifyDemoQuestion(darkAndLarge: Bool) {
+        let app = launch("connection", darkAndLarge: darkAndLarge)
+        XCTAssertTrue(app.buttons["enter-demo"].waitForExistence(timeout: 5))
+        app.buttons["enter-demo"].tap()
+        XCTAssertTrue(app.staticTexts["RNA-seq 质控 · 演示"].firstMatch.waitForExistence(timeout: 5))
+        app.staticTexts["RNA-seq 质控 · 演示"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["问题与选项"].firstMatch.waitForExistence(timeout: 5))
+        app.staticTexts["问题与选项"].firstMatch.tap()
+        let submit = app.buttons["question-submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled, "No option is silently preselected")
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "End your turn here")).firstMatch.exists)
+        let choice = app.buttons["question-option-2"]
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<12 { if choice.isHittable { break }; scroll.swipeDown() }
+        XCTAssertTrue(choice.isHittable)
+        choice.tap()
+        XCTAssertEqual(choice.value as? String, "已选择")
+        choice.tap()
+        XCTAssertFalse(submit.isEnabled, "A choice can be cleared before submitting")
+        choice.tap()
+        let note = app.descendants(matching: .any).matching(identifier: "question-freeform").firstMatch
+        for _ in 0..<12 { if note.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(note.isHittable)
+        note.tap(); note.typeText("重点检查 Q30")
+        for _ in 0..<12 { if submit.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+        let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已收到你的演示回答")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["question-submit"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "补充说明：重点检查 Q30")).firstMatch.exists)
+        for _ in 0..<12 {
+            if app.staticTexts["question-status"].isHittable { break }
+            scroll.swipeDown()
+        }
+        XCTAssertEqual(app.staticTexts["question-status"].label, "已回答")
+        XCTAssertFalse(app.staticTexts["workspace-error"].exists)
+    }
+
     func testDemoBannerDoesNotOverlapNavigationAcrossColumns() {
         verifyDemoBannerLayout(darkAndLarge: false)
     }

@@ -24,7 +24,7 @@ import WispRemote
         XCTAssertEqual(model.projects.count, 1)
         model.selectedProject = route.project; model.selectedSession = route.session
         await model.refreshSelection()
-        XCTAssertEqual(model.sessions.count, 2)
+        XCTAssertEqual(model.sessions.count, 3)
         XCTAssertTrue(model.snapshotIsCached)
         XCTAssertFalse(model.canActOnSnapshot)
         XCTAssertEqual(model.snapshot?.value["approvals"].array.count, 1)
