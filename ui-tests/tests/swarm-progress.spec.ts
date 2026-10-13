@@ -42,6 +42,7 @@ test('map swarm shows real phases and keeps the selected assistant live', async 
   await emit(page, { ...progress, revision: 3, phase: 'running', tasks: [task('a', 'running', 3), task('b', 'running', 3)] });
   await expect(dock).toContainText('2 working');
   const worker = panel.locator('[data-task-id="a"]');
+  await expect(worker).toHaveAttribute('aria-pressed', 'false');
   await worker.click();
   await expect(panel.getByTestId('swarm-task-detail')).toContainText('Extract methods');
   await emit(page, { ...progress, revision: 4, phase: 'running', tasks: [{ ...task('a', 'running', 4), log: ['read: papers/a.txt', 'Extracting study design'] }] });
@@ -55,6 +56,7 @@ test('map swarm shows real phases and keeps the selected assistant live', async 
   await page.keyboard.press('Escape');
   await expect(panel.getByTestId('swarm-task-detail')).toHaveCount(0);
   await expect(panel).toBeVisible();
+  await expect(worker).toHaveAttribute('aria-pressed', 'false');
 
   await emit(page, { ...progress, revision: 6, phase: 'summarizing', tasks: [task('b', 'completed', 6), task('c', 'completed', 6)] });
   await expect(panel).toHaveClass(/swarm-gathering/);
@@ -67,6 +69,26 @@ test('map swarm shows real phases and keeps the selected assistant live', async 
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
   await expect(dock).toBeVisible();
+});
+
+test('swarm typography follows the UI font size on desktop and narrow screens', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wisp-ui-font-size', '21'));
+  await open(page);
+  await emit(page, batch());
+  const dock = page.getByTestId('swarm-dock');
+  await expect(dock.locator('.swarm-dock-copy strong')).toHaveCSS('font-size', '19.5px');
+  await expect(dock.locator('.swarm-stages li').first()).toHaveCSS('font-size', '18px');
+  await dock.getByRole('button').click();
+  const panel = page.getByTestId('swarm-window');
+  await expect(panel.locator('h2')).toHaveCSS('font-size', '27px');
+  await expect(panel.locator('.swarm-worker-copy strong').first()).toHaveCSS('font-size', '18px');
+  await expect(panel.locator('.swarm-worker-copy small').first()).toHaveCSS('font-size', '16.5px');
+  await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCSS('font-size', '18px');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel.locator('.swarm-roster-footer small')).toHaveCSS('font-size', '15px');
+  await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCSS('font-size', '16.5px');
+  await expect(panel.locator('.swarm-stages li').first()).toHaveCSS('font-size', '16.5px');
+  expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
 for (const source of ['reader', 'explore']) {

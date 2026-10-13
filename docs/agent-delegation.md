@@ -128,7 +128,9 @@ summary. The animation follows actual execution events; it does not estimate
 completion time or invent a percentage. Select a task to read its instruction,
 recent tool/progress observations, and result preview. Reader groups transcript
 chunks by saved conversation and shows completed/total chunks for each one.
-Private model reasoning is not included.
+Private model reasoning is not included. The selected assistant is highlighted
+and exposed as selected to assistive technology. Text follows the global UI font
+size setting on both desktop and narrow windows.
 
 Completed, failed, queued, paused, and stopped tasks have separate states.
 **Stop this turn** uses the existing conversation cancellation; closing the
@@ -158,7 +160,9 @@ items and a reduce step; open the card immediately, inspect a running task,
 press Escape twice, and reopen it during reduce. Repeat with one unreadable
 input and with Stop/resume. Attach a few saved sessions to verify Reader
 progress appears before the primary response. Check a narrow window, dark
-theme, reduced motion, and switching away/back while tasks are running.
+theme, reduced motion, a larger UI font size, and switching away/back while tasks
+are running. Select a worker and return to the overview; its selected state
+should clear without closing the window.
 
 1. Open the composer Agent menu and enable **Delegation** for the current
    conversation. New conversations start with delegation off.

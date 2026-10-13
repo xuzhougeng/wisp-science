@@ -185,7 +185,7 @@ fn WorkerRow(
     let data_id = id.clone();
     view! {
         <button type="button" class="swarm-worker" data-testid="swarm-worker" data-task-id=data_id
-            aria-pressed=move || state.selected.get().as_deref() == Some(selected_id.as_str())
+            aria-pressed=move || (state.selected.get().as_deref() == Some(selected_id.as_str())).to_string()
             data-status=move || task.get().map(|t| status_name(t.status)).unwrap_or("queued")
             on:click=move |_| state.selected.set(Some(id.clone()))>
             <span class="swarm-avatar">{compose_icon("bot")}</span>
