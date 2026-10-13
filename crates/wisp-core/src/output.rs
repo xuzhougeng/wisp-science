@@ -267,6 +267,9 @@ impl<'a> ToolEnvAdapter<'a> {
 
 #[async_trait::async_trait]
 impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
+    fn publish_progress(&self, kind: &str, payload: &Value) {
+        self.out.tool_presentation(kind, payload, None);
+    }
     fn project_root(&self) -> &std::path::Path {
         &self.root
     }

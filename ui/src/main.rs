@@ -4,8 +4,7 @@ mod app_overlays;
 mod assistant_remote;
 mod assistant_workspace;
 mod automation;
-mod mandates;
-mod bindings;
+mod mandates;mod bindings;
 mod channels_view;
 mod chat_find;
 mod chat_render;
@@ -34,6 +33,7 @@ mod settings_view;
 mod sidebar;
 mod skill_detail;
 mod skill_store;
+mod swarm;
 mod text;
 mod trajectory;
 mod window_titlebar;
@@ -2244,6 +2244,12 @@ fn App() -> impl IntoView {
         }
     });
     let agent_panel = AgentPanelState::new(active_session);
+    let swarm_state = swarm::SwarmViewState::new();
+    create_effect(move |_| {
+        if let Some(id) = active_session.get() {
+            swarm::refresh(swarm_state, id);
+        }
+    });
     let workflow_studio_state = AgentPanelState::new(active_session);
     let workflow_conversion = workflow_conversion::ConversionState::new(project_info);
     provide_context(workflow_conversion);
@@ -3727,7 +3733,11 @@ fn App() -> impl IntoView {
                 presentation_kind,
                 payload,
             } => {
-                if presentation_kind == "app_prefs" {
+                if presentation_kind == SWARM_PRESENTATION {
+                    if let Ok(progress) = serde_json::from_value::<SwarmProgress>(payload) {
+                        swarm_state.accept(&frame_id, progress);
+                    }
+                } else if presentation_kind == "app_prefs" {
                     apply_prefs_patch(
                         &parse_app_prefs_payload(&payload),
                         theme_mode,
@@ -10141,6 +10151,11 @@ fn App() -> impl IntoView {
             return;
         }
 
+        if swarm_state.escape() {
+            ev.prevent_default();
+            return;
+        }
+
         // The inline task form closes before its page.
         if assistant_automation_form.get() {
             ev.prevent_default();
@@ -12224,6 +12239,8 @@ fn App() -> impl IntoView {
         />
 
         <style>{include_str!("styles/session_timer.css")}</style>
+        <style>{include_str!("styles/swarm.css")}</style>
+        <swarm::SwarmOverlay state=swarm_state session=active_session locale=locale/>
         {move || timer_open.get().then(|| active_session.get().map(|id| view! {
             <session_timer::SessionTimerPanel locale=locale session_id=id timer=session_timer active_session=active_session refresh=timer_refresh on_close=Callback::new(move |_| timer_open.set(false))/>
         }))}
@@ -14254,6 +14271,9 @@ fn App() -> impl IntoView {
                 })
             })}
 
+            <div class:center-hidden=move || center_file_open.get() && !center_split.get()>
+                <swarm::SwarmDock state=swarm_state session=active_session locale=locale/>
+            </div>
             <div class="composer"
                 class:center-hidden=move || center_file_open.get() && !center_split.get()
                 class:demo-read-only=move || demo_mode.get()>
@@ -16680,6 +16700,7 @@ fn App() -> impl IntoView {
                                 refresh_agent_resources(workflow_studio_state, specialists);
                             }),
                             load_session,
+                            swarm_state.open,
                         ).into_view(),
                         RightTab::Notebook => {
                             view! {

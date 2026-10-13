@@ -179,6 +179,9 @@ impl ConfirmDecision {
 #[async_trait]
 pub trait ToolEnv: Send + Sync {
     fn project_root(&self) -> &Path;
+    /// Synchronous, host-only progress from nested workers. It never becomes
+    /// model input; headless environments may ignore it.
+    fn publish_progress(&self, _kind: &str, _payload: &serde_json::Value) {}
     /// Restrict read/search paths to the project root. Main Agents keep the
     /// legacy unrestricted default; delegated environments opt in.
     fn restrict_read_paths_to_project(&self) -> bool {

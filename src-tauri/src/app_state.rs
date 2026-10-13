@@ -628,6 +628,7 @@ pub(crate) struct AppState {
     /// grouped by project and plugin id so Settings can explain why an enabled
     /// plugin contributed no tools to a new session.
     pub(crate) plugin_runtime_errors: StdMutex<HashMap<String, HashMap<String, Vec<String>>>>,
+    pub(crate) swarm_progress: crate::swarm_progress::SwarmCache,
     /// Session ids with an in-flight manual or automatic review. Reviews in
     /// unrelated conversations remain independent.
     pub(crate) reviewing: Arc<StdMutex<HashSet<String>>>,

@@ -568,9 +568,15 @@ async fn send_message_inner_with_continuation(
         if let Some(context) = runtime.mcp_app_context_injection() {
             injected_context.push(context);
         }
-        if let Some(injection) =
-            resolve_reader_references(&state.store, refs, &frame_id, &message, &runtime.cancel)
-                .await?
+        if let Some(injection) = swarm_progress::read_references(
+            &app,
+            &state.store,
+            refs,
+            &frame_id,
+            &message,
+            &runtime.cancel,
+        )
+        .await?
         {
             injected_context.push(injection);
         }
@@ -1545,8 +1551,15 @@ async fn send_message_inner_with_continuation(
         {
             agent.ctx.inject_user(injection);
         }
-        if let Some(injection) =
-            resolve_reader_references(&state.store, &refs, &frame_id, &message, &rt.cancel).await?
+        if let Some(injection) = swarm_progress::read_references(
+            &app,
+            &state.store,
+            &refs,
+            &frame_id,
+            &message,
+            &rt.cancel,
+        )
+        .await?
         {
             agent.ctx.inject_user(injection);
         }

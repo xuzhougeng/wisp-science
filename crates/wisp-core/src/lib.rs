@@ -15,6 +15,7 @@ pub mod output;
 pub mod provenance;
 pub mod session_locks;
 pub mod subagent;
+pub mod swarm;
 pub mod system_prompt;
 pub mod workflow_conversion;
 

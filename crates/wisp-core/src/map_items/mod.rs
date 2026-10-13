@@ -26,6 +26,7 @@ use crate::agent::agent_loop;
 use crate::context::ContextManager;
 use crate::delegation::{matches_json_contract, MAX_AGENT_OUTPUT_SCHEMA_BYTES};
 use crate::output::Output;
+use crate::swarm::{SwarmOutput, SwarmReporter};
 use async_trait::async_trait;
 use decide::{Thresholds, Verdict};
 use futures_util::StreamExt;
@@ -39,6 +40,7 @@ use std::time::{Duration, Instant};
 use store::{
     DecideSpec, Item, Manifest, ReduceSpec, Row, RowStatus, RunDir, RunStatus, Spec, WorkerSpec,
 };
+use wisp_dto::{SwarmPhase, SwarmTask, SwarmTaskStatus};
 use wisp_llm::systemone::{self, Answer, Decisions, Question};
 use wisp_llm::{
     is_retriable, LlmError, Message, Provider, ProviderConfig, Role, ToolSchema, Usage,
@@ -150,12 +152,23 @@ where
 /// Sums the per-round usage a nested agent loop reports, and keeps its file
 /// reads inside the project root.
 #[derive(Default)]
-struct Meter {
+struct Meter<'a, 'b> {
     input: AtomicU64,
     output: AtomicU64,
+    progress: Option<SwarmOutput<'a, 'b>>,
 }
 
-impl Output for Meter {
+impl Output for Meter<'_, '_> {
+    fn tool_call(&self, name: &str, preview: &str) {
+        if let Some(progress) = &self.progress {
+            progress.tool_call(name, preview);
+        }
+    }
+    fn tool_result(&self, name: &str, ok: bool, content: &str, duration_ms: u64) {
+        if let Some(progress) = &self.progress {
+            progress.tool_result(name, ok, content, duration_ms);
+        }
+    }
     fn usage(
         &self,
         _round: usize,
@@ -517,6 +530,7 @@ impl MapItemsTool {
         item: &Item,
         text: &str,
         env: &dyn ToolEnv,
+        progress: &SwarmReporter<'_>,
     ) -> Result<(Value, Usage), Fail> {
         let provider = self
             .provider_for(worker.model.as_deref())
@@ -530,7 +544,13 @@ impl MapItemsTool {
             let tools = Registry::builtins().filtered(&worker.tools);
             let mut ctx = ContextManager::new(self.max_context);
             ctx.append_system(WORKER_SYSTEM);
-            let meter = Meter::default();
+            let meter = Meter {
+                progress: Some(SwarmOutput {
+                    reporter: progress,
+                    task_id: &item.id,
+                }),
+                ..Meter::default()
+            };
             let result = agent_loop(
                 &mut ctx,
                 provider.as_ref(),
@@ -601,18 +621,21 @@ impl MapItemsTool {
         row: &mut Row,
         pin: &Mutex<Option<String>>,
         env: &dyn ToolEnv,
+        progress: &SwarmReporter<'_>,
     ) -> Result<(), Fail> {
         let needs_worker = spec.worker.is_some() && row.data.is_none();
         let needs_text = needs_worker || spec.worker.is_none();
         let mut text = String::new();
         if needs_text {
+            progress.note(&item.id, "Reading the input");
             let (loaded, chars, truncated) = items::load_text(item, spec.max_chars, env)
                 .await
                 .map_err(Fail::Item)?;
             (text, row.chars, row.truncated) = (loaded, chars, truncated);
         }
         if let (true, Some(worker)) = (needs_worker, &spec.worker) {
-            let (data, usage) = self.run_worker(worker, item, &text, env).await?;
+            progress.note(&item.id, "Processing with the worker model");
+            let (data, usage) = self.run_worker(worker, item, &text, env, progress).await?;
             row.data = Some(data);
             row.tokens_in = usage.input_tokens;
             row.tokens_out = usage.output_tokens;
@@ -631,6 +654,7 @@ impl MapItemsTool {
                 }),
             },
         };
+        progress.note(&item.id, "Evaluating the extracted result");
         let decisions = self.ask_jev(decide, &state, pin, env).await?;
         row.scores.clear();
         row.answers.clear();
@@ -657,6 +681,7 @@ impl MapItemsTool {
         prior: Option<Row>,
         pin: &Mutex<Option<String>>,
         env: &dyn ToolEnv,
+        progress: &SwarmReporter<'_>,
     ) -> Option<(Row, bool)> {
         let started = Instant::now();
         let mut row = Row {
@@ -680,7 +705,7 @@ impl MapItemsTool {
             row.data = prior.data;
             (row.chars, row.truncated) = (prior.chars, prior.truncated);
         }
-        let outcome = self.steps(spec, item, &mut row, pin, env).await;
+        let outcome = self.steps(spec, item, &mut row, pin, env, progress).await;
         row.ms = started.elapsed().as_millis() as u64;
         let service_failed = match outcome {
             Ok(()) => {
@@ -1120,6 +1145,51 @@ impl Tool for MapItemsTool {
                 .as_ref()
                 .is_some_and(|d| !d.dir.join("reduce.md").exists() || thresholds_changed);
 
+        let instruction = spec
+            .worker
+            .as_ref()
+            .map(|worker| worker.instruction.as_str())
+            .unwrap_or("Evaluate each item");
+        let worker_model = spec
+            .worker
+            .as_ref()
+            .and_then(|worker| worker.model.as_deref())
+            .unwrap_or(self.provider.model());
+        let progress = SwarmReporter::for_tool("map_items", instruction, worker_model, env);
+        let pending_ids: HashSet<&str> = pending.iter().map(|item| item.id.as_str()).collect();
+        progress.tasks(
+            manifest
+                .items
+                .iter()
+                .map(|item| {
+                    let mut task = SwarmTask::queued(
+                        item.id.clone(),
+                        crate::swarm::clip(&item.id, 160),
+                        crate::swarm::clip(instruction, 2_000),
+                        1,
+                    );
+                    if !pending_ids.contains(item.id.as_str()) {
+                        if let Some(row) = rows.get(&item.id) {
+                            task.status = if row.status == RowStatus::Ok {
+                                SwarmTaskStatus::Completed
+                            } else {
+                                SwarmTaskStatus::Failed
+                            };
+                            task.completed_units = 1;
+                            task.failed_units = usize::from(row.status == RowStatus::Failed);
+                            task.result = crate::swarm::clip(
+                                &serde_json::to_string_pretty(row).unwrap_or_default(),
+                                8_000,
+                            );
+                            task.log.push("Restored from the saved run".into());
+                        }
+                    }
+                    task
+                })
+                .collect(),
+            worker_model,
+        );
+
         // ---- one approval, before anything is written or spent
         if (!pending.is_empty() || reduce_due) && !env.approval_bypass() {
             let message = approval_message(
@@ -1132,6 +1202,7 @@ impl Tool for MapItemsTool {
                 &root,
             );
             if !env.confirm(&message).await {
+                progress.phase(SwarmPhase::Cancelled, "The batch was not approved.");
                 return ToolResult::fail("map_items was denied by the user").stop_batch();
             }
         }
@@ -1139,11 +1210,18 @@ impl Tool for MapItemsTool {
             Some(dir) => dir,
             None => match RunDir::create(&root, &manifest) {
                 Ok(dir) => dir,
-                Err(error) => return ToolResult::fail(format!("cannot create the run: {error}")),
+                Err(error) => {
+                    progress.phase(
+                        SwarmPhase::Failed,
+                        &format!("cannot create the run: {error}"),
+                    );
+                    return ToolResult::fail(format!("cannot create the run: {error}"));
+                }
             },
         };
 
         // ---- map: bounded concurrency, results appended as they arrive
+        progress.phase(SwarmPhase::Running, "");
         let started = Instant::now();
         let deadline = started + Duration::from_secs(spec.max_minutes * 60);
         let stop = AtomicBool::new(false);
@@ -1160,12 +1238,13 @@ impl Tool for MapItemsTool {
                 .collect();
             let mut stream = futures_util::stream::iter(work)
                 .map(|(item, prior)| {
-                    let (spec, stop, pin) = (&spec, &stop, &pin);
+                    let (spec, stop, pin, progress) = (&spec, &stop, &pin, &progress);
                     async move {
                         if stop.load(Ordering::SeqCst) || env.is_cancelled() {
                             return None;
                         }
-                        self.process(spec, &item, prior, pin, env).await
+                        progress.task(&item.id, |task| task.status = SwarmTaskStatus::Running);
+                        self.process(spec, &item, prior, pin, env, progress).await
                     }
                 })
                 .buffer_unordered(spec.concurrency);
@@ -1178,11 +1257,27 @@ impl Tool for MapItemsTool {
                     continue;
                 };
                 if let Err(error) = dir.append_row(&row) {
+                    progress.task(&row.item, |task| {
+                        task.status = SwarmTaskStatus::Failed;
+                        task.log.push(format!("Could not save the result: {error}"));
+                    });
                     stop.store(true, Ordering::SeqCst);
                     stop_reason.get_or_insert_with(|| format!("cannot write rows: {error}"));
                     continue;
                 }
                 done += 1;
+                progress.task(&row.item, |task| {
+                    task.status = if row.status == RowStatus::Ok {
+                        SwarmTaskStatus::Completed
+                    } else {
+                        SwarmTaskStatus::Failed
+                    };
+                    task.completed_units = 1;
+                    task.failed_units = usize::from(row.status == RowStatus::Failed);
+                    task.result = serde_json::to_string_pretty(&row).unwrap_or_default();
+                    task.log
+                        .push(row.error.clone().unwrap_or_else(|| "Result saved".into()));
+                });
                 spent_in += row.tokens_in;
                 spent_out += row.tokens_out;
                 attempted.insert(row.item.clone());
@@ -1244,7 +1339,14 @@ impl Tool for MapItemsTool {
         };
         manifest.note = stop_reason.clone().unwrap_or_default();
         if let Err(error) = dir.save_manifest(&manifest) {
+            progress.phase(
+                SwarmPhase::Failed,
+                &format!("cannot save the run manifest: {error}"),
+            );
             return ToolResult::fail(format!("cannot save the run manifest: {error}"));
+        }
+        if manifest.status == RunStatus::Complete && !env.is_cancelled() {
+            progress.phase(SwarmPhase::Summarizing, "");
         }
         let csv_note = dir
             .write_results_csv(&manifest, &rows)
@@ -1317,6 +1419,16 @@ impl Tool for MapItemsTool {
                 &format!("[... truncated; full rows in {} ...]", rel("results.csv")),
             );
         }
+        let phase = if env.is_cancelled() || manifest.status == RunStatus::Paused {
+            SwarmPhase::Paused
+        } else if !reduce_note.is_empty() {
+            SwarmPhase::Failed
+        } else if rows.values().any(|row| row.status == RowStatus::Failed) {
+            SwarmPhase::Partial
+        } else {
+            SwarmPhase::Completed
+        };
+        progress.phase(phase, &report);
         if breaker_tripped {
             ToolResult::fail(report)
         } else {

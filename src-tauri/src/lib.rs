@@ -148,6 +148,7 @@ mod mcp_app_children;
 mod storage_prefs;
 mod subagent_activity;
 mod subagent_tool;
+mod swarm_progress;
 mod terminal_sessions;
 mod trajectory;
 mod trajectory_export;
@@ -3340,6 +3341,20 @@ pub(crate) fn emit_agent_event_in(app: &AppHandle, event: AgentEvent, project_id
 }
 
 fn should_persist_ui_event(event: &AgentEvent) -> bool {
+    if let AgentEvent::ToolPresentation {
+        presentation_kind,
+        payload,
+        ..
+    } = event
+    {
+        if presentation_kind == wisp_dto::SWARM_PRESENTATION {
+            return serde_json::from_value::<wisp_dto::SwarmProgress>(payload.clone()).is_ok_and(
+                |progress| {
+                    progress.phase == wisp_dto::SwarmPhase::Starting || progress.phase.terminal()
+                },
+            );
+        }
+    }
     matches!(
         event,
         AgentEvent::User { .. }
@@ -3408,6 +3423,15 @@ impl Output for TauriOutput {
         payload: &serde_json::Value,
         server: Option<std::sync::Arc<dyn wisp_tools::McpAppServer>>,
     ) {
+        if kind == wisp_dto::SWARM_PRESENTATION {
+            if let Ok(progress) = serde_json::from_value::<wisp_dto::SwarmProgress>(payload.clone())
+            {
+                self.app
+                    .state::<AppState>()
+                    .swarm_progress
+                    .update(&self.frame_id, progress);
+            }
+        }
         let mut payload = payload.clone();
         if let Some(object) = payload.as_object_mut() {
             object.remove("_wispMcpBinding");
@@ -6130,6 +6154,7 @@ async fn resolve_composer_references(
     Ok(injections)
 }
 
+#[cfg(test)]
 async fn resolve_reader_references(
     store: &Store,
     refs: &[ComposerReferenceArg],
@@ -7400,6 +7425,7 @@ pub fn run() {
                 full_permission_sessions,
                 bootstrap,
                 plugin_runtime_errors: StdMutex::new(HashMap::new()),
+                swarm_progress: swarm_progress::SwarmCache::default(),
                 reviewing: Arc::new(StdMutex::new(HashSet::new())),
                 after_turn_generations: StdMutex::new(HashMap::new()),
                 assistant_windows: std::sync::RwLock::new(HashMap::new()),
@@ -7551,6 +7577,7 @@ pub fn run() {
             test_reviewer_backend,
             delegation_runtime::list_agent_workflows,
             subagent_activity::list_subagent_activity,
+            swarm_progress::get_swarm_progress,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
             plan_mode::get_session_plan_mode,

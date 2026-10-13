@@ -3609,6 +3609,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               started: true,
             };
           }
+          case "get_swarm_progress": {
+            return null;
+          }
           case "list_subagent_activity": {
             if (query.get("mockSubagentActivity") !== "1" || arg("sessionId") !== "subagent-parent") return [];
             return [

@@ -25,6 +25,7 @@ struct TestEnv {
     cancel: AtomicBool,
     confirms: Mutex<Vec<String>>,
     progress: Mutex<String>,
+    swarm: Mutex<Vec<wisp_dto::SwarmProgress>>,
 }
 
 impl TestEnv {
@@ -35,6 +36,7 @@ impl TestEnv {
             cancel: AtomicBool::new(false),
             confirms: Mutex::new(Vec::new()),
             progress: Mutex::new(String::new()),
+            swarm: Mutex::new(Vec::new()),
         }
     }
     fn confirms(&self) -> Vec<String> {
@@ -44,6 +46,13 @@ impl TestEnv {
 
 #[async_trait]
 impl ToolEnv for TestEnv {
+    fn publish_progress(&self, kind: &str, payload: &Value) {
+        assert_eq!(kind, wisp_dto::SWARM_PRESENTATION);
+        self.swarm
+            .lock()
+            .unwrap()
+            .push(serde_json::from_value(payload.clone()).unwrap());
+    }
     fn project_root(&self) -> &Path {
         &self.root
     }
@@ -306,6 +315,45 @@ async fn files_become_rows_and_a_table_and_failures_stay_local() {
     assert_eq!(env.confirms().len(), 1);
     assert!(env.confirms()[0].contains("4 item(s)"));
     assert!(env.progress.lock().unwrap().contains("[4/4]"));
+    {
+        let updates = env.swarm.lock().unwrap();
+        assert_eq!(updates.first().unwrap().phase, SwarmPhase::Starting);
+        assert!(updates.iter().any(|p| p.phase == SwarmPhase::Summarizing));
+        let terminal = updates.last().unwrap();
+        assert_eq!(terminal.phase, SwarmPhase::Partial);
+        assert_eq!(
+            terminal
+                .tasks
+                .iter()
+                .filter(|t| t.status == SwarmTaskStatus::Completed)
+                .count(),
+            2
+        );
+        assert_eq!(
+            terminal
+                .tasks
+                .iter()
+                .filter(|t| t.status == SwarmTaskStatus::Failed)
+                .count(),
+            2
+        );
+        assert!(terminal
+            .tasks
+            .iter()
+            .any(|t| t.result.contains("output_schema")));
+        let mut snapshot = updates[0].clone();
+        for update in updates.iter().cloned() {
+            snapshot.merge(update);
+            assert!(
+                snapshot
+                    .tasks
+                    .iter()
+                    .filter(|t| t.status == SwarmTaskStatus::Running)
+                    .count()
+                    <= 2
+            );
+        }
+    }
 
     // Resume: only the failed items are retried, finished ones are never redone.
     let before = fake.items().len();
@@ -536,6 +584,25 @@ async fn stop_pauses_without_recording_failures_and_resume_finishes() {
         result.content
     );
     assert_eq!(fake.items(), vec!["a.txt", "b.txt"], "c never started");
+    {
+        let snapshots = env.swarm.lock().unwrap();
+        let last = snapshots.last().unwrap();
+        assert_eq!(last.phase, SwarmPhase::Paused);
+        assert_eq!(
+            last.tasks
+                .iter()
+                .filter(|task| task.status == SwarmTaskStatus::Completed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            last.tasks
+                .iter()
+                .filter(|task| task.status == SwarmTaskStatus::Paused)
+                .count(),
+            2
+        );
+    }
     let id = run_id(&result.content);
 
     env.cancel.store(false, Ordering::SeqCst);
@@ -549,6 +616,10 @@ async fn stop_pauses_without_recording_failures_and_resume_finishes() {
         result.content
     );
     assert_eq!(fresh.items(), vec!["b.txt", "c.txt"]);
+    assert_eq!(
+        env.swarm.lock().unwrap().last().unwrap().phase,
+        SwarmPhase::Completed
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

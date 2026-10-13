@@ -9,6 +9,48 @@
 use serde_json::json;
 
 #[test]
+fn swarm_presentation_retains_per_task_failure_and_run_identity() {
+    use wisp_dto::{SwarmPhase, SwarmProgress, SwarmTask, SwarmTaskStatus};
+    let mut task = SwarmTask::queued(
+        "paper-1".into(),
+        "Paper 1".into(),
+        "Extract methods".into(),
+        1,
+    );
+    task.status = SwarmTaskStatus::Failed;
+    task.log.push("Could not read input".into());
+    let progress = SwarmProgress {
+        id: "run-1".into(),
+        source: "map_items".into(),
+        title: "Methods".into(),
+        model: "fake".into(),
+        started_at_ms: 20,
+        revision: 8,
+        phase: SwarmPhase::Partial,
+        total: 1,
+        tasks: vec![task],
+        summary: "1 failed".into(),
+    };
+    let event = crate::swarm_progress::progress_event("frame-1", &progress);
+    let wire = serde_json::to_value(event).unwrap();
+    let wisp_dto::AgentEvent::ToolPresentation {
+        frame_id,
+        presentation_kind,
+        payload,
+        ..
+    } = serde_json::from_value::<wisp_dto::AgentEvent>(wire).unwrap()
+    else {
+        panic!("wrong event kind")
+    };
+    assert_eq!(frame_id, "frame-1");
+    assert_eq!(presentation_kind, wisp_dto::SWARM_PRESENTATION);
+    assert_eq!(
+        serde_json::from_value::<SwarmProgress>(payload).unwrap(),
+        progress
+    );
+}
+
+#[test]
 fn native_workflow_canvas_fixture_preserves_all_task_metadata() {
     let wire: serde_json::Value = serde_json::from_str(include_str!(
         "../../contracts/native-workflows/v1/template.json"

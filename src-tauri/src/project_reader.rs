@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use wisp_core::swarm::SwarmReporter;
+use wisp_dto::{SwarmPhase, SwarmTask, SwarmTaskStatus};
 use wisp_llm::{Completion, Message, Provider, Role};
 use wisp_store::{SessionSearchResult, Store};
 
@@ -110,6 +112,7 @@ struct TaskResult {
 /// injection. Project ids are deliberately supplied separately from ordinary
 /// composer references so artifacts, skills, and compute keep their existing
 /// path.
+#[cfg(test)]
 pub async fn read_references(
     store: &Store,
     project_ids: &[String],
@@ -117,6 +120,27 @@ pub async fn read_references(
     target_frame_id: &str,
     question: &str,
     cancel: &AtomicBool,
+) -> Result<Option<String>, String> {
+    read_references_with_progress(
+        store,
+        project_ids,
+        explicit_session_ids,
+        target_frame_id,
+        question,
+        cancel,
+        None,
+    )
+    .await
+}
+
+pub async fn read_references_with_progress(
+    store: &Store,
+    project_ids: &[String],
+    explicit_session_ids: &[String],
+    target_frame_id: &str,
+    question: &str,
+    cancel: &AtomicBool,
+    progress: Option<&SwarmReporter<'_>>,
 ) -> Result<Option<String>, String> {
     if project_ids.is_empty() && explicit_session_ids.is_empty() {
         return Ok(None);
@@ -126,6 +150,12 @@ pub async fn read_references(
             .await?;
 
     if sessions.is_empty() {
+        if let Some(progress) = progress {
+            progress.phase(
+                SwarmPhase::Completed,
+                "No other saved sessions were available in the selected scope.",
+            );
+        }
         return Ok(Some(
             "## Reader project search\nNo other saved sessions were available in the selected scope."
                 .into(),
@@ -220,9 +250,16 @@ pub async fn read_references(
     };
 
     let mut tasks = Vec::new();
+    let mut workers = Vec::new();
     for (session_index, session) in inputs.iter().enumerate() {
         let chunks = chunk_session(&session.messages, transcript_budget);
         let chunk_count = chunks.len();
+        workers.push(SwarmTask::queued(
+            session.info.id.clone(),
+            session.info.title.clone(),
+            wisp_core::swarm::clip(&question, 2_000),
+            chunk_count,
+        ));
         for (chunk_index, chunk) in chunks.into_iter().enumerate() {
             tasks.push(Task {
                 session_index,
@@ -234,7 +271,11 @@ pub async fn read_references(
         }
     }
     let task_count = tasks.len();
-    let results = run_tasks(llm, retry_llm, &question, tasks, cancel).await;
+    if let Some(progress) = progress {
+        progress.tasks(workers, &model);
+        progress.phase(SwarmPhase::Running, "");
+    }
+    let results = run_tasks(llm, retry_llm, &question, tasks, cancel, progress).await;
 
     if cancel.load(Ordering::SeqCst) {
         return Err("Project reading was cancelled.".into());
@@ -247,7 +288,15 @@ pub async fn read_references(
         // A failed Reader augmentation must not abort the whole send (#784),
         // and must not drop the cited session (#1019): keep a truncated
         // transcript in context so the primary model can still answer.
-        return Ok(Some(failure_injection(&results, &inputs)));
+        let injection = failure_injection(&results, &inputs);
+        if let Some(progress) = progress {
+            progress.phase(SwarmPhase::Failed, "Structured retrieval failed. Available transcript excerpts were passed to the main assistant.");
+        }
+        return Ok(Some(injection));
+    }
+
+    if let Some(progress) = progress {
+        progress.phase(SwarmPhase::Summarizing, "");
     }
 
     let mut by_session: Vec<Vec<(usize, ChunkResult)>> = vec![Vec::new(); inputs.len()];
@@ -257,7 +306,18 @@ pub async fn read_references(
         }
     }
     let failed_tasks = task_count.saturating_sub(successful_tasks);
-    Ok(Some(render_injection(&inputs, by_session, failed_tasks)))
+    let injection = render_injection(&inputs, by_session, failed_tasks);
+    if let Some(progress) = progress {
+        progress.phase(
+            if failed_tasks > 0 {
+                SwarmPhase::Partial
+            } else {
+                SwarmPhase::Completed
+            },
+            &injection,
+        );
+    }
+    Ok(Some(injection))
 }
 
 /// Retrieval is a JSON extraction job, not a reasoning job. Do not inherit the
@@ -421,14 +481,67 @@ async fn run_tasks(
     question: &str,
     tasks: Vec<Task>,
     cancel: &AtomicBool,
+    progress: Option<&SwarmReporter<'_>>,
 ) -> Vec<TaskResult> {
     stream::iter(tasks.into_iter().map(|task| {
         let llm = llm.clone();
         let retry_llm = retry_llm.clone();
         let question = question.to_string();
         async move {
+            if let Some(progress) = progress {
+                if !cancel.load(Ordering::SeqCst) {
+                    progress.task(&task.session.id, |worker| {
+                        worker.status = SwarmTaskStatus::Running;
+                        worker.log.push(format!(
+                            "Reading part {} / {}",
+                            task.chunk_index + 1,
+                            task.chunk_count
+                        ));
+                    });
+                }
+            }
             let result =
                 run_task(llm.as_ref(), retry_llm.as_deref(), &question, &task, cancel).await;
+            if let Some(progress) = progress {
+                progress.task(&task.session.id, |worker| {
+                    if cancel.load(Ordering::SeqCst) {
+                        worker.status = SwarmTaskStatus::Cancelled;
+                        return;
+                    }
+                    worker.completed_units += 1;
+                    match &result {
+                        Ok(chunk) => {
+                            worker.log.push(format!(
+                                "Part {}: {} evidence item(s)",
+                                task.chunk_index + 1,
+                                chunk.evidence.len()
+                            ));
+                            if !chunk.evidence.is_empty() {
+                                worker.result.push_str(&format!("\n{}\n", chunk.summary));
+                                for evidence in &chunk.evidence {
+                                    worker.result.push_str(&format!(
+                                        "\n[{}] {}\n",
+                                        evidence.message_seq, evidence.quote
+                                    ));
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            worker.failed_units += 1;
+                            worker
+                                .log
+                                .push(format!("Part {} failed: {error}", task.chunk_index + 1));
+                        }
+                    }
+                    if worker.completed_units == worker.total_units {
+                        worker.status = if worker.failed_units > 0 {
+                            SwarmTaskStatus::Failed
+                        } else {
+                            SwarmTaskStatus::Completed
+                        };
+                    }
+                });
+            }
             TaskResult {
                 session_index: task.session_index,
                 chunk_index: task.chunk_index,
@@ -1413,7 +1526,7 @@ mod tests {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
         });
-        let tasks = (0..8)
+        let tasks: Vec<Task> = (0..8)
             .map(|session_index| Task {
                 session_index,
                 chunk_index: 0,
@@ -1435,12 +1548,48 @@ mod tests {
             })
             .collect();
         let cancel = AtomicBool::new(false);
-        let results = run_tasks(provider.clone(), None, "find it", tasks, &cancel).await;
+        let updates = std::sync::Mutex::new(Vec::new());
+        let progress = SwarmReporter::new("reader", "find it", "fake-reader", |event| {
+            updates.lock().unwrap().push(event)
+        });
+        progress.tasks(
+            tasks
+                .iter()
+                .map(|task| {
+                    SwarmTask::queued(
+                        task.session.id.clone(),
+                        task.session.title.clone(),
+                        "find it".into(),
+                        1,
+                    )
+                })
+                .collect(),
+            "fake-reader",
+        );
+        progress.phase(SwarmPhase::Running, "");
+        let results = run_tasks(
+            provider.clone(),
+            None,
+            "find it",
+            tasks,
+            &cancel,
+            Some(&progress),
+        )
+        .await;
+        progress.phase(SwarmPhase::Completed, "done");
         assert_eq!(results.len(), 8);
         assert!(results.iter().all(|result| result.result.is_ok()));
         let max_active = provider.max_active.load(Ordering::SeqCst);
         assert!(max_active > 1, "tasks ran serially");
         assert!(max_active <= READER_PARALLELISM, "unbounded fan-out");
+        let updates = updates.lock().unwrap();
+        let final_state = updates.last().unwrap();
+        assert_eq!(final_state.tasks.len(), 8);
+        assert!(final_state
+            .tasks
+            .iter()
+            .all(|task| task.status == SwarmTaskStatus::Completed && task.completed_units == 1));
+        assert!(final_state.tasks.iter().all(|task| !task.log.is_empty()));
     }
 
     /// Always fails with the given error; records how often it was called.

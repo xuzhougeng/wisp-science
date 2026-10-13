@@ -4652,12 +4652,16 @@ pub(super) fn agent_workflows_panel(
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
     open_session: Callback<String>,
+    swarm_open: RwSignal<bool>,
 ) -> impl IntoView {
     // The detail page is the topmost layer of this pane: Escape returns to the
     // list (component-local state; the scoped window listener is removed on
     // cleanup). A workflow result dialog above it closes first.
     window_capture_escape(move || {
-        if state.result.get_untracked().is_some() || state.selected.get_untracked().is_none() {
+        if swarm_open.get_untracked()
+            || state.result.get_untracked().is_some()
+            || state.selected.get_untracked().is_none()
+        {
             return false;
         }
         state.selected.set(None);
