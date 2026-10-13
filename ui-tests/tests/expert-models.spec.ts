@@ -51,10 +51,12 @@ test("expert diagnosis is visible in Agents and Escape closes only its detail", 
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
-  const row = panel.locator('[data-activity-id="expert:x1"]');
-  await expect(row).toContainText("Expert consultation");
+  const row = panel.locator('.agent-activity-row[data-activity-id="expert:x1"]');
+  await expect(row).toHaveAttribute("data-activity-kind", "expert");
+  await expect(row).toContainText("opus-4.8");
   await row.click();
   const detail = panel.getByTestId("agent-activity-detail");
+  await expect(detail.locator(".agent-activity-facts")).toContainText("Expert consultation");
   await expect(detail).toContainText("opus-4.8");
   await expect(detail.getByTestId("agent-activity-answer")).toContainText("Check sample IDs");
   await expect(detail.getByTestId("agent-activity-open")).toHaveCount(0);

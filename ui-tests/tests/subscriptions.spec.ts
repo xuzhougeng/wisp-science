@@ -84,7 +84,7 @@ async function setup(page: Page, locale = "en", saved = false) {
 async function subscriptions(page: Page) { await page.getByTestId("models-category-subscriptions").click(); }
 
 for (const locale of ["en", "zh"]) {
-  test(`subscription accounts share Models tabs, with only ID and alias editable (${locale})`, async ({ page }, testInfo) => {
+  test(`subscription accounts share Models tabs and preserve the expert opt-in (${locale})`, async ({ page }, testInfo) => {
     await setup(page, locale, true);
     await expect(page.getByTestId("settings-nav-subscriptions")).toHaveCount(0);
     await expect(page.getByRole("tab")).toHaveCount(3);
@@ -104,17 +104,30 @@ for (const locale of ["en", "zh"]) {
     for (const provider of ["codex", "xai"]) {
       await page.getByTestId(`subscription-account-${provider}`).locator(".subscription-model-edit").click();
       const form = page.getByTestId("subscription-model-form");
-      await expect(form.locator("input")).toHaveCount(2);
+      await expect(form.getByRole("textbox")).toHaveCount(2);
+      await expect(form.getByRole("checkbox")).toHaveCount(1);
+      const expert = form.getByRole("checkbox", {
+        name: locale === "zh" ? "高级专家模型（按需求助）" : "Expert model (on-demand help)",
+        exact: true,
+      });
+      await expect(expert).not.toBeChecked();
       await expect(form.locator("select")).toHaveCount(0);
       await expect(page.getByTestId("settings-provider")).toHaveCount(0);
       await expect(page.locator("#model-form-api-key")).toHaveCount(0);
       await page.getByTestId("subscription-model-label").fill(`Renamed ${provider}`);
+      await expert.check();
       await page.getByTestId("save-subscription-model").click();
       await expect(page.getByTestId(`subscription-account-${provider}`)).toContainText(`Renamed ${provider}`);
+      await expect(page.getByTestId(`subscription-account-${provider}`).getByTestId("expert-role-badge")).toBeVisible();
+      await page.getByTestId(`subscription-account-${provider}`).locator(".subscription-model-edit").click();
+      await expect(expert).toBeChecked();
+      await page.keyboard.press("Escape");
+      await expect(form).toHaveCount(0);
     }
     const edits = await page.evaluate(() => (window as any).__subscription.edits);
     expect(edits.map((p: any) => p.provider)).toEqual(["openai_codex", "xai_oauth"]);
     expect(edits.every((p: any) => p.max_tokens === 4096 && p.context_window === 128000)).toBe(true);
+    expect(edits.every((p: any) => p.use_for_expert === true)).toBe(true);
     await page.getByTestId("add-codex-model").click();
     await expect(page.getByTestId("codex-login-form").locator("input")).toHaveCount(2);
     await expect(page.getByTestId("codex-login-start")).toHaveCount(0);
@@ -187,7 +200,10 @@ test("Sign in with ChatGPT is the first card, browser-only, and saves managed mo
   expect(state.saves[0]).toMatchObject({ provider: "chatgpt", accountOnly: true, loginId: "login-1" });
   expect(state.saves[1]).toMatchObject({ provider: "chatgpt", accountOnly: false, useSaved: true, label: "Plan GPT" });
   await card.locator(".subscription-model-edit").click();
-  await expect(page.getByTestId("subscription-model-form").locator("input")).toHaveCount(2);
+  const form = page.getByTestId("subscription-model-form");
+  await expect(form.getByRole("textbox")).toHaveCount(2);
+  await expect(form.getByRole("checkbox")).toHaveCount(1);
+  await expect(form.getByTestId("use-for-expert")).not.toBeChecked();
   await expect(page.getByTestId("settings-provider")).toHaveCount(0);
   await expect(page.locator("#model-form-api-key")).toHaveCount(0);
 });

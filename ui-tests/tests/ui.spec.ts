@@ -9465,8 +9465,10 @@ for (const locale of ["en", "zh"]) {
     await expect(effort).toHaveAccessibleDescription(/.+/);
     const image = page.getByTestId("use-for-image-generation");
     const video = page.getByTestId("use-for-video-generation");
+    const expert = page.getByTestId("use-for-expert");
     await expect(image).toHaveAccessibleDescription(locale === "zh" ? /自定义模型 ID/ : /Custom model IDs/);
     await expect(video).toHaveAccessibleDescription(/grok-imagine-video/);
+    await expect(expert).toHaveAccessibleDescription(locale === "zh" ? /每轮最多一次/ : /once per turn/);
     for (const width of [1440, 640]) {
       await page.setViewportSize({ width, height: 1200 });
       const control = (await effort.boundingBox())!;
@@ -9475,7 +9477,7 @@ for (const locale of ["en", "zh"]) {
       expect(hint.y - control.y - control.height).toBeGreaterThanOrEqual(0);
       expect(hint.y - control.y - control.height).toBeLessThan(12);
       const groups = form.locator(".model-capability");
-      await expect(groups).toHaveCount(3);
+      await expect(groups).toHaveCount(4);
       for (const group of await groups.all()) {
         const explanation = group.locator(":scope > .hint");
         const bounds = (await group.boundingBox())!;
@@ -9484,8 +9486,8 @@ for (const locale of ["en", "zh"]) {
         expect(text.x + text.width).toBeLessThanOrEqual(bounds.x + bounds.width);
         expect(text.y + text.height).toBeLessThanOrEqual(bounds.y + bounds.height);
       }
-      const imageGroup = (await groups.nth(1).boundingBox())!;
-      const videoGroup = (await groups.nth(2).boundingBox())!;
+      const imageGroup = (await groups.filter({ has: image }).boundingBox())!;
+      const videoGroup = (await groups.filter({ has: video }).boundingBox())!;
       if (width === 1440) {
         expect(Math.abs(imageGroup.y - videoGroup.y)).toBeLessThan(2);
       } else {
@@ -10325,7 +10327,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await openSettingsSection(page, "Models");
     await page.locator(".settings-list-row", { hasText: "opus-4.8" }).click();
     await providerSelect(page).selectOption("openai");
-    await page.getByLabel("Model").fill(modelId);
+    await page.getByRole("textbox", { name: "Model ID", exact: true }).fill(modelId);
     await page.getByTestId("use-for-image-generation").check();
     await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
     await expect(page.getByTestId("image-size")).toBeVisible();
@@ -10434,7 +10436,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
-  await page.getByLabel("Model").fill("gpt-image-2");
+  await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gpt-image-2");
   await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
   await expect(page.getByLabel("Supports image input")).toHaveCount(0);
   await expect(page.getByTestId("image-size")).toBeVisible();
@@ -10480,7 +10482,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
-  await page.getByLabel("Model").fill("grok-imagine-image-2.0");
+  await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("grok-imagine-image-2.0");
   await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
   await expect(page.getByLabel("Supports image input")).toHaveCount(0);
   await expect(page.getByTestId("image-aspect-ratio")).toBeVisible();
@@ -10529,7 +10531,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
-  await page.getByLabel("Model").fill("grok-imagine-video");
+  await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("grok-imagine-video");
   await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
   await expect(page.getByLabel("Supports image input")).toHaveCount(0);
   await expect(page.getByTestId("video-duration")).toBeVisible();
@@ -11563,7 +11565,7 @@ test("protocol switch keeps the current Base URL, endpoint suffix, and model ID"
 test("model form inputs keep focus while typing (#62)", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
-  const model = page.getByLabel("Model");
+  const model = page.getByRole("textbox", { name: "Model ID", exact: true });
   await model.fill("");
   // Type character-by-character. The bug: the form pane was gated on the whole
   // model_form signal, so each keystroke rebuilt the inputs and dropped focus —
