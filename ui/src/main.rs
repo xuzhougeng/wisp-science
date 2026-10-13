@@ -8684,6 +8684,27 @@ fn App() -> impl IntoView {
     let transfer_tray_collapsed = create_rw_signal(false);
     let transfer_tray_clock_active = create_rw_signal(false);
     let transfer_tray_now = create_rw_signal(run_clock.get_untracked());
+    // The clock can expire settled cards without replacing still-visible
+    // cards. Key only on run identity; elapsed text and progress update inside
+    // each row so keyboard focus survives ticks and run-list refreshes.
+    let transfer_tray_ids = create_memo(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return Vec::<String>::new();
+        };
+        let now = transfer_tray_now.get();
+        run_records.with(|records| {
+            records
+                .iter()
+                .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
+                .filter(|run| {
+                    run_progress(run).is_some_and(|progress| {
+                        transfer_progress_visible(&progress, &run.status, now)
+                    })
+                })
+                .map(|run| run.id.clone())
+                .collect()
+        })
+    });
     create_effect(move |_| {
         // Decide from the records before subscribing to the clock. Reading a
         // false flag and then setting it true inside this same effect does not
@@ -14186,90 +14207,69 @@ fn App() -> impl IntoView {
             }}
             </div>
 
-            {move || active_session.get().and_then(|session_id| {
-                // Finished transfers linger briefly for confirmation. The
-                // clock-driving effect above stops updating this signal after
-                // the final card expires.
-                let now = transfer_tray_now.get();
-                let transfers = run_records.with(|records| {
-                    records
-                        .iter()
-                    .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
-                    .filter_map(|run| {
-                            let progress = run_progress(run)?;
-                        transfer_progress_visible(&progress, &run.status, now)
-                                .then_some((run.clone(), progress))
-                    })
-                        .collect::<Vec<_>>()
-                });
-                (!transfers.is_empty()).then(|| view! {
-                    <div class="transfer-tray" class:collapsed=transfer_tray_collapsed.get()>
-                        {if transfer_tray_collapsed.get() {
-                            view! {
-                                <button type="button" class="transfer-summary"
-                                    aria-label=t(locale.get(), "transfer.expand") aria-expanded="false"
-                                    on:click=move |_| transfer_tray_collapsed.set(false)>
-                                    {compose_icon("sync")}
-                                    <span>{tf(locale.get(), "transfer.count", &[("n", &transfers.len().to_string())])}</span>
-                                    {compose_icon("expand")}
-                                </button>
-                            }.into_view()
-                        } else { transfers.into_iter().map(|(run, progress)| {
-                            let run_id = run.id.clone();
-                            let cancellable = matches!(
-                                run.status.as_str(),
-                                "submitted" | "running" | "cancelling"
-                            );
-                            let cancel_label = if run.status == "cancelling" {
-                                t(locale.get(), "runs.force_cancel")
+            <Show when=move || !transfer_tray_ids.with(Vec::is_empty)>
+                <div class="transfer-tray" class:collapsed=move || transfer_tray_collapsed.get()>
+                    <Show when=move || transfer_tray_collapsed.get()>
+                        <button type="button" class="transfer-summary"
+                            aria-label=move || t(locale.get(), "transfer.expand") aria-expanded="false"
+                            on:click=move |_| transfer_tray_collapsed.set(false)>
+                            {compose_icon("sync")}
+                            <span>{move || tf(locale.get(), "transfer.count", &[("n", &transfer_tray_ids.with(Vec::len).to_string())])}</span>
+                            {compose_icon("expand")}
+                        </button>
+                    </Show>
+                    <Show when=move || !transfer_tray_collapsed.get()>
+                        <For each=move || transfer_tray_ids.get() key=|id| id.clone() children=move |id| {
+                            let lookup = id.clone();
+                            let run = create_memo(move |_| run_records.with(|records| records.iter().find(|run| run.id == lookup).cloned()));
+                            let cancellable = create_memo(move |_| run.with(|run| run.as_ref().is_some_and(|run| {
+                                matches!(run.status.as_str(), "submitted" | "running" | "cancelling")
+                            })));
+                            let cancel_label = move || t(locale.get(), if run.with(|run| run.as_ref().is_some_and(|run| run.status == "cancelling")) {
+                                "runs.force_cancel"
                             } else {
-                                t(locale.get(), "runs.cancel")
-                            };
-                            let direction = progress.direction.clone();
-                            let icon = match direction.as_str() {
-                                "download" => "download",
-                                "relay" => "sync",
-                                _ => "upload",
-                            };
+                                "runs.cancel"
+                            });
+                            let icon = create_memo(move |_| run.with(|run| run.as_ref().and_then(run_progress).map(|progress| {
+                                match progress.direction.as_str() { "download" => "download", "relay" => "sync", _ => "upload" }
+                            }).unwrap_or("upload")));
                             view! {
-                                <section class="transfer-card" data-run-id=run.id>
+                                <section class="transfer-card" data-run-id=id.clone()>
                                     <div class="transfer-card-head">
-                                        <span class="transfer-card-icon" aria-hidden="true">{compose_icon(icon)}</span>
-                                        <strong title=run.context_id>{run.title}</strong>
-                                        <span class="transfer-elapsed">{tf(locale.get(), "transfer.elapsed", &[("time", &transfer_duration(
-                                            run.ended_at.filter(|_| !cancellable).unwrap_or(now)
-                                                .saturating_sub(run.started_at.unwrap_or(run.created_at)).max(0) as u64
-                                        ))])}</span>
+                                        <span class="transfer-card-icon" aria-hidden="true">{move || compose_icon(icon.get())}</span>
+                                        <strong title=move || run.get().map(|run| run.context_id)>{move || run.get().map(|run| run.title)}</strong>
+                                        <span class="transfer-elapsed">{move || run.with(|run| run.as_ref().map(|run| {
+                                            let now = run.ended_at.filter(|_| !cancellable.get()).unwrap_or_else(|| transfer_tray_now.get());
+                                            tf(locale.get(), "transfer.elapsed", &[("time", &transfer_duration(
+                                                now.saturating_sub(run.started_at.unwrap_or(run.created_at)).max(0) as u64
+                                            ))])
+                                        }))}</span>
                                         <button type="button" class="icon-btn transfer-collapse"
-                                            title=t(locale.get(), "transfer.collapse")
-                                            aria-label=t(locale.get(), "transfer.collapse") aria-expanded="true"
+                                            title=move || t(locale.get(), "transfer.collapse")
+                                            aria-label=move || t(locale.get(), "transfer.collapse") aria-expanded="true"
                                             on:click=move |_| transfer_tray_collapsed.set(true)>
                                             {compose_icon("chevron-down")}
                                         </button>
-                                        {cancellable.then(|| {
-                                            let tip = cancel_label.clone();
-                                            view! {
+                                        <Show when=move || cancellable.get()>
                                             <button type="button" class="icon-btn transfer-cancel"
-                                                title=tip.clone()
-                                                aria-label=tip
-                                                on:click=move |_| {
-                                                    let run_id = run_id.clone();
+                                                title=cancel_label aria-label=cancel_label
+                                                on:click={let id = id.clone(); move |_| {
+                                                    let run_id = id.clone();
                                                     spawn_local(async move {
                                                         let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
                                                         let _ = invoke("cancel_run", arg).await;
                                                         refresh_runs(run_records, locale, Some(run_refresh_health));
                                                     });
-                                                }>{compose_icon("close")}</button>
-                                            }
-                                        })}
+                                                }}>{compose_icon("close")}</button>
+                                        </Show>
                                     </div>
-                                    {run_progress_meter(progress, locale.get())}
+                                    {move || run.with(|run| run.as_ref().and_then(run_progress)).map(|progress| run_progress_meter(progress, locale.get()))}
                                 </section>
                             }
-                        }).collect_view()}}
-                    </div>
-                })
-            })}
+                        } />
+                    </Show>
+                </div>
+            </Show>
 
             <div class:center-hidden=move || center_file_open.get() && !center_split.get()>
                 <swarm::SwarmDock state=swarm_state session=active_session locale=locale/>

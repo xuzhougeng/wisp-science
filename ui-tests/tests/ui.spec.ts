@@ -7634,8 +7634,22 @@ test("unmeasured relay shows elapsed activity and collapses without cancelling",
   await expect(card).not.toContainText("0%");
   await expect(card).not.toContainText("ETA");
   await expect(card.locator("progress")).not.toHaveAttribute("value");
+  // The timer and background refreshes must update the same card, preserving
+  // keyboard focus as well as keeping element screenshots attached.
+  const originalCard = await card.elementHandle();
+  const cancel = card.getByRole("button", { name: "Cancel run" });
+  await cancel.focus();
   const elapsed = await card.locator(".transfer-elapsed").innerText();
   await expect.poll(() => card.locator(".transfer-elapsed").innerText()).not.toBe(elapsed);
+  expect(await originalCard!.evaluate(el => el.isConnected)).toBe(true);
+  await expect(cancel).toBeFocused();
+  await page.evaluate(() => {
+    const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
+    run.progress_json = JSON.stringify({ ...JSON.parse(run.progress_json), current_file: "reads-next.fastq.gz" });
+  });
+  await expect(card).toContainText("reads-next.fastq.gz");
+  expect(await originalCard!.evaluate(el => el.isConnected)).toBe(true);
+  await expect(cancel).toBeFocused();
   await card.screenshot({ path: test.info().outputPath("relay-expanded.png") });
   // A higher surface consumes Escape first; the transfer tray stays expanded.
   await composer(page).press("@");

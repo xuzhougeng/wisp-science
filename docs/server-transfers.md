@@ -47,8 +47,9 @@ to Uploading after staging completes and shows 100% only after upload succeeds.
 
 Use **Collapse transfers** to reduce all cards to one small **Transfers (N)**
 row; **Expand transfers** restores the details and cancellation controls. The
-collapsed state survives progress refreshes. Escape collapses an expanded tray
-after any higher dialog or menu has been dismissed. Cards use a thinner progress
+collapsed state survives progress refreshes. Elapsed-time ticks and progress
+updates preserve the card and keyboard focus on its controls. Escape collapses an
+expanded tray after any higher dialog or menu has been dismissed. Cards use a thinner progress
 bar below their details to leave more room for the conversation. A completed,
 failed, or cancelled transfer remains there for three seconds so its final
 state can be confirmed, then dismisses automatically without covering the
