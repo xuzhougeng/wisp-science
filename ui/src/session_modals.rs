@@ -1641,7 +1641,7 @@ pub(crate) fn ShelvedSessionsOverlay(
                                     on:click=move |_| on_open.call(open_session.clone())>
                                     {compose_icon("chat")}<span>{session.title}</span>
                                 </button>
-                                <button type="button" class="btn" on:click=move |_| on_restore.call(restore_id.clone())>
+                                <button type="button" class="btn-ghost shelved-session-restore" on:click=move |_| on_restore.call(restore_id.clone())>
                                     {compose_icon("undo")}<span>{move || t(locale.get(), "session.restore")}</span>
                                 </button>
                             </div>
@@ -1653,7 +1653,7 @@ pub(crate) fn ShelvedSessionsOverlay(
                 </div>
                 {move || loading.get().then(|| view! { <p role="status">{move || t(locale.get(), "loading")}</p> })}
                 {move || cursor.get().is_some().then(|| view! {
-                    <button type="button" class="btn" disabled=move || loading.get()
+                    <button type="button" class="btn-ghost shelved-sessions-more" disabled=move || loading.get()
                         on:click=move |_| fetch.call(cursor.get_untracked())>{move || t(locale.get(), "sidebar.load_older")}</button>
                 })}
             </section>
