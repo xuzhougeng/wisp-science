@@ -54,6 +54,8 @@ mod native_composer;
 mod native_conversations;
 mod native_files;
 mod native_history;
+#[cfg(target_os = "macos")]
+mod native_host_lifecycle;
 mod native_journey;
 mod native_library;
 mod native_message_images;
@@ -7183,8 +7185,13 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let macos_exit_for_setup = Arc::clone(&macos_exit_in_progress);
 
-    tauri::Builder::default()
-        .manage(mcp_app_children::McpAppChildren::default())
+    let builder = tauri::Builder::default()
+        .manage(mcp_app_children::McpAppChildren::default());
+    #[cfg(target_os = "macos")]
+    let builder = builder.manage(native_host_lifecycle::NativeHostLifecycle::new(
+        native_settings::requested(std::env::args()),
+    ));
+    builder
         // Keep this first so a repeated launch is intercepted before other plugins
         // and application state are initialized in a second process.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -7503,6 +7510,8 @@ pub fn run() {
             if native_settings::requested(std::env::args()) {
                 native_settings::start(app.handle()).map_err(std::io::Error::other)?;
             }
+            #[cfg(target_os = "macos")]
+            native_host_lifecycle::watch_owner(app.handle());
             startup.finish();
             Ok(())
         })

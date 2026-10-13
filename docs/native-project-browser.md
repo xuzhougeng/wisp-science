@@ -77,8 +77,11 @@ actions retain their WebView positions but are disabled and labeled as not yet c
 
 ## Build and run on macOS
 
-Requires macOS 13+, Xcode with Swift 5.9+ command-line tools, and the repository's
-Rust toolchain. No Swift package dependencies are downloaded.
+Requires macOS 13+, Xcode with Swift 5.9+ command-line tools, Node.js, Trunk, and
+the repository's Rust toolchain including `wasm32-unknown-unknown`. SwiftPM
+resolves the pinned native dependencies. The build includes the WebView frontend
+so opening the regular app can reuse the native helper without a blank window;
+see [helper lifetime](native-settings.md#macos-helper-lifetime-and-opening-the-regular-app).
 
 ```bash
 bash scripts/build_native_macos.sh

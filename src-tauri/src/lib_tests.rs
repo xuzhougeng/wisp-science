@@ -2862,10 +2862,11 @@ fn project_workspace_data_deletion_rejects_filesystem_root() {
 }
 
 #[test]
-fn app_activation_restores_workspace_windows_but_not_the_pet() {
+fn app_activation_restores_workspaces_but_keeps_native_host_contexts_hidden() {
     assert!(should_activate_workspace_window("main"));
     assert!(should_activate_workspace_window("proj-default"));
     assert!(!should_activate_workspace_window("pet"));
+    assert!(!should_activate_workspace_window("native-settings-123"));
 }
 
 #[test]

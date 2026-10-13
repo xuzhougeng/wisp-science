@@ -65,6 +65,36 @@ Native settings never switch the WebView's active project or active session.
 No mutation is automatically retried following a timeout. The user can refresh
 to discover whether the previous operation completed.
 
+### macOS helper lifetime and opening the regular app
+
+The SwiftUI shell and regular app share one runtime. The macOS helper bundles
+the regular WebView frontend as well as the inert native command document.
+Opening the regular app while SwiftUI's helper is running loads that frontend,
+restores the Dock presence, and activates the workspace. Hidden native command
+contexts remain hidden. Existing native conversations continue in the same
+runtime; no second database owner is started and no active work is killed.
+
+A helper launched by SwiftUI receives an owner pipe. Quitting or force-quitting
+SwiftUI closes it and requests normal backend shutdown, including runtime and
+terminal cleanup. Closing the last window is not Quit: Finder/Dock can reopen
+the native workspace and the helper remains available. Once the helper has
+opened the regular workspace, it stays alive until that app is quit. A regular
+desktop host borrowed by SwiftUI is never owned or terminated by the client.
+Startup failure releases only the pipe for that launch.
+
+For #1520 on an older installed build, first finish work and quit both apps;
+an already-running old helper cannot gain this fix from reinstalling files.
+If it remains, quit that specific **Wisp Desktop Host** in Activity Monitor,
+then open the updated apps.
+
+Manual regression (use a disposable QA profile): open SwiftUI and a conversation,
+then open the matching regular app. Confirm a rendered workspace, no extra blank
+settings windows, and that SwiftUI still reads the same conversation. Quit SwiftUI;
+the regular workspace must remain usable. Repeat with SwiftUI only: close its
+last window and reopen from Dock, then Cmd+Q and confirm its owned helper exits.
+Repeat with the regular app opened first and confirm quitting SwiftUI leaves it
+running. Force-quit the SwiftUI-only shell to verify owner-pipe cleanup.
+
 ## Subscription accounts on macOS
 
 **模型 → 订阅账号** sits alongside **API 模型** and **ACP Agents**. Each

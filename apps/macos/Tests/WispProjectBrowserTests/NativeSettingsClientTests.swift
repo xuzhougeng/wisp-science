@@ -1,8 +1,27 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import WispProjectBrowser
 
 final class NativeSettingsClientTests: XCTestCase {
+    func testLaunchedHelperGetsAnOwnerPipeAndFailureReleasesOnlyThatOwner() throws {
+        let owners = NativeSettingsHostOwners()
+        let first = Process(), second = Process()
+        let firstID = try owners.configure(first), secondID = try owners.configure(second)
+        XCTAssertEqual(first.arguments, ["--native-settings-host", "--native-settings-owner-stdin"])
+        let firstPipe = try XCTUnwrap(first.standardInput as? Pipe)
+        let secondPipe = try XCTUnwrap(second.standardInput as? Pipe)
+        XCTAssertNotEqual(fcntl(firstPipe.fileHandleForWriting.fileDescriptor, F_GETFD) & FD_CLOEXEC, 0)
+        owners.release(firstID)
+        XCTAssertTrue(try firstPipe.fileHandleForReading.readToEnd()?.isEmpty ?? true)
+        // Another active client's lifetime is unaffected by a failed launch.
+        try secondPipe.fileHandleForWriting.write(contentsOf: Data([42]))
+        XCTAssertEqual(try secondPipe.fileHandleForReading.read(upToCount: 1), Data([42]))
+        second.terminationHandler?(second)
+        XCTAssertTrue(try secondPipe.fileHandleForReading.readToEnd()?.isEmpty ?? true)
+        owners.release(firstID); owners.release(secondID) // idempotent cleanup
+    }
+
     func testHostValidationRejectsRemoteRedirectTargetsAndDifferentDatabase() throws {
         let database = URL(fileURLWithPath: "/tmp/native-test/wisp.sqlite")
         func host(_ endpoint: String, database: String = "/tmp/native-test/wisp.sqlite", token: String = String(repeating: "a", count: 64)) -> NativeSettingsClient.Descriptor {
