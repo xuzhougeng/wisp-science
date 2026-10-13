@@ -528,6 +528,7 @@ pub async fn save_codex_login(
             session_header_name: String::new(),
             supports_vision: true,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),

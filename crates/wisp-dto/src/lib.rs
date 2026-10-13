@@ -1397,6 +1397,7 @@ mod session_context_window_tests {
             session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),
@@ -3337,6 +3338,8 @@ pub struct ModelProfile {
     #[serde(default)]
     pub use_for_vision: bool,
     #[serde(default)]
+    pub use_for_expert: bool,
+    #[serde(default)]
     pub use_for_image_generation: bool,
     #[serde(default)]
     pub image_generation_capable: bool,
@@ -3840,6 +3843,7 @@ pub struct ModelFormEntry {
     pub model: String,
     pub supports_vision: bool,
     pub use_for_vision: bool,
+    pub use_for_expert: bool,
     pub use_for_image_generation: bool,
     pub use_for_video_generation: bool,
 }
@@ -3878,6 +3882,7 @@ mod image_generation_model_tests {
             session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),
@@ -3953,6 +3958,7 @@ mod video_generation_model_tests {
             session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),
@@ -4025,6 +4031,7 @@ pub struct ModelForm {
     pub session_header_name: String,
     pub supports_vision: bool,
     pub use_for_vision: bool,
+    pub use_for_expert: bool,
     pub use_for_image_generation: bool,
     pub image_generation_capable: bool,
     /// Explicit recovery intent; ordinary assignment changes keep the role.
@@ -4595,7 +4602,7 @@ pub struct QuickActionRun {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SubagentActivity {
     pub id: String,
-    /// `conversation` or `explore`.
+    /// `conversation`, `explore` or `expert` (an on-demand consultation).
     pub kind: String,
     pub title: String,
     /// `running`, `completed`, `failed` or `idle` (ended without an answer).

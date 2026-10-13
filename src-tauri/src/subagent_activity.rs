@@ -56,6 +56,7 @@ pub(crate) async fn list_subagent_activity(
         .await
         .map_err(|error| error.to_string())?;
     items.extend(explore_activities(&messages));
+    items.extend(expert_activities(&messages));
     items.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     Ok(items)
 }
@@ -232,6 +233,56 @@ fn parse_explore_anchor(text: &str) -> (&'static str, String, u32, Option<String
     ("completed", answer, tool_calls, trace)
 }
 
+fn expert_activities(messages: &[Message]) -> Vec<SubagentActivity> {
+    let mut items = Vec::new();
+    for (index, message) in messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == Role::Assistant)
+    {
+        for call in message
+            .tool_calls
+            .iter()
+            .filter(|call| call.function.name == "consult_expert")
+        {
+            let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_default();
+            let field = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default();
+            let result = messages[index + 1..].iter().find(|m| {
+                m.role == Role::Tool && m.tool_call_id.as_deref() == Some(call.id.as_str())
+            });
+            let text = result.map(|m| m.content.as_text()).unwrap_or_default();
+            if text.starts_with(wisp_core::context::TOMBSTONE_PREFIX) {
+                continue;
+            }
+            let (status, answer) = match result {
+                None => ("running", String::new()),
+                Some(_) if text.starts_with("[expert subagent: ") => ("completed", text),
+                Some(_) => ("failed", text),
+            };
+            items.push(SubagentActivity {
+                id: format!("expert:{}", call.id),
+                kind: "expert".into(),
+                title: truncate(field("question"), TITLE_CHARS),
+                status: status.into(),
+                summary: summary_of(&answer),
+                instruction: format!(
+                    "{}\n\n{}\n\n{}",
+                    field("reason"),
+                    field("question"),
+                    field("context")
+                ),
+                answer,
+                started_at: message.ts,
+                ended_at: result.map(|m| m.ts).filter(|ts| *ts > 0),
+                tool_calls: 0,
+                session_id: None,
+                trace_path: None,
+            });
+        }
+    }
+    items
+}
+
 fn summary_of(answer: &str) -> String {
     truncate(
         answer
@@ -270,6 +321,56 @@ mod tests {
             },
         });
         message
+    }
+
+    #[test]
+    fn expert_activity_exposes_reason_model_answer_and_failed_or_pending_calls() {
+        let call = |id: &str| {
+            let mut message = explore_call(id, "Why do the labels conflict?");
+            message.tool_calls[0].function.name = "consult_expert".into();
+            message.tool_calls[0].function.arguments = serde_json::json!({
+                "question":"Why do the labels conflict?", "reason":"Two attempts failed",
+                "context":"The user needs reproducible sample matching."
+            })
+            .to_string();
+            message
+        };
+        let report = crate::expert_tool::ExpertReport {
+            profile_id: "expert".into(),
+            model: "expensive-model".into(),
+            advice: "Check sample IDs before rerunning.".into(),
+            input_tokens: 100,
+            output_tokens: 20,
+            reasoning_tokens: 0,
+        };
+        let messages = vec![
+            call("done"),
+            Message::tool("done", "consult_expert", report.anchor()),
+            call("failed"),
+            Message::tool(
+                "failed",
+                "consult_expert",
+                "Expert consultation failed: Timed out.",
+            ),
+            call("pending"),
+            call("archived"),
+            Message::tool(
+                "archived",
+                "consult_expert",
+                format!("{}archived]", wisp_core::context::TOMBSTONE_PREFIX),
+            ),
+        ];
+        let items = expert_activities(&messages);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].id, "expert:done");
+        assert_eq!(items[0].kind, "expert");
+        assert_eq!(items[0].status, "completed");
+        assert!(items[0].instruction.contains("Two attempts failed"));
+        assert!(items[0].answer.contains("expensive-model"));
+        assert!(items[0].answer.contains("Check sample IDs"));
+        assert!(items[0].session_id.is_none());
+        assert_eq!(items[1].status, "failed");
+        assert_eq!(items[2].status, "running");
     }
 
     #[test]

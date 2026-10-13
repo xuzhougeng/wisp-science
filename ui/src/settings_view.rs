@@ -4087,6 +4087,13 @@ pub(super) fn SettingsView(
                                                 <input data-testid="subscription-model-label" prop:value=move || model_form.get().map(|f| f.label).unwrap_or_default()
                                                     on:input=move |ev| model_form.update(|f| if let Some(f)=f { f.label = event_target_value(&ev); }) />
                                             </label>
+                                            <label class="settings-check span-2">
+                                                <input type="checkbox" data-testid="use-for-expert" aria-describedby="subscription-expert-hint"
+                                                    prop:checked=move || model_form.get().is_some_and(|f| f.use_for_expert)
+                                                    on:change=move |ev| model_form.update(|f| if let Some(f)=f { f.use_for_expert = event_target_checked(&ev); }) />
+                                                <span>{move || t(locale.get(), "settings.use_for_expert")}</span>
+                                            </label>
+                                            <span id="subscription-expert-hint" class="hint span-2">{move || t(locale.get(), "settings.expert_hint")}</span>
                                         </div>
                                         {move || model_form_msg.get().map(|(ok, text)| view! { <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div> })}
                                         <div class="row settings-footer">
@@ -4481,6 +4488,17 @@ pub(super) fn SettingsView(
                                             })
                                         }}
                                         <div class="span-2 settings-form-grid model-capabilities">
+                                            <Show when=move || model_form.get().is_some_and(|f| !f.is_image_model() && !is_video_generation_model(&f.model) && !f.use_for_video_generation)>
+                                            <div class="model-capability span-2">
+                                                <label class="settings-check">
+                                                    <input type="checkbox" data-testid="use-for-expert" aria-describedby="model-expert-hint"
+                                                        prop:checked=move || model_form.get().is_some_and(|f| f.use_for_expert)
+                                                        on:change=move |ev| model_form.update(|f| if let Some(f)=f { f.use_for_expert = event_target_checked(&ev); }) />
+                                                    <span>{move || t(locale.get(), "settings.use_for_expert")}</span>
+                                                </label>
+                                                <span id="model-expert-hint" class="hint">{move || t(locale.get(), "settings.expert_hint")}</span>
+                                            </div>
+                                            </Show>
                                             <div class="model-capability span-2" role="group" aria-describedby="model-vision-hint">
                                             <div class="model-capability-checks">
                                             <label class="settings-check">
@@ -4607,6 +4625,7 @@ pub(super) fn SettingsView(
                                         }}
                                     </div>
                                     <div class="provider-models" data-testid="provider-models">
+                                        <p class="hint" id="provider-expert-hint">{move || t(locale.get(), "settings.expert_hint")}</p>
                                         <div class="provider-models-head">
                                             <strong>{move || t(locale.get(), "models.entries")}</strong>
                                             <span class="hint">{move || t(locale.get(), "models.entries_hint")}</span>
@@ -4775,6 +4794,21 @@ pub(super) fn SettingsView(
                                                                     }.into_view()
                                                                 } else {
                                                                     view! {
+                                                            <label class="settings-check">
+                                                                <input type="checkbox" data-testid="provider-use-for-expert" aria-describedby="provider-expert-hint"
+                                                                    prop:checked=move || model_form.get()
+                                                                        .and_then(|f| f.entries.into_iter().find(|e| e.row_id == row_id))
+                                                                        .is_some_and(|e| e.use_for_expert)
+                                                                    on:change=move |ev| {
+                                                                        let checked = event_target_checked(&ev);
+                                                                        model_form.update(|f| if let Some(f)=f {
+                                                                            if let Some(e) = f.entries.iter_mut().find(|e| e.row_id == row_id) {
+                                                                                e.use_for_expert = checked;
+                                                                            }
+                                                                        });
+                                                                    } />
+                                                                <span>{move || t(locale.get(), "settings.use_for_expert")}</span>
+                                                            </label>
                                                             <label class="settings-check">
                                                                 <input type="checkbox"
                                                                     prop:checked=move || model_form.get()
@@ -4981,13 +5015,14 @@ pub(super) fn SettingsView(
                                                         <Show when=move || !models.get().iter().any(|m| settings_provider_value(&m.provider) == profile_provider)>
                                                             <p class="hint">{move || t(locale.get(), "subscriptions.empty")}</p>
                                                         </Show>
-                                                        <For each=move || { models.get().into_iter().filter(|m| settings_provider_value(&m.provider) == profile_provider).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.label.clone(), m.model.clone()) let:m>
+                                                        <For each=move || { models.get().into_iter().filter(|m| settings_provider_value(&m.provider) == profile_provider).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.label.clone(), m.model.clone(), m.use_for_expert) let:m>
                                                             {let edit = m.clone(); let pick = m.id.clone(); let delete = m.clone(); view! {
                                                                 <div class="subscription-model-row" data-testid="subscription-model">
                                                                     <button type="button" class="subscription-model-edit" on:click=move |_| {
                                                                         model_form.set(Some(profile_to_form(&edit)));
                                                                         model_form_key.set(String::new()); model_form_msg.set(None);
                                                                     }><strong>{m.label}</strong><span class="hint">{m.model}</span></button>
+                                                                    {m.use_for_expert.then(|| view! { <span class="settings-cap-badge" data-testid="expert-role-badge">{move || t(locale.get(), "models.capability.expert")}</span> })}
                                                                     {if m.active { view! { <span class="settings-model-default">{move || t(locale.get(), "models.default")}</span> }.into_view() } else { view! {
                                                                         <button type="button" disabled=move || settings_busy.get() on:click=move |_| {
                                                                             let id = pick.clone(); settings_busy.set(true);
@@ -5175,7 +5210,7 @@ pub(super) fn SettingsView(
                                         }).collect_view()}
                                     </div>
                                     <div class="settings-list">
-                                        <For each=move || { models.get().into_iter().filter(|m| !is_subscription_provider(&m.provider)).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active) let:m>
+                                        <For each=move || { models.get().into_iter().filter(|m| !is_subscription_provider(&m.provider)).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.use_for_expert) let:m>
                                             {
                                                 let pick_id = m.id.clone();
                                                 let del_id = m.id.clone();
@@ -5254,6 +5289,7 @@ pub(super) fn SettingsView(
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
                                                                 {m.use_for_vision.then(|| view! { <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.vision")}</span> })}
+                                                                {m.use_for_expert.then(|| view! { <span class="settings-cap-badge" data-testid="expert-role-badge">{move || t(locale.get(), "models.capability.expert")}</span> })}
                                                                 {(m.image_generation_capable || m.use_for_image_generation || is_image_generation_model(&m.model)).then(|| view! {
                                                                     <span class="settings-cap-badge" data-testid="image-role-badge">{move || t(locale.get(), "models.capability.image_only")}</span>
                                                                 })}

@@ -1,5 +1,54 @@
 # Model configuration
 
+## On-demand senior experts / 按需求助高级模型
+
+In **Settings → Models**, enable **Expert model (on-demand help)** on one or
+more chat profiles. API provider rows and existing subscription models support
+this setting. Existing profiles default to off. Adding an expert keeps the
+everyday default selected; marking the current default chooses another everyday
+model. Keep at least one ordinary chat profile. Experts are excluded from
+automatic default fallback and the ordinary delegation model pool. Explicitly
+choosing one as a conversation model or assigning it to another specialist still
+uses that model for that purpose.
+
+The built-in main Agent receives `consult_expert` when experts are configured.
+It can escalate during a turn when repeated attempts fail, evidence conflicts,
+or important reasoning remains uncertain, or when the user asks for expert help.
+The decision is made by the main Agent; this is not a deterministic failure
+counter or an end-of-turn hook. The tool requires the question, escalation reason,
+and a self-contained handoff with the user's goal, constraints, attempts and
+evidence. It also attaches a bounded transcript of the latest four user turns.
+The first expert in the Models list is the default; the Agent may name another
+configured expert profile. There is no fallback to an unmarked model.
+
+The expert is an isolated, tool-free subagent. It returns diagnosis and suggested
+checks to the parent, which evaluates the advice and continues under the user's
+existing instructions. The expert cannot run commands, change files, authorize
+actions, or start further subagents. Its context contains supplied text, not
+unsupplied files or image attachments. Its result and provider-reported token
+counts are saved in the tool transcript; **Agents** shows the escalation reason,
+model and advice. These token counts are not yet included in the Usage dashboard.
+
+Each main turn allows one paid consultation attempt, including provider failures.
+There is no automatic retry or model rotation. Input is capped at 24,000 bytes
+plus the expert instructions, output at 8,192 tokens, and both shrink to fit the
+profile and exact catalog limits. Requests time out after five minutes; **Stop**
+cancels the pending request. Cancellation cannot undo provider charges already
+incurred. Conversation subagents and external ACP agents do not receive this tool.
+Automatic review keeps its existing trigger and reviewer settings.
+
+在 **设置 → 模型** 中勾选 **高级专家模型（按需求助）**，可设置多个高价模型。
+主 Agent 在反复失败、证据冲突或关键推理拿不准时，可携带问题、求助原因、已尝试的方法
+和近期对话证据调用专家；也可以直接告诉 Agent「请高级专家帮忙诊断」。专家只给出诊断
+与建议，由主 Agent 判断后继续工作。每轮最多调用一次，失败不自动重试；可在 **Agents**
+面板查看模型和结果。新增专家不会替换日常默认模型，仍需保留至少一个普通对话模型。
+这与回合结束后的自动审查是两个独立功能。
+
+Manual smoke check (with a configured provider): mark a second chat profile as
+an expert, keep the ordinary model active, and ask the built-in Agent to consult
+it about a concrete problem. Check the tool result and Agents detail, then try
+Stop during a pending request. Reopen Settings to confirm the expert flag persists.
+
 In General settings, **Suggest follow-up questions** is enabled by default.
 After a completed reply, Wisp uses that conversation's current model to offer
 three optional next questions. That secondary call reads only the four most
@@ -144,7 +193,7 @@ are listed here and in the conversation model picker, separately from API models
 Subscription is an authentication method, not a conversation protocol: Wisp
 manages the Responses connection and all other model parameters. The Models page
 has three peer tabs: API models, ACP Agents and Subscription accounts. Editing a
-subscription model only exposes its ID and alias; API and advanced controls are absent.
+subscription model exposes its ID, alias and on-demand expert flag; API and advanced controls are absent.
 Browser sign-in opens ChatGPT and listens on `127.0.0.1:1455` for the
 redirect. Enable device-code login in ChatGPT security settings or workspace
 permissions before using the one-time-code alternative when the browser

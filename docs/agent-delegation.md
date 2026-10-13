@@ -414,6 +414,11 @@ pass/reject decision. See [map-items.md](map-items.md).
 
 ## Subagent conversations
 
+For a bounded second opinion during a difficult turn, configure an
+[on-demand expert model](model-configuration.md#on-demand-senior-experts--按需求助高级模型).
+The `consult_expert` subagent returns advice directly to its parent and appears
+in the Agents pane. It has no tools and does not create a watch-only conversation.
+
 A conversation's Agent can also start a **subagent**: a conversation of its own
 for one focused task, such as "open a new conversation and do X there". Unlike
 the temporary sub-Agents above, a subagent is unbounded by a task plan, visible

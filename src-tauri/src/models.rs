@@ -63,6 +63,10 @@ pub struct ModelProfile {
     /// to image analysis. Serialized so the UI can restore the checkbox.
     #[serde(default)]
     pub use_for_vision: bool,
+    /// Opt-in pool for on-demand expert consultations. Never auto-selected
+    /// as the everyday model when added or used as a fallback.
+    #[serde(default)]
+    pub use_for_expert: bool,
     /// Computed on read / accepted on save; true when this profile is assigned
     /// to the Scientific Illustrator's raster image-generation tool.
     #[serde(default)]
@@ -757,6 +761,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         session_header_name: String::new(),
         supports_vision: false,
         use_for_vision: false,
+        use_for_expert: false,
         use_for_image_generation: false,
         image_generation_capable: false,
         image_size: String::new(),
@@ -791,8 +796,7 @@ async fn active_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Stri
     } else {
         profiles
             .iter()
-            .find(|p| is_chat_model(p))
-            .or_else(|| profiles.first())
+            .find(|p| is_default_chat_model(p))
             .map(|p| p.id.clone())
             .unwrap_or_default()
     }
@@ -1317,6 +1321,18 @@ fn is_chat_model(p: &ModelProfile) -> bool {
     !profile_is_image_model(p) && !is_video_generation_model(&p.model)
 }
 
+fn is_default_chat_model(p: &ModelProfile) -> bool {
+    is_chat_model(p) && !p.use_for_expert
+}
+
+pub(crate) async fn expert_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
+    ensure(store)
+        .await
+        .into_iter()
+        .filter(|profile| profile.use_for_expert && is_chat_model(profile))
+        .collect()
+}
+
 /// Match the WebView composer: only the built-in OpenAI chat transports expose Fast.
 pub(crate) fn supports_fast_service_tier(p: &ModelProfile) -> bool {
     is_chat_model(p)
@@ -1755,7 +1771,7 @@ pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelP
     decorated(store)
         .await
         .into_iter()
-        .filter(is_chat_model)
+        .filter(is_default_chat_model)
         .collect()
 }
 
@@ -1914,7 +1930,11 @@ async fn save_model_profile(
     profile.session_header_name =
         wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
     let existing = profiles.iter().find(|old| old.id == profile.id);
+    let newly_reserved = profile.use_for_expert && !existing.is_some_and(|old| old.use_for_expert);
     normalize_image_role(&mut profile, existing, restore_chat_model)?;
+    if profile.use_for_expert && !is_chat_model(&profile) {
+        return Err("Expert consultation requires a chat model.".into());
+    }
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
@@ -1938,6 +1958,15 @@ async fn save_model_profile(
     let is_new = !profiles.iter().any(|p| p.id == id);
     if !is_chat_model(&profile) && !profiles.iter().any(|p| p.id != id && is_chat_model(p)) {
         return Err("At least one chat model is required.".into());
+    }
+    if !is_default_chat_model(&profile)
+        && !profiles
+            .iter()
+            .any(|p| p.id != id && is_default_chat_model(p))
+    {
+        return Err(
+            "Keep at least one everyday chat model before reserving an expert model.".into(),
+        );
     }
     if let Some(existing) = profiles.iter_mut().find(|p| p.id == id) {
         *existing = profile;
@@ -1975,12 +2004,18 @@ async fn save_model_profile(
         .map_err(|error| error.to_string())?
         .unwrap_or_default();
     // Restoring an existing chat profile does not change the current default.
-    if is_new && profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
+    if is_new
+        && profiles
+            .iter()
+            .any(|p| p.id == id && is_default_chat_model(p))
+    {
         active = id.clone();
-    } else if active == id && !profiles.iter().any(|p| p.id == id && is_chat_model(p)) {
+    } else if active == id
+        && (newly_reserved || !profiles.iter().any(|p| p.id == id && is_chat_model(p)))
+    {
         active = profiles
             .iter()
-            .find(|p| is_chat_model(p))
+            .find(|p| is_default_chat_model(p))
             .map(|p| p.id.clone())
             .unwrap_or_default();
     }
@@ -2011,11 +2046,11 @@ pub async fn remove_model(
     let mut profiles = ensure(&state.store).await;
     if profiles
         .iter()
-        .filter(|p| p.id != id && is_chat_model(p))
+        .filter(|p| p.id != id && is_default_chat_model(p))
         .count()
         == 0
     {
-        return Err("At least one chat model is required.".into());
+        return Err("At least one everyday chat model is required.".into());
     }
     profiles.retain(|p| p.id != id);
     save_raw(&state.store, &profiles).await?;
@@ -2031,7 +2066,7 @@ pub async fn remove_model(
         .flatten()
         .unwrap_or_default();
     if cur == id {
-        if let Some(first) = profiles.iter().find(|p| is_chat_model(p)) {
+        if let Some(first) = profiles.iter().find(|p| is_default_chat_model(p)) {
             let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
         }
     }
@@ -2234,6 +2269,7 @@ mod tests {
             session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),
@@ -2281,6 +2317,97 @@ mod tests {
             profile.model = model.into();
             assert!(!supports_fast_service_tier(&profile));
         }
+    }
+
+    #[tokio::test]
+    async fn expert_profiles_persist_without_replacing_the_everyday_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("experts.sqlite"))
+            .await
+            .unwrap();
+        let everyday = test_profile("daily", "Everyday", "daily-model");
+        save_raw(&store, &[everyday]).await.unwrap();
+        store.set_setting(ACTIVE_KEY, "daily").await.unwrap();
+        let mut expert = test_profile("", "Senior expert", "expert-model");
+        expert.use_for_expert = true;
+        let saved = save_model_profile(&store, expert, None, false)
+            .await
+            .unwrap();
+        let expert_id = saved.iter().find(|p| p.use_for_expert).unwrap().id.clone();
+        assert_eq!(active_profile_id(&store).await, "daily");
+        assert_eq!(expert_profiles(&store).await[0].id, expert_id);
+        assert_eq!(delegation_profiles(&store).await.len(), 1);
+        assert_eq!(delegation_profiles(&store).await[0].id, "daily");
+        // A missing default must not select the first, expensive profile.
+        let mut reordered = load_raw(&store).await;
+        reordered.reverse();
+        save_raw(&store, &reordered).await.unwrap();
+        store
+            .set_setting(ACTIVE_KEY, "deleted-model")
+            .await
+            .unwrap();
+        assert_eq!(active_profile_id(&store).await, "daily");
+        // Users can still deliberately select it for a conversation.
+        store.create_project("p", "Project", "").await.unwrap();
+        store
+            .create_frame("f", "p", "OPERON", &expert_id)
+            .await
+            .unwrap();
+        store.set_frame_model("f", "p", &expert_id).await.unwrap();
+        assert_eq!(session_profile_id(&store, "f").await, expert_id);
+        let mut expert = profile_owned(&store, &expert_id).await.unwrap();
+        // Editing an explicitly selected expert must preserve that selection.
+        store.set_setting(ACTIVE_KEY, &expert_id).await.unwrap();
+        expert.reasoning_effort = "high".into();
+        save_model_profile(&store, expert.clone(), None, false)
+            .await
+            .unwrap();
+        assert_eq!(active_profile_id(&store).await, expert_id);
+        expert.use_for_expert = false;
+        save_model_profile(&store, expert, None, false)
+            .await
+            .unwrap();
+        assert!(expert_profiles(&store).await.is_empty());
+        // Reserving the current default chooses the remaining everyday model.
+        expert = profile_owned(&store, &expert_id).await.unwrap();
+        expert.use_for_expert = true;
+        save_model_profile(&store, expert, None, false)
+            .await
+            .unwrap();
+        assert_eq!(active_profile_id(&store).await, "daily");
+    }
+
+    #[tokio::test]
+    async fn expert_assignment_requires_a_chat_model_and_an_everyday_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("roles.sqlite"))
+            .await
+            .unwrap();
+        let daily = test_profile("daily", "Everyday", "daily-model");
+        save_raw(&store, &[daily.clone()]).await.unwrap();
+        let mut reserved = daily;
+        reserved.use_for_expert = true;
+        assert!(save_model_profile(&store, reserved, None, false)
+            .await
+            .unwrap_err()
+            .contains("everyday"));
+        assert!(!load_raw(&store).await[0].use_for_expert);
+        let mut image = test_profile("image", "Image", "gpt-image-2");
+        image.use_for_expert = true;
+        assert!(save_model_profile(&store, image, None, false)
+            .await
+            .unwrap_err()
+            .contains("chat model"));
+        assert!(expert_profiles(&store).await.is_empty());
+    }
+
+    #[test]
+    fn old_model_profiles_do_not_opt_in_to_expensive_expert_calls() {
+        let profile: ModelProfile = serde_json::from_value(serde_json::json!({
+            "id":"old", "provider":"openai", "api_url":"u", "model":"m"
+        }))
+        .unwrap();
+        assert!(!profile.use_for_expert);
     }
 
     #[tokio::test]

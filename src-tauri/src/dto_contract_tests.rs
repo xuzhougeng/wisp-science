@@ -205,6 +205,7 @@ fn model_profile_contract() {
         session_header_name: "x-custom-session".into(),
         supports_vision: true,
         use_for_vision: true,
+        use_for_expert: true,
         use_for_image_generation: false,
         image_generation_capable: false,
         image_size: String::new(),
@@ -235,6 +236,7 @@ fn model_profile_contract() {
     assert_eq!(dto.session_header_name, "x-custom-session");
     assert!(dto.supports_vision);
     assert!(dto.use_for_vision);
+    assert!(dto.use_for_expert);
     assert!(!dto.use_for_image_generation);
     assert!(!dto.image_generation_capable);
     assert!(dto.use_for_video_generation);

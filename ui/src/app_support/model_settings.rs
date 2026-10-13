@@ -161,6 +161,7 @@ impl ModelSettingsState {
                     "session_header_name": profile.session_header_name,
                     "supports_vision": profile.supports_vision,
                     "use_for_vision": profile.use_for_vision,
+                    "use_for_expert": profile.use_for_expert,
                     "use_for_image_generation": profile.use_for_image_generation,
                     "image_size": profile.image_size,
                     "image_quality": profile.image_quality,
@@ -277,6 +278,7 @@ impl ModelSettingsState {
             "session_header_name": form.session_header_name,
             "supports_vision": form.supports_vision,
             "use_for_vision": form.use_for_vision,
+            "use_for_expert": form.use_for_expert && !form.is_image_model() && !is_video_generation_model(&form.model) && !form.use_for_video_generation,
             "use_for_image_generation": form.use_for_image_generation,
             "image_size": form.image_size.trim(),
             "image_quality": form.image_quality.trim(),
@@ -355,10 +357,11 @@ impl ModelSettingsState {
             return;
         }
         let existing = models.get();
-        let has_chat = entries
+        let has_chat = entries.iter().any(|entry| {
+            !entry.is_image_model() && !entry.is_video_model() && !entry.use_for_expert
+        }) || existing
             .iter()
-            .any(|entry| !entry.is_image_model() && !entry.is_video_model())
-            || existing.iter().any(|profile| profile.is_chat_model());
+            .any(|profile| profile.is_chat_model() && !profile.use_for_expert);
         if !has_chat {
             model_form_msg.set(Some((false, t(loc, "models.need_chat").into())));
             return;
@@ -373,9 +376,9 @@ impl ModelSettingsState {
         }
         // Image and video models first, then extra chat models, first chat
         // last so `save_model` leaves the cheaper/default chat profile active.
-        let first_chat = entries
-            .iter()
-            .position(|entry| !entry.is_image_model() && !entry.is_video_model());
+        let first_chat = entries.iter().position(|entry| {
+            !entry.is_image_model() && !entry.is_video_model() && !entry.use_for_expert
+        });
         let mut ordered = Vec::with_capacity(entries.len());
         if let Some(first) = first_chat {
             let default_chat = entries.remove(first);
@@ -431,6 +434,7 @@ impl ModelSettingsState {
                     "session_header_name": form.session_header_name,
                     "supports_vision": entry.supports_vision && !media,
                     "use_for_vision": entry.use_for_vision && !media,
+                    "use_for_expert": entry.use_for_expert && !media,
                     "use_for_image_generation": image,
                     "image_size": "",
                     "image_quality": "",

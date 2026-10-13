@@ -56,7 +56,7 @@ mod project_sync_backend_tests {
 #[cfg(test)]
 mod provider_form_tests {
     use super::{
-        apply_base_url_suggestions, endpoint_has_stored_key, new_model_form,
+        apply_base_url_suggestions, endpoint_has_stored_key, new_model_form, profile_to_form,
         provider_entries_are_pristine, suggested_base_url_models, ModelProfile,
         DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL,
     };
@@ -81,6 +81,7 @@ mod provider_form_tests {
             session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
+            use_for_expert: false,
             use_for_image_generation: false,
             image_generation_capable: false,
             image_size: String::new(),
@@ -156,6 +157,9 @@ mod provider_form_tests {
     fn changing_url_refreshes_only_pristine_suggestions() {
         let mut form = new_model_form();
         assert!(provider_entries_are_pristine(&form));
+        form.entries[0].use_for_expert = true;
+        assert!(!provider_entries_are_pristine(&form));
+        form.entries[0].use_for_expert = false;
         apply_base_url_suggestions(&mut form, "https://api.kimi.com/coding/v1");
         assert_eq!(form.entries[0].model, "kimi-coding");
         form.entries[0].model = "k3-256k".into();
@@ -165,6 +169,13 @@ mod provider_form_tests {
         edited.api_url = "https://api.kimi.com/coding/v1/".into();
         assert!(!provider_entries_are_pristine(&edited));
         assert_eq!(edited.entries[0].model, before[0].model);
+    }
+
+    #[test]
+    fn editing_a_profile_preserves_expert_opt_in() {
+        let mut model = profile("https://example.test", true);
+        model.use_for_expert = true;
+        assert!(profile_to_form(&model).use_for_expert);
     }
 
     #[test]
@@ -821,6 +832,7 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         session_header_name: m.session_header_name.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
+        use_for_expert: m.use_for_expert,
         use_for_image_generation: m.use_for_image_generation,
         image_generation_capable: m.image_generation_capable,
         restore_chat_model: false,
@@ -881,6 +893,7 @@ pub(crate) fn model_form_entry(
         model: model.into(),
         supports_vision: false,
         use_for_vision: false,
+        use_for_expert: false,
         use_for_image_generation: image,
         use_for_video_generation: video,
     }
@@ -933,6 +946,7 @@ pub(crate) fn provider_entries_are_pristine(form: &ModelForm) -> bool {
                 entry.model.trim(),
                 entry.supports_vision,
                 entry.use_for_vision,
+                entry.use_for_expert,
                 entry.use_for_image_generation,
             )
         })
@@ -947,6 +961,7 @@ pub(crate) fn provider_entries_are_pristine(form: &ModelForm) -> bool {
                 entry.model.trim(),
                 entry.supports_vision,
                 entry.use_for_vision,
+                entry.use_for_expert,
                 entry.use_for_image_generation,
             )
         })

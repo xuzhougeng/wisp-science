@@ -4403,10 +4403,10 @@ fn format_duration(secs: i64) -> String {
 fn activity_meta(item: &SubagentActivity, locale: Locale) -> String {
     let mut parts = vec![t(
         locale,
-        if item.kind == "explore" {
-            "agents.activity.kind.explore"
-        } else {
-            "agents.activity.kind.conversation"
+        match item.kind.as_str() {
+            "explore" => "agents.activity.kind.explore",
+            "expert" => "agents.activity.kind.expert",
+            _ => "agents.activity.kind.conversation",
         },
     )];
     if item.tool_calls > 0 {
@@ -4423,10 +4423,10 @@ fn activity_meta(item: &SubagentActivity, locale: Locale) -> String {
 }
 
 fn activity_icon(item: &SubagentActivity) -> &'static str {
-    if item.kind == "explore" {
-        "search"
-    } else {
-        "bot"
+    match item.kind.as_str() {
+        "explore" => "search",
+        "expert" => "brain",
+        _ => "bot",
     }
 }
 

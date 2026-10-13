@@ -1293,6 +1293,23 @@ async fn send_message_inner_with_continuation(
         }
     }
     let (auto_continue, auto_continue_limit) = load_auto_continue_settings(&state.store).await;
+    // Only top-level built-in conversations may escalate. A cached agent
+    // receives a fresh budget on a new turn; resume keeps the existing one.
+    if !assistant
+        && agent.tools.get("dispatch_subagent").is_some()
+        && (!resume || agent.tools.get("consult_expert").is_none())
+    {
+        let experts = models::expert_profiles(&state.store).await;
+        if !experts.is_empty() || agent.tools.get("consult_expert").is_some() {
+            agent
+                .tools
+                .replace(Box::new(expert_tool::ConsultExpertTool::new(
+                    state.store.clone(),
+                    frame_id.clone(),
+                    experts,
+                )));
+        }
+    }
     apply_live_agent_settings(
         agent,
         max_iter,

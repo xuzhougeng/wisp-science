@@ -142,6 +142,7 @@ pub(crate) use wisp_runs::ssh_guard;
 mod ssh_hosts;
 pub(crate) use wisp_runs::ssh_master;
 mod clipboard_files;
+mod expert_tool;
 mod mcp_app_child_commands;
 mod mcp_app_children;
 mod storage_prefs;

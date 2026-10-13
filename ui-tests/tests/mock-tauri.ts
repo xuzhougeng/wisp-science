@@ -3612,6 +3612,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "list_subagent_activity": {
             if (query.get("mockSubagentActivity") !== "1" || arg("sessionId") !== "subagent-parent") return [];
             return [
+              ...(query.get("mockExpertActivity") === "1" ? [{
+                id: "expert:x1", kind: "expert", title: "Why do the sample labels conflict?", status: "completed",
+                instruction: "Two attempts failed.\n\nMatch sample IDs reproducibly.", summary: "opus-4.8",
+                answer: "opus-4.8\n\n## Diagnosis\n\nCheck sample IDs before rerunning.",
+                started_at: 1_700_000_010, ended_at: 1_700_000_030, tool_calls: 0, session_id: null, trace_path: null,
+              }] : []),
               { id: "subagent-child", kind: "conversation", title: "Align the reads", status: "running",
                 instruction: "Align the reads to GRCh38 and report mapping rates.", summary: "", answer: "",
                 started_at: 1_700_000_000, ended_at: null, tool_calls: 3, session_id: "subagent-child", trace_path: null },
@@ -4477,6 +4483,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "save_model": {
             if ((window as any).__failSaveModel) throw new Error("Could not save model");
             const profile = plain(arg("profile") ?? {});
+            profile.use_for_expert = Boolean(profile.use_for_expert);
+            const newlyReserved = profile.use_for_expert && !mockModels.some((m: any) => m.id === profile.id && m.use_for_expert);
+            if (profile.use_for_expert && !mockModels.some((m: any) => m.id !== profile.id
+              && !m.use_for_expert && !m.use_for_image_generation && !m.use_for_video_generation)) {
+              throw new Error("Keep at least one everyday chat model before reserving an expert model.");
+            }
             // Mirror the backend: catalog-known models clamp context/output
             // to their documented ceilings.
             const catalogEntry = mockCatalogLookup(
@@ -4529,8 +4541,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const isChatModel = (model: any) => !model.image_generation_capable
               && !model.use_for_video_generation
               && !["grok-imagine-video", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview"].includes(String(model.model).split("/").pop()!.toLowerCase());
-            if (mockModels.some((model) => model.active && !isChatModel(model))) {
-              const fallback = mockModels.find(isChatModel)?.id;
+            if (mockModels.some((model: any) => model.active && (!isChatModel(model) || (newlyReserved && model.id === profile.id)))) {
+              const fallback = mockModels.find((model: any) => isChatModel(model) && !model.use_for_expert)?.id;
               mockModels = mockModels.map((model) => ({ ...model, active: model.id === fallback }));
             }
             return mockModels;
