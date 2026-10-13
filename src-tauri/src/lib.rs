@@ -7185,8 +7185,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let macos_exit_for_setup = Arc::clone(&macos_exit_in_progress);
 
-    let builder = tauri::Builder::default()
-        .manage(mcp_app_children::McpAppChildren::default());
+    let builder = tauri::Builder::default().manage(mcp_app_children::McpAppChildren::default());
     #[cfg(target_os = "macos")]
     let builder = builder.manage(native_host_lifecycle::NativeHostLifecycle::new(
         native_settings::requested(std::env::args()),
