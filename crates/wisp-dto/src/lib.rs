@@ -33,6 +33,8 @@ mod project_chat_search;
 pub use project_chat_search::*;
 mod session_artifacts;
 pub use session_artifacts::*;
+mod swarm;
+pub use swarm::*;
 
 mod mcp_app_child;
 pub use mcp_app_child::*;

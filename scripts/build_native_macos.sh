@@ -50,12 +50,15 @@ fi
 
 python3 "$ROOT/scripts/sync_native_design.py" --check
 cargo build "${RUST_ARGS[@]}" -p wisp-service
-# A small inert document hosts legacy command extractors. No WebView settings
-# UI is bundled in this helper; all visible settings controls are native.
+# Both apps share a singleton. Keep the inert document for native command
+# extraction, but bundle the real frontend so a later regular-app launch can
+# promote this host without losing active conversations (#1520).
 HOST_ASSETS="$BUILD/host-assets"
-mkdir -p "$HOST_ASSETS"
-cp "$ROOT/ui/native-host.html" "$HOST_ASSETS/native-host.html"
-cp "$ROOT/ui/native-host.html" "$HOST_ASSETS/index.html"
+node "$ROOT/ui/sync-vendor.mjs"
+(
+  cd "$ROOT/ui"
+  env -u NO_COLOR -u TRUNK_NO_COLOR trunk build --release --cargo-profile release-wasm --dist "$HOST_ASSETS"
+)
 TAURI_CONFIG="$(python3 -c 'import json,sys; print(json.dumps({"identifier":sys.argv[2],"build":{"frontendDist":sys.argv[1]}}))' "$HOST_ASSETS" "$HOST_IDENTIFIER")" \
   cargo build "${RUST_ARGS[@]}" -p wisp-tauri --features custom-protocol
 swift build "${SWIFT_ARGS[@]}" --disable-sandbox

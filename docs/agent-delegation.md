@@ -119,6 +119,51 @@ boundary.
 
 ## Inline temporary Agents
 
+### Watching parallel exploration
+
+The WebView desktop shows an **Agent swarm** progress card above the composer
+for `map_items`, project/session Reader retrieval, and `explore`. Open **View
+assistants** to see the three stages: starting tasks, parallel execution, and
+summary. The animation follows actual execution events; it does not estimate
+completion time or invent a percentage. Select a task to read its instruction,
+recent tool/progress observations, and result preview. Reader groups transcript
+chunks by saved conversation and shows completed/total chunks for each one.
+Private model reasoning is not included. The selected assistant is highlighted
+and exposed as selected to assistive technology. Text follows the global UI font
+size setting on both desktop and narrow windows.
+
+Completed, failed, queued, paused, and stopped tasks have separate states.
+**Stop this turn** uses the existing conversation cancellation; closing the
+view only hides it. Escape returns from task detail to the overview, then
+closes the view on the next press. Reduced-motion preferences disable the
+animations. Task lists load in groups of 80; details retain the latest 12
+observations and an 8,000-character result preview. Full `map_items` results
+remain in its existing rows/CSV/reduce files.
+
+Switching conversations preserves the current batch view. Start and final
+snapshots are saved with the conversation; after an app restart an unfinished
+saved snapshot is shown as paused, never as a still-running animation. Reader
+progress is available live during preparation and its final snapshot is saved
+before the main turn. A resumed `map_items` call starts a new view with already
+finished items restored. This display does not change worker concurrency,
+Reader's search scope/time budget, or approval policy. Workflow delegation and
+watch-only child conversations retain their existing Agents panel.
+
+中文：`map_items`、项目／会话 Reader 和 `explore` 共用“并行探索”视图。
+聊天输入框上方显示当前阶段，点击“查看助手”可查看每项任务的进展与结果。
+Reader 按历史会话分组显示扫描分块数。动画由实际事件驱动；失败、暂停与停止
+不会显示为全部完成。关闭视图不取消工作，“停止本轮”沿用现有停止行为。
+`map_items` 续跑时保留已经完成的项目，完整结果仍在原有输出文件中。
+
+Manual verification: run a small approved `map_items` batch with two concurrent
+items and a reduce step; open the card immediately, inspect a running task,
+press Escape twice, and reopen it during reduce. Repeat with one unreadable
+input and with Stop/resume. Attach a few saved sessions to verify Reader
+progress appears before the primary response. Check a narrow window, dark
+theme, reduced motion, a larger UI font size, and switching away/back while tasks
+are running. Select a worker and return to the overview; its selected state
+should clear without closing the window.
+
 1. Open the composer Agent menu and enable **Delegation** for the current
    conversation. New conversations start with delegation off.
 2. Ask the main Agent for an outcome that materially benefits from independent

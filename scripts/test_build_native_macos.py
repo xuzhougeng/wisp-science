@@ -25,6 +25,12 @@ elif name=='cargo':
  if '--target' in args:path=path/value('--target')
  path=path/profile;path.mkdir(parents=True,exist_ok=True)
  (path/value('-p')).write_text('binary for '+(' '.join(args)))
+elif name=='trunk':
+ path=Path(value('--dist'));path.mkdir(parents=True,exist_ok=True)
+ (path/'index.html').write_text('<script src="wisp-ui.js"></script>')
+ (path/'wisp-ui.js').write_text('wasm frontend bootstrap')
+ (path/'wisp-ui_bg.wasm').write_bytes(b'wasm')
+ (path/'native-host.html').write_text((root/'ui/native-host.html').read_text())
 elif name=='swift':
  path=Path(value('--scratch-path'))/value('--configuration')/'bin';path.mkdir(parents=True,exist_ok=True)
  (path/'WispScience').write_text('swift binary')
@@ -53,7 +59,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
         (self.root / 'ui/native-host.html').write_text('<html></html>')
         (self.root / 'ui/vendor-src/rdkit-worker.mjs').write_text('offline worker')
         (self.root / 'ui/vendor-src/office-chunks/renderer.mjs').write_text('offline Office')
-        for tool in ['uname','cargo','swift','git','codesign']:
+        for tool in ['uname','cargo','swift','git','codesign','node','trunk']:
             path=self.root/'bin'/tool;path.write_text(FAKE_TOOL);path.chmod(0o755)
 
     def build(self, *args, flat=False):
@@ -95,7 +101,7 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assertFalse((vendor / 'obsolete.mjs').exists())
 
     def test_default_debug_app_packages_all_swift_resources(self):
-        self.build()
+        calls = self.build()
         app = self.root / 'target/native-macos/Wisp Science SwiftUI.app'
         self.assert_swift_resources(app)
         info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
@@ -104,6 +110,13 @@ class NativeBuildRoutingTests(unittest.TestCase):
         self.assertEqual(info['CFBundleExecutable'], 'WispScience')
         self.assertTrue((app / 'Contents/MacOS' / info['CFBundleExecutable']).is_file())
         self.assertEqual(info['CFBundleIdentifier'], 'science.wisp-science.native-preview')
+        host = next(x for x in calls if x['tool'] == 'cargo' and 'wisp-tauri' in x['args'])
+        assets = Path(json.loads(host['config'])['build']['frontendDist'])
+        self.assertNotEqual((assets / 'index.html').read_text(), (assets / 'native-host.html').read_text())
+        self.assertTrue((assets / 'wisp-ui_bg.wasm').is_file())
+        frontend = next(x for x in calls if x['tool'] == 'trunk')
+        self.assertIn('release-wasm', frontend['args'])
+        self.assertLess(calls.index(frontend), calls.index(host))
 
     def test_both_release_architectures_route_all_three_binaries(self):
         for target, triple in [('aarch64-apple-darwin','arm64-apple-macosx13.0'),('x86_64-apple-darwin','x86_64-apple-macosx13.0')]:

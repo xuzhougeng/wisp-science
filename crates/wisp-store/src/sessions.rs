@@ -2124,6 +2124,22 @@ impl Store {
         .await?)
     }
 
+    /// Retrieve one presentation family without a later swarm progress card
+    /// hiding an unrelated MCP App, or vice versa.
+    pub async fn load_latest_session_presentation(
+        &self,
+        frame_id: &str,
+        presentation_kind: &str,
+    ) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.load_latest_session_presentation(frame_id, presentation_kind))
+                .await;
+        }
+        Ok(sqlx::query_scalar(
+            "SELECT event_json FROM session_ui_events WHERE frame_id=? AND json_extract(event_json,'$.kind')='ToolPresentation' AND json_extract(event_json,'$.presentation_kind')=? ORDER BY seq DESC LIMIT 1",
+        ).bind(frame_id).bind(presentation_kind).fetch_optional(&self.pool).await?)
+    }
+
     /// How the conversation's most recent turn ended: `Done`, `Error`, or
     /// `None` when no turn end was recorded.
     pub async fn last_turn_outcome(&self, frame_id: &str) -> Result<Option<String>> {

@@ -8,10 +8,11 @@
 use crate::agent::agent_loop;
 use crate::archive::{prune_dir, ArchiveRetention};
 use crate::context::ContextManager;
-use crate::output::NullOutput;
+use crate::swarm::{SwarmOutput, SwarmReporter};
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wisp_dto::{SwarmPhase, SwarmTask, SwarmTaskStatus};
 use wisp_llm::{Provider, Role, ToolSchema};
 use wisp_tools::{Registry, Tool, ToolEnv, ToolResult};
 
@@ -121,13 +122,29 @@ impl Tool for ExploreTool {
                     .with_session_id(uuid::Uuid::new_v4().to_string()),
             )
         });
+        let progress = SwarmReporter::for_tool("explore", &question, self.provider.model(), env);
+        progress.tasks(
+            vec![SwarmTask::queued(
+                "explorer".into(),
+                crate::swarm::clip(&question, 160),
+                crate::swarm::clip(&user_prompt, 2_000),
+                1,
+            )],
+            self.provider.model(),
+        );
+        progress.phase(SwarmPhase::Running, "");
+        progress.task("explorer", |task| task.status = SwarmTaskStatus::Running);
+        let output = SwarmOutput {
+            reporter: &progress,
+            task_id: "explorer",
+        };
         let result = agent_loop(
             &mut ctx,
             provider.as_deref().unwrap_or(self.provider.as_ref()),
             None,
             &tools,
             &root,
-            &NullOutput,
+            &output,
             &user_prompt,
             EXPLORE_MAX_ITER,
             env.cancel_flag(),
@@ -143,6 +160,22 @@ impl Tool for ExploreTool {
         prune_dir(&trace_dir, ArchiveRetention::default());
 
         if let Err(e) = result {
+            progress.task("explorer", |task| {
+                task.status = if env.is_cancelled() {
+                    SwarmTaskStatus::Cancelled
+                } else {
+                    SwarmTaskStatus::Failed
+                };
+                task.log.push(e.to_string());
+            });
+            progress.phase(
+                if env.is_cancelled() {
+                    SwarmPhase::Cancelled
+                } else {
+                    SwarmPhase::Failed
+                },
+                &e.to_string(),
+            );
             return ToolResult::fail(format!(
                 "explore subagent failed: {e} (partial trace archived at {})",
                 trace_txt.display()
@@ -150,6 +183,7 @@ impl Tool for ExploreTool {
         }
 
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        progress.phase(SwarmPhase::Summarizing, "");
         for m in ctx.messages.iter().filter(|m| m.role == Role::Tool) {
             *counts
                 .entry(m.tool_name.clone().unwrap_or_default())
@@ -188,6 +222,12 @@ impl Tool for ExploreTool {
             );
             anchor = ContextManager::truncate_middle(&anchor, half, half, &marker);
         }
+        progress.task("explorer", |task| {
+            task.status = SwarmTaskStatus::Completed;
+            task.completed_units = 1;
+            task.result = conclusion;
+        });
+        progress.phase(SwarmPhase::Completed, &anchor);
         ToolResult::ok(anchor)
     }
 }
@@ -195,9 +235,28 @@ impl Tool for ExploreTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::ToolEnvAdapter;
+    use crate::output::{NullOutput, Output, ToolEnvAdapter};
     use std::sync::Mutex;
     use wisp_llm::{Completion, FunctionCall, Message, ToolCall};
+
+    #[derive(Default)]
+    struct ProgressOutput(Mutex<Vec<wisp_dto::SwarmProgress>>);
+
+    impl Output for ProgressOutput {
+        fn tool_presentation(
+            &self,
+            kind: &str,
+            payload: &serde_json::Value,
+            _server: Option<Arc<dyn wisp_tools::McpAppServer>>,
+        ) {
+            if kind == wisp_dto::SWARM_PRESENTATION {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_value(payload.clone()).unwrap());
+            }
+        }
+    }
 
     /// Pops one scripted completion per model call.
     struct ScriptedProvider {
@@ -331,7 +390,7 @@ mod tests {
         });
 
         let tool = ExploreTool::new(provider, 128_000);
-        let out = NullOutput;
+        let out = ProgressOutput::default();
         let env = ToolEnvAdapter::new(root.clone(), &out);
         let result = tool
             .run(
@@ -345,6 +404,13 @@ mod tests {
             .content
             .starts_with("[explore subagent: 1 tool call(s) — read×1]"));
         assert!(result.content.contains("findings:"));
+        let progress = out.0.lock().unwrap();
+        assert_eq!(progress.first().unwrap().phase, SwarmPhase::Starting);
+        assert_eq!(progress.last().unwrap().phase, SwarmPhase::Completed);
+        assert!(progress.last().unwrap().tasks[0]
+            .log
+            .iter()
+            .any(|line| line.starts_with("read:")));
         assert!(result.content.contains("full trace archived at"));
 
         let trace_path = result

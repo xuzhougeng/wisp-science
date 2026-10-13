@@ -1716,7 +1716,7 @@ pub(super) async fn load_session(
     let presentations = if before_seq.is_none() {
         state
             .store
-            .load_latest_session_ui_event(&id, "ToolPresentation")
+            .load_latest_session_presentation(&id, "mcp_app")
             .await
             .map_err(|e| format!("{e}"))?
             .and_then(|json| serde_json::from_str::<AgentEvent>(&json).ok())

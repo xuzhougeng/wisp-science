@@ -26,7 +26,7 @@ pub(crate) fn should_hide_workspace_on_close(window_label: &str) -> bool {
 }
 
 pub(crate) fn should_activate_workspace_window(window_label: &str) -> bool {
-    window_label != "pet"
+    window_label != "pet" && !window_label.starts_with("native-settings-")
 }
 
 #[cfg(target_os = "windows")]
@@ -115,6 +115,25 @@ fn build_tray_menu<M: Manager<tauri::Wry>>(
 }
 
 pub(crate) fn activate_workspace(app: &AppHandle) {
+    // The singleton callback runs off the main thread on macOS. Serialize
+    // activation with native-shell owner exit before showing any window.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || activate_workspace_on_main(&handle));
+}
+
+fn activate_workspace_on_main(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = crate::native_host_lifecycle::prepare_workspace(app) {
+        use tauri_plugin_dialog::DialogExt;
+        tracing::error!(%error, "Cannot open the regular workspace from the native host");
+        app.dialog()
+            .message(format!(
+                "无法打开 Wisp 工作区：{error}\n请退出 Wisp 后重新打开。"
+            ))
+            .title("Wisp Science")
+            .show(|_| {});
+        return;
+    }
     #[cfg(target_os = "macos")]
     let _ = app.show();
 

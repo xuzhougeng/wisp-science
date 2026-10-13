@@ -64,8 +64,11 @@ import WispRemote
             guard !text.isEmpty, text.utf8.count <= 16_000 else {
                 throw RemoteError.service("演示消息不能为空，且需少于 16 KB。")
             }
+            let response = sessionID == "demo-options"
+                ? "**本地预设回复 · 未调用 AI 或运行分析**\n\n已收到你的演示回答。你可以继续[查看质控报告](results/qc_report.md)，或在「演示设置」中重置数据，再体验其他选项。"
+                : reply(to: text)
             try append([.object(["role": .string("user"), "text": .string(text)]),
-                    .object(["role": .string("assistant"), "text": .string(reply(to: text))])], to: session)
+                    .object(["role": .string("assistant"), "text": .string(response)])], to: session)
             return .null
         case "native_conversation_approve":
             let id = args["approval_id"]?.string ?? ""
@@ -113,9 +116,13 @@ import WispRemote
     private var sessionRows: [RemoteValue] {
         manifest["sessions"].array.map { session in
             let needsApproval = session["approvals"].array.contains { decisions[$0["approval_id"].string] == nil }
+            let items = messages[session["id"].string] ?? session["items"].array
+            let needsAnswer = items.enumerated().contains { index, item in
+                RemoteQuestion(item, hasLaterUser: items.dropFirst(index + 1).contains { $0["role"].string == "user" })?.state == .pending
+            }
             return .object(["id": session["id"], "title": session["title"], "project_id": .string(projectID),
                             "project_name": manifest["project"]["name"],
-                            "status": .string(needsApproval || !seen.contains(session["id"].string) ? "needs_you" : "idle")])
+                            "status": .string(needsApproval || needsAnswer || !seen.contains(session["id"].string) ? "needs_you" : "idle")])
         }
     }
     private func append(_ items: [RemoteValue], to session: RemoteValue) throws {

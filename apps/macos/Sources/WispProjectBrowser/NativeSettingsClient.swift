@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum SettingsValue: Codable, Equatable, Sendable {
     case object([String: SettingsValue]), array([SettingsValue]), string(String), integer(Int64), number(Double), bool(Bool), null
@@ -89,15 +90,21 @@ public actor NativeSettingsClient: NativeSettingsQuerying {
         }
         let child = Process()
         child.executableURL = executableURL
-        child.arguments = ["--native-settings-host"]
+        let owner = try NativeSettingsHostOwners.shared.configure(child)
         child.standardOutput = FileHandle.nullDevice
         child.standardError = FileHandle.nullDevice
-        try child.run()
+        do { try child.run() }
+        catch { NativeSettingsHostOwners.shared.release(owner); throw error }
         process = child
+        var ready = false
+        defer { if !ready { NativeSettingsHostOwners.shared.release(owner) } }
         for _ in 0..<60 {
             try Task.checkCancellation()
             if let host = try? readDescriptor(),
-               (try? await Self.request(host, command: "native_settings_capabilities", args: [:], projectID: nil, timeout: 2)) != nil { return host }
+               (try? await Self.request(host, command: "native_settings_capabilities", args: [:], projectID: nil, timeout: 2)) != nil {
+                ready = true
+                return host
+            }
             try await Task.sleep(nanoseconds: 500_000_000)
         }
         throw ProjectBrowserError.service("完整设置宿主未就绪。请确认当前数据库属于正在运行的桌面宿主，然后重试。")
@@ -149,6 +156,36 @@ public actor NativeSettingsClient: NativeSettingsQuerying {
         if case .string(let message) = response["error"] { throw ProjectBrowserError.service(message) }
         guard response.object.keys.contains("result") else { throw ProjectBrowserError.invalidResponse }
         return response["result"]
+    }
+}
+
+/// Keep launched hosts alive for the native application's lifetime, not the
+/// lifetime of a settings view/client. OS pipe closure also covers force quit.
+/// A discovered/borrowed host never enters this registry.
+final class NativeSettingsHostOwners: @unchecked Sendable {
+    static let shared = NativeSettingsHostOwners()
+    private let lock = NSLock()
+    private var pipes: [UUID: Pipe] = [:]
+
+    func configure(_ process: Process) throws -> UUID {
+        let id = UUID(), pipe = Pipe()
+        // Only the native UI may retain the write end. An inherited writer in
+        // the host (or another child) would prevent EOF after the UI exits.
+        let writer = pipe.fileHandleForWriting.fileDescriptor
+        let flags = fcntl(writer, F_GETFD)
+        guard flags >= 0, fcntl(writer, F_SETFD, flags | FD_CLOEXEC) >= 0 else {
+            throw ProjectBrowserError.service("无法创建桌面宿主的生命周期连接。")
+        }
+        lock.lock(); pipes[id] = pipe; lock.unlock()
+        process.arguments = ["--native-settings-host", "--native-settings-owner-stdin"]
+        process.standardInput = pipe
+        process.terminationHandler = { [self] _ in release(id) }
+        return id
+    }
+
+    func release(_ id: UUID) {
+        lock.lock(); let pipe = pipes.removeValue(forKey: id); lock.unlock()
+        try? pipe?.fileHandleForWriting.close()
     }
 }
 

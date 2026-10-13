@@ -154,6 +154,23 @@ for row in rows:
                                "message": "体验一次命令审批。批准或拒绝都不会实际执行命令。", "preview": "python scripts/qc_demo.py"}],
                 "follow_ups": ["查看完整质控报告"],
             },
+            {
+                "id": "demo-options", "title": "问题与选项", "approvals": [], "run_cards": [], "follow_ups": [],
+                "items": [
+                    message("assistant", "**本地选项演示**\n\n点选选项后点击「提交回答」。选择和补充说明只保存在本次演示中，不会调用 AI 或执行分析。"),
+                    message("question", json.dumps({
+                        "v": 1, "source": "native",
+                        "question": "这组演示样本的质控结果已经整理好。接下来希望如何查看？请选择一项，也可以填写自己的要求。",
+                        "options": [
+                            {"label": "按建议标准查看", "description": "查看每个样本的比对率、Q30 和分组汇总，并打开预先打包的质控报告。"},
+                            {"label": "只查看汇总报告", "description": "直接阅读报告和图表，暂时跳过逐样本详情。"},
+                            {"label": "使用自定义标准", "description": "在下方补充你关注的指标或阈值，例如希望重点查看哪些样本。"},
+                        ],
+                        "allow_freeform": True,
+                        "note": "Question submitted; it is now waiting for the user. End your turn here — the answer arrives as the next user message.",
+                    }, ensure_ascii=False, separators=(",", ":"))),
+                ],
+            },
         ],
         "files": [{"path": str(path.relative_to(FILES))} for path in sorted(FILES.rglob("*")) if path.is_file()],
     }

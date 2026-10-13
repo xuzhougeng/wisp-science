@@ -12,12 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
       - run: python3 scripts/sync_native_design.py --check
       - run: python3 scripts/sync_native_settings_contract.py --check
       - run: python3 scripts/test_sync_native_settings_contract.py
       - run: python3 -m unittest discover -s scripts -p 'test_*native_macos.py'
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
+      - run: WISP_CATALOG_OFFLINE=1 cargo test --locked -p wisp-tauri --lib native_host
       - run: swift test --package-path apps/macos --scratch-path target/native-macos/swift
       - run: bash scripts/build_native_macos.sh
       - name: Archive unnotarized SwiftUI CI build

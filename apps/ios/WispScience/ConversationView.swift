@@ -304,8 +304,8 @@ private struct TranscriptGroupView: View {
     var body: some View {
         if group.isProcess {
             DisclosureGroup {
-                ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
-                    MessageView(item: item, model: model, route: route)
+                ForEach(Array(group.items.enumerated()), id: \.offset) { offset, item in
+                    MessageView(item: item, model: model, route: route, index: group.id + offset)
                 }
             } label: {
                 let layout = typeSize.isAccessibilitySize
@@ -322,8 +322,8 @@ private struct TranscriptGroupView: View {
                 }
             }.disclosureGroupStyle(WispDisclosureStyle(identifier: "process-group-\(group.id)"))
         } else {
-            ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
-                MessageView(item: item, model: model, route: route)
+            ForEach(Array(group.items.enumerated()), id: \.offset) { offset, item in
+                MessageView(item: item, model: model, route: route, index: group.id + offset)
             }
         }
     }
@@ -333,6 +333,7 @@ struct MessageView: View {
     let item: RemoteValue
     @ObservedObject var model: RemoteWorkspace
     let route: ConversationRoute
+    let index: Int
     var body: some View {
         switch item["role"].string {
         case "user":
@@ -349,6 +350,14 @@ struct MessageView: View {
             MarkdownView(text: item["text"].string, resources: item["resources"].array, model: model, route: route)
         case "usage":
             UsageDetailsView(text: item["text"].string)
+        case "question":
+            if let question = model.question(at: index, item: item) {
+                QuestionCardView(question: question, item: item, index: index,
+                    model: model, connection: model.connection, route: route)
+                    .id(model.questionID(at: index, item: item, route: route))
+            } else {
+                Text(item["text"].string).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         case "tool", "acp_tool", "reasoning":
             DisclosureGroup {
                 if !item["input"].string.isEmpty { CodeText(text: item["input"].string) }
@@ -373,6 +382,101 @@ struct MessageView: View {
         default:
             if !item["text"].string.isEmpty { Text(item["text"].string).foregroundStyle(.secondary).textSelection(.enabled) }
         }
+    }
+}
+
+private struct QuestionCardView: View {
+    let question: RemoteQuestion
+    let item: RemoteValue
+    let index: Int
+    @ObservedObject var model: RemoteWorkspace
+    @ObservedObject var connection: RemoteConnection
+    let route: ConversationRoute
+    @State private var selected: Int?
+    @State private var note = ""
+    @FocusState private var editingNote: Bool
+
+    private var id: String { model.questionID(at: index, item: item, route: route) }
+    private var submission: QuestionSubmission? { model.questionSubmissions[id] }
+    private var answered: Bool { question.state == .answered || submission == .sent }
+    private var enabled: Bool { model.canAnswerQuestion(at: index, item: item, route: route) }
+    private var status: String {
+        if answered { return "已回答" }
+        if question.state == .expired { return "问题已过期" }
+        if submission == .uncertain { return "发送结果待确认，请刷新对话或在主机查看。" }
+        if !question.isNative || model.snapshot?.writable != true { return "请在桌面端回答此问题。" }
+        if !model.canActOnSnapshot { return "联网刷新后可回答" }
+        if model.busy.contains(route) { return "正在提交…" }
+        if model.snapshot?.running == true { return "等待当前运行结束后回答" }
+        if !connection.supports("native_conversation_send") { return "当前主机不支持回答，请更新主机。" }
+        if question.options.isEmpty { return "填写回答后提交" }
+        return question.allowsFreeform ? "选择一项后提交，也可以补充说明" : "选择一项后提交"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(answered ? "已回答的问题" : question.state == .expired ? "已过期的问题" : "需要你确认")
+                .font(.caption.weight(.semibold)).foregroundStyle(WispStyle.accent)
+            Text(question.question).font(.body.weight(.medium)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if !answered && question.state == .pending && submission == nil {
+                VStack(spacing: 8) {
+                    ForEach(question.options.indices, id: \.self) { option in
+                        let choice = question.options[option]
+                        Button { selected = selected == option ? nil : option } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(choice.label).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(selected == option ? "已选" : "选择").font(.caption.weight(.medium))
+                                        .foregroundStyle(WispStyle.accent).fixedSize()
+                                }
+                                if !choice.description.isEmpty {
+                                    Text(choice.description).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                            .padding(12).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .background(selected == option ? WispStyle.accent.opacity(0.09) : WispStyle.canvas,
+                                        in: RoundedRectangle(cornerRadius: 10))
+                            .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(
+                                selected == option ? WispStyle.accent : WispStyle.border, lineWidth: selected == option ? 1.5 : 1) }
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(WispRowButtonStyle()).disabled(!enabled)
+                        .accessibilityIdentifier("question-option-\(option)")
+                        .accessibilityValue(selected == option ? "已选择" : "未选择")
+                        .accessibilityHint("选择后点击提交回答")
+                        .accessibilityAddTraits(selected == option ? .isSelected : [])
+                    }
+                }
+                if question.allowsFreeform {
+                    TextField("补充说明，或直接输入你的回答", text: $note, axis: .vertical)
+                        .font(.subheadline).lineLimit(2...6).focused($editingNote)
+                        .padding(12).background(WispStyle.canvas, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(WispStyle.border, lineWidth: 1) }
+                        .disabled(!enabled).accessibilityIdentifier("question-freeform")
+                }
+                HStack {
+                    Spacer()
+                    Button("提交回答") {
+                        editingNote = false
+                        let questionID = id
+                        let option = selected, answerNote = note
+                        Task { await model.answerQuestion(at: index, item: item, id: questionID,
+                            route: route, option: option, freeform: answerNote) }
+                    }
+                    .buttonStyle(WispSendButtonStyle()).accessibilityIdentifier("question-submit")
+                    .disabled(!enabled || question.answer(option: selected, freeform: note) == nil)
+                }
+            }
+            Text(status).font(.caption).foregroundStyle(.secondary)
+                .accessibilityIdentifier("question-status")
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(WispStyle.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(WispStyle.border, lineWidth: 1) }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("question-card")
     }
 }
 

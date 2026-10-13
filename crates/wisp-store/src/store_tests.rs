@@ -3359,6 +3359,43 @@ async fn session_ui_events_keep_insertion_order() {
 }
 
 #[tokio::test]
+async fn presentation_families_do_not_hide_each_other() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_presentations_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "P", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let app =
+        r#"{"kind":"ToolPresentation","presentation_kind":"mcp_app","payload":{"name":"Browser"}}"#;
+    let swarm = r#"{"kind":"ToolPresentation","presentation_kind":"agent_swarm","payload":{"phase":"completed"}}"#;
+    store.append_session_ui_event("f", 1, app).await.unwrap();
+    store.append_session_ui_event("f", 2, swarm).await.unwrap();
+    assert_eq!(
+        store
+            .load_latest_session_presentation("f", "mcp_app")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(app)
+    );
+    assert_eq!(
+        store
+            .load_latest_session_presentation("f", "agent_swarm")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(swarm)
+    );
+    assert!(store
+        .load_latest_session_presentation("f", "missing")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn session_ui_events_timed_roundtrip() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_ui_events_timed_{}.sqlite",
