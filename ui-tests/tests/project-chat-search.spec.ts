@@ -163,8 +163,11 @@ test("chat search fits a narrow viewport and Enter opens the selected result", a
 });
 
 test("a dialog above chat search consumes Escape before search", async ({ page }) => {
+  // The default mock project has no saved conversations.
+  await page.locator(".sidebar").getByRole("button", { name: "New session", exact: true }).click();
   await page.locator(".sidebar .ses").first().click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(page.locator("#rename-session-input")).toBeVisible();
   await page.keyboard.press("Control+Shift+f");
   await page.keyboard.press("Escape");
   await expect(page.locator("#rename-session-input")).toHaveCount(0);
