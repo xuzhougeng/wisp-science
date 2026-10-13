@@ -369,6 +369,62 @@ final class WorkspaceUITests: XCTestCase {
         verifyDemoQuestion(darkAndLarge: false)
     }
 
+    func testResearchAssistantDemoKeepsOneConversationAndEscapeClosesOnlyTopSurface() {
+        verifyAssistantDemo(darkAndLarge: false)
+    }
+
+    func testResearchAssistantDemoWithLargeTextAndDarkAppearance() {
+        verifyAssistantDemo(darkAndLarge: true)
+    }
+
+    private func verifyAssistantDemo(darkAndLarge: Bool) {
+        let app = launch("connection", darkAndLarge: darkAndLarge)
+        XCTAssertTrue(app.buttons["enter-demo"].waitForExistence(timeout: 5))
+        app.buttons["enter-demo"].tap()
+        let entry = app.buttons["research-assistant-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        XCTAssertTrue(app.buttons["close-assistant"].waitForExistence(timeout: 5))
+        // No focus movement before Escape: the assistant is the top surface.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        XCTAssertTrue(app.buttons["conversation-info"].waitForExistence(timeout: 5))
+        app.buttons["conversation-info"].tap()
+        XCTAssertTrue(app.otherElements["conversation-info-sheet"].waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertFalse(app.otherElements["conversation-info-sheet"].exists)
+        XCTAssertTrue(app.buttons["close-assistant"].exists, "Only the detail sheet should close")
+        XCTAssertFalse(app.buttons["conversation-files"].exists)
+        XCTAssertFalse(app.buttons["添加图片"].exists)
+        let suggestion = app.buttons["follow-up-0"]
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
+        let transcript = app.scrollViews["conversation-transcript"]
+        for _ in 0..<8 { if suggestion.isHittable { break }; transcript.swipeDown() }
+        XCTAssertTrue(suggestion.isHittable)
+        suggestion.tap()
+        app.buttons["send-message"].tap()
+        let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "本地科研助理演示 · 未调用 AI")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        app.buttons["close-assistant"].tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        XCTAssertTrue(reply.waitForExistence(timeout: 5), "Reopening continues the same assistant history")
+        XCTAssertFalse(app.staticTexts["workspace-error"].exists)
+    }
+
+    func testResearchAssistantOnOlderHostShowsUpgradeAndCanReturnToProjects() {
+        let app = launch()
+        let entry = app.buttons["research-assistant-entry"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        XCTAssertTrue(app.staticTexts["assistant-unavailable"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["send-message"].isEnabled)
+        app.buttons["close-assistant"].tap()
+        openConversation(app)
+        XCTAssertFalse(app.staticTexts["workspace-error"].exists)
+    }
+
     func testDemoQuestionWithDarkAppearanceAndAccessibilityText() {
         verifyDemoQuestion(darkAndLarge: true)
     }

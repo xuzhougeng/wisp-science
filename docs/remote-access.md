@@ -221,6 +221,11 @@ so its first launch asks for the code once.
 - **Small allowlist.** Remote browsers can list projects and conversations,
   read snapshots, create conversations, send, queue a message and cancel a
   queued one, stop, approve, attach a picture and mark a conversation as seen.
+  Updated hosts also expose `native_assistant_open` for the iOS research-assistant
+  entry. It takes no project or arguments, resolves the same persistent assistant
+  conversation as the desktop without rebinding a desktop window, and uses the
+  existing remote conversation commands and approval policy. Assistant workspace
+  and automation-mutation APIs are not exposed through this tunnel.
   Terminal input, kernel execution, file save and file actions, references,
   reordering or editing the queue, and ACP conversations are not available
   remotely. Approvals apply once; a remote browser cannot grant

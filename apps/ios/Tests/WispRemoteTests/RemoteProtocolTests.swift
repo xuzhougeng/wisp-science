@@ -24,6 +24,19 @@ func fixture(_ name: String) throws -> RemoteValue {
 }
 
 final class RemoteProtocolTests: XCTestCase {
+    func testResearchAssistantUsesSharedFixedBindingAndOpenIsNotAReadCacheCommand() throws {
+        let value = try fixture("native-assistant/v1/workspace.json")
+        let route = try ConversationRoute.assistant(from: value["open"])
+        XCTAssertEqual(route, .researchAssistant)
+        XCTAssertEqual(route.args, ["session_id": .string("research-assistant")])
+        XCTAssertFalse(RemoteReadCache.accepts("native_assistant_open"))
+        let invalid: [RemoteValue] = [.null, .object(["project_id": .string("other"), "session_id": .string(route.session)]),
+                                     .object(["project_id": .string(route.project), "session_id": .string("other")])]
+        for wrong in invalid {
+            XCTAssertThrowsError(try ConversationRoute.assistant(from: wrong))
+        }
+    }
+
     func testConnectionLinkNeverSendsCodeAndPreservesProxyPrefix() throws {
         let configuration = try RemoteConfiguration(address: "https://relay.example.test/wisp/remote#\(testCode)/p/project/s/chat")
         XCTAssertEqual(configuration.relay.absoluteString, "https://relay.example.test/wisp/")

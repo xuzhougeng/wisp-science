@@ -5,6 +5,15 @@ public struct ConversationRoute: Hashable, Sendable {
     public let session: String
     public init(project: String, session: String) { self.project = project; self.session = session }
     public var args: [String: RemoteValue] { ["session_id": .string(session)] }
+
+    /// Existing native-assistant/v1 binding, also used to find its offline
+    /// snapshot. Online access must first resolve native_assistant_open.
+    public static let researchAssistant = ConversationRoute(project: "assistant:research", session: "research-assistant")
+    public static func assistant(from value: RemoteValue) throws -> ConversationRoute {
+        guard value["project_id"].string == researchAssistant.project,
+              value["session_id"].string == researchAssistant.session else { throw RemoteError.incompatibleResponse }
+        return researchAssistant
+    }
 }
 
 /// A replacement snapshot, as defined by wisp-dto::native_conversations.

@@ -172,6 +172,23 @@ for row in rows:
                 ],
             },
         ],
+        "assistant": {
+            "id": "research-assistant",
+            "title": "科研助理",
+            "approvals": [],
+            "run_cards": [],
+            "items": [
+                {
+                    "role": "assistant",
+                    "text": "# 让研究，日渐清晰\n\n**这是本地科研助理演示，使用合成数据和预设回复。**\n\n你可以在这里统筹多个项目、回顾进展、安排下一步工作。真实连接时，这里与桌面端共享同一条长期对话。\n\n试试下方的问题；返回项目后再进入，对话会保留到本次演示结束。"
+                }
+            ],
+            "follow_ups": [
+                "汇总目前研究进展",
+                "帮我规划下一步",
+                "有哪些待我处理的事项？"
+            ]
+        },
         "files": [{"path": str(path.relative_to(FILES))} for path in sorted(FILES.rglob("*")) if path.is_file()],
     }
     (ROOT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

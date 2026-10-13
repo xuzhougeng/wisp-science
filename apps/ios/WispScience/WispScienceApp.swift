@@ -23,8 +23,8 @@ final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         workspace = model
         let window = WispWindow(windowScene: scene)
-        window.dismissTopSurface = { [weak model] in model?.sheet = nil }
-        window.hasSurface = { [weak model] in model?.sheet != nil }
+        window.dismissTopSurface = { [weak model] in model?.dismissTopSurface() }
+        window.hasSurface = { [weak model] in model?.hasDismissibleSurface == true }
         window.rootViewController = UIHostingController(rootView: WorkspaceView(model: model, connection: model.connection))
         self.window = window
         window.makeKeyAndVisible()

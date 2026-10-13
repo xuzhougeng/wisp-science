@@ -42,6 +42,7 @@ const CODE_SECRET: &str = "remote_access_code";
 /// is a small picture into `uploads/`, to attach to its own message.
 const REMOTE_COMMANDS: &[&str] = &[
     "list_projects",
+    "native_assistant_open",
     "remote_sessions",
     "remote_attach_image",
     "native_conversation_inbox",
@@ -549,6 +550,15 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
         return Err("This command is not available remotely".into());
     }
     match request.command.as_str() {
+        // Resolve the one persistent assistant conversation without rebinding
+        // a desktop window. Its turns still use the remote broker's Ask policy.
+        "native_assistant_open" => {
+            if request.project_id.is_some()
+                || !request.args.as_object().is_some_and(|args| args.is_empty())
+            {
+                return Err("Assistant open takes no project or arguments".into());
+            }
+        }
         "native_conversation_send" | "native_conversation_enqueue" => {
             check_message(&decode(&request.args)?)?;
         }
@@ -616,6 +626,8 @@ mod tests {
             "native_conversation_panel_file_locations",
             "native_conversation_panel_export",
             "native_conversation_delete",
+            "native_assistant_workspace",
+            "native_assistant_mutate",
             "write_terminal",
             "channels_status",
         ] {
@@ -696,6 +708,25 @@ mod tests {
         assert!(check(&request("remote_attach_image", named)).is_err());
         let acp = json!({"acp_agent_id": "codex"});
         assert!(check(&request("native_conversation_create", acp)).is_err());
+    }
+
+    #[test]
+    fn remote_assistant_open_only_resolves_the_single_unbound_conversation() {
+        let mut open = request("native_assistant_open", json!({}));
+        assert!(check(&open).is_err());
+        open.project_id = None;
+        assert!(check(&open).is_ok());
+        for args in [
+            json!({"session_id": "other"}),
+            json!({"full_permission": true}),
+            json!([]),
+        ] {
+            open.args = args;
+            assert!(check(&open).is_err());
+        }
+        open.args = json!({});
+        open.project_id = Some(String::new());
+        assert!(check(&open).is_err());
     }
 
     #[test]

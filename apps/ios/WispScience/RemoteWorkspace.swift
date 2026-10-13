@@ -44,6 +44,10 @@ enum WorkspaceSheet: Identifiable {
     private static let demoPreference = "wisp.workspace.demo"
     private var demo: DemoDataset?
     @Published private(set) var isDemo = false
+    @Published private(set) var showingAssistant = false
+    @Published private(set) var openingAssistant = false
+    private var assistantSession: UUID?
+    private var assistantOpenTask: (session: UUID, task: Task<Void, Error>)?
     @Published private(set) var configuration: RemoteConfiguration?
     @Published var projects: [RemoteValue] = []
     @Published var sessions: [RemoteValue] = []
@@ -52,7 +56,7 @@ enum WorkspaceSheet: Identifiable {
         if selectedProject != oldValue { selectedSession = nil; sessions = []; sessionsRefreshed = nil }
     } }
     @Published var selectedSession: String? { didSet {
-        if selectedSession != oldValue { history = RemoteHistory(); error = nil; snapshotIsCached = false; snapshotSavedAt = nil; snapshotSession = nil }
+        if selectedSession != oldValue { resetConversation() }
     } }
     @Published var history = RemoteHistory()
     @Published var sheet: WorkspaceSheet?
@@ -93,14 +97,72 @@ enum WorkspaceSheet: Identifiable {
     }
 
     var route: ConversationRoute? {
+        if showingAssistant { return .researchAssistant }
         guard let project = selectedProject, let session = selectedSession else { return nil }
         return ConversationRoute(project: project, session: session)
     }
     var snapshot: RemoteSnapshot? { history.snapshot }
-    var title: String { sessions.first { $0["id"].string == selectedSession }?["title"].string ?? "对话" }
-    var canActOnSnapshot: Bool { connection.state == .online && snapshot != nil && !snapshotIsCached && snapshotSession == connection.readSessionID }
+    var title: String { showingAssistant ? "科研助理" : sessions.first { $0["id"].string == selectedSession }?["title"].string ?? "对话" }
+    var canActOnSnapshot: Bool {
+        connection.state == .online && snapshot != nil && !snapshotIsCached && snapshotSession == connection.readSessionID
+            && (!showingAssistant || assistantSession == connection.readSessionID)
+    }
+    var assistantUnavailableMessage: String? {
+        guard showingAssistant, connection.state == .online, !connection.supports("native_assistant_open") else { return nil }
+        return "当前 Wisp 主机尚不支持远程科研助理，请更新桌面端后重新连接。已缓存的对话仍可阅读。"
+    }
     var hostName: String { connection.hostName.isEmpty ? cachedHostName : connection.hostName }
     private var cacheScope: String? { isDemo ? nil : configuration.map(RemoteReadCache.scope) }
+
+    func openAssistant() {
+        guard !showingAssistant else { return }
+        sheet = nil
+        resetConversation()
+        showingAssistant = true
+    }
+    func closeAssistant() {
+        guard showingAssistant else { return }
+        sheet = nil
+        showingAssistant = false
+        resetConversation()
+    }
+    var hasDismissibleSurface: Bool { sheet != nil || showingAssistant }
+    func dismissTopSurface() {
+        if sheet != nil { sheet = nil }
+        else if showingAssistant { closeAssistant() }
+    }
+    private func resetConversation() {
+        history = RemoteHistory(); error = nil; snapshotIsCached = false; snapshotSavedAt = nil; snapshotSession = nil
+        visibleRoute = nil
+    }
+
+    /// The open command creates/resolves the host's fixed conversation; do not
+    /// treat it as a cacheable read or infer support from ordinary chat APIs.
+    private func prepareAssistant() async throws {
+        guard connection.supports("native_assistant_open") else {
+            throw RemoteError.service(assistantUnavailableMessage ?? "当前主机不支持科研助理。")
+        }
+        let session = connection.readSessionID, identity = self.identity
+        if assistantSession == session { return }
+        let task: Task<Void, Error>
+        if let pending = assistantOpenTask, pending.session == session { task = pending.task }
+        else {
+            openingAssistant = true
+            task = Task {
+                let value = try await self.connection.call("native_assistant_open")
+                _ = try ConversationRoute.assistant(from: value)
+            }
+            assistantOpenTask = (session, task)
+        }
+        defer {
+            if self.identity == identity, assistantOpenTask?.session == session {
+                assistantOpenTask = nil; openingAssistant = false
+            }
+        }
+        try await task.value
+        guard self.identity == identity, connection.readSessionID == session else { throw RemoteError.disconnected }
+        assistantSession = session
+    }
 
     func restore() {
         guard !restored else { return }
@@ -180,6 +242,8 @@ enum WorkspaceSheet: Identifiable {
     }
     private func clearWorkspace() {
         identity = UUID()
+        showingAssistant = false; openingAssistant = false; assistantSession = nil
+        assistantOpenTask?.task.cancel(); assistantOpenTask = nil
         cacheGeneration = UUID()
         for (_, task) in reads.values { task.cancel() }
         reads = [:]; projectsRefreshed = false; sessionsRefreshed = nil
@@ -316,6 +380,14 @@ enum WorkspaceSheet: Identifiable {
         let identity = self.identity
         let session = connection.readSessionID
         let configuration = self.configuration
+        if route == .researchAssistant {
+            do { try await prepareAssistant() }
+            catch {
+                guard self.route == route, self.identity == identity else { return }
+                throw error
+            }
+            guard self.route == route, self.identity == identity, connection.readSessionID == session else { return }
+        }
         let result: RemoteValue
         do { result = try await read("native_conversation_snapshot", project: route.project, args: route.args) }
         catch {
@@ -349,6 +421,7 @@ enum WorkspaceSheet: Identifiable {
     }
 
     func createConversation() async {
+        guard !showingAssistant else { return }
         guard let project = selectedProject, !creating else { return }
         let identity = self.identity
         creating = true
@@ -475,6 +548,7 @@ enum WorkspaceSheet: Identifiable {
         } catch { if self.identity == identity { self.error = error.localizedDescription } }
     }
     func openInbox(_ entry: RemoteValue) {
+        closeAssistant()
         selectedProject = entry["project_id"].string
         selectedSession = entry["id"].string
         sheet = nil

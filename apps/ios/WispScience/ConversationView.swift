@@ -26,6 +26,10 @@ struct ConversationView: View {
             ScrollViewReader { reader in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
+                        if route == .researchAssistant, let message = model.assistantUnavailableMessage {
+                            Text(message).font(.callout).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("assistant-unavailable")
+                        }
                         if let date = model.snapshotSavedAt, model.snapshotIsCached || connection.state != .online {
                             Text("缓存内容 · \(date.formatted(date: .abbreviated, time: .shortened)) · 联网刷新后可操作")
                                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("cached-conversation")
@@ -89,9 +93,13 @@ struct ConversationView: View {
                                     }
                                 }.padding(12).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                             }
+                        } else if route == .researchAssistant && model.assistantUnavailableMessage != nil {
+                            EmptyView()
                         } else if connection.state != .online {
                             Text("这个对话尚未缓存，请联网后打开。").foregroundStyle(.secondary)
-                        } else { ProgressView("读取对话…").frame(maxWidth: .infinity) }
+                        } else if route == .researchAssistant && model.error != nil {
+                            Text("未能读取科研助理对话，请下拉重试。").foregroundStyle(.secondary)
+                        } else { ProgressView(model.openingAssistant ? "打开科研助理…" : "读取对话…").frame(maxWidth: .infinity) }
                         Color.clear.frame(height: 1).id("latest")
                             .background {
                                 GeometryReader { position in
@@ -160,10 +168,12 @@ struct ConversationView: View {
                     .accessibilityLabel("对话详情：\(model.title)")
                     .accessibilityHint("查看完整标题和所属项目")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("文件") { model.sheet = .files(route, ".", true) }
-                .disabled(connection.state == .online && !connection.supports("native_conversation_panel_file_directory"))
-                .accessibilityIdentifier("conversation-files")
+            if route != .researchAssistant {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("文件") { model.sheet = .files(route, ".", true) }
+                    .disabled(connection.state == .online && !connection.supports("native_conversation_panel_file_directory"))
+                    .accessibilityIdentifier("conversation-files")
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
@@ -203,6 +213,7 @@ struct ConversationView: View {
                     .strokeBorder(composing ? WispStyle.accent.opacity(0.6) : WispStyle.border, lineWidth: 1)
             }
             Text(model.isDemo ? "本地预设回复 · 不调用 AI，不执行分析" :
+                    route == .researchAssistant ? "与桌面端共享同一条科研助理对话" :
                     snapshot?.value["read_only"].bool == true ? "这个对话是只读的。" :
                     !(snapshot?.value["acp_agent_id"].string ?? "").isEmpty ? "ACP 会话请在桌面端继续。" :
                     "写文件和执行命令前，会请你批准")
@@ -233,7 +244,7 @@ struct ConversationView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
         return layout {
-            if connection.supports("remote_attach_image") {
+            if route != .researchAssistant && connection.supports("remote_attach_image") {
                 PhotosPicker(selection: $chosenPhotos, maxSelectionCount: max(1, 4 - (model.photos[route]?.count ?? 0)), matching: .images) {
                     HStack(spacing: 6) {
                         if uploading { ProgressView().controlSize(.small) }

@@ -5,6 +5,7 @@ import WispRemote
 /// this provider cannot execute commands, open sockets or modify project files.
 @MainActor final class DemoDataset {
     static let commands: Set<String> = [
+        "native_assistant_open",
         "list_projects", "remote_sessions", "native_conversation_snapshot", "native_conversation_send",
         "native_conversation_approve", "native_conversation_seen", "native_conversation_inbox",
         "native_conversation_panel_file_directory", "native_conversation_panel_file_read", "native_conversation_image",
@@ -32,6 +33,11 @@ import WispRemote
 
     func call(_ command: String, project: String?, args: [String: RemoteValue]) throws -> RemoteValue {
         guard Self.commands.contains(command) else { throw RemoteError.unsupported }
+        if command == "native_assistant_open" {
+            guard project == nil, args.isEmpty else { throw RemoteError.unsupported }
+            return .object(["project_id": .string(ConversationRoute.researchAssistant.project),
+                            "session_id": .string(ConversationRoute.researchAssistant.session)])
+        }
         if command == "list_projects" {
             return .array([.object([
                 "id": .string(projectID), "name": manifest["project"]["name"],
@@ -39,20 +45,25 @@ import WispRemote
                 "needs_you_count": .integer(Int64(sessionRows.filter { $0["status"].string == "needs_you" }.count)),
             ])])
         }
-        guard project == projectID else { throw RemoteError.service("演示项目不存在。") }
+        let assistant = project == ConversationRoute.researchAssistant.project
+        guard project == projectID || assistant else { throw RemoteError.service("演示项目不存在。") }
+        if assistant && !["native_conversation_snapshot", "native_conversation_send", "native_conversation_seen"].contains(command) {
+            throw RemoteError.unsupported
+        }
         if command == "remote_sessions" { return .array(sessionRows) }
         if command == "native_conversation_inbox" {
             return .array(sessionRows.filter { $0["status"].string == "needs_you" })
         }
         let sessionID = args["session_id"]?.string ?? ""
-        guard let session = manifest["sessions"].array.first(where: { $0["id"].string == sessionID }) else {
+        let available = assistant ? [manifest["assistant"]] : manifest["sessions"].array
+        guard let session = available.first(where: { $0["id"].string == sessionID }) else {
             throw RemoteError.service("演示对话不存在。")
         }
         switch command {
         case "native_conversation_snapshot":
             let approvals = session["approvals"].array.filter { decisions[$0["approval_id"].string] == nil }
             return .object([
-                "schema": .string("wisp.native-conversations.v1"), "project_id": .string(projectID),
+                "schema": .string("wisp.native-conversations.v1"), "project_id": .string(project ?? projectID),
                 "session_id": .string(sessionID), "epoch": .string(epoch), "sequence": .unsigned(sequence),
                 "items": .array(messages[sessionID] ?? session["items"].array), "run_cards": session["run_cards"],
                 "approvals": .array(approvals), "follow_ups": session["follow_ups"],
@@ -64,7 +75,9 @@ import WispRemote
             guard !text.isEmpty, text.utf8.count <= 16_000 else {
                 throw RemoteError.service("演示消息不能为空，且需少于 16 KB。")
             }
-            let response = sessionID == "demo-options"
+            let response = assistant
+                ? "**本地科研助理演示 · 未调用 AI 或执行分析**\n\n演示项目「RNA-seq 质控」已提供 6 个合成样本的质控报告和图表。下一步可以阅读报告、体验问题选项，或查看示例审批。\n\n连接支持远程科研助理的 Wisp 主机后，可以在这里延续桌面端的同一条长期对话，询问各项目进展、安排下一步工作。"
+                : sessionID == "demo-options"
                 ? "**本地预设回复 · 未调用 AI 或运行分析**\n\n已收到你的演示回答。你可以继续[查看质控报告](results/qc_report.md)，或在「演示设置」中重置数据，再体验其他选项。"
                 : reply(to: text)
             try append([.object(["role": .string("user"), "text": .string(text)]),

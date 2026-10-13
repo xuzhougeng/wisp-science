@@ -40,9 +40,35 @@ struct WorkspaceView: View {
         Group {
             if model.configuration == nil && !model.isDemo {
                 ConnectionView(model: model)
+            } else if model.showingAssistant {
+                NavigationStack {
+                    ConversationView(model: model, connection: connection, route: .researchAssistant)
+                        .id(ConversationRoute.researchAssistant)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("返回") { model.closeAssistant() }
+                                    .accessibilityIdentifier("close-assistant")
+                                    .accessibilityHint("返回之前的项目或对话")
+                            }
+                        }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) { offlineNotice }
             } else {
                 NavigationSplitView {
                     List(selection: $model.selectedProject) {
+                        Section {
+                            Button { model.openAssistant() } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text("科研助理").font(.headline).foregroundStyle(WispStyle.accent)
+                                        Text("统筹项目进展，继续同一条长期对话")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                    WispIcon(.chevronRight, size: 16).foregroundStyle(.secondary)
+                                }.padding(.vertical, 6).frame(minHeight: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityIdentifier("research-assistant-entry")
+                        }
                         Section {
                             ForEach(model.projects, id: \.recordID) { project in
                                 NavigationLink(value: project["id"].string) {
@@ -104,17 +130,19 @@ struct WorkspaceView: View {
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if connection.state != .online {
-                        HStack {
-                            Text(model.projects.isEmpty ? (connection.diagnostic ?? "正在连接 Wisp 主机…") : "尚未连接 · 可查看已缓存内容，状态以联网刷新为准")
-                                .font(.caption).accessibilityIdentifier("offline-cache-status")
-                            Spacer()
-                            Button("重新连接") { model.reconnect() }
-                        }.padding(12).background(.regularMaterial)
-                    }
-                }
+                .safeAreaInset(edge: .bottom, spacing: 0) { offlineNotice }
             }
+        }
+    }
+
+    @ViewBuilder private var offlineNotice: some View {
+        if connection.state != .online {
+            HStack {
+                Text(model.projects.isEmpty ? (connection.diagnostic ?? "正在连接 Wisp 主机…") : "尚未连接 · 可查看已缓存内容，状态以联网刷新为准")
+                    .font(.caption).accessibilityIdentifier("offline-cache-status")
+                Spacer()
+                Button("重新连接") { model.reconnect() }
+            }.padding(12).background(.regularMaterial)
         }
     }
 
