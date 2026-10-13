@@ -25,6 +25,7 @@ mod method_search;
 mod models;
 mod persist_seq;
 mod plugins;
+mod project_chat_search;
 mod project_snapshots;
 mod project_state_revisions;
 mod project_storage;

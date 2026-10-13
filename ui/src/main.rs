@@ -20,6 +20,7 @@ mod network_settings;
 mod notebook;
 mod overlays;
 mod pet;
+mod project_chat_search;
 mod project_landing;
 mod publication;
 mod publication_sources;
@@ -708,7 +709,7 @@ fn App() -> impl IntoView {
             });
         }
     });
-    // The displayed conversation can be shelved while remaining open. Its
+    // The displayed conversation can be shelved or opened from search. Its
     // title and branch controls must not depend on membership in the sidebar.
     let opened_shelved_metadata =
         create_rw_signal::<Option<(String, String, Option<String>)>>(None);
@@ -1661,6 +1662,17 @@ fn App() -> impl IntoView {
     let session_specialist = create_rw_signal::<Option<Specialist>>(None);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let command_palette_open = create_rw_signal(false);
+    let show_shelved_sessions = create_rw_signal(false);
+    let project_chat_search_open = create_rw_signal(false);
+    let pending_chat_search_jump = create_rw_signal(None::<(String, ProjectChatSearchTarget, u64)>);
+    let chat_search_project_id = create_memo(move |_| {
+        project_info.with(|project| project.as_ref().map(|p| p.id.clone()))
+    });
+    create_effect(move |_| {
+        chat_search_project_id.track();
+        show_projects.get();
+        project_chat_search_open.set(false);
+    });
     let action_palette_open = create_rw_signal(false);
     let (privacy_active_initial, privacy_projects_initial) = load_privacy_mode();
     mirror_privacy_mode(privacy_active_initial, &privacy_projects_initial);
@@ -7810,6 +7822,89 @@ fn App() -> impl IntoView {
             });
         });
 
+    let open_chat_search_hit = Callback::new(move |hit: ProjectChatSearchHit| {
+        let Some(project_id) = chat_search_project_id.get_untracked() else {
+            return;
+        };
+        project_chat_search_open.set(false);
+        show_shelved_sessions.set(false);
+        center_file.set(None);
+        opened_shelved_metadata.set(Some((
+            hit.session_id.clone(),
+            hit.session_title.clone(),
+            None,
+        )));
+        load_session.call(hit.session_id.clone());
+        let epoch = transcript_load_epoch.get_untracked();
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "projectId": project_id, "sessionId": hit.session_id, "messageSeq": hit.message_seq,
+            }))
+            .unwrap();
+            let result = invoke_checked("locate_project_chat_match", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<Option<ProjectChatSearchTarget>>(value)
+                        .map_err(|e| e.to_string())
+                });
+            if transcript_load_epoch.get_untracked() != epoch
+                || active_session.get_untracked().as_deref() != Some(hit.session_id.as_str())
+                || chat_search_project_id.get_untracked().as_deref() != Some(project_id.as_str())
+            {
+                return;
+            }
+            match result {
+                Ok(Some(target)) => {
+                    pending_chat_search_jump.set(Some((hit.session_id, target, epoch)))
+                }
+                Ok(None) => show_toast(&t(
+                    locale.get_untracked(),
+                    "chat_search.location_unavailable",
+                )),
+                Err(error) => show_toast(&error),
+            }
+        });
+    });
+    create_effect(move |_| {
+        let Some((id, target, epoch)) = pending_chat_search_jump.get() else {
+            return;
+        };
+        if active_session.get().as_deref() != Some(id.as_str())
+            || transcript_load_epoch.get() != epoch
+        {
+            pending_chat_search_jump.set(None);
+            return;
+        }
+        if transcript_loading.get().is_some() {
+            return;
+        }
+        pending_chat_search_jump.set(None);
+        if transcript_page_error.get_untracked().is_some() {
+            return;
+        }
+        request_animation_frame(move || {
+            if transcript_load_epoch.get_untracked() != epoch
+                || active_session.get_untracked().as_deref() != Some(id.as_str())
+            {
+                return;
+            }
+            let user_offset = transcript_pages
+                .with_untracked(|pages| pages.get(&id).map_or(0, |page| page.user_offset));
+            if busy.get_untracked()
+                && !conversation_outline_target_is_loaded(
+                    &items.get_untracked(),
+                    user_offset,
+                    target.user_index,
+                )
+            {
+                show_toast(&t(locale.get_untracked(), "chat_search.wait_for_turn"));
+                return;
+            }
+            jump_to_conversation_outline.call((target.user_index, target.before_seq));
+        });
+    });
+
     let load_demo = move |info: DemoInfo| {
         let id = info.id.clone();
         let items = items;
@@ -8180,7 +8275,6 @@ fn App() -> impl IntoView {
     });
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
-    let show_shelved_sessions = create_rw_signal(false);
     let shelved_sessions_revision = create_rw_signal(0u64);
     let shelved_project_id = create_memo(move |_| {
         project_info.with(|project| project.as_ref().map(|project| project.id.clone()))
@@ -10016,6 +10110,11 @@ fn App() -> impl IntoView {
             command_palette_open.set(false);
             return;
         }
+        if project_chat_search_open.get() && !project_chat_search::covered_by_dialog() {
+            ev.prevent_default();
+            project_chat_search_open.set(false);
+            return;
+        }
         if show_shelved_sessions.get() {
             ev.prevent_default();
             show_shelved_sessions.set(false);
@@ -11635,6 +11734,15 @@ fn App() -> impl IntoView {
         }
         let key = ev.key().to_lowercase();
         match key.as_str() {
+            "f" if ev.shift_key()
+                && !ev.alt_key()
+                && has_current_project.get_untracked()
+                && !assistant_mode.get_untracked() => {
+                ev.prevent_default();
+                command_palette_open.set(false);
+                action_palette_open.set(false);
+                project_chat_search_open.set(true);
+            }
             "f" if !ev.alt_key() && !ev.shift_key() && chat_find::can_find_chat() => {
                 ev.prevent_default();
                 chat_find_open.set(true);
@@ -11832,6 +11940,8 @@ fn App() -> impl IntoView {
         <ActionPalette open=action_palette_open has_current_project=has_current_project
             on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
+            can_search_project=Signal::derive(move || has_current_project.get() && !assistant_mode.get())
+            on_search_project=Callback::new(move |_| project_chat_search_open.set(true))
             privacy_mode_active=privacy_mode_active
             privacy_hidden_project_ids=privacy_hidden_project_ids
             on_open_project=command_palette_open_project on_open_session=command_palette_open_session on_open_artifact=palette_open_artifact
@@ -11839,6 +11949,10 @@ fn App() -> impl IntoView {
             on_new_session=palette_new_session
             on_project_settings=palette_project_settings
             on_manage_skills=palette_manage_skills on_attach=palette_attach />
+        {move || project_chat_search_open.get().then(|| project_info.get()).flatten().map(|project| view! {
+            <project_chat_search::ProjectChatSearch project_id=project.id project_name=project.name locale=locale
+                on_close=Callback::new(move |_| project_chat_search_open.set(false)) on_open=open_chat_search_hit />
+        })}
         <PrivacyModeModal
             open=privacy_mode_modal_open
             active=privacy_mode_active

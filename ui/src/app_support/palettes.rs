@@ -181,6 +181,8 @@ fn command_palette_section(item: &CommandPaletteItem) -> &'static str {
 pub(crate) fn CommandPalette(
     open: RwSignal<bool>,
     current_project_id: Signal<Option<String>>,
+    can_search_project: Signal<bool>,
+    on_search_project: Callback<()>,
     privacy_mode_active: RwSignal<bool>,
     privacy_hidden_project_ids: RwSignal<HashSet<String>>,
     on_open_project: Callback<(String, bool)>,
@@ -401,6 +403,15 @@ pub(crate) fn CommandPalette(
                                 }
                             } />
                     </div>
+                    <Show when=move || can_search_project.get()>
+                        <button type="button" class="project-chat-search-entry" on:click=move |_| {
+                            open.set(false);
+                            on_search_project.call(());
+                        }>{compose_icon("chat")}
+                            <span>{move || t(locale.get(), "chat_search.entry")}</span>
+                            <kbd>{if is_mac() { "⌘⇧F" } else { "Ctrl+Shift+F" }}</kbd>
+                        </button>
+                    </Show>
                     <div class="project-search-results"
                         on:scroll=move |_| list_overflows.set(palette_list_overflows(".conversation-search-dialog .project-search-results"))>
                         {move || {

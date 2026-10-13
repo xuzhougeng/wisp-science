@@ -2197,6 +2197,44 @@ pub(super) async fn set_viewed_session(
 }
 
 #[tauri::command]
+pub(super) async fn search_project_chats(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    project_id: String,
+    query: String,
+    cursor: Option<wisp_dto::ProjectChatSearchCursor>,
+) -> Result<wisp_dto::ProjectChatSearchPage, String> {
+    let active = state.require_active(window.label())?;
+    if active.id != project_id {
+        return Err("The active project changed. Reopen chat search.".into());
+    }
+    let page = state
+        .store
+        .search_project_chats(&project_id, &query, cursor.as_ref(), 50)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(page)
+}
+
+#[tauri::command]
+pub(super) async fn locate_project_chat_match(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    project_id: String,
+    session_id: String,
+    message_seq: i64,
+) -> Result<Option<wisp_dto::ProjectChatSearchTarget>, String> {
+    if state.require_active(window.label())?.id != project_id {
+        return Err("The active project changed. Reopen chat search.".into());
+    }
+    state
+        .store
+        .locate_project_chat_match(&project_id, &session_id, message_seq)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub(super) async fn search_sessions(
     state: State<'_, AppState>,
     query: Option<String>,

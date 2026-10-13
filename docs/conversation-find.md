@@ -1,5 +1,47 @@
 # Find in a conversation
 
+## Search all conversations in a project
+
+Open **Search** in the sidebar (or **Ctrl+K / Command+K**) and choose
+**Search this project's chat history**. **Ctrl+Shift+F** on Windows/Linux or
+**Command+Shift+F** on macOS opens it directly while a project is open.
+
+Enter a keyword or phrase to search saved questions, assistant replies and tool
+output across the current project's conversations, including shelved chats,
+branches, unloaded older messages and original messages retained after context
+compaction. Other projects, exploration workspaces, internal execution frames,
+system prompts, reasoning, attachment bytes and tool-call arguments are excluded.
+This searches saved message text; it does not search files or use a model/API.
+
+Matching is literal: `%`, `_`, quotes and backslashes have no special meaning.
+English letters ignore case; Chinese and other characters match their original
+text. Leading/trailing whitespace is ignored. Blank queries show no history;
+keywords are limited to 256 characters. Results show one excerpt per matching
+message, highlighting its first match, with the conversation title, author and
+time. The newest 50 matches appear first; **Load more matches** continues through
+the remaining history. Select a result (or use arrows and Enter) to open its
+conversation and jump to the corresponding question/response turn. Search
+failures offer **Retry search**. Escape closes the topmost open surface first.
+If a legacy record has an ambiguous turn location, the conversation opens with
+a notice so its outline can be used. While that conversation is generating a
+reply, jumping to an unloaded older turn waits until you reopen the result after
+the reply finishes.
+
+中文：点击侧栏“搜索”后选择“搜索当前项目的聊天记录”，或直接按
+**Ctrl/⌘+Shift+F**。输入关键词即可检索当前项目各会话中已保存的提问、回复和
+工具输出，包括已收起会话、未加载的旧消息及压缩前保留的原始历史。搜索结果
+显示会话名、时间和关键词高亮片段；点击结果跳转到对应的对话轮次。“加载更多匹配”
+可继续查看。支持中文和短语，英文不区分大小写，`%`、`_` 按普通字符查找。
+
+Manual checks: search a keyword found only in an old reply in another conversation
+of the same project, then a shelved conversation; open both results. Search `%_`
+and a Chinese phrase. With more than 50 hits, load another page. Open chat search
+above Shelved conversations, then open the action palette and press Escape
+immediately: only the palette should close. Repeat Escape to close chat search
+while keeping the shelved collection open.
+
+## Find in the displayed conversation
+
 Press **Ctrl+F** on Windows/Linux or **Command+F** on macOS while viewing the
 conversation to search its displayed message bodies. The count and orange
 active highlight use the same ordered list of matches; yellow highlights show

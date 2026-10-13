@@ -9,6 +9,30 @@
 use serde_json::json;
 
 #[test]
+fn project_chat_search_preserves_literal_snippets_and_paging_locator() {
+    let wire = json!({
+        "items": [{
+            "session_id": "saved-session", "session_title": "分析记录", "message_seq": 42,
+            "role": "assistant", "ts": 100,
+            "before": "…<script>", "matched": "中文 100%_", "after": "</script>\nnext…"
+        }],
+        "next_cursor": {"ts": 100, "session_id": "saved-session", "message_seq": 42}
+    });
+    let page: wisp_dto::ProjectChatSearchPage = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        page.items[0].message_seq,
+        page.next_cursor.as_ref().unwrap().message_seq
+    );
+    assert_eq!(serde_json::to_value(page).unwrap(), wire);
+    let target = wisp_dto::ProjectChatSearchTarget {
+        user_index: 7,
+        before_seq: Some(90),
+    };
+    let decoded: wisp_dto::ProjectChatSearchTarget = roundtrip(&target);
+    assert_eq!(decoded, target);
+}
+
+#[test]
 fn native_workflow_canvas_fixture_preserves_all_task_metadata() {
     let wire: serde_json::Value = serde_json::from_str(include_str!(
         "../../contracts/native-workflows/v1/template.json"

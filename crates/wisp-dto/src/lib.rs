@@ -29,6 +29,8 @@ pub mod native_session_import;
 pub mod native_session_transfer;
 pub mod native_settings;
 pub mod project_browser;
+mod project_chat_search;
+pub use project_chat_search::*;
 mod session_artifacts;
 pub use session_artifacts::*;
 
