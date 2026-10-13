@@ -1,6 +1,10 @@
-use super::{save_approval_grants, AppState, ApprovalGrantKey, ConfirmRequest, PendingConfirm};
+use super::{
+    save_approval_grants, AppState, ApprovalGrantKey, ApprovalGrants, ConfirmRequest,
+    PendingConfirm,
+};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, RwLock};
 use tauri::State;
 
 const MIN_REMOTE_APPROVAL_PREFIX: usize = 6;
@@ -42,6 +46,38 @@ pub(crate) fn session_full_permission(state: &AppState, session_id: &str) -> boo
         .read()
         .map(|sessions| sessions.contains(session_id))
         .unwrap_or(false)
+}
+
+/// Snapshot the source's live permissions when creating a conversation branch
+/// or exploration. Grants remain session-scoped and in memory; later changes
+/// in either conversation do not affect the other. One-shot decisions and
+/// pending confirmations are deliberately not part of this snapshot.
+pub(crate) fn copy_session_permissions(
+    approval_grants: &Mutex<ApprovalGrants>,
+    full_permission_sessions: &RwLock<HashSet<String>>,
+    source: &str,
+    target: &str,
+) -> Result<(), String> {
+    let mut grants = approval_grants
+        .lock()
+        .map_err(|_| "Session approval grants are unavailable.".to_string())?;
+    let mut full_permission = full_permission_sessions
+        .write()
+        .map_err(|_| "Full Permission state is unavailable.".to_string())?;
+    match grants.session.get(source).cloned() {
+        Some(keys) => {
+            grants.session.insert(target.to_string(), keys);
+        }
+        None => {
+            grants.session.remove(target);
+        }
+    }
+    if full_permission.contains(source) {
+        full_permission.insert(target.to_string());
+    } else {
+        full_permission.remove(target);
+    }
+    Ok(())
 }
 
 pub(super) fn cancel_pending_confirmation(state: &AppState, session_id: &str) {
@@ -416,6 +452,82 @@ pub(super) async fn revoke_all_approval_grants(state: State<'_, AppState>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copied_session_permissions_are_independent_and_remain_ephemeral() {
+        let run = ApprovalGrantKey {
+            kind: "tool".into(),
+            target: "run_in_context".into(),
+        };
+        let shell = ApprovalGrantKey {
+            kind: "command".into(),
+            target: "shell".into(),
+        };
+        let project = ApprovalGrantKey {
+            kind: "tool".into(),
+            target: "python".into(),
+        };
+        let global = ApprovalGrantKey {
+            kind: "mcp_app_tool".into(),
+            target: "connector:lookup".into(),
+        };
+        let mut original = ApprovalGrants::default();
+        original.grant("session", "source", "p", run.clone());
+        original.grant("session", "source", "p", shell.clone());
+        original.grant("project", "source", "p", project.clone());
+        original.grant("global", "source", "p", global.clone());
+        let grants = Mutex::new(original);
+        let full_permission = RwLock::new(HashSet::from(["source".to_string()]));
+
+        for target in ["branch", "exploration"] {
+            copy_session_permissions(&grants, &full_permission, "source", target).unwrap();
+            let snapshot = grants.lock().unwrap();
+            assert!(full_permission.read().unwrap().contains(target));
+            assert_eq!(
+                snapshot.session.get(target),
+                Some(&HashSet::from([run.clone(), shell.clone()]))
+            );
+            assert!(snapshot.allows(target, "p", &project));
+            assert!(!snapshot.allows(target, "other-project", &project));
+            assert!(snapshot.allows(target, "other-project", &global));
+            assert!(!snapshot.allows("unrelated", "p", &run));
+        }
+
+        let mut snapshot = grants.lock().unwrap();
+        snapshot.revoke("session", Some("branch"), None, &run);
+        snapshot.revoke("session", Some("source"), None, &shell);
+        full_permission.write().unwrap().remove("branch");
+        assert!(snapshot.allows("source", "p", &run));
+        assert!(snapshot.allows("exploration", "p", &run));
+        assert!(snapshot.allows("branch", "p", &shell));
+        assert!(full_permission.read().unwrap().contains("source"));
+        assert!(full_permission.read().unwrap().contains("exploration"));
+        let restored = ApprovalGrants::from_persisted(snapshot.persisted());
+        assert!(!restored.allows("exploration", "p", &run));
+        assert!(restored.allows("exploration", "p", &project));
+        assert!(restored.allows("exploration", "other-project", &global));
+    }
+
+    #[test]
+    fn copying_restricted_permissions_does_not_enable_full_permission_or_ungranted_tools() {
+        let run = ApprovalGrantKey {
+            kind: "tool".into(),
+            target: "run_in_context".into(),
+        };
+        let grants = Mutex::new(ApprovalGrants::default());
+        grants
+            .lock()
+            .unwrap()
+            .grant("session", "source", "p", run.clone());
+        let full_permission = RwLock::new(HashSet::new());
+        copy_session_permissions(&grants, &full_permission, "source", "branch").unwrap();
+        assert!(grants.lock().unwrap().allows("branch", "p", &run));
+        assert!(full_permission.read().unwrap().is_empty());
+
+        copy_session_permissions(&grants, &full_permission, "fresh", "exploration").unwrap();
+        assert!(!grants.lock().unwrap().allows("exploration", "p", &run));
+        assert!(full_permission.read().unwrap().is_empty());
+    }
 
     fn pending(approval_id: &str) -> PendingConfirm {
         let (tx, _rx) = tokio::sync::oneshot::channel();

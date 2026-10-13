@@ -130,7 +130,7 @@ pub(super) async fn branch_session(
             .set_frame_service_tier(&id, &ap.id, service_tier.as_deref())
             .await
             .map_err(|error| error.to_string())?;
-        ssh_hosts::copy_session_default_execution_context(&state.store, source, &id).await?;
+        ssh_hosts::copy_session_execution_environment(&state.store, source, &id).await?;
         let msgs = state
             .store
             .load_messages_in_epoch(source, epoch)
@@ -143,6 +143,12 @@ pub(super) async fn branch_session(
                 .await
                 .map_err(|e| format!("{e}"))?;
         }
+        approval_commands::copy_session_permissions(
+            &state.approval_grants,
+            &state.full_permission_sessions,
+            source,
+            &id,
+        )?;
     }
     if let Some(t) = branch_title(title.as_deref()) {
         let _ = state.store.rename_session(&id, &ap.id, &t).await;

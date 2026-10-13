@@ -2,6 +2,8 @@
 
 Explorations let you test a scientific direction without changing the project mainline. They are different from ordinary conversation branches: an exploration gets its own persistent workspace and private project records for files, artifacts, runs, decisions, and external resources.
 
+New explorations and ordinary conversation branches inherit their source conversation's permissions and server environment at creation: Full Permission, tool grants allowed for the session, the default analysis environment, and enabled SSH/WSL servers. The default keeps the source's local, pinned-server, or follow-global choice; a server attached by the global new-session default is not added to the inherited selection. Each conversation can change its permissions and server selection independently afterward. One-time approvals and pending requests are not inherited. Full Permission and session grants still last only for the current app run; project and global grants retain their existing scope. Exploration workspace isolation remains enforced.
+
 ## Start and use an exploration
 
 1. Finish a turn on a native Wisp conversation.

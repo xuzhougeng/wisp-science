@@ -1214,6 +1214,37 @@ pub async fn copy_session_default_execution_context(
     Ok(())
 }
 
+/// Inherit the source's enabled servers and default environment. Replace the
+/// destination selection so a global default attached at frame creation does
+/// not leak into a branch of a conversation with a different environment.
+pub async fn copy_session_execution_environment(
+    store: &wisp_store::Store,
+    from_frame_id: &str,
+    to_frame_id: &str,
+) -> Result<(), String> {
+    let source = store
+        .list_session_execution_context_ids(from_frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let target = store
+        .list_session_execution_context_ids(to_frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    for context_id in target.iter().filter(|id| !source.contains(id)) {
+        store
+            .set_session_execution_context_enabled(to_frame_id, context_id, false)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    for context_id in source.iter().filter(|id| !target.contains(id)) {
+        store
+            .set_session_execution_context_enabled(to_frame_id, context_id, true)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    copy_session_default_execution_context(store, from_frame_id, to_frame_id).await
+}
+
 /// Pin a new conversation to the current global default (or local).
 pub async fn snapshot_session_default_from_global(
     store: &wisp_store::Store,
@@ -2091,6 +2122,91 @@ Host -unsafe bad/name !negated
         );
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn copied_session_environment_replaces_global_defaults_and_stays_independent() {
+        for (default, enabled) in [
+            (Some("ssh:gpu"), vec!["ssh:gpu", "wsl:Ubuntu"]),
+            (Some("wsl:Ubuntu"), vec!["ssh:gpu", "wsl:Ubuntu"]),
+            (Some("local"), vec!["ssh:gpu", "wsl:Ubuntu"]),
+            (None, vec!["ssh:gpu", "wsl:Ubuntu"]),
+            (Some("local"), vec![]),
+        ] {
+            let (store, path) = session_default_store().await;
+            store
+                .upsert_execution_context(
+                    &wisp_store::ExecutionContext::new("wsl:Ubuntu", "Ubuntu").unwrap(),
+                )
+                .await
+                .unwrap();
+            for context_id in &enabled {
+                store
+                    .set_session_execution_context_enabled("f", context_id, true)
+                    .await
+                    .unwrap();
+            }
+            store
+                .set_session_default_execution_context("f", default)
+                .await
+                .unwrap();
+            // A normal new frame would pick up this different global server.
+            store
+                .set_setting(DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:cpu")
+                .await
+                .unwrap();
+            store.create_frame("g", "p", "OPERON", "m").await.unwrap();
+            snapshot_session_default_from_global(&store, "g")
+                .await
+                .unwrap();
+
+            copy_session_execution_environment(&store, "f", "g")
+                .await
+                .unwrap();
+            assert_eq!(
+                store.session_default_execution_context("g").await.unwrap(),
+                default.map(str::to_string)
+            );
+            assert_eq!(
+                store.list_session_execution_context_ids("g").await.unwrap(),
+                enabled
+            );
+            // Server selection and the default remain saved across a reopen.
+            let reopened = wisp_store::Store::open(&path).await.unwrap();
+            assert_eq!(
+                reopened
+                    .session_default_execution_context("g")
+                    .await
+                    .unwrap(),
+                default.map(str::to_string)
+            );
+            assert_eq!(
+                reopened
+                    .list_session_execution_context_ids("g")
+                    .await
+                    .unwrap(),
+                enabled
+            );
+            store
+                .set_session_execution_context_enabled("g", "ssh:gpu", false)
+                .await
+                .unwrap();
+            assert_eq!(
+                store.list_session_execution_context_ids("f").await.unwrap(),
+                enabled
+            );
+            assert_eq!(
+                store.session_default_execution_context("f").await.unwrap(),
+                default.map(str::to_string)
+            );
+            assert_eq!(
+                stored_default_execution_context(&store).await.as_deref(),
+                Some("ssh:cpu")
+            );
+            drop(reopened);
+            drop(store);
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     #[tokio::test]
