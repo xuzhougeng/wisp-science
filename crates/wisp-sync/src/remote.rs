@@ -266,7 +266,7 @@ pub(crate) async fn script() -> Response {
 pub(crate) async fn manifest() -> Response {
     static_asset(
         "application/manifest+json",
-        r##"{"name":"Wisp Remote","short_name":"Wisp","start_url":"remote","display":"standalone","background_color":"#faf9f6","theme_color":"#faf9f6","icons":[{"src":"remote-icon-192.png","sizes":"192x192","type":"image/png"},{"src":"remote-icon-512.png","sizes":"512x512","type":"image/png"}]}"##,
+        r##"{"name":"Wisp Remote","short_name":"Wisp","start_url":"remote","display":"standalone","background_color":"#f2f2f7","theme_color":"#f2f2f7","icons":[{"src":"remote-icon-192.png","sizes":"192x192","type":"image/png"},{"src":"remote-icon-512.png","sizes":"512x512","type":"image/png"}]}"##,
     )
 }
 

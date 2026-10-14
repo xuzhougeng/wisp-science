@@ -53,6 +53,13 @@
   const C2H = enc.encode("wisp-remote/v1/c2h");
   const $ = (id) => document.getElementById(id);
   const main = $("main");
+  const tr = (cn, en) => zh ? cn : en;
+  const tabTitles = {
+    chats: T.conversations,
+    calendar: tr("科研日历", "Research calendar"),
+    checklist: tr("科研清单", "Research checklist"),
+    notebook: tr("实验记录本", "Lab notebook"),
+  };
 
   function el(tag, props, ...children) {
     const node = document.createElement(tag);
@@ -70,6 +77,27 @@
 
   // Same 24×24 stroke paths as the desktop's compose_icon().
   const ICONS = {
+    "circle": [["circle", {"cx": "12", "cy": "12", "r": "9"}]],
+    "circle-check": [["circle", {"cx": "12", "cy": "12", "r": "9"}], ["path", {"d": "m8 12 2.5 2.5L16 9"}]],
+    "refresh": [["path", {"d": "M20 7v5h-5M4 17v-5h5"}], ["path", {"d": "M6 6a8 8 0 0 1 13 2M18 18a8 8 0 0 1-13-2"}]],
+    "chat": [["path", {"d": "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"}], ["path", {"d": "M8 10h8"}], ["path", {"d": "M8 14h5"}]],
+    "calendar": [["rect", {"x": "3", "y": "5", "width": "18", "height": "16", "rx": "2"}], ["path", {"d": "M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"}]],
+    "list": [["path", {"d": "M8 6h13"}], ["path", {"d": "M8 12h13"}], ["path", {"d": "M8 18h13"}], ["path", {"d": "M3 6h.01"}], ["path", {"d": "M3 12h.01"}], ["path", {"d": "M3 18h.01"}]],
+    "notebook": [["rect", {"x": "4", "y": "3", "width": "16", "height": "18", "rx": "2"}], ["path", {"d": "M8 3v18"}], ["path", {"d": "M2 7h4M2 12h4M2 17h4M12 8h4M12 12h4"}]],
+    "camera": [["path", {"d": "M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"}], ["circle", {"cx": "12", "cy": "13", "r": "3"}]],
+    "book": [["path", {"d": "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"}], ["path", {"d": "M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"}]],
+    "gear": [["path", {"d": "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"}], ["circle", {"cx": "12", "cy": "12", "r": "3"}]],
+    "circle-help": [["circle", {"cx": "12", "cy": "12", "r": "10"}], ["path", {"d": "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"}], ["path", {"d": "M12 17h.01"}]],
+    "research-trail": [["path", {"d": "M3 3v18h18"}], ["path", {"d": "m7 14 4-4 4 3 5-7"}], ["circle", {"cx": "7", "cy": "14", "r": "1"}], ["circle", {"cx": "11", "cy": "10", "r": "1"}], ["circle", {"cx": "15", "cy": "13", "r": "1"}]],
+    "edit": [["path", {"d": "M12 20h9"}], ["path", {"d": "M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"}]],
+    "square-pen": [["path", {"d": "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"}], ["path", {"d": "M16 3a2.1 2.1 0 0 1 3 3l-9 9-4 1 1-4Z"}]],
+    "inbox": [["path", {"d": "m22 12-3.45-6.9A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"}], ["path", {"d": "M2 12h6l2 3h4l2-3h6"}]],
+    "chevron-left": [["path", {"d": "m15 18-6-6 6-6"}]],
+    "chevron-right": [["path", {"d": "m9 18 6-6-6-6"}]],
+    "plus": [["path", {"d": "M12 5v14"}], ["path", {"d": "M5 12h14"}]],
+    "check": [["path", {"d": "m20 6-11 11-5-5"}]],
+    "image": [["rect", {"x": "3", "y": "3", "width": "18", "height": "18", "rx": "2"}], ["circle", {"cx": "8.5", "cy": "8.5", "r": "1.5"}], ["path", {"d": "m21 15-5-5L5 21"}]],
+    "arrow-up": [["path", {"d": "m5 12 7-7 7 7"}], ["path", {"d": "M12 19V5"}]],
     folder: ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"],
     doc: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
     close: ["M18 6 6 18", "m6 6 12 12"],
@@ -80,10 +108,12 @@
     const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("viewBox", "0 0 24 24");
     svg.setAttribute("aria-hidden", "true");
-    for (const d of ICONS[name]) {
-      const path = document.createElementNS(ns, "path");
-      path.setAttribute("d", d);
-      svg.append(path);
+    svg.setAttribute("stroke", "currentColor");
+    for (const shape of ICONS[name]) {
+      const [tag, attrs] = typeof shape === "string" ? ["path", { d: shape }] : shape;
+      const node = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      svg.append(node);
     }
     return svg;
   }
@@ -271,11 +301,13 @@
   }
   function readRoute() {
     const parts = location.hash.slice(1).split("/");
-    const route = { code: safeDecode(parts[0]), project: null, session: null, dir: null, file: null };
-    const keys = { p: "project", s: "session", d: "dir", f: "file" };
+    const route = { code: safeDecode(parts[0]), tab: "chats", project: null, session: null, dir: null, file: null };
+    const keys = { p: "project", s: "session", d: "dir", f: "file", t: "tab" };
     for (let i = 1; i + 1 < parts.length; i += 2) {
       if (keys[parts[i]] && parts[i + 1]) route[keys[parts[i]]] = safeDecode(parts[i + 1]);
     }
+    if (!Object.hasOwn(tabTitles, route.tab)) route.tab = "chats";
+    if (route.tab !== "chats") route.project = null;
     if (!route.project) route.session = null;
     if (!route.session || route.file) route.dir = null;
     if (!route.session) route.file = null;
@@ -284,6 +316,7 @@
   function href(patch) {
     const route = { ...state.route, ...patch };
     let hash = `#${state.code}`;
+    if (route.tab && route.tab !== "chats") return `${hash}/t/${route.tab}`;
     if (!route.project) return hash;
     hash += `/p/${encodeURIComponent(route.project)}`;
     if (!route.session) return hash;
@@ -306,15 +339,27 @@
   const baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
 
   function applyRoute() {
+    closeSheet();
     const prev = state.route;
     const route = (state.route = readRoute());
     const filesOpen = route.dir != null || route.file != null;
     document.body.dataset.pane = filesOpen ? "panel" : route.session ? "chat" : route.project ? "side" : "home";
+    document.body.dataset.tab = route.tab;
+    $("tabs").hidden = !!route.session;
+    for (const link of $("tabs").children) {
+      if (link.dataset.tab === route.tab) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
     if (route.project !== prev.project) sideView(++gens.side, route.project);
     else markCurrent();
-    if (route.project !== prev.project || route.session !== prev.session) {
+    if (route.project !== prev.project || route.session !== prev.session || route.tab !== prev.tab) {
       const gen = ++gens.chat;
-      if (!route.project) projectsView(gen);
+      main.scrollTop = 0;
+      $("composer").hidden = true;
+      if (route.tab === "calendar") calendarView(gen);
+      else if (route.tab === "checklist") checklistView(gen);
+      else if (route.tab === "notebook") notebookView(gen);
+      else if (!route.project) projectsView(gen);
       else if (!route.session) idleView();
       else chatView(gen, route.project, route.session);
     }
@@ -330,8 +375,8 @@
     const session = state.sessions.find((item) => item.id === route.session);
     const host = state.host ? `${state.host.name} · Wisp ${state.host.version}` : "";
     const filesOpen = route.dir != null || route.file != null;
-    let title = T.projects;
-    let subtitle = host;
+    let title = route.tab === "chats" ? "Wisp" : tabTitles[route.tab];
+    let subtitle = "";
     let up = null;
     if (route.file || (route.dir && route.dir !== ".")) {
       const path = route.file || route.dir;
@@ -354,10 +399,14 @@
     const waiting = document.visibilityState === "hidden" ? state.inbox.length : others.length;
     document.title = `${waiting ? `(${waiting}) ` : ""}${title} · Wisp`;
     const inbox = $("inbox");
-    inbox.hidden = !others.length;
+    inbox.hidden = !!route.session || route.tab !== "chats" || !!route.project;
+    inbox.disabled = !others.length;
+    inbox.lastElementChild.hidden = !others.length;
     inbox.lastElementChild.textContent = others.length;
     inbox.setAttribute("aria-label", T.inbox(others.length));
-    inbox.onclick = others.length ? () => go({ project: others[0].project_id, session: others[0].id, ...noFiles }) : null;
+    inbox.onclick = others.length ? () => go({ tab: "chats", project: others[0].project_id, session: others[0].id, ...noFiles }) : null;
+    // Keep pending approvals reachable while reading a conversation.
+    if (route.session && others.length) inbox.hidden = false;
     const back = $("back");
     back.hidden = !up;
     back.onclick = up && (() => go(up));
@@ -367,6 +416,15 @@
     files.setAttribute("aria-label", T.files);
     files.setAttribute("aria-pressed", String(filesOpen));
     files.onclick = () => go(filesOpen ? noFiles : { dir: "." });
+    $("settings").hidden = !!route.project || route.tab === "calendar" || route.tab === "notebook";
+    $("help").hidden = route.tab !== "notebook";
+    $("header-new").hidden = !route.project || !!route.session;
+    $("header-new").disabled = $("new").disabled;
+    $("journey").hidden = !can("native_research_calendar");
+    $("journey").href = href({ tab: "calendar", project: null, session: null });
+    const hostLabel = $("host-name");
+    if (hostLabel) hostLabel.textContent = state.host?.name || T.connecting;
+    $("status").title = host;
   }
 
   // ----------------------------------------------------------------- views
@@ -400,7 +458,7 @@
   function statusBadge(status) {
     if (status === "running") return el("span", { class: "badge running" }, T.running);
     if (status === "needs_you") return el("span", { class: "badge needs_you" }, T.needsYou);
-    return null;
+    return status === "complete" ? el("span", { class: "badge complete" }, T.done) : null;
   }
 
   async function refreshProjects() {
@@ -429,13 +487,13 @@
 
   async function projectsView(gen) {
     $("composer").hidden = true;
-    const list = el("div", { class: "list" }, el("p", { class: "empty" }, T.loading));
+    const list = el("div", { class: "list grouped projects" }, el("p", { class: "empty" }, T.loading));
     // Reachable while the computer is offline, when a reset code is the reason.
     const forget = el("button", { type: "button", class: "quiet", onclick: () => {
       saved.set("");
       location.hash = "";
     } }, T.forget);
-    main.replaceChildren(el("div", { class: "list" }, list, forget));
+    main.replaceChildren(el("h2", { class: "section-label", id: "host-name" }, state.host?.name || T.connecting), list, forget);
     let shown = "";
     while (gen === gens.chat) {
       try {
@@ -450,8 +508,9 @@
               el("a", { class: "row", href: href({ project: project.id, session: null, ...noFiles }) },
                 el("span", { class: "main" },
                   el("span", { class: "name" }, project.name),
-                  el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0))),
-                project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null)
+                  el("span", { class: "sub" }, T.sessionsCount(project.session_count || 0)),
+                  project.needs_you_count ? statusBadge("needs_you") : project.running_count ? statusBadge("running") : null),
+                icon("chevron-right"))
             ) : [el("p", { class: "empty" }, T.none)]));
         }
       } catch (error) {
@@ -495,8 +554,9 @@
               el("a", { class: "row", "data-id": session.id, href: href({ project: projectId, session: session.id, ...noFiles }) },
                 el("span", { class: "main" },
                   el("span", { class: "name" }, session.title || T.untitled),
-                  el("span", { class: "sub" }, when(session.activity_at || session.ts))),
-                statusBadge(session.status))
+                  statusBadge(session.status)),
+                el("span", { class: "session-date" }, new Date(seconds(session.activity_at || session.ts) * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })),
+                icon("chevron-right"))
             ) : [el("p", { class: "empty" }, T.none)]));
         }
         markCurrent();
@@ -507,6 +567,380 @@
       }
       await sleep(8000);
     }
+  }
+
+  // ----------------------------------------------------- workspace navigation
+  const sheetStack = [];
+  $("sheet").setAttribute("aria-labelledby", "sheet-title");
+  function showSheet(title, body) {
+    sheetStack.push({ title, body, focus: document.activeElement });
+    renderSheet();
+  }
+  function renderSheet() {
+    const top = sheetStack.at(-1);
+    if (!top) { $("sheet").close(); return; }
+    $("sheet-title").textContent = top.title;
+    $("sheet-body").replaceChildren(top.body);
+    if (!$("sheet").open) $("sheet").showModal();
+  }
+  function closeSheet(all = true) {
+    const top = sheetStack.pop();
+    if (all) sheetStack.length = 0;
+    renderSheet();
+    if (top?.focus?.isConnected) top.focus.focus();
+  }
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (sheetStack.length) {
+      event.preventDefault(); event.stopImmediatePropagation(); closeSheet(false);
+    } else if (state.route.dir != null || state.route.file != null) {
+      event.preventDefault(); event.stopImmediatePropagation(); go(noFiles);
+    }
+  }, true);
+  $("sheet").addEventListener("cancel", (event) => { event.preventDefault(); closeSheet(false); });
+  $("sheet-close").append(icon("close"));
+  $("sheet-close").setAttribute("aria-label", tr("关闭", "Close"));
+  $("sheet-close").onclick = () => closeSheet(false);
+  const action = (label, kind, onclick, props = {}) => el("button", { type: "button", onclick, ...props }, icon(kind), el("span", null, label));
+  function setupWorkspace() {
+    const tabs = [["chats", "chat", T.conversations], ["calendar", "calendar", tr("日历", "Calendar")],
+      ["checklist", "list", tr("清单", "Checklist")], ["notebook", "notebook", tr("记录本", "Notebook")]];
+    $("tabs").replaceChildren(...tabs.map(([tab, kind, label]) => el("a", {
+      href: href({ tab, project: null, session: null, ...noFiles }), "data-tab": tab,
+    }, icon(kind), el("span", null, label))));
+    $("settings").append(icon("gear"));
+    $("settings").setAttribute("aria-label", tr("设置", "Settings"));
+    $("settings").onclick = () => {
+      const theme = el("select", { "aria-label": tr("外观", "Appearance") },
+        ...[["auto", tr("跟随系统", "System")], ["light", tr("浅色", "Light")], ["dark", tr("深色", "Dark")]]
+          .map(([value, label]) => el("option", { value }, label)));
+      theme.value = document.documentElement.dataset.theme || "auto";
+      theme.onchange = () => {
+        document.documentElement.dataset.theme = theme.value;
+        try { localStorage.setItem("wisp-remote-theme", theme.value); } catch {}
+      };
+      showSheet(tr("设置", "Settings"), el("div", { class: "form-stack" },
+        el("p", { class: "note" }, state.host ? `${state.host.name} · Wisp ${state.host.version}` : T.connecting),
+        el("label", null, tr("外观", "Appearance"), theme),
+        el("p", { class: "note" }, tr("清单连接主机后保存；记录本仅保存在当前浏览器。", "Checklist changes are saved on the connected host. Notebook entries stay in this browser.")),
+        el("button", { type: "button", onclick: () => { saved.set(""); location.hash = ""; } }, T.forget)));
+    };
+    $("inbox").firstElementChild.replaceWith(icon("inbox"));
+    $("header-new").append(icon("square-pen"));
+    $("header-new").setAttribute("aria-label", T.newChat);
+    $("header-new").onclick = () => $("new").click();
+    $("help").append(icon("circle-help"));
+    $("help").setAttribute("aria-label", tr("记录本帮助", "Notebook help"));
+    $("help").onclick = notebookHelp;
+    $("journey").append(icon("research-trail"), el("span", null, tr("研究历程", "Research history")), icon("chevron-right"));
+    $("journey").onclick = () => { calendarProject = state.route.project; };
+    try { document.documentElement.dataset.theme = localStorage.getItem("wisp-remote-theme") || "auto"; } catch {}
+  }
+  const localDay = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const monthStart = (date) => new Date(date.getFullYear(), date.getMonth(), 1);
+  const range = (from, until) => ({ from: Math.floor(from.getTime() / 1000), until: Math.floor(until.getTime() / 1000) });
+  const unavailable = () => new Error(tr("当前主机尚未提供此功能，请更新 Wisp 主机后重连。", "Update and reconnect your Wisp host to use this feature."));
+  async function requireCapability(command) {
+    await whenReady();
+    if (!can(command)) throw unavailable();
+  }
+
+  // Research records stay in memory. Each day has its own query, so a capped
+  // month never silently drops records from the selected day. Local dates use
+  // calendar arithmetic rather than 24-hour increments (DST).
+  let calendarProject = null;
+  async function calendarView(gen) {
+    const live = () => gen === gens.chat;
+    let month = monthStart(new Date()), selected = new Date(), revision = 0;
+    const filters = el("div", { class: "project-filters", "aria-label": T.projects });
+    const title = el("h2", { id: "month-title" });
+    const grid = el("div", { class: "calendar-grid", id: "calendar-grid", role: "group", "aria-label": tr("选择日期", "Choose a date") });
+    const records = el("div", { class: "grouped research-records" });
+    const dayHeading = el("h2", { class: "section-label" });
+    const feedback = el("div", { "aria-live": "polite" });
+    const days = zh ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"];
+    const changeMonth = (delta) => { month = new Date(month.getFullYear(), month.getMonth() + delta, 1); selected = month; draw(); };
+    const controls = el("div", { class: "month-controls" },
+      action(tr("上个月", "Previous month"), "chevron-left", () => changeMonth(-1), { class: "icon", "aria-label": tr("上个月", "Previous month") }),
+      el("button", { type: "button", onclick: () => { selected = new Date(); month = monthStart(selected); draw(); } }, tr("今天", "Today")),
+      action(tr("下个月", "Next month"), "chevron-right", () => changeMonth(1), { class: "icon", "aria-label": tr("下个月", "Next month") }));
+    main.replaceChildren(el("section", { class: "calendar-card grouped" }, filters, title, controls,
+      el("div", { class: "weekdays", "aria-hidden": "true" }, days.map(day => el("span", null, day))), grid), feedback, dayHeading, records);
+    async function fetchRecords(from, until) {
+      const ids = calendarProject ? [calendarProject] : state.projects.map(project => project.id);
+      const rows = [];
+      for (let offset = 0; offset < ids.length; offset += 50) {
+        rows.push(...await call("native_research_calendar", null, { ...range(from, until), project_ids: ids.slice(offset, offset + 50) }));
+        if (!live()) return [];
+      }
+      return rows;
+    }
+    function showRecords(rows) {
+      records.replaceChildren();
+      for (const row of rows) {
+        const project = state.projects.find(item => item.id === row.project_id);
+        if (row.error) records.append(banner(`${project?.name || ""}: ${row.error}`));
+        if (row.history.truncated) records.append(banner(tr("记录较多，仅显示部分内容。请在主机查看完整记录。", "Some records are omitted. Open the host for the full history.")));
+        for (const entry of row.history.entries) {
+          records.append(el("button", { type: "button", class: "row", onclick: () => {
+            const body = el("div", { class: "form-stack" }, el("p", { class: "note" }, project?.name || ""),
+              el("p", { class: "msg" }, entry.summary || entry.title), el("p", { class: "note" }, when(entry.occurred_at)));
+            if (entry.frame_id && !entry.source_discarded) body.append(el("a", { class: "row", href: href({ tab: "chats", project: row.project_id, session: entry.frame_id, ...noFiles }) }, T.conversations, icon("chevron-right")));
+            showSheet(entry.title, body);
+          } }, el("span", { class: "main" }, el("span", { class: "name" }, entry.title), el("span", { class: "sub" }, project?.name || "")), icon("chevron-right")));
+        }
+      }
+      if (!records.childElementCount) records.append(el("p", { class: "empty" }, tr("这一天还没有研究记录", "No research records for this day")));
+    }
+    async function draw() {
+      const token = ++revision;
+      const current = () => live() && token === revision;
+      title.textContent = month.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+      dayHeading.textContent = selected.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+      filters.replaceChildren(...[{ id: null, name: tr("所有项目", "All projects") }, ...state.projects].map(project => el("button", {
+        type: "button", "aria-pressed": String(calendarProject === project.id), onclick: () => { calendarProject = project.id; draw(); },
+      }, project.name)));
+      grid.replaceChildren();
+      const offset = (month.getDay() + 6) % 7;
+      for (let i = 0; i < offset; i++) grid.append(el("span"));
+      const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+      for (let day = 1; day <= count; day++) {
+        const date = new Date(month.getFullYear(), month.getMonth(), day);
+        const key = localDay(date);
+        grid.append(el("button", { type: "button", "data-day": key, "aria-label": key,
+          "aria-pressed": String(key === localDay(selected)), "aria-current": key === localDay() ? "date" : null,
+          onclick: () => { selected = date; draw(); } }, day));
+      }
+      feedback.replaceChildren();
+      records.replaceChildren(el("p", { class: "empty", role: "status" }, T.loading));
+      const dayStart = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
+      const dayEnd = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate() + 1);
+      // Independent reads: day results need not wait for every month's project.
+      const reads = [
+        fetchRecords(month, new Date(month.getFullYear(), month.getMonth() + 1, 1)).then(rows => {
+          if (!current()) return;
+          const active = new Set(rows.flatMap(row => row.history.entries.map(entry => localDay(new Date(entry.occurred_at * 1000)))));
+          for (const button of grid.querySelectorAll("button")) button.classList.toggle("has-records", active.has(button.dataset.day));
+          if (rows.some(row => row.history.truncated)) feedback.append(el("p", { class: "note" }, tr("月视图仅显示部分活动标记；选择日期可单独读取。", "Month markers are partial; select a day to load its records.")));
+        }).catch(error => { if (current()) feedback.append(banner(error)); }),
+        fetchRecords(dayStart, dayEnd).then(rows => { if (current()) showRecords(rows); }).catch(error => { if (current()) records.replaceChildren(banner(error)); }),
+      ];
+      await Promise.all(reads);
+    }
+    for (const button of controls.querySelectorAll("button")) button.disabled = true;
+    records.append(el("p", { class: "empty" }, T.loading));
+    try {
+      await requireCapability("native_research_calendar");
+      await refreshProjects();
+      if (!live()) return;
+      if (!state.projects.some(project => project.id === calendarProject)) calendarProject = null;
+      for (const button of controls.querySelectorAll("button")) button.disabled = false;
+      await draw();
+    } catch (error) { if (live()) records.replaceChildren(banner(error)); }
+  }
+
+  // The web checklist uses online, revision-checked edits. It does not claim
+  // the iOS offline replica's semantics or automatically retry a mutation.
+  async function checklistView(gen) {
+    const live = () => gen === gens.chat;
+    let meta = null, items = [], busy = false, quickID = crypto.randomUUID();
+    const feedback = el("div", { "aria-live": "polite" });
+    const list = el("div", { class: "checklist-items" }, el("p", { class: "empty" }, T.loading));
+    const count = el("span");
+    const input = el("input", { id: "checklist-title", maxlength: 1000, placeholder: tr("添加科研事项", "Add a research task"), "aria-label": tr("添加科研事项", "Add a research task") });
+    const add = el("button", { type: "submit", disabled: true }, tr("添加", "Add"));
+    const form = el("form", { class: "checklist-add", onsubmit: async (event) => {
+      event.preventDefault();
+      if (!input.value.trim() || busy || !meta) return;
+      if (await change({ id: quickID, revision: 0, title: input.value.trim(), day: localDay(), status: "open" })) {
+        input.value = ""; quickID = crypto.randomUUID(); syncForm();
+      }
+    } }, icon("plus"), input, add);
+    function syncForm() { add.disabled = busy || !meta || !state.nonce || !input.value.trim(); input.disabled = busy; }
+    input.oninput = syncForm;
+    const reload = action(tr("刷新", "Refresh"), "refresh", () => load(), { class: "quiet" });
+    main.replaceChildren(el("div", { class: "checklist-meta" }, el("span", { id: "host-name" }, state.host?.name || T.connecting), count), feedback, list,
+      el("div", { class: "checklist-compose" }, form, el("p", { class: "note" }, tr("点圆圈完成，点事项查看或改期。更改保存到已连接的主机。", "Tap a circle to complete, or a task to edit. Changes are saved to the connected host.")), reload));
+    async function load() {
+      if (busy) return;
+      busy = true; syncForm(); reload.disabled = true;
+      try {
+        await requireCapability("native_research_checklist_sync");
+        let cursor = { epoch: null, cursor: 0, visibility: null }, next = new Map(), more;
+        do {
+          const reply = await call("native_research_checklist_sync", null, { ...cursor, changes: [] });
+          if (!live()) return;
+          if (reply.schema !== "wisp.research-checklist.v1") throw unavailable();
+          if (reply.reset || (cursor.visibility && cursor.visibility !== reply.visibility)) next.clear();
+          for (const item of reply.items) next.set(item.id, item);
+          const visible = new Set(reply.visible_project_ids);
+          for (const [id, item] of next) if (item.project_id && !visible.has(item.project_id)) next.delete(id);
+          cursor = { epoch: reply.epoch, cursor: reply.cursor, visibility: reply.visibility }; more = reply.has_more;
+        } while (more);
+        meta = cursor; items = [...next.values()]; draw();
+      } catch (error) { if (live()) { meta = null; list.replaceChildren(banner(error)); } }
+      finally { busy = false; if (live()) { syncForm(); reload.disabled = false; } }
+    }
+    async function change(item, errors = feedback, conflict) {
+      if (busy || !meta) return false;
+      if (!state.nonce) { errors.replaceChildren(banner(T.disconnected)); return false; }
+      busy = true; syncForm(); errors.replaceChildren();
+      for (const button of list.querySelectorAll("button")) button.disabled = true;
+      let success = false;
+      try {
+        const reply = await call("native_research_checklist_sync", null, { ...meta, changes: [{
+          mutation_id: crypto.randomUUID(), id: item.id, base_revision: item.revision,
+          title: item.title, day: item.day, status: item.status,
+        }] });
+        const outcome = reply.outcomes.find(outcome => outcome.id === item.id);
+        if (reply.reset || outcome?.status !== "applied") {
+          if (!reply.reset && outcome?.status === "conflict" && outcome.item && conflict) {
+            conflict(outcome.item);
+          } else {
+            throw new Error(tr("主机上的记录已变化，请刷新清单后重新编辑。你的输入仍保留在这里。", "The host record changed. Refresh the checklist before editing again. Your input is kept here."));
+          }
+        } else success = true;
+      } catch (error) { if (live()) errors.replaceChildren(banner(error)); }
+      busy = false;
+      if (live()) { if (success) await load(); else { draw(); syncForm(); } }
+      return success;
+    }
+    function edit(item) {
+      let revision = item.revision;
+      const title = el("input", { value: item.title, maxlength: 1000, required: true, "aria-label": tr("事项", "Task") });
+      const day = el("input", { type: "date", value: item.day, required: true, "aria-label": tr("日期", "Date") });
+      const errors = el("div");
+      const save = el("button", { type: "submit", class: "primary" }, tr("保存", "Save"));
+      const editor = el("form", { class: "form-stack", onsubmit: async event => {
+        event.preventDefault();
+        if (!title.value.trim() || !day.value) return;
+        save.disabled = true;
+        if (await change({ ...item, revision, title: title.value.trim(), day: day.value }, errors, server => {
+          errors.replaceChildren(banner(tr("此事项已在主机更新，请选择保留哪一版。", "This task changed on the host. Choose which version to keep.")),
+            el("p", { class: "msg" }, `${server.title} · ${server.day}`),
+            el("button", { type: "button", onclick: () => {
+              revision = server.revision; errors.replaceChildren();
+              // Explicitly choosing the local version enables a new save; it
+              // does not send a second mutation by itself.
+            } }, tr("保留我的修改", "Keep my changes")),
+            el("button", { type: "button", onclick: async () => {
+              closeSheet(false); await load();
+            } }, tr("采用主机版本", "Use host version")));
+        }) && save.isConnected) closeSheet(false);
+        save.disabled = false;
+      } }, el("label", null, tr("事项", "Task"), title), el("label", null, tr("日期", "Date"), day), errors, save);
+      showSheet(tr("科研事项", "Research task"), editor);
+    }
+    function draw() {
+      const today = localDay();
+      const open = items.filter(item => item.status === "open").sort((a, b) => a.day.localeCompare(b.day));
+      count.textContent = tr(`${open.length} 项待办`, `${open.length} to do`);
+      const row = item => el("div", { class: "checklist-row" },
+        action(item.status === "done" ? tr("重新打开", "Reopen") : tr("标记完成", "Complete"), item.status === "done" ? "circle-check" : "circle",
+          () => change({ ...item, status: item.status === "done" ? "open" : "done" }), { class: "task-toggle", "aria-label": `${item.status === "done" ? tr("重新打开", "Reopen") : tr("完成", "Complete")} ${item.title}`, "aria-pressed": String(item.status === "done") }),
+        el("button", { type: "button", class: "task-text", onclick: () => edit(item) }, el("span", null, item.title), item.day !== today ? el("small", { class: item.day < today ? "overdue" : "" }, item.day) : null));
+      list.replaceChildren();
+      for (const [label, entries, overdue] of [[tr("逾期", "Overdue"), open.filter(item => item.day < today), true], [tr("今天", "Today"), open.filter(item => item.day === today)], [tr("接下来", "Upcoming"), open.filter(item => item.day > today)]]) {
+        if (entries.length) list.append(el("section", null, el("h2", { class: overdue ? "overdue" : "" }, label, el("small", null, entries.length)), ...entries.map(row)));
+      }
+      if (!open.length) list.append(el("p", { class: "empty" }, tr("暂无待办，记下下一步研究计划吧。", "Nothing to do yet. Add your next research step.")));
+      const done = items.filter(item => item.status === "done");
+      if (done.length) list.append(el("details", { class: "completed-tasks" }, el("summary", null, `${tr("已完成", "Completed")} · ${done.length}`), ...done.map(row)));
+    }
+    await load();
+  }
+
+  // Browser-local notebook: original photos and text are stored atomically in
+  // IndexedDB. No host upload, OCR, or cross-device synchronization is implied.
+  let notebookDB;
+  function notebookStore(mode, operation) {
+    if (!notebookDB) notebookDB = new Promise((resolve, reject) => {
+      const request = indexedDB.open("wisp-remote-notebook", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("entries", { keyPath: "id" });
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error(tr("请关闭其他 Wisp 网页后重试。", "Close other Wisp pages and try again.")));
+    }).catch(error => { notebookDB = null; throw error; });
+    return notebookDB.then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction("entries", mode);
+      const request = operation(tx.objectStore("entries"));
+      tx.oncomplete = () => resolve(request.result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Notebook transaction aborted"));
+    }));
+  }
+  function notebookHelp() {
+    showSheet(tr("关于实验记录本", "About the notebook"), el("p", null, tr(
+      "文字和照片原图保存在当前浏览器，无需主机在线。清除网站数据会移除这些记录。Web 端暂不支持文字识别，也不会自动发送到主机；重要记录请保留备份。",
+      "Text and original photos stay in this browser, even when the host is offline. Clearing website data removes these records. OCR and sending to the host are not supported here yet; keep a backup of important records.")));
+  }
+  async function notebookView(gen) {
+    const live = () => gen === gens.chat;
+    const list = el("div", { class: "grouped notebook-entries" });
+    const feedback = el("div", { "aria-live": "polite" });
+    const tile = (kind, title, subtitle, onclick) => el("button", { type: "button", class: "row notebook-action", onclick },
+      icon(kind), el("span", { class: "main" }, el("span", { class: "name" }, title), el("span", { class: "sub" }, subtitle)), icon("chevron-right"));
+    main.replaceChildren(el("h2", { class: "section-label notebook-question" }, tr("你现在想做什么？", "What would you like to do?")),
+      el("div", { class: "grouped notebook-actions" },
+        tile("camera", tr("拍下纸质实验记录", "Capture a paper record"), tr("保留原图，补充文字说明", "Keep the original and add your notes"), () => editNote(null, true)),
+        tile("edit", tr("记下刚才的观察", "Write an observation"), tr("写过程、现象，也可以附上照片", "Record what happened, with optional photos"), () => editNote()),
+        tile("book", tr("先看一条示例", "See an example"), tr("了解一份完整记录是什么样", "Explore a sample lab note"), () => showSheet(tr("实验记录示例", "Example lab note"),
+          el("div", { class: "form-stack" }, el("h3", null, tr("根尖样本观察", "Root tip observation")), el("p", { class: "msg" }, tr("目的：比较处理组与对照组的根尖形态。\n过程：同一光照条件下观察，每组取 3 个样本。\n观察：处理组根毛较密，需补充重复实验。\n下一步：记录长度并拍摄同倍率照片。", "Aim: compare treated and control root tips.\nMethod: observe 3 samples per group under the same lighting.\nObservation: denser root hairs in the treated group; more replicates needed.\nNext: measure lengths and photograph at the same magnification.")), el("p", { class: "note" }, tr("这是一条示例，不会保存到你的记录中。", "This example is not saved to your notebook.")))))),
+      el("p", { class: "notebook-note" }, tr("无需连接主机。文字和照片仅保存在当前浏览器，不会自动上传。", "No host connection needed. Text and photos stay in this browser and are never uploaded automatically.")),
+      el("h2", { class: "section-label" }, tr("本机实验记录", "On this device")), feedback, list);
+    async function load() {
+      try {
+        const entries = await notebookStore("readonly", store => store.getAll());
+        if (!live()) return;
+        entries.sort((a, b) => b.updated - a.updated);
+        list.replaceChildren(...(entries.length ? entries.map(entry => el("button", { type: "button", class: "row", onclick: () => editNote(entry) },
+          el("span", { class: "main" }, el("span", { class: "name" }, entry.title || tr("未命名记录", "Untitled note")), el("span", { class: "sub" }, entry.day)), icon("chevron-right"))) :
+          [el("p", { class: "notebook-empty" }, tr("第一条记录会出现在这里。从上方选择拍照或写观察，就能开始。", "Your first note will appear here. Start with a photo or an observation above."))]));
+      } catch (error) { if (live()) feedback.replaceChildren(banner(error)); }
+    }
+    function editNote(entry, camera = false) {
+      const id = entry?.id || crypto.randomUUID();
+      const title = el("input", { value: entry?.title || "", placeholder: tr("标题（可稍后补）", "Title (optional)"), "aria-label": tr("标题", "Title") });
+      const day = el("input", { type: "date", value: entry?.day || localDay(), required: true, "aria-label": tr("日期", "Date") });
+      const text = el("textarea", { rows: 7, placeholder: tr("记录过程、现象和观察…", "Record your process and observations…"), "aria-label": tr("观察记录", "Observation") }, entry?.text || "");
+      const photos = [...(entry?.photos || [])];
+      const previews = el("div", { class: "notebook-photos" });
+      const errors = el("div", { "aria-live": "polite" });
+      const picker = el("input", { type: "file", accept: "image/jpeg,image/png,image/webp", multiple: true, hidden: true, id: "notebook-photo" });
+      if (camera) picker.setAttribute("capture", "environment");
+      const save = el("button", { type: "submit", class: "primary" }, tr("完成并保存", "Save note"));
+      const addPhoto = action(tr("添加照片", "Add photo"), "camera", () => picker.click());
+      const renderPhotos = () => previews.replaceChildren(...photos.map((photo, i) => el("div", null,
+        el("img", { src: photo.data, alt: photo.name }), el("button", { type: "button", onclick: () => { photos.splice(i, 1); renderPhotos(); } }, T.removePhoto))));
+      picker.onchange = async () => {
+        const files = [...picker.files]; picker.value = ""; save.disabled = true; addPhoto.disabled = true; errors.replaceChildren();
+        try {
+          for (const file of files) {
+            if (photos.length >= 12 || file.size > 20 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error(tr("最多保存 12 张照片，每张不超过 20 MB，支持 JPEG、PNG 和 WebP。", "Use up to 12 JPEG, PNG or WebP photos, at most 20 MB each."));
+            const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+            photos.push({ name: file.name, data }); renderPhotos();
+          }
+        } catch (error) { errors.replaceChildren(banner(error)); }
+        save.disabled = false; addPhoto.disabled = false;
+      };
+      renderPhotos();
+      showSheet(tr("实验记录", "Lab note"), el("form", { class: "form-stack", onsubmit: async event => {
+        event.preventDefault();
+        if (!text.value.trim() && !title.value.trim() && !photos.length) {
+          errors.replaceChildren(banner(tr("请先写下观察或添加照片。", "Add an observation or a photo first."))); return;
+        }
+        save.disabled = true; errors.replaceChildren();
+        try {
+          await notebookStore("readwrite", store => store.put({ id, title: title.value.trim(), day: day.value, text: text.value, photos, updated: Date.now() }));
+          if (save.isConnected) closeSheet(false);
+          if (live()) await load();
+        } catch (error) { errors.replaceChildren(banner(error)); }
+        save.disabled = false;
+      } }, title, day, text, picker, previews, addPhoto, errors, save,
+        el("p", { class: "note" }, tr("仅保存在当前浏览器", "Saved only in this browser"))));
+      if (camera) picker.click();
+    }
+    await load();
   }
 
   // -------------------------------------------------------------- markdown
@@ -817,7 +1251,7 @@
   /// It is updated in place, so a reader keeps their place while output grows.
   function runNode(card, opened) {
     const [name, time, status, pre] = [el("span", { class: "name" }), el("span", { class: "sub" }), el("span"), el("pre")];
-    const node = fold(`run:${card.id}`, opened, !RUN_OVER.has(card.status), "tool run", [name, time, status], pre);
+    const node = fold(`run:${card.id}`, opened, !RUN_OVER.has(card.status), "tool run", [name, time, status, icon("chevron-right")], pre);
     node.addEventListener("toggle", () => node.open && (pre.scrollTop = pre.scrollHeight));
     const update = (card) => {
       const over = RUN_OVER.has(card.status);
@@ -884,6 +1318,7 @@
     draft.placeholder = T.placeholder;
     stop.textContent = T.stop;
     attach.setAttribute("aria-label", T.attach);
+    attach.replaceChildren(icon("image"), el("span", null, tr("图片", "Photo")));
     const opened = new Map();
     const rendered = [];
     const runCards = new Map();
@@ -902,6 +1337,9 @@
     const older = el("div", { class: "transcript" }, earlier);
     const transcript = el("div", { class: "transcript" });
     const runs = el("div", { class: "transcript" });
+    const finishedList = el("div", { class: "transcript" });
+    const finishedLabel = el("summary");
+    const finishedRuns = el("details", { class: "tool completed-runs" }, finishedLabel, finishedList);
     const approvals = el("div", { class: "transcript" });
     const activity = el("p", { class: "activity" });
     const chips = el("div", { class: "chips", role: "group", "aria-label": T.suggestions });
@@ -927,7 +1365,7 @@
       const queues = running && can("native_conversation_enqueue");
       draft.disabled = blocked;
       send.hidden = running && !queues;
-      send.textContent = queues ? T.queue : T.send;
+      send.replaceChildren(queues ? T.queue : T.send, icon("arrow-up"));
       send.disabled = blocked || sending || uploading > 0 || !(draft.value.trim() || photos.length);
       attach.hidden = !can("remote_attach_image");
       attach.disabled = blocked || photos.length + uploading >= MAX_PHOTOS;
@@ -1078,12 +1516,21 @@
         }
         const cards = [...(next.run_cards || [])].sort((a, b) => a.created_at - b.created_at);
         for (const id of [...runCards.keys()]) if (!cards.some((card) => card.id === id)) runCards.delete(id);
-        const shown = cards.map((card) => {
+        const activeNodes = [], finishedNodes = [];
+        for (const card of cards) {
           const run = runCards.get(card.id);
           if (run) run.update(card);
           else runCards.set(card.id, runNode(card, opened));
-          return runCards.get(card.id).node;
-        });
+          const node = runCards.get(card.id).node;
+          if (card.status === "succeeded" || card.status === "cancelled") {
+            // A reader inspecting a live run keeps seeing it when it finishes.
+            if (node.open && !finishedList.contains(node)) finishedRuns.open = true;
+            finishedNodes.push(node);
+          } else activeNodes.push(node);
+        }
+        finishedLabel.replaceChildren(el("span", null, tr(`已完成的记录（${finishedNodes.length}）`, `Completed records (${finishedNodes.length})`)), icon("chevron-right"));
+        if (finishedNodes.length !== finishedList.children.length || finishedNodes.some((node, index) => finishedList.children[index] !== node)) finishedList.replaceChildren(...finishedNodes);
+        const shown = [...activeNodes, ...(finishedNodes.length ? [finishedRuns] : [])];
         if (shown.length !== runs.children.length || shown.some((node, index) => runs.children[index] !== node)) runs.replaceChildren(...shown);
         approvals.replaceChildren(...(next.approvals || []).map((approval) => approvalNode(approval, session, project)));
         activity.textContent = next.running ? next.activity_status || T.running : next.error || "";
@@ -1256,6 +1703,7 @@
     create.onclick = async () => {
       const project = state.route.project;
       create.disabled = true;
+      $("header-new").disabled = true;
       try {
         go({ project, session: await call("native_conversation_create", project), ...noFiles });
         refreshNow();
@@ -1263,7 +1711,9 @@
         $("sessions").prepend(banner(error));
       }
       create.disabled = false;
+      $("header-new").disabled = false;
     };
+    setupWorkspace();
     applyRoute();
     connect();
     watchInbox();

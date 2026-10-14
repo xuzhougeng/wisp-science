@@ -20,7 +20,7 @@ const concat = (a: Uint8Array, b: Uint8Array) => new Uint8Array([...a, ...b]);
 type Call = { command: string; project_id: string | null; args: any };
 /// What the fake desktop offers and how it behaves. A host with no `commands`
 /// is a desktop older than the page, which must still work as before.
-type Host = { commands?: string[]; mute?: boolean; connections?: number };
+type Host = { commands?: string[]; mute?: boolean; connections?: number; respond?: (call: Call) => any };
 const CURRENT = [
   "native_conversation_inbox", "native_conversation_enqueue", "native_conversation_queue_action", "remote_attach_image",
 ];
@@ -246,7 +246,7 @@ async function remote(page: Page, host: Host = {}): Promise<Call[]> {
         let result = null;
         let error = null;
         try {
-          result = answer(call);
+          result = host.respond ? await host.respond(call) : answer(call);
         } catch (failure) {
           error = (failure as Error).message;
         }
@@ -498,7 +498,7 @@ test("a phone shows one pane at a time and Back steps out of it", async ({ page 
   expect(await page.locator("#main").evaluate((node) => node.scrollTop)).toBe(40);
   await page.locator("#back").click();
   await expect(page.locator("#sessions a.row")).toHaveCount(2);
-  await page.locator("#new").click();
+  await page.locator("#header-new").click();
   await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
   await expect(page.locator("#main")).toContainText("Second conversation.");
   expect(problems).toEqual([]);
@@ -767,4 +767,235 @@ test("the page can live on the home screen: it remembers the code until told to 
   await expect(page.getByRole("heading", { name: "Connect to your Wisp" })).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Connect to your Wisp" })).toBeVisible();
+});
+
+const RESEARCH = [...CURRENT, "native_research_calendar", "native_research_journey", "native_research_checklist_sync"];
+
+test.describe("mobile workspace aligned with the native research tabs", () => {
+  test.use({ locale: "zh-CN", timezoneId: "Asia/Shanghai", colorScheme: "light", viewport: { width: 393, height: 852 } });
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date("2026-10-14T04:00:00Z"));
+  });
+
+  const researchHost = (call: Call) => {
+    if (call.command === "native_research_calendar") {
+      const at = new Date("2026-10-14T04:00:00Z").getTime() / 1000;
+      const month = call.args.until - call.args.from > 86400;
+      return call.args.project_ids.map((id: string) => ({ project_id: id, error: null, history: {
+        // Only the day query has the record. A capped month must not suppress it.
+        truncated: month, entries: !month && id === "p-1" && call.args.from <= at && call.args.until > at ? [{
+          id: "finding-1", title: "根尖样本观察", summary: "处理组根毛较密", occurred_at: at,
+          recorded_at: at, kind: "finding", frame_id: "s-2", source_discarded: false,
+        }] : [],
+      } }));
+    }
+    return answer(call);
+  };
+
+  test("four tabs, grouped projects, session rows and composer fit a narrow phone", async ({ page }) => {
+    const problems = watchConsole(page);
+    await remote(page, { commands: RESEARCH, respond: researchHost });
+    await page.goto(`/remote#${CODE}`);
+    await expect(page.locator("#title")).toHaveText("Wisp");
+    await expect(page.locator("#tabs a")).toHaveText(["对话", "日历", "清单", "记录本"]);
+    await expect(page.locator("#host-name")).toHaveText("lab-mac");
+    await expect(page.locator(".projects .row").first()).toContainText("2 个对话");
+    await expect(page.locator('#tabs a[aria-current="page"]')).toHaveText("对话");
+    await page.getByRole("link", { name: /RNA-seq/ }).click();
+    await expect(page.locator("#journey")).toBeVisible();
+    await expect(page.locator("#header-new")).toBeVisible();
+    await expect(page.locator("#sessions .complete")).toHaveText("完成");
+    await page.locator("#sessions .row").nth(1).click();
+    await expect(page.locator("#tabs")).toBeHidden();
+    await expect(page.locator("#composer")).toBeVisible();
+    await expect(page.locator("#attach")).toContainText("图片");
+    await page.locator("#draft").fill("继续观察");
+    await expect(page.locator("#send")).toBeEnabled();
+    for (const width of [393, 320]) {
+      await page.setViewportSize({ width, height: 852 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expect(page.locator("#send")).toBeInViewport({ ratio: 1 });
+    }
+    await page.locator("#back").click();
+    await expect(page.locator("#tabs")).toBeVisible();
+    await page.locator("#back").click();
+    await page.locator("#settings").click();
+    await page.getByLabel("外观").selectOption("dark");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    expect(problems).toEqual([]);
+  });
+
+  test("calendar has Monday-first days, project filters, independent day reads and source links", async ({ page }) => {
+    const calls = await remote(page, { commands: RESEARCH, respond: researchHost });
+    await page.goto(`/remote#${CODE}/t/calendar`);
+    await expect(page.locator("#month-title")).toHaveText("2026年10月");
+    const grid = page.locator("#calendar-grid");
+    await expect(grid.locator("button")).toHaveCount(31);
+    await expect(grid.locator("span")).toHaveCount(3); // October 1 is Thursday.
+    await expect(grid.locator('[data-day="2026-10-14"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".research-records")).toContainText("根尖样本观察");
+    const queries = calls.filter(call => call.command === "native_research_calendar");
+    expect(queries.every(call => call.project_id === null)).toBe(true);
+    expect(queries.map(call => call.args.until - call.args.from)).toEqual(expect.arrayContaining([31 * 86400, 86400]));
+    expect(queries.find(call => call.args.until - call.args.from === 86400)!.args.from).toBe(new Date("2026-10-14T00:00:00+08:00").getTime() / 1000);
+    await page.locator(".project-filters").getByRole("button", { name: "RNA-seq" }).click();
+    await expect.poll(() => calls.filter(call => call.command === "native_research_calendar").at(-1)?.args.project_ids).toEqual(["p-1"]);
+    await page.locator(".research-records .row").click();
+    await page.keyboard.press("Escape"); // No focus move into the sheet first.
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await expect(page.locator("#calendar-grid")).toBeVisible();
+    await page.locator(".research-records .row").click();
+    await page.locator("#sheet").getByRole("link", { name: "对话" }).click();
+    await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await page.goBack();
+    await expect(page.locator("#calendar-grid")).toBeVisible();
+    await page.getByRole("button", { name: "上个月" }).click();
+    await expect(page.locator("#month-title")).toHaveText("2026年9月");
+    await expect(grid.locator("button")).toHaveCount(30);
+    await page.getByRole("button", { name: "今天", exact: true }).click();
+    await expect(grid.locator('[data-day="2026-10-14"]')).toHaveAttribute("aria-pressed", "true");
+    await page.reload();
+    await expect(page.locator('#tabs a[aria-current="page"]')).toHaveText("日历");
+  });
+
+  test("old hosts show a capability message without sending unsupported research commands", async ({ page }) => {
+    const calls = await remote(page);
+    await page.goto(`/remote#${CODE}/t/calendar`);
+    await expect(page.locator("#main [role=alert]")).toContainText("请更新 Wisp 主机");
+    await expect(page.getByRole("button", { name: "下个月" })).toBeDisabled();
+    await page.locator('#tabs a[data-tab="checklist"]').click();
+    await expect(page.locator("#main [role=alert]")).toContainText("请更新 Wisp 主机");
+    await expect(page.locator(".checklist-add button")).toBeDisabled();
+    expect(calls.some(call => call.command.startsWith("native_research_"))).toBe(false);
+  });
+
+  test("checklist pages in host records, completes tasks and resolves revision conflicts explicitly", async ({ page }) => {
+    const tasks = [
+      { id: "task-1", revision: 1, title: "核查运行进度", day: "2026-10-03", status: "open", project_id: "p-1", session_id: null },
+      { id: "task-2", revision: 2, title: "记录样本", day: "2026-10-14", status: "open", project_id: null, session_id: null },
+    ];
+    let revision = 2;
+    let conflict = true;
+    const calls = await remote(page, { commands: RESEARCH, respond: call => {
+      if (call.command !== "native_research_checklist_sync") return answer(call);
+      const { args } = call;
+      const outcomes = args.changes.map((change: any) => {
+        const item = tasks.find(item => item.id === change.id);
+        if (conflict && change.id === "task-2") {
+          conflict = false;
+          Object.assign(item!, { revision: ++revision, title: "主机已修改" });
+          return { mutation_id: change.mutation_id, id: change.id, status: "conflict", item };
+        }
+        const next = { ...item, ...change, revision: ++revision, project_id: item?.project_id ?? null, session_id: null };
+        if (item) Object.assign(item, next); else tasks.push(next);
+        return { mutation_id: change.mutation_id, id: change.id, status: "applied", item: next };
+      });
+      const first = !args.epoch;
+      return { schema: "wisp.research-checklist.v1", epoch: "epoch", visibility: "visible", visible_project_ids: ["p-1"],
+        reset: first, cursor: first ? 1 : revision, has_more: first, items: first ? tasks.slice(0, 1) : tasks.slice(1), outcomes };
+    } });
+    await page.goto(`/remote#${CODE}/t/checklist`);
+    await expect(page.locator(".checklist-meta")).toContainText("2 项待办");
+    await expect(page.locator(".checklist-items h2")).toHaveText(["逾期1", "今天1"]);
+    await page.getByRole("button", { name: "完成 核查运行进度", exact: true }).click();
+    await expect(page.locator(".checklist-meta")).toContainText("1 项待办");
+    await expect(page.locator(".completed-tasks summary")).toContainText("已完成 · 1");
+    await page.getByRole("button", { name: "记录样本", exact: true }).click();
+    await page.getByLabel("事项", { exact: true }).fill("我的新标题");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.locator("#sheet [role=alert]")).toContainText("此事项已在主机更新");
+    await expect(page.getByLabel("事项", { exact: true })).toHaveValue("我的新标题");
+    const mutations = () => calls.filter(call => call.command === "native_research_checklist_sync" && call.args.changes.length);
+    const before = mutations().length;
+    await page.getByRole("button", { name: "保留我的修改" }).click();
+    expect(mutations()).toHaveLength(before); // Explicit choice alone never writes.
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await expect(page.locator(".checklist-items")).toContainText("我的新标题");
+    expect(mutations().at(-1)!.args.changes[0].base_revision).toBe(4);
+    await page.locator("#checklist-title").fill("新事项");
+    await page.locator(".checklist-add button").click();
+    await expect(page.locator(".checklist-meta")).toContainText("2 项待办");
+    expect(mutations().at(-1)!.args.changes[0]).toMatchObject({ day: "2026-10-14", status: "open", base_revision: 0 });
+    expect(calls.some(call => /conversation_send|dispatch/.test(call.command))).toBe(false);
+  });
+
+  test("notebook saves text and original photos locally, restores them and never uploads", async ({ page }) => {
+    const problems = watchConsole(page);
+    const calls = await remote(page);
+    await page.goto(`/remote#${CODE}/t/notebook`);
+    await expect(page.locator("#title")).toHaveText("实验记录本");
+    await page.getByRole("button", { name: /先看一条示例/ }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await expect(page.locator(".notebook-empty")).toBeVisible();
+    await page.getByRole("button", { name: /记下刚才的观察/ }).click();
+    await page.getByLabel("标题", { exact: true }).fill("根尖观察记录");
+    await page.getByLabel("观察记录").fill("处理组根毛较密。需要增加重复。");
+    await page.locator("#notebook-photo").setInputFiles({ name: "root.png", mimeType: "image/png", buffer: Buffer.from(PNG, "base64") });
+    await expect(page.locator(".notebook-photos img")).toHaveAttribute("src", `data:image/png;base64,${PNG}`);
+    await page.getByRole("button", { name: "完成并保存" }).click();
+    await expect(page.locator(".notebook-entries")).toContainText("根尖观察记录");
+    await page.reload();
+    await page.locator(".notebook-entries").getByRole("button", { name: /根尖观察记录/ }).click();
+    await expect(page.getByLabel("观察记录")).toHaveValue("处理组根毛较密。需要增加重复。");
+    await expect(page.locator(".notebook-photos img")).toHaveAttribute("src", `data:image/png;base64,${PNG}`);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#sheet")).not.toBeVisible();
+    await expect(page.locator(".notebook-entries")).toContainText("根尖观察记录");
+    expect(calls.some(call => /remote_attach_image|conversation_send/.test(call.command))).toBe(false);
+    expect(problems).toEqual([]);
+  });
+
+  test("notebook storage failures are visible and never report a successful save", async ({ page }) => {
+    await page.addInitScript(() => {
+      indexedDB.open = () => { throw new Error("Storage unavailable"); };
+    });
+    await remote(page);
+    await page.goto(`/remote#${CODE}/t/notebook`);
+    await expect(page.locator("#main [role=alert]")).toHaveText("Storage unavailable");
+    await page.getByRole("button", { name: /记下刚才的观察/ }).click();
+    await page.getByLabel("观察记录").fill("不能丢失的观察");
+    await page.getByRole("button", { name: "完成并保存" }).click();
+    await expect(page.locator("#sheet [role=alert]")).toHaveText("Storage unavailable");
+    await expect(page.getByLabel("观察记录")).toHaveValue("不能丢失的观察");
+    await expect(page.locator(".notebook-entries .row")).toHaveCount(0);
+  });
+
+  test("Escape closes only the file overlay and leaves its conversation open", async ({ page }) => {
+    await remote(page);
+    await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
+    await page.locator("#files").click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#panel")).toBeHidden();
+    await expect(page.locator("#main")).toContainText("Second conversation.");
+    await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
+  });
+});
+
+test("completed run records fold together while failed and live runs stay visible", async ({ page }) => {
+  const original = snapshots["s-7"];
+  const cards = original.run_cards;
+  const calls = await remote(page, { respond: call => {
+    if (call.command !== "native_conversation_snapshot") return answer(call);
+    return { ...answer(call), run_cards: [
+      { ...cards[0], id: "finished", status: "succeeded", title: "Finished analysis", created_at: 1 },
+      { ...cards[0], id: "live", status: "running", title: "Live analysis", created_at: 2 },
+      { ...cards[1], id: "failed", status: "failed", title: "Failed analysis", created_at: 3 },
+    ] };
+  } });
+  await page.goto(`/remote#${CODE}/p/p-1/s/s-7`);
+  const completed = page.locator("details.completed-runs");
+  await expect(completed.locator(":scope > summary")).toHaveText("Completed records (1)");
+  await expect(completed).not.toHaveAttribute("open");
+  await expect(page.getByText("Live analysis", { exact: true })).toBeVisible();
+  await expect(page.getByText("Failed analysis", { exact: true })).toBeVisible();
+  await expect(page.getByText("Finished analysis", { exact: true })).toBeHidden();
+  await completed.locator(":scope > summary").click();
+  await expect(page.getByText("Finished analysis", { exact: true })).toBeVisible();
+  expect(calls.some(call => /send|stop|dispatch/.test(call.command))).toBe(false);
 });

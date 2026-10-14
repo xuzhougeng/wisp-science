@@ -166,13 +166,41 @@ reset.
 
 ## Use the page
 
-The page is laid out like the desktop workspace, for the moments you are away
-from it rather than as a full client:
+The web workspace follows the iPhone client's layout: a soft gray background,
+white grouped cards, teal actions and four floating navigation tabs. On a phone,
+**Conversations**, **Calendar**, **Checklist** and **Notebook** each occupy one
+page. Opening a conversation hides the tab bar to make room for its composer.
+Wide windows retain the conversation sidebar and file pane. Appearance follows
+the system, with light/dark overrides in the gear menu.
 
 - **Projects and conversations.** Pick a project, then a conversation from the
-  list on the left; the project picker above the list switches projects without
-  leaving the page. Rows show *Running* and *Needs you*, and opening a finished
-  conversation clears its *Needs you* flag on the desktop too.
+  list. On a wide screen the project picker above the sidebar switches projects;
+  on a phone, Back returns to the project list and the pen button starts a new
+  conversation. Rows show the date and *Running*, *Needs you* or *Done*.
+  Opening a finished conversation clears its *Needs you* flag on the desktop too.
+- **Calendar.** A Monday-first month grid, Today and previous/next month controls,
+  project filter chips, and records for the selected local date. Each selected
+  day is fetched independently, including when the month response is truncated.
+  Open a record to read its summary or return to its source conversation. The
+  project's **Research history** link opens the calendar with that project
+  selected. Reads require `native_research_calendar`; older hosts show an update
+  message. Calendar records are held in memory, not persisted in the browser.
+- **Checklist.** Host research tasks grouped into overdue, today, upcoming and
+  completed sections. Add a task for today, tap its circle to complete/reopen it,
+  or tap its title to rename or reschedule it. This web version requires an
+  online host advertising `native_research_checklist_sync`; it does not queue
+  offline edits. Saves check the last read revision and let you choose between
+  conflicting versions. They never start an agent or dispatch a plan. Use
+  **Refresh** to pull changes made elsewhere; failed writes are not retried.
+- **Notebook.** Capture/import a photo, write an observation, or open an example.
+  **Save note** stores the entry's text, date and original photos in this browser's
+  IndexedDB, including when the host is offline. Reopen an entry to edit it.
+  Up to 12 JPEG/PNG/WebP photos of at most 20 MB each can be saved per entry,
+  subject to the browser's storage quota. Storage errors leave the editor and
+  its input open. These notes are not synchronized with the host or native app;
+  OCR, sending notebook entries to a conversation and notebook export are not
+  implemented in the web client yet. Keep separate backups of important notes:
+  clearing site data removes them, and private browsing may not retain them.
 - **Conversation.** The latest transcript page with replies rendered as
   Markdown (headings, lists, tables, code, links), pictures shown inline, live
   tool calls, and pending approvals with the full command or diff. You can
@@ -190,7 +218,9 @@ from it rather than as a full client:
   under the project's `uploads/` folder.
 - **Runs.** A Run the conversation started shows its state, how long it has
   run and the end of its output, and keeps updating after the turn is over.
-- **Needs you.** The bell in the header counts the other conversations, in any
+  Successful/cancelled runs fold into **Completed records**; failed, timed-out
+  and live runs remain directly visible.
+- **Needs you.** The inbox in the header counts the other conversations, in any
   project, that wait for an answer or an approval, and opens the next one. The
   tab title carries the same count.
 - **Files.** The folder button opens the conversation's project folder beside
@@ -204,6 +234,10 @@ out of the current one. The address keeps track of where you are
 (`#<code>/p/<project>/s/<conversation>/f/<file>`), so the browser's Back and
 reload work and a bookmark returns to the same conversation. That address
 contains the connection code: treat a copied address like the link itself.
+Tab URLs use `#<code>/t/calendar`, `/t/checklist` and `/t/notebook`; they also
+survive reload and browser Back. Calendar date and project filters reset on
+reload. Escape closes the topmost dialog or file pane while keeping its parent
+page open.
 
 The page polls every 1.5 s while a turn runs and every 4 s otherwise, and an
 open folder every 8 s. In the background it slows to once in 30 s; back in
@@ -219,6 +253,29 @@ icon. An installed page starts without the link, so once a code has connected
 the page keeps it in that browser's storage. **Use another code** under the
 project list forgets it. On an iPhone the installed page has its own storage,
 so its first launch asks for the code once.
+The same action is available in Settings. Forgetting a code does not delete
+the browser-local notebook, which is independent of any host connection.
+
+### Manual checks for the web workspace
+
+After deploying an updated relay, use a phone-sized browser and a wide window:
+
+1. Open a project, start/open a conversation, browse files, and return with Back.
+   Check that the bottom tabs leave room for the last list row, disappear in the
+   conversation, and that long titles/tables do not widen the page at 320 px.
+2. In Calendar, filter a project, switch months, select Today, inspect a record
+   and follow its conversation link. Press Escape immediately after opening a
+   record or file pane; one press must leave the underlying page open.
+3. Add, reschedule and complete a checklist item. Change it on another client
+   before saving the web editor to check the explicit conflict choice. Disconnect
+   the host and confirm that a failed edit is not presented as saved.
+4. Save a notebook entry with text and a photo, reload and reopen it. Check that
+   no host upload occurs, the original photo remains, and a storage failure
+   leaves the editor open. Inspect light/dark appearance and the phone safe area.
+
+Automated coverage is in `ui-tests/tests/remote-web.spec.ts`, using an encrypted
+fake host and the relay's actual CSP. Running it requires the repository's
+explicit test permission; no real host, API key or network is needed.
 
 ## Security model
 
