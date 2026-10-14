@@ -17,6 +17,7 @@ members = [
     "crates/wisp-dto",
     "crates/wisp-app",
     "crates/wisp-service",
+    "crates/wisp-server",
     "crates/wisp-dev",
     "src-tauri",
 ]

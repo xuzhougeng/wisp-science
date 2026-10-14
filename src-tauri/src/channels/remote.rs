@@ -23,6 +23,7 @@ use tokio_tungstenite::tungstenite::{
 use wisp_dto::native_conversations::{ApprovalRequest, ApprovalScope, CreateRequest, SendRequest};
 use wisp_dto::native_queue::{QueueAction, QueueActionRequest};
 use wisp_dto::native_settings::{Request, Response, SCHEMA};
+use wisp_dto::remote_access::RemoteRequest;
 use wisp_dto::RemoteAccessStatus;
 use wisp_store::secrets::Secret;
 use wisp_sync::{
@@ -70,18 +71,6 @@ const MAX_ATTACHMENTS: usize = 4;
 const MAX_CLIENTS: usize = 8;
 const HEARTBEAT: Duration = Duration::from_secs(25);
 const RELAY_SILENCE: Duration = Duration::from_secs(75);
-
-#[derive(Debug, Deserialize)]
-struct RemoteRequest {
-    nonce: String,
-    seq: u64,
-    id: String,
-    command: String,
-    #[serde(default)]
-    project_id: Option<String>,
-    #[serde(default)]
-    args: Value,
-}
 
 struct Peer {
     nonce: String,

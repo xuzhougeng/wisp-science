@@ -44,6 +44,7 @@ mod resources;
 mod runs;
 mod schedules;
 pub mod secrets;
+mod server_turns;
 mod session_artifacts;
 mod session_imports;
 mod session_timers;
@@ -98,6 +99,7 @@ pub use projects::{is_assistant_project_id, ASSISTANT_PROJECT_ID};
 pub use provenance::{canonical_json, canonical_json_sha256};
 pub use remote_staging::RemoteStagingEntry;
 pub use schedules::{next_slot_after, ScheduleRecord, ScheduleRunRecord};
+pub use server_turns::ServerTurn;
 pub use session_imports::RecoveredWorkspaceSession;
 pub use sessions::{
     is_compaction_checkpoint, ModelTokenUsage, ProjectTokenUsage, SessionBranchDeltaMessage,
@@ -204,6 +206,7 @@ const SESSION_SHELVED_MIGRATION: &str = "0061_session_shelved";
 const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
 const SESSION_FILE_OPERATIONS_MIGRATION: &str = "0062_session_file_operations";
 const SESSION_TIMERS_MIGRATION: &str = "0063_session_timers";
+const SERVER_TURNS_MIGRATION: &str = "0066_server_turns";
 
 #[derive(Clone)]
 pub struct Store {
@@ -790,6 +793,11 @@ impl Store {
             .execute(pool)
             .await?;
             Self::record_migration(pool, SCHEDULES_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SERVER_TURNS_MIGRATION).await? {
+            Self::execute_sql_script(pool, include_str!("../migrations/0066_server_turns.sql"))
+                .await?;
+            Self::record_migration(pool, SERVER_TURNS_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, SESSION_TIMERS_MIGRATION).await? {
             Self::add_columns_if_missing(

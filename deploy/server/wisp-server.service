@@ -1,0 +1,25 @@
+[Unit]
+Description=Wisp headless scientific agent with mobile access
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wisp
+Group=wisp
+EnvironmentFile=/etc/wisp-server.env
+Environment=WISP_SERVER_DATA=/var/lib/wisp-server
+Environment=WISP_SERVER_BIND=127.0.0.1:8787
+StateDirectory=wisp-server
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/wisp-server
+ExecStart=/usr/local/bin/wisp-server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

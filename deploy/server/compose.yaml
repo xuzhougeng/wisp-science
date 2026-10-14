@@ -1,0 +1,33 @@
+services:
+  wisp:
+    build:
+      context: ../..
+      dockerfile: crates/wisp-server/Dockerfile
+    image: wisp-server:local
+    restart: unless-stopped
+    stop_grace_period: 45s
+    environment:
+      WISP_SERVER_PUBLIC_URL: https://${WISP_DOMAIN:?set WISP_DOMAIN}
+      WISP_SERVER_CODE: ${WISP_SERVER_CODE:?generate a connection code}
+      WISP_PROVIDER: ${WISP_PROVIDER:-openai}
+      WISP_API_URL: ${WISP_API_URL:?set WISP_API_URL}
+      WISP_MODEL: ${WISP_MODEL:?set WISP_MODEL}
+      WISP_API_KEY: ${WISP_API_KEY:?set WISP_API_KEY}
+      WISP_MAX_CONTEXT: ${WISP_MAX_CONTEXT:-}
+      WISP_MAX_TOKENS: ${WISP_MAX_TOKENS:-}
+    volumes:
+      - wisp-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${WISP_DOMAIN:?set WISP_DOMAIN} --to wisp:8787
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  wisp-data:
+  caddy-data:
+  caddy-config:

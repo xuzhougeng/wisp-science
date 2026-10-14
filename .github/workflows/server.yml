@@ -1,0 +1,56 @@
+name: Headless Linux Server
+
+on:
+  pull_request:
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "deploy/server/**", "src-tauri/model_catalog.snapshot.json", "src-tauri/src/model_catalog_shared.rs", ".github/workflows/server.yml"]
+  push:
+    branches: [main]
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "deploy/server/**", "src-tauri/model_catalog.snapshot.json", "src-tauri/src/model_catalog_shared.rs", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install headless build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - name: Offline-behavior tests with fake models
+        run: |
+          cargo test --locked -p wisp-server
+          cargo test --locked -p wisp-sync direct::tests
+          cargo test --locked -p wisp-store server_turns::tests
+      - name: Build standalone binary
+        run: cargo build --release --locked -p wisp-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wisp-server-linux-${{ matrix.arch }}
+          path: |
+            target/release/wisp-server
+            docs/linux-server.md
+            deploy/server/wisp-server.service
+          if-no-files-found: error
+      - uses: docker/setup-buildx-action@v3
+      - name: Build deployment image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: crates/wisp-server/Dockerfile
+          push: false
+          tags: wisp-server:ci
+          cache-from: type=gha,scope=wisp-server-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=wisp-server-${{ matrix.arch }}

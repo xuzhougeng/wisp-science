@@ -7319,6 +7319,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "wisp-server"
+version = "1.19.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wisp-app",
+ "wisp-core",
+ "wisp-dto",
+ "wisp-llm",
+ "wisp-runs",
+ "wisp-runtime",
+ "wisp-skills",
+ "wisp-store",
+ "wisp-sync",
+ "wisp-tools",
+]
+
+[[package]]
 name = "wisp-service"
 version = "1.19.0"
 dependencies = [
@@ -7402,6 +7428,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wisp-dto",
 ]
 
 [[package]]

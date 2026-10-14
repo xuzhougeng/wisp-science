@@ -493,6 +493,14 @@ pub struct SendRequest {
     pub references: Vec<crate::ComposerReferenceArg>,
 }
 
+/// Durable acceptance of a turn; completion arrives through snapshots.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SendAccepted {
+    pub request_id: String,
+    pub session_id: String,
+    pub epoch: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceKind {

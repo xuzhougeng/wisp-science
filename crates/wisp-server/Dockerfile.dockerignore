@@ -1,0 +1,14 @@
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!src-tauri
+!vendor/tao
+!python
+!r
+!skills
+src-tauri/gen
+**/target
+**/__pycache__
+**/.env
+**/.env.*

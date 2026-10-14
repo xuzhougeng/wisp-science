@@ -42,7 +42,7 @@ use tokio_tungstenite::{
 };
 use url::Url;
 
-type WebSocket = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
+pub(crate) type WebSocket = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
 
 pub const REMOTE_CODE_BYTES: usize = 16;
 /// AAD labels bind each frame to its direction, so the relay cannot reflect a
@@ -303,7 +303,7 @@ fn static_asset(content_type: &'static str, body: impl Into<Body>) -> Response {
 
 /// RFC 6455 server upgrade on the tungstenite the desktop already links,
 /// instead of axum's `ws` feature (which pins a second tungstenite).
-fn upgrade<F, Fut>(request: Request, max_message: usize, run: F) -> Response
+pub(crate) fn upgrade<F, Fut>(request: Request, max_message: usize, run: F) -> Response
 where
     F: FnOnce(WebSocket) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()> + Send,

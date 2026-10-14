@@ -1,5 +1,10 @@
 # Remote web access
 
+For a headless Linux machine that runs the agent and serves phones directly,
+use [Linux Server](linux-server.md). That deployment includes its own mobile
+endpoint and does not require a separate `wisp-relay` or a desktop session.
+The rest of this guide describes the separate desktop-plus-relay setup.
+
 Open the Wisp running on your computer from a phone or any browser (#1460).
 An experimental [native iPhone and iPad client](../apps/ios/README.md) also uses
 the same relay and connection code. It requires iOS/iPadOS 17; real remote work

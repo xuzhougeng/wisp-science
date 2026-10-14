@@ -6,6 +6,7 @@
 //! access codes and lab keys never leave clients.
 
 mod crypto;
+mod direct;
 mod http;
 mod lab;
 mod protocol;
@@ -16,6 +17,7 @@ pub use crypto::{
     decrypt_blob, encrypt_blob, random_project_key, sha256_hex, sign_revision, verify_revision,
     PROJECT_KEY_BYTES,
 };
+pub use direct::{direct_remote_router, DirectRemoteHost};
 pub use http::{relay_router, HttpRelay, RelayHttpState, MAX_RELAY_BODY_BYTES};
 pub use lab::{
     lab_mail_aad, Lab, LabInvite, LabJoinRequest, LabKnowledgeBase, LabMail, LabMember,

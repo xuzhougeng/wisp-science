@@ -1,0 +1,30 @@
+[package]
+name = "wisp-server"
+description = "Headless Wisp host with built-in encrypted mobile web access."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+wisp-app = { workspace = true }
+wisp-core = { workspace = true }
+wisp-dto = { workspace = true }
+wisp-llm = { workspace = true }
+wisp-runs = { workspace = true }
+wisp-runtime = { workspace = true }
+wisp-skills = { workspace = true }
+wisp-store = { workspace = true }
+wisp-sync = { workspace = true }
+wisp-tools = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

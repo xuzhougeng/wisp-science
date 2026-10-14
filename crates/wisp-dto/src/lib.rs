@@ -30,6 +30,7 @@ pub mod native_session_transfer;
 pub mod native_settings;
 pub mod project_browser;
 mod project_chat_search;
+pub mod remote_access;
 pub mod research_checklist;
 pub use project_chat_search::*;
 mod session_artifacts;
@@ -1595,7 +1596,7 @@ pub struct LibraryItemVersion {
     pub created_at: i64,
 }
 
-#[derive(Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 pub struct SessionSearchInfo {
     pub id: String,
     pub project_id: String,

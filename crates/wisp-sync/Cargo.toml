@@ -25,6 +25,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
+wisp-dto = { workspace = true }
 
 [[bin]]
 name = "wisp-relay"
