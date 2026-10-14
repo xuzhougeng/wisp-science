@@ -4,6 +4,16 @@ Build, architecture, CLI environment, and tests. For first-run desktop setup see
 [basic configuration](basic-configuration.md). For HTTP model profiles see
 [model configuration](model-configuration.md).
 
+## Native mobile clients
+
+The [iOS client](../apps/ios/README.md) and the
+[Android client framework](../apps/android/README.md) connect to the same encrypted
+desktop remote-access service. Android uses Kotlin / Jetpack Compose, a pure JVM
+protocol module, and the existing iOS synthetic demo assets. Open `apps/android`
+in Android Studio with JDK 21 and SDK 36; the Android README lists the implemented
+features, remaining iOS parity work, and offline tests. Neither mobile client runs
+the scientific agent on the phone.
+
 ## WebView composer input smoke test
 
 For #1413, run `cd ui-tests && npx playwright test tests/composer-input.spec.ts`.
