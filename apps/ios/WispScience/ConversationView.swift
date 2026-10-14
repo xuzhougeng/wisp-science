@@ -10,9 +10,13 @@ struct ConversationView: View {
     @State private var uploading = false
     @State private var followLatest = true
     @State private var initialScroll = true
+    @State private var attentionFrames: [String: CGRect] = [:]
+    @State private var viewportHeight: CGFloat = 0
+    @State private var scrollTarget: String?
     @FocusState private var composing: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var snapshot: RemoteSnapshot? { model.snapshot }
     private var draft: Binding<String> {
@@ -20,6 +24,14 @@ struct ConversationView: View {
     }
     private var blocked: Bool {
         !model.canActOnSnapshot || snapshot?.writable != true || model.busy.contains(route) || uploading
+    }
+    /// Approvals and unanswered questions that are currently scrolled out of view.
+    private var hiddenAttention: [ConversationAttention] {
+        ConversationAttention.items(model: model, route: route).filter { item in
+            guard let frame = attentionFrames[item.id] else { return true }
+            // Count a card as seen only once a usable strip of it is on screen.
+            return frame.maxY <= 44 || frame.minY >= viewportHeight - 44
+        }
     }
     var body: some View {
         GeometryReader { viewport in
@@ -44,6 +56,7 @@ struct ConversationView: View {
                         }
                         ForEach(snapshot?.value["approvals"].array ?? [], id: \.approvalID) { approval in
                             approvalCard(approval)
+                                .attentionProbe(ConversationAttention.approvalID(approval))
                         }
                         if let snapshot {
                             if snapshot.running && model.canActOnSnapshot {
@@ -109,6 +122,14 @@ struct ConversationView: View {
                     // Geometry, rather than onAppear, determines whether to follow updates.
                     followLatest = bottom.map { $0 <= viewport.size.height + 44 } ?? false
                 }
+                .onPreferenceChange(AttentionFrameKey.self) { frames in attentionFrames = frames }
+                .onAppear { viewportHeight = viewport.size.height }
+                .onChange(of: viewport.size.height) { _, height in viewportHeight = height }
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { reader.scrollTo(target, anchor: .center) }
+                    scrollTarget = nil
+                }
                 .accessibilityIdentifier("conversation-transcript")
                 .scrollDismissesKeyboard(.interactively)
                 .defaultScrollAnchor(.bottom)
@@ -144,6 +165,8 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(WispStyle.canvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        // On iPhone the composer owns the bottom edge, as in Messages.
+        .toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Button {
@@ -169,11 +192,19 @@ struct ConversationView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .onAppear { model.visibleRoute = route }
         .onDisappear { if model.visibleRoute == route { model.visibleRoute = nil } }
-        .accessibilityIdentifier("conversation")
+        .accessibilityElement(children: .contain).accessibilityIdentifier("conversation")
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let first = hiddenAttention.first {
+                AttentionReminder(item: first, count: hiddenAttention.count) { scrollTarget = first.scrollID }
+            }
+            if let notice = model.composerNotices[route] {
+                ComposerNoticeRow(notice: notice, retrying: model.busy.contains(route) || uploading,
+                                  retry: { Task { await model.retryComposer(route) } },
+                                  dismiss: { model.composerNotices[route] = nil })
+            }
             VStack(alignment: .leading, spacing: 4) {
                 if !(model.photos[route] ?? []).isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -222,7 +253,7 @@ struct ConversationView: View {
                     do {
                         guard let data = try await item.loadTransferable(type: Data.self) else { continue }
                         await model.upload(data, route: route)
-                    } catch { model.error = "无法读取所选图片，请重试。" }
+                    } catch { model.composerNotices[route] = ComposerNotice(message: "无法读取所选图片，请重新选择。", retry: nil) }
                 }
             }
         }
@@ -355,6 +386,10 @@ struct MessageView: View {
                 QuestionCardView(question: question, item: item, index: index,
                     model: model, connection: model.connection, route: route)
                     .id(model.questionID(at: index, item: item, route: route))
+                    .attentionProbe(ConversationAttention.questionID(index))
+                    .overlay(alignment: .top) {
+                        Color.clear.frame(height: 1).id(ConversationAttention.questionID(index)).accessibilityHidden(true)
+                    }
             } else {
                 Text(item["text"].string).foregroundStyle(.secondary).textSelection(.enabled)
             }
@@ -477,6 +512,108 @@ private struct QuestionCardView: View {
         .background(WispStyle.surface, in: RoundedRectangle(cornerRadius: 14))
         .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(WispStyle.border, lineWidth: 1) }
         .accessibilityElement(children: .contain).accessibilityIdentifier("question-card")
+    }
+}
+
+/// An approval or question that needs the user, wherever it sits in the transcript.
+struct ConversationAttention: Equatable {
+    /// Visibility probe key for the card.
+    let id: String
+    /// Scroll target: the approval's own list identity, or an anchor on the question card.
+    let scrollID: String
+    let label: String
+
+    static func approvalID(_ approval: RemoteValue) -> String { "attention-approval-" + approval.approvalID }
+    static func questionID(_ index: Int) -> String { "attention-question-\(index)" }
+
+    @MainActor static func items(model: RemoteWorkspace, route: ConversationRoute) -> [ConversationAttention] {
+        guard let snapshot = model.snapshot, model.route == route else { return [] }
+        var result = snapshot.value["approvals"].array.map {
+            ConversationAttention(id: approvalID($0), scrollID: $0.approvalID,
+                                  label: $0["tool"].string.isEmpty ? "需要你批准" : "需要你批准：\($0["tool"].string)")
+        }
+        let items = model.history.older + snapshot.items
+        for (position, item) in items.enumerated() where item["role"].string == "question" {
+            let index = position - model.history.older.count
+            guard let question = model.question(at: index, item: item), question.isNative, question.state == .pending,
+                  model.questionSubmissions[model.questionID(at: index, item: item, route: route)] == nil else { continue }
+            result.append(ConversationAttention(id: questionID(index), scrollID: questionID(index), label: "有问题等待你回答"))
+        }
+        return result
+    }
+}
+
+private struct AttentionFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] { [:] }
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+private extension View {
+    /// Reports where a card sits in the transcript's visible coordinate space.
+    func attentionProbe(_ id: String) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: AttentionFrameKey.self, value: [id: proxy.frame(in: .named("conversation-scroll"))])
+            }
+        }
+    }
+}
+
+private struct AttentionReminder: View {
+    let item: ConversationAttention
+    let count: Int
+    let open: () -> Void
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                Circle().fill(WispStyle.warning).frame(width: 7, height: 7).accessibilityHidden(true)
+                Text(count > 1 ? "\(item.label) 等 \(count) 项" : item.label)
+                    .font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("查看").font(.subheadline.weight(.semibold)).foregroundStyle(WispStyle.warning).fixedSize()
+            }
+            .padding(.horizontal, 12).frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(WispRowButtonStyle())
+        .background(WispStyle.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(WispStyle.warning.opacity(0.3), lineWidth: 1) }
+        .accessibilityHint("滚动到需要处理的内容")
+        .accessibilityIdentifier("attention-reminder")
+    }
+}
+
+private struct ComposerNoticeRow: View {
+    let notice: ComposerNotice
+    let retrying: Bool
+    let retry: () -> Void
+    let dismiss: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 8))
+        layout {
+            Text(notice.message).font(.footnote).foregroundStyle(WispStyle.failure)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("composer-notice")
+            HStack(spacing: 4) {
+                if notice.retry != nil {
+                    Button("重试", action: retry).font(.footnote.weight(.semibold))
+                        .frame(minWidth: 44, minHeight: 44).disabled(retrying)
+                        .accessibilityIdentifier("composer-retry")
+                }
+                Button("关闭", action: dismiss).font(.footnote).foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("composer-notice-dismiss")
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 2)
+        .background(WispStyle.failure.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
     }
 }
 

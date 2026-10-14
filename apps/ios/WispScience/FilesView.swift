@@ -18,7 +18,7 @@ struct FilesView: View {
                     FileContentView(model: model, connection: model.connection, route: route, location: location)
                 }
                 .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { model.sheet = nil } } }
-        }.accessibilityIdentifier("files-sheet")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("files-sheet")
     }
 }
 

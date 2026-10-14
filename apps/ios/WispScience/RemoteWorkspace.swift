@@ -12,6 +12,21 @@ struct AttachedPhoto: Identifiable {
 
 enum QuestionSubmission: Equatable { case sent, uncertain }
 
+/// Send, upload and conversation-action failures stay next to the composer.
+/// Retry is only offered when the request provably did not reach the host.
+struct ComposerNotice: Equatable {
+    enum Retry: Equatable { case send, upload }
+    let message: String
+    let retry: Retry?
+
+    static func failure(_ error: Error, retry: Retry?) -> ComposerNotice {
+        if let remote = error as? RemoteError, [.outcomeUnknown, .disconnected].contains(remote) {
+            return ComposerNotice(message: remote.localizedDescription, retry: nil)
+        }
+        return ComposerNotice(message: error.localizedDescription, retry: retry)
+    }
+}
+
 enum WorkspaceSheet: Identifiable {
     case connection, inbox, checklistSettings, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
@@ -29,7 +44,13 @@ enum WorkspaceSheet: Identifiable {
 /// Research tools occupy the workspace, with their own detail navigation.
 /// Keep them separate from transient settings, file and camera presentations.
 enum WorkspacePage: Hashable {
-    case checklist, notebook, research(String?)
+    /// A project's research journey, opened over its conversation list.
+    case journey(String)
+}
+
+/// Bottom tabs. Each tool keeps its own navigation stack while another tab is shown.
+enum WorkspaceTab: Hashable, CaseIterable {
+    case conversations, calendar, checklist, notebook
 }
 
 @MainActor final class RemoteWorkspace: ObservableObject {
@@ -65,12 +86,14 @@ enum WorkspacePage: Hashable {
     } }
     @Published var history = RemoteHistory()
     @Published var sheet: WorkspaceSheet?
-    @Published var page: WorkspacePage? { didSet {
-        if page != oldValue {
-            cancelPageBackGesture()
-            researchPath = []; checklistPath = []; notebookPath = []; notebookCameraPresented = false; notebookLibraryPresented = false
-        }
+    @Published var tab: WorkspaceTab = .conversations { didSet {
+        if tab != oldValue { cancelPageBackGesture() }
     } }
+    @Published var page: WorkspacePage? { didSet {
+        if page != oldValue { cancelPageBackGesture(); researchPath = [] }
+    } }
+    /// The research calendar tab's own detail stack.
+    @Published var calendarPath: [ResearchDestination] = []
     @Published private(set) var pageBackProgress: CGFloat = 0
     private var pageBackOrigin: WorkspacePage?
     @Published var researchPath: [ResearchDestination] = []
@@ -82,6 +105,8 @@ enum WorkspacePage: Hashable {
     @Published var drafts: [ConversationRoute: String] = [:]
     @Published var photos: [ConversationRoute: [AttachedPhoto]] = [:]
     @Published var busy: Set<ConversationRoute> = []
+    @Published var composerNotices: [ConversationRoute: ComposerNotice] = [:]
+    private var failedUploads: [ConversationRoute: Data] = [:]
     @Published private(set) var questionSubmissions: [String: QuestionSubmission] = [:]
     @Published var loadingEarlier = false
     @Published var creating = false
@@ -205,7 +230,7 @@ enum WorkspacePage: Hashable {
     }
     private func clearWorkspace() {
         identity = UUID()
-        sheet = nil; page = nil
+        sheet = nil; page = nil; calendarPath = []
         cacheGeneration = UUID()
         for (_, task) in reads.values { task.cancel() }
         reads = [:]; projectsRefreshed = false; sessionsRefreshed = nil
@@ -213,6 +238,7 @@ enum WorkspacePage: Hashable {
         visibleRoute = nil
         selectedProject = nil; selectedSession = nil
         projects = []; sessions = []; inbox = []; drafts = [:]; photos = [:]
+        composerNotices = [:]; failedUploads = [:]
         busy = []; loadingEarlier = false; creating = false
         history = RemoteHistory(); seen = []; error = nil; questionSubmissions = [:]
     }
@@ -279,7 +305,7 @@ enum WorkspacePage: Hashable {
         if let entry = await cachedRead("list_projects"), self.identity == identity, !projectsRefreshed { projects = entry.value.array }
         if let entry = await cachedRead("host_metadata"), self.identity == identity { cachedHostName = entry.value["name"].string }
         if let project, let entry = await cachedRead("remote_sessions", project: project),
-           self.identity == identity, selectedProject == project, sessionsRefreshed != project { sessions = entry.value.array }
+           self.identity == identity, selectedProject == project, sessionsRefreshed != project { sessions = Self.ordered(entry.value.array) }
         if let route, let entry = await cachedRead("native_conversation_snapshot", project: route.project, args: route.args),
            self.identity == identity, self.route == route, history.snapshot == nil,
            let snapshot = try? RemoteSnapshot(entry.value, route: route) {
@@ -328,7 +354,7 @@ enum WorkspacePage: Hashable {
             let result = try await read("remote_sessions", project: project)
             try Task.checkCancellation()
             if selectedProject == project && self.configuration == configuration && self.identity == identity {
-                sessions = result.array; sessionsRefreshed = project
+                sessions = Self.ordered(result.array); sessionsRefreshed = project
             }
         }
         if let project = projects.first?["id"].string, connection.supports("native_conversation_inbox") {
@@ -355,7 +381,7 @@ enum WorkspacePage: Hashable {
         history.replace(next)
         snapshotIsCached = false; snapshotSavedAt = Date(); snapshotSession = session
         let stamp = "\(next.epoch):\(route.project):\(route.session):\(next.sequence)"
-        if !next.running && active && visibleRoute == route && sheet == nil && page == nil && connection.supports("native_conversation_seen"), !seen.contains(stamp) {
+        if !next.running && active && visibleRoute == route && sheet == nil && page == nil && tab == .conversations && connection.supports("native_conversation_seen"), !seen.contains(stamp) {
             _ = try await connection.call("native_conversation_seen", project: route.project, args: route.args)
             seen = [stamp]
         }
@@ -372,6 +398,15 @@ enum WorkspacePage: Hashable {
         }
         catch is CancellationError { }
         catch { if self.identity == identity { self.error = error.localizedDescription } }
+    }
+
+    /// Most recent activity first. Rows without a timestamp keep host order
+    /// after the dated ones, so older hosts are not reshuffled.
+    static func ordered(_ sessions: [RemoteValue]) -> [RemoteValue] {
+        sessions.enumerated().sorted { a, b in
+            let left = a.element["activity_at"].uint ?? 0, right = b.element["activity_at"].uint ?? 0
+            return left != right ? left > right : a.offset < b.offset
+        }.map(\.element)
     }
 
     func createConversation() async {
@@ -430,7 +465,7 @@ enum WorkspacePage: Hashable {
                let remote = error as? RemoteError, [.outcomeUnknown, .disconnected].contains(remote) {
                 questionSubmissions[id] = .uncertain
             }
-            self.error = error.localizedDescription
+            composerNotices[route] = .failure(error, retry: nil)
         }
     }
 
@@ -442,6 +477,7 @@ enum WorkspacePage: Hashable {
         guard !message.isEmpty || !attached.isEmpty else { return }
         busy.insert(route)
         defer { busy.remove(route) }
+        composerNotices[route] = nil
         do {
             var args = route.args
             args["request_id"] = .string(UUID().uuidString)
@@ -453,20 +489,22 @@ enum WorkspacePage: Hashable {
             // A typed replacement draft must survive an in-flight response.
             if (drafts[route] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == message { drafts[route] = "" }
             photos[route]?.removeAll { photo in attached.contains { $0.id == photo.id } }
-            if self.route == route { try await refreshConversation() }
-        } catch { if self.identity == identity { self.error = error.localizedDescription } }
+            // The message was accepted: a refresh failure must not offer a resend.
+            if self.route == route { try? await refreshConversation() }
+        } catch { if self.identity == identity { composerNotices[route] = .failure(error, retry: .send) } }
     }
     func action(_ command: String, route: ConversationRoute, extra: [String: RemoteValue] = [:]) async {
         guard canActOnSnapshot, self.route == route, !busy.contains(route) else { return }
         let identity = self.identity
         busy.insert(route)
         defer { busy.remove(route) }
+        composerNotices[route] = nil
         do {
             _ = try await connection.call(command, project: route.project, args: route.args.merging(extra) { _, new in new })
             guard self.identity == identity else { return }
-            if self.route == route { try await refreshConversation() }
-            if isDemo { try await refreshSidebar() }
-        } catch { if self.identity == identity { self.error = error.localizedDescription } }
+            if self.route == route { try? await refreshConversation() }
+            if isDemo { try? await refreshSidebar() }
+        } catch { if self.identity == identity { composerNotices[route] = .failure(error, retry: nil) } }
     }
     func earlier() async {
         guard let route, let snapshot, history.cursor != .null, !loadingEarlier else { return }
@@ -490,7 +528,9 @@ enum WorkspacePage: Hashable {
     }
     func upload(_ data: Data, route: ConversationRoute) async {
         let identity = self.identity
-        guard (photos[route]?.count ?? 0) < 4 else { error = "一条消息最多添加 4 张图片。"; return }
+        guard (photos[route]?.count ?? 0) < 4 else {
+            composerNotices[route] = ComposerNotice(message: "一条消息最多添加 4 张图片。", retry: nil); return
+        }
         do {
             let jpeg = try PhotoPreparation.jpeg(data)
             let result = try await connection.call("remote_attach_image", project: route.project,
@@ -498,13 +538,45 @@ enum WorkspacePage: Hashable {
             guard self.identity == identity else { return }
             guard !result["path"].string.isEmpty else { throw RemoteError.incompatibleResponse }
             photos[route, default: []].append(AttachedPhoto(path: result["path"].string, data: jpeg))
-        } catch { if self.identity == identity { self.error = error.localizedDescription } }
+            failedUploads[route] = nil
+            if composerNotices[route]?.retry == .upload { composerNotices[route] = nil }
+        } catch {
+            guard self.identity == identity else { return }
+            // Retrying an attachment upload is safe: nothing reaches the
+            // conversation until the user presses send.
+            let notice = ComposerNotice.failure(error, retry: .upload)
+            failedUploads[route] = notice.retry == nil ? nil : data
+            composerNotices[route] = ComposerNotice(message: "图片未添加。" + notice.message, retry: notice.retry)
+        }
+    }
+
+    /// Runs the composer notice's retry. Upload retries reuse the original bytes.
+    func retryComposer(_ route: ConversationRoute) async {
+        guard let notice = composerNotices[route], let retry = notice.retry, !busy.contains(route) else { return }
+        composerNotices[route] = nil
+        switch retry {
+        case .send: await send(route)
+        case .upload:
+            guard let data = failedUploads.removeValue(forKey: route) else { return }
+            busy.insert(route)
+            defer { busy.remove(route) }
+            await upload(data, route: route)
+        }
     }
     func openInbox(_ entry: RemoteValue) {
         selectedProject = entry["project_id"].string
         selectedSession = entry["id"].string
         sheet = nil
         page = nil
+        tab = .conversations
+    }
+
+    /// The calendar needs a host (or the demo); the offline tools are hidden in the demo.
+    var availableTabs: [WorkspaceTab] {
+        var tabs: [WorkspaceTab] = [.conversations]
+        if configuration != nil || isDemo { tabs.append(.calendar) }
+        if !isDemo { tabs += [.checklist, .notebook] }
+        return tabs
     }
 
     func projectName(_ id: String) -> String {
@@ -524,22 +596,24 @@ enum WorkspacePage: Hashable {
         selectedSession = route.session
         sheet = nil
         page = nil
+        tab = .conversations
     }
 
     var hasDismissibleSurface: Bool {
-        notebookLibraryPresented || notebookCameraPresented || sheet != nil || page != nil
+        if notebookLibraryPresented || notebookCameraPresented || sheet != nil { return true }
+        switch tab {
+        case .conversations: return page != nil
+        case .calendar: return !calendarPath.isEmpty
+        case .checklist: return !checklistPath.isEmpty
+        case .notebook: return !notebookPath.isEmpty
+        }
     }
 
     /// Detail stacks own their native interactive pop. The workspace gesture
     /// handles only the extra full-page layer, and never reaches through a modal.
     var canSwipeBackToWorkspace: Bool {
-        guard sheet == nil, !notebookLibraryPresented, !notebookCameraPresented else { return false }
-        switch page {
-        case .checklist: return checklistPath.isEmpty
-        case .notebook: return notebookPath.isEmpty
-        case .research: return researchPath.isEmpty
-        case nil: return false
-        }
+        guard tab == .conversations, sheet == nil, !notebookLibraryPresented, !notebookCameraPresented else { return false }
+        return page != nil && researchPath.isEmpty
     }
 
     func beginPageBackGesture() -> Bool {
@@ -575,10 +649,16 @@ enum WorkspacePage: Hashable {
         if notebookLibraryPresented { notebookLibraryPresented = false }
         else if notebookCameraPresented { notebookCameraPresented = false }
         else if sheet != nil { sheet = nil }
-        else if case .notebook? = page, !notebookPath.isEmpty { notebookPath.removeLast() }
-        else if case .research? = page, !researchPath.isEmpty { researchPath.removeLast() }
-        else if case .checklist? = page, !checklistPath.isEmpty { checklistPath.removeLast() }
-        else { page = nil }
+        else {
+            // Tabs are not dismissible; Escape only steps back inside the visible one.
+            switch tab {
+            case .conversations:
+                if !researchPath.isEmpty { researchPath.removeLast() } else { page = nil }
+            case .calendar: if !calendarPath.isEmpty { calendarPath.removeLast() }
+            case .checklist: if !checklistPath.isEmpty { checklistPath.removeLast() }
+            case .notebook: if !notebookPath.isEmpty { notebookPath.removeLast() }
+            }
+        }
     }
 }
 

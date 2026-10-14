@@ -85,26 +85,28 @@ import WispRemote
         XCTAssertThrowsError(try demo.call("native_research_journey", project: "other", args: args))
         let connection = connection()
         let workspace = RemoteWorkspace(connection: connection, preferences: nil, cache: nil)
-        workspace.page = .research(nil)
+        workspace.tab = .calendar
         XCTAssertNil(workspace.sheet)
-        XCTAssertTrue(workspace.hasDismissibleSurface)
+        XCTAssertFalse(workspace.hasDismissibleSurface, "The calendar tab root is not a dismissible layer")
         let entry = try XCTUnwrap(history.entries.first { $0.sessionID == "demo-qc" })
-        workspace.researchPath = [.journey(demo.projectID, Date()), .entry(demo.projectID, entry)]
+        workspace.calendarPath = [.journey(demo.projectID, Date()), .entry(demo.projectID, entry)]
+        XCTAssertTrue(workspace.hasDismissibleSurface)
         workspace.dismissTopSurface()
-        XCTAssertEqual(workspace.researchPath.count, 1)
-        XCTAssertEqual(workspace.page, .research(nil))
+        XCTAssertEqual(workspace.calendarPath.count, 1)
         workspace.dismissTopSurface()
-        XCTAssertTrue(workspace.researchPath.isEmpty)
-        XCTAssertEqual(workspace.page, .research(nil))
-        workspace.dismissTopSurface()
-        XCTAssertNil(workspace.page)
+        XCTAssertTrue(workspace.calendarPath.isEmpty)
+        XCTAssertEqual(workspace.tab, .calendar)
         XCTAssertFalse(workspace.hasDismissibleSurface)
-        workspace.page = .research(demo.projectID)
+        workspace.tab = .conversations
+        workspace.page = .journey(demo.projectID)
         workspace.researchPath = [.entry(demo.projectID, entry)]
         workspace.openResearchConversation(entry, project: demo.projectID)
         XCTAssertEqual(workspace.route, ConversationRoute(project: demo.projectID, session: "demo-qc"))
         XCTAssertNil(workspace.sheet)
         XCTAssertNil(workspace.page)
+        workspace.tab = .calendar
+        workspace.openResearchConversation(entry, project: demo.projectID)
+        XCTAssertEqual(workspace.tab, .conversations, "Opening a related conversation switches to the conversations tab")
         XCTAssertTrue(workspace.researchPath.isEmpty)
     }
 }

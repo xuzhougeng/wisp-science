@@ -63,19 +63,19 @@ import WispRemote
         XCTAssertEqual(sections.remainingCount, 1)
     }
 
-    func testChecklistSettingsDismissBeforeThePageAndBlockEdgeSwipe() {
+    func testChecklistSettingsDismissBeforeTheTabAndNeverSwipeAwayATab() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .checklist
+        workspace.tab = .checklist
         workspace.sheet = .checklistSettings
         XCTAssertFalse(workspace.canSwipeBackToWorkspace)
-        XCTAssertFalse(workspace.beginPageBackGesture())
         workspace.dismissTopSurface()
         XCTAssertNil(workspace.sheet)
-        XCTAssertEqual(workspace.page, .checklist)
-        XCTAssertTrue(workspace.canSwipeBackToWorkspace)
+        XCTAssertEqual(workspace.tab, .checklist)
+        XCTAssertFalse(workspace.canSwipeBackToWorkspace, "A tab root has nothing to swipe back to")
+        XCTAssertFalse(workspace.hasDismissibleSurface)
         workspace.dismissTopSurface()
-        XCTAssertNil(workspace.page)
+        XCTAssertEqual(workspace.tab, .checklist, "Escape never closes a tab")
     }
 
     func testChecklistLocalRestartScopesAndOldHostLeavePendingData() async throws {
@@ -329,7 +329,7 @@ import WispRemote
     func testOfflineSurfacesEscapeOnlyDismissesTopmostLayer() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .notebook; workspace.notebookPath = [.record("r"), .photo("r", "p")]
+        workspace.tab = .notebook; workspace.notebookPath = [.record("r"), .photo("r", "p")]
         XCTAssertNil(workspace.sheet)
         XCTAssertTrue(workspace.hasDismissibleSurface)
         workspace.notebookLibraryPresented = true
@@ -339,38 +339,80 @@ import WispRemote
         workspace.dismissTopSurface()
         XCTAssertFalse(workspace.notebookCameraPresented); XCTAssertEqual(workspace.notebookPath.count, 2)
         workspace.dismissTopSurface(); XCTAssertEqual(workspace.notebookPath.count, 1)
-        workspace.dismissTopSurface(); XCTAssertTrue(workspace.notebookPath.isEmpty); XCTAssertEqual(workspace.page, .notebook)
-        workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
-        workspace.page = .checklist; workspace.checklistPath = ["item"]
-        workspace.dismissTopSurface(); XCTAssertTrue(workspace.checklistPath.isEmpty); XCTAssertEqual(workspace.page, .checklist)
-        workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
+        workspace.dismissTopSurface(); XCTAssertTrue(workspace.notebookPath.isEmpty); XCTAssertEqual(workspace.tab, .notebook)
+        XCTAssertFalse(workspace.hasDismissibleSurface)
+        workspace.tab = .checklist; workspace.checklistPath = ["item"]
+        workspace.dismissTopSurface(); XCTAssertTrue(workspace.checklistPath.isEmpty); XCTAssertEqual(workspace.tab, .checklist)
         XCTAssertFalse(workspace.hasDismissibleSurface)
     }
 
-    func testEdgeBackReturnsFromEveryPageWithoutChangingConversationOrDraft() {
+    func testTabsKeepTheirOwnStacksAndEscapeOnlyAffectsTheVisibleTab() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.tab = .checklist; workspace.checklistPath = ["item"]
+        workspace.tab = .notebook; workspace.notebookPath = [.record("r")]
+        workspace.tab = .conversations
+        workspace.page = .journey("p"); workspace.researchPath = [.journey("p", Date())]
+        workspace.calendarPath = [.journey("p", Date())]
+        workspace.dismissTopSurface()
+        XCTAssertTrue(workspace.researchPath.isEmpty)
+        XCTAssertEqual(workspace.calendarPath.count, 1, "The journey page and the calendar tab never pop each other")
+        XCTAssertEqual(workspace.checklistPath, ["item"]); XCTAssertEqual(workspace.notebookPath.count, 1)
+        workspace.dismissTopSurface()
+        XCTAssertNil(workspace.page)
+        workspace.tab = .calendar
+        XCTAssertTrue(workspace.hasDismissibleSurface)
+        workspace.dismissTopSurface()
+        XCTAssertTrue(workspace.calendarPath.isEmpty)
+        workspace.tab = .checklist
+        XCTAssertEqual(workspace.checklistPath, ["item"], "Switching tabs keeps each tool's place")
+    }
+
+    func testAvailableTabsFollowConnectionAndDemo() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let suite = "wisp-tabs-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let offline = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: nil), preferences: preferences,
+                                      cache: nil, offlineDirectory: dir)
+        XCTAssertEqual(offline.availableTabs, [.conversations, .checklist, .notebook])
+        offline.enterDemo()
+        XCTAssertEqual(offline.availableTabs, [.conversations, .calendar], "The demo hides the personal offline tools")
+        offline.exitDemo()
+        XCTAssertEqual(offline.availableTabs, [.conversations, .checklist, .notebook])
+        let paired = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: try configuration("tabs")),
+                                     preferences: nil, cache: nil, offlineDirectory: dir)
+        paired.setActive(false) // Restore the saved pairing without opening a socket.
+        paired.restore()
+        XCTAssertEqual(paired.availableTabs, WorkspaceTab.allCases)
+    }
+
+    func testEdgeBackReturnsFromTheJourneyWithoutChangingConversationOrDraft() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
         let route = ConversationRoute(project: "project", session: "session")
         workspace.selectedProject = route.project; workspace.selectedSession = route.session
         workspace.drafts[route] = "Unsent observation"
         XCTAssertFalse(workspace.beginPageBackGesture())
-        for page in [WorkspacePage.checklist, .notebook, .research(nil), .research(route.project)] {
-            workspace.page = page
-            XCTAssertTrue(workspace.beginPageBackGesture())
-            workspace.updatePageBackGesture(translation: 160, width: 400)
-            XCTAssertEqual(workspace.pageBackProgress, 0.4, accuracy: 0.001)
-            workspace.finishPageBackGesture(translation: 160, velocity: 0, width: 400, cancelled: false)
-            XCTAssertNil(workspace.page)
-            XCTAssertEqual(workspace.pageBackProgress, 0)
-            XCTAssertEqual(workspace.route, route)
-            XCTAssertEqual(workspace.drafts[route], "Unsent observation")
+        workspace.page = .journey(route.project)
+        XCTAssertTrue(workspace.beginPageBackGesture())
+        workspace.updatePageBackGesture(translation: 160, width: 400)
+        XCTAssertEqual(workspace.pageBackProgress, 0.4, accuracy: 0.001)
+        workspace.finishPageBackGesture(translation: 160, velocity: 0, width: 400, cancelled: false)
+        XCTAssertNil(workspace.page)
+        XCTAssertEqual(workspace.pageBackProgress, 0)
+        XCTAssertEqual(workspace.route, route)
+        XCTAssertEqual(workspace.drafts[route], "Unsent observation")
+        for tab in [WorkspaceTab.calendar, .checklist, .notebook] {
+            workspace.tab = tab
+            XCTAssertFalse(workspace.beginPageBackGesture(), "Tab roots have no workspace page to leave")
         }
     }
 
     func testEdgeBackCancellationReversalAndShortFlick() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .notebook
+        workspace.page = .journey("p")
         let cancelledDrags: [(CGFloat, CGFloat, Bool)] = [
             (60, 0, false), (250, -300, false), (250, 800, true), (10, 1000, false),
         ]
@@ -378,7 +420,7 @@ import WispRemote
             XCTAssertTrue(workspace.beginPageBackGesture())
             workspace.updatePageBackGesture(translation: translation, width: 400)
             workspace.finishPageBackGesture(translation: translation, velocity: velocity, width: 400, cancelled: cancelled)
-            XCTAssertEqual(workspace.page, .notebook)
+            XCTAssertEqual(workspace.page, .journey("p"))
             XCTAssertEqual(workspace.pageBackProgress, 0)
         }
         XCTAssertTrue(workspace.beginPageBackGesture())
@@ -389,88 +431,73 @@ import WispRemote
     func testEdgeBackLeavesNativeDetailNavigationAndModalsInControl() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .checklist; workspace.checklistPath = ["item"]
+        workspace.page = .journey("p"); workspace.researchPath = [.journey("p", Date())]
         XCTAssertFalse(workspace.beginPageBackGesture())
         // A native detail pop can empty the path during the same touch. No
         // workspace gesture was begun, so its completion must not pop again.
-        workspace.checklistPath = []
-        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
-        XCTAssertEqual(workspace.page, .checklist)
-        workspace.page = .notebook; workspace.notebookPath = [.record("r")]
-        XCTAssertFalse(workspace.beginPageBackGesture())
-        workspace.page = .research(nil); workspace.researchPath = [.journey("p", Date())]
-        XCTAssertFalse(workspace.beginPageBackGesture())
         workspace.researchPath = []
+        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
+        XCTAssertEqual(workspace.page, .journey("p"))
         workspace.sheet = .connection
         XCTAssertFalse(workspace.beginPageBackGesture())
         workspace.sheet = nil; workspace.notebookLibraryPresented = true
         XCTAssertFalse(workspace.beginPageBackGesture())
         workspace.notebookLibraryPresented = false; workspace.notebookCameraPresented = true
         XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.notebookCameraPresented = false; workspace.tab = .calendar
+        XCTAssertFalse(workspace.beginPageBackGesture(), "The journey is not visible from another tab")
     }
 
     func testInterruptedEdgeBackCannotCloseAReplacementPageOrReachThroughAModal() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .checklist
+        workspace.page = .journey("a")
         XCTAssertTrue(workspace.beginPageBackGesture())
         workspace.updatePageBackGesture(translation: 150, width: 400)
-        workspace.page = .notebook
+        workspace.page = .journey("b")
         XCTAssertEqual(workspace.pageBackProgress, 0)
         workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
-        XCTAssertEqual(workspace.page, .notebook)
+        XCTAssertEqual(workspace.page, .journey("b"))
         XCTAssertTrue(workspace.beginPageBackGesture())
         workspace.sheet = .connection
         workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
         XCTAssertNotNil(workspace.sheet)
-        XCTAssertEqual(workspace.page, .notebook)
+        XCTAssertEqual(workspace.page, .journey("b"))
         XCTAssertEqual(workspace.pageBackProgress, 0)
         workspace.sheet = nil
         XCTAssertTrue(workspace.beginPageBackGesture())
-        workspace.cancelPageBackGesture() // Scene resignation interrupts the drag.
+        workspace.tab = .checklist // Switching tabs interrupts the drag.
+        workspace.tab = .conversations
         workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
-        XCTAssertEqual(workspace.page, .notebook)
+        XCTAssertEqual(workspace.page, .journey("b"))
     }
 
-    func testModalAboveResearchPagePreservesNavigationAndSelection() {
+    func testModalAboveAToolTabPreservesNavigationAndSelection() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
         workspace.selectedProject = "project"; workspace.selectedSession = "session"
-        workspace.page = .checklist; workspace.checklistPath = ["item"]
+        workspace.tab = .checklist; workspace.checklistPath = ["item"]
         workspace.sheet = .connection
         workspace.dismissTopSurface()
         XCTAssertNil(workspace.sheet)
-        XCTAssertEqual(workspace.page, .checklist)
         XCTAssertEqual(workspace.checklistPath, ["item"], "Closing a modal must not pop the page below it")
         workspace.dismissTopSurface()
-        XCTAssertEqual(workspace.page, .checklist)
-        workspace.dismissTopSurface()
-        XCTAssertNil(workspace.page)
+        XCTAssertTrue(workspace.checklistPath.isEmpty)
+        XCTAssertEqual(workspace.tab, .checklist)
         XCTAssertEqual(workspace.route, ConversationRoute(project: "project", session: "session"))
     }
 
-    func testLeavingResearchPageClearsDetailAndPhotoPresentationState() {
+    func testLeavingTheJourneyClearsItsDetailStackOnly() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.page = .notebook
         workspace.notebookPath = [.record("r"), .send("r")]
-        workspace.notebookCameraPresented = true
-        workspace.notebookLibraryPresented = true
+        workspace.page = .journey("p"); workspace.researchPath = [.journey("p", Date())]
         workspace.page = nil
-        XCTAssertTrue(workspace.notebookPath.isEmpty)
-        XCTAssertFalse(workspace.notebookCameraPresented)
-        XCTAssertFalse(workspace.notebookLibraryPresented)
-        XCTAssertFalse(workspace.hasDismissibleSurface)
-        workspace.page = .notebook
-        XCTAssertTrue(workspace.notebookPath.isEmpty, "Reopening starts at the page root")
-        workspace.page = .checklist
-        workspace.checklistPath = ["item"]
-        workspace.page = .research(nil)
-        XCTAssertTrue(workspace.checklistPath.isEmpty)
         XCTAssertTrue(workspace.researchPath.isEmpty)
+        XCTAssertEqual(workspace.notebookPath.count, 2, "Leaving the journey does not touch the notebook tab")
     }
 
-    func testResearchPagesDoNotMarkTheCoveredConversationAsRead() async throws {
+    func testToolTabsAndTheJourneyDoNotMarkTheCoveredConversationAsRead() async throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let connection = connection()
         let route = ConversationRoute(project: "project", session: "session")
@@ -484,12 +511,15 @@ import WispRemote
         let workspace = RemoteWorkspace(connection: connection, preferences: nil, cache: nil, offlineDirectory: dir)
         workspace.selectedProject = route.project; workspace.selectedSession = route.session
         workspace.visibleRoute = route
-        let pages: [WorkspacePage] = [.checklist, .notebook, .research(nil), .research(route.project)]
-        for page in pages {
-            workspace.page = page
+        for tab in [WorkspaceTab.calendar, .checklist, .notebook] {
+            workspace.tab = tab
             try await workspace.refreshConversation()
             XCTAssertEqual(seenCalls, 0)
         }
+        workspace.tab = .conversations
+        workspace.page = .journey(route.project)
+        try await workspace.refreshConversation()
+        XCTAssertEqual(seenCalls, 0)
         workspace.page = nil
         try await workspace.refreshConversation()
         XCTAssertEqual(seenCalls, 1, "Returning to the conversation restores read acknowledgements")
@@ -526,4 +556,12 @@ import WispRemote
         XCTAssertEqual(model.record(record.id)?.transfer?.state, "uncertain")
         XCTAssertEqual(model.record(record.id)?.notes, "preserve")
     }
+}
+
+private final class TabCredentials: RemoteCredentialStoring {
+    let saved: RemoteConfiguration?
+    init(saved: RemoteConfiguration?) { self.saved = saved }
+    func load() throws -> RemoteConfiguration? { saved }
+    func save(_ configuration: RemoteConfiguration) throws { }
+    func remove() throws { }
 }

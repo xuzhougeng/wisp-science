@@ -8,13 +8,17 @@ private struct ResearchLoadKey: Equatable {
     let refresh: UUID
 }
 
+/// The calendar tab (no project) or a project's journey page over its conversation list.
+/// Each owns a separate detail stack so the two never pop each other.
 struct ResearchView: View {
     @ObservedObject var workspace: RemoteWorkspace
     @ObservedObject var connection: RemoteConnection
     let project: String?
 
+    private var path: Binding<[ResearchDestination]> { project == nil ? $workspace.calendarPath : $workspace.researchPath }
+
     var body: some View {
-        NavigationStack(path: $workspace.researchPath) {
+        NavigationStack(path: path) {
             Group {
                 if let project {
                     ResearchJourneyView(workspace: workspace, connection: connection, project: project, day: nil)
@@ -31,13 +35,14 @@ struct ResearchView: View {
                 }
             }
             .toolbar {
-                if workspace.researchPath.isEmpty {
+                // The calendar is a tab; only the project journey is a page to leave.
+                if project != nil && workspace.researchPath.isEmpty {
                     ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
                 }
             }
         }
-        .accessibilityIdentifier("research-page")
-        .onChange(of: connection.readSessionID) { _, _ in workspace.researchPath = [] }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("research-page")
+        .onChange(of: connection.readSessionID) { _, _ in path.wrappedValue = [] }
     }
 }
 

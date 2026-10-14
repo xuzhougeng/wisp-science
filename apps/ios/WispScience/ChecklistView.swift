@@ -19,7 +19,6 @@ struct ChecklistView: View {
             .navigationTitle("科研清单").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if workspace.checklistPath.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
                     ToolbarItem(placement: .topBarTrailing) {
                         WispToolbarButton(title: "清单设置", icon: .gear) { workspace.sheet = .checklistSettings }
                             .accessibilityIdentifier("checklist-settings")
@@ -31,7 +30,7 @@ struct ChecklistView: View {
                     ChecklistEditor(model: model, workspace: workspace, connection: connection, entry: entry)
                 } else { Text("这项记录已移除或当前不可见。") }
             }
-        }.accessibilityIdentifier("checklist-page")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("checklist-page")
             .onChange(of: model.scope) { _, _ in showDone = false }
     }
 

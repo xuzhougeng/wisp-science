@@ -158,7 +158,8 @@ import WispRemote
         await model.answerQuestion(at: 1, item: item, id: id, route: route, option: nil, freeform: "自己的标准")
         XCTAssertEqual(sends, 1)
         XCTAssertNil(model.questionSubmissions[id])
-        XCTAssertEqual(model.error, "模拟拒绝")
+        XCTAssertNil(model.error, "Answer failures stay next to the composer")
+        XCTAssertEqual(model.composerNotices[route], ComposerNotice(message: "模拟拒绝", retry: nil))
         XCTAssertTrue(model.canAnswerQuestion(at: 1, item: item, route: route))
         failure = .outcomeUnknown
         await model.answerQuestion(at: 1, item: item, id: id, route: route, option: 0, freeform: "")
@@ -167,6 +168,19 @@ import WispRemote
         await model.answerQuestion(at: 1, item: item, id: id, route: route, option: 0, freeform: "")
         XCTAssertEqual(sends, 2)
         XCTAssertFalse(model.canAnswerQuestion(at: 1, item: item, route: route))
+    }
+
+    func testDemoSessionsCarryActivityAndASentMessageMovesItsSessionFirst() throws {
+        let demo = try dataset()
+        let rows = try demo.call("remote_sessions", project: demo.projectID, args: [:]).array
+        XCTAssertEqual(rows.compactMap { $0["activity_at"].uint }.count, rows.count)
+        XCTAssertEqual(RemoteWorkspace.ordered(rows).map { $0["id"].string }, rows.map { $0["id"].string },
+                       "Bundled order already runs from most to least recent")
+        let route = ConversationRoute(project: demo.projectID, session: "demo-options")
+        _ = try demo.call("native_conversation_send", project: route.project,
+            args: route.args.merging(["message": .string("新的问题")]) { _, v in v })
+        let next = RemoteWorkspace.ordered(try demo.call("remote_sessions", project: demo.projectID, args: [:]).array)
+        XCTAssertEqual(next.first?["id"].string, "demo-options")
     }
 
     func testReadingDemoQuestionDoesNotClearPendingUntilItIsAnswered() throws {

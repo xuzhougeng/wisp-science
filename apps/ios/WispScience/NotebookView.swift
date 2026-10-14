@@ -48,7 +48,6 @@ struct NotebookView: View {
             .navigationTitle("实验记录本").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if workspace.notebookPath.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
                     ToolbarItem(placement: .topBarTrailing) {
                         WispToolbarButton(title: "怎么用", icon: .circleHelp) { workspace.notebookPath.append(.guide) }
                             .accessibilityIdentifier("notebook-help")
@@ -66,7 +65,7 @@ struct NotebookView: View {
                 case .send(let id): NotebookSendView(workspace: workspace, model: model, connection: connection, id: id)
                 }
             }
-        }.accessibilityIdentifier("notebook-page")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("notebook-page")
     }
 }
 
@@ -286,7 +285,7 @@ private struct NotebookEditor: View {
         return result
     }
     private func openImported(_ imported: (record: String, photo: String)?, from origin: [NotebookDestination]) {
-        guard let imported, visible, workspace.page == .notebook, workspace.notebookPath == origin else { return }
+        guard let imported, visible, workspace.tab == .notebook, workspace.notebookPath == origin else { return }
         workspace.notebookPath = [.record(imported.record), .photo(imported.record, imported.photo)]
     }
 }
@@ -454,7 +453,7 @@ private struct NotebookSendView: View {
                     let result = try await connection.call("remote_sessions", project: project)
                     try Task.checkCancellation()
                     guard self.project == project, generation == connection.readSessionID else { return }
-                    sessions = result.array
+                    sessions = RemoteWorkspace.ordered(result.array)
                 } catch { if !Task.isCancelled { targetError = error.localizedDescription } }
             }
             .onChange(of: connection.readSessionID) { _, _ in project = nil; session = nil; sessions = [] }

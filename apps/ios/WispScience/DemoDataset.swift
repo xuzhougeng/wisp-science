@@ -18,6 +18,8 @@ import WispRemote
     private var decisions: [String: Bool] = [:]
     private var seen: Set<String> = []
     private let researchDay: Date
+    /// Synthetic "last activity" stamps in Unix seconds; sending bumps a session.
+    private var activity: [String: Int64] = [:]
 
     init(bundle: Bundle = .main, now: Date = Date()) throws {
         researchDay = RemoteResearchClock.localCalendar().startOfDay(for: now)
@@ -28,6 +30,12 @@ import WispRemote
         manifest = try JSONDecoder().decode(RemoteValue.self, from: Data(contentsOf: root.appendingPathComponent("manifest.json")))
         guard manifest["schema"].string == "wisp.ios-demo.v1", !manifest["sessions"].array.isEmpty else {
             throw RemoteError.service("演示数据版本不可用。")
+        }
+        // Keep the bundled order: the first conversation is the most recent.
+        let base = Int64(now.timeIntervalSince1970)
+        let ages: [Int64] = [10 * 60, 2 * 3600, 26 * 3600]
+        for (index, session) in manifest["sessions"].array.enumerated() {
+            activity[session["id"].string] = base - (index < ages.count ? ages[index] : Int64(index) * 86400)
         }
     }
 
@@ -132,6 +140,7 @@ import WispRemote
             }
             return .object(["id": session["id"], "title": session["title"], "project_id": .string(projectID),
                             "project_name": manifest["project"]["name"],
+                            "activity_at": .integer(activity[session["id"].string] ?? 0),
                             "status": .string(needsApproval || needsAnswer || !seen.contains(session["id"].string) ? "needs_you" : "idle")])
         }
     }
@@ -166,6 +175,7 @@ import WispRemote
             throw RemoteError.service("本次演示消息已满，请在演示设置中重置数据。")
         }
         messages[id] = existing + items
+        activity[id] = max(Int64(Date().timeIntervalSince1970), (activity.values.max() ?? 0) + 1)
         sequence += 1
     }
     private func reply(to text: String) -> String {

@@ -12,7 +12,70 @@ struct WorkspaceView: View {
         // safeAreaInset on NavigationSplitView can overlap its compact toolbar.
         VStack(spacing: 0) {
             workspaceBanners
-            GeometryReader { geometry in
+            TabView(selection: $model.tab) {
+                conversationsTab
+                    .tabItem { WorkspaceTabLabel(tab: .conversations, connected: model.configuration != nil || model.isDemo) }
+                    .tag(WorkspaceTab.conversations)
+                if model.availableTabs.contains(.calendar) {
+                    ResearchView(workspace: model, connection: connection, project: nil)
+                        .tabItem { WorkspaceTabLabel(tab: .calendar) }
+                        .tag(WorkspaceTab.calendar)
+                }
+                if model.availableTabs.contains(.checklist) {
+                    ChecklistView(workspace: model, model: model.checklist, connection: connection)
+                        .tabItem { WorkspaceTabLabel(tab: .checklist) }
+                        .tag(WorkspaceTab.checklist)
+                }
+                if model.availableTabs.contains(.notebook) {
+                    NotebookView(workspace: model, model: model.notebook, connection: connection)
+                        .tabItem { WorkspaceTabLabel(tab: .notebook) }
+                        .tag(WorkspaceTab.notebook)
+                }
+            }
+            .onChange(of: model.availableTabs) { _, tabs in
+                if !tabs.contains(model.tab) { model.tab = .conversations }
+            }
+            .onChange(of: model.tab) { _, _ in
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+        }
+        .tint(WispStyle.accent)
+        .sheet(item: $model.sheet) { sheet in
+            switch sheet {
+            case .connection: ConnectionSettingsView(model: model, connection: connection)
+            case .inbox: InboxView(model: model)
+            case .checklistSettings: ChecklistSettingsView(workspace: model, model: model.checklist, connection: connection)
+            case .conversationInfo(let title, let project):
+                NavigationStack {
+                    Form {
+                        Section("完整标题") { Text(title).textSelection(.enabled) }
+                        if !project.isEmpty { Section("所属项目") { Text(project).textSelection(.enabled) } }
+                    }
+                    .navigationTitle("对话详情").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { model.sheet = nil } } }
+                }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation-info-sheet")
+            case .files(let route, let path, let directory):
+                FilesView(model: model, route: route, initialPath: path, isDirectory: directory)
+            }
+        }
+        .task { model.restore() }
+        .task(id: connection.state) {
+            if connection.state == .online { await model.monitor() }
+        }
+        .task(id: connection.readSessionID) {
+            model.checklist.configure(configuration: model.configuration, connection: connection, demo: model.isDemo)
+            while !Task.isCancelled && connection.state == .online && !model.isDemo {
+                await model.checklist.sync(connection: connection)
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+            }
+        }
+        .task(id: model.selectedProject) { await model.refreshSelection() }
+        .task(id: model.route) { await model.refreshSelection() }
+    }
+
+    /// Projects, conversations and the project journey page over them.
+    private var conversationsTab: some View {
+        GeometryReader { geometry in
                 ZStack {
                     // Retain selection, scroll positions and connection input.
                     // The entry remains visible behind an interactive edge swipe.
@@ -35,47 +98,12 @@ struct WorkspaceView: View {
                 .onChange(of: model.page) { _, _ in
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
-            }
         }
-        .tint(WispStyle.accent)
-        .sheet(item: $model.sheet) { sheet in
-            switch sheet {
-            case .connection: ConnectionSettingsView(model: model, connection: connection)
-            case .inbox: InboxView(model: model)
-            case .checklistSettings: ChecklistSettingsView(workspace: model, model: model.checklist, connection: connection)
-            case .conversationInfo(let title, let project):
-                NavigationStack {
-                    Form {
-                        Section("完整标题") { Text(title).textSelection(.enabled) }
-                        if !project.isEmpty { Section("所属项目") { Text(project).textSelection(.enabled) } }
-                    }
-                    .navigationTitle("对话详情").navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { model.sheet = nil } } }
-                }.accessibilityIdentifier("conversation-info-sheet")
-            case .files(let route, let path, let directory):
-                FilesView(model: model, route: route, initialPath: path, isDirectory: directory)
-            }
-        }
-        .task { model.restore() }
-        .task(id: connection.state) {
-            if connection.state == .online { await model.monitor() }
-        }
-        .task(id: connection.readSessionID) {
-            model.checklist.configure(configuration: model.configuration, connection: connection, demo: model.isDemo)
-            while !Task.isCancelled && connection.state == .online && !model.isDemo {
-                await model.checklist.sync(connection: connection)
-                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
-            }
-        }
-        .task(id: model.selectedProject) { await model.refreshSelection() }
-        .task(id: model.route) { await model.refreshSelection() }
     }
 
     @ViewBuilder private func workspacePage(_ page: WorkspacePage) -> some View {
         switch page {
-        case .checklist: ChecklistView(workspace: model, model: model.checklist, connection: connection)
-        case .notebook: NotebookView(workspace: model, model: model.notebook, connection: connection)
-        case .research(let project): ResearchView(workspace: model, connection: connection, project: project)
+        case .journey(let project): ResearchView(workspace: model, connection: connection, project: project)
         }
     }
 
@@ -86,13 +114,6 @@ struct WorkspaceView: View {
             } else {
                 NavigationSplitView {
                     List(selection: $model.selectedProject) {
-                        Section {
-                            if !model.isDemo {
-                                WorkspacePageLink(model: model, page: .checklist, title: "科研清单", icon: .list, identifier: "research-checklist")
-                                WorkspacePageLink(model: model, page: .notebook, title: "实验记录本", icon: .notebook, identifier: "research-notebook")
-                            }
-                            WorkspacePageLink(model: model, page: .research(nil), title: "科研日历", icon: .calendar, identifier: "research-calendar")
-                        }
                         Section {
                             ForEach(model.projects, id: \.recordID) { project in
                                 NavigationLink(value: project["id"].string) {
@@ -116,15 +137,12 @@ struct WorkspaceView: View {
                     List(selection: $model.selectedSession) {
                         if let project = model.selectedProject {
                             Section {
-                                WorkspacePageLink(model: model, page: .research(project), title: "研究历程", icon: .researchTrail, identifier: "research-journey")
+                                WorkspacePageLink(model: model, page: .journey(project), title: "研究历程", icon: .researchTrail, identifier: "research-journey")
                             }
                         }
                         ForEach(model.sessions, id: \.recordID) { session in
                             NavigationLink(value: session["id"].string) {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(session["title"].string.isEmpty ? "未命名对话" : session["title"].string)
-                                    StatusBadge(status: session["status"].string)
-                                }.padding(.vertical, 4)
+                                SessionRow(session: session)
                             }
                         }
                         if model.sessions.isEmpty { Text(model.selectedProject == nil ? "选择一个项目" : "暂无对话") .foregroundStyle(.secondary) }
@@ -204,10 +222,35 @@ struct WorkspaceView: View {
                     Text(error).font(.callout).accessibilityIdentifier("workspace-error")
                     Spacer()
                     Button("关闭") { model.error = nil }
-                }.padding(12).background(Color.orange.opacity(0.15))
+                }.padding(12).background(WispStyle.warning.opacity(0.12))
             }
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Tab bar items use the shared compose_icon glyphs as template images.
+private struct WorkspaceTabLabel: View {
+    let tab: WorkspaceTab
+    var connected = true
+    private var title: String {
+        switch tab {
+        case .conversations: return connected ? "对话" : "连接"
+        case .calendar: return "日历"
+        case .checklist: return "清单"
+        case .notebook: return "记录本"
+        }
+    }
+    private var icon: String {
+        switch tab {
+        case .conversations: return connected ? "wisp-chat" : "wisp-gear"
+        case .calendar: return "wisp-calendar"
+        case .checklist: return "wisp-list"
+        case .notebook: return "wisp-notebook"
+        }
+    }
+    var body: some View {
+        Label { Text(title) } icon: { Image(icon).renderingMode(.template) }
     }
 }
 
@@ -254,10 +297,10 @@ struct ConnectionView: View {
                     Text("连接到你的 Wisp").font(.title2.bold())
                     Text("粘贴桌面端复制的远程访问链接，或填写云端中继地址和联机码。").foregroundStyle(.secondary)
                 }
-                Section("离线研究工具") {
-                    WorkspacePageLink(model: model, page: .checklist, title: "科研清单", icon: .list, identifier: "research-checklist")
-                    WorkspacePageLink(model: model, page: .notebook, title: "实验记录本", icon: .notebook, identifier: "research-notebook")
-                    Text("无需连接主机即可记录事项，连接后同步到研究计划。").font(.caption).foregroundStyle(.secondary)
+                Section {
+                    Text("「清单」和「记录本」在底部标签栏，无需连接主机即可使用，连接后清单同步到研究计划。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("offline-tools-hint")
                 }
                 Section {
                     Button { model.enterDemo() } label: {
@@ -333,7 +376,7 @@ struct ConnectionSettingsView: View {
             }
             .navigationTitle(model.isDemo ? "演示设置" : "连接设置")
             .toolbar { Button("完成") { model.sheet = nil } }
-        }.accessibilityIdentifier("connection-sheet")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("connection-sheet")
     }
 }
 
@@ -353,6 +396,31 @@ struct InboxView: View {
             .navigationTitle("待处理")
             .toolbar { Button("完成") { model.sheet = nil } }
         }
+    }
+}
+
+/// Title, latest activity and status. Accessibility sizes stack the time below.
+private struct SessionRow: View {
+    let session: RemoteValue
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            let title = Text(session["title"].string.isEmpty ? "未命名对话" : session["title"].string)
+            let time = WispTime.date(session["activity_at"]).map { WispTime.activity($0) }
+            if typeSize.isAccessibilitySize {
+                title
+                if let time { Text(time).font(.caption).foregroundStyle(.secondary).accessibilityLabel("最近活动 \(time)") }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    title.frame(maxWidth: .infinity, alignment: .leading)
+                    if let time {
+                        Text(time).font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                            .accessibilityLabel("最近活动 \(time)")
+                    }
+                }
+            }
+            StatusBadge(status: session["status"].string)
+        }.padding(.vertical, 4)
     }
 }
 

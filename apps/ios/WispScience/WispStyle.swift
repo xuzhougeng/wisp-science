@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WispRemote
 
 /// Shared surfaces and accents for the transcript, composer and workspace lists.
 enum WispStyle {
@@ -32,7 +33,7 @@ enum WispStyle {
 /// Keep the WebView's shared glyphs; do not substitute a second icon family.
 struct WispIcon: View {
     enum Kind: String {
-        case gear, inbox, folder, circleHelp = "circle-help", squarePen = "square-pen"
+        case gear, inbox, folder, chat, circleHelp = "circle-help", squarePen = "square-pen"
         case plus, circle, circleCheck = "circle-check", circleAlert = "circle-alert"
         case list, notebook, camera, edit, book, check, square, checkSquare = "check-square"
         case image, calendar, researchTrail = "research-trail", arrowUp = "arrow-up"
@@ -92,6 +93,30 @@ struct WispToolbarButton: View {
         .accessibilityShowsLargeContentViewer {
             Label { Text(status.isEmpty ? title : status) } icon: { WispIcon(icon) }
         }
+    }
+}
+
+/// Compact activity stamps for lists: time today, "昨天", month/day this year.
+enum WispTime {
+    /// Hosts send Unix seconds; tolerate millisecond values from older payloads.
+    static func date(_ value: RemoteValue) -> Date? {
+        guard let raw = value.uint, raw > 0 else { return nil }
+        let seconds = raw > 100_000_000_000 ? Double(raw) / 1000 : Double(raw)
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    static func activity(_ date: Date, now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> String {
+        if calendar.isDate(date, inSameDayAs: now) {
+            var style = Date.FormatStyle(locale: Locale(identifier: "zh_CN"), calendar: calendar, timeZone: calendar.timeZone)
+            style = style.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+            return date.formatted(style)
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return "昨天"
+        }
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let y = parts.year, let m = parts.month, let d = parts.day else { return "" }
+        return y == calendar.component(.year, from: now) ? "\(m)月\(d)日" : "\(y)年\(m)月\(d)日"
     }
 }
 

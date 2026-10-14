@@ -1,9 +1,11 @@
 import XCTest
 
 final class WorkspaceUITests: XCTestCase {
+    private func tab(_ app: XCUIApplication, _ title: String) -> XCUIElement { app.tabBars.buttons[title] }
+
     func testChecklistQuickAddCompleteAndReopenWithoutLeavingTheList() {
         let app = launch("connection")
-        app.buttons["research-checklist"].tap()
+        tab(app, "清单").tap()
         XCTAssertTrue(app.staticTexts["还没有待办事项"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["保存与同步"].exists)
         XCTAssertFalse(app.datePickers.firstMatch.exists)
@@ -39,9 +41,8 @@ final class WorkspaceUITests: XCTestCase {
 
     func testChecklistSettingsImmediateEscapePreservesListAndDraftWithLargeText() {
         let app = launch("connection", darkAndLarge: true)
-        let entry = app.buttons["research-checklist"]
-        for _ in 0..<5 { if entry.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(entry.isHittable); entry.tap()
+        let entry = tab(app, "清单")
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
         let title = app.textFields["checklist-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("尚未添加的任务")
         app.buttons["checklist-settings"].tap()
@@ -49,7 +50,7 @@ final class WorkspaceUITests: XCTestCase {
         // No focus movement inside the sheet before Escape.
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertFalse(app.navigationBars["清单设置"].exists)
-        assertResearchPage(app, title: "科研清单")
+        assertToolTab(app, title: "科研清单", tab: "清单")
         XCTAssertEqual(title.value as? String, "尚未添加的任务")
         app.buttons["checklist-add"].tap()
         XCTAssertTrue(app.staticTexts["尚未添加的任务"].waitForExistence(timeout: 5))
@@ -61,9 +62,8 @@ final class WorkspaceUITests: XCTestCase {
 
     func testNotebookGuidanceAndExampleReturnOneLevelWithoutCreatingRecords() {
         let app = launch("connection", darkAndLarge: true)
-        let notebook = app.buttons["research-notebook"]
-        for _ in 0..<5 { if notebook.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(notebook.isHittable); notebook.tap()
+        let notebook = tab(app, "记录本")
+        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
         let example = app.buttons["notebook-example"]
         for _ in 0..<5 { if example.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(example.isHittable); example.tap()
@@ -74,13 +74,13 @@ final class WorkspaceUITests: XCTestCase {
         app.buttons["notebook-help"].tap()
         XCTAssertTrue(app.navigationBars["记录本怎么用"].waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(app.buttons["workspace-page-back"].waitForExistence(timeout: 5))
+        assertToolTab(app, title: "实验记录本", tab: "记录本")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).count, 0)
     }
 
     func testNotebookObservationWithoutTitleExplainsSaveAndOptionalSending() {
         let app = launch("connection")
-        app.buttons["research-notebook"].tap()
+        tab(app, "记录本").tap()
         app.buttons["notebook-add"].tap()
         let notes = app.textViews["notebook-notes"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5)); notes.tap(); notes.typeText("A03 复测浓度")
@@ -108,62 +108,82 @@ final class WorkspaceUITests: XCTestCase {
 
     func testNotebookPhotoPickerCanBeCancelledBeforeCreatingARecord() {
         let app = launch("connection")
-        app.buttons["research-notebook"].tap()
+        tab(app, "记录本").tap()
         app.buttons["notebook-start-photos"].tap()
         XCTAssertTrue(app.buttons["notebook-import-photos"].waitForExistence(timeout: 5))
         app.buttons["notebook-import-photos"].tap()
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.buttons["notebook-start-photos"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).count, 0)
     }
 
-    func testResearchToolsSupportEdgeSwipeBack() {
-        verifyResearchToolEdgeBack(darkAndLarge: false)
+    func testToolTabsKeepTheirPlaceAndHaveNoWorkspaceBackButton() {
+        verifyToolTabs(darkAndLarge: false)
     }
 
-    func testResearchToolsSupportEdgeSwipeBackWithLargeText() {
-        verifyResearchToolEdgeBack(darkAndLarge: true)
+    func testToolTabsWithDarkAppearanceAndLargeText() {
+        verifyToolTabs(darkAndLarge: true)
     }
 
-    private func verifyResearchToolEdgeBack(darkAndLarge: Bool) {
+    private func verifyToolTabs(darkAndLarge: Bool) {
         let app = launch(darkAndLarge: darkAndLarge)
-        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本"), ("research-calendar", "科研日历")] {
-            let link = app.buttons[entry]
-            XCTAssertTrue(link.waitForExistence(timeout: 5)); link.tap()
-            assertResearchPage(app, title: title)
+        XCTAssertTrue(app.staticTexts["RNA-seq 研究"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.tabBars.buttons.count, 4)
+        for (label, title) in [("清单", "科研清单"), ("记录本", "实验记录本"), ("日历", "科研日历")] {
+            tab(app, label).tap()
+            assertToolTab(app, title: title, tab: label)
+            // A tab root is not a page: an edge swipe leaves it in place.
             swipeBack(app)
-            XCTAssertTrue(link.waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["connection-settings"].isHittable)
-            XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+            assertToolTab(app, title: title, tab: label)
         }
+        tab(app, "清单").tap()
+        let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("切换标签后保留")
+        app.buttons["checklist-add"].tap()
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-item-")).firstMatch
+        for _ in 0..<4 { if item.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(item.isHittable); item.tap()
+        XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5))
+        tab(app, "对话").tap()
+        XCTAssertTrue(app.staticTexts["RNA-seq 研究"].firstMatch.waitForExistence(timeout: 5))
+        tab(app, "清单").tap()
+        XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5), "Each tab keeps its own navigation stack")
+        // Native detail navigation keeps its one-level swipe back inside a tab.
+        swipeBack(app)
+        assertToolTab(app, title: "科研清单", tab: "清单")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = darkAndLarge ? "Tabs — dark and large text" : "Tabs"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
-    func testCancelledEdgeSwipeAndContentDragsPreservePageAndInput() {
+    func testCancelledEdgeSwipeAndContentDragsPreserveTheJourney() {
         let app = launch("connection")
-        app.buttons["research-checklist"].tap()
-        let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("尚未保存的事项")
+        app.buttons["enter-demo"].tap()
+        let project = app.staticTexts["RNA-seq 质控 · 演示"].firstMatch
+        XCTAssertTrue(project.waitForExistence(timeout: 5)); project.tap()
+        XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
+        app.buttons["research-journey"].tap()
+        assertJourneyPage(app)
         // Hold before lifting to distinguish a short drag from a fast flick.
         swipeBack(app, end: 0.12)
-        assertResearchPage(app, title: "科研清单")
-        XCTAssertEqual(title.value as? String, "尚未保存的事项")
-        XCTAssertFalse(app.buttons["research-checklist"].exists)
+        assertJourneyPage(app)
         let center = app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.35))
         center.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.35)))
-        assertResearchPage(app, title: "科研清单")
+        assertJourneyPage(app)
         let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.4))
         edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.2)))
-        assertResearchPage(app, title: "科研清单")
+        assertJourneyPage(app)
         swipeBack(app)
-        XCTAssertTrue(app.buttons["research-checklist"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["样本质控与报告"].firstMatch.exists)
     }
 
-    func testOfflineDetailsSwipeBackOneLevelBeforeReturningToConnection() {
+    func testOfflineDetailsSwipeBackOneLevelInsideTabs() {
         let app = launch("connection")
-        app.buttons["research-checklist"].tap()
+        tab(app, "清单").tap()
         let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("侧滑返回事项")
         app.buttons["checklist-add"].tap()
@@ -172,26 +192,25 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(item.isHittable); item.tap()
         XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5))
         swipeBack(app)
-        assertResearchPage(app, title: "科研清单")
+        assertToolTab(app, title: "科研清单", tab: "清单")
         XCTAssertTrue(item.exists)
-        swipeBack(app)
-        XCTAssertTrue(app.buttons["research-notebook"].waitForExistence(timeout: 5))
-        app.buttons["research-notebook"].tap()
+        tab(app, "记录本").tap()
         app.buttons["notebook-add"].tap()
         let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
         XCTAssertTrue(experiment.waitForExistence(timeout: 5)); experiment.tap(); experiment.typeText("侧滑返回实验")
         XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
         swipeBack(app)
-        assertResearchPage(app, title: "实验记录本")
-        swipeBack(app)
-        XCTAssertTrue(app.buttons["research-notebook"].waitForExistence(timeout: 5))
+        assertToolTab(app, title: "实验记录本", tab: "记录本")
+        tab(app, "连接").tap()
+        XCTAssertTrue(app.buttons["enter-demo"].waitForExistence(timeout: 5))
     }
 
-    func testCalendarAndProjectJourneySwipeBackPreserveTheirParent() {
+    func testCalendarTabAndProjectJourneyKeepSeparateStacks() {
         let app = launch("connection")
         app.buttons["enter-demo"].tap()
-        XCTAssertTrue(app.buttons["research-calendar"].waitForExistence(timeout: 5))
-        app.buttons["research-calendar"].tap()
+        XCTAssertTrue(tab(app, "日历").waitForExistence(timeout: 5))
+        XCTAssertFalse(tab(app, "清单").exists, "The demo hides personal offline tools")
+        tab(app, "日历").tap()
         let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "research-open-day-")).firstMatch
         for _ in 0..<5 { if day.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(day.isHittable); day.tap()
@@ -202,17 +221,16 @@ final class WorkspaceUITests: XCTestCase {
         swipeBack(app)
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["workspace-page-back"].exists)
-        swipeBack(app)
-        assertResearchPage(app, title: "科研日历")
-        swipeBack(app)
+        tab(app, "对话").tap()
         let project = app.staticTexts["RNA-seq 质控 · 演示"].firstMatch
         XCTAssertTrue(project.waitForExistence(timeout: 5)); project.tap()
         XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
         app.buttons["research-journey"].tap()
-        assertResearchPage(app, title: "研究历程")
+        assertJourneyPage(app)
         swipeBack(app)
         XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["样本质控与报告"].firstMatch.exists)
+        tab(app, "日历").tap()
+        XCTAssertTrue(entry.waitForExistence(timeout: 5), "The calendar tab kept its day journey")
     }
 
     private func swipeBack(_ app: XCUIApplication, end: CGFloat = 0.8) {
@@ -221,51 +239,21 @@ final class WorkspaceUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: finish, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    func testResearchToolsOpenFullPagesAndReturnToWorkspace() {
-        let app = launch()
-        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本"), ("research-calendar", "科研日历")] {
-            let link = app.buttons[entry]
-            XCTAssertTrue(link.waitForExistence(timeout: 5)); link.tap()
-            assertResearchPage(app, title: title)
-            XCTAssertFalse(app.buttons["connection-settings"].exists, "The workspace underneath must not remain accessible")
-            app.buttons["workspace-page-back"].tap()
-            XCTAssertTrue(link.waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["connection-settings"].isHittable)
-        }
-    }
-
-    func testOfflineResearchPagesHaveBackNavigationWithLargeText() {
-        let app = launch("connection", darkAndLarge: true)
-        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本")] {
-            let link = app.buttons[entry]
-            for _ in 0..<5 { if link.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(link.isHittable); link.tap()
-            assertResearchPage(app, title: title)
-            app.buttons["workspace-page-back"].tap()
-            XCTAssertTrue(link.waitForExistence(timeout: 5))
-        }
-    }
-
-    private func assertResearchPage(_ app: XCUIApplication, title: String,
-                                    file: StaticString = #filePath, line: UInt = #line) {
+    /// A tool tab root: full-width navigation bar, selected tab, no workspace back button.
+    private func assertToolTab(_ app: XCUIApplication, title: String, tab label: String,
+                               file: StaticString = #filePath, line: UInt = #line) {
         let navigation = app.navigationBars[title]
         XCTAssertTrue(navigation.waitForExistence(timeout: 5), file: file, line: line)
-        let back = app.buttons["workspace-page-back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), file: file, line: line)
-        XCTAssertTrue(back.isHittable, file: file, line: line)
-        XCTAssertEqual(back.label, "返回上一页", file: file, line: line)
-        assertCompactToolbarButton(back, file: file, line: line)
-        assertTitleSharesToolbarRow(app, title: title, action: "workspace-page-back", file: file, line: line)
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists, file: file, line: line)
+        XCTAssertTrue(tab(app, label).isSelected, file: file, line: line)
         if title == "实验记录本" {
             let help = app.buttons["notebook-help"]
             assertCompactToolbarButton(help, file: file, line: line)
             XCTAssertEqual(help.label, "怎么用", file: file, line: line)
-            XCTAssertEqual(back.frame.width, help.frame.width, accuracy: 1, file: file, line: line)
             assertTitleSharesToolbarRow(app, title: title, action: "notebook-help", file: file, line: line)
         }
         XCTAssertFalse(app.buttons["完成"].exists, file: file, line: line)
         XCTAssertEqual(app.sheets.count, 0, file: file, line: line)
-        // Pages use the full app width on iPad too, rather than a sheet or sidebar.
         let fullWidth = NSPredicate { _, _ in
             navigation.exists && abs(navigation.frame.width - app.frame.width) < 2
                 && abs(navigation.frame.minX - app.frame.minX) < 2
@@ -274,17 +262,27 @@ final class WorkspaceUITests: XCTestCase {
                        .completed, file: file, line: line)
     }
 
+    /// The project journey stays a page over the conversation list, with a back button.
+    private func assertJourneyPage(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(app.navigationBars["研究历程"].waitForExistence(timeout: 5), file: file, line: line)
+        let back = app.buttons["workspace-page-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(back.isHittable, file: file, line: line)
+        XCTAssertEqual(back.label, "返回上一页", file: file, line: line)
+        assertCompactToolbarButton(back, file: file, line: line)
+        assertTitleSharesToolbarRow(app, title: "研究历程", action: "workspace-page-back", file: file, line: line)
+    }
+
     func testResearchCalendarImmediateEscapeMonthNavigationAndConversationLink() {
         let app = launch("connection")
         app.buttons["enter-demo"].tap()
-        let calendar = app.buttons["research-calendar"]
+        let calendar = tab(app, "日历")
         XCTAssertTrue(calendar.waitForExistence(timeout: 5))
         calendar.tap()
-        assertResearchPage(app, title: "科研日历")
-        // Escape without moving focus closes only the currently visible surface.
+        assertToolTab(app, title: "科研日历", tab: "日历")
+        // Escape at a tab root has nothing to close and must not leave the tab.
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(calendar.waitForExistence(timeout: 5))
-        calendar.tap()
+        assertToolTab(app, title: "科研日历", tab: "日历")
         let month = app.staticTexts["research-month-title"]
         XCTAssertTrue(month.waitForExistence(timeout: 5))
         let original = month.label
@@ -322,7 +320,7 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(project.waitForExistence(timeout: 5))
         project.tap()
         app.buttons["research-journey"].tap()
-        assertResearchPage(app, title: "研究历程")
+        assertJourneyPage(app)
         XCTAssertTrue(app.staticTexts["research-month-title"].waitForExistence(timeout: 5))
         let entry = app.buttons["research-entry-demo-finding"]
         for _ in 0..<8 { if entry.isHittable { break }; app.swipeUp() }
@@ -337,8 +335,8 @@ final class WorkspaceUITests: XCTestCase {
 
     func testResearchOnOldHostShowsUpgradeMessageRatherThanEmptyHistory() {
         let app = launch()
-        XCTAssertTrue(app.buttons["research-calendar"].waitForExistence(timeout: 5))
-        app.buttons["research-calendar"].tap()
+        XCTAssertTrue(tab(app, "日历").waitForExistence(timeout: 5))
+        tab(app, "日历").tap()
         XCTAssertTrue(app.staticTexts["当前主机尚未提供手机端研究日历，请更新 Wisp 主机后重连。"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["当天没有可显示的研究记录。"].exists)
     }
@@ -348,11 +346,9 @@ final class WorkspaceUITests: XCTestCase {
         app.launchEnvironment["WISP_UI_TESTING"] = "connection"
         app.launchEnvironment["WISP_OFFLINE_TEST_ID"] = UUID().uuidString
         app.launch()
-        let checklist = app.buttons["research-checklist"]
+        let checklist = tab(app, "清单")
         XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
-        assertResearchPage(app, title: "科研清单")
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
+        assertToolTab(app, title: "科研清单", tab: "清单")
         let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("离线样本核对")
         app.buttons["checklist-add"].tap()
@@ -360,12 +356,9 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.buttons["checklist-add"].waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        let notebook = app.buttons["research-notebook"]
-        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
-        assertResearchPage(app, title: "实验记录本")
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        let notebook = tab(app, "记录本")
+        notebook.tap()
+        assertToolTab(app, title: "实验记录本", tab: "记录本")
         app.buttons["notebook-add"].tap()
         let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
         XCTAssertTrue(experiment.waitForExistence(timeout: 5)); experiment.tap(); experiment.typeText("离线实验 A")
@@ -381,17 +374,66 @@ final class WorkspaceUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["workspace-page-back"].exists)
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(app.buttons["notebook-add"].waitForExistence(timeout: 5))
         app.terminate(); app.launch()
         XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
         let record = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).firstMatch
         XCTAssertTrue(record.waitForExistence(timeout: 5)); record.tap()
         XCTAssertTrue(notes.waitForExistence(timeout: 5)); XCTAssertEqual(notes.value as? String, "样本 A，重复三次。")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
         XCTAssertTrue(app.staticTexts["离线样本核对"].waitForExistence(timeout: 5))
+    }
+
+    func testConversationHidesTheTabBarOnPhone() {
+        let app = launch()
+        openConversation(app)
+        if app.windows.firstMatch.frame.width < 600 {
+            XCTAssertFalse(app.tabBars.firstMatch.isHittable, "The composer owns the bottom edge on iPhone")
+        }
+        XCTAssertTrue(app.buttons["send-message"].isHittable)
+    }
+
+    func testSessionsShowRecentActivity() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["RNA-seq 研究"].firstMatch.waitForExistence(timeout: 5))
+        app.staticTexts["RNA-seq 研究"].firstMatch.tap()
+        let activity = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "最近活动")).firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 5))
+        XCTAssertNotNil(activity.label.range(of: #"\d{2}:\d{2}$"#, options: .regularExpression))
+    }
+
+    func testHiddenApprovalShowsAReminderThatScrollsBackToIt() {
+        let app = launch("attention")
+        openConversation(app, title: "/data1/home/research/project/PlantRootAtlas/跨物种表达分析")
+        let approve = app.buttons["批准一次"]
+        XCTAssertTrue(approve.waitForExistence(timeout: 5))
+        let reminder = app.buttons["attention-reminder"]
+        XCTAssertFalse(reminder.exists, "A visible approval needs no reminder")
+        let transcript = app.scrollViews["conversation-transcript"]
+        for _ in 0..<4 { transcript.swipeDown() }
+        XCTAssertTrue(reminder.waitForExistence(timeout: 5))
+        XCTAssertTrue(reminder.label.contains("需要你批准"))
+        XCTAssertGreaterThanOrEqual(reminder.frame.height, 44)
+        reminder.tap()
+        let shown = NSPredicate { _, _ in approve.exists && approve.isHittable && !reminder.exists }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: shown, object: app)], timeout: 5), .completed)
+    }
+
+    func testSendFailureShowsRetryAtTheComposerNotTheGlobalBanner() {
+        let app = launch("send-failure")
+        openConversation(app)
+        XCTAssertTrue(app.buttons["查看统计结果"].waitForExistence(timeout: 5))
+        app.buttons["查看统计结果"].tap()
+        app.buttons["send-message"].tap()
+        let notice = app.staticTexts["composer-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertEqual(notice.label, "主机暂时无法接收消息")
+        XCTAssertFalse(app.staticTexts["workspace-error"].exists)
+        let draft = app.textFields["message-draft"].exists ? app.textFields["message-draft"] : app.textViews["message-draft"]
+        XCTAssertEqual(draft.value as? String, "查看统计结果", "The draft survives a rejected send")
+        XCTAssertTrue(app.buttons["composer-retry"].isHittable)
+        app.buttons["composer-notice-dismiss"].tap()
+        XCTAssertFalse(notice.exists)
     }
 
     private func launch(_ mode: String = "connected", darkAndLarge: Bool = false) -> XCUIApplication {
@@ -492,20 +534,19 @@ final class WorkspaceUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertFalse(app.navigationBars["待处理"].exists)
         XCTAssertTrue(project.isHittable)
-        app.buttons["research-notebook"].tap()
-        assertResearchPage(app, title: "实验记录本")
-        XCTAssertEqual(app.buttons["workspace-page-back"].frame.width, actionWidth, accuracy: 1)
+        tab(app, "记录本").tap()
+        assertToolTab(app, title: "实验记录本", tab: "记录本")
+        XCTAssertEqual(app.buttons["notebook-help"].frame.width, actionWidth, accuracy: 1)
         app.buttons["notebook-help"].tap()
         XCTAssertTrue(app.navigationBars["记录本怎么用"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
         // Native detail navigation must retain swipe-back after toolbar styling.
         swipeBack(app)
-        assertResearchPage(app, title: "实验记录本")
+        assertToolTab(app, title: "实验记录本", tab: "记录本")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = darkAndLarge ? "Notebook toolbar — dark and large text" : "Notebook toolbar"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.buttons["workspace-page-back"].tap()
+        tab(app, "对话").tap()
         XCTAssertTrue(project.waitForExistence(timeout: 5))
         project.tap()
         XCTAssertTrue(app.staticTexts["样本质控"].firstMatch.waitForExistence(timeout: 5))

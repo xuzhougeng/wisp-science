@@ -11,10 +11,11 @@ import WispRemote
         guard let mode = environment["WISP_UI_TESTING"] ?? (environment["WISP_TESTING"] == "1" ? "connection" : nil) else { return nil }
         let credential = MemoryCredential(connected: mode != "connection")
         let connection = RemoteConnection(socketFactory: { _ in
-            Socket(running: mode == "running" || mode == "process-running", appearance: mode == "appearance" || mode == "interaction",
-                   interaction: mode == "interaction", malformedUsage: mode == "usage-malformed",
+            Socket(running: mode == "running" || mode == "process-running" || mode == "attention",
+                   appearance: mode == "appearance" || mode == "interaction" || mode == "attention",
+                   interaction: mode == "interaction" || mode == "attention", malformedUsage: mode == "usage-malformed",
                    process: mode == "process" || mode == "process-running", offline: mode == "cache-offline",
-                   emptyInbox: mode == "inbox-empty")
+                   emptyInbox: mode == "inbox-empty", failSend: mode == "send-failure")
         })
         let cache: RemoteReadCache?
         if mode.hasPrefix("cache-"), let id = environment["WISP_CACHE_TEST_ID"], let uuid = UUID(uuidString: id) {
@@ -44,13 +45,16 @@ import WispRemote
         private let appearance: Bool
         private let interaction: Bool
         private let emptyInbox: Bool
+        private let failSend: Bool
         private var approved = false
         private let commands = ["list_projects", "remote_sessions", "native_conversation_snapshot", "native_conversation_create",
             "native_conversation_send", "native_conversation_enqueue", "native_conversation_queue_action", "native_conversation_stop",
             "native_conversation_approve", "native_conversation_seen", "native_conversation_inbox", "native_conversation_panel_file_directory",
             "native_conversation_panel_file_read", "remote_attach_image"]
-        init(running: Bool, appearance: Bool, interaction: Bool, malformedUsage: Bool, process: Bool, offline: Bool, emptyInbox: Bool) {
+        init(running: Bool, appearance: Bool, interaction: Bool, malformedUsage: Bool, process: Bool, offline: Bool,
+             emptyInbox: Bool, failSend: Bool) {
             self.running = running
+            self.failSend = failSend
             self.appearance = appearance
             self.interaction = interaction
             self.emptyInbox = emptyInbox
@@ -92,9 +96,12 @@ import WispRemote
         func send(_ text: String) async throws {
             let data = try AES.GCM.open(AES.GCM.SealedBox(combined: Data(base64Encoded: text)!), using: key, authenticating: RemoteCrypto.clientToHost)
             let request = try JSONDecoder().decode(RemoteValue.self, from: data)
-            let result = response(request)
+            // A definite host rejection: the message never entered the conversation.
+            let rejected = failSend && request["command"].string == "native_conversation_send"
+            let result = rejected ? .null : response(request)
             push(seal(.object(["type": .string("response"), "response": .object([
-                "schema": .string("wisp.native-settings.v1"), "id": request["id"], "result": result, "error": .null,
+                "schema": .string("wisp.native-settings.v1"), "id": request["id"], "result": result,
+                "error": rejected ? .string("主机暂时无法接收消息") : .null,
             ])])))
         }
         func receive() async throws -> String {
@@ -117,6 +124,7 @@ import WispRemote
             case "remote_sessions", "native_conversation_inbox": return .array([.object([
                 "id": .string("session-a"), "title": .string(interaction ? "/data1/home/research/project/PlantRootAtlas/跨物种表达分析" : "样本质控"), "project_id": .string("project-a"),
                 "project_name": .string("RNA-seq 研究"), "status": .string(running ? "running" : "needs_you"),
+                "activity_at": .integer(Int64(Date().timeIntervalSince1970) - 300),
             ])])
             case "native_conversation_snapshot":
                 return .object(["schema": .string("wisp.native-conversations.v1"), "epoch": .string("preview"), "sequence": .unsigned(sequence),
