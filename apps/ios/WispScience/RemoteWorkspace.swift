@@ -15,10 +15,12 @@ enum QuestionSubmission: Equatable { case sent, uncertain }
 enum WorkspaceSheet: Identifiable {
     case connection, inbox, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
+    case research(String?)
     var id: String {
         switch self {
         case .connection: return "connection"
         case .inbox: return "inbox"
+        case .research(let project): return "research:\(project ?? "calendar")"
         case .conversationInfo: return "conversation-info"
         case .files(let route, let path, _): return "files:\(route.project):\(route.session):\(path)"
         }
@@ -55,7 +57,10 @@ enum WorkspaceSheet: Identifiable {
         if selectedSession != oldValue { history = RemoteHistory(); error = nil; snapshotIsCached = false; snapshotSavedAt = nil; snapshotSession = nil }
     } }
     @Published var history = RemoteHistory()
-    @Published var sheet: WorkspaceSheet?
+    @Published var sheet: WorkspaceSheet? { didSet {
+        if sheet?.id != oldValue?.id { researchPath = [] }
+    } }
+    @Published var researchPath: [ResearchDestination] = []
     @Published var error: String?
     @Published var drafts: [ConversationRoute: String] = [:]
     @Published var photos: [ConversationRoute: [AttachedPhoto]] = [:]
@@ -180,6 +185,7 @@ enum WorkspaceSheet: Identifiable {
     }
     private func clearWorkspace() {
         identity = UUID()
+        sheet = nil; researchPath = []
         cacheGeneration = UUID()
         for (_, task) in reads.values { task.cancel() }
         reads = [:]; projectsRefreshed = false; sessionsRefreshed = nil
@@ -478,6 +484,29 @@ enum WorkspaceSheet: Identifiable {
         selectedProject = entry["project_id"].string
         selectedSession = entry["id"].string
         sheet = nil
+    }
+
+    func projectName(_ id: String) -> String {
+        projects.first { $0["id"].string == id }?["name"].string ?? id
+    }
+
+    func sessionName(_ id: String, project: String) -> String {
+        if selectedProject == project, let session = sessions.first(where: { $0["id"].string == id }) {
+            return session["title"].string.isEmpty ? "未命名对话" : session["title"].string
+        }
+        return "对话 · \(id)"
+    }
+
+    func openResearchConversation(_ entry: RemoteResearchEntry, project: String) {
+        guard connection.state == .online, let route = entry.route(project: project) else { return }
+        selectedProject = route.project
+        selectedSession = route.session
+        sheet = nil
+    }
+
+    func dismissTopSurface() {
+        if case .research? = sheet, !researchPath.isEmpty { researchPath.removeLast() }
+        else { sheet = nil }
     }
 }
 

@@ -8,6 +8,7 @@ import WispRemote
         "list_projects", "remote_sessions", "native_conversation_snapshot", "native_conversation_send",
         "native_conversation_approve", "native_conversation_seen", "native_conversation_inbox",
         "native_conversation_panel_file_directory", "native_conversation_panel_file_read", "native_conversation_image",
+        "native_research_calendar", "native_research_journey",
     ]
     private let root: URL
     private let manifest: RemoteValue
@@ -16,8 +17,10 @@ import WispRemote
     private var messages: [String: [RemoteValue]] = [:]
     private var decisions: [String: Bool] = [:]
     private var seen: Set<String> = []
+    private let researchDay: Date
 
-    init(bundle: Bundle = .main) throws {
+    init(bundle: Bundle = .main, now: Date = Date()) throws {
+        researchDay = RemoteResearchClock.localCalendar().startOfDay(for: now)
         guard let root = bundle.url(forResource: "DemoData", withExtension: nil) else {
             throw RemoteError.service("演示数据缺失，请重新安装 App。")
         }
@@ -39,7 +42,14 @@ import WispRemote
                 "needs_you_count": .integer(Int64(sessionRows.filter { $0["status"].string == "needs_you" }.count)),
             ])])
         }
+        if command == "native_research_calendar" {
+            guard project == nil, case .array(let ids) = args["project_ids"],
+                  ids.allSatisfy({ $0.string == projectID }) else { throw RemoteError.service("演示项目不存在。") }
+            return .array(ids.isEmpty ? [] : [.object(["project_id": .string(projectID),
+                "history": try researchHistory(args), "error": .null])])
+        }
         guard project == projectID else { throw RemoteError.service("演示项目不存在。") }
+        if command == "native_research_journey" { return try researchHistory(args) }
         if command == "remote_sessions" { return .array(sessionRows) }
         if command == "native_conversation_inbox" {
             return .array(sessionRows.filter { $0["status"].string == "needs_you" })
@@ -124,6 +134,30 @@ import WispRemote
                             "project_name": manifest["project"]["name"],
                             "status": .string(needsApproval || needsAnswer || !seen.contains(session["id"].string) ? "needs_you" : "idle")])
         }
+    }
+
+    private func researchHistory(_ args: [String: RemoteValue]) throws -> RemoteValue {
+        guard case .integer(let from) = args["from"], case .integer(let until) = args["until"],
+              until > from, from >= 0, until - from <= 32 * 86400 else { throw RemoteError.incompatibleResponse }
+        let calendar = RemoteResearchClock.localCalendar()
+        let examples: [(String, String, String, String, String?, Int, Int)] = [
+            ("demo-plan", "note", "确定 RNA-seq 质控流程", "本地演示 · 使用 6 个合成样本检查流程，不代表真实实验。", "demo-workflow", -1, 10),
+            ("demo-finding", "finding", "合成样本质控结果", "6 个合成样本平均比对率约 96.0%，质控报告与图表已随 App 打包。", "demo-qc", 0, 10),
+            ("demo-artifact", "artifact", "qc_report.md", "演示产物记录，可在关联对话的文件中阅读报告。", "demo-qc", 0, 11),
+            ("demo-note", "note", "后续研究备忘", "本地演示 · 检查样本分组后再开展差异表达分析。", nil, 0, 12),
+        ]
+        let entries: [RemoteValue] = examples.compactMap { id, kind, title, summary, session, offset, hour in
+            let day = calendar.date(byAdding: .day, value: offset, to: researchDay)!
+            let stamp = Int64(calendar.date(byAdding: .hour, value: hour, to: day)!.timeIntervalSince1970)
+            guard stamp >= from, stamp < until else { return nil }
+            return .object(["id": .string(id), "kind": .string(kind), "title": .string(title), "summary": .string(summary),
+                "occurred_at": .integer(stamp), "recorded_at": .integer(stamp), "source_id": .string(id),
+                "frame_id": session.map(RemoteValue.string) ?? .null, "status": .string("recorded"),
+                "content_type": .string(kind == "artifact" ? "text/markdown" : ""),
+                "version_number": kind == "artifact" ? .integer(1) : .null,
+                "source_discarded": .bool(false), "manual": .bool(kind == "note")])
+        }
+        return .object(["entries": .array(entries), "truncated": .bool(false), "recaps": .array([])])
     }
     private func append(_ items: [RemoteValue], to session: RemoteValue) throws {
         let id = session["id"].string

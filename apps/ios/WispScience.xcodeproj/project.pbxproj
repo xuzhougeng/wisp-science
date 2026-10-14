@@ -23,6 +23,9 @@
 		ED8C82E2E5CED917660B9246 /* WispScienceTests/PhotoPreparationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F89B9FE4684E9A9827DFB5F /* WispScienceTests/PhotoPreparationTests.swift */; };
 		EDD99A08A91255B989AA9F5B /* WispScience/ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5C191FDFCD237E9B271468 /* WispScience/ConversationView.swift */; };
 		F8949BE74AB7742434A91A39 /* WispScience/WispScienceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 079360F350DC77D9AB69D16F /* WispScience/WispScienceApp.swift */; };
+		1FBD01C9E1D5FF04F57F00B5 /* WispScience/ResearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */; };
+		EC5141997F6093AF50ECA2A5 /* WispScience/ResearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */; };
+		77681D7788EC5F36256A99DF /* WispScienceTests/ResearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +58,9 @@
 		E24B067E45BA2C51C61160C0 /* WispScienceUITests/WorkspaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScienceUITests/WorkspaceUITests.swift; sourceTree = "<group>"; };
 		E76C459B1F19AC0A987695D5 /* WispScience/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = WispScience/Assets.xcassets; sourceTree = "<group>"; };
 		EC2D1E3AC69A6D9720329C82 /* WispScience/DemoDataset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/DemoDataset.swift; sourceTree = "<group>"; };
+		FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ResearchModel.swift; sourceTree = "<group>"; };
+		33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ResearchView.swift; sourceTree = "<group>"; };
+		085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScienceTests/ResearchTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +92,9 @@
 		E96857C58F716104CAEAD648 = {
 			isa = PBXGroup;
 			children = (
+				085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */,
+				33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */,
+				FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */,
 				24A329D3F98240F7B5DBE780 /* WispScienceTests/WorkspaceCacheTests.swift */,
 				9A1D338C9D6D9214A4E4D211 /* WispScienceTests/DemoDatasetTests.swift */,
 				13354CFDFC5C4130EFC506EE /* WispScience/DemoData */,
@@ -249,6 +258,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EC5141997F6093AF50ECA2A5 /* WispScience/ResearchView.swift in Sources */,
+				1FBD01C9E1D5FF04F57F00B5 /* WispScience/ResearchModel.swift in Sources */,
 				5A87079A59A0FEF94F8B8302 /* WispScience/DemoDataset.swift in Sources */,
 				49ED2460828CA24D45D253A9 /* WispScience/WispStyle.swift in Sources */,
 				EDD99A08A91255B989AA9F5B /* WispScience/ConversationView.swift in Sources */,
@@ -272,6 +283,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				77681D7788EC5F36256A99DF /* WispScienceTests/ResearchTests.swift in Sources */,
 				0A41B28BCE6E45B8A9E06098 /* WispScienceTests/WorkspaceCacheTests.swift in Sources */,
 				158BEEB8D350EC68CCD387D9 /* WispScienceTests/DemoDatasetTests.swift in Sources */,
 				ED8C82E2E5CED917660B9246 /* WispScienceTests/PhotoPreparationTests.swift in Sources */,

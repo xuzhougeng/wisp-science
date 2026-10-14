@@ -1,6 +1,72 @@
 import XCTest
 
 final class WorkspaceUITests: XCTestCase {
+    func testResearchCalendarImmediateEscapeMonthNavigationAndConversationLink() {
+        let app = launch("connection")
+        app.buttons["enter-demo"].tap()
+        let calendar = app.buttons["research-calendar"]
+        XCTAssertTrue(calendar.waitForExistence(timeout: 5))
+        calendar.tap()
+        // Escape without moving focus closes only the currently visible surface.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(calendar.waitForExistence(timeout: 5))
+        calendar.tap()
+        let month = app.staticTexts["research-month-title"]
+        XCTAssertTrue(month.waitForExistence(timeout: 5))
+        let original = month.label
+        app.buttons["research-previous-month"].tap()
+        XCTAssertNotEqual(month.label, original)
+        app.buttons["research-today"].tap()
+        XCTAssertEqual(month.label, original)
+        let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "research-open-day-")).firstMatch
+        for _ in 0..<5 { if day.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(day.waitForExistence(timeout: 5))
+        day.tap()
+        let entry = app.buttons["research-entry-demo-finding"]
+        for _ in 0..<4 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(entry.waitForExistence(timeout: 5), "Record details close but the journey stays open")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(day.waitForExistence(timeout: 5), "Journey closes but the calendar stays open")
+        day.tap()
+        for _ in 0..<4 { if entry.isHittable { break }; app.swipeUp() }
+        entry.tap()
+        let open = app.buttons["research-open-conversation"]
+        for _ in 0..<5 { if open.isHittable { break }; app.swipeUp() }
+        open.tap()
+        XCTAssertTrue(app.buttons["conversation-files"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["研究记录"].exists)
+    }
+
+    func testProjectJourneySupportsDarkAppearanceAndLargeText() {
+        let app = launch("connection", darkAndLarge: true)
+        app.buttons["enter-demo"].tap()
+        let project = app.staticTexts["RNA-seq 质控 · 演示"].firstMatch
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        project.tap()
+        app.buttons["research-journey"].tap()
+        XCTAssertTrue(app.staticTexts["research-month-title"].waitForExistence(timeout: 5))
+        let entry = app.buttons["research-entry-demo-finding"]
+        for _ in 0..<8 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.isHittable)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Research journey — dark and large text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
+    }
+
+    func testResearchOnOldHostShowsUpgradeMessageRatherThanEmptyHistory() {
+        let app = launch()
+        XCTAssertTrue(app.buttons["research-calendar"].waitForExistence(timeout: 5))
+        app.buttons["research-calendar"].tap()
+        XCTAssertTrue(app.staticTexts["当前主机尚未提供手机端研究日历，请更新 Wisp 主机后重连。"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["当天没有可显示的研究记录。"].exists)
+    }
+
     private func launch(_ mode: String = "connected", darkAndLarge: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["WISP_UI_TESTING"] = mode

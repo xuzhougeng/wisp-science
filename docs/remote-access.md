@@ -7,6 +7,13 @@ requires an online Wisp host, as a relay alone does not run the agent. The nativ
 client also includes a bundled offline demo, available from “体验演示项目” on the
 connection screen without a server or account. Open its Xcode project to build
 or install it on a development device.
+The native client includes a research calendar and project research history:
+browse activity by local date, inspect records and return to their source
+conversation. Update the host to advertise `native_research_calendar` and
+`native_research_journey`. These read-only commands reuse mainline history and
+the host's privacy filter; queries cover at most 32 days and report truncation.
+Research pages require an online host and do not use the persistent read cache.
+The bundled offline demo includes synthetic calendar and history records.
 The desktop dials out to your own `wisp-relay`; no inbound port is opened on
 the computer. One relay serves any number of computers: each computer has its
 own connection code, and browsers reach the computer whose code they hold.

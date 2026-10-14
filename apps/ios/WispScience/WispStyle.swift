@@ -25,7 +25,10 @@ enum WispStyle {
 /// Assets are exported from compose_icon() by scripts/export_icons.py.
 /// Keep the WebView's shared glyphs; do not substitute a second icon family.
 struct WispIcon: View {
-    enum Kind: String { case image, arrowUp = "arrow-up", chevronRight = "chevron-right", chevronDown = "chevron-down" }
+    enum Kind: String {
+        case image, calendar, researchTrail = "research-trail", arrowUp = "arrow-up"
+        case chevronRight = "chevron-right", chevronDown = "chevron-down", chevronLeft = "chevron-left"
+    }
     let kind: Kind
     @ScaledMetric private var size: CGFloat
 

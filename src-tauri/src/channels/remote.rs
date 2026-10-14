@@ -44,6 +44,8 @@ const REMOTE_COMMANDS: &[&str] = &[
     "list_projects",
     "remote_sessions",
     "remote_attach_image",
+    "native_research_calendar",
+    "native_research_journey",
     "native_conversation_inbox",
     "native_conversation_create",
     "native_conversation_snapshot",
@@ -446,6 +448,24 @@ async fn dispatch(broker: &Broker, request: &RemoteRequest) -> Result<Value, Str
     if request.command == "remote_attach_image" {
         return attach_image(broker, project_id, decode(&request.args)?).await;
     }
+    if request.command == "native_research_journey" {
+        // Use the calendar's explicit mainline and privacy gate for remote
+        // history too, including after privacy settings change on the host.
+        let project = project_id.ok_or("A project is required")?;
+        let input: wisp_dto::native_journey::JourneyRequest = decode(&request.args)?;
+        let result = crate::native_settings::dispatch(
+            broker,
+            &Request {
+                schema: SCHEMA.into(),
+                id: request.id.clone(),
+                project_id: None,
+                command: "native_research_calendar".into(),
+                args: json!({"project_ids": [&project], "from": input.from, "until": input.until}),
+            },
+        )
+        .await?;
+        return remote_journey_history(result, &project);
+    }
     let mut result = crate::native_settings::dispatch(
         broker,
         &Request {
@@ -549,6 +569,30 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
         return Err("This command is not available remotely".into());
     }
     match request.command.as_str() {
+        "native_research_calendar" => {
+            let input: wisp_dto::native_calendar::CalendarRequest = decode(&request.args)?;
+            if request
+                .project_id
+                .as_deref()
+                .is_some_and(|id| !id.is_empty())
+                || input.project_ids.len() > 100
+                || input.project_ids.iter().any(|id| id.trim().is_empty())
+            {
+                return Err("The calendar requires up to 100 explicit projects".into());
+            }
+            check_research_range(input.from, input.until)?;
+        }
+        "native_research_journey" => {
+            let input: wisp_dto::native_journey::JourneyRequest = decode(&request.args)?;
+            if request
+                .project_id
+                .as_deref()
+                .is_none_or(|id| id.trim().is_empty())
+            {
+                return Err("A project is required".into());
+            }
+            check_research_range(input.from, input.until)?;
+        }
         "native_conversation_send" | "native_conversation_enqueue" => {
             check_message(&decode(&request.args)?)?;
         }
@@ -588,6 +632,26 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
     Ok(())
 }
 
+fn check_research_range(from: i64, until: i64) -> Result<(), String> {
+    if from >= until || until.saturating_sub(from) > 32 * 86400 {
+        return Err("Research history requires a date range of at most 32 days".into());
+    }
+    Ok(())
+}
+
+fn remote_journey_history(value: Value, project: &str) -> Result<Value, String> {
+    let rows: Vec<wisp_dto::ResearchCalendarProject> =
+        serde_json::from_value(value).map_err(|error| error.to_string())?;
+    let row = rows
+        .into_iter()
+        .find(|row| row.project_id == project)
+        .ok_or("Project history is unavailable")?;
+    if let Some(error) = row.error {
+        return Err(error);
+    }
+    serde_json::to_value(row.history).map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,6 +665,59 @@ mod tests {
             project_id: Some("p".into()),
             args,
         }
+    }
+
+    #[test]
+    fn remote_research_is_bounded_explicit_and_read_only() {
+        let mut calendar = request(
+            "native_research_calendar",
+            json!({"project_ids": ["p"], "from": 0, "until": 86400}),
+        );
+        assert!(check(&calendar).is_err());
+        calendar.project_id = None;
+        assert!(check(&calendar).is_ok());
+        calendar.args["project_ids"] = json!(vec!["p"; 101]);
+        assert!(check(&calendar).is_err());
+        for (from, until) in [(0, 0), (1, 0), (0, 33 * 86400), (i64::MIN, i64::MAX)] {
+            assert!(check(&request(
+                "native_research_journey",
+                json!({"from": from, "until": until})
+            ))
+            .is_err());
+        }
+        let mut journey = request(
+            "native_research_journey",
+            json!({"from": 0, "until": 86400}),
+        );
+        assert!(check(&journey).is_ok());
+        journey.project_id = None;
+        assert!(check(&journey).is_err());
+        journey.project_id = Some("p".into());
+        journey.args["session_id"] = json!("another-scope");
+        assert!(check(&journey).is_err());
+        for command in [
+            "native_research_journey_add",
+            "native_research_journey_recap",
+            "native_research_journey_artifact",
+            "native_research_journey_run",
+            "native_research_journey_graph",
+        ] {
+            assert!(check(&request(command, json!({}))).is_err());
+        }
+    }
+
+    #[test]
+    fn remote_journey_preserves_privacy_omissions_and_project_errors() {
+        assert!(remote_journey_history(json!([]), "hidden").is_err());
+        let row = json!({"project_id": "p", "history": {"entries": [], "truncated": false}, "error": null});
+        assert_eq!(
+            remote_journey_history(json!([row.clone()]), "p").unwrap()["entries"],
+            json!([])
+        );
+        assert!(remote_journey_history(json!([row.clone()]), "other").is_err());
+        let mut failed = row;
+        failed["error"] = json!("Project no longer exists");
+        assert!(remote_journey_history(json!([failed]), "p").is_err());
     }
 
     #[test]

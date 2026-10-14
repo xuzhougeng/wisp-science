@@ -17,6 +17,7 @@ struct WorkspaceView: View {
             switch sheet {
             case .connection: ConnectionSettingsView(model: model, connection: connection)
             case .inbox: InboxView(model: model)
+            case .research(let project): ResearchView(workspace: model, connection: connection, project: project)
             case .conversationInfo(let title, let project):
                 NavigationStack {
                     Form {
@@ -43,6 +44,11 @@ struct WorkspaceView: View {
             } else {
                 NavigationSplitView {
                     List(selection: $model.selectedProject) {
+                        Section {
+                            Button { model.sheet = .research(nil) } label: {
+                                HStack(spacing: 12) { WispIcon(.calendar); Text("科研日历") }
+                            }.accessibilityIdentifier("research-calendar")
+                        }
                         Section {
                             ForEach(model.projects, id: \.recordID) { project in
                                 NavigationLink(value: project["id"].string) {
@@ -72,6 +78,13 @@ struct WorkspaceView: View {
                     .refreshable { await model.refreshSelection() }
                 } content: {
                     List(selection: $model.selectedSession) {
+                        if let project = model.selectedProject {
+                            Section {
+                                Button { model.sheet = .research(project) } label: {
+                                    HStack(spacing: 12) { WispIcon(.researchTrail); Text("研究历程") }
+                                }.accessibilityIdentifier("research-journey")
+                            }
+                        }
                         ForEach(model.sessions, id: \.recordID) { session in
                             NavigationLink(value: session["id"].string) {
                                 VStack(alignment: .leading, spacing: 5) {
