@@ -5,6 +5,7 @@
 use crate::archive::{prune_dir, ArchiveRetention};
 use crate::context::{image_content, ContextManager};
 use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
+use crate::plan_progress::PlanProgress;
 use crate::provenance;
 use crate::Output;
 use anyhow::Result;
@@ -375,6 +376,29 @@ impl<'a> AgentLoop<'a> {
     }
 
     async fn drive(&self, ctx: &mut ContextManager) -> Result<AgentLoopOutcome> {
+        let mut plan = PlanProgress::from_history(&ctx.messages);
+        let result = self.drive_with_plan(ctx, &mut plan).await;
+        plan.clear_reminder(ctx);
+        result
+    }
+
+    fn remind_unfinished_plan(
+        &self,
+        ctx: &mut ContextManager,
+        plan: &mut PlanProgress,
+        iteration: usize,
+    ) -> bool {
+        !self.cancelled()
+            && !iteration_limit_reached(iteration, self.max_iter)
+            && self.tools.get("update_plan").is_some()
+            && plan.remind(ctx)
+    }
+
+    async fn drive_with_plan(
+        &self,
+        ctx: &mut ContextManager,
+        plan: &mut PlanProgress,
+    ) -> Result<AgentLoopOutcome> {
         let env = self.tool_env();
         let mut iteration = 0usize;
         let mut auto_continues = 0usize;
@@ -479,10 +503,14 @@ impl<'a> AgentLoop<'a> {
             );
 
             if comp.tool_calls.is_empty() && !env.guidance_pending() {
+                if self.remind_unfinished_plan(ctx, plan, iteration) {
+                    continue;
+                }
                 return Ok(AgentLoopOutcome::Completed);
             }
 
             let mut batch_control = ToolControl::Continue;
+            let mut completed_via_tool = false;
             let mut observation = Sha256::new();
             hash_observation_part(
                 &mut observation,
@@ -509,7 +537,7 @@ impl<'a> AgentLoop<'a> {
                     break;
                 }
                 let control = self
-                    .execute_tool_call(ctx, &env, tc, &mut observation)
+                    .execute_tool_call(ctx, &env, tc, &mut observation, plan)
                     .await;
                 if control != ToolControl::Continue {
                     // A user decision invalidates calls the model optimistically
@@ -525,11 +553,16 @@ impl<'a> AgentLoop<'a> {
                         control,
                     );
                     batch_control = control;
+                    completed_via_tool = tc.function.name == "attempt_completion";
                     break;
                 }
             }
             if batch_control == ToolControl::StopTurn {
-                return Ok(AgentLoopOutcome::Completed);
+                // ask_user/propose_plan must still stop immediately. Only a
+                // final answer is subject to the bounded plan-status reminder.
+                if !completed_via_tool || !self.remind_unfinished_plan(ctx, plan, iteration) {
+                    return Ok(AgentLoopOutcome::Completed);
+                }
             }
             // Stuck-loop guard: compare completed tool-call/result observations,
             // then require a consecutively repeated suffix cycle. The result is
@@ -634,6 +667,7 @@ impl<'a> AgentLoop<'a> {
         env: &ToolEnvAdapter<'_>,
         tc: &ToolCall,
         observation: &mut Sha256,
+        plan: &mut PlanProgress,
     ) -> ToolControl {
         let name = tc.function.name.as_str();
         let args = tc.args_value();
@@ -662,6 +696,12 @@ impl<'a> AgentLoop<'a> {
             None => self.tools.run(name, &args, env).await,
         };
         env.set_hook_ask(false);
+        if name == "update_plan" && result.success {
+            // Save before output budgeting/compaction can shorten the checklist.
+            plan.accept(&args);
+            // A later request must not see the old snapshot as the latest plan.
+            plan.clear_reminder(ctx);
+        }
         // Drain even for non-producing calls so a stale kernel report
         // cannot leak into the next call's provenance record.
         let reported = env.take_reported_writes();
@@ -1744,6 +1784,317 @@ mod tests {
             .iter()
             .filter_map(|message| message.tool_call_id.as_deref())
             .collect()
+    }
+
+    fn plan_update(id: &str, statuses: &[&str]) -> Completion {
+        Completion {
+            tool_calls: vec![call(
+                id,
+                "update_plan",
+                serde_json::json!({"steps": statuses.iter().enumerate().map(|(index, status)| {
+                    serde_json::json!({"step": format!("Step {}", index + 1), "status": status})
+                }).collect::<Vec<_>>()}),
+            )],
+            finish_reason: Some("tool_calls".into()),
+            ..Completion::default()
+        }
+    }
+
+    fn plan_final_answer() -> Completion {
+        Completion {
+            content: "The report is ready.".into(),
+            finish_reason: Some("stop".into()),
+            ..Completion::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn unfinished_plan_is_reconciled_before_text_or_completion_tool_ends_the_loop() {
+        for completion_tool in [false, true] {
+            let answer = if completion_tool {
+                Completion {
+                    tool_calls: vec![call(
+                        "complete",
+                        "attempt_completion",
+                        serde_json::json!({"result": "The report is ready."}),
+                    )],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Completion::default()
+                }
+            } else {
+                plan_final_answer()
+            };
+            let provider = SequenceProvider::new([
+                plan_update("initial", &["in_progress", "pending", "pending", "pending"]),
+                answer,
+                plan_update("finished", &["completed"; 4]),
+                plan_final_answer(),
+            ]);
+            let mut ctx = ContextManager::new(100_000);
+            ctx.inject_user("Host context");
+            let outcome = agent_loop(
+                &mut ctx,
+                &provider,
+                None,
+                &Registry::builtins(),
+                Path::new("."),
+                &NullOutput,
+                "Write a report",
+                0,
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(outcome, AgentLoopOutcome::Completed);
+            assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 4);
+            let last_plan = ctx
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.tool_name.as_deref() == Some("update_plan"))
+                .unwrap();
+            assert!(last_plan
+                .content
+                .as_text()
+                .contains("4 done · 0 in progress · 0 pending"));
+            assert_eq!(
+                ctx.runtime_injections.len(),
+                1,
+                "the reminder must not leak into later turns"
+            );
+            assert_eq!(ctx.runtime_injections[0].content.as_text(), "Host context");
+        }
+    }
+
+    #[tokio::test]
+    async fn review_and_stop_resumes_reconcile_the_existing_plan_without_a_new_user_turn() {
+        for instruction in [
+            "Correct the automatic review findings",
+            "Resolve the Stop hook findings",
+        ] {
+            let initial = plan_update("initial", &["in_progress", "pending"]);
+            let args = initial.tool_calls[0].args_value();
+            let mut ctx = ContextManager::new(100_000);
+            ctx.append_user("Write a report");
+            ctx.append_assistant(String::new(), initial.tool_calls, None);
+            ctx.messages.push(Message::tool(
+                "initial",
+                "update_plan",
+                wisp_tools::plan::render_plan(&args).unwrap(),
+            ));
+            ctx.append_assistant("The main task finished.".into(), vec![], None);
+            let mut agent = crate::Agent {
+                provider: Box::new(SequenceProvider::new([
+                    plan_final_answer(),
+                    plan_update("reconciled", &["completed", "cancelled"]),
+                    plan_final_answer(),
+                ])),
+                vision_provider: None,
+                tools: Registry::builtins(),
+                ctx,
+                root: PathBuf::from("."),
+                max_iter: 0,
+                session_path: PathBuf::new(),
+            };
+            // This is the native TurnDriver::continue_turn path: a runtime
+            // instruction and run_resume, not a new persisted user message.
+            agent.ctx.inject_user(instruction);
+            agent.run_resume(&NullOutput, None, None).await.unwrap();
+            assert!(
+                agent.ctx.messages.iter().any(|message| {
+                    message.tool_call_id.as_deref() == Some("reconciled")
+                        && message
+                            .content
+                            .as_text()
+                            .contains("1 done · 0 in progress · 0 pending · 1 cancelled")
+                }),
+                "{instruction}"
+            );
+            assert_eq!(
+                agent
+                    .ctx
+                    .messages
+                    .iter()
+                    .filter(|message| message.role == Role::User)
+                    .count(),
+                1
+            );
+            assert_eq!(agent.ctx.runtime_injections.len(), 1);
+            assert_eq!(
+                agent.ctx.runtime_injections[0].content.as_text(),
+                instruction
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unfinished_plan_reminder_does_not_loop_or_invent_completed_steps() {
+        let provider = SequenceProvider::new([
+            plan_update("initial", &["in_progress", "pending"]),
+            plan_final_answer(),
+            plan_final_answer(),
+        ]);
+        let mut ctx = ContextManager::new(100_000);
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &NullOutput,
+            "Write a report",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(tool_result_ids(&ctx), ["initial"]);
+        assert!(ctx.messages[2]
+            .content
+            .as_text()
+            .contains("0 done · 1 in progress · 1 pending"));
+        assert!(ctx.runtime_injections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_plan_update_cannot_suppress_the_final_reminder() {
+        let provider = SequenceProvider::new([
+            plan_update("initial", &["in_progress", "pending"]),
+            plan_update("invalid", &["completed", "invalid-status"]),
+            plan_final_answer(),
+            plan_update("finished", &["completed", "cancelled"]),
+            plan_final_answer(),
+        ]);
+        let mut ctx = ContextManager::new(100_000);
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &NullOutput,
+            "Write a report",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 5);
+        assert_eq!(tool_result_ids(&ctx), ["initial", "invalid", "finished"]);
+    }
+
+    #[tokio::test]
+    async fn unfinished_plan_does_not_override_questions_approval_or_iteration_limits() {
+        for tool in [ASK_USER, wisp_tools::plan::PROPOSE_PLAN, "iteration_limit"] {
+            let answer = match tool {
+                ASK_USER => Completion {
+                    tool_calls: vec![call(
+                        "pause",
+                        tool,
+                        serde_json::json!({"question": "Which data?"}),
+                    )],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Completion::default()
+                },
+                wisp_tools::plan::PROPOSE_PLAN => Completion {
+                    tool_calls: vec![call(
+                        "pause",
+                        tool,
+                        serde_json::json!({"entries": [{"content": "Analyze data"}]}),
+                    )],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Completion::default()
+                },
+                _ => plan_final_answer(),
+            };
+            let provider = SequenceProvider::new([
+                plan_update("initial", &["in_progress", "pending"]),
+                answer,
+            ]);
+            let mut tools = Registry::builtins();
+            tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
+            tools.add(Box::new(wisp_tools::plan::ProposePlanTool));
+            let mut ctx = ContextManager::new(100_000);
+            agent_loop(
+                &mut ctx,
+                &provider,
+                None,
+                &tools,
+                Path::new("."),
+                &NullOutput,
+                "Write a report",
+                if tool == "iteration_limit" { 2 } else { 0 },
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2, "{tool}");
+            assert!(ctx.runtime_injections.is_empty(), "{tool}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_with_an_unfinished_plan_does_not_start_finalization() {
+        struct CancelAfterPlan<'a>(&'a AtomicBool);
+        impl Output for CancelAfterPlan<'_> {
+            fn tool_result(&self, name: &str, ok: bool, _content: &str, _duration_ms: u64) {
+                if name == "update_plan" && ok {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        let cancel = AtomicBool::new(false);
+        let provider = SequenceProvider::new([plan_update("initial", &["in_progress"])]);
+        let mut ctx = ContextManager::new(100_000);
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &CancelAfterPlan(&cancel),
+            "Write a report",
+            0,
+            Some(&cancel),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<LoopError>(),
+            Some(LoopError::StoppedByUser)
+        ));
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(tool_result_ids(&ctx), ["initial"]);
+        assert!(ctx.runtime_injections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn plan_reminder_is_removed_if_the_followup_model_request_fails() {
+        let provider = SequenceProvider::new([
+            plan_update("initial", &["in_progress"]),
+            plan_final_answer(),
+        ]);
+        let mut ctx = ContextManager::new(100_000);
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &NullOutput,
+            "Write a report",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<LoopError>(),
+            Some(LoopError::StreamCut)
+        ));
+        assert!(ctx.runtime_injections.is_empty());
+        assert_eq!(tool_result_ids(&ctx), ["initial"]);
     }
 
     #[tokio::test]

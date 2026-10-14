@@ -42,7 +42,8 @@ fn is_fresh_proposal(args: &Value) -> bool {
 
 /// Validate the `steps` argument and render it as a checklist, or return a
 /// message the model can act on. Pure so it carries the unit tests below.
-fn render_plan(args: &Value) -> Result<String, String> {
+/// The agent loop also uses this to restore accepted plan snapshots from history.
+pub fn render_plan(args: &Value) -> Result<String, String> {
     let steps = args
         .get("steps")
         .and_then(|v| v.as_array())

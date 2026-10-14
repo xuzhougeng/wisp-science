@@ -11784,7 +11784,7 @@ test("composer plan stays visible through folded tools, live updates and session
   await expect(strip.locator(".composer-plan-track > span")).toHaveCSS("transition-duration", "0s");
   await page.evaluate(() => (window as any).__finishPlanProgress());
   await expect(strip).not.toHaveClass(/is-running/);
-  await expect(strip).toContainText("not running");
+  await expect(strip).toContainText("Turn ended · plan unfinished");
   await update("[x] Inspect data\n[x] Check barcode alignment\n[x] Verify results");
   await expect(strip).toContainText("Plan completed");
   await expect(strip).toContainText("3 / 3 completed");
@@ -11795,6 +11795,54 @@ test("composer plan stays visible through folded tools, live updates and session
   await expect(strip).toHaveCount(0);
 });
 
+for (const reconciled of [false, true]) {
+  test(`composer plan settles after automatic review with reconciliation=${reconciled}`, async ({ page }) => {
+    await enterApp(page, "/?mockSessionModels=1");
+    await page.locator('[data-session-id="s-model-a"]').click();
+    await composer(page).fill("PLANPROGRESS");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).__finishPlanProgress)).toBe("function");
+    const strip = page.getByTestId("composer-plan-progress");
+    const update = async (content: string, ok = true) => {
+      await emitTauriEvent(page, "agent", { kind: "ToolCall", frame_id: "s-model-a", name: "update_plan", preview: "Plan update" });
+      await emitTauriEvent(page, "agent", { kind: "ToolResult", frame_id: "s-model-a", name: "update_plan", ok, content });
+    };
+    await update("[~] Inspect data\n[ ] Analyze\n[ ] Write report\n[ ] Verify results");
+    await strip.getByTestId("composer-plan-toggle").click();
+    const steps = strip.getByTestId("composer-plan-steps");
+    await expect(steps.locator('[data-status="running"]')).toHaveCount(1);
+    await emitTauriEvent(page, "agent", { kind: "Text", frame_id: "s-model-a", delta: "The report passed all self-checks." });
+    await emitTauriEvent(page, "agent", { kind: "ReviewStarted", frame_id: "s-model-a" });
+    await expect(strip).toHaveClass(/is-running/);
+    await emitTauriEvent(page, "agent", { kind: "CorrectionStarted", frame_id: "s-model-a", model: "mock" });
+    await expect(strip).toHaveClass(/is-running/);
+    await expect(strip).toContainText("0 / 4 completed");
+    const finished = "[x] Inspect data\n[x] Analyze\n[x] Write report\n[x] Verify results";
+    // A failed final update must leave the accepted 0/4 visible after Done.
+    await update(finished, reconciled);
+    await page.evaluate(() => (window as any).__finishPlanProgress());
+    await expect(strip).not.toHaveClass(/is-running/);
+    await expect(strip.locator(".composer-plan-mark")).not.toHaveCSS("animation-name", "composer-plan-orbit");
+    await expect(steps.locator('[data-status="running"]')).toHaveCount(0);
+    if (reconciled) {
+      await expect(strip).toContainText("Plan completed");
+      await expect(strip).toContainText("4 / 4 completed");
+      await expect(steps.locator('[data-status="done"]')).toHaveCount(4);
+    } else {
+      await expect(strip).toContainText("Turn ended · plan unfinished");
+      await expect(strip).toContainText("0 / 4 completed");
+      await expect(strip).not.toHaveClass(/is-complete/);
+      await expect(steps.locator('[data-status="unfinished"]')).toContainText("Unfinished");
+      await expect(steps.locator('[data-status="pending"]')).toHaveCount(3);
+    }
+    await page.locator('[data-session-id="s-model-b"]').click();
+    await expect(strip).toHaveCount(0);
+    await page.locator('[data-session-id="s-model-a"]').click();
+    await expect(strip).not.toHaveClass(/is-running/);
+    await expect(strip).toContainText(reconciled ? "4 / 4 completed" : "Turn ended · plan unfinished");
+  });
+}
+
 test("composer plan supports Chinese, cancelled steps and narrow light/dark layouts", async ({ page }, testInfo) => {
   await page.goto("/?mockSessionModels=1&mockLocale=zh");
   await page.locator(".proj-card-main").first().click();
@@ -11803,6 +11851,7 @@ test("composer plan supports Chinese, cancelled steps and narrow light/dark layo
     content: "[x] 检查输入数据\n[~] 检查训练输出数据中 barcode 与 species 的对应关系并回溯数据拼接逻辑\n[-] 可选对照分析" });
   const strip = page.getByTestId("composer-plan-progress");
   await expect(strip).toContainText("1 / 3 已完成");
+  await expect(strip).toContainText("回合已结束，计划未收尾");
   for (const theme of ["light", "dark"]) {
     await page.evaluate(theme => document.documentElement.setAttribute("data-theme", theme), theme);
     await strip.evaluate(el => { (el as HTMLElement).style.width = "280px"; });

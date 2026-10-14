@@ -93,6 +93,27 @@ once with the reason. The Stop hooks then run again with
 `stop_hook_active: true`. If one still blocks, the status line says so and the
 turn ends. It does not loop.
 
+The built-in agent also checks the latest accepted `update_plan` before a final
+answer ends each loop pass, including an automatic-review correction or Stop-hook
+continuation. If any steps are still pending or in progress, it gets one reminder
+to update their actual status before `Done`. This reminder respects cancellation
+and the iteration limit, and does not interrupt a question or plan-approval pause.
+Failed plan updates do not replace the last accepted progress. Finished work is
+marked completed; work explicitly removed by the user is cancelled. Blocked work
+stays unfinished, with an explanation in the final answer.
+
+If the model still leaves an unfinished plan when the turn ends, the composer
+shows **Turn ended · plan unfinished / 回合已结束，计划未收尾**. The progress count
+is preserved, animations stop, and an expanded step no longer says it is running.
+Reopening the conversation shows the same state. A turn ending never marks all
+steps completed automatically. ACP agents continue to manage their own plans.
+
+To check the behavior manually, run a multistep task with automatic review enabled
+and watch the plan through a correction. The last plan update should precede the
+end of the turn. For a task with remaining blocked work, expand the plan after the
+turn ends and reopen the conversation: it should retain its count and display the
+unfinished notice. Verify that asking the user a question still pauses immediately.
+
 ## Project hooks (`.wisp/hooks.json`)
 
 The file uses the Claude Code / Codex layout, so existing hooks can be copied

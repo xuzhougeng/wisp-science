@@ -1613,6 +1613,7 @@ fn plan_step_status_key(status: &str) -> &'static str {
     match status {
         "done" => "execution_plan.done",
         "running" => "execution_plan.running",
+        "unfinished" => "execution_plan.unfinished",
         "cancelled" => "execution_plan.cancelled",
         _ => "execution_plan.pending",
     }
@@ -1727,12 +1728,16 @@ pub(crate) fn ComposerPlanProgress(
                     view! {
                         <ol class="execution-plan-list composer-plan-steps" data-testid="composer-plan-steps">
                             {rows.into_iter().map(|(status, text)| {
-                                let key = plan_step_status_key(status);
+                                // Keep the recorded progress intact; a stopped
+                                // turn cannot have a currently running step.
+                                let display_status = move || {
+                                    if status == "running" && !busy.get() { "unfinished" } else { status }
+                                };
                                 view! {
-                                    <li data-status=status>
-                                        <span class="execution-plan-mark" aria-hidden="true">{compose_icon(plan_step_icon(status))}</span>
+                                    <li data-status=display_status>
+                                        <span class="execution-plan-mark" aria-hidden="true">{move || compose_icon(plan_step_icon(display_status()))}</span>
                                         <span class="execution-plan-text">{text}</span>
-                                        <span class="execution-plan-status">{move || t(locale.get(), key)}</span>
+                                        <span class="execution-plan-status">{move || t(locale.get(), plan_step_status_key(display_status()))}</span>
                                     </li>
                                 }
                             }).collect_view()}
