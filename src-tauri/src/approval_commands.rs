@@ -744,9 +744,10 @@ mod tests {
         };
         check_asks("project-session", true);
 
-        let taken = update_session_full_permission(&mut entries, &sessions, "project-session", true)
-            .unwrap()
-            .unwrap();
+        let taken =
+            update_session_full_permission(&mut entries, &sessions, "project-session", true)
+                .unwrap()
+                .unwrap();
         taken
             .tx
             .send(wisp_tools::ConfirmDecision::Approved)
