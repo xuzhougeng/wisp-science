@@ -1,31 +1,41 @@
 package science.wisp.remote
 
 import java.util.UUID
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.*
 
 /** Has no transport or credential dependency. Assets are the iOS client's synthetic dataset. */
-class DemoService(manifest: String, private val readAsset: (String) -> String) : RemoteService {
+class DemoService(manifest: String, private val readImageAsset: ((String) -> ByteArray)? = null, private val readAsset: (String) -> String) : RemoteService {
     private val data = Json.parseToJsonElement(manifest)
     private val project = data.field("project")
     private val sessions = data.field("sessions").rows()
     private val additions = mutableMapOf<String, List<JsonElement>>()
     private val resolved = mutableSetOf<String>()
+    private val researchDay = LocalDate.now()
     private var sequence = 1L
     private val mutableStatus = MutableStateFlow(ConnectionStatus(ConnectionPhase.ONLINE, UUID.randomUUID().toString(),
         "离线演示 · 合成数据", setOf("list_projects", "remote_sessions", "native_conversation_snapshot",
+            "native_research_calendar", "native_research_journey", "native_conversation_inbox", "native_conversation_image",
             "native_conversation_send", "native_conversation_approve", "native_conversation_panel_file_directory", "native_conversation_panel_file_read")))
     override val status: StateFlow<ConnectionStatus> = mutableStatus
 
     override suspend fun call(command: String, project: String?, args: JsonObject): JsonElement {
         requireRemote(status.value.phase == ConnectionPhase.ONLINE, RemoteFailure.Reason.OFFLINE)
         requireRemote(command in status.value.commands, RemoteFailure.Reason.UNSUPPORTED)
-        if (command == "list_projects") return JsonArray(listOf(this.project))
+        if (command == "list_projects") return JsonArray(listOf(JsonObject(this.project.jsonObject + mapOf(
+            "session_count" to JsonPrimitive(sessions.size), "needs_you_count" to JsonPrimitive(sessionRows().count { it.field("status").text() == "needs_you" })))))
+        if (command == "native_research_calendar") {
+            val ids = args.field("project_ids").rows()
+            requireRemote(project == null && args.field("project_ids") is JsonArray && ids.all { it.text() == this.project.field("id").text() })
+            return JsonArray(ids.distinct().map { obj("project_id" to it, "history" to history(args), "error" to JsonNull) })
+        }
         requireRemote(project == this.project.field("id").text())
-        if (command == "remote_sessions") return JsonArray(sessions.map {
-            obj("id" to it.field("id"), "title" to it.field("title"), "project_id" to string(project!!), "status" to string("idle"))
-        })
+        if (command == "remote_sessions") return JsonArray(sessionRows())
+        if (command == "native_conversation_inbox") return JsonArray(sessionRows().filter { it.field("status").text() == "needs_you" })
+        if (command == "native_research_journey") return history(args)
         val id = args.field("session_id").text()
         val session = sessions.firstOrNull { it.field("id").text() == id } ?: throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
         return when (command) {
@@ -67,6 +77,13 @@ class DemoService(manifest: String, private val readAsset: (String) -> String) :
                     }
                 obj("entries" to JsonArray(entries))
             }
+            "native_conversation_image" -> {
+                val path = args.field("path").text()
+                requireRemote(args.field("resource_id") == JsonNull && validPath(path) && path.endsWith(".png") &&
+                    data.field("files").rows().any { it.field("path").text() == path })
+                val bytes = readImageAsset?.invoke("files/$path") ?: throw RemoteFailure(RemoteFailure.Reason.UNSUPPORTED)
+                obj("base64" to string(java.util.Base64.getEncoder().encodeToString(bytes)), "mime" to string("image/png"))
+            }
             "native_conversation_panel_file_read" -> {
                 val path = args.field("path").text()
                 requireRemote(validPath(path) && data.field("files").rows().any { it.field("path").text() == path })
@@ -75,6 +92,28 @@ class DemoService(manifest: String, private val readAsset: (String) -> String) :
             }
             else -> throw RemoteFailure(RemoteFailure.Reason.UNSUPPORTED)
         }
+    }
+    private fun sessionRows() = sessions.mapIndexed { index, session ->
+        val items = session.field("items").rows() + additions[session.field("id").text()].orEmpty()
+        val pending = session.field("approvals").rows().any { it.field("approval_id").text() !in resolved } ||
+            items.withIndex().any { (i, item) -> Question.parse(item) != null && items.drop(i + 1).none { it.field("role").text() == "user" } }
+        obj("id" to session.field("id"), "title" to session.field("title"), "project_id" to project.field("id"),
+            "project_name" to project.field("name"), "status" to string(if (pending) "needs_you" else "complete"),
+            "activity_at" to JsonPrimitive(researchDay.minusDays(index.toLong()).atTime(10, 0).atZone(ZoneId.systemDefault()).toEpochSecond()))
+    }
+    private fun history(args: JsonObject): JsonObject {
+        val from = (args.field("from") as? JsonPrimitive)?.longOrNull
+        val until = (args.field("until") as? JsonPrimitive)?.longOrNull
+        requireRemote(from != null && until != null && from >= 0 && until > from && until - from <= 32 * 86400)
+        val entries = sessions.mapIndexedNotNull { index, session ->
+            val stamp = researchDay.minusDays(index.toLong()).atTime(10, 0).atZone(ZoneId.systemDefault()).toEpochSecond()
+            if (stamp < from!! || stamp >= until!!) null else obj(
+                "id" to string("research-" + session.field("id").text()), "kind" to string("note"),
+                "title" to session.field("title"), "summary" to string("本地演示 · 合成样本的研究记录。可打开关联对话查看报告和流程。"),
+                "occurred_at" to JsonPrimitive(stamp), "recorded_at" to JsonPrimitive(stamp),
+                "frame_id" to session.field("id"), "source_discarded" to JsonPrimitive(false), "status" to string("recorded"))
+        }
+        return obj("entries" to JsonArray(entries), "truncated" to JsonPrimitive(false))
     }
     override fun disconnect() { mutableStatus.value = ConnectionStatus() }
     private fun validPath(path: String) = path.isNotBlank() && !path.startsWith('/') && '\\' !in path &&

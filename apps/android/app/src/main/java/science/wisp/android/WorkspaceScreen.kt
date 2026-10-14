@@ -2,22 +2,32 @@ package science.wisp.android
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.time.format.DateTimeFormatter
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
 import java.time.ZoneId
@@ -29,39 +39,56 @@ import science.wisp.remote.*
 fun WorkspaceScreen(model: WorkspaceModel) {
     val state by model.state.collectAsStateWithLifecycle()
     val page = state.page
-    BackHandler(state.stack.size > 1) { model.back() }
-    Scaffold(topBar = {
-        TopAppBar(title = { Text(page.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+    val holder = rememberSaveableStateHolder()
+    val grouped = page.kind in setOf(PageKind.PROJECTS, PageKind.CALENDAR, PageKind.NOTEBOOK, PageKind.CONNECTION, PageKind.INFO)
+    val background = if (grouped) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface
+    BackHandler(state.hasBack) { model.back() }
+    Scaffold(containerColor = background, topBar = {
+        CenterAlignedTopAppBar(colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
+            title = { Text(page.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
-                if (state.stack.size > 1) IconButton(onClick = { model.back() }) { WispIcon(R.drawable.wisp_chevron_left, "返回") }
-            }, actions = {
-                if (page.kind == PageKind.PROJECTS) IconButton(onClick = { model.open(Page(PageKind.CONNECTION, "连接与演示")) }) {
-                    WispIcon(R.drawable.wisp_gear, "连接设置")
+                if (state.stack.size > 1) ToolbarAction(R.drawable.wisp_chevron_left, "返回", onClick = { model.back() })
+                else if (page.kind == PageKind.PROJECTS) ToolbarAction(R.drawable.wisp_gear, "连接设置") {
+                    model.open(Page(PageKind.CONNECTION, "连接与演示"))
                 }
-                if (page.kind == PageKind.CONVERSATION) IconButton(onClick = {
-                    model.open(Page(PageKind.FILES, "项目文件", page.project, page.session))
-                }) { WispIcon(R.drawable.wisp_folder, "项目文件") }
-                if (page.kind in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CONVERSATION, PageKind.FILES, PageKind.JOURNEY)) {
-                    TextButton(onClick = model::refresh, enabled = !state.loading && state.status.phase == ConnectionPhase.ONLINE) { Text("刷新") }
+            }, actions = {
+                when (page.kind) {
+                    PageKind.PROJECTS -> ToolbarAction(R.drawable.wisp_inbox, "待处理对话",
+                        enabled = state.status.phase == ConnectionPhase.ONLINE && "native_conversation_inbox" in state.status.commands) {
+                        model.open(Page(PageKind.INBOX, "待处理对话"))
+                    }
+                    PageKind.SESSIONS -> ToolbarAction(R.drawable.wisp_square_pen, "新建对话", enabled = !state.busy &&
+                        state.status.phase == ConnectionPhase.ONLINE && "native_conversation_create" in state.status.commands, onClick = model::createConversation)
+                    PageKind.CONVERSATION -> ToolbarAction(R.drawable.wisp_folder, "项目文件") {
+                        model.open(Page(PageKind.FILES, "项目文件", page.project, page.session))
+                    }
+                    PageKind.CHECKLIST -> ToolbarAction(R.drawable.wisp_gear, "清单设置") { model.open(Page(PageKind.INFO, "清单设置", path = "checklist")) }
+                    PageKind.NOTEBOOK -> ToolbarAction(R.drawable.wisp_circle_help, "记录本帮助") { model.open(Page(PageKind.INFO, "记录本帮助", path = "notebook")) }
+                    PageKind.CALENDAR, PageKind.JOURNEY, PageKind.FILES, PageKind.INBOX -> TextButton(onClick = model::refresh, enabled = !state.loading && state.status.phase == ConnectionPhase.ONLINE) { Text("刷新") }
+                    else -> Unit
                 }
             })
-    }) { padding ->
+    }, bottomBar = { if (state.showsTabs) WorkspaceTabs(state, model) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding(), horizontalAlignment = Alignment.CenterHorizontally) {
             Column(Modifier.widthIn(max = 840.dp).fillMaxWidth().weight(1f)) {
-                val connection = when {
-                    state.demo -> "离线演示 · 合成数据"
-                    state.status.phase == ConnectionPhase.ONLINE -> "已连接 · ${state.status.name}"
-                    state.status.phase == ConnectionPhase.CONNECTING -> "正在连接主机…"
-                    state.status.phase == ConnectionPhase.RETRYING -> "连接中断，正在重连；会话操作已停用"
-                    state.status.phase == ConnectionPhase.OFFLINE -> "主机离线，请保持主机联网并运行 Wisp"
-                    else -> "未连接 · 本机科研记录仍可使用"
+                if (state.status.phase != ConnectionPhase.ONLINE && page.kind in setOf(PageKind.SESSIONS, PageKind.CONVERSATION, PageKind.CALENDAR, PageKind.JOURNEY, PageKind.INBOX)) {
+                    MutedText(if (state.status.phase == ConnectionPhase.CONNECTING || state.status.phase == ConnectionPhase.RETRYING)
+                        "正在连接主机…" else "主机未连接，请在对话页的连接设置中连接。", Modifier.padding(16.dp))
                 }
-                Text(connection, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
-                state.error?.let {
-                    Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error)
+                if (page.kind != PageKind.CONVERSATION) state.error?.let { error ->
+                    Text(error, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
                 }
-                if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                key(page) {
+                if (state.loading && (page.kind !in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CONVERSATION) ||
+                    (state.projects.isEmpty() && state.sessions.isEmpty() && state.snapshot == null))) LinearProgressIndicator(Modifier.fillMaxWidth())
+                val pageKey = "${state.tab}:$page"
+                holder.SaveableStateProvider(pageKey) {
+                    DisposableEffect(pageKey) {
+                        onDispose {
+                            val current = model.state.value
+                            val stacks = current.savedStacks + (current.tab to current.stack)
+                            if (stacks[state.tab]?.contains(page) != true) holder.removeState(pageKey)
+                        }
+                    }
                     when (page.kind) {
                         PageKind.PROJECTS -> Projects(state, model)
                         PageKind.CONNECTION -> Connection(state, model)
@@ -69,8 +96,12 @@ fun WorkspaceScreen(model: WorkspaceModel) {
                         PageKind.CONVERSATION -> Conversation(state, model)
                         PageKind.FILES -> Files(state, model)
                         PageKind.JOURNEY -> Journey(state, model)
-                        PageKind.CHECKLIST, PageKind.NOTEBOOK -> LocalResearch(state, model)
+                        PageKind.CALENDAR -> ResearchCalendar(state, model)
+                        PageKind.CHECKLIST -> Checklist(state, model)
+                        PageKind.NOTEBOOK -> Notebook(state, model)
                         PageKind.EDITOR -> EntryEditor(state, model)
+                        PageKind.INFO -> ResearchInfo(state.page.path)
+                        PageKind.INBOX -> Inbox(state, model)
                     }
                 }
             }
@@ -79,20 +110,15 @@ fun WorkspaceScreen(model: WorkspaceModel) {
 }
 
 @Composable
-private fun WispIcon(resource: Int, description: String?) {
-    Icon(painterResource(resource), description, Modifier.size(24.dp))
-}
-
-@Composable
-private fun NavigationRow(title: String, subtitle: String = "", icon: Int? = null, onClick: () -> Unit) {
+internal fun NavigationRow(title: String, subtitle: String = "", icon: Int? = null, onClick: () -> Unit) {
     Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            icon?.let { WispIcon(it, null) }
+            icon?.let { androidx.compose.runtime.CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) { WispIcon(it, null) } }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            WispIcon(R.drawable.wisp_chevron_right, null)
+            WispChevron()
         }
     }
     HorizontalDivider()
@@ -100,20 +126,33 @@ private fun NavigationRow(title: String, subtitle: String = "", icon: Int? = nul
 
 @Composable
 private fun Projects(state: WorkspaceState, model: WorkspaceModel) {
-    LazyColumn {
-        item { NavigationRow("科研清单", "本机保存 · 离线可用", R.drawable.wisp_list) { model.open(Page(PageKind.CHECKLIST, "科研清单")) } }
-        item { NavigationRow("实验记录本", "文字记录 · 离线可用", R.drawable.wisp_notebook) { model.open(Page(PageKind.NOTEBOOK, "实验记录本")) } }
-        item { Text("项目", Modifier.padding(16.dp), style = MaterialTheme.typography.titleLarge) }
-        items(state.projects) { project ->
-            NavigationRow(project.field("name").text(), project.field("description").text(), R.drawable.wisp_folder) {
-                model.open(Page(PageKind.SESSIONS, project.field("name").text(), project.field("id").text()))
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { MutedText(state.status.name.ifBlank { "你的研究工作台" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+        item {
+            if (state.projects.isNotEmpty()) GroupCard {
+                state.projects.forEachIndexed { index, project ->
+                    Surface(onClick = { model.open(Page(PageKind.SESSIONS, project.field("name").text(), project.field("id").text())) }) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text(project.field("name").text(), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                                MutedText("${(project.field("session_count") as? JsonPrimitive)?.intOrNull ?: 0} 个对话")
+                                if (((project.field("needs_you_count") as? JsonPrimitive)?.intOrNull ?: 0) > 0) StatusBadge("needs_you")
+                                else if (((project.field("running_count") as? JsonPrimitive)?.intOrNull ?: 0) > 0) StatusBadge("running")
+                            }
+                            WispChevron()
+                        }
+                    }
+                    if (index < state.projects.lastIndex) RowDivider(Modifier.padding(horizontal = 16.dp))
+                }
             }
         }
         if (state.projects.isEmpty() && !state.loading) item {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (state.status.phase == ConnectionPhase.ONLINE) "暂无可用项目。请在主机创建项目，或检查隐私设置。" else "连接你的 Wisp 主机，或先体验随应用提供的示例项目。")
-                Button(onClick = { model.open(Page(PageKind.CONNECTION, "连接与演示")) }) { Text("连接主机") }
-                OutlinedButton(onClick = model::enterDemo) { Text("体验演示项目") }
+            GroupCard {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(if (state.status.phase == ConnectionPhase.ONLINE) "暂无可用项目。请在主机创建项目，或检查隐私设置。" else "连接你的 Wisp 主机，或先体验随应用提供的示例项目。")
+                    Button(onClick = { model.open(Page(PageKind.CONNECTION, "连接与演示")) }) { Text("连接主机") }
+                    OutlinedButton(onClick = model::enterDemo) { Text("体验演示项目") }
+                }
             }
         }
     }
@@ -144,38 +183,67 @@ private fun Connection(state: WorkspaceState, model: WorkspaceModel) {
 
 @Composable
 private fun Sessions(state: WorkspaceState, model: WorkspaceModel) {
-    LazyColumn {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
         item {
-            NavigationRow("研究历程", "按月阅读项目研究记录", R.drawable.wisp_research_trail) {
+            NavigationRow("研究历程", icon = R.drawable.wisp_research_trail) {
                 model.open(Page(PageKind.JOURNEY, "研究历程", state.page.project))
             }
         }
-        item {
-            TextButton(onClick = model::createConversation, modifier = Modifier.padding(8.dp), enabled = !state.busy &&
-                state.status.phase == ConnectionPhase.ONLINE && "native_conversation_create" in state.status.commands) {
-                WispIcon(R.drawable.wisp_square_pen, null); Spacer(Modifier.width(8.dp)); Text("新建对话")
-            }
-        }
-        items(state.sessions) { session ->
-            NavigationRow(session.field("title").text().ifBlank { "未命名对话" }, session.field("status").text()) {
-                model.open(Page(PageKind.CONVERSATION, session.field("title").text().ifBlank { "对话" }, state.page.project, session.field("id").text()))
-            }
-        }
-        if (state.sessions.isEmpty() && !state.loading && state.error == null) item { Text("暂无对话。", Modifier.padding(16.dp)) }
+        items(state.sessions, key = { it.field("id").text() }) { session -> SessionRow(session) {
+            model.open(Page(PageKind.CONVERSATION, session.field("title").text().ifBlank { "对话" }, state.page.project, session.field("id").text()))
+        } }
+        if (state.sessions.isEmpty() && !state.loading && state.error == null) item { MutedText("暂无对话。", Modifier.padding(16.dp)) }
     }
+}
+
+@Composable
+private fun Inbox(state: WorkspaceState, model: WorkspaceModel) {
+    LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        items(state.detail.rows()) { session -> SessionRow(session, showProject = true) {
+            model.open(Page(PageKind.CONVERSATION, session.field("title").text(), session.field("project_id").text(), session.field("id").text()))
+        } }
+        if (state.detail != JsonNull && state.detail.rows().isEmpty() && state.error == null) item { MutedText("暂无待处理对话。") }
+    }
+}
+
+@Composable
+private fun SessionRow(session: JsonElement, showProject: Boolean = false, onClick: () -> Unit) {
+    Surface(onClick, Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(session.field("title").text().ifBlank { "未命名对话" }, fontSize = 17.sp)
+                if (showProject) MutedText(session.field("project_name").text())
+                StatusBadge(session.field("status").text())
+            }
+            val stamp = (session.field("activity_at") as? JsonPrimitive)?.longOrNull ?: (session.field("ts") as? JsonPrimitive)?.longOrNull
+            stamp?.let { MutedText(Instant.ofEpochSecond(it).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("M月d日"))) }
+            WispChevron()
+        }
+    }
+    RowDivider()
 }
 
 @Composable
 private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
     val snapshot = state.snapshot?.takeIf { it.route == state.page.route }
     val fresh = snapshot != null && state.snapshotSession == state.status.session && state.status.phase == ConnectionPhase.ONLINE
+    var showCompleted by rememberSaveable { mutableStateOf(false) }
+    val runs = snapshot?.value?.field("run_cards")?.rows().orEmpty()
+    val completed = completedRuns(runs)
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.page.route, snapshot?.items?.size) {
+        if (snapshot != null) {
+            val count = snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+            listState.scrollToItem(count - 1)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         if (snapshot != null && !fresh) Text("当前内容尚未更新，会话操作已停用。", Modifier.padding(16.dp))
         if (state.page.route in state.uncertain) {
             Text("上次操作结果未确认。核对主机上的对话后，再继续发送或审批。", Modifier.padding(16.dp))
             TextButton(onClick = model::acknowledge) { Text("已核对，允许继续") }
         }
-        LazyColumn(Modifier.weight(1f).testTag("transcript"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(Modifier.weight(1f).testTag("transcript"), state = listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (snapshot?.value?.field("next_before_seq")?.let { it != JsonNull } == true) item {
                 Text("当前显示最近一段对话；完整历史请在主机查看。", style = MaterialTheme.typography.bodySmall)
             }
@@ -196,6 +264,8 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
                                         enabled = state.can("native_conversation_send") && !snapshot.running) { Text(label) }
                                 }
                             }
+                        } else if (item.field("role").text() in setOf("assistant", "user")) {
+                            MarkdownContent(item.field("text").text(), state, model, item.field("resources").rows())
                         } else SelectionContainer { Text(item.field("text").text().ifBlank { item.field("tool_name").text() }) }
                     }
                 }
@@ -211,29 +281,59 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
                     }
                 }
             }
-            items(snapshot?.value?.field("run_cards")?.rows().orEmpty()) { run ->
-                var expanded by rememberSaveable(run.field("id").text()) { mutableStateOf(false) }
-                OutlinedCard(onClick = { expanded = !expanded }) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(run.field("title").text().ifBlank { "运行记录" }, style = MaterialTheme.typography.titleSmall)
-                        Text(run.field("status").text())
-                        if (expanded) SelectionContainer {
-                            Text(listOf("command", "stdout_tail", "stderr_tail").map { run.field(it).text() }.filter { it.isNotBlank() }.joinToString("\n"))
+            items(runs.filter { it.field("status").text() != "succeeded" }, key = { "run-${it.field("id").text()}" }) { RunCard(it) }
+            if (completed.isNotEmpty()) {
+                item {
+                    Surface(onClick = { showCompleted = !showCompleted }, color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(14.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            MutedText("已完成的记录（${completed.size}）", Modifier.weight(1f))
+                            WispChevron(showCompleted)
+                        }
+                    }
+                }
+                if (showCompleted) items(completed, key = { "run-${it.field("id").text()}" }) { RunCard(it) }
+            }
+            if (snapshot == null && !state.loading) item { Text("连接后刷新，加载当前对话。") }
+        }
+        RowDivider()
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(8.dp)) {
+                    TextField(state.drafts[state.page.route].orEmpty(), model::setDraft,
+                        Modifier.fillMaxWidth().semantics { contentDescription = "消息" }, placeholder = { Text("给 Wisp 发消息…") }, minLines = 2, maxLines = 5,
+                        colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                            WispIcon(R.drawable.wisp_image, null, Modifier.size(18.dp)); Spacer(Modifier.width(5.dp)); Text("图片 · 暂未支持", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (snapshot?.running == true) TextButton(onClick = model::stop, enabled = state.can("native_conversation_stop") && !snapshot.value.field("stopping").flag()) { Text("停止") }
+                        Button(onClick = model::send, shape = RoundedCornerShape(14.dp), enabled = state.can("native_conversation_send") && snapshot?.running == false && state.drafts[state.page.route].orEmpty().isNotBlank()) {
+                            Text("发送"); Spacer(Modifier.width(4.dp)); WispIcon(R.drawable.wisp_arrow_up, null, Modifier.size(18.dp))
                         }
                     }
                 }
             }
-            if (snapshot == null && !state.loading) item { Text("连接后刷新，加载当前对话。") }
+            Text("写文件和执行命令前，会请你批准", Modifier.align(Alignment.CenterHorizontally),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
-        HorizontalDivider()
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(state.drafts[state.page.route].orEmpty(), model::setDraft, Modifier.fillMaxWidth(),
-                label = { Text("消息") }, maxLines = 5)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                if (snapshot?.running == true) TextButton(onClick = model::stop, enabled = state.can("native_conversation_stop") && !snapshot.value.field("stopping").flag()) { Text("停止") }
-                Button(onClick = model::send, enabled = state.can("native_conversation_send") && snapshot?.running == false && state.drafts[state.page.route].orEmpty().isNotBlank()) {
-                    WispIcon(R.drawable.wisp_arrow_up, null); Spacer(Modifier.width(6.dp)); Text("发送")
-                }
+    }
+}
+
+@Composable
+private fun RunCard(run: JsonElement) {
+    var expanded by rememberSaveable(run.field("id").text()) { mutableStateOf(false) }
+    Surface(onClick = { expanded = !expanded }, color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(run.field("title").text().ifBlank { "运行记录" }, Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                StatusBadge(run.field("status").text())
+                WispChevron(expanded)
+            }
+            if (expanded) SelectionContainer {
+                Text(listOf("command", "stdout_tail", "stderr_tail", "last_poll_error").map { run.field(it).text() }
+                    .filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { "暂无输出" }, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -244,16 +344,23 @@ private fun Files(state: WorkspaceState, model: WorkspaceModel) {
     if (state.page.directory) LazyColumn {
         items(state.detail.field("entries").rows()) { file ->
             val name = file.field("name").text()
-            NavigationRow(name, if (file.field("is_dir").flag()) "文件夹" else "文本预览") {
+            NavigationRow(name, if (file.field("is_dir").flag()) "文件夹" else if (Markdown.isImage(name)) "图片预览" else "文本预览") {
                 val path = if (state.page.path == ".") name else "${state.page.path}/$name"
                 model.open(state.page.copy(title = name, path = path, directory = file.field("is_dir").flag()))
             }
         }
         if (state.detail != JsonNull && state.detail.field("entries").rows().isEmpty()) item { Text("空文件夹", Modifier.padding(16.dp)) }
+    } else if (Markdown.isImage(state.page.path)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+            MarkdownImage(state, model, obj("path" to string(state.page.path)), state.page.title)
+        }
     } else Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
         if (state.detail.field("content").field("truncated").flag()) Text("文件较大，只显示开头部分。")
-        SelectionContainer { Text(state.detail.field("content").field("text").text().ifBlank {
-            if (state.loading) "读取中…" else "暂无文本预览；图片和二进制文件请在主机打开。"
+        val text = state.detail.field("content").field("text").text()
+        if (text.isNotBlank() && Markdown.isDocument(state.page.path)) {
+            MarkdownContent(text, state, model, directory = state.page.path.substringBeforeLast('/', "."))
+        } else SelectionContainer { Text(text.ifBlank {
+            if (state.loading) "读取中…" else "暂无文本预览；二进制文件请在主机打开。"
         }) }
     }
 }
@@ -282,41 +389,6 @@ private fun Journey(state: WorkspaceState, model: WorkspaceModel) {
             }
             if (state.detail != JsonNull && state.detail.field("entries").rows().isEmpty() && state.error == null) item { Text("本月暂无研究记录。") }
         }
-    }
-}
-
-@Composable
-private fun LocalResearch(state: WorkspaceState, model: WorkspaceModel) {
-    val kind = if (state.page.kind == PageKind.CHECKLIST) "checklist" else "notebook"
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Text(if (kind == "checklist") "本机清单暂不与主机同步。" else "记录保存在本机；拍照、文字识别和发送到主机将在后续版本接入。")
-            state.localError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(onClick = { model.open(Page(PageKind.EDITOR, "新增记录", entryKind = kind)) }, enabled = state.localError == null && !state.localBusy) { Text("新增记录") }
-        }
-        items(state.entries.filter { it.kind == kind }, key = { it.id }) { entry ->
-            OutlinedCard {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Top) {
-                    if (kind == "checklist") Checkbox(entry.done, { model.toggleEntry(entry) }, enabled = !state.localBusy && state.localError == null)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(entry.title, style = MaterialTheme.typography.titleMedium)
-                        SelectionContainer { Text(entry.text) }
-                    }
-                }
-            }
-        }
-        if (state.entries.none { it.kind == kind } && !state.localBusy) item { Text("暂无本机记录。") }
-    }
-}
-
-@Composable
-private fun EntryEditor(state: WorkspaceState, model: WorkspaceModel) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var text by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("标题（可留空）") })
-        OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("记录内容") }, minLines = 6)
-        Button(onClick = { model.saveEntry(title, text) }, enabled = text.isNotBlank() && !state.localBusy && state.localError == null) { Text("保存到本机") }
     }
 }
 

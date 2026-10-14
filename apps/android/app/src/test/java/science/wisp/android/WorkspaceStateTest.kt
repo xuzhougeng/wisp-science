@@ -30,4 +30,17 @@ class WorkspaceStateTest {
         assertFalse(state.copy(status = state.status.copy(session = "reconnected")).can("send"))
         assertFalse(state.copy(snapshotSession = "").can("send"))
     }
+    @Test fun tabsKeepIndependentNavigationAndConversationDrafts() {
+        val project = Page(PageKind.SESSIONS, "研究", "project")
+        val home = WorkspaceState(stack = listOf(WorkspaceTab.CONVERSATIONS.root, project), drafts = mapOf(route to "未发送"))
+        val calendar = home.switchingTab(WorkspaceTab.CALENDAR)
+        assertEquals(PageKind.CALENDAR, calendar.page.kind)
+        assertTrue(calendar.hasBack)
+        assertTrue(calendar.showsTabs)
+        val restored = calendar.switchingTab(WorkspaceTab.CONVERSATIONS)
+        assertEquals(home.stack, restored.stack)
+        assertEquals("未发送", restored.drafts[route])
+        assertFalse(restored.copy(stack = restored.stack + Page(PageKind.CONVERSATION, "对话", "project", "session")).showsTabs)
+        assertFalse(WorkspaceState().hasBack)
+    }
 }

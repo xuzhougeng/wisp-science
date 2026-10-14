@@ -9,7 +9,9 @@ from xml.sax.saxutils import quoteattr
 ROOT = Path(__file__).resolve().parents[3]
 DEST = ROOT / "apps/android/app/src/main/res/drawable"
 ICONS = ("gear", "folder", "chevron-left", "chevron-right", "arrow-up",
-         "notebook", "list", "research-trail", "square-pen")
+         "notebook", "list", "research-trail", "square-pen", "chat", "calendar",
+         "inbox", "camera", "edit", "book", "circle-help", "plus", "circle",
+         "circle-check", "chevron-down", "image")
 
 
 def path_data(element):

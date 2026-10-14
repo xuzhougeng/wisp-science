@@ -3,6 +3,7 @@ package science.wisp.android
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.util.UUID
@@ -11,26 +12,42 @@ import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 import science.wisp.remote.*
 
-enum class PageKind { PROJECTS, CONNECTION, SESSIONS, CONVERSATION, FILES, JOURNEY, CHECKLIST, NOTEBOOK, EDITOR }
+enum class PageKind { PROJECTS, CONNECTION, SESSIONS, CONVERSATION, FILES, JOURNEY, CHECKLIST, NOTEBOOK, EDITOR, CALENDAR, INBOX, INFO }
+enum class WorkspaceTab(val label: String, val root: Page) {
+    CONVERSATIONS("对话", Page(PageKind.PROJECTS, "Wisp")),
+    CALENDAR("日历", Page(PageKind.CALENDAR, "科研日历")),
+    CHECKLIST("清单", Page(PageKind.CHECKLIST, "科研清单")),
+    NOTEBOOK("记录本", Page(PageKind.NOTEBOOK, "实验记录本")),
+}
 data class Page(
     val kind: PageKind, val title: String, val project: String = "", val session: String = "",
-    val path: String = ".", val directory: Boolean = true, val entryKind: String = "notebook",
+    val path: String = ".", val directory: Boolean = true, val entryKind: String = "notebook", val entryId: String = "",
 ) {
     val route get() = ConversationRoute(project, session)
 }
 data class WorkspaceState(
-    val stack: List<Page> = listOf(Page(PageKind.PROJECTS, "Wisp Science")),
+    val stack: List<Page> = listOf(WorkspaceTab.CONVERSATIONS.root),
+    val tab: WorkspaceTab = WorkspaceTab.CONVERSATIONS,
+    val savedStacks: Map<WorkspaceTab, List<Page>> = emptyMap(),
     val status: ConnectionStatus = ConnectionStatus(), val demo: Boolean = false,
     val projects: List<JsonElement> = emptyList(), val sessions: List<JsonElement> = emptyList(),
     val snapshot: RemoteSnapshot? = null, val snapshotSession: String = "",
     val detail: JsonElement = JsonNull, val entries: List<LocalEntry> = emptyList(),
     val drafts: Map<ConversationRoute, String> = emptyMap(),
     val uncertain: Set<ConversationRoute> = emptySet(),
-    val month: YearMonth = YearMonth.now(),
+    val month: YearMonth = YearMonth.now(), val selectedDay: LocalDate = LocalDate.now(),
+    val calendarProject: String? = null,
+    val calendarMonth: CalendarHistory? = null, val calendarDay: CalendarHistory? = null,
     val loading: Boolean = false, val busy: Boolean = false, val localBusy: Boolean = true,
     val error: String? = null, val localError: String? = null,
 ) {
     val page get() = stack.last()
+    val hasBack get() = stack.size > 1 || tab != WorkspaceTab.CONVERSATIONS
+    val showsTabs get() = page.kind in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CALENDAR, PageKind.CHECKLIST, PageKind.NOTEBOOK)
+    fun switchingTab(next: WorkspaceTab): WorkspaceState = if (next == tab) this else copy(
+        tab = next, stack = savedStacks[next] ?: listOf(next.root), savedStacks = savedStacks + (tab to stack),
+        detail = JsonNull, error = null, loading = false,
+    )
     fun can(command: String): Boolean = !busy && page.route !in uncertain &&
         canAct(status, snapshot?.takeIf { it.route == page.route }, snapshotSession, command)
 }
@@ -75,7 +92,9 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         watcher = viewModelScope.launch {
             next.status.collect { status ->
                 if (service !== next) return@collect
-                mutable.update { it.copy(status = status) }
+                mutable.update { it.copy(status = status,
+                    calendarMonth = if (it.status.session != status.session || status.phase != ConnectionPhase.ONLINE) null else it.calendarMonth,
+                    calendarDay = if (it.status.session != status.session || status.phase != ConnectionPhase.ONLINE) null else it.calendarDay) }
                 if (status.phase == ConnectionPhase.ONLINE) {
                     if (next === remote) configuration?.let { config ->
                         val identity = config.relay.toString() + config.crypto.sid
@@ -95,7 +114,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         foreground = true
         if (state.value.demo) refresh() else configuration?.let(remote::connect)
         polling = viewModelScope.launch {
-            while (isActive) { delay(3_000); if (!state.value.loading) refresh() }
+            while (isActive) { delay(3_000); if (!state.value.loading && state.value.page.kind in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CONVERSATION, PageKind.INBOX)) refresh() }
         }
     }
     fun pause() {
@@ -126,7 +145,8 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     fun enterDemo() {
         try {
             val assets = getApplication<Application>().assets
-            val demo = DemoService(assets.open("manifest.json").bufferedReader().use { it.readText() }) {
+            val demo = DemoService(assets.open("manifest.json").bufferedReader().use { it.readText() },
+                readImageAsset = { path -> assets.open(path).use { it.readBytes() } }) {
                 path -> assets.open(path).bufferedReader().use { it.readText() }
             }
             reset(true)
@@ -158,8 +178,18 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
             sessions = if (page.kind == PageKind.SESSIONS) emptyList() else it.sessions) }
         refresh()
     }
+    fun selectTab(tab: WorkspaceTab) {
+        if (tab == state.value.tab) return
+        revision++
+        mutable.update { it.switchingTab(tab) }
+        refresh()
+    }
     fun back(): Boolean {
-        if (state.value.stack.size == 1) return false
+        if (state.value.stack.size == 1) {
+            if (state.value.tab == WorkspaceTab.CONVERSATIONS) return false
+            selectTab(WorkspaceTab.CONVERSATIONS)
+            return true
+        }
         revision++
         mutable.update { it.copy(stack = it.stack.dropLast(1), detail = JsonNull, error = null) }
         refresh()
@@ -169,7 +199,19 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     fun acknowledge() { mutable.update { it.copy(uncertain = it.uncertain - it.page.route, error = null) } }
     fun changeMonth(delta: Long) {
         revision++
-        mutable.update { it.copy(month = it.month.plusMonths(delta), detail = JsonNull) }
+        mutable.update { it.copy(month = it.month.plusMonths(delta), selectedDay = it.month.plusMonths(delta).atDay(1),
+            detail = JsonNull, calendarMonth = null, calendarDay = null, error = null) }
+        refresh()
+    }
+
+    fun selectDay(day: LocalDate) {
+        revision++
+        mutable.update { it.copy(selectedDay = day, month = YearMonth.from(day), calendarMonth = if (YearMonth.from(day) == it.month) it.calendarMonth else null, calendarDay = null, error = null) }
+        refresh()
+    }
+    fun filterCalendar(project: String?) {
+        revision++
+        mutable.update { it.copy(calendarProject = project, calendarMonth = null, calendarDay = null, error = null) }
         refresh()
     }
 
@@ -183,14 +225,48 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         if (source.status.value.phase != ConnectionPhase.ONLINE) {
             mutable.update { it.copy(loading = false) }; return
         }
-        if (page.kind !in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CONVERSATION, PageKind.FILES, PageKind.JOURNEY)) {
+        if (page.kind !in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CONVERSATION, PageKind.FILES, PageKind.JOURNEY, PageKind.CALENDAR, PageKind.INBOX)) {
+            mutable.update { it.copy(loading = false) }; return
+        }
+        if (page.kind == PageKind.FILES && !page.directory && Markdown.isImage(page.path)) {
             mutable.update { it.copy(loading = false) }; return
         }
         mutable.update { it.copy(loading = true) }
         reader = viewModelScope.launch {
             try {
+                if (page.kind == PageKind.CALENDAR) {
+                    if ("native_research_calendar" !in source.status.value.commands) throw RemoteFailure(RemoteFailure.Reason.UNSUPPORTED)
+                    val projects = source.call("list_projects")
+                    if (projects !is JsonArray) throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
+                    val available = projects.map { it.field("id").text() }
+                    // A selected project hidden by the host must never be silently replaced with all projects.
+                    val ids = start.calendarProject?.let { listOf(it) } ?: available
+                    val allowed = ids.filter { it in available }
+                    val zone = ZoneId.systemDefault()
+                    suspend fun load(range: JsonObject): CalendarHistory {
+                        val history = CalendarHistory.load(allowed, range) { source.call("native_research_calendar", args = it) }
+                        return history.copy(unavailable = history.unavailable + (ids - allowed.toSet()))
+                    }
+                    val month = load(ResearchHistory.monthArgs(start.month, zone))
+                    // Fetch the selected day separately: a truncated month is not a complete day.
+                    val day = load(ResearchHistory.dayArgs(start.selectedDay, zone))
+                    ensureActive()
+                    if (stamp == revision && source === service && session == source.status.value.session) {
+                        mutable.update { it.copy(projects = projects.toList(), calendarMonth = month, calendarDay = day, error = null) }
+                    }
+                    return@launch
+                }
                 val result = when (page.kind) {
                     PageKind.PROJECTS -> source.call("list_projects")
+                    PageKind.INBOX -> {
+                        val projects = source.call("list_projects")
+                        if (projects !is JsonArray) throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
+                        JsonArray(projects.flatMap { project ->
+                            val rows = source.call("native_conversation_inbox", project.field("id").text())
+                            if (rows !is JsonArray) throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
+                            rows.toList()
+                        })
+                    }
                     PageKind.SESSIONS -> source.call("remote_sessions", page.project)
                     PageKind.CONVERSATION -> source.call("native_conversation_snapshot", page.project, page.route.args)
                     PageKind.FILES -> source.call(if (page.directory) "native_conversation_panel_file_directory" else "native_conversation_panel_file_read",
@@ -219,10 +295,24 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 if (stamp == revision && source === service) mutable.update {
-                    it.copy(error = safeError(error), snapshotSession = if (page.kind == PageKind.CONVERSATION) "" else it.snapshotSession)
+                    it.copy(error = safeError(error), calendarMonth = if (page.kind == PageKind.CALENDAR) null else it.calendarMonth,
+                        calendarDay = if (page.kind == PageKind.CALENDAR) null else it.calendarDay, snapshotSession = if (page.kind == PageKind.CONVERSATION) "" else it.snapshotSession)
                 }
             } finally { if (stamp == revision && source === service) mutable.update { it.copy(loading = false) } }
         }
+    }
+
+    suspend fun image(route: ConversationRoute, args: JsonObject): ByteArray {
+        val source = service
+        val session = source.status.value.session
+        if (source.status.value.phase != ConnectionPhase.ONLINE) throw RemoteFailure(RemoteFailure.Reason.OFFLINE)
+        if ("native_conversation_image" !in source.status.value.commands) throw RemoteFailure(RemoteFailure.Reason.UNSUPPORTED)
+        val value = source.call("native_conversation_image", route.project, JsonObject(route.args + args))
+        currentCoroutineContext().ensureActive()
+        if (source !== service || source.status.value.session != session || source.status.value.phase != ConnectionPhase.ONLINE || state.value.page.route != route) {
+            throw CancellationException("Image read no longer belongs to this page")
+        }
+        return ImagePreview.bytes(value)
     }
 
     fun createConversation() {
@@ -276,15 +366,23 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveEntry(title: String, text: String) {
+    fun saveEntry(title: String, text: String, dueDate: LocalDate? = null) {
         val page = state.value.page
         if (page.kind != PageKind.EDITOR || text.isBlank()) return
-        val entry = LocalEntry(UUID.randomUUID().toString(), page.entryKind,
-            title.trim().ifEmpty { text.lineSequence().first().take(40) }, text.trim())
-        storeEntries(listOf(entry) + state.value.entries, leaveEditor = true)
+        val old = state.value.entries.firstOrNull { it.id == page.entryId }
+        val entry = LocalEntry(old?.id ?: UUID.randomUUID().toString(), page.entryKind,
+            title.trim().ifEmpty { text.lineSequence().first().take(80) }, text.trim(), old?.done ?: false, dueDate)
+        val entries = if (old == null) listOf(entry) + state.value.entries else state.value.entries.map { if (it.id == old.id) entry else it }
+        storeEntries(entries, leaveEditor = true)
     }
+    fun addChecklist(text: String, onSaved: () -> Unit) {
+        if (text.isBlank()) return
+        val entry = LocalEntry(UUID.randomUUID().toString(), "checklist", text.trim(), text.trim(), dueDate = LocalDate.now())
+        storeEntries(state.value.entries + entry, onSaved = onSaved)
+    }
+    fun editEntry(entry: LocalEntry) = open(Page(PageKind.EDITOR, if (entry.kind == "checklist") "科研事项" else "实验记录", entryKind = entry.kind, entryId = entry.id))
     fun toggleEntry(entry: LocalEntry) = storeEntries(state.value.entries.map { if (it.id == entry.id) it.copy(done = !it.done) else it })
-    private fun storeEntries(entries: List<LocalEntry>, leaveEditor: Boolean = false) {
+    private fun storeEntries(entries: List<LocalEntry>, leaveEditor: Boolean = false, onSaved: () -> Unit = {}) {
         if (state.value.localError != null || state.value.localBusy) return
         val page = state.value.page
         mutable.update { it.copy(localBusy = true) }
@@ -292,6 +390,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
             try {
                 withContext(Dispatchers.IO) { localStore.save(entries) }
                 mutable.update { it.copy(entries = entries) }
+                onSaved()
                 if (leaveEditor && state.value.page == page) back()
             } catch (_: Exception) { mutable.update { it.copy(error = "本机记录保存失败，输入内容已保留，请重试。") } }
             finally { mutable.update { it.copy(localBusy = false) } }

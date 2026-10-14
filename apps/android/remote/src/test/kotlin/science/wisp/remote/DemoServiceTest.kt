@@ -6,7 +6,9 @@ import kotlinx.serialization.json.*
 
 class DemoServiceTest {
     private val assets = mutableListOf<String>()
-    private fun demo() = DemoService(fixture("manifest.json").toString()) { path ->
+    private fun demo() = DemoService(fixture("manifest.json").toString(), readImageAsset = { path ->
+        requireNotNull(javaClass.classLoader!!.getResourceAsStream(path)).use { it.readBytes() }
+    }) { path ->
         assets += path
         requireNotNull(javaClass.classLoader!!.getResourceAsStream(path)).bufferedReader().use { it.readText() }
     }
@@ -46,5 +48,27 @@ class DemoServiceTest {
         val question = assertNotNull(Question.parse(questionItem))
         assertEquals(3, question.options.size)
         assertFalse(question.text.contains("End your turn"))
+    }
+    @Test fun demoCalendarAndInboxUseTheSameProjectsAndApprovalState() = runTest {
+        val demo = demo()
+        val project = demo.call("list_projects").rows().single()
+        assertEquals(3, project.field("session_count").jsonPrimitive.int)
+        val inbox = demo.call("native_conversation_inbox", route.project).rows()
+        assertTrue(inbox.any { it.field("id").text() == "demo-workflow" })
+        val range = ResearchHistory.dayArgs(java.time.LocalDate.now(), java.time.ZoneId.systemDefault())
+        val history = CalendarHistory.load(listOf(route.project), range) { demo.call("native_research_calendar", args = it) }
+        assertEquals("demo-qc", history.entries.single().field("frame_id").text())
+        val emptyDay = ResearchHistory.dayArgs(java.time.LocalDate.now().plusDays(10), java.time.ZoneId.systemDefault())
+        assertTrue(demo.call("native_research_journey", route.project, emptyDay).field("entries").rows().isEmpty())
+        demo.call("native_conversation_approve", route.project, obj("session_id" to string("demo-workflow"), "approval_id" to string("demo-approval"), "approved" to JsonPrimitive(false), "scope" to string("once")))
+        assertFalse(demo.call("native_conversation_inbox", route.project).rows().any { it.field("id").text() == "demo-workflow" })
+    }
+    @Test fun bundledImageUsesTheBoundedImageCommandAndRejectsRemotePaths() = runTest {
+        val demo = demo()
+        val value = demo.call("native_conversation_image", route.project, JsonObject(route.args + ("path" to string("results/qc_summary.png"))))
+        val bytes = ImagePreview.bytes(value)
+        assertContentEquals(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47), bytes.take(4).toByteArray())
+        assertFailsWith<RemoteFailure> { demo.call("native_conversation_image", route.project, JsonObject(route.args + ("path" to string("https://example.org/a.png")))) }
+        assertFailsWith<RemoteFailure> { demo.call("native_conversation_image", route.project, JsonObject(route.args + mapOf("path" to string("results/qc_summary.png"), "resource_id" to string("unavailable")))) }
     }
 }
