@@ -1,0 +1,53 @@
+name: CI changes
+
+on:
+  workflow_call:
+    outputs:
+      rust:
+        value: ${{ jobs.detect.outputs.rust }}
+      headless:
+        value: ${{ jobs.detect.outputs.headless }}
+      desktop:
+        value: ${{ jobs.detect.outputs.desktop }}
+      ui:
+        value: ${{ jobs.detect.outputs.ui }}
+      macos:
+        value: ${{ jobs.detect.outputs.macos }}
+      windows:
+        value: ${{ jobs.detect.outputs.windows }}
+      ios:
+        value: ${{ jobs.detect.outputs.ios }}
+      release_notes:
+        value: ${{ jobs.detect.outputs.release_notes }}
+      shared_assets:
+        value: ${{ jobs.detect.outputs.shared_assets }}
+      frontend_assets:
+        value: ${{ jobs.detect.outputs.frontend_assets }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      headless: ${{ steps.scope.outputs.headless }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      ui: ${{ steps.scope.outputs.ui }}
+      macos: ${{ steps.scope.outputs.macos }}
+      windows: ${{ steps.scope.outputs.windows }}
+      ios: ${{ steps.scope.outputs.ios }}
+      release_notes: ${{ steps.scope.outputs.release_notes }}
+      shared_assets: ${{ steps.scope.outputs.shared_assets }}
+      frontend_assets: ${{ steps.scope.outputs.frontend_assets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CI routing regressions
+        run: python3 -m unittest discover -s scripts -p test_ci_scope.py
+      - name: Detect affected job groups
+        id: scope
+        run: python3 scripts/ci_scope.py

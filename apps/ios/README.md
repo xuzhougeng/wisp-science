@@ -207,6 +207,11 @@ Application Support 的 `WispResearch-v1` 目录，采用原子写入和 iOS 完
 
 ## 验证（先获用户许可）
 
+GitHub 的 `Native Apps / ios` 检查运行远程协议包测试、编译 iOS App 及单元／UI 测试目标，
+并在 iPhone 模拟器运行 App 单元测试。UI 交互用例只编译，真机相机、OCR 和签名仍需另行验证。
+仅修改 `apps/ios/` 时跳过无关的 Rust、macOS 和 Windows 检查；涉及共享后端／协议时保留关联检查。
+具体规则见 [CI routing](../../.github/CI.md)。原有 `swiftui` 检查对应 macOS App。
+
 仓库 `AGENTS.md` 要求执行本地测试前获得明确许可。以下命令仅为参考，不表示已执行。
 
 ```bash

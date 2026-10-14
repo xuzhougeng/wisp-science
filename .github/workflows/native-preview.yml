@@ -6,8 +6,80 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
+  shared-assets:
+    needs: changes
+    if: needs.changes.outputs.shared_assets == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/sync_native_design.py --check
+      - run: python3 scripts/sync_native_settings_contract.py --check
+      - run: python3 scripts/test_sync_native_settings_contract.py
+
+  ios:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test iOS remote protocol package
+        run: swift test --package-path apps/ios --scratch-path target/ios-package
+      - name: Select an installed iPhone simulator
+        id: simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/ios-simulators.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads((Path(os.environ['RUNNER_TEMP']) / 'ios-simulators.json').read_text())
+          devices = [device for runtime, items in data['devices'].items()
+                     if '.iOS-' in runtime for device in items
+                     if device['name'].startswith('iPhone') and device['isAvailable']]
+          if not devices:
+              raise SystemExit('No available iPhone simulator in the runner Xcode installation')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('id=' + devices[0]['udid'] + '\n')
+          PY
+      - name: Compile iOS app, unit tests and UI tests without signing
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcodebuild -project apps/ios/WispScience.xcodeproj -scheme WispScience \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath target/ios-app CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Run iOS app unit tests
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcodebuild -project apps/ios/WispScience.xcodeproj -scheme WispScience \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath target/ios-app -resultBundlePath target/ios-unit-tests.xcresult \
+            -only-testing:WispScienceTests CODE_SIGNING_ALLOWED=NO test-without-building
+      - name: Upload iOS test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-unit-test-results
+          path: target/ios-unit-tests.xcresult
+          if-no-files-found: ignore
+
   swiftui:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +91,6 @@ jobs:
         with:
           node-version: '22'
       - run: command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
-      - run: python3 scripts/sync_native_design.py --check
-      - run: python3 scripts/sync_native_settings_contract.py --check
-      - run: python3 scripts/test_sync_native_settings_contract.py
       - run: python3 -m unittest discover -s scripts -p 'test_*native_macos.py'
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: WISP_CATALOG_OFFLINE=1 cargo test --locked -p wisp-tauri --lib native_host
@@ -36,6 +105,8 @@ jobs:
           if-no-files-found: error
 
   winui:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +115,6 @@ jobs:
           dotnet-version: '8.0.x'
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
-      - run: python scripts/test_sync_native_settings_contract.py
       - run: powershell -NoProfile -File scripts/test_build_native_windows.ps1
       - uses: actions/setup-python@v5
         with:

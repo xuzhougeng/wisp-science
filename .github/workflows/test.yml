@@ -6,8 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+
   release-notes-helper:
+    needs: changes
+    if: needs.changes.outputs.release_notes == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +27,8 @@ jobs:
         run: bash scripts/github_release_notes.sh --self-test
 
   headless-agent-eval:
+    needs: changes
+    if: needs.changes.outputs.headless == 'true'
     name: Headless agent eval (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -57,9 +71,6 @@ jobs:
       - name: Test repository build launcher
         run: cargo test --locked -p wisp-dev
 
-      - name: Test incremental frontend asset staging
-        run: node --test ui/build-fast.test.mjs
-
       - name: Run project storage startup and migration regressions
         run: cargo test -p wisp-store -- project_storage::tests upgrade_backup::tests
 
@@ -92,6 +103,8 @@ jobs:
           if-no-files-found: error
 
   windows-native-input:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     name: Windows native input reentrancy
     runs-on: windows-latest
     timeout-minutes: 35
@@ -123,6 +136,8 @@ jobs:
           }
 
   macos-native-redraw:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     name: macOS native redraw reentrancy
     runs-on: macos-latest
     timeout-minutes: 35
@@ -149,6 +164,8 @@ jobs:
           done
 
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -161,13 +178,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          targets: wasm32-unknown-unknown
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: |
-            . -> target
-            ui -> target
           cache-on-failure: true
           shared-key: rust-${{ matrix.toolchain }}
 
@@ -223,11 +236,46 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  ui-check:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, 1.90.0]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: wasm32-unknown-unknown
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ui -> target
+          cache-on-failure: true
+          shared-key: ui-${{ matrix.toolchain }}
       - name: cargo check (wasm UI crate)
         run: cargo check --target wasm32-unknown-unknown
         working-directory: ui
 
+  frontend-assets:
+    needs: changes
+    if: needs.changes.outputs.frontend_assets == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test incremental frontend asset staging
+        run: node --test ui/build-fast.test.mjs
+
   ui-e2e:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
