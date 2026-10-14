@@ -73,6 +73,7 @@ final class OfflineResearchTests: XCTestCase {
         try replica.merge(reply())
         XCTAssertFalse(replica.visible(replica.entries[id]!))
         try replica.merge(reply(reset: true, epoch: "new"))
+        XCTAssertFalse(replica.visible(replica.entries[id]!), "A reset must not reveal cached private project data")
         XCTAssertTrue(replica.entries[id]!.conflict)
         XCTAssertEqual(replica.entries[id]?.fields.title, "offline")
         XCTAssertEqual(replica.pendingCount, 0)

@@ -62,6 +62,9 @@ public struct ChecklistEntry: Codable, Identifiable, Sendable {
     public var baseRevision: Int64
     public var conflict: Bool
     public var unavailable: Bool
+    /// Keep the last project association even if a database reset invalidates
+    /// the server revision. Hidden cached items must not become unassigned.
+    public var projectID: String? = nil
 }
 
 public struct ChecklistReplica: Codable, Sendable {
@@ -73,7 +76,7 @@ public struct ChecklistReplica: Codable, Sendable {
     public init() {}
     public var pendingCount: Int { entries.values.filter { $0.mutationID != nil && !$0.conflict && !$0.unavailable }.count }
     public func visible(_ entry: ChecklistEntry) -> Bool {
-        !entry.unavailable && (entry.server?.project_id.map { visibleProjects.contains($0) } ?? true)
+        !entry.unavailable && ((entry.server?.project_id ?? entry.projectID).map { visibleProjects.contains($0) } ?? true)
     }
 
     public mutating func edit(id: String? = nil, fields: ChecklistFields) throws {
@@ -119,6 +122,8 @@ public struct ChecklistReplica: Codable, Sendable {
         if reply.reset, epoch != nil {
             // A restored/replaced host must not silently reinterpret old revisions.
             for id in Array(entries.keys) {
+                let project = entries[id]?.server?.project_id ?? entries[id]?.projectID
+                entries[id]?.projectID = project
                 entries[id]?.server = nil; entries[id]?.baseRevision = 0
                 entries[id]?.conflict = true; entries[id]?.unavailable = false
             }
@@ -129,6 +134,7 @@ public struct ChecklistReplica: Codable, Sendable {
             guard var entry = entries[outcome.id] else { continue }
             if outcome.status == "unavailable" { entry.unavailable = true; entries[entry.id] = entry; continue }
             entry.server = outcome.item
+            if let server = outcome.item { entry.projectID = server.project_id }
             if entry.mutationID == outcome.mutation_id {
                 if outcome.status == "applied", let server = outcome.item {
                     entry.fields = server.fields; entry.baseRevision = server.revision; entry.mutationID = nil; entry.conflict = false
@@ -142,7 +148,7 @@ public struct ChecklistReplica: Codable, Sendable {
         for server in reply.items {
             if var entry = entries[server.id] {
                 guard server.revision >= (entry.server?.revision ?? 0) else { continue }
-                entry.server = server; entry.unavailable = false
+                entry.server = server; entry.projectID = server.project_id; entry.unavailable = false
                 if entry.mutationID == nil && !entry.conflict {
                     entry.fields = server.fields; entry.baseRevision = server.revision
                 } else if !entry.conflict && server.revision != entry.baseRevision {
