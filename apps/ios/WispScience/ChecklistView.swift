@@ -12,7 +12,7 @@ struct ChecklistView: View {
     var body: some View {
         NavigationStack(path: $workspace.checklistPath) {
             List {
-                Section {
+                Section("保存与同步") {
                     Text("离线记录，联网同步到科研助理的研究计划。").foregroundStyle(.secondary)
                     if model.scopes.count > 1 {
                         ScrollView(.horizontal) {
@@ -42,7 +42,7 @@ struct ChecklistView: View {
                     }.disabled(!model.loaded || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("checklist-add")
                 }
-                Section {
+                Section("我的科研事项") {
                     Toggle("显示已完成", isOn: $showDone)
                     if model.entries.isEmpty { Text("先记下今天要推进的一件事。").foregroundStyle(.secondary) }
                     ForEach(model.entries.filter { showDone || $0.fields.status != "done" || $0.conflict }) { entry in
@@ -66,14 +66,20 @@ struct ChecklistView: View {
                     }
                 }
             }
+            .listStyle(.insetGrouped)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("科研清单").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("完成") { workspace.sheet = nil } }
+            .toolbar {
+                if workspace.checklistPath.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
+                }
+            }
             .navigationDestination(for: String.self) { id in
                 if let entry = model.replica.entries[id], model.replica.visible(entry) {
                     ChecklistEditor(model: model, workspace: workspace, connection: connection, entry: entry)
                 } else { Text("这项记录已移除或当前不可见。") }
             }
-        }.presentationDetents([.large])
+        }.accessibilityIdentifier("checklist-page")
     }
 }
 

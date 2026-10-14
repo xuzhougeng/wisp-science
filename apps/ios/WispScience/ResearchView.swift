@@ -30,10 +30,13 @@ struct ResearchView: View {
                     ResearchEntryView(workspace: workspace, connection: connection, project: project, entry: entry)
                 }
             }
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { workspace.sheet = nil } } }
+            .toolbar {
+                if workspace.researchPath.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
+                }
+            }
         }
-        .presentationDetents([.large])
-        .accessibilityIdentifier("research-sheet")
+        .accessibilityIdentifier("research-page")
         .onChange(of: connection.readSessionID) { _, _ in workspace.researchPath = [] }
     }
 }

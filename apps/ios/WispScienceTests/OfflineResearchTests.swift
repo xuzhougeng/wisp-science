@@ -205,7 +205,9 @@ import WispRemote
     func testOfflineSurfacesEscapeOnlyDismissesTopmostLayer() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
-        workspace.sheet = .notebook; workspace.notebookPath = [.record("r"), .photo("r", "p")]
+        workspace.page = .notebook; workspace.notebookPath = [.record("r"), .photo("r", "p")]
+        XCTAssertNil(workspace.sheet)
+        XCTAssertTrue(workspace.hasDismissibleSurface)
         workspace.notebookLibraryPresented = true
         workspace.dismissTopSurface()
         XCTAssertFalse(workspace.notebookLibraryPresented); XCTAssertEqual(workspace.notebookPath.count, 2)
@@ -213,11 +215,75 @@ import WispRemote
         workspace.dismissTopSurface()
         XCTAssertNil(workspace.notebookCameraRecord); XCTAssertEqual(workspace.notebookPath.count, 2)
         workspace.dismissTopSurface(); XCTAssertEqual(workspace.notebookPath.count, 1)
-        workspace.dismissTopSurface(); XCTAssertTrue(workspace.notebookPath.isEmpty); XCTAssertNotNil(workspace.sheet)
-        workspace.dismissTopSurface(); XCTAssertNil(workspace.sheet)
-        workspace.sheet = .checklist; workspace.checklistPath = ["item"]
-        workspace.dismissTopSurface(); XCTAssertTrue(workspace.checklistPath.isEmpty); XCTAssertNotNil(workspace.sheet)
-        workspace.dismissTopSurface(); XCTAssertNil(workspace.sheet)
+        workspace.dismissTopSurface(); XCTAssertTrue(workspace.notebookPath.isEmpty); XCTAssertEqual(workspace.page, .notebook)
+        workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
+        workspace.page = .checklist; workspace.checklistPath = ["item"]
+        workspace.dismissTopSurface(); XCTAssertTrue(workspace.checklistPath.isEmpty); XCTAssertEqual(workspace.page, .checklist)
+        workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
+        XCTAssertFalse(workspace.hasDismissibleSurface)
+    }
+
+    func testModalAboveResearchPagePreservesNavigationAndSelection() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.selectedProject = "project"; workspace.selectedSession = "session"
+        workspace.page = .checklist; workspace.checklistPath = ["item"]
+        workspace.sheet = .connection
+        workspace.dismissTopSurface()
+        XCTAssertNil(workspace.sheet)
+        XCTAssertEqual(workspace.page, .checklist)
+        XCTAssertEqual(workspace.checklistPath, ["item"], "Closing a modal must not pop the page below it")
+        workspace.dismissTopSurface()
+        XCTAssertEqual(workspace.page, .checklist)
+        workspace.dismissTopSurface()
+        XCTAssertNil(workspace.page)
+        XCTAssertEqual(workspace.route, ConversationRoute(project: "project", session: "session"))
+    }
+
+    func testLeavingResearchPageClearsDetailAndPhotoPresentationState() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.page = .notebook
+        workspace.notebookPath = [.record("r"), .send("r")]
+        workspace.notebookCameraRecord = "r"
+        workspace.notebookLibraryPresented = true
+        workspace.page = nil
+        XCTAssertTrue(workspace.notebookPath.isEmpty)
+        XCTAssertNil(workspace.notebookCameraRecord)
+        XCTAssertFalse(workspace.notebookLibraryPresented)
+        XCTAssertFalse(workspace.hasDismissibleSurface)
+        workspace.page = .notebook
+        XCTAssertTrue(workspace.notebookPath.isEmpty, "Reopening starts at the page root")
+        workspace.page = .checklist
+        workspace.checklistPath = ["item"]
+        workspace.page = .research(nil)
+        XCTAssertTrue(workspace.checklistPath.isEmpty)
+        XCTAssertTrue(workspace.researchPath.isEmpty)
+    }
+
+    func testResearchPagesDoNotMarkTheCoveredConversationAsRead() async throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let connection = connection()
+        let route = ConversationRoute(project: "project", session: "session")
+        var seenCalls = 0
+        connection.useLocalService(name: "host", commands: ["native_conversation_snapshot", "native_conversation_seen"]) { command, project, args in
+            XCTAssertEqual(project, route.project)
+            XCTAssertEqual(args["session_id"], .string(route.session))
+            if command == "native_conversation_seen" { seenCalls += 1; return .null }
+            return self.snapshot(route)
+        }
+        let workspace = RemoteWorkspace(connection: connection, preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.selectedProject = route.project; workspace.selectedSession = route.session
+        workspace.visibleRoute = route
+        let pages: [WorkspacePage] = [.checklist, .notebook, .research(nil), .research(route.project)]
+        for page in pages {
+            workspace.page = page
+            try await workspace.refreshConversation()
+            XCTAssertEqual(seenCalls, 0)
+        }
+        workspace.page = nil
+        try await workspace.refreshConversation()
+        XCTAssertEqual(seenCalls, 1, "Returning to the conversation restores read acknowledgements")
     }
 
     func testChangingConnectionBeforeSyncOrSendNeverTargetsTheNewHost() async throws {

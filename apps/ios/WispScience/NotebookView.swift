@@ -14,6 +14,8 @@ struct NotebookView: View {
             List {
                 Section {
                     Text("照片和文字先保存在手机，选择目标对话并确认后才会发送。").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Section("新建实验记录") {
                     TextField("实验标题", text: $title, axis: .vertical).accessibilityIdentifier("notebook-title")
                     DatePicker("实验日期", selection: $date, displayedComponents: .date)
                     Button("新建实验记录") {
@@ -34,16 +36,23 @@ struct NotebookView: View {
                     }
                     if model.records.isEmpty { Text("拍下实验记录，或先记几句观察。无需联网。").foregroundStyle(.secondary) }
                 }
-            }.navigationTitle("实验记录本").navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("完成") { workspace.sheet = nil } }
-                .navigationDestination(for: NotebookDestination.self) { destination in
-                    switch destination {
-                    case .record(let id): NotebookEditor(workspace: workspace, model: model, id: id)
-                    case .photo(let record, let photo): NotebookPhotoView(model: model, recordID: record, photoID: photo)
-                    case .send(let id): NotebookSendView(workspace: workspace, model: model, connection: connection, id: id)
-                    }
+            }
+            .listStyle(.insetGrouped)
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("实验记录本").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if workspace.notebookPath.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
                 }
-        }.presentationDetents([.large])
+            }
+            .navigationDestination(for: NotebookDestination.self) { destination in
+                switch destination {
+                case .record(let id): NotebookEditor(workspace: workspace, model: model, id: id)
+                case .photo(let record, let photo): NotebookPhotoView(model: model, recordID: record, photoID: photo)
+                case .send(let id): NotebookSendView(workspace: workspace, model: model, connection: connection, id: id)
+                }
+            }
+        }.accessibilityIdentifier("notebook-page")
             .sheet(isPresented: Binding(get: { workspace.notebookCameraRecord != nil }, set: { if !$0 { workspace.notebookCameraRecord = nil } })) {
                 NotebookCamera { data in
                     let id = workspace.notebookCameraRecord

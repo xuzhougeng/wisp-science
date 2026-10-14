@@ -1,25 +1,45 @@
 import SwiftUI
+import UIKit
 import WispRemote
 
 struct WorkspaceView: View {
     @ObservedObject var model: RemoteWorkspace
     @ObservedObject var connection: RemoteConnection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // Banners own layout space above the navigation container. A top
         // safeAreaInset on NavigationSplitView can overlap its compact toolbar.
         VStack(spacing: 0) {
             workspaceBanners
-            workspaceContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                // Retain split-view selection, scroll positions and connection
+                // form input while a full-workspace research page is open.
+                workspaceContent
+                    .opacity(model.page == nil ? 1 : 0)
+                    .disabled(model.page != nil)
+                    .allowsHitTesting(model.page == nil)
+                    .accessibilityHidden(model.page != nil)
+                if let page = model.page {
+                    workspacePage(page)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(WispStyle.canvas)
+                        .transition(reduceMotion ? .opacity : .move(edge: .trailing))
+                        .zIndex(1)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.page)
+            .onChange(of: model.page) { _, _ in
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
         }
         .tint(WispStyle.accent)
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
             case .connection: ConnectionSettingsView(model: model, connection: connection)
             case .inbox: InboxView(model: model)
-            case .research(let project): ResearchView(workspace: model, connection: connection, project: project)
-            case .checklist: ChecklistView(workspace: model, model: model.checklist, connection: connection)
-            case .notebook: NotebookView(workspace: model, model: model.notebook, connection: connection)
             case .conversationInfo(let title, let project):
                 NavigationStack {
                     Form {
@@ -48,6 +68,14 @@ struct WorkspaceView: View {
         .task(id: model.route) { await model.refreshSelection() }
     }
 
+    @ViewBuilder private func workspacePage(_ page: WorkspacePage) -> some View {
+        switch page {
+        case .checklist: ChecklistView(workspace: model, model: model.checklist, connection: connection)
+        case .notebook: NotebookView(workspace: model, model: model.notebook, connection: connection)
+        case .research(let project): ResearchView(workspace: model, connection: connection, project: project)
+        }
+    }
+
     private var workspaceContent: some View {
         Group {
             if model.configuration == nil && !model.isDemo {
@@ -57,16 +85,10 @@ struct WorkspaceView: View {
                     List(selection: $model.selectedProject) {
                         Section {
                             if !model.isDemo {
-                                Button { model.sheet = .checklist } label: {
-                                    HStack(spacing: 12) { WispIcon(.list); Text("科研清单") }
-                                }.accessibilityIdentifier("research-checklist")
-                                Button { model.sheet = .notebook } label: {
-                                    HStack(spacing: 12) { WispIcon(.notebook); Text("实验记录本") }
-                                }.accessibilityIdentifier("research-notebook")
+                                WorkspacePageLink(model: model, page: .checklist, title: "科研清单", icon: .list, identifier: "research-checklist")
+                                WorkspacePageLink(model: model, page: .notebook, title: "实验记录本", icon: .notebook, identifier: "research-notebook")
                             }
-                            Button { model.sheet = .research(nil) } label: {
-                                HStack(spacing: 12) { WispIcon(.calendar); Text("科研日历") }
-                            }.accessibilityIdentifier("research-calendar")
+                            WorkspacePageLink(model: model, page: .research(nil), title: "科研日历", icon: .calendar, identifier: "research-calendar")
                         }
                         Section {
                             ForEach(model.projects, id: \.recordID) { project in
@@ -99,9 +121,7 @@ struct WorkspaceView: View {
                     List(selection: $model.selectedSession) {
                         if let project = model.selectedProject {
                             Section {
-                                Button { model.sheet = .research(project) } label: {
-                                    HStack(spacing: 12) { WispIcon(.researchTrail); Text("研究历程") }
-                                }.accessibilityIdentifier("research-journey")
+                                WorkspacePageLink(model: model, page: .research(project), title: "研究历程", icon: .researchTrail, identifier: "research-journey")
                             }
                         }
                         ForEach(model.sessions, id: \.recordID) { session in
@@ -183,6 +203,42 @@ struct WorkspaceView: View {
     }
 }
 
+/// Disclosure rows distinguish page navigation from modal actions.
+private struct WorkspacePageLink: View {
+    @ObservedObject var model: RemoteWorkspace
+    let page: WorkspacePage
+    let title: String
+    let icon: WispIcon.Kind
+    let identifier: String
+
+    var body: some View {
+        Button { model.page = page } label: {
+            HStack(spacing: 12) {
+                WispIcon(icon).foregroundStyle(WispStyle.accent)
+                Text(title).foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                WispIcon(.chevronRight, size: 14).foregroundStyle(.secondary)
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+        .accessibilityHint("打开\(title)页面")
+    }
+}
+
+struct WorkspacePageBackButton: View {
+    @ObservedObject var workspace: RemoteWorkspace
+
+    var body: some View {
+        Button { workspace.page = nil } label: {
+            HStack(spacing: 4) { WispIcon(.chevronLeft); Text("返回") }
+                .frame(minHeight: 44)
+        }
+        .accessibilityLabel("返回上一页")
+        .accessibilityIdentifier("workspace-page-back")
+    }
+}
+
 struct ConnectionView: View {
     @ObservedObject var model: RemoteWorkspace
     @State private var address = ""
@@ -195,12 +251,8 @@ struct ConnectionView: View {
                     Text("粘贴桌面端复制的远程访问链接，或填写云端中继地址和联机码。").foregroundStyle(.secondary)
                 }
                 Section("离线研究工具") {
-                    Button { model.sheet = .checklist } label: {
-                        HStack(spacing: 12) { WispIcon(.list); Text("科研清单") }
-                    }.accessibilityIdentifier("research-checklist")
-                    Button { model.sheet = .notebook } label: {
-                        HStack(spacing: 12) { WispIcon(.notebook); Text("实验记录本") }
-                    }.accessibilityIdentifier("research-notebook")
+                    WorkspacePageLink(model: model, page: .checklist, title: "科研清单", icon: .list, identifier: "research-checklist")
+                    WorkspacePageLink(model: model, page: .notebook, title: "实验记录本", icon: .notebook, identifier: "research-notebook")
                     Text("无需连接主机即可记录事项，连接后同步到研究计划。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {

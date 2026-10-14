@@ -1,12 +1,56 @@
 import XCTest
 
 final class WorkspaceUITests: XCTestCase {
+    func testResearchToolsOpenFullPagesAndReturnToWorkspace() {
+        let app = launch()
+        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本"), ("research-calendar", "科研日历")] {
+            let link = app.buttons[entry]
+            XCTAssertTrue(link.waitForExistence(timeout: 5)); link.tap()
+            assertResearchPage(app, title: title)
+            XCTAssertFalse(app.buttons["connection-settings"].exists, "The workspace underneath must not remain accessible")
+            app.buttons["workspace-page-back"].tap()
+            XCTAssertTrue(link.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["connection-settings"].isHittable)
+        }
+    }
+
+    func testOfflineResearchPagesHaveBackNavigationWithLargeText() {
+        let app = launch("connection", darkAndLarge: true)
+        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本")] {
+            let link = app.buttons[entry]
+            for _ in 0..<5 { if link.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(link.isHittable); link.tap()
+            assertResearchPage(app, title: title)
+            app.buttons["workspace-page-back"].tap()
+            XCTAssertTrue(link.waitForExistence(timeout: 5))
+        }
+    }
+
+    private func assertResearchPage(_ app: XCUIApplication, title: String,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let navigation = app.navigationBars[title]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 5), file: file, line: line)
+        let back = app.buttons["workspace-page-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(back.isHittable, file: file, line: line)
+        XCTAssertFalse(app.buttons["完成"].exists, file: file, line: line)
+        XCTAssertEqual(app.sheets.count, 0, file: file, line: line)
+        // Pages use the full app width on iPad too, rather than a sheet or sidebar.
+        let fullWidth = NSPredicate { _, _ in
+            navigation.exists && abs(navigation.frame.width - app.frame.width) < 2
+                && abs(navigation.frame.minX - app.frame.minX) < 2
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: fullWidth, object: app)], timeout: 5),
+                       .completed, file: file, line: line)
+    }
+
     func testResearchCalendarImmediateEscapeMonthNavigationAndConversationLink() {
         let app = launch("connection")
         app.buttons["enter-demo"].tap()
         let calendar = app.buttons["research-calendar"]
         XCTAssertTrue(calendar.waitForExistence(timeout: 5))
         calendar.tap()
+        assertResearchPage(app, title: "科研日历")
         // Escape without moving focus closes only the currently visible surface.
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(calendar.waitForExistence(timeout: 5))
@@ -26,6 +70,7 @@ final class WorkspaceUITests: XCTestCase {
         for _ in 0..<4 { if entry.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         entry.tap()
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists, "Details use the navigation stack's one-level back action")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Record details close but the journey stays open")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
@@ -47,6 +92,7 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(project.waitForExistence(timeout: 5))
         project.tap()
         app.buttons["research-journey"].tap()
+        assertResearchPage(app, title: "研究历程")
         XCTAssertTrue(app.staticTexts["research-month-title"].waitForExistence(timeout: 5))
         let entry = app.buttons["research-entry-demo-finding"]
         for _ in 0..<8 { if entry.isHittable { break }; app.swipeUp() }
@@ -74,6 +120,7 @@ final class WorkspaceUITests: XCTestCase {
         app.launch()
         let checklist = app.buttons["research-checklist"]
         XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
+        assertResearchPage(app, title: "科研清单")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
         let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
@@ -86,6 +133,7 @@ final class WorkspaceUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         let notebook = app.buttons["research-notebook"]
         XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        assertResearchPage(app, title: "实验记录本")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
         let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
@@ -94,6 +142,13 @@ final class WorkspaceUITests: XCTestCase {
         let notes = app.textViews["notebook-notes"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5)); notes.tap(); notes.typeText("样本 A，重复三次。")
         app.buttons["notebook-save"].tap()
+        let photos = app.buttons["notebook-import-photos"]
+        for _ in 0..<4 { if photos.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(photos.isHittable); photos.tap()
+        // No focus change inside the picker before Escape; the editor stays open.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.buttons["notebook-add"].waitForExistence(timeout: 5))
         app.terminate(); app.launch()

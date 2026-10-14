@@ -24,7 +24,7 @@ final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
         workspace = model
         let window = WispWindow(windowScene: scene)
         window.dismissTopSurface = { [weak model] in model?.dismissTopSurface() }
-        window.hasSurface = { [weak model] in model?.sheet != nil }
+        window.hasSurface = { [weak model] in model?.hasDismissibleSurface == true }
         window.rootViewController = UIHostingController(rootView: WorkspaceView(model: model, connection: model.connection))
         self.window = window
         window.makeKeyAndVisible()
@@ -34,7 +34,7 @@ final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidDisconnect(_ scene: UIScene) { workspace?.setActive(false) }
 }
 
-/// A window-level Escape command works immediately after opening a sheet,
+/// A window-level Escape command works immediately after opening a page or sheet,
 /// including when focus remains in the conversation's composer underneath.
 final class WispWindow: UIWindow {
     var dismissTopSurface: (() -> Void)?

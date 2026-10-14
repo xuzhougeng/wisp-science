@@ -15,19 +15,20 @@ enum QuestionSubmission: Equatable { case sent, uncertain }
 enum WorkspaceSheet: Identifiable {
     case connection, inbox, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
-    case research(String?)
-    case checklist, notebook
     var id: String {
         switch self {
         case .connection: return "connection"
         case .inbox: return "inbox"
-        case .research(let project): return "research:\(project ?? "calendar")"
-        case .checklist: return "checklist"
-        case .notebook: return "notebook"
         case .conversationInfo: return "conversation-info"
         case .files(let route, let path, _): return "files:\(route.project):\(route.session):\(path)"
         }
     }
+}
+
+/// Research tools occupy the workspace, with their own detail navigation.
+/// Keep them separate from transient settings, file and camera presentations.
+enum WorkspacePage: Hashable {
+    case checklist, notebook, research(String?)
 }
 
 @MainActor final class RemoteWorkspace: ObservableObject {
@@ -62,8 +63,9 @@ enum WorkspaceSheet: Identifiable {
         if selectedSession != oldValue { history = RemoteHistory(); error = nil; snapshotIsCached = false; snapshotSavedAt = nil; snapshotSession = nil }
     } }
     @Published var history = RemoteHistory()
-    @Published var sheet: WorkspaceSheet? { didSet {
-        if sheet?.id != oldValue?.id { researchPath = []; checklistPath = []; notebookPath = []; notebookCameraRecord = nil; notebookLibraryPresented = false }
+    @Published var sheet: WorkspaceSheet?
+    @Published var page: WorkspacePage? { didSet {
+        if page != oldValue { researchPath = []; checklistPath = []; notebookPath = []; notebookCameraRecord = nil; notebookLibraryPresented = false }
     } }
     @Published var researchPath: [ResearchDestination] = []
     @Published var checklistPath: [String] = []
@@ -197,7 +199,7 @@ enum WorkspaceSheet: Identifiable {
     }
     private func clearWorkspace() {
         identity = UUID()
-        sheet = nil; researchPath = []
+        sheet = nil; page = nil
         cacheGeneration = UUID()
         for (_, task) in reads.values { task.cancel() }
         reads = [:]; projectsRefreshed = false; sessionsRefreshed = nil
@@ -347,7 +349,7 @@ enum WorkspaceSheet: Identifiable {
         history.replace(next)
         snapshotIsCached = false; snapshotSavedAt = Date(); snapshotSession = session
         let stamp = "\(next.epoch):\(route.project):\(route.session):\(next.sequence)"
-        if !next.running && active && visibleRoute == route && sheet == nil && connection.supports("native_conversation_seen"), !seen.contains(stamp) {
+        if !next.running && active && visibleRoute == route && sheet == nil && page == nil && connection.supports("native_conversation_seen"), !seen.contains(stamp) {
             _ = try await connection.call("native_conversation_seen", project: route.project, args: route.args)
             seen = [stamp]
         }
@@ -496,6 +498,7 @@ enum WorkspaceSheet: Identifiable {
         selectedProject = entry["project_id"].string
         selectedSession = entry["id"].string
         sheet = nil
+        page = nil
     }
 
     func projectName(_ id: String) -> String {
@@ -514,15 +517,21 @@ enum WorkspaceSheet: Identifiable {
         selectedProject = route.project
         selectedSession = route.session
         sheet = nil
+        page = nil
+    }
+
+    var hasDismissibleSurface: Bool {
+        notebookLibraryPresented || notebookCameraRecord != nil || sheet != nil || page != nil
     }
 
     func dismissTopSurface() {
         if notebookLibraryPresented { notebookLibraryPresented = false }
         else if notebookCameraRecord != nil { notebookCameraRecord = nil }
-        else if case .notebook? = sheet, !notebookPath.isEmpty { notebookPath.removeLast() }
-        else if case .research? = sheet, !researchPath.isEmpty { researchPath.removeLast() }
-        else if case .checklist? = sheet, !checklistPath.isEmpty { checklistPath.removeLast() }
-        else { sheet = nil }
+        else if sheet != nil { sheet = nil }
+        else if case .notebook? = page, !notebookPath.isEmpty { notebookPath.removeLast() }
+        else if case .research? = page, !researchPath.isEmpty { researchPath.removeLast() }
+        else if case .checklist? = page, !checklistPath.isEmpty { checklistPath.removeLast() }
+        else { page = nil }
     }
 }
 
