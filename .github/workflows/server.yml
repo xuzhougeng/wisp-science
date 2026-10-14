@@ -33,7 +33,7 @@ jobs:
         run: |
           cargo test --locked -p wisp-server
           cargo test --locked -p wisp-sync direct::tests
-          cargo test --locked -p wisp-store server_turns::tests
+          cargo test --locked -p wisp-store --lib -- server_turns::tests store_tests::store_open_records_migrations_and_seeds_local_context
       - name: Build standalone binary
         run: cargo build --release --locked -p wisp-server
       - uses: actions/upload-artifact@v4

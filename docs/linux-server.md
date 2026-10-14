@@ -161,7 +161,7 @@ ACP、订阅 OAuth 登录和完整桌面功能。模型与工作目录在部署�
 cargo check -p wisp-server --offline
 cargo test -p wisp-server --offline
 cargo test -p wisp-sync direct::tests --offline
-cargo test -p wisp-store server_turns::tests --offline
+cargo test -p wisp-store --lib --offline -- server_turns::tests store_tests::store_open_records_migrations_and_seeds_local_context
 ```
 
 实际 Linux 部署的手动检查：手机打开 HTTPS 网页；创建会话；让 Agent 写一个小文件；
