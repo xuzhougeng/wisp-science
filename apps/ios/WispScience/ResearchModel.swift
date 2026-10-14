@@ -7,6 +7,23 @@ enum ResearchDestination: Hashable {
     case entry(String, RemoteResearchEntry)
 }
 
+/// The calendar's month, selected day and project filter. The iPad month grid
+/// and its day column share one state, which also survives switching tools.
+@MainActor final class ResearchCalendarState: ObservableObject {
+    @Published var month = Date()
+    @Published var day = Date()
+    @Published var project: String?
+    @Published var refresh = UUID()
+
+    func projectIDs(_ projects: [RemoteValue]) -> [String] {
+        project.map { [$0] } ?? projects.map { $0["id"].string }.sorted()
+    }
+
+    func reset() {
+        month = Date(); day = Date(); project = nil
+    }
+}
+
 struct ResearchQuery: Hashable {
     let project: String?
     let projectIDs: [String]

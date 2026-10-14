@@ -5,33 +5,51 @@ struct ChecklistView: View {
     @ObservedObject var workspace: RemoteWorkspace
     @ObservedObject var model: ChecklistModel
     @ObservedObject var connection: RemoteConnection
-    @State private var title = ""
+    var presentation: ToolPresentation = .stack
     @State private var showDone = false
     @FocusState private var adding: Bool
 
     var body: some View {
-        NavigationStack(path: $workspace.checklistPath) {
-            // Reclassify tasks after midnight as well as when the data changes.
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                taskList(today: ChecklistDate.string(context.date))
+        switch presentation {
+        case .stack:
+            NavigationStack(path: $workspace.checklistPath) {
+                listPage.navigationDestination(for: String.self) { id in editor(id) }
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("checklist-page")
+                .onChange(of: model.scope) { _, _ in showDone = false }
+        case .list:
+            listPage.accessibilityElement(children: .contain).accessibilityIdentifier("checklist-page")
+                .onChange(of: model.scope) { _, _ in showDone = false }
+        case .detail:
+            // The open item is the column's root, so there is no back button to an empty page.
+            if let id = workspace.checklistPath.first {
+                editor(id).id(id)
+            } else {
+                ToolPlaceholder(icon: .list, title: "选择一个事项", message: "点左侧事项查看详情、改期或移出清单；点圆圈可直接完成。")
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { quickAdd }
-            .navigationTitle("科研清单").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if workspace.checklistPath.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        WispToolbarButton(title: "清单设置", icon: .gear) { workspace.sheet = .checklistSettings }
-                            .accessibilityIdentifier("checklist-settings")
-                    }
+        }
+    }
+
+    private var listPage: some View {
+        // Reclassify tasks after midnight as well as when the data changes.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            taskList(today: ChecklistDate.string(context.date))
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { quickAdd }
+        .navigationTitle("科研清单").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if presentation == .list || workspace.checklistPath.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    WispToolbarButton(title: "清单设置", icon: .gear) { workspace.sheet = .checklistSettings }
+                        .accessibilityIdentifier("checklist-settings")
                 }
             }
-            .navigationDestination(for: String.self) { id in
-                if let entry = model.replica.entries[id], model.replica.visible(entry) {
-                    ChecklistEditor(model: model, workspace: workspace, connection: connection, entry: entry)
-                } else { Text("这项记录已移除或当前不可见。") }
-            }
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("checklist-page")
-            .onChange(of: model.scope) { _, _ in showDone = false }
+        }
+    }
+
+    @ViewBuilder private func editor(_ id: String) -> some View {
+        if let entry = model.replica.entries[id], model.replica.visible(entry) {
+            ChecklistEditor(model: model, workspace: workspace, connection: connection, entry: entry)
+        } else { Text("这项记录已移除或当前不可见。") }
     }
 
     private func taskList(today: String) -> some View {
@@ -111,7 +129,8 @@ struct ChecklistView: View {
     }
 
     private func taskRow(_ entry: ChecklistEntry, today: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let open = presentation == .list && workspace.checklistPath.first == entry.id
+        return HStack(alignment: .top, spacing: 6) {
             Button {
                 var fields = entry.fields
                 fields.status = fields.status == "done" ? "open" : "done"
@@ -121,12 +140,13 @@ struct ChecklistView: View {
                     .foregroundStyle(entry.conflict ? WispStyle.warning : WispStyle.accent)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             }
-            .buttonStyle(.plain).disabled(entry.conflict)
+            .buttonStyle(.plain).hoverEffect(.highlight).disabled(entry.conflict)
             .accessibilityLabel(entry.conflict ? "待确认" : entry.fields.status == "done" ? "标记未完成" : "标记完成")
             .accessibilityValue(entry.fields.title)
             .accessibilityIdentifier("checklist-toggle-\(entry.id)")
 
-            Button { workspace.checklistPath.append(entry.id) } label: {
+            // Replace rather than push: on iPad another item may already be open beside the list.
+            Button { workspace.checklistPath = [entry.id] } label: {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(entry.fields.title).font(.body)
                         .strikethrough(entry.fields.status == "done" && !entry.conflict)
@@ -143,21 +163,23 @@ struct ChecklistView: View {
             }
             .buttonStyle(.plain).accessibilityIdentifier("checklist-item-\(entry.id)")
             .accessibilityHint(entry.conflict ? "查看并处理两个版本" : "编辑事项、调整日期或移出清单")
+            .accessibilityAddTraits(open ? .isSelected : [])
         }
         .padding(.vertical, 4)
         .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 20))
+        .listRowBackground(open ? WispStyle.accent.opacity(0.1) : nil)
     }
 
     private var quickAdd: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 WispIcon(.plus).foregroundStyle(WispStyle.accent)
-                TextField("添加科研事项", text: $title)
+                TextField("添加科研事项", text: $model.draft)
                     .focused($adding).submitLabel(.done).onSubmit(addItem)
                     .frame(minHeight: 44).accessibilityIdentifier("checklist-title")
                 Button("添加", action: addItem)
                     .buttonStyle(WispSendButtonStyle())
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("checklist-add")
             }
             Text(adding ? "默认安排在今天，点事项可改期" : "点圆圈完成，点事项查看或改期")
@@ -169,9 +191,9 @@ struct ChecklistView: View {
     }
 
     private func addItem() {
-        let value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = model.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, model.edit(fields: ChecklistFields(title: value, day: ChecklistDate.string(Date()))) else { return }
-        title = ""; adding = false
+        model.draft = ""; adding = false
         Task { await model.sync(connection: connection) }
     }
 }

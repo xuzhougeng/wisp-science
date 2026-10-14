@@ -7,65 +7,114 @@ struct NotebookView: View {
     @ObservedObject var workspace: RemoteWorkspace
     @ObservedObject var model: NotebookModel
     @ObservedObject var connection: RemoteConnection
+    var presentation: ToolPresentation = .stack
 
     var body: some View {
-        NavigationStack(path: $workspace.notebookPath) {
-            List {
-                Section {
-                    NavigationLink(value: NotebookDestination.create(.photos)) {
-                        NotebookEntryLabel(icon: .camera, title: "拍下纸质实验记录", detail: "保留原图，识别并校对文字")
-                    }.disabled(!model.loaded).accessibilityIdentifier("notebook-start-photos")
-                    NavigationLink(value: NotebookDestination.create(.observation)) {
-                        NotebookEntryLabel(icon: .edit, title: "记下刚才的观察", detail: "写过程、现象，也可以附上照片")
-                    }.disabled(!model.loaded).accessibilityIdentifier("notebook-add")
-                    NavigationLink(value: NotebookDestination.example) {
-                        NotebookEntryLabel(icon: .book, title: "先看一条示例", detail: "了解一份完整记录是什么样")
-                    }.accessibilityIdentifier("notebook-example")
-                } header: {
-                    Text("你现在想做什么？").font(.title2.weight(.semibold)).textCase(nil)
-                } footer: {
-                    Text("无需连接主机。文字和照片先存在手机，完成后再决定是否交给 Wisp 整理。")
-                }
-                if let error = model.error { Section { Text(error).foregroundStyle(WispStyle.warning) } }
-                Section("本机实验记录") {
-                    ForEach(model.records) { record in
-                        NavigationLink(value: NotebookDestination.record(record.id)) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(record.title).font(.headline)
-                                if !record.notes.isEmpty { Text(record.notes).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
-                                Text("\(record.day) · \(record.photos.count) 张照片").font(.caption).foregroundStyle(.secondary)
-                                if let transfer = record.transfer { Text(transferLabel(transfer.state)).font(.caption).foregroundStyle(.secondary) }
-                            }.padding(.vertical, 4)
-                        }.accessibilityIdentifier("notebook-record-\(record.id)")
-                    }
-                    if model.records.isEmpty {
-                        Text("第一条记录会出现在这里。从上方选择拍照或写观察，就能开始。")
-                            .foregroundStyle(.secondary).accessibilityIdentifier("notebook-empty")
+        switch presentation {
+        case .stack:
+            NavigationStack(path: $workspace.notebookPath) {
+                home.navigationDestination(for: NotebookDestination.self) { destination($0) }
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("notebook-page")
+        case .list:
+            home.accessibilityElement(children: .contain).accessibilityIdentifier("notebook-page")
+        case .detail:
+            NavigationStack(path: detailPath) {
+                Group {
+                    if let first = workspace.notebookPath.first {
+                        destination(first).id(first)
+                    } else {
+                        ToolPlaceholder(icon: .notebook, title: "选择一条实验记录",
+                                        message: "从左侧打开本机记录，或拍下纸质记录、记下刚才的观察。")
                     }
                 }
+                .navigationDestination(for: NotebookDestination.self) { destination($0) }
             }
-            .listStyle(.insetGrouped)
-            .navigationTitle("实验记录本").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if workspace.notebookPath.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        WispToolbarButton(title: "怎么用", icon: .circleHelp) { workspace.notebookPath.append(.guide) }
-                            .accessibilityIdentifier("notebook-help")
-                    }
+        }
+    }
+
+    /// In the iPad detail column the first destination is the root; the rest push over it.
+    private var detailPath: Binding<[NotebookDestination]> {
+        Binding(get: { Array(workspace.notebookPath.dropFirst()) },
+                set: { workspace.notebookPath = Array(workspace.notebookPath.prefix(1)) + $0 })
+    }
+
+    private var home: some View {
+        List {
+            Section {
+                entryLink(.create(.photos)) {
+                    NotebookEntryLabel(icon: .camera, title: "拍下纸质实验记录", detail: "保留原图，识别并校对文字")
+                }.disabled(!model.loaded).accessibilityIdentifier("notebook-start-photos")
+                entryLink(.create(.observation)) {
+                    NotebookEntryLabel(icon: .edit, title: "记下刚才的观察", detail: "写过程、现象，也可以附上照片")
+                }.disabled(!model.loaded).accessibilityIdentifier("notebook-add")
+                entryLink(.example) {
+                    NotebookEntryLabel(icon: .book, title: "先看一条示例", detail: "了解一份完整记录是什么样")
+                }.accessibilityIdentifier("notebook-example")
+            } header: {
+                Text("你现在想做什么？").font(.title2.weight(.semibold)).textCase(nil)
+            } footer: {
+                Text("无需连接主机。文字和照片先存在手机，完成后再决定是否交给 Wisp 整理。")
+            }
+            if let error = model.error { Section { Text(error).foregroundStyle(WispStyle.warning) } }
+            Section("本机实验记录") {
+                ForEach(model.records) { record in
+                    entryLink(.record(record.id)) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(record.title).font(.headline)
+                            if !record.notes.isEmpty { Text(record.notes).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
+                            Text("\(record.day) · \(record.photos.count) 张照片").font(.caption).foregroundStyle(.secondary)
+                            if let transfer = record.transfer { Text(transferLabel(transfer.state)).font(.caption).foregroundStyle(.secondary) }
+                        }.padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
+                    }.accessibilityIdentifier("notebook-record-\(record.id)")
+                }
+                if model.records.isEmpty {
+                    Text("第一条记录会出现在这里。从上方选择拍照或写观察，就能开始。")
+                        .foregroundStyle(.secondary).accessibilityIdentifier("notebook-empty")
                 }
             }
-            .navigationDestination(for: NotebookDestination.self) { destination in
-                switch destination {
-                case .create(let entry): NotebookEditor(workspace: workspace, model: model, id: nil, entry: entry)
-                case .guide: NotebookGuideView(workspace: workspace, example: false)
-                case .example: NotebookGuideView(workspace: workspace, example: true)
-                case .record(let id): NotebookEditor(workspace: workspace, model: model, id: id, entry: .observation)
-                case .photo(let record, let photo): NotebookPhotoView(workspace: workspace, model: model, recordID: record, photoID: photo)
-                case .saved(let id): NotebookSavedView(workspace: workspace, model: model, id: id)
-                case .send(let id): NotebookSendView(workspace: workspace, model: model, connection: connection, id: id)
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("实验记录本").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if presentation == .list || workspace.notebookPath.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    WispToolbarButton(title: "怎么用", icon: .circleHelp) { workspace.notebookPath = [.guide] }
+                        .accessibilityIdentifier("notebook-help")
                 }
             }
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("notebook-page")
+        }
+    }
+
+    /// A pushed link on iPhone. Beside the iPad detail column, the row replaces
+    /// whatever the column shows and stays highlighted while it is open.
+    @ViewBuilder private func entryLink<Label: View>(_ destination: NotebookDestination,
+                                                     @ViewBuilder label: () -> Label) -> some View {
+        if presentation == .stack {
+            NavigationLink(value: destination, label: label)
+        } else {
+            let open = workspace.notebookPath.first == destination
+            Button { workspace.notebookPath = [destination] } label: {
+                HStack(spacing: 8) {
+                    label()
+                    WispIcon(.chevronRight, size: 14).foregroundStyle(.secondary)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(open ? WispStyle.accent.opacity(0.1) : nil)
+            .accessibilityAddTraits(open ? .isSelected : [])
+        }
+    }
+
+    @ViewBuilder private func destination(_ destination: NotebookDestination) -> some View {
+        switch destination {
+        case .create(let entry): NotebookEditor(workspace: workspace, model: model, id: nil, entry: entry)
+        case .guide: NotebookGuideView(workspace: workspace, example: false)
+        case .example: NotebookGuideView(workspace: workspace, example: true)
+        case .record(let id): NotebookEditor(workspace: workspace, model: model, id: id, entry: .observation)
+        case .photo(let record, let photo): NotebookPhotoView(workspace: workspace, model: model, recordID: record, photoID: photo)
+        case .saved(let id): NotebookSavedView(workspace: workspace, model: model, id: id)
+        case .send(let id): NotebookSendView(workspace: workspace, model: model, connection: connection, id: id)
+        }
     }
 }
 

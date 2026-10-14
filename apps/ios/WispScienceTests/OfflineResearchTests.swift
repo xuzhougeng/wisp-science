@@ -387,6 +387,102 @@ import WispRemote
         XCTAssertEqual(paired.availableTabs, WorkspaceTab.allCases)
     }
 
+    func testIPadSidebarMapsSectionsAndProjectsWithoutLosingPlaces() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let offline = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: nil), preferences: nil,
+                                      cache: nil, offlineDirectory: dir)
+        XCTAssertEqual(offline.sidebarItem, .section(.conversations), "Before pairing the first section is the connection form")
+        XCTAssertEqual(offline.sectionTitle(.conversations), "连接")
+        offline.sidebarItem = .section(.calendar)
+        XCTAssertEqual(offline.tab, .conversations, "The calendar needs a host")
+        offline.sidebarItem = .section(.checklist)
+        XCTAssertEqual(offline.sidebarItem, .section(.checklist))
+        offline.checklistPath = ["item"]
+        offline.sidebarItem = .section(.notebook)
+        offline.sidebarItem = .section(.checklist)
+        XCTAssertEqual(offline.checklistPath, ["item"], "Each section keeps the item open beside its list")
+
+        let paired = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: try configuration("sidebar")),
+                                     preferences: nil, cache: nil, offlineDirectory: dir)
+        paired.setActive(false); paired.restore()
+        XCTAssertNil(paired.sidebarItem, "Paired, the projects stand for the conversations section")
+        XCTAssertEqual(paired.sectionTitle(.conversations), "对话")
+        paired.selectedProject = "a"; paired.selectedSession = "s"
+        XCTAssertEqual(paired.sidebarItem, .project("a"))
+        paired.sidebarItem = .section(.calendar)
+        XCTAssertEqual(paired.tab, .calendar)
+        XCTAssertEqual(paired.sidebarItem, .section(.calendar))
+        paired.sidebarItem = .project("a")
+        XCTAssertEqual(paired.tab, .conversations)
+        XCTAssertEqual(paired.route, ConversationRoute(project: "a", session: "s"), "Returning to a project keeps its conversation")
+        paired.sidebarItem = .project("b")
+        XCTAssertEqual(paired.selectedProject, "b")
+        XCTAssertNil(paired.selectedSession)
+        paired.sidebarItem = nil
+        XCTAssertEqual(paired.selectedProject, "b", "Clearing the list selection does not drop the project")
+    }
+
+    func testKeyboardCommandsFollowTheVisibleSectionAndNeverActUnderAModal() async throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let host = connection()
+        let workspace = RemoteWorkspace(connection: host, credentials: TabCredentials(saved: try configuration("keys")),
+                                        preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.setActive(false); workspace.restore()
+        host.useLocalService(name: "host", commands: ["native_conversation_create"]) { _, _, _ in .null }
+        XCTAssertFalse(workspace.canCreateConversation, "No project is selected")
+        workspace.selectedProject = "p"
+        XCTAssertTrue(workspace.canCreateConversation)
+        XCTAssertTrue(workspace.canRefresh)
+        workspace.page = .journey("p")
+        XCTAssertFalse(workspace.canCreateConversation, "Not behind the journey page")
+        workspace.page = nil
+        workspace.showSection(.checklist)
+        XCTAssertEqual(workspace.tab, .checklist)
+        XCTAssertFalse(workspace.canCreateConversation)
+        XCTAssertFalse(workspace.canRefresh, "The checklist syncs on its own")
+        workspace.sheet = .checklistSettings
+        XCTAssertFalse(workspace.canShowSection(.notebook))
+        workspace.showSection(.notebook)
+        XCTAssertEqual(workspace.tab, .checklist, "A shortcut never switches sections under a modal")
+        workspace.sheet = nil; workspace.notebookLibraryPresented = true
+        XCTAssertFalse(workspace.canShowSection(.notebook))
+        workspace.notebookLibraryPresented = false
+        workspace.showSection(.calendar)
+        XCTAssertEqual(workspace.tab, .calendar)
+        let refresh = workspace.researchCalendar.refresh
+        await workspace.refreshVisible()
+        XCTAssertNotEqual(workspace.researchCalendar.refresh, refresh, "Refreshing the calendar reloads its month and day")
+
+        let demo = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: nil), preferences: nil,
+                                   cache: nil, offlineDirectory: dir)
+        demo.enterDemo()
+        demo.selectedProject = "demo"
+        XCTAssertFalse(demo.canCreateConversation, "The demo cannot create conversations")
+        XCTAssertFalse(demo.canShowSection(.checklist), "The demo hides the personal offline tools")
+        XCTAssertTrue(demo.canShowSection(.calendar))
+    }
+
+    func testCalendarSelectionAndConnectionInputOutliveTheViewButNotTheHost() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), credentials: TabCredentials(saved: nil), preferences: nil,
+                                        cache: nil, offlineDirectory: dir)
+        workspace.connectionAddress = "http://relay.example.test/remote"
+        workspace.showSection(.checklist); workspace.showSection(.conversations)
+        workspace.connect(address: workspace.connectionAddress, code: "")
+        XCTAssertNotNil(workspace.error)
+        XCTAssertEqual(workspace.connectionAddress, "http://relay.example.test/remote", "Rejected input stays for correction")
+        let calendar = workspace.researchCalendar
+        calendar.project = "p"; calendar.day = Date(timeIntervalSince1970: 0); calendar.month = calendar.day
+        XCTAssertEqual(calendar.projectIDs([.object(["id": .string("q")]), .object(["id": .string("p")])]), ["p"])
+        calendar.project = nil
+        XCTAssertEqual(calendar.projectIDs([.object(["id": .string("q")]), .object(["id": .string("p")])]), ["p", "q"])
+        calendar.project = "p"
+        workspace.enterDemo()
+        XCTAssertNil(calendar.project, "Another host's project filter does not carry over")
+        XCTAssertTrue(Calendar.current.isDateInToday(calendar.day))
+        XCTAssertTrue(Calendar.current.isDateInToday(calendar.month))
+    }
+
     func testEdgeBackReturnsFromTheJourneyWithoutChangingConversationOrDraft() {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)

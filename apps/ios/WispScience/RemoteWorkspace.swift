@@ -49,8 +49,16 @@ enum WorkspacePage: Hashable {
 }
 
 /// Bottom tabs. Each tool keeps its own navigation stack while another tab is shown.
-enum WorkspaceTab: Hashable, CaseIterable {
+/// Regular-width iPad windows list the same sections in the workspace sidebar.
+enum WorkspaceTab: String, Hashable, CaseIterable {
     case conversations, calendar, checklist, notebook
+}
+
+/// A row in the iPad sidebar: a workspace section, or one of the host's projects.
+/// Choosing a project shows the conversations section for that project.
+enum WorkspaceSidebarItem: Hashable {
+    case section(WorkspaceTab)
+    case project(String)
 }
 
 @MainActor final class RemoteWorkspace: ObservableObject {
@@ -94,6 +102,10 @@ enum WorkspaceTab: Hashable, CaseIterable {
     } }
     /// The research calendar tab's own detail stack.
     @Published var calendarPath: [ResearchDestination] = []
+    let researchCalendar = ResearchCalendarState()
+    /// Connection form input, kept while another tool or window size is shown.
+    @Published var connectionAddress = ""
+    @Published var connectionCode = ""
     @Published private(set) var pageBackProgress: CGFloat = 0
     private var pageBackOrigin: WorkspacePage?
     @Published var researchPath: [ResearchDestination] = []
@@ -172,6 +184,7 @@ enum WorkspaceTab: Hashable, CaseIterable {
             isDemo = false
             clearWorkspace()
             self.configuration = configuration
+            connectionAddress = ""; connectionCode = ""
             connection.connect(configuration)
             Task { await self.hydrateCache() }
         } catch { self.error = error.localizedDescription }
@@ -231,6 +244,7 @@ enum WorkspaceTab: Hashable, CaseIterable {
     private func clearWorkspace() {
         identity = UUID()
         sheet = nil; page = nil; calendarPath = []
+        researchCalendar.reset()
         cacheGeneration = UUID()
         for (_, task) in reads.values { task.cancel() }
         reads = [:]; projectsRefreshed = false; sessionsRefreshed = nil
@@ -577,6 +591,51 @@ enum WorkspaceTab: Hashable, CaseIterable {
         if configuration != nil || isDemo { tabs.append(.calendar) }
         if !isDemo { tabs += [.checklist, .notebook] }
         return tabs
+    }
+
+    /// The iPad sidebar selection. Before pairing, the conversations section is
+    /// the connection form; afterwards each project stands for that section.
+    var sidebarItem: WorkspaceSidebarItem? {
+        get {
+            if tab != .conversations { return .section(tab) }
+            if configuration == nil && !isDemo { return .section(.conversations) }
+            return selectedProject.map(WorkspaceSidebarItem.project)
+        }
+        set {
+            switch newValue {
+            case .section(let section)?: if availableTabs.contains(section) { tab = section }
+            case .project(let id)?: tab = .conversations; selectedProject = id
+            case nil: break
+            }
+        }
+    }
+
+    func sectionTitle(_ section: WorkspaceTab) -> String {
+        Self.sectionTitle(section, paired: configuration != nil || isDemo)
+    }
+    static func sectionTitle(_ section: WorkspaceTab, paired: Bool) -> String {
+        switch section {
+        case .conversations: return paired ? "对话" : "连接"
+        case .calendar: return "科研日历"
+        case .checklist: return "科研清单"
+        case .notebook: return "实验记录本"
+        }
+    }
+
+    /// Hardware keyboard and menu bar commands never act underneath a modal.
+    private var acceptsCommands: Bool { sheet == nil && !notebookLibraryPresented && !notebookCameraPresented }
+    func canShowSection(_ section: WorkspaceTab) -> Bool { acceptsCommands && availableTabs.contains(section) }
+    func showSection(_ section: WorkspaceTab) { if canShowSection(section) { tab = section } }
+    var canCreateConversation: Bool {
+        acceptsCommands && tab == .conversations && page == nil && !isDemo && selectedProject != nil && !creating
+            && connection.supports("native_conversation_create")
+    }
+    var canRefresh: Bool {
+        acceptsCommands && (configuration != nil || isDemo) && (tab == .conversations || tab == .calendar)
+    }
+    func refreshVisible() async {
+        guard canRefresh else { return }
+        if tab == .calendar { researchCalendar.refresh = UUID() } else { await refreshSelection() }
     }
 
     func projectName(_ id: String) -> String {

@@ -12,6 +12,9 @@ enum WispStyle {
     static let success = adaptive(light: 0x286A45, dark: 0x8CD5A8)
     static let failure = adaptive(light: 0xB33339, dark: 0xFF999C)
     static let warning = adaptive(light: 0x875710, dark: 0xEFC27B)
+    /// Selection fill for the iPad sidebar and lists. White text stays readable
+    /// on it in both appearances, unlike the light dark-mode accent.
+    static let selection = adaptive(light: 0x176A60, dark: 0x237A6E)
     static var navigationAction: Color {
         // Match the native back control's monochrome treatment on Liquid Glass;
         // older navigation bars continue using the app's accent tint.
@@ -126,6 +129,27 @@ struct WispRowButtonStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? Color.primary.opacity(0.05) : .clear)
             .opacity(enabled ? 1 : 0.45)
+            .hoverEffect(.highlight)
+    }
+}
+
+/// How a research tool is hosted: its own navigation stack (iPhone and narrow
+/// iPad windows), or the list and detail columns of the full-width iPad workspace.
+enum ToolPresentation { case stack, list, detail }
+
+/// An iPad detail column with nothing chosen in the list beside it.
+struct ToolPlaceholder: View {
+    let icon: WispIcon.Kind
+    let title: String
+    let message: String
+    var body: some View {
+        ContentUnavailableView {
+            Label { Text(title) } icon: { WispIcon(icon, size: 36).foregroundStyle(WispStyle.accent) }
+        } description: {
+            Text(message)
+        }
+        .background(WispStyle.canvas)
+        .accessibilityElement(children: .contain).accessibilityIdentifier("tool-placeholder")
     }
 }
 
@@ -175,5 +199,7 @@ struct WispSendButtonStyle: ButtonStyle {
             .background(enabled ? WispStyle.accent : Color(uiColor: .tertiarySystemFill),
                         in: RoundedRectangle(cornerRadius: 12))
             .opacity(configuration.isPressed ? 0.8 : 1)
+            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 12))
+            .hoverEffect(.lift)
     }
 }

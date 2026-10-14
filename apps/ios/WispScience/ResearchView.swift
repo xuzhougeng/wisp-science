@@ -9,55 +9,70 @@ private struct ResearchLoadKey: Equatable {
 }
 
 /// The calendar tab (no project) or a project's journey page over its conversation list.
-/// Each owns a separate detail stack so the two never pop each other.
+/// Each owns a separate detail stack so the two never pop each other. On iPad the
+/// calendar's month grid and its day records fill the workspace's list and detail columns.
 struct ResearchView: View {
     @ObservedObject var workspace: RemoteWorkspace
     @ObservedObject var connection: RemoteConnection
     let project: String?
+    var presentation: ToolPresentation = .stack
 
     private var path: Binding<[ResearchDestination]> { project == nil ? $workspace.calendarPath : $workspace.researchPath }
 
     var body: some View {
-        NavigationStack(path: path) {
-            Group {
-                if let project {
-                    ResearchJourneyView(workspace: workspace, connection: connection, project: project, day: nil)
-                } else {
-                    ResearchCalendarView(workspace: workspace, connection: connection)
+        Group {
+            switch presentation {
+            case .stack:
+                NavigationStack(path: path) {
+                    Group {
+                        if let project {
+                            ResearchJourneyView(workspace: workspace, connection: connection, project: project, day: nil)
+                        } else {
+                            ResearchCalendarView(workspace: workspace, connection: connection, state: workspace.researchCalendar, showsDay: true)
+                        }
+                    }
+                    .navigationDestination(for: ResearchDestination.self) { destination($0) }
+                    .toolbar {
+                        // The calendar is a tab; only the project journey is a page to leave.
+                        if project != nil && workspace.researchPath.isEmpty {
+                            ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
+                        }
+                    }
                 }
-            }
-            .navigationDestination(for: ResearchDestination.self) { destination in
-                switch destination {
-                case .journey(let project, let day):
-                    ResearchJourneyView(workspace: workspace, connection: connection, project: project, day: day)
-                case .entry(let project, let entry):
-                    ResearchEntryView(workspace: workspace, connection: connection, project: project, entry: entry)
-                }
-            }
-            .toolbar {
-                // The calendar is a tab; only the project journey is a page to leave.
-                if project != nil && workspace.researchPath.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) { WorkspacePageBackButton(workspace: workspace) }
+            case .list:
+                ResearchCalendarView(workspace: workspace, connection: connection, state: workspace.researchCalendar, showsDay: false)
+            case .detail:
+                NavigationStack(path: $workspace.calendarPath) {
+                    ResearchDayView(workspace: workspace, connection: connection, state: workspace.researchCalendar)
+                        .navigationDestination(for: ResearchDestination.self) { destination($0) }
                 }
             }
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("research-page")
         .onChange(of: connection.readSessionID) { _, _ in path.wrappedValue = [] }
     }
+
+    @ViewBuilder private func destination(_ destination: ResearchDestination) -> some View {
+        switch destination {
+        case .journey(let project, let day):
+            ResearchJourneyView(workspace: workspace, connection: connection, project: project, day: day)
+        case .entry(let project, let entry):
+            ResearchEntryView(workspace: workspace, connection: connection, project: project, entry: entry)
+        }
+    }
 }
 
 private struct ResearchCalendarView: View {
     @ObservedObject var workspace: RemoteWorkspace
     @ObservedObject var connection: RemoteConnection
+    @ObservedObject var state: ResearchCalendarState
+    /// The day's records follow the grid on iPhone; iPad shows them in the detail column.
+    let showsDay: Bool
     @StateObject private var loader = ResearchLoader()
-    @State private var month = Date()
-    @State private var selectedDay = Date()
-    @State private var project: String?
-    @State private var refresh = UUID()
     private var calendar: Calendar { RemoteResearchClock.localCalendar() }
-    private var projectIDs: [String] { project.map { [$0] } ?? workspace.projects.map { $0["id"].string }.sorted() }
     private var query: ResearchQuery {
-        ResearchQuery(project: nil, projectIDs: projectIDs, interval: RemoteResearchClock.interval(.month, containing: month, calendar: calendar))
+        ResearchQuery(project: nil, projectIDs: state.projectIDs(workspace.projects),
+                      interval: RemoteResearchClock.interval(.month, containing: state.month, calendar: calendar))
     }
 
     var body: some View {
@@ -69,8 +84,8 @@ private struct ResearchCalendarView: View {
                         ForEach(workspace.projects, id: \.recordID) { row in filterButton(row["name"].string, id: row["id"].string) }
                     }.padding(.vertical, 4)
                 }.scrollIndicators(.hidden)
-                ResearchMonthControls(month: month, previous: { shift(-1) }, next: { shift(1) }, today: {
-                    month = Date(); selectedDay = Date()
+                ResearchMonthControls(month: state.month, previous: { shift(-1) }, next: { shift(1) }, today: {
+                    state.month = Date(); select(Date())
                 })
                 grid
             }
@@ -81,34 +96,43 @@ private struct ResearchCalendarView: View {
                         .font(.caption).foregroundStyle(WispStyle.warning)
                 }
             }
-            ResearchDayPreview(workspace: workspace, connection: connection, projectIDs: projectIDs, day: selectedDay, refresh: refresh)
+            if showsDay {
+                ResearchDayPreview(workspace: workspace, connection: connection, projectIDs: state.projectIDs(workspace.projects),
+                                   day: state.day, refresh: state.refresh)
+            }
         }
         .navigationTitle("科研日历").navigationBarTitleDisplayMode(.inline)
-        .task(id: ResearchLoadKey(query: query, session: connection.readSessionID, state: connection.state, refresh: refresh)) {
+        .task(id: ResearchLoadKey(query: query, session: connection.readSessionID, state: connection.state, refresh: state.refresh)) {
             await loader.load(query, connection: connection)
         }
-        .refreshable { refresh = UUID() }
+        .refreshable { state.refresh = UUID() }
+    }
+
+    /// Selecting a day also closes an older day's journey shown beside the grid.
+    private func select(_ date: Date) {
+        state.day = date
+        if !workspace.calendarPath.isEmpty { workspace.calendarPath = [] }
     }
 
     private func filterButton(_ title: String, id: String?) -> some View {
-        Button { project = id } label: {
+        Button { state.project = id } label: {
             Text(title).font(.subheadline).padding(.horizontal, 12).padding(.vertical, 10)
-                .background(project == id ? WispStyle.accent.opacity(0.12) : WispStyle.surface, in: Capsule())
-        }.buttonStyle(.plain).foregroundStyle(project == id ? WispStyle.accent : .primary)
-            .accessibilityAddTraits(project == id ? .isSelected : [])
+                .background(state.project == id ? WispStyle.accent.opacity(0.12) : WispStyle.surface, in: Capsule())
+        }.buttonStyle(.plain).hoverEffect(.highlight).foregroundStyle(state.project == id ? WispStyle.accent : .primary)
+            .accessibilityAddTraits(state.project == id ? .isSelected : [])
     }
 
     private var grid: some View {
-        let cells = RemoteResearchClock.cells(containing: month, calendar: calendar)
+        let cells = RemoteResearchClock.cells(containing: state.month, calendar: calendar)
         let counts = Dictionary(grouping: loader.projects.flatMap { $0.history.entries }) { calendar.startOfDay(for: $0.date) }.mapValues(\.count)
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 6) {
             ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
             ForEach(cells.indices, id: \.self) { index in
                 if let date = cells[index] {
-                    let selected = calendar.isDate(date, inSameDayAs: selectedDay)
+                    let selected = calendar.isDate(date, inSameDayAs: state.day)
                     let count = counts[date] ?? 0
                     let today = calendar.isDateInToday(date)
-                    Button { selectedDay = date } label: {
+                    Button { select(date) } label: {
                         VStack(spacing: 3) {
                             Text("\(calendar.component(.day, from: date))").font(.body.monospacedDigit()).minimumScaleFactor(0.6).lineLimit(1)
                             Circle().fill(count > 0 ? (selected ? WispStyle.onAccent : WispStyle.accent) : .clear).frame(width: 5, height: 5)
@@ -117,7 +141,8 @@ private struct ResearchCalendarView: View {
                         .foregroundStyle(selected ? WispStyle.onAccent : .primary)
                         .background(selected ? WispStyle.accent : .clear, in: RoundedRectangle(cornerRadius: 10))
                         .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(today ? WispStyle.accent : .clear, lineWidth: 1) }
-                    }.buttonStyle(.plain)
+                        .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 10))
+                    }.buttonStyle(.plain).hoverEffect(.highlight)
                         .accessibilityLabel(date.formatted(date: .complete, time: .omitted) + (today ? "，今天" : "") + "，\(count) 条已加载记录")
                         .accessibilityAddTraits(selected ? .isSelected : [])
                         .accessibilityIdentifier("research-day-\(calendar.component(.day, from: date))")
@@ -127,8 +152,23 @@ private struct ResearchCalendarView: View {
     }
 
     private func shift(_ delta: Int) {
-        let start = RemoteResearchClock.interval(.month, containing: month, calendar: calendar).start
-        if let date = calendar.date(byAdding: .month, value: delta, to: start) { month = date; selectedDay = date }
+        let start = RemoteResearchClock.interval(.month, containing: state.month, calendar: calendar).start
+        if let date = calendar.date(byAdding: .month, value: delta, to: start) { state.month = date; select(date) }
+    }
+}
+
+/// The iPad detail column beside the month grid: the selected day's records.
+private struct ResearchDayView: View {
+    @ObservedObject var workspace: RemoteWorkspace
+    @ObservedObject var connection: RemoteConnection
+    @ObservedObject var state: ResearchCalendarState
+    var body: some View {
+        List {
+            ResearchDayPreview(workspace: workspace, connection: connection, projectIDs: state.projectIDs(workspace.projects),
+                               day: state.day, refresh: state.refresh)
+        }
+        .navigationTitle("当日研究记录").navigationBarTitleDisplayMode(.inline)
+        .refreshable { state.refresh = UUID() }
     }
 }
 

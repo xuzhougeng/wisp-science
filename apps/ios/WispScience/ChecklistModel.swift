@@ -35,6 +35,8 @@ struct ChecklistSections {
     @Published private(set) var syncing = false
     @Published var error: String?
     @Published private(set) var lastSync: Date?
+    /// Unsaved quick-add text, kept while another tool or window size is shown.
+    @Published var draft = ""
     private let file: URL
     private var connectedScope: String?
     private var connectionID: UUID?

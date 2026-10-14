@@ -9,6 +9,25 @@ import WispRemote
         configuration.delegateClass = WispSceneDelegate.self
         return configuration
     }
+
+    /// Hardware keyboard shortcuts, listed in the iPad ⌘ overlay and menu bar.
+    /// WispWindow performs and validates them for the current workspace.
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        let sections = WorkspaceTab.allCases.enumerated().map { index, tab in
+            UIKeyCommand(title: RemoteWorkspace.sectionTitle(tab, paired: true), action: #selector(WispWindow.showWorkspaceSection(_:)),
+                         input: "\(index + 1)", modifierFlags: .command, propertyList: tab.rawValue)
+        }
+        let refresh = UIKeyCommand(title: "刷新", action: #selector(WispWindow.refreshWorkspace(_:)), input: "r", modifierFlags: .command)
+        let workspace = UIMenu(title: "", identifier: UIMenu.Identifier("science.wisp.workspace"), options: .displayInline,
+                               children: sections + [refresh])
+        let create = UIMenu(title: "", identifier: UIMenu.Identifier("science.wisp.conversation"), options: .displayInline, children: [
+            UIKeyCommand(title: "新对话", action: #selector(WispWindow.newConversation(_:)), input: "n", modifierFlags: .command),
+        ])
+        if builder.menu(for: .view) != nil { builder.insertChild(workspace, atStartOfMenu: .view) }
+        if builder.menu(for: .file) != nil { builder.insertChild(create, atStartOfMenu: .file) }
+    }
 }
 
 final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -41,7 +60,7 @@ final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
 final class WispWindow: UIWindow, UIGestureRecognizerDelegate {
     var dismissTopSurface: (() -> Void)?
     var hasSurface: (() -> Bool)?
-    private weak var pageBackWorkspace: RemoteWorkspace?
+    private weak var workspace: RemoteWorkspace?
     private lazy var pageBackGesture: UIScreenEdgePanGestureRecognizer = {
         let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handlePageBack(_:)))
         gesture.edges = .left
@@ -50,14 +69,49 @@ final class WispWindow: UIWindow, UIGestureRecognizerDelegate {
     }()
 
     func installPageBackGesture(workspace: RemoteWorkspace) {
-        pageBackWorkspace = workspace
+        self.workspace = workspace
         addGestureRecognizer(pageBackGesture)
+    }
+
+    // MARK: Keyboard and menu commands
+
+    private func section(_ sender: Any?) -> WorkspaceTab? {
+        ((sender as? UICommand)?.propertyList as? String).flatMap(WorkspaceTab.init(rawValue:))
+    }
+    @objc func showWorkspaceSection(_ sender: UIKeyCommand) {
+        if let tab = section(sender) { workspace?.showSection(tab) }
+    }
+    @objc func newConversation(_ sender: UIKeyCommand) {
+        guard let workspace, workspace.canCreateConversation else { return }
+        Task { await workspace.createConversation() }
+    }
+    @objc func refreshWorkspace(_ sender: UIKeyCommand) {
+        guard let workspace else { return }
+        Task { await workspace.refreshVisible() }
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        guard let workspace else { return super.canPerformAction(action, withSender: sender) }
+        switch action {
+        case #selector(showWorkspaceSection(_:)): return section(sender).map(workspace.canShowSection) ?? false
+        case #selector(newConversation(_:)): return workspace.canCreateConversation
+        case #selector(refreshWorkspace(_:)): return workspace.canRefresh
+        default: return super.canPerformAction(action, withSender: sender)
+        }
+    }
+
+    override func validate(_ command: UICommand) {
+        super.validate(command)
+        guard command.action == #selector(showWorkspaceSection(_:)), let tab = section(command),
+              let workspace else { return }
+        command.title = workspace.sectionTitle(tab)
+        command.state = workspace.tab == tab ? .on : .off
     }
 
     private var canStartPageBack: Bool {
         // Also respect UIKit presentations, such as a date-picker popover,
         // which are not represented by the workspace's sheet state.
-        pageBackWorkspace?.canSwipeBackToWorkspace == true && rootViewController?.presentedViewController == nil
+        workspace?.canSwipeBackToWorkspace == true && rootViewController?.presentedViewController == nil
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -74,7 +128,7 @@ final class WispWindow: UIWindow, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePageBack(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard let workspace = pageBackWorkspace else { return }
+        guard let workspace else { return }
         let translation = gesture.translation(in: self).x
         switch gesture.state {
         case .began:

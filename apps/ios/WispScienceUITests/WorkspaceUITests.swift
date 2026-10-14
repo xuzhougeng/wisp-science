@@ -1,7 +1,24 @@
 import XCTest
+import UIKit
 
 final class WorkspaceUITests: XCTestCase {
-    private func tab(_ app: XCUIApplication, _ title: String) -> XCUIElement { app.tabBars.buttons[title] }
+    /// Full-screen iPad runs use the workspace sidebar instead of bottom tabs.
+    private var padSidebar: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+
+    /// A bottom tab on iPhone; the matching sidebar row on iPad. Once paired, the
+    /// iPad conversations section is reached through a project row.
+    private func tab(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+        guard padSidebar else { return app.tabBars.buttons[title] }
+        let section = ["对话": "conversations", "连接": "conversations", "日历": "calendar",
+                       "清单": "checklist", "记录本": "notebook"][title] ?? title
+        let row = app.buttons["sidebar-\(section)"]
+        if section == "conversations" && !row.exists { return sidebarProject(app) }
+        return row
+    }
+
+    private func sidebarProject(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "sidebar-project-")).firstMatch
+    }
 
     func testChecklistQuickAddCompleteAndReopenWithoutLeavingTheList() {
         let app = launch("connection")
@@ -130,7 +147,12 @@ final class WorkspaceUITests: XCTestCase {
     private func verifyToolTabs(darkAndLarge: Bool) {
         let app = launch(darkAndLarge: darkAndLarge)
         XCTAssertTrue(app.staticTexts["RNA-seq 研究"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(app.tabBars.buttons.count, 4)
+        if padSidebar {
+            XCTAssertEqual(app.tabBars.count, 0, "The sidebar replaces the tab bar")
+            XCTAssertTrue(sidebarProject(app).exists)
+        } else {
+            XCTAssertEqual(app.tabBars.buttons.count, 4)
+        }
         for (label, title) in [("清单", "科研清单"), ("记录本", "实验记录本"), ("日历", "科研日历")] {
             tab(app, label).tap()
             assertToolTab(app, title: title, tab: label)
@@ -239,7 +261,7 @@ final class WorkspaceUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: finish, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    /// A tool tab root: full-width navigation bar, selected tab, no workspace back button.
+    /// A tool tab root: full-width navigation bar (iPhone), selected tab or sidebar row, no workspace back button.
     private func assertToolTab(_ app: XCUIApplication, title: String, tab label: String,
                                file: StaticString = #filePath, line: UInt = #line) {
         let navigation = app.navigationBars[title]
@@ -254,6 +276,8 @@ final class WorkspaceUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["完成"].exists, file: file, line: line)
         XCTAssertEqual(app.sheets.count, 0, file: file, line: line)
+        // On iPad the tool's list sits beside the sidebar instead.
+        guard !padSidebar else { return }
         let fullWidth = NSPredicate { _, _ in
             navigation.exists && abs(navigation.frame.width - app.frame.width) < 2
                 && abs(navigation.frame.minX - app.frame.minX) < 2
@@ -382,6 +406,72 @@ final class WorkspaceUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
         XCTAssertTrue(app.staticTexts["离线样本核对"].waitForExistence(timeout: 5))
+    }
+
+    func testPadSidebarShowsToolsBesideTheirDetailsWithoutATabBar() throws {
+        try XCTSkipUnless(padSidebar, "Full-width iPad layout only")
+        let app = launch("connection")
+        XCTAssertTrue(app.buttons["sidebar-conversations"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.tabBars.count, 0, "No floating tab bar sits over the columns")
+        XCTAssertTrue(app.buttons["enter-demo"].exists, "The connection form sits beside the sidebar")
+        XCTAssertEqual(app.staticTexts["offline-tools-hint"].label,
+                       "「科研清单」和「实验记录本」在左侧边栏，无需连接主机即可使用，连接后清单同步到研究计划。")
+        app.buttons["sidebar-checklist"].tap()
+        XCTAssertTrue(app.navigationBars["科研清单"].waitForExistence(timeout: 5))
+        let placeholder = app.descendants(matching: .any)["tool-placeholder"]
+        XCTAssertTrue(placeholder.exists)
+        let title = app.textFields["checklist-title"]
+        title.tap(); title.typeText("核对样本编号")
+        app.buttons["sidebar-notebook"].tap()
+        XCTAssertTrue(app.navigationBars["实验记录本"].waitForExistence(timeout: 5))
+        app.buttons["sidebar-checklist"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(title.value as? String, "核对样本编号", "Unsaved quick-add text survives switching sections")
+        app.buttons["checklist-add"].tap()
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-item-")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["科研清单"].exists, "The list stays beside the open item")
+        XCTAssertTrue(item.isSelected)
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "iPad sidebar — checklist beside its item"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        // No focus movement into the editor before Escape: only the item closes.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["清单事项"].exists)
+        XCTAssertTrue(app.navigationBars["科研清单"].exists)
+        app.typeKey("4", modifierFlags: .command)
+        XCTAssertTrue(app.navigationBars["实验记录本"].waitForExistence(timeout: 5))
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["enter-demo"].waitForExistence(timeout: 5))
+    }
+
+    func testPadSidebarKeepsTheConversationWhileTheCalendarFillsTheColumns() throws {
+        try XCTSkipUnless(padSidebar, "Full-width iPad layout only")
+        let app = launch("connection")
+        app.buttons["enter-demo"].tap()
+        let project = sidebarProject(app)
+        XCTAssertTrue(project.waitForExistence(timeout: 5)); project.tap()
+        let conversation = app.staticTexts["样本质控与报告"].firstMatch
+        XCTAssertTrue(conversation.waitForExistence(timeout: 5)); conversation.tap()
+        XCTAssertTrue(app.buttons["conversation-files"].waitForExistence(timeout: 5))
+        assertDemoBannerAboveNavigation(app)
+        app.buttons["sidebar-calendar"].tap()
+        XCTAssertTrue(app.navigationBars["科研日历"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["当日研究记录"].waitForExistence(timeout: 5), "The day's records fill the detail column")
+        XCTAssertFalse(app.buttons["conversation-files"].exists)
+        let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "research-open-day-")).firstMatch
+        XCTAssertTrue(day.waitForExistence(timeout: 5)); day.tap()
+        XCTAssertTrue(app.navigationBars["研究历程"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["research-month-title"].exists, "The month grid stays beside the journey")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.navigationBars["当日研究记录"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["研究历程"].exists)
+        project.tap()
+        XCTAssertTrue(app.buttons["conversation-files"].waitForExistence(timeout: 5), "The project keeps its open conversation")
     }
 
     func testConversationHidesTheTabBarOnPhone() {
