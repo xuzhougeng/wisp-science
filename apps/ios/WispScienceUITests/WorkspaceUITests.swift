@@ -1,6 +1,226 @@
 import XCTest
 
 final class WorkspaceUITests: XCTestCase {
+    func testChecklistQuickAddCompleteAndReopenWithoutLeavingTheList() {
+        let app = launch("connection")
+        app.buttons["research-checklist"].tap()
+        XCTAssertTrue(app.staticTexts["还没有待办事项"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["保存与同步"].exists)
+        XCTAssertFalse(app.datePickers.firstMatch.exists)
+        let add = app.buttons["checklist-add"]
+        XCTAssertFalse(add.isEnabled)
+        let title = app.textFields["checklist-title"]
+        title.tap(); title.typeText("核对样本编号"); add.tap()
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-item-")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["今天"].exists)
+        let id = String(item.identifier.dropFirst("checklist-item-".count))
+        let toggle = app.buttons["checklist-toggle-\(id)"]
+        XCTAssertEqual(toggle.label, "标记完成")
+        toggle.tap()
+        let completed = app.buttons["checklist-show-done"]
+        XCTAssertTrue(completed.waitForExistence(timeout: 5))
+        XCTAssertEqual(completed.value as? String, "已收起")
+        XCTAssertFalse(app.buttons["checklist-item-\(id)"].exists)
+        XCTAssertTrue(app.staticTexts["待办都完成了"].exists)
+        XCTAssertFalse(app.navigationBars["清单事项"].exists, "Tapping the circle must not also open the editor")
+        completed.tap()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.label, "标记未完成")
+        toggle.tap()
+        XCTAssertFalse(completed.exists)
+        XCTAssertEqual(toggle.label, "标记完成")
+        app.buttons["checklist-item-\(id)"].tap()
+        XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.datePickers.firstMatch.exists, "Dates are edited in task details")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["checklist-item-\(id)"].waitForExistence(timeout: 5))
+    }
+
+    func testChecklistSettingsImmediateEscapePreservesListAndDraftWithLargeText() {
+        let app = launch("connection", darkAndLarge: true)
+        let entry = app.buttons["research-checklist"]
+        for _ in 0..<5 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.isHittable); entry.tap()
+        let title = app.textFields["checklist-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("尚未添加的任务")
+        app.buttons["checklist-settings"].tap()
+        XCTAssertTrue(app.navigationBars["清单设置"].waitForExistence(timeout: 5))
+        // No focus movement inside the sheet before Escape.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertFalse(app.navigationBars["清单设置"].exists)
+        assertResearchPage(app, title: "科研清单")
+        XCTAssertEqual(title.value as? String, "尚未添加的任务")
+        app.buttons["checklist-add"].tap()
+        XCTAssertTrue(app.staticTexts["尚未添加的任务"].waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Checklist — dark and large text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testNotebookGuidanceAndExampleReturnOneLevelWithoutCreatingRecords() {
+        let app = launch("connection", darkAndLarge: true)
+        let notebook = app.buttons["research-notebook"]
+        for _ in 0..<5 { if notebook.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(notebook.isHittable); notebook.tap()
+        let example = app.buttons["notebook-example"]
+        for _ in 0..<5 { if example.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(example.isHittable); example.tap()
+        XCTAssertTrue(app.navigationBars["记录示例"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["教学示例，不会加入你的本机记录。"].exists)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["notebook-help"].waitForExistence(timeout: 5))
+        app.buttons["notebook-help"].tap()
+        XCTAssertTrue(app.navigationBars["记录本怎么用"].waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["workspace-page-back"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).count, 0)
+    }
+
+    func testNotebookObservationWithoutTitleExplainsSaveAndOptionalSending() {
+        let app = launch("connection")
+        app.buttons["research-notebook"].tap()
+        app.buttons["notebook-add"].tap()
+        let notes = app.textViews["notebook-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5)); notes.tap(); notes.typeText("A03 复测浓度")
+        app.buttons["notebook-save"].tap()
+        XCTAssertTrue(app.navigationBars["已保存到本机"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["A03 复测浓度"].exists)
+        XCTAssertTrue(app.staticTexts["尚未上传到 Wisp 主机。"].exists)
+        let send = app.buttons["notebook-review-send"]
+        for _ in 0..<5 { if send.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(send.isHittable); send.tap()
+        let offline = app.staticTexts["notebook-send-offline"]
+        for _ in 0..<5 { if offline.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(offline.exists)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.navigationBars["已保存到本机"].waitForExistence(timeout: 5))
+        let back = app.buttons["notebook-return-list"]
+        for _ in 0..<5 { if back.isHittable { break }; app.swipeDown() }
+        back.tap()
+        let record = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).firstMatch
+        for _ in 0..<5 { if record.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(record.isHittable); record.tap()
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        XCTAssertEqual(notes.value as? String, "A03 复测浓度")
+    }
+
+    func testNotebookPhotoPickerCanBeCancelledBeforeCreatingARecord() {
+        let app = launch("connection")
+        app.buttons["research-notebook"].tap()
+        app.buttons["notebook-start-photos"].tap()
+        XCTAssertTrue(app.buttons["notebook-import-photos"].waitForExistence(timeout: 5))
+        app.buttons["notebook-import-photos"].tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["notebook-start-photos"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).count, 0)
+    }
+
+    func testResearchToolsSupportEdgeSwipeBack() {
+        verifyResearchToolEdgeBack(darkAndLarge: false)
+    }
+
+    func testResearchToolsSupportEdgeSwipeBackWithLargeText() {
+        verifyResearchToolEdgeBack(darkAndLarge: true)
+    }
+
+    private func verifyResearchToolEdgeBack(darkAndLarge: Bool) {
+        let app = launch(darkAndLarge: darkAndLarge)
+        for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本"), ("research-calendar", "科研日历")] {
+            let link = app.buttons[entry]
+            XCTAssertTrue(link.waitForExistence(timeout: 5)); link.tap()
+            assertResearchPage(app, title: title)
+            swipeBack(app)
+            XCTAssertTrue(link.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["connection-settings"].isHittable)
+            XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+        }
+    }
+
+    func testCancelledEdgeSwipeAndContentDragsPreservePageAndInput() {
+        let app = launch("connection")
+        app.buttons["research-checklist"].tap()
+        let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("尚未保存的事项")
+        // Hold before lifting to distinguish a short drag from a fast flick.
+        swipeBack(app, end: 0.12)
+        assertResearchPage(app, title: "科研清单")
+        XCTAssertEqual(title.value as? String, "尚未保存的事项")
+        XCTAssertFalse(app.buttons["research-checklist"].exists)
+        let center = app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.35))
+        center.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.35)))
+        assertResearchPage(app, title: "科研清单")
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.4))
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.2)))
+        assertResearchPage(app, title: "科研清单")
+        swipeBack(app)
+        XCTAssertTrue(app.buttons["research-checklist"].waitForExistence(timeout: 5))
+    }
+
+    func testOfflineDetailsSwipeBackOneLevelBeforeReturningToConnection() {
+        let app = launch("connection")
+        app.buttons["research-checklist"].tap()
+        let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("侧滑返回事项")
+        app.buttons["checklist-add"].tap()
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-item-")).firstMatch
+        for _ in 0..<4 { if item.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(item.isHittable); item.tap()
+        XCTAssertTrue(app.navigationBars["清单事项"].waitForExistence(timeout: 5))
+        swipeBack(app)
+        assertResearchPage(app, title: "科研清单")
+        XCTAssertTrue(item.exists)
+        swipeBack(app)
+        XCTAssertTrue(app.buttons["research-notebook"].waitForExistence(timeout: 5))
+        app.buttons["research-notebook"].tap()
+        app.buttons["notebook-add"].tap()
+        let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
+        XCTAssertTrue(experiment.waitForExistence(timeout: 5)); experiment.tap(); experiment.typeText("侧滑返回实验")
+        XCTAssertTrue(app.navigationBars["实验记录"].waitForExistence(timeout: 5))
+        swipeBack(app)
+        assertResearchPage(app, title: "实验记录本")
+        swipeBack(app)
+        XCTAssertTrue(app.buttons["research-notebook"].waitForExistence(timeout: 5))
+    }
+
+    func testCalendarAndProjectJourneySwipeBackPreserveTheirParent() {
+        let app = launch("connection")
+        app.buttons["enter-demo"].tap()
+        XCTAssertTrue(app.buttons["research-calendar"].waitForExistence(timeout: 5))
+        app.buttons["research-calendar"].tap()
+        let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "research-open-day-")).firstMatch
+        for _ in 0..<5 { if day.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(day.isHittable); day.tap()
+        let entry = app.buttons["research-entry-demo-finding"]
+        for _ in 0..<4 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.isHittable); entry.tap()
+        XCTAssertTrue(app.navigationBars["研究记录"].waitForExistence(timeout: 5))
+        swipeBack(app)
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+        swipeBack(app)
+        assertResearchPage(app, title: "科研日历")
+        swipeBack(app)
+        let project = app.staticTexts["RNA-seq 质控 · 演示"].firstMatch
+        XCTAssertTrue(project.waitForExistence(timeout: 5)); project.tap()
+        XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
+        app.buttons["research-journey"].tap()
+        assertResearchPage(app, title: "研究历程")
+        swipeBack(app)
+        XCTAssertTrue(app.buttons["research-journey"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["样本质控与报告"].firstMatch.exists)
+    }
+
+    private func swipeBack(_ app: XCUIApplication, end: CGFloat = 0.8) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.35))
+        let finish = app.coordinate(withNormalizedOffset: CGVector(dx: end, dy: 0.35))
+        start.press(forDuration: 0.05, thenDragTo: finish, withVelocity: .slow, thenHoldForDuration: 0.3)
+    }
+
     func testResearchToolsOpenFullPagesAndReturnToWorkspace() {
         let app = launch()
         for (entry, title) in [("research-checklist", "科研清单"), ("research-notebook", "实验记录本"), ("research-calendar", "科研日历")] {
@@ -33,6 +253,16 @@ final class WorkspaceUITests: XCTestCase {
         let back = app.buttons["workspace-page-back"]
         XCTAssertTrue(back.waitForExistence(timeout: 5), file: file, line: line)
         XCTAssertTrue(back.isHittable, file: file, line: line)
+        XCTAssertEqual(back.label, "返回上一页", file: file, line: line)
+        assertCompactToolbarButton(back, file: file, line: line)
+        assertTitleSharesToolbarRow(app, title: title, action: "workspace-page-back", file: file, line: line)
+        if title == "实验记录本" {
+            let help = app.buttons["notebook-help"]
+            assertCompactToolbarButton(help, file: file, line: line)
+            XCTAssertEqual(help.label, "怎么用", file: file, line: line)
+            XCTAssertEqual(back.frame.width, help.frame.width, accuracy: 1, file: file, line: line)
+            assertTitleSharesToolbarRow(app, title: title, action: "notebook-help", file: file, line: line)
+        }
         XCTAssertFalse(app.buttons["完成"].exists, file: file, line: line)
         XCTAssertEqual(app.sheets.count, 0, file: file, line: line)
         // Pages use the full app width on iPad too, rather than a sheet or sidebar.
@@ -136,12 +366,14 @@ final class WorkspaceUITests: XCTestCase {
         assertResearchPage(app, title: "实验记录本")
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        app.buttons["notebook-add"].tap()
         let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
         XCTAssertTrue(experiment.waitForExistence(timeout: 5)); experiment.tap(); experiment.typeText("离线实验 A")
-        app.buttons["notebook-add"].tap()
         let notes = app.textViews["notebook-notes"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5)); notes.tap(); notes.typeText("样本 A，重复三次。")
         app.buttons["notebook-save"].tap()
+        XCTAssertTrue(app.buttons["notebook-continue-editing"].waitForExistence(timeout: 5))
+        app.buttons["notebook-continue-editing"].tap()
         let photos = app.buttons["notebook-import-photos"]
         for _ in 0..<4 { if photos.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(photos.isHittable); photos.tap()
@@ -227,18 +459,94 @@ final class WorkspaceUITests: XCTestCase {
         verifyWorkspaceNavigation(darkAndLarge: true)
     }
 
+    func testEmptyInboxKeepsCompactToolbarWithoutZeroInLabel() {
+        let app = launch("inbox-empty")
+        XCTAssertTrue(app.staticTexts["RNA-seq 研究"].firstMatch.waitForExistence(timeout: 5))
+        assertCompactWorkspaceToolbar(app)
+        let inbox = app.buttons["inbox"]
+        XCTAssertEqual(inbox.label, "待处理")
+        XCTAssertEqual(inbox.value as? String, "暂无待处理事项")
+        XCTAssertFalse(inbox.isEnabled)
+        XCTAssertFalse(app.staticTexts["待处理 0"].exists)
+    }
+
     private func verifyWorkspaceNavigation(darkAndLarge: Bool) {
         let app = launch(darkAndLarge: darkAndLarge)
         let project = app.staticTexts["RNA-seq 研究"].firstMatch
         XCTAssertTrue(project.waitForExistence(timeout: 5))
         assertTitleSharesToolbarRow(app, title: "Wisp", action: "connection-settings")
         assertTitleSharesToolbarRow(app, title: "Wisp", action: "inbox")
+        assertCompactWorkspaceToolbar(app)
+        XCTAssertEqual(app.buttons["connection-settings"].label, "连接设置")
+        let actionWidth = app.buttons["connection-settings"].frame.width
+        let inbox = app.buttons["inbox"]
+        let pending = NSPredicate(format: "value == %@ AND enabled == YES", "1 项待处理")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pending, object: inbox)], timeout: 5), .completed)
         app.buttons["connection-settings"].tap()
         XCTAssertTrue(app.buttons["完成"].waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertFalse(app.buttons["完成"].exists)
+        inbox.tap()
+        XCTAssertTrue(app.navigationBars["待处理"].waitForExistence(timeout: 5))
+        // Dismiss immediately, without moving focus into the sheet.
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertFalse(app.navigationBars["待处理"].exists)
+        XCTAssertTrue(project.isHittable)
+        app.buttons["research-notebook"].tap()
+        assertResearchPage(app, title: "实验记录本")
+        XCTAssertEqual(app.buttons["workspace-page-back"].frame.width, actionWidth, accuracy: 1)
+        app.buttons["notebook-help"].tap()
+        XCTAssertTrue(app.navigationBars["记录本怎么用"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["workspace-page-back"].exists)
+        // Native detail navigation must retain swipe-back after toolbar styling.
+        swipeBack(app)
+        assertResearchPage(app, title: "实验记录本")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = darkAndLarge ? "Notebook toolbar — dark and large text" : "Notebook toolbar"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["workspace-page-back"].tap()
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
         project.tap()
         XCTAssertTrue(app.staticTexts["样本质控"].firstMatch.waitForExistence(timeout: 5))
         assertTitleSharesToolbarRow(app, title: "RNA-seq 研究", action: "new-conversation")
+        let create = app.buttons["new-conversation"]
+        assertCompactToolbarButton(create)
+        XCTAssertEqual(create.frame.width, actionWidth, accuracy: 1)
+        XCTAssertEqual(create.label, "新对话")
+        create.tap()
+        let files = app.buttons["conversation-files"]
+        XCTAssertTrue(files.waitForExistence(timeout: 5))
+        assertCompactToolbarButton(files)
+        XCTAssertEqual(files.label, "文件")
+        XCTAssertEqual(files.frame.width, actionWidth, accuracy: 1)
+        // A collapsed split view should still return to the session list.
+        if !create.isHittable {
+            swipeBack(app)
+            XCTAssertTrue(create.waitForExistence(timeout: 5))
+            XCTAssertTrue(create.isHittable)
+            XCTAssertTrue(app.staticTexts["样本质控"].firstMatch.exists)
+        }
+    }
+
+    private func assertCompactWorkspaceToolbar(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let settings = app.buttons["connection-settings"]
+        let inbox = app.buttons["inbox"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(inbox.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertEqual(settings.frame.width, inbox.frame.width, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(settings.frame.height, inbox.frame.height, accuracy: 1, file: file, line: line)
+        for button in [settings, inbox] {
+            assertCompactToolbarButton(button, file: file, line: line)
+        }
+    }
+
+    private func assertCompactToolbarButton(_ button: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(button.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 44, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44, file: file, line: line)
+        XCTAssertLessThanOrEqual(button.frame.width, 60, file: file, line: line)
+        XCTAssertLessThanOrEqual(button.frame.height, 60, file: file, line: line)
     }
 
     private func assertTitleSharesToolbarRow(_ app: XCUIApplication, title: String, action: String,

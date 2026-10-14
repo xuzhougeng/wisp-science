@@ -11,6 +11,12 @@ enum WispStyle {
     static let success = adaptive(light: 0x286A45, dark: 0x8CD5A8)
     static let failure = adaptive(light: 0xB33339, dark: 0xFF999C)
     static let warning = adaptive(light: 0x875710, dark: 0xEFC27B)
+    static var navigationAction: Color {
+        // Match the native back control's monochrome treatment on Liquid Glass;
+        // older navigation bars continue using the app's accent tint.
+        if #available(iOS 26.0, *) { return .primary }
+        return accent
+    }
 
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
@@ -26,7 +32,9 @@ enum WispStyle {
 /// Keep the WebView's shared glyphs; do not substitute a second icon family.
 struct WispIcon: View {
     enum Kind: String {
-        case list, notebook, camera, square, checkSquare = "check-square"
+        case gear, inbox, folder, circleHelp = "circle-help", squarePen = "square-pen"
+        case plus, circle, circleCheck = "circle-check", circleAlert = "circle-alert"
+        case list, notebook, camera, edit, book, check, square, checkSquare = "check-square"
         case image, calendar, researchTrail = "research-trail", arrowUp = "arrow-up"
         case chevronRight = "chevron-right", chevronDown = "chevron-down", chevronLeft = "chevron-left"
     }
@@ -40,6 +48,50 @@ struct WispIcon: View {
     var body: some View {
         Image("wisp-" + kind.rawValue).renderingMode(.template).resizable()
             .scaledToFit().frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+/// Navigation actions share the system bar-button treatment, including its
+/// background, so custom page entry points match the native back button.
+struct WispToolbarButton: View {
+    let title: String
+    let icon: WispIcon.Kind
+    var count: Int? = nil
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+
+    private var status: String {
+        guard let count else { return "" }
+        return count == 0 ? "暂无待处理事项" : "\(count) 项待处理"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Label {
+                Text(title)
+            } icon: {
+                WispIcon(icon, size: icon == .chevronLeft ? 28 : 20)
+            }
+            .labelStyle(.iconOnly).dynamicTypeSize(.large)
+            .frame(width: 44, height: 44)
+            .overlay(alignment: .topTrailing) {
+                if let count, count > 0 {
+                    Text(count > 99 ? "99+" : "\(count)")
+                        .font(.system(size: 10, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(WispStyle.onAccent)
+                        .padding(.horizontal, 4).frame(minWidth: 16, minHeight: 16)
+                        .background(WispStyle.accent, in: Capsule()).padding(.top, 2)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.automatic).tint(WispStyle.navigationAction)
+        .foregroundStyle(enabled ? WispStyle.navigationAction : Color.secondary)
+        .accessibilityLabel(title).accessibilityValue(status)
+        .accessibilityShowsLargeContentViewer {
+            Label { Text(status.isEmpty ? title : status) } icon: { WispIcon(icon) }
+        }
     }
 }
 

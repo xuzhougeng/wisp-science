@@ -22,6 +22,62 @@ import WispRemote
                  "approvals": .array([]), "running": .bool(false), "stopping": .bool(false), "read_only": .bool(readOnly)])
     }
 
+    func testChecklistSectionsKeepConflictsVisibleAndGroupOpenTasksByDay() throws {
+        var replica = ChecklistReplica()
+        for (id, day, status) in [
+            ("overdue", "2026-12-18", "open"), ("today", "2026-12-19", "open"),
+            ("next-year", "2027-01-01", "open"), ("tomorrow", "2026-12-20", "open"),
+            ("done", "2026-12-18", "done"), ("dropped", "2026-12-19", "dropped"),
+            ("conflict-done", "2026-12-19", "done"), ("conflict-dropped", "2026-12-19", "dropped"),
+        ] {
+            try replica.edit(id: id, fields: ChecklistFields(title: id, day: day, status: status))
+        }
+        var entries = Array(replica.entries.values)
+        for index in entries.indices where entries[index].id.hasPrefix("conflict-") { entries[index].conflict = true }
+        let sections = ChecklistSections(entries: Array(entries.reversed()), today: "2026-12-19")
+        XCTAssertEqual(sections.needsReview.map(\.id), ["conflict-done", "conflict-dropped"])
+        XCTAssertEqual(sections.overdue.map(\.id), ["overdue"])
+        XCTAssertEqual(sections.today.map(\.id), ["today"])
+        XCTAssertEqual(sections.upcoming.map(\.id), ["tomorrow", "next-year"])
+        XCTAssertEqual(sections.done.map(\.id), ["done"])
+        XCTAssertEqual(sections.remainingCount, 6)
+        let nextDay = ChecklistSections(entries: entries, today: "2026-12-20")
+        XCTAssertEqual(nextDay.overdue.map(\.id), ["overdue", "today"])
+        XCTAssertEqual(nextDay.today.map(\.id), ["tomorrow"])
+        XCTAssertEqual(nextDay.upcoming.map(\.id), ["next-year"])
+        XCTAssertEqual(nextDay.remainingCount, 6)
+    }
+
+    func testChecklistCompletionAndReopeningMoveBetweenSectionsAndPersist() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = ChecklistModel(directory: dir)
+        XCTAssertTrue(model.edit(id: "sample", fields: ChecklistFields(title: "核对样本编号", day: "2026-10-14")))
+        XCTAssertTrue(model.edit(id: "sample", fields: ChecklistFields(title: "核对样本编号", day: "2026-10-14", status: "done")))
+        var sections = ChecklistSections(entries: ChecklistModel(directory: dir).entries, today: "2026-10-14")
+        XCTAssertEqual(sections.remainingCount, 0)
+        XCTAssertEqual(sections.done.map(\.id), ["sample"])
+        XCTAssertTrue(model.edit(id: "sample", fields: ChecklistFields(title: "核对样本编号", day: "2026-10-15")))
+        sections = ChecklistSections(entries: ChecklistModel(directory: dir).entries, today: "2026-10-14")
+        XCTAssertTrue(sections.done.isEmpty)
+        XCTAssertEqual(sections.upcoming.map(\.id), ["sample"])
+        XCTAssertEqual(sections.remainingCount, 1)
+    }
+
+    func testChecklistSettingsDismissBeforeThePageAndBlockEdgeSwipe() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.page = .checklist
+        workspace.sheet = .checklistSettings
+        XCTAssertFalse(workspace.canSwipeBackToWorkspace)
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.dismissTopSurface()
+        XCTAssertNil(workspace.sheet)
+        XCTAssertEqual(workspace.page, .checklist)
+        XCTAssertTrue(workspace.canSwipeBackToWorkspace)
+        workspace.dismissTopSurface()
+        XCTAssertNil(workspace.page)
+    }
+
     func testChecklistLocalRestartScopesAndOldHostLeavePendingData() async throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let model = ChecklistModel(directory: dir)
@@ -131,6 +187,74 @@ import WispRemote
         XCTAssertNil(restored.record(id)?.transfer, "Import, recognition and restart must never upload")
     }
 
+    func testFirstObservationNeedsNoTitleAndPersistsInOneRecord() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = NotebookModel(directory: dir, recognizeText: { _ in XCTFail("Text entry must not invoke OCR"); return "" })
+        XCTAssertTrue(model.records.isEmpty)
+        XCTAssertNil(model.createObservation(title: "  ", day: "2026-10-13", notes: "\n "))
+        XCTAssertTrue(model.records.isEmpty, "An empty editor must not create a record")
+        let notes = "  A03 出现沉淀，补做离心。\n下午复测浓度。"
+        let id = try XCTUnwrap(model.createObservation(title: "", day: "2026-10-13", notes: notes))
+        XCTAssertEqual(model.record(id)?.title, "A03 出现沉淀，补做离心。")
+        let restored = NotebookModel(directory: dir)
+        XCTAssertEqual(restored.records.count, 1)
+        XCTAssertEqual(restored.record(id)?.notes, notes)
+        XCTAssertNil(restored.record(id)?.transfer)
+        XCTAssertEqual(restored.record(id)?.photos.count, 0)
+    }
+
+    func testNewObservationRejectsInvalidFieldsWithoutPartialSave() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = NotebookModel(directory: dir)
+        XCTAssertNil(model.createObservation(title: "实验", day: "invalid", notes: "观察"))
+        XCTAssertNil(model.createObservation(title: String(repeating: "a", count: 201), day: "2026-10-13", notes: "观察"))
+        XCTAssertNil(model.createObservation(title: "实验", day: "2026-10-13", notes: String(repeating: "x", count: 256 * 1024 + 1)))
+        XCTAssertTrue(model.records.isEmpty)
+        XCTAssertTrue(NotebookModel(directory: dir).records.isEmpty)
+    }
+
+    func testPhotoFirstImportKeepsOriginalWhenRecognitionFails() async throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = NotebookModel(directory: dir, recognizeText: { _ in throw RemoteError.service("Offline OCR unavailable") })
+        let data = image()
+        let result = await model.createFromPhoto(data, title: "", day: "2026-10-13", notes: "")
+        let imported = try XCTUnwrap(result)
+        XCTAssertEqual(model.records.count, 1)
+        XCTAssertEqual(model.record(imported.record)?.title, "实验记录 · 2026-10-13")
+        XCTAssertEqual(try model.photoData(imported.photo), data)
+        XCTAssertNotNil(model.error, "The correction page must explain that OCR did not finish")
+        let restored = NotebookModel(directory: dir)
+        XCTAssertEqual(restored.record(imported.record)?.photos.first?.id, imported.photo)
+        XCTAssertEqual(restored.record(imported.record)?.photos.first?.text, "")
+        XCTAssertNil(restored.record(imported.record)?.transfer)
+    }
+
+    func testInvalidFirstPhotoDoesNotCreateAnEmptyRecordOrRunOCR() async {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = NotebookModel(directory: dir, recognizeText: { _ in XCTFail("Invalid photos must not reach OCR"); return "" })
+        let result = await model.createFromPhoto(Data("not an image".utf8), title: "", day: "2026-10-13", notes: "")
+        XCTAssertNil(result)
+        XCTAssertTrue(model.records.isEmpty)
+        XCTAssertTrue(NotebookModel(directory: dir).records.isEmpty)
+        XCTAssertNotNil(model.error)
+    }
+
+    func testPhotoFirstImportCanBeCorrectedAndExtendedWithoutDuplicatingRecord() async throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = NotebookModel(directory: dir, recognizeText: { _ in "A03: 0.25 µL" })
+        let result = await model.createFromPhoto(image(), title: "提取记录", day: "2026-10-13", notes: "第一批")
+        let imported = try XCTUnwrap(result)
+        XCTAssertEqual(model.record(imported.record)?.photos.first?.text, "A03: 0.25 µL")
+        XCTAssertTrue(model.saveText(record: imported.record, photo: imported.photo, text: "A03: 0.35 µL"))
+        let second = await model.addPhoto(image(), record: imported.record)
+        XCTAssertNotNil(second)
+        XCTAssertEqual(model.records.count, 1)
+        let restored = NotebookModel(directory: dir)
+        XCTAssertEqual(restored.record(imported.record)?.notes, "第一批")
+        XCTAssertEqual(restored.record(imported.record)?.photos.count, 2)
+        XCTAssertEqual(restored.record(imported.record)?.photos.first?.text, "A03: 0.35 µL")
+    }
+
     func testNotebookOnlyUploadsSelectedPagesAndKeepsSuccessfulReceiptOnDuplicateTap() async throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let model = NotebookModel(directory: dir, recognizeText: { _ in "local OCR" })
@@ -211,9 +335,9 @@ import WispRemote
         workspace.notebookLibraryPresented = true
         workspace.dismissTopSurface()
         XCTAssertFalse(workspace.notebookLibraryPresented); XCTAssertEqual(workspace.notebookPath.count, 2)
-        workspace.notebookCameraRecord = "r"
+        workspace.notebookCameraPresented = true
         workspace.dismissTopSurface()
-        XCTAssertNil(workspace.notebookCameraRecord); XCTAssertEqual(workspace.notebookPath.count, 2)
+        XCTAssertFalse(workspace.notebookCameraPresented); XCTAssertEqual(workspace.notebookPath.count, 2)
         workspace.dismissTopSurface(); XCTAssertEqual(workspace.notebookPath.count, 1)
         workspace.dismissTopSurface(); XCTAssertTrue(workspace.notebookPath.isEmpty); XCTAssertEqual(workspace.page, .notebook)
         workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
@@ -221,6 +345,91 @@ import WispRemote
         workspace.dismissTopSurface(); XCTAssertTrue(workspace.checklistPath.isEmpty); XCTAssertEqual(workspace.page, .checklist)
         workspace.dismissTopSurface(); XCTAssertNil(workspace.page)
         XCTAssertFalse(workspace.hasDismissibleSurface)
+    }
+
+    func testEdgeBackReturnsFromEveryPageWithoutChangingConversationOrDraft() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        let route = ConversationRoute(project: "project", session: "session")
+        workspace.selectedProject = route.project; workspace.selectedSession = route.session
+        workspace.drafts[route] = "Unsent observation"
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        for page in [WorkspacePage.checklist, .notebook, .research(nil), .research(route.project)] {
+            workspace.page = page
+            XCTAssertTrue(workspace.beginPageBackGesture())
+            workspace.updatePageBackGesture(translation: 160, width: 400)
+            XCTAssertEqual(workspace.pageBackProgress, 0.4, accuracy: 0.001)
+            workspace.finishPageBackGesture(translation: 160, velocity: 0, width: 400, cancelled: false)
+            XCTAssertNil(workspace.page)
+            XCTAssertEqual(workspace.pageBackProgress, 0)
+            XCTAssertEqual(workspace.route, route)
+            XCTAssertEqual(workspace.drafts[route], "Unsent observation")
+        }
+    }
+
+    func testEdgeBackCancellationReversalAndShortFlick() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.page = .notebook
+        let cancelledDrags: [(CGFloat, CGFloat, Bool)] = [
+            (60, 0, false), (250, -300, false), (250, 800, true), (10, 1000, false),
+        ]
+        for (translation, velocity, cancelled) in cancelledDrags {
+            XCTAssertTrue(workspace.beginPageBackGesture())
+            workspace.updatePageBackGesture(translation: translation, width: 400)
+            workspace.finishPageBackGesture(translation: translation, velocity: velocity, width: 400, cancelled: cancelled)
+            XCTAssertEqual(workspace.page, .notebook)
+            XCTAssertEqual(workspace.pageBackProgress, 0)
+        }
+        XCTAssertTrue(workspace.beginPageBackGesture())
+        workspace.finishPageBackGesture(translation: 60, velocity: 800, width: 400, cancelled: false)
+        XCTAssertNil(workspace.page, "A deliberate quick edge flick also returns")
+    }
+
+    func testEdgeBackLeavesNativeDetailNavigationAndModalsInControl() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.page = .checklist; workspace.checklistPath = ["item"]
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        // A native detail pop can empty the path during the same touch. No
+        // workspace gesture was begun, so its completion must not pop again.
+        workspace.checklistPath = []
+        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
+        XCTAssertEqual(workspace.page, .checklist)
+        workspace.page = .notebook; workspace.notebookPath = [.record("r")]
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.page = .research(nil); workspace.researchPath = [.journey("p", Date())]
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.researchPath = []
+        workspace.sheet = .connection
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.sheet = nil; workspace.notebookLibraryPresented = true
+        XCTAssertFalse(workspace.beginPageBackGesture())
+        workspace.notebookLibraryPresented = false; workspace.notebookCameraPresented = true
+        XCTAssertFalse(workspace.beginPageBackGesture())
+    }
+
+    func testInterruptedEdgeBackCannotCloseAReplacementPageOrReachThroughAModal() {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
+        workspace.page = .checklist
+        XCTAssertTrue(workspace.beginPageBackGesture())
+        workspace.updatePageBackGesture(translation: 150, width: 400)
+        workspace.page = .notebook
+        XCTAssertEqual(workspace.pageBackProgress, 0)
+        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
+        XCTAssertEqual(workspace.page, .notebook)
+        XCTAssertTrue(workspace.beginPageBackGesture())
+        workspace.sheet = .connection
+        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
+        XCTAssertNotNil(workspace.sheet)
+        XCTAssertEqual(workspace.page, .notebook)
+        XCTAssertEqual(workspace.pageBackProgress, 0)
+        workspace.sheet = nil
+        XCTAssertTrue(workspace.beginPageBackGesture())
+        workspace.cancelPageBackGesture() // Scene resignation interrupts the drag.
+        workspace.finishPageBackGesture(translation: 300, velocity: 800, width: 400, cancelled: false)
+        XCTAssertEqual(workspace.page, .notebook)
     }
 
     func testModalAboveResearchPagePreservesNavigationAndSelection() {
@@ -245,11 +454,11 @@ import WispRemote
         let workspace = RemoteWorkspace(connection: connection(), preferences: nil, cache: nil, offlineDirectory: dir)
         workspace.page = .notebook
         workspace.notebookPath = [.record("r"), .send("r")]
-        workspace.notebookCameraRecord = "r"
+        workspace.notebookCameraPresented = true
         workspace.notebookLibraryPresented = true
         workspace.page = nil
         XCTAssertTrue(workspace.notebookPath.isEmpty)
-        XCTAssertNil(workspace.notebookCameraRecord)
+        XCTAssertFalse(workspace.notebookCameraPresented)
         XCTAssertFalse(workspace.notebookLibraryPresented)
         XCTAssertFalse(workspace.hasDismissibleSurface)
         workspace.page = .notebook

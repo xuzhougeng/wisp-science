@@ -161,7 +161,7 @@ struct ConversationView: View {
                     .accessibilityHint("查看完整标题和所属项目")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("文件") { model.sheet = .files(route, ".", true) }
+                WispToolbarButton(title: "文件", icon: .folder) { model.sheet = .files(route, ".", true) }
                 .disabled(connection.state == .online && !connection.supports("native_conversation_panel_file_directory"))
                 .accessibilityIdentifier("conversation-files")
             }

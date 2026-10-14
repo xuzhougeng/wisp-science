@@ -12,27 +12,29 @@ struct WorkspaceView: View {
         // safeAreaInset on NavigationSplitView can overlap its compact toolbar.
         VStack(spacing: 0) {
             workspaceBanners
-            ZStack {
-                // Retain split-view selection, scroll positions and connection
-                // form input while a full-workspace research page is open.
-                workspaceContent
-                    .opacity(model.page == nil ? 1 : 0)
-                    .disabled(model.page != nil)
-                    .allowsHitTesting(model.page == nil)
-                    .accessibilityHidden(model.page != nil)
-                if let page = model.page {
-                    workspacePage(page)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(WispStyle.canvas)
-                        .transition(reduceMotion ? .opacity : .move(edge: .trailing))
-                        .zIndex(1)
+            GeometryReader { geometry in
+                ZStack {
+                    // Retain selection, scroll positions and connection input.
+                    // The entry remains visible behind an interactive edge swipe.
+                    workspaceContent
+                        .disabled(model.page != nil)
+                        .allowsHitTesting(model.page == nil)
+                        .accessibilityHidden(model.page != nil)
+                    if let page = model.page {
+                        workspacePage(page)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(WispStyle.canvas)
+                            .offset(x: reduceMotion ? 0 : geometry.size.width * model.pageBackProgress)
+                            .transition(reduceMotion ? .opacity : .move(edge: .trailing))
+                            .zIndex(1)
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.page)
-            .onChange(of: model.page) { _, _ in
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: model.page)
+                .onChange(of: model.page) { _, _ in
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
             }
         }
         .tint(WispStyle.accent)
@@ -40,6 +42,7 @@ struct WorkspaceView: View {
             switch sheet {
             case .connection: ConnectionSettingsView(model: model, connection: connection)
             case .inbox: InboxView(model: model)
+            case .checklistSettings: ChecklistSettingsView(workspace: model, model: model.checklist, connection: connection)
             case .conversationInfo(let title, let project):
                 NavigationStack {
                     Form {
@@ -107,15 +110,7 @@ struct WorkspaceView: View {
                     .navigationTitle("Wisp")
                     .navigationBarTitleDisplayMode(.inline)
                     .navigationSplitViewColumnWidth(min: 210, ideal: 250, max: 340)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button(model.isDemo ? "演示设置" : "连接") { model.sheet = .connection }.accessibilityIdentifier("connection-settings")
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("待处理 \(model.inbox.count)") { model.sheet = .inbox }
-                                .disabled(model.inbox.isEmpty).accessibilityIdentifier("inbox")
-                        }
-                    }
+                    .toolbar { workspaceToolbar }
                     .refreshable { await model.refreshSelection() }
                 } content: {
                     List(selection: $model.selectedSession) {
@@ -139,9 +134,11 @@ struct WorkspaceView: View {
                     .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 400)
                     .toolbar {
                         if !model.isDemo {
-                            Button("新对话") { Task { await model.createConversation() } }
-                                .disabled(model.selectedProject == nil || model.creating || !connection.supports("native_conversation_create"))
-                                .accessibilityIdentifier("new-conversation")
+                            ToolbarItem(placement: .topBarTrailing) {
+                                WispToolbarButton(title: "新对话", icon: .squarePen) { Task { await model.createConversation() } }
+                                    .disabled(model.selectedProject == nil || model.creating || !connection.supports("native_conversation_create"))
+                                    .accessibilityIdentifier("new-conversation")
+                            }
                         }
                     }
                     .refreshable { await model.refreshSelection() }
@@ -167,6 +164,17 @@ struct WorkspaceView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ToolbarContentBuilder private var workspaceToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            WispToolbarButton(title: model.isDemo ? "演示设置" : "连接设置", icon: .gear) { model.sheet = .connection }
+                .accessibilityIdentifier("connection-settings")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            WispToolbarButton(title: "待处理", icon: .inbox, count: model.inbox.count) { model.sheet = .inbox }
+                .disabled(model.inbox.isEmpty).accessibilityIdentifier("inbox")
         }
     }
 
@@ -230,12 +238,8 @@ struct WorkspacePageBackButton: View {
     @ObservedObject var workspace: RemoteWorkspace
 
     var body: some View {
-        Button { workspace.page = nil } label: {
-            HStack(spacing: 4) { WispIcon(.chevronLeft); Text("返回") }
-                .frame(minHeight: 44)
-        }
-        .accessibilityLabel("返回上一页")
-        .accessibilityIdentifier("workspace-page-back")
+        WispToolbarButton(title: "返回上一页", icon: .chevronLeft) { workspace.page = nil }
+            .accessibilityIdentifier("workspace-page-back")
     }
 }
 

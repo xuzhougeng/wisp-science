@@ -6,10 +6,15 @@ import ImageIO
 import WispRemote
 
 enum NotebookDestination: Hashable {
+    case create(NotebookEntry)
+    case guide, example
     case record(String)
     case photo(String, String)
+    case saved(String)
     case send(String)
 }
+
+enum NotebookEntry: Hashable { case observation, photos }
 
 @MainActor final class NotebookModel: ObservableObject {
     private struct Document: Codable { var version = 1; var records: [NotebookRecord] = [] }
@@ -65,6 +70,41 @@ enum NotebookDestination: Hashable {
         var next = document; next.records.append(record)
         do { try save(next); error = nil; return record.id } catch { self.error = error.localizedDescription; return nil }
     }
+    /// Keep an untitled first observation useful without creating empty records
+    /// when someone merely opens the editor or cancels the photo picker.
+    func createObservation(title: String, day: String, notes: String) -> String? {
+        do {
+            guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw RemoteError.service("先写下一句观察，或添加一张照片。")
+            }
+            let record = try draft(title: title, day: day, notes: notes)
+            var next = document; next.records.append(record)
+            try save(next); error = nil; return record.id
+        } catch { self.error = error.localizedDescription; return nil }
+    }
+    private func draft(title: String, day: String, notes: String) throws -> NotebookRecord {
+        var title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty {
+            let firstLine = notes.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            title = String(firstLine.prefix(40))
+            if title.isEmpty { title = "实验记录 · \(day)" }
+        }
+        guard title.count <= 200, ChecklistFields(title: title, day: day).isValid, notes.utf8.count <= 256 * 1024 else {
+            throw RemoteError.service("标题最多 200 字，记录文字最多 256 KB，请检查实验日期。")
+        }
+        return NotebookRecord(title: title, day: day, notes: notes)
+    }
+    func createFromPhoto(_ data: Data, title: String, day: String, notes: String) async -> (record: String, photo: String)? {
+        do {
+            var record = try draft(title: title, day: day, notes: notes)
+            let photo = try storePhoto(data)
+            record.photos.append(photo)
+            var next = document; next.records.append(record)
+            try save(next); error = nil
+            await recognize(record: record.id, photo: photo.id)
+            return (record.id, photo.id)
+        } catch { self.error = error.localizedDescription; return nil }
+    }
     @discardableResult func saveNotes(_ id: String, title: String, day: String, notes: String) -> Bool {
         do {
             guard ChecklistFields(title: title, day: day).isValid, title.count <= 200, notes.utf8.count <= 256 * 1024 else {
@@ -92,19 +132,25 @@ enum NotebookDestination: Hashable {
         return result
     }
 
-    func addPhoto(_ data: Data, record id: String) async {
+    private func storePhoto(_ data: Data) throws -> NotebookPhoto {
+        guard loaded else { throw RemoteError.service("实验记录尚未成功读取，无法覆盖保存。") }
+        guard data.count <= 40 * 1024 * 1024, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0 else { throw RemoteError.service("请选择不超过 40 MB 的有效照片。") }
         let photo = NotebookPhoto()
+        // Persist original bytes first, then the manifest. An interrupted
+        // import can leave an orphan file but never a reference to lost data.
+        try OfflineResearchStorage.write(data, to: photoURL(photo.id))
+        return photo
+    }
+    @discardableResult func addPhoto(_ data: Data, record id: String) async -> String? {
         do {
             guard let record = record(id), record.photos.count < 50 else { throw RemoteError.service("每条实验记录最多保存 50 张照片。") }
-            guard data.count <= 40 * 1024 * 1024, let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  CGImageSourceGetCount(source) > 0 else { throw RemoteError.service("请选择不超过 40 MB 的有效照片。") }
-            // Persist original bytes first, then the manifest. An interrupted
-            // import can leave an orphan file but never a reference to lost data.
-            try OfflineResearchStorage.write(data, to: photoURL(photo.id))
+            let photo = try storePhoto(data)
             try update(id) { $0.photos.append(photo) }
             error = nil
             await recognize(record: id, photo: photo.id)
-        } catch { self.error = error.localizedDescription }
+            return photo.id
+        } catch { self.error = error.localizedDescription; return nil }
     }
     func recognize(record id: String, photo photoID: String) async {
         guard !recognizing.contains(photoID), let photo = record(id)?.photos.first(where: { $0.id == photoID }) else { return }

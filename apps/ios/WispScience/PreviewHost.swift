@@ -13,7 +13,8 @@ import WispRemote
         let connection = RemoteConnection(socketFactory: { _ in
             Socket(running: mode == "running" || mode == "process-running", appearance: mode == "appearance" || mode == "interaction",
                    interaction: mode == "interaction", malformedUsage: mode == "usage-malformed",
-                   process: mode == "process" || mode == "process-running", offline: mode == "cache-offline")
+                   process: mode == "process" || mode == "process-running", offline: mode == "cache-offline",
+                   emptyInbox: mode == "inbox-empty")
         })
         let cache: RemoteReadCache?
         if mode.hasPrefix("cache-"), let id = environment["WISP_CACHE_TEST_ID"], let uuid = UUID(uuidString: id) {
@@ -42,15 +43,17 @@ import WispRemote
         private var running: Bool
         private let appearance: Bool
         private let interaction: Bool
+        private let emptyInbox: Bool
         private var approved = false
         private let commands = ["list_projects", "remote_sessions", "native_conversation_snapshot", "native_conversation_create",
             "native_conversation_send", "native_conversation_enqueue", "native_conversation_queue_action", "native_conversation_stop",
             "native_conversation_approve", "native_conversation_seen", "native_conversation_inbox", "native_conversation_panel_file_directory",
             "native_conversation_panel_file_read", "remote_attach_image"]
-        init(running: Bool, appearance: Bool, interaction: Bool, malformedUsage: Bool, process: Bool, offline: Bool) {
+        init(running: Bool, appearance: Bool, interaction: Bool, malformedUsage: Bool, process: Bool, offline: Bool, emptyInbox: Bool) {
             self.running = running
             self.appearance = appearance
             self.interaction = interaction
+            self.emptyInbox = emptyInbox
             if interaction {
                 messages = (1...40).map { index in
                     .object(["role": .string("assistant"), "text": .string("历史记录 \(index)\n\n这是一条较早的离线研究记录，用于验证长对话滚动和返回最新消息。")])
@@ -110,6 +113,7 @@ import WispRemote
             let args = request["args"]
             switch request["command"].string {
             case "list_projects": return .array([.object(["id": .string("project-a"), "name": .string("RNA-seq 研究"), "session_count": .integer(1)])])
+            case "native_conversation_inbox" where emptyInbox: return .array([])
             case "remote_sessions", "native_conversation_inbox": return .array([.object([
                 "id": .string("session-a"), "title": .string(interaction ? "/data1/home/research/project/PlantRootAtlas/跨物种表达分析" : "样本质控"), "project_id": .string("project-a"),
                 "project_name": .string("RNA-seq 研究"), "status": .string(running ? "running" : "needs_you"),

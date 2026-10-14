@@ -2,6 +2,27 @@ import Foundation
 import Combine
 import WispRemote
 
+/// A display projection only: grouping must not rewrite dates, drop conflicts,
+/// or change the replica's visibility rules.
+struct ChecklistSections {
+    let needsReview: [ChecklistEntry]
+    let overdue: [ChecklistEntry]
+    let today: [ChecklistEntry]
+    let upcoming: [ChecklistEntry]
+    let done: [ChecklistEntry]
+    var remainingCount: Int { needsReview.count + overdue.count + today.count + upcoming.count }
+
+    init(entries: [ChecklistEntry], today day: String) {
+        let sorted = entries.sorted { ($0.fields.day, $0.id) < ($1.fields.day, $1.id) }
+        needsReview = sorted.filter(\.conflict)
+        let open = sorted.filter { !$0.conflict && $0.fields.status == "open" }
+        overdue = open.filter { $0.fields.day < day }
+        today = open.filter { $0.fields.day == day }
+        upcoming = open.filter { $0.fields.day > day }
+        done = sorted.filter { !$0.conflict && $0.fields.status == "done" }
+    }
+}
+
 @MainActor final class ChecklistModel: ObservableObject {
     private struct Document: Codable {
         var version = 1

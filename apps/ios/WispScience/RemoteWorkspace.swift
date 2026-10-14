@@ -13,12 +13,13 @@ struct AttachedPhoto: Identifiable {
 enum QuestionSubmission: Equatable { case sent, uncertain }
 
 enum WorkspaceSheet: Identifiable {
-    case connection, inbox, files(ConversationRoute, String, Bool)
+    case connection, inbox, checklistSettings, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
     var id: String {
         switch self {
         case .connection: return "connection"
         case .inbox: return "inbox"
+        case .checklistSettings: return "checklist-settings"
         case .conversationInfo: return "conversation-info"
         case .files(let route, let path, _): return "files:\(route.project):\(route.session):\(path)"
         }
@@ -65,12 +66,17 @@ enum WorkspacePage: Hashable {
     @Published var history = RemoteHistory()
     @Published var sheet: WorkspaceSheet?
     @Published var page: WorkspacePage? { didSet {
-        if page != oldValue { researchPath = []; checklistPath = []; notebookPath = []; notebookCameraRecord = nil; notebookLibraryPresented = false }
+        if page != oldValue {
+            cancelPageBackGesture()
+            researchPath = []; checklistPath = []; notebookPath = []; notebookCameraPresented = false; notebookLibraryPresented = false
+        }
     } }
+    @Published private(set) var pageBackProgress: CGFloat = 0
+    private var pageBackOrigin: WorkspacePage?
     @Published var researchPath: [ResearchDestination] = []
     @Published var checklistPath: [String] = []
     @Published var notebookPath: [NotebookDestination] = []
-    @Published var notebookCameraRecord: String?
+    @Published var notebookCameraPresented = false
     @Published var notebookLibraryPresented = false
     @Published var error: String?
     @Published var drafts: [ConversationRoute: String] = [:]
@@ -521,12 +527,53 @@ enum WorkspacePage: Hashable {
     }
 
     var hasDismissibleSurface: Bool {
-        notebookLibraryPresented || notebookCameraRecord != nil || sheet != nil || page != nil
+        notebookLibraryPresented || notebookCameraPresented || sheet != nil || page != nil
+    }
+
+    /// Detail stacks own their native interactive pop. The workspace gesture
+    /// handles only the extra full-page layer, and never reaches through a modal.
+    var canSwipeBackToWorkspace: Bool {
+        guard sheet == nil, !notebookLibraryPresented, !notebookCameraPresented else { return false }
+        switch page {
+        case .checklist: return checklistPath.isEmpty
+        case .notebook: return notebookPath.isEmpty
+        case .research: return researchPath.isEmpty
+        case nil: return false
+        }
+    }
+
+    func beginPageBackGesture() -> Bool {
+        guard canSwipeBackToWorkspace, pageBackOrigin == nil else { return false }
+        pageBackOrigin = page
+        return true
+    }
+
+    func updatePageBackGesture(translation: CGFloat, width: CGFloat) {
+        guard pageBackOrigin != nil, pageBackOrigin == page, canSwipeBackToWorkspace, width > 0 else {
+            cancelPageBackGesture()
+            return
+        }
+        pageBackProgress = min(1, max(0, translation / width))
+    }
+
+    func finishPageBackGesture(translation: CGFloat, velocity: CGFloat, width: CGFloat, cancelled: Bool) {
+        let canFinish = pageBackOrigin != nil && pageBackOrigin == page && canSwipeBackToWorkspace
+        cancelPageBackGesture()
+        // A deliberate short flick can finish; a short drag or a reversal snaps
+        // back without clearing the page's form, scroll position or selection.
+        guard canFinish, !cancelled, width > 0, translation >= 30, velocity >= -100,
+              translation >= width * 0.35 || velocity >= 600 else { return }
+        page = nil
+    }
+
+    func cancelPageBackGesture() {
+        pageBackOrigin = nil
+        pageBackProgress = 0
     }
 
     func dismissTopSurface() {
         if notebookLibraryPresented { notebookLibraryPresented = false }
-        else if notebookCameraRecord != nil { notebookCameraRecord = nil }
+        else if notebookCameraPresented { notebookCameraPresented = false }
         else if sheet != nil { sheet = nil }
         else if case .notebook? = page, !notebookPath.isEmpty { notebookPath.removeLast() }
         else if case .research? = page, !researchPath.isEmpty { researchPath.removeLast() }
