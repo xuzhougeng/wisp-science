@@ -40,7 +40,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      # v3 defaults to installing the removed `tools` package, which fails on current runners.
+      - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
       - name: Install pinned SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.1.0'
