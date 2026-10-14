@@ -256,10 +256,15 @@ fn update_session_full_permission(
     }
 }
 
-/// Only the assistant's explicit session grant overrides the IM default.
-/// Project turns (including work dispatched by the assistant) keep asking.
-pub(crate) fn force_ask_for_turn(im: bool, frame_id: &str, full_permission: bool) -> bool {
-    im && !(frame_id == crate::research_assistant::ASSISTANT_FRAME_ID && full_permission)
+/// A conversation's own Full Permission overrides the remote-origin default.
+/// Explicit review constraints (mandates and lab mail) remain independent of
+/// that session grant. Callers must never use a parent conversation's grant.
+pub(crate) fn force_ask_for_turn(
+    unattended: bool,
+    full_permission: bool,
+    explicit_review: bool,
+) -> bool {
+    explicit_review || (unattended && !full_permission)
 }
 
 #[tauri::command]
@@ -664,7 +669,7 @@ mod tests {
             (ASSISTANT_FRAME_ID.into(), pending("assistant-approval")),
             ("project-session".into(), pending("project-approval")),
         ]);
-        assert!(force_ask_for_turn(true, ASSISTANT_FRAME_ID, false));
+        assert!(force_ask_for_turn(true, false, false));
         let taken =
             update_session_full_permission(&mut entries, &sessions, ASSISTANT_FRAME_ID, true)
                 .unwrap()
@@ -677,12 +682,16 @@ mod tests {
         assert!(entries.contains_key("project-session"));
         assert!(!force_ask_for_turn(
             true,
-            ASSISTANT_FRAME_ID,
-            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID)
+            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID),
+            false,
         ));
-        // Desktop full permission must still not bypass project IM approval.
-        assert!(force_ask_for_turn(true, "project-session", true));
-        assert!(!force_ask_for_turn(false, "project-session", true));
+        // The assistant's grant is not inherited by a dispatched project turn.
+        assert!(force_ask_for_turn(
+            true,
+            sessions.read().unwrap().contains("project-session"),
+            false,
+        ));
+        assert!(!force_ask_for_turn(false, false, false));
         assert!(
             update_session_full_permission(&mut entries, &sessions, ASSISTANT_FRAME_ID, true)
                 .unwrap()
@@ -698,9 +707,72 @@ mod tests {
         assert!(entries.contains_key(ASSISTANT_FRAME_ID));
         assert!(force_ask_for_turn(
             true,
-            ASSISTANT_FRAME_ID,
-            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID)
+            sessions.read().unwrap().contains(ASSISTANT_FRAME_ID),
+            false,
         ));
+    }
+
+    #[tokio::test]
+    async fn project_full_permission_releases_pending_run_and_skips_later_remote_prompts() {
+        let sessions = std::sync::RwLock::new(std::collections::HashSet::new());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut run = pending("run-approval");
+        run.request = ConfirmRequest::new(
+            "project-session",
+            "Run tool 'run_in_context'?".into(),
+            "run_in_context",
+            String::new(),
+        );
+        run.tx = tx;
+        let mut entries = HashMap::from([("project-session".into(), run)]);
+        let check_asks = |session: &str, expected: bool| {
+            for origin in [
+                crate::TurnOrigin::Im,
+                crate::TurnOrigin::QueuedUnattended(1),
+                crate::TurnOrigin::Subagent { unattended: true },
+            ] {
+                assert_eq!(
+                    force_ask_for_turn(
+                        origin.force_ask_mutations(),
+                        sessions.read().unwrap().contains(session),
+                        false,
+                    ),
+                    expected,
+                    "{origin:?}: {session}",
+                );
+            }
+        };
+        check_asks("project-session", true);
+
+        let taken =
+            update_session_full_permission(&mut entries, &sessions, "project-session", true)
+                .unwrap()
+                .unwrap();
+        taken
+            .tx
+            .send(wisp_tools::ConfirmDecision::Approved)
+            .unwrap();
+        assert!(rx.await.unwrap().approved());
+        assert!(entries.is_empty());
+        // Enabling Full Permission must cover subsequent calls in the same
+        // running iOS/browser/IM turn, rather than only settling the current card.
+        check_asks("project-session", false);
+        check_asks("other-project-session", true);
+        check_asks("child-session", true);
+
+        update_session_full_permission(&mut entries, &sessions, "project-session", false).unwrap();
+        check_asks("project-session", true);
+    }
+
+    #[test]
+    fn explicit_turn_review_survives_full_permission() {
+        // Mandates and lab mail retain their review requirement on desktop
+        // and remote turns, independently of the conversation's grant.
+        for unattended in [false, true] {
+            for full_permission in [false, true] {
+                assert!(force_ask_for_turn(unattended, full_permission, true));
+            }
+        }
     }
 
     #[tokio::test]

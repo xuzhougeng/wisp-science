@@ -417,8 +417,8 @@ async fn running(broker: &Broker, session: &str) -> bool {
         .await
         .contains(session)
 }
-/// Remote web turns run like IM turns (#1460): the IM origin forces Ask for
-/// mutating tools, so a phone cannot inherit an unattended Allow default.
+/// Remote web and iOS turns use the IM approval default (#1460): mutating
+/// tools ask unless this conversation has its own explicit Full Permission.
 async fn remote_turn(
     broker: &Broker,
     project: &str,
