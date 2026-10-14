@@ -29,10 +29,12 @@ GitHub Releases remains the fallback and the home for older releases.
 | Windows | Intel / AMD x64 | EXE (standard setup), MSI |
 | macOS | Apple Silicon / Intel | DMG |
 | Linux | Intel / AMD x64 / ARM64 | DEB, AppImage |
+| Android 8.0+ | Universal | APK (optional, see below) |
 
 The browser suggests an operating system only. Mac and Linux users explicitly
-choose their processor. Mobile visitors choose the target desktop system. There
-is no native Windows ARM64 package. The page shows the mirrored version,
+choose their processor. Android phones get the APK preselected; iPhone and iPad
+visitors choose the target desktop system. There is no native Windows ARM64
+package. The page shows the mirrored version,
 filename, size and SHA-256 checksum, along with installation guidance.
 
 ## Local deployment
@@ -71,8 +73,12 @@ catalog; Worker source, configuration, dependencies and credentials stay private
 ## Synchronization behavior
 
 The sync script resolves the latest stable GitHub release at execution time. It
-accepts the exact eight installer names for that version; missing/duplicate files
-fail validation before any upload. Source archives, signatures and `.app.tar.gz`
+requires the exact eight desktop installer names for that version; missing or
+duplicate files fail validation before any upload. The Android APK
+(`wisp-science_<version>_android.apk`) is optional: a release without it still
+publishes the desktop installers, and the picker then sends Android visitors to
+the GitHub release list. A present APK is validated like any installer and
+served as `application/vnd.android.package-archive`. Source archives, signatures and `.app.tar.gz`
 updater bundles are excluded.
 
 Each installer is checked against the GitHub asset size, hashed with SHA-256,
@@ -96,10 +102,12 @@ and must not be configured as a Tauri updater endpoint.
 
 - `Deploy website to Cloudflare`: deploys on website/skills changes to `main`, or
   manual dispatch. GitHub Pages continues deploying the same public build.
-- `Sync installers to Cloudflare R2`: runs after a successful Windows, macOS or
-  Linux release workflow, daily as a recovery check, or manually. A platform
-  completion with missing installers waits for the other platforms; manual and
-  scheduled runs fail visibly if packages are missing. Runs are serialized and
+- `Sync installers to Cloudflare R2`: runs after a successful Windows, macOS,
+  Linux or Android release workflow, daily as a recovery check, or manually. A
+  platform completion with missing desktop installers waits for the other
+  platforms; manual and scheduled runs fail visibly if desktop packages are
+  missing. If the APK lands after the desktop installers, its completion
+  republishes the manifest with it. Runs are serialized and
   read the latest stable release using trusted `main` code.
 
 For unattended Cloudflare CI, set repository variable

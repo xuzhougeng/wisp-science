@@ -7,6 +7,9 @@ requires an online Wisp host, as a relay alone does not run the agent. The nativ
 client also includes a bundled offline demo, available from “体验演示项目” on the
 connection screen without a server or account. Open its Xcode project to build
 or install it on a development device.
+An [Android client](../apps/android/README.md) (Android 8.0+) uses the same relay
+protocol and demo. Install its APK from the website download section or the
+GitHub release; it does not update itself, so install new versions over it.
 The native client includes a research calendar and project research history:
 browse activity by local date, inspect records and return to their source
 conversation. Update the host to advertise `native_research_calendar` and

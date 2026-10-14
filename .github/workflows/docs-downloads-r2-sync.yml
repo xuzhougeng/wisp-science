@@ -2,7 +2,7 @@ name: Sync installers to Cloudflare R2
 
 on:
   workflow_run:
-    workflows: [Windows Release, macOS Release, Linux Release]
+    workflows: [Windows Release, macOS Release, Linux Release, Android Release]
     types: [completed]
   schedule:
     - cron: '17 3 * * *'

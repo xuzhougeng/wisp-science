@@ -38,7 +38,62 @@ cd apps/android
 
 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。本机 SDK 路径可放在
 `local.properties` 的 `sdk.dir`，该文件不会提交。首次构建需要下载依赖；自动测试不连接真实
-Wisp 主机、不调用模型，也不依赖任何科研服务或密钥。发布签名和应用商店分发不在本次范围内。
+Wisp 主机、不调用模型，也不依赖任何科研服务或密钥。
+
+## 发布与安装
+
+用户在官网下载区（`https://wispscience.com/#download`，Android 手机会自动选中 Android）或
+GitHub Release 下载 `wisp-science_<版本>_android.apk`，首次安装时允许浏览器「安装未知应用」，
+以后升级直接覆盖安装。APK 不含应用内自动更新，暂不上架应用商店。
+
+版本号取自仓库根 `Cargo.toml` 的 `workspace.package.version`，与同一次桌面发布一致，
+不单独维护；`versionCode = 主版本 × 1000000 + 次版本 × 1000 + 修订号`。
+
+推送 `v*` 标签后，`.github/workflows/release-android.yml`（Android Release）等待
+Create Release 发布说明，再构建 release APK、核对签名证书指纹、包名和版本号，然后附加到该
+Release；R2 同步随后把 APK 加入官网下载清单。APK 在清单中是**可选项**：Android 构建未启用或失败时，
+桌面安装包照常发布，官网 Android 选项改为指向 GitHub 版本列表。
+
+签名只来自环境变量 `WISP_ANDROID_KEYSTORE`、`WISP_ANDROID_KEYSTORE_PASSWORD`、
+`WISP_ANDROID_KEY_ALIAS`、`WISP_ANDROID_KEY_PASSWORD`。未设置时 `:app:assembleRelease`
+生成未签名 APK，Android CI 用它检查 release 构建；仓库不保存任何密钥或口令。
+
+### 维护者一次性配置
+
+1. 生成发布密钥。只生成一次，离线备份密钥文件和口令：**丢失或更换后，已安装的用户无法覆盖升级**。
+   PKCS12 密钥库的密钥口令与库口令相同。
+
+   ```bash
+   keytool -genkeypair -v -keystore wisp-android-release.jks -alias wisp-release -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Wisp Science"
+   ```
+
+2. 读取证书 SHA-256 指纹：
+
+   ```bash
+   keytool -list -v -keystore wisp-android-release.jks -alias wisp-release
+   ```
+
+3. 写入仓库 Secrets 与 Variables（口令交互输入，不进入命令历史）：
+
+   ```bash
+   base64 < wisp-android-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+   gh secret set ANDROID_KEYSTORE_PASSWORD
+   gh secret set ANDROID_KEY_ALIAS --body wisp-release
+   gh secret set ANDROID_KEY_PASSWORD
+   gh variable set ANDROID_SIGNING_CERT_SHA256 --body '<第 2 步的 SHA256>'
+   gh variable set ANDROID_RELEASE_ENABLED --body true
+   ```
+
+   工作流拒绝上传签名证书与 `ANDROID_SIGNING_CERT_SHA256` 不一致的 APK，防止误用其他密钥。
+
+4. 在 Google Android Developer Console 完成开发者验证，登记包名 `science.wisp.android`
+   和上述证书。按 Google 公布的时间表，部分地区的认证设备会拒绝安装未登记开发者的 APK。
+
+补发某个标签的 APK 时，从 `main` 手动运行（该标签须已包含本节的签名配置）：
+
+```bash
+gh workflow run "Android Release" --ref main -f tag=vX.Y.Z
+```
 
 ## 当前范围
 

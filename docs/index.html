@@ -127,7 +127,7 @@
             <label for="download-os"><span data-text-zh="1. 操作系统" data-text-en="1. Operating system">1. 操作系统</span>
               <select id="download-os">
                 <option value="" data-text-zh="请选择系统" data-text-en="Choose a system">请选择系统</option>
-                <option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option>
+                <option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option>
               </select>
             </label>
             <label for="download-arch"><span data-text-zh="2. 芯片 / 架构" data-text-en="2. Processor / architecture">2. 芯片 / 架构</span><select id="download-arch" aria-describedby="architecture-help" disabled></select></label>
@@ -152,6 +152,8 @@
           <p data-text-zh="打开苹果菜单 → 关于本机。“芯片”为 Apple M 系列选 Apple Silicon；“处理器”为 Intel 选 Intel。" data-text-en="Open Apple menu → About This Mac. Choose Apple Silicon for an Apple M-series chip, or Intel for an Intel processor.">打开苹果菜单 → 关于本机。“芯片”为 Apple M 系列选 Apple Silicon；“处理器”为 Intel 选 Intel。</p>
           <h3>Linux</h3>
           <p data-text-zh="运行 uname -m：x86_64 选 Intel / AMD，aarch64 选 ARM64。Debian / Ubuntu 优先选 DEB；其他兼容发行版可选 AppImage，仍需满足系统依赖。" data-text-en="Run uname -m: x86_64 means Intel / AMD; aarch64 means ARM64. Prefer DEB on Debian / Ubuntu, or AppImage on other compatible distributions. System dependencies still apply.">运行 uname -m：x86_64 选 Intel / AMD，aarch64 选 ARM64。Debian / Ubuntu 优先选 DEB；其他兼容发行版可选 AppImage，仍需满足系统依赖。</p>
+          <h3>Android</h3>
+          <p data-text-zh="Android 8.0 及以上可安装 APK。手机版不在本机运行 Agent，而是通过远程接入连接一台在线的 Wisp 桌面主机；没有主机时可先体验内置演示项目。" data-text-en="Install the APK on Android 8.0 or later. The phone app does not run the agent itself; it connects to an online Wisp desktop host through remote access. Without a host, try the built-in demo project.">Android 8.0 及以上可安装 APK。手机版不在本机运行 Agent，而是通过远程接入连接一台在线的 Wisp 桌面主机；没有主机时可先体验内置演示项目。</p>
           <div class="download-guide-links">
             <a href="tutorials/wisp-science-quick-start.html" data-text-zh="安装后的第一步" data-text-en="After installation">安装后的第一步</a>
             <a href="https://github.com/xuzhougeng/wisp-science/releases" data-text-zh="历史版本与发布说明" data-text-en="Older versions and release notes">历史版本与发布说明</a>

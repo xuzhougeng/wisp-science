@@ -77,7 +77,7 @@ cargo run -p wisp-mcp --example smoke
 
 When asked to release, follow this section. Create the GitHub Release with `gh` **before** CI uploads installers, so platform jobs never write the title or notes.
 
-1. Bump `workspace.package.version` in `Cargo.toml`, `ui/Cargo.toml`, and `src-tauri/tauri.conf.json`. Update workspace package versions in `Cargo.lock` and `ui/Cargo.lock` (only `name = "wisp-*"` entries — do not bump third-party crates that happen to share the same version).
+1. Bump `workspace.package.version` in `Cargo.toml`, `ui/Cargo.toml`, and `src-tauri/tauri.conf.json`. The Android APK reads its version from `Cargo.toml`; do not bump it separately. Update workspace package versions in `Cargo.lock` and `ui/Cargo.lock` (only `name = "wisp-*"` entries — do not bump third-party crates that happen to share the same version).
 2. Write bilingual notes at `.github/release-notes/vX.Y.Z.md`. Put the GitHub title in an HTML comment on the first line:
 
    ```markdown
@@ -102,14 +102,14 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh release create vX.Y.Z --title $title --notes-file .github/release-notes/vX.Y.Z.md --target (git rev-parse HEAD)
    ```
 
-5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Relay Image):
+5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Android Release, Relay Image):
 
    ```bash
    gh release view vX.Y.Z
    gh run list --branch vX.Y.Z
    ```
 
-   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
+   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
 
 Do not `git push origin vX.Y.Z` after `gh release create` — the tag already exists on GitHub. To fix notes on an existing release, edit the notes file and run the Create Release workflow with `overwrite_notes`, or `gh release edit`. Never use `tauri-action` / `action-gh-release` with a body on a published release.
 

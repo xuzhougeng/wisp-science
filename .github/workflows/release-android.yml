@@ -1,0 +1,110 @@
+name: Android Release
+
+# Attaches a signed APK to an existing GitHub Release. Like the desktop platform
+# workflows it waits for Create Release and never edits the title or notes.
+# Skipped until the repository variable ANDROID_RELEASE_ENABLED is 'true', so
+# desktop releases are never blocked by missing Android signing secrets.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish (e.g. v1.20.0)
+        required: true
+        default: v1.20.0
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: vars.ANDROID_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      BUILD_TOOLS_VERSION: 36.1.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/actions/wait-for-release
+          path: _release_ci
+
+      - name: Wait for GitHub release
+        uses: ./_release_ci/.github/actions/wait-for-release
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install pinned SDK
+        run: sdkmanager 'platforms;android-36' "build-tools;$BUILD_TOOLS_VERSION"
+
+      - name: Restore signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64" || { echo '::error::Set the ANDROID_KEYSTORE_BASE64 secret'; exit 1; }
+          keystore="$RUNNER_TEMP/wisp-android-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          echo "WISP_ANDROID_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
+      - name: Build signed APK
+        working-directory: apps/android
+        env:
+          WISP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          WISP_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          WISP_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --console=plain
+
+      # A different key would make every installed copy refuse the update, so the
+      # certificate must match the pinned fingerprint before anything is uploaded.
+      - name: Verify signature, package and version
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk=apps/android/app/build/outputs/apk/release/app-release.apk
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ': ' | tr 'A-F' 'a-f')"
+          test -n "$expected" || { echo '::error::Set the ANDROID_SIGNING_CERT_SHA256 repository variable'; exit 1; }
+          "$tools/apksigner" verify --print-certs "$apk" > signers.txt
+          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' signers.txt)"
+          if [ "$actual" != "$expected" ] || grep -q '^Signer #2' signers.txt; then
+            echo "::error::APK signer $actual does not match ANDROID_SIGNING_CERT_SHA256"
+            exit 1
+          fi
+          badging="$("$tools/aapt2" dump badging "$apk")"
+          badging="${badging%%$'\n'*}"
+          echo "$badging"
+          version="${RELEASE_TAG#v}"
+          case "$badging" in
+            *"name='science.wisp.android'"*"versionName='$version'"*) ;;
+            *) echo "::error::APK package or versionName does not match $RELEASE_TAG"; exit 1 ;;
+          esac
+          out="wisp-science_${version}_android.apk"
+          cp "$apk" "$out"
+          echo "APK_FILE=$out" >> "$GITHUB_ENV"
+
+      - name: Upload APK to release
+        run: gh release upload "$RELEASE_TAG" "$APK_FILE" --clobber -R "${{ github.repository }}"
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/wisp-android-release.jks"

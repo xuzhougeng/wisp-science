@@ -44,6 +44,14 @@ test("streams installer with original filename and immutable cache; HEAD skips b
   assert.equal(calls.length, 1);
 });
 
+test("APK downloads use the Android package type so the browser can open the installer", async () => {
+  const { env } = fixture();
+  const response = await worker.fetch(request(`/downloads/${key.replace("x64.dmg", "android.apk")}`), env);
+  assert.equal(response.headers.get("content-type"), "application/vnd.android.package-archive");
+  assert.match(response.headers.get("content-disposition"), /wisp-science_1.12.0_android.apk/);
+  assert.equal((await worker.fetch(request(`/downloads/${key}`), env)).headers.get("content-type"), "application/octet-stream");
+});
+
 test("manifest supports GitHub Pages CORS with short cache and conditional GET", async () => {
   const { env, calls } = fixture();
   const response = await worker.fetch(request("/downloads/latest.json"), env);

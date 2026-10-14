@@ -1,4 +1,4 @@
-import { validDownloadKey } from "../assets/download-catalog.mjs";
+import { contentType, validDownloadKey } from "../assets/download-catalog.mjs";
 
 function error(message, status, extra = {}) {
   return new Response(message, { status, headers: { "Cache-Control": "no-store", ...extra } });
@@ -29,7 +29,7 @@ export default {
       if (!metadata) return error("Download not available. Please use GitHub Releases.", 404);
       const headers = new Headers({
         "Cache-Control": manifest ? "public, max-age=60" : "public, max-age=31536000, immutable",
-        "Content-Type": manifest ? "application/json; charset=utf-8" : "application/octet-stream",
+        "Content-Type": manifest ? "application/json; charset=utf-8" : contentType(key),
         "ETag": metadata.httpEtag,
         "Access-Control-Allow-Origin": "*",
         "X-Content-Type-Options": "nosniff",

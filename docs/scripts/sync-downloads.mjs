@@ -5,17 +5,18 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { PACKAGES, RELEASES, assetName, downloadKey, validTag, validateManifest } from "../assets/download-catalog.mjs";
+import { PACKAGES, RELEASES, assetName, contentType, downloadKey, validTag, validateManifest } from "../assets/download-catalog.mjs";
 
 const repo = "xuzhougeng/wisp-science";
 
 export function selectAssets(release) {
   if (!validTag(release.tagName) || release.isDraft || release.isPrerelease) throw new Error("Expected a stable published release");
-  return PACKAGES.map(pkg => {
+  return PACKAGES.flatMap(pkg => {
     const name = assetName(release.tagName, pkg);
     const matches = release.assets.filter(asset => asset.name === name);
+    if (pkg.optional && matches.length === 0) return [];
     if (matches.length !== 1 || matches[0].size <= 0) throw new Error(`Missing or ambiguous installer: ${name}`);
-    return { ...pkg, name, size: matches[0].size };
+    return [{ ...pkg, name, size: matches[0].size }];
   });
 }
 
@@ -33,7 +34,7 @@ export async function syncRelease(release, { download, upload, currentTag, direc
     for await (const chunk of createReadStream(file)) hash.update(chunk);
     const sha256 = hash.digest("hex");
     const key = downloadKey(release.tagName, asset.name, sha256);
-    await upload(key, file, "application/octet-stream", "public, max-age=31536000, immutable");
+    await upload(key, file, contentType(asset.name), "public, max-age=31536000, immutable");
     manifest.packages.push({ id: asset.id, name: asset.name, key, size, sha256 });
   }
   validateManifest(manifest);

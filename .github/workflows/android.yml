@@ -48,8 +48,10 @@ jobs:
         run: |
           python3 scripts/export_icons.py
           git diff --exit-code -- app/src/main/res/drawable app/src/main/res/drawable-nodpi
-      - name: Test protocol and compile app and instrumentation
-        run: ./gradlew :remote:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain
+      # assembleRelease builds unsigned here; it keeps the tag-time release build
+      # (and its lintVital checks) from failing for the first time at release.
+      - name: Test protocol and compile app, release build and instrumentation
+        run: ./gradlew :remote:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:lintDebug --console=plain
       - uses: actions/upload-artifact@v4
         if: always()
         with:

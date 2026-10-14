@@ -68,7 +68,10 @@ The workflows are two steps so platform builds cannot overwrite the notes.
    unchanged unless `overwrite_notes` is checked.
 2. **Platform workflows** (Windows, macOS, Linux) wait until that release
    exists, then attach installers. They do not set the release name or body.
-   macOS still merges `latest.json` for both architectures.
+   macOS still merges `latest.json` for both architectures. **Android Release**
+   attaches `wisp-science_<version>_android.apk` the same way once
+   `ANDROID_RELEASE_ENABLED` is set (see `apps/android/README.md`); the APK has
+   no in-app updater, and users install new versions over the old one.
 
 Manual reruns of a platform workflow require the release from step 1 to
 already exist.

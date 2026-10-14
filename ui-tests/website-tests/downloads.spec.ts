@@ -5,6 +5,7 @@ const suffixes = {
   "macos-arm64-dmg": "aarch64.dmg", "macos-x64-dmg": "x64.dmg",
   "linux-x64-deb": "amd64.deb", "linux-arm64-deb": "arm64.deb",
   "linux-x64-appimage": "amd64.AppImage", "linux-arm64-appimage": "aarch64.AppImage",
+  "android-universal-apk": "android.apk",
 };
 const manifest = {
   schema: 1, tag: "v1.12.0",
@@ -30,7 +31,7 @@ test("homepage download stays on the homepage and tutorials return to its downlo
   await expect(page.locator(".nav-cta .btn-primary")).toHaveAttribute("href", /\.\.\/index\.html.*#download/);
 });
 
-test("all eight packages resolve exact versioned mirror and GitHub links", async ({ page }) => {
+test("all nine packages resolve exact versioned mirror and GitHub links", async ({ page }) => {
   await page.goto("/index.html#download");
   await expect(page.locator("#release-status")).toContainText("v1.12.0");
   for (const asset of manifest.packages) {
@@ -77,16 +78,43 @@ for (const failure of ["network", "invalid"]) {
   });
 }
 
-test("mobile layout stays within the viewport and does not guess a desktop", async ({ page }) => {
+test("Android phones get the APK preselected within the viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "platform", { value: "Linux aarch64" });
-    Object.defineProperty(navigator, "userAgent", { value: "Android" });
+    Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Linux; Android 14; Pixel 8)" });
+  });
+  await page.goto("/index.html#download");
+  await expect(page.locator("#download-os")).toHaveValue("android");
+  await expect(page.locator("#download-format")).toHaveValue("apk");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /_android\.apk$/);
+  await expect(page.locator("#architecture-help")).toContainText("Android 8.0");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator("#download").screenshot({ path: "website-test-results/download-mobile.png" });
+});
+
+test("iPhone does not guess a desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { value: "iPhone" });
+    Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" });
   });
   await page.goto("/index.html#download");
   await expect(page.locator("#download-os")).toHaveValue("");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.locator("#download").screenshot({ path: "website-test-results/download-mobile.png" });
+  await expect(page.locator("#download-primary")).not.toHaveAttribute("href");
+});
+
+test("a release without the APK keeps desktop downloads and points Android to all releases", async ({ page }) => {
+  const desktopOnly = { ...manifest, packages: manifest.packages.filter(asset => asset.id !== "android-universal-apk") };
+  await page.route("https://wisp-science.sfl.bio/downloads/latest.json", route => route.fulfill({ json: desktopOnly }));
+  await page.goto("/index.html?lang=en#download");
+  await expect(page.locator("#release-status")).toHaveText("Available release v1.12.0");
+  await page.locator("#download-os").selectOption("windows");
+  await expect(page.locator("#download-primary")).toHaveAttribute("href", /x64-setup\.exe$/);
+  await page.locator("#download-os").selectOption("android");
+  await expect(page.locator("#download-primary")).not.toHaveAttribute("href");
+  await expect(page.locator("#package-name")).toContainText("does not include this package");
+  await expect(page.locator("#download-github")).toHaveAttribute("href", "https://github.com/xuzhougeng/wisp-science/releases");
 });
 
 test("desktop download page", async ({ page }) => {
