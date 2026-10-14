@@ -38,6 +38,7 @@ mod publications;
 mod remote_staging;
 mod research;
 mod research_archives;
+mod research_checklist;
 mod research_journey;
 mod resources;
 mod runs;
@@ -907,6 +908,15 @@ impl Store {
             .await?;
         // The research assistant's dated plan items.
         sqlx::raw_sql(include_str!("../migrations/0063_assistant_tasks.sql"))
+            .execute(pool)
+            .await?;
+        Self::add_columns_if_missing(
+            pool,
+            "assistant_tasks",
+            &[("sync_revision", "INTEGER NOT NULL DEFAULT 0")],
+        )
+        .await?;
+        sqlx::raw_sql(include_str!("../migrations/0065_research_checklist.sql"))
             .execute(pool)
             .await?;
         // Research mandates and their round ledger.

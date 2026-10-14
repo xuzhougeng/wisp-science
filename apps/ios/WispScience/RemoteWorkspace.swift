@@ -16,11 +16,14 @@ enum WorkspaceSheet: Identifiable {
     case connection, inbox, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
     case research(String?)
+    case checklist, notebook
     var id: String {
         switch self {
         case .connection: return "connection"
         case .inbox: return "inbox"
         case .research(let project): return "research:\(project ?? "calendar")"
+        case .checklist: return "checklist"
+        case .notebook: return "notebook"
         case .conversationInfo: return "conversation-info"
         case .files(let route, let path, _): return "files:\(route.project):\(route.session):\(path)"
         }
@@ -29,6 +32,8 @@ enum WorkspaceSheet: Identifiable {
 
 @MainActor final class RemoteWorkspace: ObservableObject {
     let connection: RemoteConnection
+    let checklist: ChecklistModel
+    let notebook: NotebookModel
     private let credentials: any RemoteCredentialStoring
     private let preferences: UserDefaults?
     private let cache: RemoteReadCache?
@@ -58,9 +63,13 @@ enum WorkspaceSheet: Identifiable {
     } }
     @Published var history = RemoteHistory()
     @Published var sheet: WorkspaceSheet? { didSet {
-        if sheet?.id != oldValue?.id { researchPath = [] }
+        if sheet?.id != oldValue?.id { researchPath = []; checklistPath = []; notebookPath = []; notebookCameraRecord = nil; notebookLibraryPresented = false }
     } }
     @Published var researchPath: [ResearchDestination] = []
+    @Published var checklistPath: [String] = []
+    @Published var notebookPath: [NotebookDestination] = []
+    @Published var notebookCameraRecord: String?
+    @Published var notebookLibraryPresented = false
     @Published var error: String?
     @Published var drafts: [ConversationRoute: String] = [:]
     @Published var photos: [ConversationRoute: [AttachedPhoto]] = [:]
@@ -75,8 +84,11 @@ enum WorkspaceSheet: Identifiable {
     private var restored = false
 
     init(connection: RemoteConnection? = nil, credentials: any RemoteCredentialStoring = RemoteCredentials(),
-         preferences: UserDefaults? = .standard, cache: RemoteReadCache? = .shared) {
+         preferences: UserDefaults? = .standard, cache: RemoteReadCache? = .shared,
+         offlineDirectory: URL = OfflineResearchStorage.directory) {
         self.connection = connection ?? RemoteConnection()
+        self.checklist = ChecklistModel(directory: offlineDirectory)
+        self.notebook = NotebookModel(directory: offlineDirectory)
         self.credentials = credentials
         self.preferences = preferences
         self.cache = cache
@@ -505,7 +517,11 @@ enum WorkspaceSheet: Identifiable {
     }
 
     func dismissTopSurface() {
-        if case .research? = sheet, !researchPath.isEmpty { researchPath.removeLast() }
+        if notebookLibraryPresented { notebookLibraryPresented = false }
+        else if notebookCameraRecord != nil { notebookCameraRecord = nil }
+        else if case .notebook? = sheet, !notebookPath.isEmpty { notebookPath.removeLast() }
+        else if case .research? = sheet, !researchPath.isEmpty { researchPath.removeLast() }
+        else if case .checklist? = sheet, !checklistPath.isEmpty { checklistPath.removeLast() }
         else { sheet = nil }
     }
 }

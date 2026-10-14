@@ -132,6 +132,8 @@ pub(crate) fn capabilities() -> Value {
         "assistant_schema": wisp_dto::native_assistant::SCHEMA,
         "calendar": wisp_dto::native_calendar::COMMANDS,
         "calendar_schema": wisp_dto::native_calendar::SCHEMA,
+        "checklist": [wisp_dto::research_checklist::COMMAND],
+        "checklist_schema": wisp_dto::research_checklist::SCHEMA,
         "journey": wisp_dto::native_journey::COMMANDS,
         "journey_schema": wisp_dto::native_journey::SCHEMA,
         "publication": wisp_dto::native_publication::COMMANDS,
@@ -213,6 +215,25 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
     if wisp_dto::native_calendar::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
         return crate::native_calendar::execute(&state.store, request).await;
+    }
+    if request.command == wisp_dto::research_checklist::COMMAND {
+        if request.project_id.is_some() {
+            return Err("The research checklist is a global plan".into());
+        }
+        let input: wisp_dto::research_checklist::SyncRequest =
+            serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+        let state = broker.app.state::<crate::AppState>();
+        let visible = crate::research_assistant::visible_projects(&state.store)
+            .await?
+            .into_iter()
+            .map(|project| project.0)
+            .collect();
+        let result = state
+            .store
+            .sync_research_checklist(&input, &visible)
+            .await
+            .map_err(|error| error.to_string())?;
+        return serde_json::to_value(result).map_err(|error| error.to_string());
     }
     if wisp_dto::native_search::COMMANDS.contains(&request.command.as_str()) {
         let state = broker.app.state::<crate::AppState>();
@@ -486,6 +507,11 @@ mod tests {
         assert!(!COMMANDS.contains(&"get_privacy_mode"));
         assert!(!COMMANDS.contains(&"set_privacy_mode"));
         let advertised = capabilities();
+        assert_eq!(advertised["checklist"][0], wisp_dto::research_checklist::COMMAND);
+        assert_eq!(
+            advertised["checklist_schema"],
+            wisp_dto::research_checklist::SCHEMA
+        );
         assert_eq!(advertised["projects"][0], "native_project_create");
         assert_eq!(
             advertised["project_schema"],

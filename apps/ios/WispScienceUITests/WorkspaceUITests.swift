@@ -67,6 +67,46 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["当天没有可显示的研究记录。"].exists)
     }
 
+    func testOfflineChecklistAndNotebookSurviveRelaunchAndImmediateEscape() {
+        let app = XCUIApplication()
+        app.launchEnvironment["WISP_UI_TESTING"] = "connection"
+        app.launchEnvironment["WISP_OFFLINE_TEST_ID"] = UUID().uuidString
+        app.launch()
+        let checklist = app.buttons["research-checklist"]
+        XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
+        let title = app.descendants(matching: .any).matching(identifier: "checklist-title").firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5)); title.tap(); title.typeText("离线样本核对")
+        app.buttons["checklist-add"].tap()
+        let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-item-")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["checklist-add"].waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        let notebook = app.buttons["research-notebook"]
+        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        let experiment = app.descendants(matching: .any).matching(identifier: "notebook-title").firstMatch
+        XCTAssertTrue(experiment.waitForExistence(timeout: 5)); experiment.tap(); experiment.typeText("离线实验 A")
+        app.buttons["notebook-add"].tap()
+        let notes = app.textViews["notebook-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5)); notes.tap(); notes.typeText("样本 A，重复三次。")
+        app.buttons["notebook-save"].tap()
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["notebook-add"].waitForExistence(timeout: 5))
+        app.terminate(); app.launch()
+        XCTAssertTrue(notebook.waitForExistence(timeout: 5)); notebook.tap()
+        let record = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebook-record-")).firstMatch
+        XCTAssertTrue(record.waitForExistence(timeout: 5)); record.tap()
+        XCTAssertTrue(notes.waitForExistence(timeout: 5)); XCTAssertEqual(notes.value as? String, "样本 A，重复三次。")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(checklist.waitForExistence(timeout: 5)); checklist.tap()
+        XCTAssertTrue(app.staticTexts["离线样本核对"].waitForExistence(timeout: 5))
+    }
+
     private func launch(_ mode: String = "connected", darkAndLarge: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["WISP_UI_TESTING"] = mode

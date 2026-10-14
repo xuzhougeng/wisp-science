@@ -6,7 +6,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[3]
 DEST = ROOT / "apps/ios/WispScience/Assets.xcassets"
-ICONS = ("image", "arrow-up", "chevron-right", "chevron-down", "chevron-left", "calendar", "research-trail")
+ICONS = ("image", "arrow-up", "chevron-right", "chevron-down", "chevron-left", "calendar", "research-trail",
+         "list", "notebook", "camera", "square", "check-square")
 
 
 def main():

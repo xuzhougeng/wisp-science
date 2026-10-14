@@ -19,7 +19,9 @@ import WispRemote
         if mode.hasPrefix("cache-"), let id = environment["WISP_CACHE_TEST_ID"], let uuid = UUID(uuidString: id) {
             cache = RemoteReadCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent("wisp-ui-cache-" + uuid.uuidString))
         } else { cache = nil }
-        return RemoteWorkspace(connection: connection, credentials: credential, preferences: nil, cache: cache)
+        let offlineID = environment["WISP_OFFLINE_TEST_ID"].flatMap(UUID.init(uuidString:)) ?? UUID()
+        let offline = FileManager.default.temporaryDirectory.appendingPathComponent("wisp-ui-research-" + offlineID.uuidString)
+        return RemoteWorkspace(connection: connection, credentials: credential, preferences: nil, cache: cache, offlineDirectory: offline)
     }
     private struct MemoryCredential: RemoteCredentialStoring {
         let connected: Bool

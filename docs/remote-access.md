@@ -14,6 +14,15 @@ conversation. Update the host to advertise `native_research_calendar` and
 the host's privacy filter; queries cover at most 32 days and report truncation.
 Research pages require an online host and do not use the persistent read cache.
 The bundled offline demo includes synthetic calendar and history records.
+The native client also has a local research checklist and experimental notebook,
+available before pairing. Checklist edits sync with the desktop assistant's
+research plan through `native_research_checklist_sync`, using revisions, tombstones
+and explicit conflict resolution. Sync never dispatches a plan or starts an agent.
+Notebook photos and editable Vision OCR stay on the phone until the user selects
+pages and confirms sending them to an existing project conversation. Only selected
+compressed copies and optional text are sent; this starts a conversation turn.
+Unknown delivery is not automatically retried. See the [iOS guide](../apps/ios/README.md)
+for limits, storage and offline manual checks.
 The desktop dials out to your own `wisp-relay`; no inbound port is opened on
 the computer. One relay serves any number of computers: each computer has its
 own connection code, and browsers reach the computer whose code they hold.
@@ -228,11 +237,13 @@ so its first launch asks for the code once.
 - **Small allowlist.** Remote browsers can list projects and conversations,
   read snapshots, create conversations, send, queue a message and cancel a
   queued one, stop, approve, attach a picture and mark a conversation as seen.
+  Research history reads use the host privacy filter; bounded global checklist
+  sync can edit plan titles, dates and status, but cannot assign or execute work.
   Terminal input, kernel execution, file save and file actions, references,
   reordering or editing the queue, and ACP conversations are not available
   remotely. Approvals apply once; a remote browser cannot grant
   session/project/global permissions.
-- **One write: a picture.** A browser can add a picture to its own message.
+- **Bounded picture uploads.** A browser can add a picture to its own message.
   The desktop accepts at most 768 KiB, checks that the bytes are a JPEG, PNG or
   WebP, picks the file name itself and stores it under `uploads/`. A message
   can name at most four attachments, and only files directly in `uploads/`.

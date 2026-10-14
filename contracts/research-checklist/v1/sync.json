@@ -1,0 +1,56 @@
+{
+  "schema": "wisp.research-checklist.v1",
+  "command": "native_research_checklist_sync",
+  "project_id": null,
+  "args": {
+    "epoch": "fixture-epoch",
+    "cursor": 0,
+    "visibility": "fixture-visible",
+    "changes": [
+      {
+        "id": "e91f72ed-402e-41d7-b271-057858fdb956",
+        "title": "核对样本编号",
+        "day": "2026-10-14",
+        "status": "open",
+        "mutation_id": "3dcaef89-9884-4ca6-9312-1a7640185b09",
+        "base_revision": 0
+      }
+    ]
+  },
+  "result": {
+    "schema": "wisp.research-checklist.v1",
+    "epoch": "fixture-epoch",
+    "cursor": 1,
+    "visibility": "fixture-visible",
+    "visible_project_ids": [],
+    "reset": false,
+    "has_more": false,
+    "items": [
+      {
+        "id": "e91f72ed-402e-41d7-b271-057858fdb956",
+        "title": "核对样本编号",
+        "day": "2026-10-14",
+        "status": "open",
+        "project_id": null,
+        "session_id": null,
+        "revision": 1
+      }
+    ],
+    "outcomes": [
+      {
+        "mutation_id": "3dcaef89-9884-4ca6-9312-1a7640185b09",
+        "id": "e91f72ed-402e-41d7-b271-057858fdb956",
+        "status": "applied",
+        "item": {
+          "id": "e91f72ed-402e-41d7-b271-057858fdb956",
+          "title": "核对样本编号",
+          "day": "2026-10-14",
+          "status": "open",
+          "project_id": null,
+          "session_id": null,
+          "revision": 1
+        }
+      }
+    ]
+  }
+}

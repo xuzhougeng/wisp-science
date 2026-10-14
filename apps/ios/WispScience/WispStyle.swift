@@ -26,6 +26,7 @@ enum WispStyle {
 /// Keep the WebView's shared glyphs; do not substitute a second icon family.
 struct WispIcon: View {
     enum Kind: String {
+        case list, notebook, camera, square, checkSquare = "check-square"
         case image, calendar, researchTrail = "research-trail", arrowUp = "arrow-up"
         case chevronRight = "chevron-right", chevronDown = "chevron-down", chevronLeft = "chevron-left"
     }

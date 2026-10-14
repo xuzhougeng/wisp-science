@@ -26,6 +26,11 @@
 		1FBD01C9E1D5FF04F57F00B5 /* WispScience/ResearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */; };
 		EC5141997F6093AF50ECA2A5 /* WispScience/ResearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */; };
 		77681D7788EC5F36256A99DF /* WispScienceTests/ResearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */; };
+		3CDD527B48FB58F868A49D20 /* WispScience/ChecklistModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FBF33D50F44BDA27C7FDCC6 /* WispScience/ChecklistModel.swift */; };
+		6383E1FE8E57A0F919E2E192 /* WispScience/ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03EEA59FD771D6FF48E62808 /* WispScience/ChecklistView.swift */; };
+		91890CFA5BF3030C55EAFD5C /* WispScience/NotebookModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A25967C5677578B8C81D4C1 /* WispScience/NotebookModel.swift */; };
+		8C010D519999A35DD1F67DDE /* WispScience/NotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9FC4831BFB82095F0B6293 /* WispScience/NotebookView.swift */; };
+		71E6A272F99C70103B55B656 /* WispScienceTests/OfflineResearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91CBA8A574F78C18BE75BC3E /* WispScienceTests/OfflineResearchTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +66,11 @@
 		FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ResearchModel.swift; sourceTree = "<group>"; };
 		33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ResearchView.swift; sourceTree = "<group>"; };
 		085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScienceTests/ResearchTests.swift; sourceTree = "<group>"; };
+		4FBF33D50F44BDA27C7FDCC6 /* WispScience/ChecklistModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ChecklistModel.swift; sourceTree = "<group>"; };
+		03EEA59FD771D6FF48E62808 /* WispScience/ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/ChecklistView.swift; sourceTree = "<group>"; };
+		1A25967C5677578B8C81D4C1 /* WispScience/NotebookModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/NotebookModel.swift; sourceTree = "<group>"; };
+		0D9FC4831BFB82095F0B6293 /* WispScience/NotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScience/NotebookView.swift; sourceTree = "<group>"; };
+		91CBA8A574F78C18BE75BC3E /* WispScienceTests/OfflineResearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WispScienceTests/OfflineResearchTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,6 +102,11 @@
 		E96857C58F716104CAEAD648 = {
 			isa = PBXGroup;
 			children = (
+				91CBA8A574F78C18BE75BC3E /* WispScienceTests/OfflineResearchTests.swift */,
+				0D9FC4831BFB82095F0B6293 /* WispScience/NotebookView.swift */,
+				1A25967C5677578B8C81D4C1 /* WispScience/NotebookModel.swift */,
+				03EEA59FD771D6FF48E62808 /* WispScience/ChecklistView.swift */,
+				4FBF33D50F44BDA27C7FDCC6 /* WispScience/ChecklistModel.swift */,
 				085516411E5B9F6EC558AE97 /* WispScienceTests/ResearchTests.swift */,
 				33D6AB854960570789BF3F8A /* WispScience/ResearchView.swift */,
 				FB225026D69A1E88CDAE5210 /* WispScience/ResearchModel.swift */,
@@ -258,6 +273,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8C010D519999A35DD1F67DDE /* WispScience/NotebookView.swift in Sources */,
+				91890CFA5BF3030C55EAFD5C /* WispScience/NotebookModel.swift in Sources */,
+				6383E1FE8E57A0F919E2E192 /* WispScience/ChecklistView.swift in Sources */,
+				3CDD527B48FB58F868A49D20 /* WispScience/ChecklistModel.swift in Sources */,
 				EC5141997F6093AF50ECA2A5 /* WispScience/ResearchView.swift in Sources */,
 				1FBD01C9E1D5FF04F57F00B5 /* WispScience/ResearchModel.swift in Sources */,
 				5A87079A59A0FEF94F8B8302 /* WispScience/DemoDataset.swift in Sources */,
@@ -283,6 +302,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				71E6A272F99C70103B55B656 /* WispScienceTests/OfflineResearchTests.swift in Sources */,
 				77681D7788EC5F36256A99DF /* WispScienceTests/ResearchTests.swift in Sources */,
 				0A41B28BCE6E45B8A9E06098 /* WispScienceTests/WorkspaceCacheTests.swift in Sources */,
 				158BEEB8D350EC68CCD387D9 /* WispScienceTests/DemoDatasetTests.swift in Sources */,

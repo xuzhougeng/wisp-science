@@ -18,6 +18,8 @@ struct WorkspaceView: View {
             case .connection: ConnectionSettingsView(model: model, connection: connection)
             case .inbox: InboxView(model: model)
             case .research(let project): ResearchView(workspace: model, connection: connection, project: project)
+            case .checklist: ChecklistView(workspace: model, model: model.checklist, connection: connection)
+            case .notebook: NotebookView(workspace: model, model: model.notebook, connection: connection)
             case .conversationInfo(let title, let project):
                 NavigationStack {
                     Form {
@@ -32,7 +34,16 @@ struct WorkspaceView: View {
             }
         }
         .task { model.restore() }
-        .task(id: connection.state) { if connection.state == .online { await model.monitor() } }
+        .task(id: connection.state) {
+            if connection.state == .online { await model.monitor() }
+        }
+        .task(id: connection.readSessionID) {
+            model.checklist.configure(configuration: model.configuration, connection: connection, demo: model.isDemo)
+            while !Task.isCancelled && connection.state == .online && !model.isDemo {
+                await model.checklist.sync(connection: connection)
+                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+            }
+        }
         .task(id: model.selectedProject) { await model.refreshSelection() }
         .task(id: model.route) { await model.refreshSelection() }
     }
@@ -45,6 +56,14 @@ struct WorkspaceView: View {
                 NavigationSplitView {
                     List(selection: $model.selectedProject) {
                         Section {
+                            if !model.isDemo {
+                                Button { model.sheet = .checklist } label: {
+                                    HStack(spacing: 12) { WispIcon(.list); Text("科研清单") }
+                                }.accessibilityIdentifier("research-checklist")
+                                Button { model.sheet = .notebook } label: {
+                                    HStack(spacing: 12) { WispIcon(.notebook); Text("实验记录本") }
+                                }.accessibilityIdentifier("research-notebook")
+                            }
                             Button { model.sheet = .research(nil) } label: {
                                 HStack(spacing: 12) { WispIcon(.calendar); Text("科研日历") }
                             }.accessibilityIdentifier("research-calendar")
@@ -174,6 +193,15 @@ struct ConnectionView: View {
                 Section {
                     Text("连接到你的 Wisp").font(.title2.bold())
                     Text("粘贴桌面端复制的远程访问链接，或填写云端中继地址和联机码。").foregroundStyle(.secondary)
+                }
+                Section("离线研究工具") {
+                    Button { model.sheet = .checklist } label: {
+                        HStack(spacing: 12) { WispIcon(.list); Text("科研清单") }
+                    }.accessibilityIdentifier("research-checklist")
+                    Button { model.sheet = .notebook } label: {
+                        HStack(spacing: 12) { WispIcon(.notebook); Text("实验记录本") }
+                    }.accessibilityIdentifier("research-notebook")
+                    Text("无需连接主机即可记录事项，连接后同步到研究计划。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     Button { model.enterDemo() } label: {

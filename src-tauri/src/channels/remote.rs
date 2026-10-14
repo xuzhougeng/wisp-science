@@ -38,14 +38,16 @@ const CODE_SECRET: &str = "remote_access_code";
 /// What a remote browser may run. Terminal input, kernel execution and file
 /// writes stay off the tunnel until identity, roles and audit exist (#1460).
 /// The file commands are read-only and local: a directory listing, a text
-/// preview and a bounded image thumbnail. The one thing a browser can write
-/// is a small picture into `uploads/`, to attach to its own message.
+/// preview and a bounded image thumbnail. File uploads are small pictures into
+/// `uploads/` for messages. Checklist sync only edits dated plan data and never
+/// dispatches the plan to a conversation or starts execution.
 const REMOTE_COMMANDS: &[&str] = &[
     "list_projects",
     "remote_sessions",
     "remote_attach_image",
     "native_research_calendar",
     "native_research_journey",
+    "native_research_checklist_sync",
     "native_conversation_inbox",
     "native_conversation_create",
     "native_conversation_snapshot",
@@ -569,6 +571,12 @@ fn check(request: &RemoteRequest) -> Result<(), String> {
         return Err("This command is not available remotely".into());
     }
     match request.command.as_str() {
+        "native_research_checklist_sync" => {
+            let input: wisp_dto::research_checklist::SyncRequest = decode(&request.args)?;
+            if request.project_id.is_some() || input.cursor < 0 || input.changes.len() > 50 {
+                return Err("Invalid research checklist sync request".into());
+            }
+        }
         "native_research_calendar" => {
             let input: wisp_dto::native_calendar::CalendarRequest = decode(&request.args)?;
             if request
@@ -665,6 +673,29 @@ mod tests {
             project_id: Some("p".into()),
             args,
         }
+    }
+
+    #[test]
+    fn checklist_sync_only_accepts_bounded_global_plan_data() {
+        let mut sync = request("native_research_checklist_sync", json!({}));
+        assert!(check(&sync).is_err());
+        sync.project_id = None;
+        assert!(check(&sync).is_ok());
+        sync.args["cursor"] = json!(-1);
+        assert!(check(&sync).is_err());
+        sync.args = json!({"changes": [], "session_id": "cannot-dispatch"});
+        assert!(check(&sync).is_err());
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../contracts/research-checklist/v1/sync.json"
+        ))
+        .unwrap();
+        sync.args = fixture["args"].clone();
+        assert!(check(&sync).is_ok());
+        sync.args["changes"] = json!(vec![fixture["args"]["changes"][0].clone(); 51]);
+        assert!(check(&sync).is_err());
+        sync.args = fixture["args"].clone();
+        sync.args["changes"][0]["project_id"] = json!("p");
+        assert!(check(&sync).is_err());
     }
 
     #[test]
