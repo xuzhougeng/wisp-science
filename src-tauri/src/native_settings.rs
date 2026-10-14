@@ -507,7 +507,10 @@ mod tests {
         assert!(!COMMANDS.contains(&"get_privacy_mode"));
         assert!(!COMMANDS.contains(&"set_privacy_mode"));
         let advertised = capabilities();
-        assert_eq!(advertised["checklist"][0], wisp_dto::research_checklist::COMMAND);
+        assert_eq!(
+            advertised["checklist"][0],
+            wisp_dto::research_checklist::COMMAND
+        );
         assert_eq!(
             advertised["checklist_schema"],
             wisp_dto::research_checklist::SCHEMA
