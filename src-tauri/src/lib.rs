@@ -3170,9 +3170,12 @@ struct TauriOutput {
     provenance_scope: String,
     /// Per-send_message id used to attribute real-browser tabs to this turn.
     turn_id: String,
-    /// IM turns force Ask unless the assistant's owner explicitly enables
-    /// its session Full Permission. Dispatched project turns still ask.
+    /// Remote turns default to Ask unless this conversation's own Full
+    /// Permission is enabled. A dispatch never inherits the parent's grant.
     force_ask_mutations: bool,
+    /// A mandate's explicit review constraint remains authoritative even
+    /// when this conversation has Full Permission.
+    mandate_reviews_mutations: bool,
     /// The turn was started by another lab member's mail: beyond asking
     /// before changes, it may run unasked only what
     /// `channels::lab_mail::UNATTENDED_TOOLS` names.
@@ -3195,11 +3198,11 @@ impl TauriOutput {
             .unwrap_or(false)
     }
 
-    fn requires_im_approval(&self) -> bool {
+    fn requires_turn_approval(&self) -> bool {
         approval_commands::force_ask_for_turn(
             self.force_ask_mutations,
-            &self.frame_id,
             self.full_permission(),
+            self.mandate_reviews_mutations || self.lab_turn,
         )
     }
 
@@ -3230,7 +3233,7 @@ impl TauriOutput {
         allow_full_permission: bool,
     ) -> wisp_tools::ConfirmDecision {
         let _slot = workflow_approval::lock_frame(&self.frame_id).await;
-        if allow_full_permission && self.full_permission() && !self.requires_im_approval() {
+        if allow_full_permission && self.full_permission() && !self.requires_turn_approval() {
             return wisp_tools::ConfirmDecision::Approved;
         }
         let (tool, preview) = parse_confirm_payload(message);
@@ -3252,7 +3255,7 @@ impl TauriOutput {
             // Enabling Full Permission takes this same lock. Recheck while
             // registering so a concurrent `full` cannot miss a new request
             // and leave the running turn waiting despite its updated policy.
-            if allow_full_permission && self.full_permission() && !self.requires_im_approval() {
+            if allow_full_permission && self.full_permission() && !self.requires_turn_approval() {
                 return wisp_tools::ConfirmDecision::Approved;
             }
             confirms.insert(
@@ -3682,10 +3685,10 @@ impl Output for TauriOutput {
         })
     }
     fn approval_bypass(&self) -> bool {
-        self.full_permission() && !self.requires_im_approval()
+        self.full_permission() && !self.requires_turn_approval()
     }
     fn danger_auto_approve(&self) -> bool {
-        if self.requires_im_approval() {
+        if self.requires_turn_approval() {
             return false;
         }
         self.full_permission()
@@ -3696,7 +3699,7 @@ impl Output for TauriOutput {
                 .unwrap_or(false)
     }
     fn force_ask_mutations(&self) -> bool {
-        self.requires_im_approval()
+        self.requires_turn_approval()
     }
     fn unattended_tools(&self) -> Option<&'static [&'static str]> {
         self.lab_turn

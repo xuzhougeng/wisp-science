@@ -71,9 +71,15 @@ Only plain text input is supported in v1 (WeChat voice messages arrive as
 transcripts and work too). Approval prompts still appear in the desktop app. A
 WeChat turn that reaches a native Wisp confirmation or an ACP permission request
 also receives a bounded plain-text summary and a one-time approval code; Feishu
-approvals still require the desktop app. Project IM turns additionally force Ask on
-write/edit/shell and other mutating tools even when the desktop policy defaults
-to Allow, including Full Permission.
+approvals still require the desktop app. Project IM turns default to Ask on
+write/edit/shell, `run_in_context` and other mutating tools even when the project
+policy defaults to Allow. Explicitly enabling **Full Permission** for that same
+conversation on the desktop releases its pending ordinary tool approval and
+skips subsequent ordinary prompts, including during the current IM turn.
+Disabling it restores approval prompts; restarting Wisp clears the grant.
+Dispatching from an assistant or parent conversation does not transfer its grant
+to the target conversation. Explicit tool denials, mandate review constraints
+and lab-mail approvals remain in force.
 
 ## Feishu bot
 

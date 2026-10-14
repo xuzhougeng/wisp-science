@@ -21,7 +21,7 @@ pub(crate) struct Broker {
     pub(crate) conversations: Arc<crate::native_conversations::Conversations>,
     contexts: Arc<Mutex<HashMap<Option<String>, String>>>,
     /// Stamped by the connection, never read from a request: true for the
-    /// remote web tunnel, whose turns run with IM-style forced Ask.
+    /// remote tunnel, whose turns use the IM approval default.
     pub(crate) remote: bool,
 }
 

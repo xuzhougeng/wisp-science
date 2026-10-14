@@ -224,7 +224,11 @@ so its first launch asks for the code once.
   Terminal input, kernel execution, file save and file actions, references,
   reordering or editing the queue, and ACP conversations are not available
   remotely. Approvals apply once; a remote browser cannot grant
-  session/project/global permissions.
+  session/project/global permissions. Browser and iOS turns default to asking
+  before mutating tools. Full Permission explicitly enabled on the desktop for
+  that same conversation also applies to its remote turns, including a running turn.
+  Each turn uses its target conversation's grant. Explicit tool denials,
+  mandate review constraints and lab-mail approvals remain in force.
 - **One write: a picture.** A browser can add a picture to its own message.
   The desktop accepts at most 768 KiB, checks that the bytes are a JPEG, PNG or
   WebP, picks the file name itself and stores it under `uploads/`. A message
