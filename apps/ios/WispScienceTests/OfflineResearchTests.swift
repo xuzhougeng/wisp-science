@@ -46,6 +46,42 @@ import WispRemote
         XCTAssertEqual(ChecklistModel(directory: dir).entries[0].fields.status, "done")
     }
 
+    func testChecklistReconnectAdoptsLocalEntriesOnceAndPreservesExistingHostEntries() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let model = ChecklistModel(directory: dir)
+        let c = connection()
+        let config = try configuration("host")
+        c.useLocalService(name: "host", commands: []) { _, _, _ in
+            XCTFail("Configuring a checklist must not send data"); return .null
+        }
+        model.configure(configuration: config, connection: c, demo: false)
+        let hostScope = model.scope
+        XCTAssertTrue(model.edit(fields: ChecklistFields(title: "host entry", day: "2026-10-14")))
+        let hostID = try XCTUnwrap(model.entries.first?.id)
+        model.select("local")
+        XCTAssertTrue(model.edit(fields: ChecklistFields(title: "local entry", day: "2026-10-15")))
+        let localID = try XCTUnwrap(model.entries.first?.id)
+        let mutationID = try XCTUnwrap(model.entries.first?.mutationID)
+
+        model.configure(configuration: config, connection: c, demo: false)
+        model.configure(configuration: config, connection: c, demo: false)
+        XCTAssertEqual(model.scope, hostScope)
+        XCTAssertEqual(Set(model.entries.map(\.id)), Set([hostID, localID]))
+        XCTAssertEqual(model.replica.entries[localID]?.mutationID, mutationID)
+        XCTAssertEqual(model.pendingCount, 2)
+        XCTAssertNil(model.error)
+
+        let restored = ChecklistModel(directory: dir)
+        XCTAssertEqual(restored.scope, hostScope)
+        XCTAssertEqual(Set(restored.entries.map(\.id)), Set([hostID, localID]))
+        restored.select("local")
+        XCTAssertTrue(restored.entries.isEmpty)
+        restored.configure(configuration: try configuration("other"), connection: c, demo: false)
+        XCTAssertTrue(restored.entries.isEmpty, "Adopted entries must not move into another host")
+        restored.select(hostScope)
+        XCTAssertEqual(Set(restored.entries.map(\.id)), Set([hostID, localID]))
+    }
+
     func testChecklistHandshakeThenSyncConvergesAndDoesNotReplayConversationCommands() async throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let model = ChecklistModel(directory: dir)

@@ -72,7 +72,8 @@ import WispRemote
         if next.replicas[scope] == nil { next.replicas[scope] = ChecklistReplica() }
         next.names[scope] = connection.hostName.isEmpty ? (configuration?.relay.host ?? "Wisp 主机") : connection.hostName
         if connection.state == .online {
-            next.replicas[scope]?.adopt(next.replicas["local"] ?? ChecklistReplica())
+            let local = next.replicas["local"] ?? ChecklistReplica()
+            next.replicas[scope]?.adopt(local)
             next.replicas["local"] = ChecklistReplica()
         }
         // Repeated polling does not change a user's selected offline list.
