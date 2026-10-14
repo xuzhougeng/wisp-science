@@ -27,6 +27,17 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(select_scopes(["apps/ios/Package.swift", "crates/wisp-store/src/lib.rs"]),
                          BACKEND | {"ios"})
 
+    def test_android_only_runs_only_the_android_workflow(self):
+        self.assertEqual(select_scopes([
+            "apps/android/app/src/main/java/science/wisp/android/WorkspaceModel.kt",
+            "apps/android/remote/src/test/kotlin/science/wisp/remote/DemoServiceTest.kt",
+            "apps/android/scripts/export_icons.py", "apps/android/gradle/libs.versions.toml",
+            ".github/workflows/android.yml",
+        ]), set())
+        self.assertEqual(select_scopes(["apps/android/README.md", "contracts/research-checklist/v1/sync.json"]),
+                         APPLICATIONS)
+        self.assertEqual(select_scopes(["apps/android/README.md", "apps/ios/README.md"]), {"ios"})
+
     def test_website_only_does_not_build_apps(self):
         self.assertEqual(select_scopes([
             "docs/index.html", "README.md", "ui-tests/website-tests/downloads.spec.ts",

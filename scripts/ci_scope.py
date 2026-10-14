@@ -34,6 +34,8 @@ def scopes_for_path(path):
         return NATIVE
     if path.startswith("apps/ios/"):
         return {"ios"}
+    if path.startswith("apps/android/") or path == ".github/workflows/android.yml":
+        return set()  # android.yml has its own path filters.
     # WinUI links this particular resource directory from the macOS tree.
     # Ordinary Swift/C# edits do not require the other platform's build.
     if path.startswith("apps/macos/Sources/WispProjectBrowserUI/Resources/"):

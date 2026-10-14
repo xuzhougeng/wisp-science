@@ -9,6 +9,7 @@ and PR or branch.
 | Changed inputs | Selected checks |
 | --- | --- |
 | Only `apps/ios/**` | iOS protocol package tests, simulator app/test compilation and app unit tests |
+| Only `apps/android/**` or `.github/workflows/android.yml` | The separate `Android` workflow (its own path filters); `Test` and `Native Apps` skip every job |
 | Ordinary `apps/windows/**` source | WinUI only, plus a lightweight shared asset check |
 | Ordinary `apps/macos/**` source | macOS only |
 | Shared DTO/sync crates, `src-tauri/**`, `contracts/**`, root Cargo/toolchain/config | Rust/MSRV, headless, desktop regressions, web UI, all native apps and contract checks |
@@ -72,7 +73,8 @@ python3 -m unittest discover -s scripts -p test_ci_scope.py
 ```
 
 For manual CI review, inspect `changes / detect` and verify that an iOS-only PR
-selects just `ios`, a WinUI-only PR selects `windows` and the small shared asset
+selects just `ios`, an Android-only PR selects no group (only the `Android` workflow
+runs), a WinUI-only PR selects `windows` and the small shared asset
 check, a normal web UI change selects only `ui`, a backend/iOS PR selects both,
 and an unknown build input
 selects all groups. A docs-only PR should retain the Website checks without
