@@ -61,7 +61,19 @@ class DemoServiceTest {
         val emptyDay = ResearchHistory.dayArgs(java.time.LocalDate.now().plusDays(10), java.time.ZoneId.systemDefault())
         assertTrue(demo.call("native_research_journey", route.project, emptyDay).field("entries").rows().isEmpty())
         demo.call("native_conversation_approve", route.project, obj("session_id" to string("demo-workflow"), "approval_id" to string("demo-approval"), "approved" to JsonPrimitive(false), "scope" to string("once")))
+        // Like the iOS demo, an unseen reply still needs the user until the conversation is marked seen.
+        assertTrue(demo.call("native_conversation_inbox", route.project).rows().any { it.field("id").text() == "demo-workflow" })
+        demo.call("native_conversation_seen", route.project, obj("session_id" to string("demo-workflow")))
         assertFalse(demo.call("native_conversation_inbox", route.project).rows().any { it.field("id").text() == "demo-workflow" })
+        assertEquals("idle", demo.call("remote_sessions", route.project).rows().single { it.field("id").text() == "demo-workflow" }.field("status").text())
+    }
+    @Test fun seenClearsOnlyUnreadStateAndRejectsUnknownSessions() = runTest {
+        val demo = demo()
+        assertEquals(setOf("demo-qc", "demo-workflow", "demo-options"), demo.call("native_conversation_inbox", route.project).rows().map { it.field("id").text() }.toSet())
+        listOf("demo-qc", "demo-workflow", "demo-options").forEach { demo.call("native_conversation_seen", route.project, obj("session_id" to string(it))) }
+        // The pending approval and the unanswered question keep their conversations in the inbox.
+        assertEquals(setOf("demo-workflow", "demo-options"), demo.call("native_conversation_inbox", route.project).rows().map { it.field("id").text() }.toSet())
+        assertFailsWith<RemoteFailure> { demo.call("native_conversation_seen", route.project, obj("session_id" to string("other"))) }
     }
     @Test fun bundledImageUsesTheBoundedImageCommandAndRejectsRemotePaths() = runTest {
         val demo = demo()

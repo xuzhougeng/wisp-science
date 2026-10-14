@@ -26,6 +26,28 @@ class RemoteSnapshot(val value: JsonElement, val route: ConversationRoute) {
     fun supersedes(previous: RemoteSnapshot?): Boolean = previous == null || epoch != previous.epoch || sequence!! >= previous.sequence!!
 }
 
+/** Marks each settled snapshot read once, like the iOS client, so the host clears 待处理 for replies seen here. */
+class SeenMarker {
+    private var last = ""
+    suspend fun mark(service: RemoteService, snapshot: RemoteSnapshot) {
+        if (snapshot.running || "native_conversation_seen" !in service.status.value.commands) return
+        val stamp = "${snapshot.epoch}:${snapshot.route.project}:${snapshot.route.session}:${snapshot.sequence}"
+        if (stamp == last) return
+        service.call("native_conversation_seen", snapshot.route.project, snapshot.route.args)
+        last = stamp
+    }
+}
+
+/** The host's inbox already spans every project; the first project only routes the request. */
+suspend fun loadInbox(call: suspend (command: String, project: String?) -> JsonElement): List<JsonElement> {
+    val projects = call("list_projects", null)
+    requireRemote(projects is JsonArray)
+    val project = projects.rows().firstOrNull()?.field("id")?.text() ?: return emptyList()
+    val rows = call("native_conversation_inbox", project)
+    requireRemote(rows is JsonArray)
+    return rows.rows()
+}
+
 /** All mutations require a snapshot fetched during this authenticated socket session. */
 fun canAct(status: ConnectionStatus, snapshot: RemoteSnapshot?, snapshotSession: String, command: String): Boolean =
     status.phase == ConnectionPhase.ONLINE && status.session.isNotEmpty() && status.session == snapshotSession &&

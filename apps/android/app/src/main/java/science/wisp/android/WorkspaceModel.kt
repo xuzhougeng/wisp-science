@@ -36,6 +36,7 @@ data class WorkspaceState(
     val drafts: Map<ConversationRoute, String> = emptyMap(),
     val uncertain: Set<ConversationRoute> = emptySet(),
     val month: YearMonth = YearMonth.now(), val selectedDay: LocalDate = LocalDate.now(),
+    val journeyMonth: YearMonth = YearMonth.now(),
     val calendarProject: String? = null,
     val calendarMonth: CalendarHistory? = null, val calendarDay: CalendarHistory? = null,
     val loading: Boolean = false, val busy: Boolean = false, val localBusy: Boolean = true,
@@ -48,6 +49,8 @@ data class WorkspaceState(
         tab = next, stack = savedStacks[next] ?: listOf(next.root), savedStacks = savedStacks + (tab to stack),
         detail = JsonNull, error = null, loading = false,
     )
+    /** The project journey pages its own month; the calendar tab's month and selected day stay put. */
+    fun shiftingJourneyMonth(delta: Long): WorkspaceState = copy(journeyMonth = journeyMonth.plusMonths(delta), detail = JsonNull, error = null)
     fun can(command: String): Boolean = !busy && page.route !in uncertain &&
         canAct(status, snapshot?.takeIf { it.route == page.route }, snapshotSession, command)
 }
@@ -65,6 +68,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     private var watcher: Job? = null
     private var reader: Job? = null
     private var polling: Job? = null
+    private val seen = SeenMarker()
     private var revision = 0L
     private var workspaceEpoch = 0L
     private var foreground = false
@@ -174,6 +178,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     fun open(page: Page) {
         revision++
         mutable.update { it.copy(stack = it.stack + page, detail = JsonNull, error = null,
+            journeyMonth = if (page.kind == PageKind.JOURNEY) YearMonth.now() else it.journeyMonth,
             snapshot = if (page.route == it.snapshot?.route) it.snapshot else null,
             sessions = if (page.kind == PageKind.SESSIONS) emptyList() else it.sessions) }
         refresh()
@@ -201,6 +206,11 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         revision++
         mutable.update { it.copy(month = it.month.plusMonths(delta), selectedDay = it.month.plusMonths(delta).atDay(1),
             detail = JsonNull, calendarMonth = null, calendarDay = null, error = null) }
+        refresh()
+    }
+    fun changeJourneyMonth(delta: Long) {
+        revision++
+        mutable.update { it.shiftingJourneyMonth(delta) }
         refresh()
     }
 
@@ -258,22 +268,14 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
                 }
                 val result = when (page.kind) {
                     PageKind.PROJECTS -> source.call("list_projects")
-                    PageKind.INBOX -> {
-                        val projects = source.call("list_projects")
-                        if (projects !is JsonArray) throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
-                        JsonArray(projects.flatMap { project ->
-                            val rows = source.call("native_conversation_inbox", project.field("id").text())
-                            if (rows !is JsonArray) throw RemoteFailure(RemoteFailure.Reason.PROTOCOL)
-                            rows.toList()
-                        })
-                    }
+                    PageKind.INBOX -> JsonArray(loadInbox { command, project -> source.call(command, project) })
                     PageKind.SESSIONS -> source.call("remote_sessions", page.project)
                     PageKind.CONVERSATION -> source.call("native_conversation_snapshot", page.project, page.route.args)
                     PageKind.FILES -> source.call(if (page.directory) "native_conversation_panel_file_directory" else "native_conversation_panel_file_read",
                         page.project, JsonObject(page.route.args + ("path" to string(page.path))))
                     PageKind.JOURNEY -> {
                         val zone = ZoneId.systemDefault()
-                        ResearchHistory.parse(source.call("native_research_journey", page.project, ResearchHistory.monthArgs(start.month, zone)))
+                        ResearchHistory.parse(source.call("native_research_journey", page.project, ResearchHistory.monthArgs(start.journeyMonth, zone)))
                     }
                     else -> JsonNull
                 }
@@ -287,8 +289,11 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
                     }
                     PageKind.CONVERSATION -> {
                         val snapshot = RemoteSnapshot(result, page.route)
-                        mutable.update { if (snapshot.supersedes(it.snapshot?.takeIf { old -> old.route == page.route }))
-                            it.copy(snapshot = snapshot, snapshotSession = session, error = null) else it }
+                        if (!snapshot.supersedes(state.value.snapshot?.takeIf { old -> old.route == page.route })) return@launch
+                        mutable.update { it.copy(snapshot = snapshot, snapshotSession = session, error = null) }
+                        if (foreground) try { seen.mark(source, snapshot) }
+                        catch (error: CancellationException) { throw error }
+                        catch (_: Exception) { /* Read state is advisory; the next settled snapshot retries. */ }
                     }
                     else -> mutable.update { it.copy(detail = result, error = null) }
                 }

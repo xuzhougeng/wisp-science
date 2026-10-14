@@ -14,12 +14,13 @@ class DemoService(manifest: String, private val readImageAsset: ((String) -> Byt
     private val sessions = data.field("sessions").rows()
     private val additions = mutableMapOf<String, List<JsonElement>>()
     private val resolved = mutableSetOf<String>()
+    private val seen = mutableSetOf<String>()
     private val researchDay = LocalDate.now()
     private var sequence = 1L
     private val mutableStatus = MutableStateFlow(ConnectionStatus(ConnectionPhase.ONLINE, UUID.randomUUID().toString(),
         "离线演示 · 合成数据", setOf("list_projects", "remote_sessions", "native_conversation_snapshot",
             "native_research_calendar", "native_research_journey", "native_conversation_inbox", "native_conversation_image",
-            "native_conversation_send", "native_conversation_approve", "native_conversation_panel_file_directory", "native_conversation_panel_file_read")))
+            "native_conversation_seen", "native_conversation_send", "native_conversation_approve", "native_conversation_panel_file_directory", "native_conversation_panel_file_read")))
     override val status: StateFlow<ConnectionStatus> = mutableStatus
 
     override suspend fun call(command: String, project: String?, args: JsonObject): JsonElement {
@@ -67,6 +68,10 @@ class DemoService(manifest: String, private val readImageAsset: ((String) -> Byt
                 sequence++
                 JsonNull
             }
+            "native_conversation_seen" -> {
+                seen += id
+                JsonNull
+            }
             "native_conversation_panel_file_directory" -> {
                 val path = args.field("path").text()
                 requireRemote(path == "." || validPath(path))
@@ -98,7 +103,7 @@ class DemoService(manifest: String, private val readImageAsset: ((String) -> Byt
         val pending = session.field("approvals").rows().any { it.field("approval_id").text() !in resolved } ||
             items.withIndex().any { (i, item) -> Question.parse(item) != null && items.drop(i + 1).none { it.field("role").text() == "user" } }
         obj("id" to session.field("id"), "title" to session.field("title"), "project_id" to project.field("id"),
-            "project_name" to project.field("name"), "status" to string(if (pending) "needs_you" else "complete"),
+            "project_name" to project.field("name"), "status" to string(if (pending || session.field("id").text() !in seen) "needs_you" else "idle"),
             "activity_at" to JsonPrimitive(researchDay.minusDays(index.toLong()).atTime(10, 0).atZone(ZoneId.systemDefault()).toEpochSecond()))
     }
     private fun history(args: JsonObject): JsonObject {

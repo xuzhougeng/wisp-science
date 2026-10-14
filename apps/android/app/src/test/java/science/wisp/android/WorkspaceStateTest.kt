@@ -43,4 +43,16 @@ class WorkspaceStateTest {
         assertFalse(restored.copy(stack = restored.stack + Page(PageKind.CONVERSATION, "对话", "project", "session")).showsTabs)
         assertFalse(WorkspaceState().hasBack)
     }
+    @Test fun journeyMonthDoesNotMoveTheCalendarTab() {
+        val day = java.time.LocalDate.of(2026, 10, 14)
+        val calendar = WorkspaceState(month = java.time.YearMonth.from(day), selectedDay = day, journeyMonth = java.time.YearMonth.from(day))
+        val journey = calendar.shiftingJourneyMonth(-1)
+        assertEquals(java.time.YearMonth.of(2026, 9), journey.journeyMonth)
+        assertEquals(calendar.month, journey.month)
+        assertEquals(day, journey.selectedDay)
+    }
+    @Test fun hostReasoningItemsAreLabelledAsThinking() {
+        assertEquals("思考", roleLabel("reasoning"))
+        assertEquals("工具", roleLabel("tool"))
+    }
 }

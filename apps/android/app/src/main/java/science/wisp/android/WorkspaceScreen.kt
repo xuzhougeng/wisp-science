@@ -369,9 +369,9 @@ private fun Files(state: WorkspaceState, model: WorkspaceModel) {
 private fun Journey(state: WorkspaceState, model: WorkspaceModel) {
     Column {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = { model.changeMonth(-1) }) { Text("上月") }
-            Text(state.month.toString(), style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = { model.changeMonth(1) }) { Text("下月") }
+            TextButton(onClick = { model.changeJourneyMonth(-1) }) { Text("上月") }
+            Text(state.journeyMonth.toString(), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = { model.changeJourneyMonth(1) }) { Text("下月") }
         }
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.detail.field("truncated").flag()) item { Text("记录较多，当前月份结果未完整返回，请在主机查看。") }
@@ -392,11 +392,11 @@ private fun Journey(state: WorkspaceState, model: WorkspaceModel) {
     }
 }
 
-private fun roleLabel(role: String): String = when (role) {
+internal fun roleLabel(role: String): String = when (role) {
     "user" -> "你"
     "assistant" -> "Wisp"
     "question" -> "问题"
     "tool" -> "工具"
-    "thinking" -> "思考"
+    "reasoning" -> "思考"
     else -> "记录"
 }
