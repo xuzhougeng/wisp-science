@@ -32,6 +32,8 @@ pub struct PersistedMessage {
 #[derive(Default)]
 pub struct Live {
     pub running: bool,
+    /// Changes when a turn starts or finishes, invalidating in-flight store reads.
+    pub generation: u64,
     pub messages: Vec<Message>,
     pub next_before_seq: Option<i64>,
     pub draft: String,
@@ -49,6 +51,8 @@ pub struct Session {
     /// Serializes acceptance, including the durable request-id check.
     pub accept: tokio::sync::Mutex<()>,
     pub runtime: Mutex<Option<wisp_runtime::RuntimeManager>>,
+    #[cfg(test)]
+    pub snapshot_after_read: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 impl Default for Session {
@@ -58,6 +62,8 @@ impl Default for Session {
             cancel: Arc::new(AtomicBool::new(false)),
             accept: Default::default(),
             runtime: Mutex::new(None),
+            #[cfg(test)]
+            snapshot_after_read: Mutex::new(None),
         }
     }
 }

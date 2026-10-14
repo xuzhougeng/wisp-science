@@ -355,6 +355,7 @@ impl Server {
         {
             let mut live = session.live.lock().unwrap();
             live.running = true;
+            live.generation = live.generation.wrapping_add(1);
             live.error = None;
             live.draft.clear();
             live.messages = page.messages.into_iter().map(|(_, msg)| msg).collect();
@@ -387,6 +388,7 @@ impl Server {
             }
             let mut live = session.live.lock().unwrap();
             live.running = false;
+            live.generation = live.generation.wrapping_add(1);
             live.approvals.clear();
             live.messages.clear();
             live.draft.clear();
@@ -397,11 +399,37 @@ impl Server {
 
     async fn snapshot(&self, project: &str, request: &dto::SessionRequest) -> Result<Value> {
         let session = self.session(&request.session_id);
+        loop {
+            let generation = session.live.lock().unwrap().generation;
+            if let Some(snapshot) = self
+                .snapshot_at_generation(project, request, &session, generation)
+                .await?
+            {
+                return Ok(snapshot);
+            }
+        }
+    }
+
+    async fn snapshot_at_generation(
+        &self,
+        project: &str,
+        request: &dto::SessionRequest,
+        session: &Session,
+        generation: u64,
+    ) -> Result<Option<Value>> {
         let page = self
             .0
             .store
             .load_session_transcript_page(&request.session_id, request.before_seq, 20)
             .await?;
+        #[cfg(test)]
+        {
+            let pause = session.snapshot_after_read.lock().unwrap().take();
+            if let Some((loaded, resume)) = pause {
+                let _ = loaded.send(());
+                let _ = resume.await;
+            }
+        }
         let turn = self.0.store.latest_server_turn(&request.session_id).await?;
         let runs = self.0.store.list_runs_by_project(project).await?;
         let mut outcomes: HashMap<_, _> = self
@@ -415,6 +443,12 @@ impl Server {
             .map(|event| (event.outcome.call_id.clone(), event.outcome))
             .collect();
         let live = session.live.lock().unwrap();
+        // Completion clears the live transcript only after persisting it. If it
+        // crossed these store reads, reload instead of returning an old page as
+        // complete. A generation also detects a whole turn starting and ending.
+        if live.generation != generation {
+            return Ok(None);
+        }
         let use_live = live.running && request.before_seq.is_none();
         let saved: Vec<_> = page.messages.into_iter().map(|(_, msg)| msg).collect();
         let mut items = runtime::items(if use_live { &live.messages } else { &saved });
@@ -481,7 +515,7 @@ impl Server {
                 .collect::<serde_json::Result<_>>()?,
             run_review_supported: Some(false),
         };
-        Ok(serde_json::to_value(snapshot)?)
+        Ok(Some(serde_json::to_value(snapshot)?))
     }
 
     pub async fn shutdown(&self) {

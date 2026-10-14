@@ -223,6 +223,72 @@ async fn mobile_turn_approval_persistence_and_restart_reuse_the_same_runtime() {
 }
 
 #[tokio::test]
+async fn snapshot_during_turn_completion_includes_the_final_reply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(
+        config(tmp.path()),
+        models(Arc::new(AtomicUsize::new(0)), true),
+    )
+    .await
+    .unwrap();
+    let id = call(&server, "native_conversation_create", PROJECT, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+    call(
+        &server,
+        "native_conversation_send",
+        PROJECT,
+        json!({"session_id":id,"request_id":"snapshot-race","message":"write"}),
+    )
+    .await
+    .unwrap();
+    let pending = wait_for(&server, &id, |s| !s.approvals.is_empty()).await;
+
+    // Hold a snapshot after its transcript read, then finish and persist the turn.
+    // A completed snapshot must not reuse the earlier, incomplete transcript.
+    let (loaded_tx, loaded_rx) = tokio::sync::oneshot::channel();
+    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+    *server.session(&id).snapshot_after_read.lock().unwrap() = Some((loaded_tx, resume_rx));
+    let reading = {
+        let server = server.clone();
+        let id = id.clone();
+        tokio::spawn(async move { snapshot(&server, &id).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), loaded_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    call(
+        &server,
+        "native_conversation_approve",
+        PROJECT,
+        json!({"session_id":id,"approval_id":pending.approvals[0].approval_id,"approved":true}),
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &id, |s| !s.running).await;
+    resume_tx.send(()).unwrap();
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), reading)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!finished.running);
+    assert!(finished.error.is_none(), "{:?}", finished.error);
+    assert!(finished
+        .items
+        .iter()
+        .any(|item| item.text == "Saved result"));
+    assert!(finished
+        .items
+        .iter()
+        .any(|item| item.tool_name.as_deref() == Some("write") && item.ok == Some(true)));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn stop_during_approval_never_executes_the_write() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = config(tmp.path());
