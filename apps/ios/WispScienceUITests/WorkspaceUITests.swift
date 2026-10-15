@@ -826,15 +826,21 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertEqual(menu.value as? String, "标准", "Each launch starts from the default level")
         XCTAssertTrue(app.buttons["process-group-1"].exists)
 
-        // One Escape closes only the menu; the conversation underneath stays open.
+        // No focus movement inside before Escape: one press closes only the
+        // sheet, and the conversation underneath stays open.
         menu.tap()
-        XCTAssertTrue(app.buttons["简洁"].waitForExistence(timeout: 3))
+        let minimal = app.buttons["transcript-detail-minimal"]
+        XCTAssertTrue(minimal.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["transcript-detail-standard"].isSelected)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(app.buttons["简洁"].waitForNonExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["conversation-files"].exists)
+        XCTAssertTrue(minimal.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["process-group-1"].exists)
 
         menu.tap()
-        app.buttons["简洁"].tap()
+        XCTAssertTrue(minimal.waitForExistence(timeout: 3))
+        minimal.tap()
+        XCTAssertTrue(minimal.waitForNonExistence(timeout: 3), "Choosing a level closes the sheet")
         XCTAssertEqual(menu.value as? String, "简洁")
         let hint = app.buttons["failure-hint-1"]
         revealEarlier(hint, in: app)
@@ -851,7 +857,7 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["python heatmap.py"].exists, "Steps inside the hint start collapsed")
 
         menu.tap()
-        app.buttons["详细"].tap()
+        app.buttons["transcript-detail-full"].tap()
         XCTAssertEqual(menu.value as? String, "详细")
         XCTAssertFalse(app.buttons["failure-hint-1"].exists)
         XCTAssertFalse(app.buttons["process-group-1"].exists)
@@ -864,7 +870,7 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["python heatmap.py"].exists)
 
         menu.tap()
-        app.buttons["标准"].tap()
+        app.buttons["transcript-detail-standard"].tap()
         let group = app.buttons["process-group-1"]
         revealEarlier(group, in: app)
         XCTAssertEqual(group.value as? String, "已折叠")

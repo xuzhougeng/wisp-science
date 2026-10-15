@@ -52,6 +52,7 @@ struct WorkspaceView: View {
                     .navigationTitle("对话详情").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { model.sheet = nil } } }
                 }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation-info-sheet")
+            case .transcriptDetail: TranscriptDetailSheet { model.sheet = nil }
             case .files(let route, let path, let directory):
                 FilesView(model: model, route: route, initialPath: path, isDirectory: directory)
                     .modifier(PageSizedSheet())

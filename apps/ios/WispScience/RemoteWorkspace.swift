@@ -30,12 +30,14 @@ struct ComposerNotice: Equatable {
 enum WorkspaceSheet: Identifiable {
     case connection, inbox, checklistSettings, files(ConversationRoute, String, Bool)
     case conversationInfo(String, String)
+    case transcriptDetail
     var id: String {
         switch self {
         case .connection: return "connection"
         case .inbox: return "inbox"
         case .checklistSettings: return "checklist-settings"
         case .conversationInfo: return "conversation-info"
+        case .transcriptDetail: return "transcript-detail"
         case .files(let route, let path, _): return "files:\(route.project):\(route.session):\(path)"
         }
     }

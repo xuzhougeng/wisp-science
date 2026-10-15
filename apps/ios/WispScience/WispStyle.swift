@@ -62,10 +62,13 @@ struct WispToolbarButton: View {
     let title: String
     let icon: WispIcon.Kind
     var count: Int? = nil
+    /// A current setting VoiceOver reads after the title, such as a chosen level.
+    var value: String? = nil
     let action: () -> Void
     @Environment(\.isEnabled) private var enabled
 
     private var status: String {
+        if let value { return value }
         guard let count else { return "" }
         return count == 0 ? "暂无待处理事项" : "\(count) 项待处理"
     }
@@ -95,33 +98,7 @@ struct WispToolbarButton: View {
         .foregroundStyle(enabled ? WispStyle.navigationAction : Color.secondary)
         .accessibilityLabel(title).accessibilityValue(status)
         .accessibilityShowsLargeContentViewer {
-            Label { Text(status.isEmpty ? title : status) } icon: { WispIcon(icon) }
-        }
-    }
-}
-
-/// A toolbar menu with the same icon-only bar treatment as `WispToolbarButton`.
-struct WispToolbarMenu<Content: View>: View {
-    let title: String
-    let icon: WispIcon.Kind
-    var value = ""
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        Menu(content: content) {
-            Label {
-                Text(title)
-            } icon: {
-                WispIcon(icon)
-            }
-            .labelStyle(.iconOnly).dynamicTypeSize(.large)
-            .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
-        }
-        .tint(WispStyle.navigationAction).foregroundStyle(WispStyle.navigationAction)
-        .accessibilityLabel(title).accessibilityValue(value)
-        .accessibilityShowsLargeContentViewer {
-            Label { Text(value.isEmpty ? title : "\(title)：\(value)") } icon: { WispIcon(icon) }
+            Label { Text(value.map { "\(title)：\($0)" } ?? (status.isEmpty ? title : status)) } icon: { WispIcon(icon) }
         }
     }
 }

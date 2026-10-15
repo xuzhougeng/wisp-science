@@ -14,7 +14,7 @@ struct ConversationView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var scrollTarget: String?
     /// Per device, for every conversation; never sent to the host.
-    @AppStorage("transcriptDetailLevel") private var detailLevel = RemoteTranscript.DetailLevel.default
+    @AppStorage(RemoteTranscript.DetailLevel.storageKey) private var detailLevel = RemoteTranscript.DetailLevel.default
     @FocusState private var composing: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -199,13 +199,8 @@ struct ConversationView: View {
                 .accessibilityIdentifier("conversation-files")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                WispToolbarMenu(title: "信息详细程度", icon: .adjustments, value: detailLevel.label) {
-                    Picker("信息详细程度", selection: $detailLevel) {
-                        ForEach(RemoteTranscript.DetailLevel.allCases) { level in
-                            Text(level.label).tag(level)
-                        }
-                    }
-                    .pickerStyle(.inline)
+                WispToolbarButton(title: "信息详细程度", icon: .adjustments, value: detailLevel.label) {
+                    model.sheet = .transcriptDetail
                 }
                 .accessibilityIdentifier("transcript-detail")
                 .accessibilityHint("选择对话中显示多少执行过程，适用于本机所有对话")
@@ -373,6 +368,55 @@ private struct TranscriptGroupView: View {
                 }
             }
         }.disclosureGroupStyle(WispDisclosureStyle(identifier: "process-group-\(group.id)"))
+    }
+}
+
+extension RemoteTranscript.DetailLevel {
+    /// Per device, for every conversation; never sent to the host.
+    static let storageKey = "transcriptDetailLevel"
+    var summary: String {
+        switch self {
+        case .minimal: return "隐藏工具调用，只提示失败"
+        case .standard: return "把中间步骤合并为「执行过程」"
+        case .full: return "逐条显示并展开每一步"
+        }
+    }
+}
+
+/// The 信息详细程度 choices, opened from the conversation toolbar as a
+/// workspace sheet so window-level Escape closes it. Picking one applies it.
+struct TranscriptDetailSheet: View {
+    @AppStorage(RemoteTranscript.DetailLevel.storageKey) private var selection = RemoteTranscript.DetailLevel.default
+    let done: () -> Void
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(RemoteTranscript.DetailLevel.allCases) { level in
+                        Button { selection = level; done() } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(level.label).foregroundStyle(.primary)
+                                    Text(level.summary).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                                WispIcon(.check, size: 18).foregroundStyle(WispStyle.accent).opacity(selection == level ? 1 : 0)
+                            }
+                            .frame(minHeight: 44).contentShape(Rectangle())
+                        }
+                        .accessibilityLabel(level.label)
+                        .accessibilityHint(level.summary)
+                        .accessibilityAddTraits(selection == level ? .isSelected : [])
+                        .accessibilityIdentifier("transcript-detail-\(level.rawValue)")
+                    }
+                } footer: {
+                    Text("只改变本机的显示方式，适用于所有对话。")
+                }
+            }
+            .navigationTitle("信息详细程度").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成", action: done) } }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
