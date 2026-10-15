@@ -94,10 +94,17 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_fast",
 ];
 
+/// Reply to clients that still try to switch delegation per conversation.
+pub const DELEGATION_ALWAYS_ON: &str =
+    "Sub-Agent delegation is always available; it can no longer be switched per conversation.";
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ComposerOptions {
     pub session_id: String,
     pub full_permission: bool,
+    /// Always true: delegation is no longer switched per conversation. Kept
+    /// for older native clients.
+    #[serde(default = "crate::default_true")]
     pub delegation: bool,
     pub completion: crate::AgentCompletionSettings,
     pub auto_review: bool,
@@ -144,6 +151,8 @@ pub enum ComposerOptionChange {
         enabled: bool,
         confirmed: bool,
     },
+    /// Legacy: delegation is always on. Still decoded for older clients,
+    /// refused with [`DELEGATION_ALWAYS_ON`].
     Delegation {
         enabled: bool,
     },
@@ -171,10 +180,7 @@ impl ComposerOptionChange {
                 "set_session_full_permission",
                 json!({"sessionId":session,"enabled":enabled}),
             ),
-            Self::Delegation { enabled } => (
-                "set_session_delegation_enabled",
-                json!({"sessionId":session,"enabled":enabled}),
-            ),
+            Self::Delegation { .. } => return Err(DELEGATION_ALWAYS_ON.into()),
             Self::Completion {
                 policy,
                 auto_resume,

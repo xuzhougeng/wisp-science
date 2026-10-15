@@ -672,7 +672,6 @@ button.run-status:hover { filter:brightness(0.96); }
 .agents-danger { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); background: color-mix(in srgb, var(--err) 9%, var(--bg-elev)); color: var(--err); }
 .agents-primary:disabled, .agents-secondary:disabled { cursor: default; opacity: .55; }
 .agents-error { margin-top: 8px; padding: 7px 9px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--err) 8%, var(--bg-elev)); color: var(--err); font-size: calc(11.5px * var(--ui-font-scale, 1)); line-height: 1.45; overflow-wrap: anywhere; }
-.agent-delegation-off { margin-bottom: 8px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--clay) 22%, var(--border)); border-radius: var(--radius-xs); background: var(--clay-soft); color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; }
 .agent-workflow-card { margin-top: 10px; padding: 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 .agent-workflow-head, .agent-step-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .agent-workflow-name { color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
@@ -740,7 +739,6 @@ button.run-status:hover { filter:brightness(0.96); }
 .agent-activity-trace { display: grid; gap: 3px; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
 .agent-activity-trace code { overflow-wrap: anywhere; color: var(--text-muted); font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
 .agents-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
-.agents-footer-hint { flex: 1 1 160px; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.4; }
 .agent-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .dynamic-roundtable { padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--clay) 28%, var(--border)); border-radius: var(--radius-xs); background: var(--clay-soft); }
 .dynamic-roundtable > summary { cursor: pointer; color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 700; }

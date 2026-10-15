@@ -731,18 +731,6 @@ async fn send_message_inner_with_continuation(
     }
     // Deliberately no set_active_frame here: see the `AppState::active_frame`
     // doc — a turn writing view state races the user's session/project switch.
-    // A workflow reference is itself an accepted capability request. Persist it
-    // before a Guide message can be consumed by the current loop; provider
-    // profile reads below still wait for the next workflow boundary.
-    if references.as_ref().is_some_and(|references| {
-        references
-            .iter()
-            .any(|reference| matches!(reference, ComposerReferenceArg::Workflow { .. }))
-    }) {
-        delegation_runtime::save_session_delegation_enabled(&state.store, &ap.id, &frame_id, true)
-            .await?;
-    }
-
     // Record this project's last session on accepted send. Desktop traffic
     // must not steal the Feishu/WeChat IM project.
     if origin != TurnOrigin::Timer {
@@ -861,8 +849,12 @@ async fn send_message_inner_with_continuation(
     }
     .try_into()
     .unwrap_or(fallback_max_context);
+    // Delegation is an always-available capability of built-in conversations,
+    // like skills and MCP tools. The research assistant goes without it, and a
+    // workflow child delegates only through the nested capacity its runner
+    // hands it, never through the conversation-level grant.
     let delegation_enabled =
-        !assistant && delegation_runtime::session_delegation_enabled(&state.store, &frame_id).await;
+        !assistant && !delegation_tool::is_delegated_child_frame(&state.store, &frame_id).await;
     let plan_mode_enabled =
         !assistant && plan_mode::session_plan_mode(&state.store, &frame_id).await;
     let (
@@ -941,9 +933,9 @@ async fn send_message_inner_with_continuation(
         .as_ref()
         .is_some_and(|agent| agent.tools.get("delegate_tasks").is_some() != delegation_enabled)
     {
-        // Delegation is a live per-session capability. Rebuild from persisted
-        // messages when the toggle changed so the next turn sees the exact
-        // tool set and prompt section selected by the user.
+        // The cached agent was built for the other kind of conversation
+        // (assistant vs. built-in). Rebuild from persisted messages so the
+        // next turn sees the exact tool set and prompt section.
         *guard = None;
     }
     // A mandate's conversation carries its brief on every turn, whether a due

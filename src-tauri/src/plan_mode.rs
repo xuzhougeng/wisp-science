@@ -3,7 +3,7 @@
 //! plan mode on the agent side and never use this flag.
 //!
 //! The flag rides the `settings` kv table keyed by frame, exactly like
-//! `frame_delegation_enabled` — a per-session boolean does not deserve a
+//! `frame_auto_review` — a per-session boolean does not deserve a
 //! migration, and it must never touch the `frames.model` column (that field's
 //! `acp:<label>` marker is a contract with the UI's model badge).
 

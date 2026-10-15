@@ -1727,7 +1727,7 @@ fn default_ui_font_size() -> u16 {
 fn default_code_font_size() -> u16 {
     12
 }
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 
@@ -4634,6 +4634,9 @@ pub struct SubagentActivity {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AgentWorkflowSnapshot {
     pub workflow: AgentWorkflow,
+    /// Always true since delegation stopped being a per-conversation switch;
+    /// kept so older native clients keep decoding the snapshot.
+    #[serde(default = "default_true")]
     pub delegation_enabled: bool,
     #[serde(default)]
     pub approval_policy: AgentApprovalPolicy,

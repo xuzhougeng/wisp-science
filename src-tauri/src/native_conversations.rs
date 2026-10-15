@@ -726,15 +726,8 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                     )
                     .await?,
                 )?,
-                delegation: decode(
-                    &call(
-                        broker,
-                        project,
-                        "get_session_delegation_enabled",
-                        session_args.clone(),
-                    )
-                    .await?,
-                )?,
+                // Always on; kept on the wire for native clients.
+                delegation: true,
                 completion: decode(
                     &call(
                         broker,

@@ -139,6 +139,18 @@ async fn nested_delegation_access_context(
     }))
 }
 
+/// A conversation started by a running workflow attempt. Such a child never
+/// gets the conversation-level delegation grant; it delegates only through the
+/// bounded nested capacity its parent task left it.
+pub(crate) async fn is_delegated_child_frame(store: &Store, frame_id: &str) -> bool {
+    store
+        .running_agent_workflow_attempt_for_child_frame(frame_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 pub(crate) async fn nested_delegation_available(store: &Store, frame_id: &str) -> bool {
     nested_delegation_context(store, frame_id)
         .await
@@ -500,12 +512,8 @@ impl DelegateTasksTool {
                     })?,
             )
         } else {
-            delegation_runtime::require_session_delegation(
-                &self.store,
-                &self.project.id,
-                &self.frame_id,
-            )
-            .await?;
+            delegation_runtime::ensure_project_frame(&self.store, &self.project.id, &self.frame_id)
+                .await?;
             None
         };
         let parsed: DelegateTasksArgs = serde_json::from_value(args.clone())
@@ -1037,12 +1045,8 @@ impl Tool for GetDelegatedResultTool {
 impl GetDelegatedResultTool {
     pub(crate) async fn read_result(&self, args: &Value) -> Result<Value, String> {
         if !nested_result_access_available(&self.store, &self.frame_id).await {
-            delegation_runtime::require_session_delegation(
-                &self.store,
-                &self.project_id,
-                &self.frame_id,
-            )
-            .await?;
+            delegation_runtime::ensure_project_frame(&self.store, &self.project_id, &self.frame_id)
+                .await?;
         }
         let workflow_id = required_arg(args, "workflow_id")?;
         let task_id = required_arg(args, "task_id")?;
@@ -1523,12 +1527,6 @@ mod tests {
         (store, project, root)
     }
 
-    async fn enable_delegation(store: &Store) {
-        delegation_runtime::save_session_delegation_enabled(store, "p", "f", true)
-            .await
-            .unwrap();
-    }
-
     fn parse_tool_result(result: &ToolResult) -> Value {
         assert!(result.success, "{}", result.content);
         serde_json::from_str(&result.content).unwrap()
@@ -1574,7 +1572,6 @@ mod tests {
     #[tokio::test]
     async fn parent_agent_delegates_parallel_tasks_and_synthesizes_inline() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let delegator = Arc::new(FakeDelegator::new(&[], &[]));
         let args = json!({
             "goal": "Compare two independent inputs",
@@ -1656,7 +1653,6 @@ mod tests {
     #[tokio::test]
     async fn background_batch_returns_handle_then_delivers_one_internal_result() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         crate::delegation_completion::save_session_completion_settings(
             &store,
             "p",
@@ -1740,7 +1736,6 @@ mod tests {
     #[tokio::test]
     async fn cancellation_before_background_start_is_explicit_and_spawns_nothing() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         crate::delegation_completion::save_session_completion_settings(
             &store,
             "p",
@@ -1796,7 +1791,6 @@ mod tests {
     #[tokio::test]
     async fn cancellation_after_background_start_delivers_cancelled_terminal_result() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         crate::delegation_completion::save_session_completion_settings(
             &store,
             "p",
@@ -1892,7 +1886,6 @@ mod tests {
     #[tokio::test]
     async fn inline_batch_runs_two_tasks_in_parallel_then_supplies_fan_in_results() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let delegator = Arc::new(FakeDelegator::new(&[], &[]));
         let tool = DelegateTasksTool::with_runtime(
             store.clone(),
@@ -1950,7 +1943,6 @@ mod tests {
     #[tokio::test]
     async fn durable_resource_references_survive_persistence_and_parent_delivery() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let tool = DelegateTasksTool::with_runtime(
             store.clone(),
             project,
@@ -1996,7 +1988,6 @@ mod tests {
     #[tokio::test]
     async fn approval_denial_starts_no_children_and_returns_feedback_to_parent() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let delegator = Arc::new(FakeDelegator::new(&[], &[]));
         let tool = DelegateTasksTool::with_runtime(
             store.clone(),
@@ -2050,7 +2041,6 @@ mod tests {
     #[tokio::test]
     async fn independent_success_survives_failure_while_only_descendants_are_blocked() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let delegator = Arc::new(FakeDelegator::new(&["bad"], &[]));
         let tool = DelegateTasksTool::with_runtime(
             store.clone(),
@@ -2112,7 +2102,6 @@ mod tests {
     #[tokio::test]
     async fn task_output_schema_violations_degrade_and_full_result_can_be_loaded() {
         let (store, project, root) = fixture().await;
-        enable_delegation(&store).await;
         let delegator = Arc::new(FakeDelegator::new(&[], &["invalid"]));
         let tool =
             DelegateTasksTool::with_runtime(store.clone(), project, "f", test_policy(), delegator);
@@ -2177,13 +2166,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_session_cannot_invoke_inline_delegation() {
+    async fn foreign_conversation_cannot_invoke_inline_delegation() {
         let (store, project, root) = fixture().await;
+        store.create_project("p2", "Two", "").await.unwrap();
+        store
+            .create_frame("f2", "p2", "Agent", "local")
+            .await
+            .unwrap();
         let delegator = Arc::new(FakeDelegator::new(&[], &[]));
         let tool = DelegateTasksTool::with_runtime(
             store.clone(),
             project,
-            "f",
+            "f2",
             test_policy(),
             delegator.clone(),
         );
@@ -2203,7 +2197,9 @@ mod tests {
             .await;
 
         assert!(!result.success);
-        assert!(result.content.contains("delegation is off"));
+        assert!(result
+            .content
+            .contains("does not belong to the active project"));
         assert!(delegator.calls().is_empty());
         assert!(store.list_agent_workflows("p").await.unwrap().is_empty());
         drop(store);

@@ -3748,7 +3748,6 @@ fn workflow_actions(
     let run_busy_id = workflow_id.clone();
     let cancel_id = workflow_id.clone();
     let retry_snapshot = snapshot.clone();
-    let delegation_enabled = snapshot.delegation_enabled;
     let automatic = snapshot.approval_policy == AgentApprovalPolicy::AutoSafe;
     view! {
         <div class="agent-workflow-actions">
@@ -3760,7 +3759,7 @@ fn workflow_actions(
             {(workflow.status == "draft").then(|| {
                 view! {
                     <button type="button" class="agents-primary" data-testid="agent-approve"
-                        disabled=!delegation_enabled || legacy
+                        disabled=legacy
                         on:click=move |_| invoke_workflow_action(
                             "approve_agent_workflow",
                             serde_json::json!({
@@ -3783,7 +3782,7 @@ fn workflow_actions(
             })}
             {(workflow.status == "approved").then(|| view! {
                 <button type="button" class="agents-primary" data-testid="agent-run"
-                    disabled=move || legacy || !delegation_enabled || state.launching.with(|ids| ids.contains(&run_busy_id))
+                    disabled=move || legacy || state.launching.with(|ids| ids.contains(&run_busy_id))
                     on:click=move |_| launch_workflow(run_id.clone(), state)>
                     {t(locale.get(), "agents.run")}
                 </button>
@@ -3798,7 +3797,7 @@ fn workflow_actions(
             })}
             {matches!(workflow.status.as_str(), "failed" | "cancelled").then(|| view! {
                 <button type="button" class="agents-primary" data-testid="agent-retry"
-                    disabled=!delegation_enabled || legacy
+                    disabled=legacy
                     on:click=move |_| retry_workflow(retry_snapshot.clone(), state)>
                     {t(locale.get(), "agents.retry")}
                 </button>
@@ -3824,7 +3823,6 @@ fn dynamic_workflow_card(
         AgentApprovalPolicy::AutoSafe => t(locale.get(), "agents.approval.auto_safe"),
     };
     let actions = workflow_actions(&snapshot, state, locale, open_workflows);
-    let workflow_delegation_enabled = snapshot.delegation_enabled;
     let nested = workflow.depth > 0;
     let card_class = if nested {
         "agent-workflow-card dynamic nested"
@@ -3855,9 +3853,6 @@ fn dynamic_workflow_card(
             <p class="agent-workflow-goal">{workflow.goal.clone()}</p>
             {workflow.requires_confirmation.then(|| view! {
                 <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
-            })}
-            {(!nested && !workflow_delegation_enabled).then(|| view! {
-                <div class="agent-delegation-off">{t(locale.get(), "agents.workflow_disabled")}</div>
             })}
             {(!dynamic.approval_reasons.is_empty()).then(|| view! {
                 <section class="agent-approval-reasons" aria-label=t(locale.get(), "agents.approval_reasons")>
@@ -4541,7 +4536,6 @@ fn activity_detail(
 fn activity_list(
     state: AgentPanelState,
     sessions: RwSignal<Vec<SessionInfo>>,
-    delegation_enabled: RwSignal<bool>,
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
 ) -> View {
@@ -4635,9 +4629,6 @@ fn activity_list(
             }}
         </div>
         <div class="agents-footer">
-            {move || (!delegation_enabled.get()).then(|| view! {
-                <span class="agents-footer-hint">{t(locale.get(), "agents.disabled")}</span>
-            })}
             <button type="button" class="agents-secondary agents-manage-workflows"
                 data-testid="agent-open-workflows"
                 on:click=move |_| open_workflows.call(())>
@@ -4652,7 +4643,6 @@ fn activity_list(
 pub(super) fn agent_workflows_panel(
     state: AgentPanelState,
     sessions: RwSignal<Vec<SessionInfo>>,
-    delegation_enabled: RwSignal<bool>,
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
     open_session: Callback<String>,
@@ -4687,7 +4677,7 @@ pub(super) fn agent_workflows_panel(
                 });
                 match item {
                     Some(item) => activity_detail(item, state, locale.get(), open_session),
-                    None => activity_list(state, sessions, delegation_enabled, locale, open_workflows),
+                    None => activity_list(state, sessions, locale, open_workflows),
                 }
             }}
             {workflow_result_dialog(state, locale)}

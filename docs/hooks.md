@@ -7,7 +7,7 @@ Settings → Hooks / 钩子 lists everything that runs at agent lifecycle events
 | Hook | Event | Setting |
 | --- | --- | --- |
 | Auto-review / 自动审查 | Stop | Default for new conversations. The composer menu still switches it per conversation. **Reviewer model** opens the Reviewer specialist. |
-| Analyze tool failures / 自动分析工具失败 | Stop (after the turn) | Global switch, failure-rate threshold and minimum failures. Same setting as the composer menu. |
+| Analyze tool failures / 自动分析工具失败 | Stop (after the turn) | Global switch, failure-rate threshold and minimum failures. This is its only home; the composer menu holds per-conversation options only. |
 
 ## Command hooks
 

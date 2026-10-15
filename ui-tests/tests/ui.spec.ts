@@ -183,16 +183,6 @@ async function openAgentMenu(page: Page) {
   return page.getByRole("menu", { name: "Agent options" });
 }
 
-async function enableDelegation(page: Page) {
-  const menu = await openAgentMenu(page);
-  const row = menu.locator("label.agent-menu-row", { hasText: "Delegation" });
-  const toggle = row.locator('input[type="checkbox"]');
-  if (!(await toggle.isChecked())) await row.click();
-  await expect.poll(() => lastInvokeArgs(page, "set_session_delegation_enabled"))
-    .toMatchObject({ enabled: true });
-  await page.keyboard.press("Escape");
-}
-
 async function openComputeMenu(page: Page) {
   const agentMenu = await openAgentMenu(page);
   await agentMenu.getByRole("button", { name: /^Compute/ }).click();
@@ -515,16 +505,20 @@ test("an ordinary conversation offers no mandate scope", async ({ page }) => {
 
 test("optional tool-failure analysis exposes thresholds and proposes a confirmed lesson", async ({ page }) => {
   await enterApp(page);
-  let menu = await openAgentMenu(page);
-  await menu.locator("label.agent-menu-row", { hasText: "Analyze tool failures" }).click();
-  await expect(page.getByTestId("failure-rate-threshold")).toHaveValue("30");
-  await expect(page.getByTestId("minimum-failures")).toHaveValue("2");
-  await page.getByTestId("failure-rate-threshold").fill("60");
-  await page.getByTestId("failure-rate-threshold").press("Tab");
+  // The switch lives in Settings > Hooks; the composer menu holds only
+  // per-conversation options.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("settings-nav-hooks").click();
+  await expect(page.getByTestId("hook-failure-rate")).toHaveCount(0);
+  await page.getByTestId("hook-failure-analysis-toggle").locator("xpath=..").click();
+  await expect(page.getByTestId("hook-failure-rate")).toHaveValue("30");
+  await expect(page.getByTestId("hook-minimum-failures")).toHaveValue("2");
+  await page.getByTestId("hook-failure-rate").fill("60");
+  await page.getByTestId("hook-failure-rate").press("Tab");
   await expect.poll(() => lastInvokeArgs(page, "set_auto_failure_analysis_settings"))
     .toMatchObject({ settings: { enabled: true, failure_rate_threshold: 60, minimum_failures: 2 } });
-
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("hooks-pane")).toHaveCount(0);
   await composer(page).fill("TOOLFAILMEMORY diagnose retries");
   await page.getByRole("button", { name: "Send" }).click();
 
@@ -6920,6 +6914,27 @@ test("Escape closes the compute submenu before Agent options", async ({ page }) 
   await expect(page.getByRole("menu", { name: "Agent options" })).toHaveCount(0);
 });
 
+test("agent menu groups per-conversation options and links to Settings", async ({ page }) => {
+  await enterApp(page);
+  const menu = await openAgentMenu(page);
+
+  const groups = menu.locator(".agent-menu-group");
+  await expect(groups).toHaveText(["Mode", "Agents", "Resources"]);
+  // Group order: mode switches, then the agents taking part, then compute.
+  const rows = menu.locator(".agent-menu-group, .agent-menu-row > span:first-child");
+  await expect(rows).toHaveText([
+    "Mode", "Plan first", "Full Permission",
+    "Agents", "Specialist", "Delegated tasks", "Auto-review", "Reviewer model",
+    "Resources", "Compute",
+    "More in Settings",
+  ]);
+  await expect(menu.getByRole("button", { name: /^Reviewer model/ })).toHaveClass(/agent-menu-sub/);
+
+  await menu.getByTestId("agent-menu-more-settings").click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("hooks-pane")).toBeVisible();
+});
+
 test("Escape closes the sidebar sort menu without closing the sidebar", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Sort and group" }).click();
@@ -6931,16 +6946,13 @@ test("Escape closes the sidebar sort menu without closing the sidebar", async ({
   await expect(newSessionButton(page)).toBeVisible();
 });
 
-test("agent menu updates review, reviewer model, and memory preferences", async ({ page }) => {
+test("agent menu updates completion, review, and reviewer model preferences", async ({ page }) => {
   await enterApp(page);
   let menu = await openAgentMenu(page);
 
-  const delegation = menu.locator("label.agent-menu-row", { hasText: "Delegation" });
-  await expect(delegation.locator('input[type="checkbox"]')).not.toBeChecked();
-  await delegation.click();
-  await expect.poll(() => lastInvokeArgs(page, "set_session_delegation_enabled"))
-    .toMatchObject({ enabled: true });
-
+  // Delegation is always available: no switch, and the completion policy is
+  // editable straight away.
+  await expect(menu.locator("label.agent-menu-row", { hasText: "Delegation" })).toHaveCount(0);
   const completion = page.getByTestId("agent-completion-policy");
   await expect(completion).toHaveValue("inline");
   await expect(menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" })).toHaveCount(0);
@@ -6999,8 +7011,9 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
   });
   menu = await openAgentMenu(page);
 
-  await menu.locator("label.agent-menu-row", { hasText: "Memory" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "set_memory_enabled")).toMatchObject({ enabled: false });
+  // App-wide switches moved out of the per-conversation menu.
+  await expect(menu.locator("label.agent-menu-row", { hasText: "Memory" })).toHaveCount(0);
+  await expect(menu.locator("label.agent-menu-row", { hasText: "Analyze tool failures" })).toHaveCount(0);
 
   await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: false });
@@ -7014,7 +7027,6 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
 
 test("auto-review stays with the session that enabled it", async ({ page }) => {
   await enterApp(page);
-  await enableDelegation(page);
   let menu = await openAgentMenu(page);
   await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: true });
@@ -16597,7 +16609,6 @@ test("Agents panel is activity-only and opens the standalone Workflow Studio", a
   const panel = page.getByTestId("agent-workflows");
 
   await expect(panel).toContainText("No subagents in this conversation yet");
-  await expect(panel).toContainText("Delegation is off for this conversation");
   await expect(panel.getByTestId("dynamic-agent-editor")).toHaveCount(0);
   await expect(panel.getByTestId("agent-create")).toHaveCount(0);
   await panel.getByTestId("agent-open-workflows").click();
@@ -16643,12 +16654,10 @@ test("nested Agent workflows render under their root without independent control
   await expect(nested).toContainText("Nested · depth 2");
   await expect(nested.locator('[data-step-id$="parent/leaf"]')).toBeVisible();
   await expect(nested.getByTestId("agent-retry")).toHaveCount(0);
-  await expect(nested).not.toContainText("Delegation is off for this workflow");
 });
 
 test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({ page }) => {
   await enterApp(page, "/?mockAgentWorkflow=partial");
-  await enableDelegation(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
@@ -16700,23 +16709,6 @@ test("task results are readable without exposing the child Agent conversation", 
   await expect(page.getByTestId("agent-workflows")).toBeVisible();
   await expect(page.locator(".rightpane")).toBeVisible();
   await expect(card.getByRole("button", { name: "Take over" })).toHaveCount(0);
-});
-
-test("disabled delegation preserves running history and blocks new starts and retries", async ({ page }) => {
-  await enterApp(page, "/?mockAgentWorkflow=parallel");
-  await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
-  const panel = page.getByTestId("agent-workflows");
-  const card = panel.locator(".agent-workflow-card.dynamic").first();
-
-  await expect(panel).toContainText("Delegation is off for this conversation");
-  await expect(card).toContainText("Main Agent parallel research batch");
-  await expect(panel.getByTestId("agent-create")).toHaveCount(0);
-  await expect(card.getByTestId("agent-edit")).toHaveCount(0);
-  await expect(card.getByTestId("agent-cancel")).toBeEnabled();
-  await card.getByTestId("agent-cancel").click();
-  await expect(card.locator(".agent-workflow-status")).toHaveText("Cancelled");
-  await expect(card.getByTestId("agent-retry")).toBeDisabled();
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {

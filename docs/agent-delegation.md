@@ -164,8 +164,10 @@ theme, reduced motion, a larger UI font size, and switching away/back while task
 are running. Select a worker and return to the overview; its selected state
 should clear without closing the window.
 
-1. Open the composer Agent menu and enable **Delegation** for the current
-   conversation. New conversations start with delegation off.
+1. Delegation is always available to a built-in conversation, like Skills and
+   MCP tools: there is no per-conversation switch to enable first. The composer
+   Agent menu only chooses how **Delegated tasks** complete (inline or in the
+   background).
 2. Ask the main Agent for an outcome that materially benefits from independent
    or parallel work. The main Agent decides whether delegation is useful and,
    when it is, calls `delegate_tasks` itself.
@@ -250,7 +252,7 @@ still apply.
 
 ## Background completion
 
-The composer Agent menu has a per-conversation **Completion** setting. Inline
+The composer Agent menu has a per-conversation **Delegated tasks** setting. Inline
 is the default and preserves the same-turn behavior above. Background returns
 a workflow handle as soon as the approved batch is scheduled, allowing the
 parent turn and the rest of the app to continue. The main Agent must not poll
@@ -712,9 +714,10 @@ insufficient; these strict contracts are exempt from degraded-success delivery.
 The built-in Data-driven research design retains its eight-part synthesis and
 records upstream task evidence sources. It no longer binds mutable Skill packages.
 
-- Turning Delegation off prevents the main conversation and its MCP bridge from
-  listing or invoking delegation tools. It does not erase workflow history or
-  implicitly cancel a workflow that is already running.
+- The main conversation and its MCP bridge always list the delegation tools;
+  only the research assistant and subagent conversations go without them.
+  Workflow history is never erased, and cancelling a workflow is always
+  explicit.
 
 ## Dynamic Agents panel
 
@@ -737,9 +740,7 @@ does not offer a separate child-conversation takeover flow.
 Workflow Studio creates arbitrary task graphs instead of assembling a fixed
 team. Add bounded tasks, connect them with dependencies, and choose
 capabilities, Specialist persona, model, eligible executor, isolation,
-budgets, and output schemas there. Turning Delegation off disables approvals,
-runs, and retries while leaving supported dynamic history and cancellation
-available in the activity panel.
+budgets, and output schemas there.
 
 ### Editing a research workflow
 
@@ -786,10 +787,10 @@ list them and workflow actions reject them before approval, retry, or execution.
 
 ## Manual smoke check
 
-Enable Delegation and ask the main Agent to compare two project files using two
-independent temporary Agents. Confirm in the Agents panel that the two root
+Ask the main Agent to compare two project files using two independent
+temporary Agents. Confirm in the Agents panel that the two root
 tasks overlap, their dependent synthesis task waits, and the final chat
-response contains one synthesized comparison. Switch **Completion** to
+response contains one synthesized comparison. Switch **Delegated tasks** to
 **Background**, repeat the request, and verify the initial tool result is a
 running handle followed later by exactly one completion card in the same
 conversation. Enable **Auto-resume parent** and verify an idle conversation

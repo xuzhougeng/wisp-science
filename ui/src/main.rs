@@ -8436,13 +8436,9 @@ fn App() -> impl IntoView {
     let specialist_menu_open = create_rw_signal(false);
     let auto_review_enabled = create_rw_signal(false);
     let auto_failure_analysis = create_rw_signal(AutoFailureAnalysisSettings::default());
-    let delegation_enabled = create_rw_signal(false);
-    let delegation_setting_busy = create_rw_signal(false);
     let agent_completion = create_rw_signal(AgentCompletionSettings::default());
     let agent_completion_busy = create_rw_signal(false);
     create_effect(move |_| {
-        delegation_enabled.set(false);
-        delegation_setting_busy.set(false);
         full_permission_enabled.set(false);
         full_permission_busy.set(false);
         plan_mode_busy.set(false);
@@ -8457,10 +8453,6 @@ fn App() -> impl IntoView {
         };
         spawn_local(async move {
             let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
-            let enabled = invoke_checked("get_session_delegation_enabled", args.clone())
-                .await
-                .ok()
-                .and_then(|value| value.as_bool());
             let plan = invoke_checked("get_session_plan_mode", args.clone())
                 .await
                 .ok()
@@ -8480,7 +8472,6 @@ fn App() -> impl IntoView {
                 .ok()
                 .and_then(|value| value.as_bool());
             if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
-                delegation_enabled.set(enabled.unwrap_or(false));
                 full_permission_enabled.set(full_permission.unwrap_or(false));
                 local_plan_mode.set(plan.unwrap_or(None));
                 agent_completion.set(completion.unwrap_or_default());
@@ -8563,7 +8554,6 @@ fn App() -> impl IntoView {
                             };
                             let name = quick_action_label(locale.get_untracked(), &run.action);
                             load_session.call(run.session_id);
-                            delegation_enabled.set(true);
                             ensure_right_tab(
                                 RightTab::Agents,
                                 show_right,
@@ -8594,12 +8584,24 @@ fn App() -> impl IntoView {
     };
     let save_agent_completion = Callback::new(move |next: AgentCompletionSettings| {
         let previous = agent_completion.get_untracked();
-        let Some(session_id) = active_session.get_untracked() else {
-            return;
-        };
         agent_completion.set(next);
         agent_completion_busy.set(true);
         spawn_local(async move {
+            // Like the other per-conversation rows: choosing a policy before
+            // the first message starts the conversation it applies to.
+            let (session_id, created_session) = match active_session.get_untracked() {
+                Some(session_id) => (session_id, false),
+                None => {
+                    let Some(session_id) =
+                        invoke("new_session", JsValue::UNDEFINED).await.as_string()
+                    else {
+                        agent_completion.set(previous);
+                        agent_completion_busy.set(false);
+                        return;
+                    };
+                    (session_id, true)
+                }
+            };
             let args = to_value(&serde_json::json!({
                 "sessionId": session_id.clone(),
                 "policy": next.policy,
@@ -8612,6 +8614,11 @@ fn App() -> impl IntoView {
                 .and_then(|value| {
                     serde_wasm_bindgen::from_value::<AgentCompletionSettings>(value).ok()
                 });
+            if created_session {
+                active_session.set(Some(session_id.clone()));
+                items.set(vec![]);
+                refresh_session_history();
+            }
             if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
                 agent_completion.set(saved.unwrap_or(previous));
                 agent_completion_busy.set(false);
@@ -15285,7 +15292,6 @@ fn App() -> impl IntoView {
                                     compute_menu_open.set(false);
                                     if opening {
                                         refresh_specialists();
-                                        refresh_memory();
                                         refresh_execution_contexts(execution_contexts);
                                         refresh_runtimes(runtime_infos);
                                         refresh_runs(run_records, locale, Some(run_refresh_health));
@@ -15304,6 +15310,10 @@ fn App() -> impl IntoView {
                                 }></div>
                                 <div class="compose-menu agent-menu" role="menu"
                                     aria-label=move || t(locale.get(), "composer.agent_options")>
+                                    // Three groups, each holding only what applies to this conversation:
+                                    // how the agent runs, which agents take part, and where code runs.
+                                    // App-wide switches (memory, tool-failure analysis) live in Settings.
+                                    <div class="agent-menu-group" data-testid="agent-menu-group-mode">{move || t(locale.get(), "composer.group.mode")}</div>
                                     {move || {
                                         // One control, two backends: ACP-bound sessions switch the
                                         // agent's own plan/default mode pair (and get no row when the
@@ -15364,58 +15374,26 @@ fn App() -> impl IntoView {
                                             <span class="toggle-track" aria-hidden="true"></span>
                                         </span>
                                     </label>
-                                    <label class="agent-menu-row">
-                                        <span>{move || t(locale.get(), "composer.delegation")}</span>
-                                        <span class="toggle agent-menu-toggle">
-                                            <input type="checkbox" prop:checked=move || delegation_enabled.get()
-                                                disabled=move || delegation_setting_busy.get()
-                                                on:change=move |ev| {
-                                                    let enabled = event_target_checked(&ev);
-                                                    delegation_enabled.set(enabled);
-                                                    delegation_setting_busy.set(true);
-                                                    spawn_local(async move {
-                                                        let (session_id, created_session) = match active_session.get_untracked() {
-                                                            Some(session_id) => (session_id, false),
-                                                            None if enabled => {
-                                                                let Some(session_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
-                                                                    delegation_enabled.set(false);
-                                                                    delegation_setting_busy.set(false);
-                                                                    return;
-                                                                };
-                                                                (session_id, true)
-                                                            }
-                                                            None => {
-                                                                delegation_enabled.set(false);
-                                                                delegation_setting_busy.set(false);
-                                                                return;
-                                                            }
-                                                        };
-                                                        let args = to_value(&serde_json::json!({
-                                                            "sessionId": session_id.clone(),
-                                                            "enabled": enabled,
-                                                        })).unwrap();
-                                                        let saved = invoke_checked("set_session_delegation_enabled", args).await
-                                                            .ok()
-                                                            .and_then(|value| value.as_bool());
-                                                        if created_session {
-                                                            active_session.set(Some(session_id.clone()));
-                                                            items.set(vec![]);
-                                                            refresh_session_history();
-                                                        }
-                                                        if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
-                                                            delegation_enabled.set(saved.unwrap_or(!enabled));
-                                                            delegation_setting_busy.set(false);
-                                                        }
-                                                    });
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
+                                    <div class="agent-menu-group" data-testid="agent-menu-group-agent">{move || t(locale.get(), "composer.group.agent")}</div>
+                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
+                                        disabled=locked
+                                        title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
+                                        on:click=move |_| {
+                                            specialist_menu_open.update(|open| *open = !*open);
+                                            reviewer_model_menu_open.set(false);
+                                            compute_menu_open.set(false);
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.specialist")}</span>
+                                        <span class="agent-menu-value">{move || session_specialist.get()
+                                            .map(|specialist| specialist.name)
+                                            .unwrap_or_else(|| t(locale.get(), "composer.specialist.none"))}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
+                                    </button>
                                     <label class="agent-menu-row">
                                         <span>{move || t(locale.get(), "composer.agent_completion")}</span>
                                         <select class="agent-menu-select"
                                             data-testid="agent-completion-policy"
-                                            disabled=move || !delegation_enabled.get() || active_session.get().is_none() || agent_completion_busy.get()
+                                            disabled=move || agent_completion_busy.get()
                                             on:change=move |event| {
                                                 let mut next = agent_completion.get_untracked();
                                                 next.policy = if dom_value(&event) == "background" {
@@ -15437,13 +15415,13 @@ fn App() -> impl IntoView {
                                         </select>
                                     </label>
                                     {move || (agent_completion.get().policy == AgentCompletionPolicy::Background).then(|| view! {
-                                        <label class="agent-menu-row">
+                                        <label class="agent-menu-row agent-menu-sub">
                                             <span>{move || t(locale.get(), "composer.agent_auto_resume")}</span>
                                             <span class="toggle agent-menu-toggle">
                                                 <input type="checkbox"
                                                     data-testid="agent-auto-resume"
                                                     prop:checked=move || agent_completion.get().auto_resume
-                                                    disabled=move || !delegation_enabled.get() || agent_completion_busy.get()
+                                                    disabled=move || agent_completion_busy.get()
                                                     on:change=move |event| {
                                                         let mut next = agent_completion.get_untracked();
                                                         next.auto_resume = event_target_checked(&event);
@@ -15495,47 +15473,7 @@ fn App() -> impl IntoView {
                                             <span class="toggle-track" aria-hidden="true"></span>
                                         </span>
                                     </label>
-                                    <label class="agent-menu-row">
-                                        <span>{move || t(locale.get(), "composer.auto_failure_analysis")}</span>
-                                        <span class="toggle agent-menu-toggle">
-                                            <input type="checkbox"
-                                                data-testid="auto-failure-analysis"
-                                                prop:checked=move || auto_failure_analysis.get().enabled
-                                                on:change=move |event| {
-                                                    let mut next = auto_failure_analysis.get_untracked();
-                                                    next.enabled = event_target_checked(&event);
-                                                    save_auto_failure_analysis.call(next);
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
-                                    {move || auto_failure_analysis.get().enabled.then(|| view! {
-                                        <label class="agent-menu-row agent-menu-setting">
-                                            <span>{move || t(locale.get(), "composer.failure_rate_threshold")}</span>
-                                            <input class="agent-menu-number" type="number" min="1" max="100" step="1"
-                                                data-testid="failure-rate-threshold"
-                                                prop:value=move || auto_failure_analysis.get().failure_rate_threshold.to_string()
-                                                on:change=move |event| {
-                                                    let Ok(value) = dom_value(&event).parse::<u8>() else { return; };
-                                                    let mut next = auto_failure_analysis.get_untracked();
-                                                    next.failure_rate_threshold = value;
-                                                    save_auto_failure_analysis.call(next);
-                                                } />
-                                        </label>
-                                        <label class="agent-menu-row agent-menu-setting">
-                                            <span>{move || t(locale.get(), "composer.minimum_failures")}</span>
-                                            <input class="agent-menu-number" type="number" min="1" max="100" step="1"
-                                                data-testid="minimum-failures"
-                                                prop:value=move || auto_failure_analysis.get().minimum_failures.to_string()
-                                                on:change=move |event| {
-                                                    let Ok(value) = dom_value(&event).parse::<u16>() else { return; };
-                                                    let mut next = auto_failure_analysis.get_untracked();
-                                                    next.minimum_failures = value;
-                                                    save_auto_failure_analysis.call(next);
-                                                } />
-                                        </label>
-                                    })}
-                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
+                                    <button type="button" class="agent-menu-row agent-menu-sub" aria-haspopup="menu"
                                         on:click=move |_| {
                                             reviewer_model_menu_open.update(|open| *open = !*open);
                                             specialist_menu_open.set(false);
@@ -15556,39 +15494,7 @@ fn App() -> impl IntoView {
                                         }}</span>
                                         <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
-                                    <label class="agent-menu-row">
-                                        <span>{move || t(locale.get(), "settings.nav.memory")}</span>
-                                        <span class="toggle agent-menu-toggle">
-                                            <input type="checkbox" prop:checked=move || memory_view.get().map(|view| view.enabled).unwrap_or(true)
-                                                on:change=move |ev| {
-                                                    let enabled = event_target_checked(&ev);
-                                                    spawn_local(async move {
-                                                        let arg = to_value(&serde_json::json!({ "enabled": enabled })).unwrap();
-                                                        if let Ok(value) = invoke_checked("set_memory_enabled", arg).await {
-                                                            if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(value) {
-                                                                memory_view.set(Some(view));
-                                                            }
-                                                        }
-                                                    });
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
-                                    <div class="agent-menu-separator"></div>
-                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
-                                        disabled=locked
-                                        title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
-                                        on:click=move |_| {
-                                            specialist_menu_open.update(|open| *open = !*open);
-                                            reviewer_model_menu_open.set(false);
-                                            compute_menu_open.set(false);
-                                        }>
-                                        <span>{move || t(locale.get(), "composer.specialist")}</span>
-                                        <span class="agent-menu-value">{move || session_specialist.get()
-                                            .map(|specialist| specialist.name)
-                                            .unwrap_or_else(|| t(locale.get(), "composer.specialist.none"))}</span>
-                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
-                                    </button>
+                                    <div class="agent-menu-group" data-testid="agent-menu-group-resources">{move || t(locale.get(), "composer.group.resources")}</div>
                                     <button type="button" class="agent-menu-row" aria-haspopup="menu"
                                         on:click=move |_| {
                                             compute_menu_open.update(|open| *open = !*open);
@@ -15611,6 +15517,18 @@ fn App() -> impl IntoView {
                                                 session_execution_contexts.get().len(),
                                             )
                                         }}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
+                                    </button>
+                                    <div class="agent-menu-separator"></div>
+                                    <button type="button" class="agent-menu-row agent-menu-more" data-testid="agent-menu-more-settings"
+                                        on:click=move |_| {
+                                            agent_menu_open.set(false);
+                                            reviewer_model_menu_open.set(false);
+                                            specialist_menu_open.set(false);
+                                            compute_menu_open.set(false);
+                                            open_settings_fn(Some("hooks".into()));
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.more_settings")}</span>
                                         <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
 
@@ -16859,7 +16777,6 @@ fn App() -> impl IntoView {
                         RightTab::Agents => agent_workflows_panel(
                             agent_panel,
                             sessions,
-                            delegation_enabled,
                             locale,
                             Callback::new(move |_: ()| {
                                 workflow_studio_state.legacy_conversion_requested.set(agent_panel.legacy_conversion_requested.get_untracked());

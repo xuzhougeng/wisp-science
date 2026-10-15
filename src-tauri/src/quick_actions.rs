@@ -1501,13 +1501,6 @@ pub(crate) async fn run_quick_action(
     .await?;
     let (session_id, message) = create_action_session(&state, &project, &action, &input).await?;
     state.set_active_frame(window.label(), Some(session_id.clone()));
-    delegation_runtime::save_session_delegation_enabled(
-        &state.store,
-        &project.id,
-        &session_id,
-        true,
-    )
-    .await?;
     let mut snapshot = delegation_runtime::create_dynamic_agent_workflow_draft(
         &state.store,
         &project.id,

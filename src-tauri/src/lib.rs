@@ -7589,8 +7589,6 @@ pub fn run() {
             delegation_runtime::list_agent_workflows,
             subagent_activity::list_subagent_activity,
             swarm_progress::get_swarm_progress,
-            delegation_runtime::get_session_delegation_enabled,
-            delegation_runtime::set_session_delegation_enabled,
             plan_mode::get_session_plan_mode,
             plan_mode::set_session_plan_mode,
             delegation_completion::get_session_agent_completion,
