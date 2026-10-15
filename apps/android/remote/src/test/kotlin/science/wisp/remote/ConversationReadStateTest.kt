@@ -52,7 +52,7 @@ class ConversationReadStateTest {
         assertTrue(service.calls.isEmpty())
         marker.mark(service, snapshot(2))
         marker.mark(service, snapshot(2))
-        assertEquals(listOf(Triple("native_conversation_seen", route.project, route.args)), service.calls)
+        assertEquals(listOf<Triple<String, String?, JsonObject>>(Triple("native_conversation_seen", route.project, route.args)), service.calls)
         marker.mark(service, snapshot(3))
         assertEquals(2, service.calls.size)
     }
