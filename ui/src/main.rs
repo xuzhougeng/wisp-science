@@ -2132,6 +2132,17 @@ fn App() -> impl IntoView {
         let session = active_session.get();
         library_items.with(|items| session_highlight_count(session, items))
     });
+    let session_active_run_count = create_memo(move |_| {
+        let Some(frame_id) = active_session.get() else {
+            return 0;
+        };
+        run_records.with(|runs| {
+            runs.iter()
+                .filter(|run| run.frame_id.as_deref() == Some(frame_id.as_str()))
+                .filter(|run| is_active_run_status(&run.status))
+                .count()
+        })
+    });
     let monitored_run_ids = create_memo(move |_| {
         let _ = active_session.get();
         let _ = transcript_projection_epoch.get();
@@ -11662,6 +11673,10 @@ fn App() -> impl IntoView {
                     remote_file_error,
                 );
             }
+            "runs" => {
+                ensure_right_tab(RightTab::Runs, show_right, open_right_tabs, right_tab);
+                refresh_runs(run_records, locale, Some(run_refresh_health));
+            }
             "provenance" => {
                 ensure_right_tab(RightTab::Provenance, show_right, open_right_tabs, right_tab)
             }
@@ -11717,6 +11732,7 @@ fn App() -> impl IntoView {
                         "artifacts" => Some("artifacts"),
                         "notebook" => Some("notebook"),
                         "files" => Some("files"),
+                        "runs" => Some("runs"),
                         "provenance" => Some("provenance"),
                         "contexts" => Some("contexts"),
                         "side-chat" => Some("side-chat"),
@@ -16390,10 +16406,12 @@ fn App() -> impl IntoView {
                             let notebook_n = notebook_count.get();
                             let prov_n = provenance_count.get();
                             let highlight_n = highlight_count.get();
+                            let runs_n = session_active_run_count.get();
                             open_right_tabs.get().into_iter().map(|tab| {
                                 let label = match tab {
                                     RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                     RightTab::Agents => t(loc, "right.agents").into(),
+                                    RightTab::Runs => tab_count(loc, "right.runs", runs_n),
                                     RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                     RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
                                     RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
@@ -16471,6 +16489,9 @@ fn App() -> impl IntoView {
                                                         refresh_runtimes(runtime_infos);
                                                         refresh_runs(run_records, locale, Some(run_refresh_health));
                                                     }
+                                                    RightTab::Runs => {
+                                                        refresh_runs(run_records, locale, Some(run_refresh_health));
+                                                    }
                                                     RightTab::Agents => {
                                                         refresh_agent_workflows(agent_panel)
                                                     }
@@ -16503,10 +16524,12 @@ fn App() -> impl IntoView {
                                     let notebook_n = notebook_count.get();
                                     let prov_n = provenance_count.get();
                                     let highlight_n = highlight_count.get();
+                                    let runs_n = session_active_run_count.get();
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                             RightTab::Agents => t(loc, "right.agents").into(),
+                                            RightTab::Runs => tab_count(loc, "right.runs", runs_n),
                                             RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                             RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
@@ -16533,6 +16556,9 @@ fn App() -> impl IntoView {
                                                         RightTab::Hosts => {
                                                             refresh_execution_contexts(execution_contexts);
                                                             refresh_runtimes(runtime_infos);
+                                                            refresh_runs(run_records, locale, Some(run_refresh_health));
+                                                        }
+                                                        RightTab::Runs => {
                                                             refresh_runs(run_records, locale, Some(run_refresh_health));
                                                         }
                                                         RightTab::Agents => {
@@ -16806,6 +16832,15 @@ fn App() -> impl IntoView {
                                 }.into_view()
                             }
                         }
+                        RightTab::Runs => view! {
+                            <chat_render::SessionRunsPane
+                                runs=run_records
+                                clock=run_clock.read_only()
+                                active_session=active_session
+                                dismissed_runs=dismissed_run_cards
+                                locale=locale />
+                        }
+                        .into_view(),
                         RightTab::Agents => agent_workflows_panel(
                             agent_panel,
                             sessions,

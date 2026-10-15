@@ -4562,6 +4562,7 @@ pub struct PublicationFreezeOutcome {
 pub enum RightTab {
     Artifacts,
     Agents,
+    Runs,
     Notebook,
     Highlights,
     File,

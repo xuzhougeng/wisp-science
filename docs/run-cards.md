@@ -18,3 +18,17 @@ Runs without a matching submission in the loaded transcript retain the existing
 standalone monitor behavior, including dismissal for completed cards. Historical
 full Run results can restore their cards even when absent from the recent Runs
 list; submission-only results still need their Run in that list.
+
+## Runs tab in the right pane
+
+Long sessions bury Run cards in the transcript. The right pane's **Runs / 运行**
+tab (add it with **Add panel**, or from the View menu and command palette) lists
+the active conversation's Runs and file transfers without scrolling: working
+Runs (submitted, running, cancelling, paused) sit at the top, newest first, and
+the tab label carries their count as a badge. Finished Runs collapse into a
+**Completed** group below. The tab reuses the conversation Run card in embedded
+mode, so cancel, result review, and the output preview behave the same, but
+there is no dismiss action and transcript dismissals never hide a row here. Only
+work that produces a Run record appears: `run_in_context` Runs and
+`transfer_between_contexts` transfers. The synchronous `shell` tool and agent
+workflows do not; workflows stay on the **Agents** tab.

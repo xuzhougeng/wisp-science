@@ -2526,6 +2526,151 @@ mod run_artifact_link_tests {
     }
 }
 
+/// Statuses that mean a Run or transfer is still doing work. Shared by the
+/// right-pane Runs tab badge and its grouping so the two never disagree.
+pub(crate) fn is_active_run_status(status: &str) -> bool {
+    matches!(status, "submitted" | "running" | "cancelling" | "paused")
+}
+
+/// Runs of one conversation, split for the right-pane Runs tab.
+#[derive(Clone, Default, PartialEq)]
+pub(crate) struct SessionRunGroups {
+    /// Still working, newest submission first.
+    pub active: Vec<RunSummary>,
+    /// Everything else (finished, cancelled, lost, drafts), most recently
+    /// ended first so the last thing that happened sits at the top.
+    pub completed: Vec<RunSummary>,
+}
+
+/// Group the polled run list for the conversation `frame_id`. Runs without a
+/// frame (older rows, Environment-launched work) belong to no session and are
+/// left out; transfers share `RunSummary`, so they are included.
+pub(crate) fn session_run_groups(runs: &[RunSummary], frame_id: &str) -> SessionRunGroups {
+    let mut groups = SessionRunGroups::default();
+    for run in runs {
+        if run.frame_id.as_deref() != Some(frame_id) {
+            continue;
+        }
+        if is_active_run_status(&run.status) {
+            groups.active.push(run.clone());
+        } else {
+            groups.completed.push(run.clone());
+        }
+    }
+    groups.active.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    groups.completed.sort_by(|a, b| {
+        let a_end = a.ended_at.unwrap_or(a.created_at);
+        let b_end = b.ended_at.unwrap_or(b.created_at);
+        b_end
+            .cmp(&a_end)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    groups
+}
+
+#[cfg(test)]
+mod session_run_group_tests {
+    use super::{is_active_run_status, session_run_groups};
+    use crate::dto::RunSummary;
+
+    fn run(
+        id: &str,
+        frame: Option<&str>,
+        status: &str,
+        created: i64,
+        ended: Option<i64>,
+    ) -> RunSummary {
+        RunSummary {
+            id: id.into(),
+            frame_id: frame.map(str::to_string),
+            context_id: "local".into(),
+            title: id.into(),
+            kind: if id.starts_with("xfer") {
+                "file_transfer".into()
+            } else {
+                "ssh_direct".into()
+            },
+            status: status.into(),
+            created_at: created,
+            started_at: Some(created),
+            ended_at: ended,
+            exit_code: ended.map(|_| 0),
+            remote_workdir: None,
+            timeout_secs: None,
+            last_polled_at: None,
+            last_poll_error: None,
+            progress_json: String::new(),
+            harvested_at: None,
+            cleaned_at: None,
+            cleanup_error: None,
+            output_fingerprint: String::new(),
+        }
+    }
+
+    fn ids(runs: &[RunSummary]) -> Vec<&str> {
+        runs.iter().map(|run| run.id.as_str()).collect()
+    }
+
+    #[test]
+    fn active_statuses_cover_every_working_lifecycle() {
+        for status in ["submitted", "running", "cancelling", "paused"] {
+            assert!(is_active_run_status(status), "{status}");
+        }
+        for status in [
+            "draft",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "lost",
+            "",
+        ] {
+            assert!(!is_active_run_status(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn only_the_requested_frame_is_kept_and_transfers_count() {
+        let runs = vec![
+            run("a-run", Some("frame-a"), "running", 10, None),
+            run("b-run", Some("frame-b"), "running", 11, None),
+            run("xfer-a", Some("frame-a"), "submitted", 12, None),
+            run("orphan", None, "running", 13, None),
+            run("a-done", Some("frame-a"), "succeeded", 5, Some(9)),
+        ];
+        let groups = session_run_groups(&runs, "frame-a");
+        assert_eq!(ids(&groups.active), vec!["xfer-a", "a-run"]);
+        assert_eq!(ids(&groups.completed), vec!["a-done"]);
+        let other = session_run_groups(&runs, "frame-b");
+        assert_eq!(ids(&other.active), vec!["b-run"]);
+        assert!(other.completed.is_empty());
+        let none = session_run_groups(&runs, "frame-none");
+        assert!(none.active.is_empty() && none.completed.is_empty());
+    }
+
+    #[test]
+    fn completed_runs_sort_by_end_time_and_drafts_fall_in_the_lower_group() {
+        let runs = vec![
+            run("early", Some("f"), "succeeded", 1, Some(20)),
+            run("late", Some("f"), "failed", 2, Some(30)),
+            run("never-ended", Some("f"), "lost", 25, None),
+            run("draft", Some("f"), "draft", 40, None),
+            run("paused", Some("f"), "paused", 3, None),
+        ];
+        let groups = session_run_groups(&runs, "f");
+        assert_eq!(ids(&groups.active), vec!["paused"]);
+        assert_eq!(
+            ids(&groups.completed),
+            vec!["draft", "late", "never-ended", "early"]
+        );
+    }
+}
+
 pub(crate) fn run_title(run: &RunSummary) -> String {
     if !run.title.trim().is_empty() {
         run.title.clone()

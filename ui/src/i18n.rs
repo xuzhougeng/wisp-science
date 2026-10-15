@@ -997,6 +997,13 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "right.artifacts") => Some("Artifacts"),
         (Locale::En, "right.artifacts_n") => Some("Artifacts ({n})"),
         (Locale::En, "right.agents") => Some("Agents"),
+        (Locale::En, "right.runs") => Some("Runs"),
+        (Locale::En, "right.runs_n") => Some("Runs ({n})"),
+        (Locale::En, "right.runs_active") => Some("Active"),
+        (Locale::En, "right.runs_active_empty") => Some("No active runs in this session."),
+        (Locale::En, "right.runs_completed") => Some("Completed ({n})"),
+        (Locale::En, "right.no_runs.title") => Some("No runs in this session"),
+        (Locale::En, "right.no_runs.body") => Some("Background runs and file transfers started from this conversation appear here, so you can check their status without scrolling the transcript."),
         (Locale::En, "agents.goal") => Some("Delegation goal"),
         (Locale::En, "agents.goal_ph") => Some("e.g. analyze gene pathways and create a figure"),
         (Locale::En, "agents.approve") => Some("Approve"),
@@ -3388,6 +3395,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "command.artifacts") => Some("Open artifacts"),
         (Locale::En, "command.notebook") => Some("Open notebook"),
         (Locale::En, "command.files") => Some("Open files"),
+        (Locale::En, "command.runs") => Some("Open session runs"),
         (Locale::En, "command.provenance") => Some("Open provenance"),
         (Locale::En, "command.contexts") => Some("Open execution contexts"),
         (Locale::En, "command.side_chat") => Some("Open side chat"),
@@ -4256,6 +4264,13 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "right.artifacts") => Some("产物"),
         (Locale::Zh, "right.artifacts_n") => Some("产物 ({n})"),
         (Locale::Zh, "right.agents") => Some("Agents"),
+        (Locale::Zh, "right.runs") => Some("运行"),
+        (Locale::Zh, "right.runs_n") => Some("运行 ({n})"),
+        (Locale::Zh, "right.runs_active") => Some("进行中"),
+        (Locale::Zh, "right.runs_active_empty") => Some("本会话当前没有进行中的运行。"),
+        (Locale::Zh, "right.runs_completed") => Some("已完成 ({n})"),
+        (Locale::Zh, "right.no_runs.title") => Some("本会话暂无运行"),
+        (Locale::Zh, "right.no_runs.body") => Some("本会话启动的后台运行和文件传输会显示在这里，无需翻看对话即可查看状态。"),
         (Locale::Zh, "agents.goal") => Some("委派目标"),
         (Locale::Zh, "agents.goal_ph") => Some("例如：分析基因通路并生成图表"),
         (Locale::Zh, "agents.approve") => Some("批准"),
@@ -6450,6 +6465,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "command.artifacts") => Some("打开产物"),
         (Locale::Zh, "command.notebook") => Some("打开 Notebook"),
         (Locale::Zh, "command.files") => Some("打开文件"),
+        (Locale::Zh, "command.runs") => Some("打开会话运行"),
         (Locale::Zh, "command.provenance") => Some("打开溯源"),
         (Locale::Zh, "command.contexts") => Some("打开执行上下文"),
         (Locale::Zh, "command.side_chat") => Some("打开侧边对话"),
@@ -7518,6 +7534,34 @@ mod queue_label_tests {
                 t(locale, &format!("tip.{TIP_COUNT}")),
                 format!("tip.{TIP_COUNT}")
             );
+        }
+    }
+
+    #[test]
+    fn session_runs_tab_labels_exist_in_both_locales() {
+        assert_eq!(t(Locale::En, "right.runs"), "Runs");
+        assert_eq!(t(Locale::Zh, "right.runs"), "运行");
+        assert_eq!(tab_count(Locale::En, "right.runs", 0), "Runs");
+        assert_eq!(tab_count(Locale::En, "right.runs", 2), "Runs (2)");
+        assert_eq!(tab_count(Locale::Zh, "right.runs", 2), "运行 (2)");
+        assert_eq!(
+            tf(Locale::En, "right.runs_completed", &[("n", "3")]),
+            "Completed (3)"
+        );
+        assert_eq!(
+            tf(Locale::Zh, "right.runs_completed", &[("n", "3")]),
+            "已完成 (3)"
+        );
+        for key in [
+            "right.runs_active",
+            "right.runs_active_empty",
+            "right.no_runs.title",
+            "right.no_runs.body",
+            "command.runs",
+        ] {
+            for locale in [Locale::En, Locale::Zh] {
+                assert_ne!(t(locale, key), key, "missing {key}");
+            }
         }
     }
 

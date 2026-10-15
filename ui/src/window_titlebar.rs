@@ -36,6 +36,7 @@ const VIEW_ITEMS: &[MenuItem] = &[
     ("artifacts", "command.artifacts", ""),
     ("notebook", "command.notebook", ""),
     ("files", "command.files", ""),
+    ("runs", "command.runs", ""),
     ("provenance", "command.provenance", ""),
     ("contexts", "command.contexts", ""),
     ("side-chat", "command.side_chat", ""),

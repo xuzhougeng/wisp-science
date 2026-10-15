@@ -697,6 +697,15 @@ pub(crate) fn ActionPalette(
                 true,
             ),
             (
+                "runs",
+                "play",
+                "command.runs",
+                navigate.clone(),
+                "",
+                "open runs background jobs transfers 运行 后台 任务",
+                true,
+            ),
+            (
                 "provenance",
                 "copy",
                 "command.provenance",

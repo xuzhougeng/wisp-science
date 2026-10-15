@@ -57,6 +57,14 @@
 .rp-hosts-add { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; padding:9px; margin-bottom:2px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-elev); color:var(--clay-strong); font:inherit; font-size:calc(12.5px * var(--ui-font-scale, 1)); font-weight:600; cursor:pointer; }
 .rp-hosts-add:hover { background:var(--clay-soft); border-color: color-mix(in srgb, var(--clay-strong) 30%, var(--border-strong)); }
 
+.rp-runs { flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:14px; padding:12px; background:var(--bg-sunken); }
+.rp-runs-group { gap:8px; }
+.rp-runs .run-monitor-card { width:100%; margin:0; }
+.rp-runs-toggle { width:100%; padding:0; border:none; background:transparent; font:inherit; cursor:pointer; text-align:left; }
+.rp-runs-toggle:hover { color:var(--text); }
+.rp-runs-toggle:focus-visible { outline:2px solid var(--clay); outline-offset:2px; border-radius:var(--radius-xs); }
+.rp-runs-toggle-label { display:inline-flex; align-items:center; gap:4px; }
+.rp-runs-toggle-label svg { width:14px; height:14px; }
 .rp-contexts { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; background:var(--bg-elev); }
 .context-list-pane { flex:1 1 auto; min-height:0; overflow:auto; padding:12px; background:var(--bg-sunken); }
 .control-section { display:flex; flex-direction:column; gap:8px; }

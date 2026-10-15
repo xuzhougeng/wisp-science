@@ -2063,6 +2063,126 @@ pub(crate) fn acp_tool_step_body(content: &str, locations: &str) -> String {
     parts.join("\n")
 }
 
+/// Right-pane "Runs" tab: the active conversation's background Runs and file
+/// transfers, so a long session can be checked without scrolling the transcript.
+/// Cards are the conversation `RunMonitorCard` in embedded mode: no dismiss
+/// button, and transcript dismissals never hide a row here.
+#[component]
+pub(crate) fn SessionRunsPane(
+    runs: RwSignal<Vec<RunSummary>>,
+    clock: ReadSignal<i64>,
+    active_session: RwSignal<Option<String>>,
+    dismissed_runs: RwSignal<HashSet<String>>,
+    locale: RwSignal<Locale>,
+) -> impl IntoView {
+    let run_refresh_health = use_context::<RunRefreshHealth>();
+    let groups = create_memo(move |_| {
+        let Some(frame_id) = active_session.get() else {
+            return SessionRunGroups::default();
+        };
+        runs.with(|records| session_run_groups(records, &frame_id))
+    });
+    // Keyed by id only: a poll that changes a run's output must update the
+    // mounted card, not remount it (and reset its output scroll).
+    let active_ids = create_memo(move |_| {
+        groups.with(|groups| {
+            groups
+                .active
+                .iter()
+                .map(|run| run.id.clone())
+                .collect::<Vec<_>>()
+        })
+    });
+    let completed_ids = create_memo(move |_| {
+        groups.with(|groups| {
+            groups
+                .completed
+                .iter()
+                .map(|run| run.id.clone())
+                .collect::<Vec<_>>()
+        })
+    });
+    let completed_open = create_rw_signal(false);
+    // Reopening the tab for another conversation must not inherit a group
+    // state that was expanded for the previous one.
+    create_effect(move |_| {
+        let _ = active_session.get();
+        completed_open.set(false);
+    });
+    let has_runs = create_memo(move |_| {
+        !(active_ids.with(Vec::is_empty) && completed_ids.with(Vec::is_empty))
+    });
+    let card = move |id: String| {
+        view! {
+            <RunMonitorCard
+                run_id=id
+                runs=runs
+                clock=clock
+                tool_ok=None
+                tool_output=String::new()
+                dismissed_runs=dismissed_runs
+                embedded=true
+            />
+        }
+    };
+    view! {
+        {move || if !has_runs.get() {
+            view! {
+                <div class="rp-empty" data-testid="session-runs-empty">
+                    <span class="rp-empty-icon"></span>
+                    <div class="rp-empty-title">{move || t(locale.get(), "right.no_runs.title")}</div>
+                    <p>{move || t(locale.get(), "right.no_runs.body")}</p>
+                </div>
+            }
+            .into_view()
+        } else {
+            view! {
+                <div class="rp-runs" data-testid="session-runs-pane">
+                    <section class="control-section rp-runs-group" data-testid="session-runs-active">
+                        <div class="control-section-head">
+                            <span>{move || t(locale.get(), "right.runs_active")}</span>
+                            <div class="control-head-actions">
+                                <span class="control-count" data-testid="session-runs-active-count">
+                                    {move || active_ids.with(Vec::len).to_string()}
+                                </span>
+                                <button type="button" class="icon-btn control-refresh"
+                                    title=move || t(locale.get(), "runs.refresh")
+                                    aria-label=move || t(locale.get(), "runs.refresh")
+                                    on:click=move |_| refresh_runs(runs, locale, run_refresh_health)
+                                >{compose_icon("sync")}</button>
+                            </div>
+                        </div>
+                        {move || active_ids.with(Vec::is_empty).then(|| view! {
+                            <div class="control-empty">{t(locale.get(), "right.runs_active_empty")}</div>
+                        })}
+                        <For each=move || active_ids.get() key=|id| id.clone() children=card />
+                    </section>
+                    {move || (!completed_ids.with(Vec::is_empty)).then(|| view! {
+                        <section class="control-section rp-runs-group" data-testid="session-runs-completed">
+                            <button type="button" class="control-section-head rp-runs-toggle"
+                                aria-expanded=move || completed_open.get().to_string()
+                                on:click=move |_| completed_open.update(|open| *open = !*open)>
+                                <span class="rp-runs-toggle-label">
+                                    {move || compose_icon(if completed_open.get() { "chevron-down" } else { "chevron-right" })}
+                                    <span>{move || tf(
+                                        locale.get(),
+                                        "right.runs_completed",
+                                        &[("n", &completed_ids.with(Vec::len).to_string())],
+                                    )}</span>
+                                </span>
+                            </button>
+                            <Show when=move || completed_open.get()>
+                                <For each=move || completed_ids.get() key=|id| id.clone() children=card />
+                            </Show>
+                        </section>
+                    })}
+                </div>
+            }
+            .into_view()
+        }}
+    }
+}
+
 #[component]
 pub(crate) fn ProvenancePane(
     items: RwSignal<Vec<ChatItem>>,
