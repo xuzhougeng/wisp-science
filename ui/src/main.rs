@@ -4,7 +4,7 @@ mod app_overlays;
 mod assistant_remote;
 mod assistant_workspace;
 mod automation;
-mod mandates;mod bindings;
+mod bindings;
 mod channels_view;
 mod chat_find;
 mod chat_render;
@@ -14,6 +14,7 @@ mod hooks_settings;
 mod i18n;
 mod lab_view;
 mod library;
+mod mandates;
 mod mcp_app;
 mod network_settings;
 mod notebook;
@@ -1665,9 +1666,8 @@ fn App() -> impl IntoView {
     let show_shelved_sessions = create_rw_signal(false);
     let project_chat_search_open = create_rw_signal(false);
     let pending_chat_search_jump = create_rw_signal(None::<(String, ProjectChatSearchTarget, u64)>);
-    let chat_search_project_id = create_memo(move |_| {
-        project_info.with(|project| project.as_ref().map(|p| p.id.clone()))
-    });
+    let chat_search_project_id =
+        create_memo(move |_| project_info.with(|project| project.as_ref().map(|p| p.id.clone())));
     create_effect(move |_| {
         chat_search_project_id.track();
         show_projects.get();
@@ -3785,7 +3785,10 @@ fn App() -> impl IntoView {
                 }
                 if state == "cleared" {
                     mcp_app_context.update(|current| {
-                        if current.as_ref().is_some_and(|notice| notice.context_id == context_id) {
+                        if current
+                            .as_ref()
+                            .is_some_and(|notice| notice.context_id == context_id)
+                        {
                             *current = None;
                         }
                     });
@@ -11773,7 +11776,8 @@ fn App() -> impl IntoView {
             "f" if ev.shift_key()
                 && !ev.alt_key()
                 && has_current_project.get_untracked()
-                && !assistant_mode.get_untracked() => {
+                && !assistant_mode.get_untracked() =>
+            {
                 ev.prevent_default();
                 command_palette_open.set(false);
                 action_palette_open.set(false);
