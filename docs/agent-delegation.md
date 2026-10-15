@@ -481,11 +481,22 @@ their visible parent.
 Deleting the parent asks what happens to its subagents, branches and
 explorations, nested ones included. **Also delete its subagents, branches and
 explorations** is checked by default; it discards the open exploration rounds
-they started and deletes those conversations' transcripts with the parent
-(their artifact files stay; the artifact option applies to the parent only).
-Unchecked, subagents and branches stay as standalone, writable conversations.
-An open exploration round cannot outlive its source conversation, so with one
-present the deletion requires the box to stay checked.
+they started and deletes those conversations with the parent. Unchecked,
+subagents and branches stay as standalone, writable conversations. An open
+exploration round cannot outlive its source conversation, so with one present
+the deletion requires the box to stay checked.
+
+**Also delete associated artifacts and files** follows that choice. With the
+children deleted too, the preview lists the parent's and every deleted
+subagent's and branch's artifacts, and toggling the children box refreshes it;
+unchecked, it previews the parent alone. Because the whole family goes, a
+reference from one of its conversations does not keep another one's file: a
+figure a subagent produced and the parent linked is deleted rather than kept as
+shared. Each conversation is checked against its own reviewed preview before
+any of them is deleted, then deleted deepest first with the files it reviewed,
+so a stale preview deletes nothing and asks for a fresh one. A subagent
+selected together with its parent is deleted, files included, as part of the
+parent's family.
 
 Each dispatch binds the child to the parent's chat model, reasoning effort and
 service tier, so a subagent runs on the model its parent uses rather than the

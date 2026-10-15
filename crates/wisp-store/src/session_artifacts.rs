@@ -15,22 +15,24 @@ use std::{
 use wisp_dto::{RetainedSessionArtifact, SessionArtifactPreview};
 
 /// Project evidence and references from surviving conversations must outlive
-/// the conversation that first registered the logical artifact.
+/// the conversation that first registered the logical artifact. References
+/// from `co_deleted`, the conversations deleted in the same operation, do not.
 pub(super) async fn disposable_ids(
     tx: &mut Transaction<'_, Sqlite>,
     frame: &str,
+    co_deleted: &[String],
 ) -> Result<Vec<String>> {
     let rows = sqlx::query(
-        "SELECT a.id FROM artifacts a WHERE a.root_frame_id=? AND a.exploration_id IS NULL \
+        "SELECT a.id FROM artifacts a WHERE a.root_frame_id=?1 AND a.exploration_id IS NULL \
          AND NOT EXISTS(SELECT 1 FROM research_nodes n JOIN research_edges e ON e.source_id=n.id OR e.target_id=n.id WHERE n.kind='artifact' AND n.ref_id=a.id) \
          AND NOT EXISTS(SELECT 1 FROM turn_file_undo u JOIN frames f ON f.id=u.frame_id \
-             WHERE f.root_frame_id<>a.root_frame_id AND a.logical_key='path:'||u.path) \
+             WHERE f.root_frame_id NOT IN (SELECT value FROM json_each(?2)) AND a.logical_key='path:'||u.path) \
          AND NOT EXISTS(SELECT 1 FROM session_ui_events e JOIN frames f ON f.id=e.frame_id JOIN json_tree(e.event_json) j \
-             WHERE f.root_frame_id<>a.root_frame_id AND (j.value=a.id OR j.value IN (SELECT id FROM artifact_versions WHERE artifact_id=a.id))) \
+             WHERE f.root_frame_id NOT IN (SELECT value FROM json_each(?2)) AND (j.value=a.id OR j.value IN (SELECT id FROM artifact_versions WHERE artifact_id=a.id))) \
          AND NOT EXISTS(SELECT 1 FROM run_artifacts r WHERE r.artifact_id=a.id) \
          AND NOT EXISTS(SELECT 1 FROM exploration_baseline_artifact_heads h WHERE h.artifact_id=a.id) \
          AND NOT EXISTS(SELECT 1 FROM message_resource_links l JOIN frames f ON f.id=l.frame_id \
-             WHERE l.artifact_id=a.id AND f.root_frame_id<>a.root_frame_id) \
+             WHERE l.artifact_id=a.id AND f.root_frame_id NOT IN (SELECT value FROM json_each(?2))) \
          AND NOT EXISTS(SELECT 1 FROM artifact_versions v WHERE v.artifact_id=a.id AND (\
              v.producing_run_id IS NOT NULL OR v.source_discarded_at IS NOT NULL \
              OR EXISTS(SELECT 1 FROM run_inputs r WHERE r.artifact_version_id=v.id) \
@@ -39,8 +41,11 @@ pub(super) async fn disposable_ids(
              OR EXISTS(SELECT 1 FROM reproduction_results r WHERE r.expected_artifact_version_id=v.id) \
              OR EXISTS(SELECT 1 FROM method_search_runs r WHERE r.spec_artifact_version_id=v.id) \
              OR EXISTS(SELECT 1 FROM message_resource_links l JOIN frames f ON f.id=l.frame_id \
-                 WHERE l.artifact_version_id=v.id AND f.root_frame_id<>a.root_frame_id))) ORDER BY a.id")
-        .bind(frame).fetch_all(&mut **tx).await?;
+                 WHERE l.artifact_version_id=v.id AND f.root_frame_id NOT IN (SELECT value FROM json_each(?2))))) ORDER BY a.id")
+        .bind(frame)
+        .bind(deleted_together(frame, co_deleted)?)
+        .fetch_all(&mut **tx)
+        .await?;
     let mut ids: BTreeSet<String> = rows.into_iter().map(|r| r.get("id")).collect();
     // Keep the whole connected lineage when any endpoint survives this session.
     let edges: Vec<(String, String)> = sqlx::query_as(
@@ -61,6 +66,15 @@ pub(super) async fn disposable_ids(
         }
     }
     Ok(ids.into_iter().collect())
+}
+
+/// A JSON array of `frame` and the conversations deleted with it.
+fn deleted_together(frame: &str, co_deleted: &[String]) -> Result<String> {
+    Ok(serde_json::to_string(
+        &std::iter::once(frame)
+            .chain(co_deleted.iter().map(String::as_str))
+            .collect::<BTreeSet<_>>(),
+    )?)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -93,6 +107,9 @@ pub(super) struct ArtifactPlan {
     #[serde(skip)]
     source_alias: PathBuf,
     target: Option<PathBuf>,
+    /// The other conversations deleted in the same operation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) co_deleted: Vec<String>,
 }
 impl ArtifactPlan {
     pub(super) async fn validate_records(
@@ -245,9 +262,52 @@ impl Store {
         target: Option<&str>,
     ) -> Result<SessionArtifactPreview> {
         Ok(self
-            .session_artifact_plan(frame, project, target)
+            .session_artifact_plan(frame, project, target, &[])
             .await?
             .preview)
+    }
+
+    /// Previews for deleting a conversation together with its branches and
+    /// subagents, deepest first and the conversation itself last. References
+    /// between them keep nothing, and each lists only the artifacts it owns.
+    pub async fn preview_session_family_artifacts(
+        &self,
+        frame: &str,
+        project: &str,
+    ) -> Result<Vec<(String, SessionArtifactPreview)>> {
+        Ok(self
+            .session_family_plans(frame, project)
+            .await?
+            .into_iter()
+            .map(|(id, plan)| (id, plan.preview))
+            .collect())
+    }
+
+    async fn session_family_plans(
+        &self,
+        frame: &str,
+        project: &str,
+    ) -> Result<Vec<(String, ArtifactPlan)>> {
+        let family: Vec<String> = self
+            .list_session_descendants(frame, project)
+            .await?
+            .into_iter()
+            .map(|child| child.id)
+            .chain(std::iter::once(frame.to_string()))
+            .collect();
+        let mut plans = Vec::with_capacity(family.len());
+        for member in &family {
+            let others: Vec<String> = family
+                .iter()
+                .filter(|other| *other != member)
+                .cloned()
+                .collect();
+            let plan = self
+                .session_artifact_plan(member, project, None, &others)
+                .await?;
+            plans.push((member.clone(), plan));
+        }
+        Ok(plans)
     }
 
     async fn session_artifact_plan(
@@ -255,6 +315,7 @@ impl Store {
         frame: &str,
         project: &str,
         target: Option<&str>,
+        co_deleted: &[String],
     ) -> Result<ArtifactPlan> {
         let source_store = self
             .route_project(project)
@@ -289,11 +350,18 @@ impl Store {
         if !valid {
             bail!("Session not found or is an exploration conversation");
         }
-        let disposable: BTreeSet<_> = disposable_ids(&mut tx, frame).await?.into_iter().collect();
-        let rows = sqlx::query("SELECT a.* FROM artifacts a WHERE a.project_id=? AND (a.root_frame_id=? \
-            OR EXISTS(SELECT 1 FROM message_resource_links l JOIN frames f ON f.id=l.frame_id WHERE f.root_frame_id=? \
-                AND (l.artifact_id=a.id OR l.artifact_version_id IN (SELECT id FROM artifact_versions WHERE artifact_id=a.id)))) ORDER BY a.id")
-            .bind(project).bind(frame).bind(frame)
+        let disposable: BTreeSet<_> = disposable_ids(&mut tx, frame, co_deleted)
+            .await?
+            .into_iter()
+            .collect();
+        let deleted_together = deleted_together(frame, co_deleted)?;
+        // An artifact borrowed from a conversation deleted alongside belongs to
+        // that conversation's preview.
+        let rows = sqlx::query("SELECT a.* FROM artifacts a WHERE a.project_id=?1 AND (a.root_frame_id=?2 \
+            OR (EXISTS(SELECT 1 FROM message_resource_links l JOIN frames f ON f.id=l.frame_id WHERE f.root_frame_id=?2 \
+                AND (l.artifact_id=a.id OR l.artifact_version_id IN (SELECT id FROM artifact_versions WHERE artifact_id=a.id))) \
+                AND a.root_frame_id NOT IN (SELECT value FROM json_each(?3)))) ORDER BY a.id")
+            .bind(project).bind(frame).bind(&deleted_together)
             .fetch_all(&mut *tx)
             .await?;
         let all_paths: Vec<(String,String,Option<String>)> = sqlx::query_as(
@@ -446,8 +514,8 @@ impl Store {
                     file.remove_source = false;
                 }
                 if !file.relative.starts_with(".wisp/") {
-                    let other_turn: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM turn_file_undo u JOIN frames f ON f.id=u.frame_id WHERE f.root_frame_id<>? AND u.path=?)")
-                        .bind(frame).bind(&file.relative).fetch_one(&mut *tx).await?;
+                    let other_turn: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM turn_file_undo u JOIN frames f ON f.id=u.frame_id WHERE f.root_frame_id NOT IN (SELECT value FROM json_each(?)) AND u.path=?)")
+                        .bind(&deleted_together).bind(&file.relative).fetch_one(&mut *tx).await?;
                     if other_turn {
                         file.remove_source = false;
                     }
@@ -530,7 +598,9 @@ impl Store {
             source,
             source_alias,
             target: target_root,
+            co_deleted: co_deleted.to_vec(),
         };
+        plan.co_deleted.sort();
         plan.preview.fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&plan)?));
         Ok(plan)
     }
@@ -861,6 +931,16 @@ impl ArtifactTransfer {
     }
 }
 
+const STALE_PREVIEW: &str = "Session artifacts changed. Review a fresh preview before continuing.";
+
+/// The reviewed plans for deleting a conversation together with its branches
+/// and subagents, checked before any of them is deleted. Deleting one changes
+/// what the others would preview, so each is deleted from its reviewed plan.
+pub struct SessionFamilyArtifacts {
+    project: String,
+    plans: BTreeMap<String, ArtifactPlan>,
+}
+
 impl Store {
     /// Call under exclusive source/target project activity guards. A matching
     /// preview is mandatory; ordinary transcript-only APIs remain unchanged.
@@ -871,21 +951,80 @@ impl Store {
         target: Option<(&str, &str)>,
         fingerprint: &str,
     ) -> Result<()> {
+        self.recover_before_session_operation(project, target.map(|t| t.0))
+            .await?;
+        let plan = self
+            .session_artifact_plan(frame, project, target.map(|t| t.0), &[])
+            .await?;
+        if plan.preview.fingerprint != fingerprint {
+            bail!(STALE_PREVIEW);
+        }
+        self.run_session_artifact_plan(frame, project, target, plan)
+            .await
+    }
+
+    /// Check the preview reviewed for every conversation in `frame`'s family
+    /// (see `preview_session_family_artifacts`), keyed by conversation id.
+    /// Call under the exclusive project activity guard.
+    pub async fn review_session_family_artifacts(
+        &self,
+        frame: &str,
+        project: &str,
+        fingerprints: &BTreeMap<String, String>,
+    ) -> Result<SessionFamilyArtifacts> {
+        self.recover_before_session_operation(project, None).await?;
+        let mut plans = BTreeMap::new();
+        for (id, plan) in self.session_family_plans(frame, project).await? {
+            if fingerprints.get(&id) != Some(&plan.preview.fingerprint) {
+                bail!(STALE_PREVIEW);
+            }
+            plans.insert(id, plan);
+        }
+        Ok(SessionFamilyArtifacts {
+            project: project.into(),
+            plans,
+        })
+    }
+
+    /// Delete one conversation of a reviewed family with its reviewed files.
+    /// The caller deletes them deepest first, under the exclusive project
+    /// activity guard.
+    pub async fn delete_session_in_family(
+        &self,
+        family: &mut SessionFamilyArtifacts,
+        frame: &str,
+    ) -> Result<()> {
+        let plan = family.plans.remove(frame).context(STALE_PREVIEW)?;
+        let project = family.project.clone();
+        self.recover_before_session_operation(&project, None)
+            .await?;
+        self.run_session_artifact_plan(frame, &project, None, plan)
+            .await
+    }
+
+    async fn recover_before_session_operation(
+        &self,
+        project: &str,
+        target: Option<&str>,
+    ) -> Result<()> {
         if self
             .session_artifact_recovery_projects(project)
             .await?
             .iter()
-            .any(|id| id != project && Some(id.as_str()) != target.map(|t| t.0))
+            .any(|id| id != project && Some(id.as_str()) != target)
         {
             bail!("Reopen the source project to recover an interrupted artifact operation before continuing.");
         }
-        self.recover_session_artifact_operations(project).await?;
-        let mut plan = self
-            .session_artifact_plan(frame, project, target.map(|t| t.0))
-            .await?;
-        if plan.preview.fingerprint != fingerprint {
-            bail!("Session artifacts changed. Review a fresh preview before continuing.");
-        }
+        self.recover_session_artifact_operations(project).await
+    }
+
+    async fn run_session_artifact_plan(
+        &self,
+        frame: &str,
+        project: &str,
+        target: Option<(&str, &str)>,
+        mut plan: ArtifactPlan,
+    ) -> Result<()> {
         let operation = uuid::Uuid::new_v4().to_string();
         plan.operation_id = Some(operation.clone());
         let destinations: BTreeMap<_, _> = plan
@@ -1211,6 +1350,15 @@ mod tests {
         name: &str,
         body: &str,
     ) -> (String, String, PathBuf) {
+        owned_output(store, root, "session", name, body).await
+    }
+    async fn owned_output(
+        store: &Store,
+        root: &Path,
+        frame: &str,
+        name: &str,
+        body: &str,
+    ) -> (String, String, PathBuf) {
         let logical = format!("path:{name}");
         let id = crate::logical_artifact_id("source", &logical);
         let checksum = hex::encode(Sha256::digest(body.as_bytes()));
@@ -1224,7 +1372,7 @@ mod tests {
                 version_id: None,
                 artifact_id: id.clone(),
                 project_id: "source".into(),
-                root_frame_id: "session".into(),
+                root_frame_id: frame.into(),
                 filename: name.into(),
                 content_type: "image/svg+xml".into(),
                 storage_path: snapshot.to_string_lossy().into(),
@@ -1442,6 +1590,109 @@ mod tests {
         assert!(source.join("results/plot.svg").exists());
     }
     #[tokio::test]
+    async fn a_family_deletion_reviews_every_conversation_before_deleting_any() {
+        for separate in [false, true] {
+            let (_temp, store, source, _target) = fixture(separate).await;
+            let (plot, _, plot_snapshot) =
+                output(&store, &source, "results/plot.svg", "parent").await;
+            store
+                .create_frame("child", "source", "agent", "model")
+                .await
+                .unwrap();
+            store
+                .append_message("child", 1, &wisp_llm::Message::user("Plot a panel"))
+                .await
+                .unwrap();
+            store
+                .set_session_dispatched_from("child", "session")
+                .await
+                .unwrap();
+            let (panel, panel_version, panel_snapshot) =
+                owned_output(&store, &source, "child", "results/panel.svg", "child").await;
+            // Each conversation references the other's artifact.
+            bind(&store, "session", &panel, &panel_version).await;
+            store
+                .append_session_ui_event(
+                    "child",
+                    1,
+                    &serde_json::json!({"kind":"Artifact","frame_id":"child","id":plot})
+                        .to_string(),
+                )
+                .await
+                .unwrap();
+
+            // Alone, each conversation keeps what the other one references.
+            let parent_alone = store
+                .preview_session_artifacts("session", "source", None)
+                .await
+                .unwrap();
+            assert!(parent_alone.artifacts.is_empty());
+            let child_alone = store
+                .preview_session_artifacts("child", "source", None)
+                .await
+                .unwrap();
+            assert!(child_alone.artifacts.is_empty());
+
+            // Deleted together, neither reference keeps a file, and the
+            // borrowed panel is listed only under the child that owns it.
+            let family = store
+                .preview_session_family_artifacts("session", "source")
+                .await
+                .unwrap();
+            let ids: Vec<&str> = family.iter().map(|(id, _)| id.as_str()).collect();
+            assert_eq!(ids, ["child", "session"]);
+            assert_eq!(family[0].1.artifacts, ["results/panel.svg"]);
+            assert_eq!(family[1].1.artifacts, ["results/plot.svg"]);
+            assert!(family
+                .iter()
+                .all(|(_, preview)| preview.retained.is_empty()));
+            assert_ne!(family[1].1.fingerprint, parent_alone.fingerprint);
+
+            // Every conversation needs its own reviewed preview.
+            let parent_only: BTreeMap<_, _> =
+                [("session".to_string(), family[1].1.fingerprint.clone())].into();
+            assert!(store
+                .review_session_family_artifacts("session", "source", &parent_only)
+                .await
+                .is_err());
+            let fingerprints: BTreeMap<_, _> = family
+                .iter()
+                .map(|(id, preview)| (id.clone(), preview.fingerprint.clone()))
+                .collect();
+            let mut reviewed = store
+                .review_session_family_artifacts("session", "source", &fingerprints)
+                .await
+                .unwrap();
+            // Deleting the child changes the parent's preview; the parent is
+            // still deleted from the plan that was reviewed.
+            store
+                .delete_session_in_family(&mut reviewed, "child")
+                .await
+                .unwrap();
+            assert!(!source.join("results/panel.svg").exists());
+            assert!(!panel_snapshot.exists());
+            assert!(source.join("results/plot.svg").exists());
+            store
+                .delete_session_in_family(&mut reviewed, "session")
+                .await
+                .unwrap();
+            assert!(!source.join("results/plot.svg").exists());
+            assert!(!plot_snapshot.exists());
+            assert!(store.frame_project_id("child").await.unwrap().is_none());
+            assert!(store.frame_project_id("session").await.unwrap().is_none());
+            assert!(store
+                .get_artifact_version(&panel_version)
+                .await
+                .unwrap()
+                .is_none());
+            // A reviewed plan is used once.
+            assert!(store
+                .delete_session_in_family(&mut reviewed, "session")
+                .await
+                .is_err());
+        }
+    }
+    #[tokio::test]
     async fn stale_preview_and_target_collisions_do_not_modify_either_project() {
         let (_temp, store, source, target) = fixture(false).await;
         output(&store, &source, "results/plot.svg", "generated").await;
@@ -1540,7 +1791,7 @@ mod tests {
             let (_temp, store, source, _) = fixture(false).await;
             output(&store, &source, "results/plot.svg", "generated").await;
             let mut plan = store
-                .session_artifact_plan("session", "source", None)
+                .session_artifact_plan("session", "source", None, &[])
                 .await
                 .unwrap();
             let operation = uuid::Uuid::new_v4().to_string();
@@ -1578,7 +1829,7 @@ mod tests {
         let (_temp, store, source, _) = fixture(false).await;
         output(&store, &source, "results/plot.svg", "generated").await;
         let plan = store
-            .session_artifact_plan("session", "source", None)
+            .session_artifact_plan("session", "source", None, &[])
             .await
             .unwrap();
         let operation = uuid::Uuid::new_v4().to_string();
@@ -1677,7 +1928,7 @@ mod tests {
         let (_temp, store, source, _) = fixture(false).await;
         let (id, _, _) = output(&store, &source, "results/plot.svg", "first").await;
         let mut plan = store
-            .session_artifact_plan("session", "source", None)
+            .session_artifact_plan("session", "source", None, &[])
             .await
             .unwrap();
         plan.operation_id = Some(uuid::Uuid::new_v4().to_string());

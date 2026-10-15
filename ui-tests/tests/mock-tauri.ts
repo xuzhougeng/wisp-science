@@ -2994,6 +2994,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               explorations: mockExplorations.filter((item) => family.has(item.source_frame_id)).length,
             };
           }
+          case "preview_session_family_artifacts": {
+            // One file per conversation; a selected conversation nested under
+            // another selected one is previewed within that one's family.
+            const preview = (id: string) => ({
+              fingerprint: `${id}:family`, artifacts: [`${id}.svg`], files: [`results/${id}.svg`], retained: [],
+            });
+            const families = ((arg("ids") as string[] | undefined) ?? []).map(String).map((id) => ({
+              id, preview: preview(id),
+              children: mockSessionChildren([id]).children.map((row) => ({ id: row.id, preview: preview(row.id) })),
+            }));
+            const nested = new Set(families.flatMap((family) => family.children.map((child) => child.id)));
+            return families.filter((family) => !nested.has(family.id));
+          }
           case "delete_session": {
             const id = String(arg("id"));
             const { family, children } = mockSessionChildren([id]);

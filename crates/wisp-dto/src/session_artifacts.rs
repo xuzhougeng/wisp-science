@@ -9,6 +9,23 @@ pub struct SessionArtifactPreview {
     pub retained: Vec<RetainedSessionArtifact>,
 }
 
+/// Artifact previews for deleting a conversation together with its branches
+/// and subagents. References between them keep nothing, so each preview is
+/// only valid for this deletion.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionFamilyArtifactPreview {
+    pub id: String,
+    pub preview: SessionArtifactPreview,
+    /// Its branches and subagents, nested ones included, deepest first.
+    pub children: Vec<SessionChildArtifactPreview>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionChildArtifactPreview {
+    pub id: String,
+    pub preview: SessionArtifactPreview,
+}
+
 /// Conversations nested under one that is about to be deleted, nested ones
 /// included. Deleting it can take them along or leave them standalone.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

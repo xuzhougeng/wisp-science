@@ -443,7 +443,8 @@ async fn delete_session_rows(
         // activity guard. Check versions again under SQLite's writer lock.
         plan.validate_records(tx, frame_id).await?;
     }
-    let mut ids = super::session_artifacts::disposable_ids(tx, frame_id).await?;
+    let co_deleted = artifacts.map_or(&[][..], |plan| &plan.co_deleted);
+    let mut ids = super::session_artifacts::disposable_ids(tx, frame_id, co_deleted).await?;
     if let Some(plan) = artifacts {
         let planned = plan.ids();
         if planned.iter().any(|id| !ids.contains(id)) {

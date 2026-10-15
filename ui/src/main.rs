@@ -18184,7 +18184,8 @@ fn App() -> impl IntoView {
                     <div class="hint">{message}</div>
                     {if let UiConfirm::DeleteSessions(ids) = action { Some(view! {
                         <SessionChildrenChoice locale=locale ids=ids.clone() state=delete_children />
-                        <SessionArtifactChoice locale=locale ids=ids target=None state=delete_artifacts />
+                        <SessionArtifactChoice locale=locale ids=ids target=None state=delete_artifacts
+                            with_children=Signal::derive(move || delete_children.deletes_children()) />
                     }) } else { None }}
                     <div class="row">
                         <button on:click=move |_| ui_confirm.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
@@ -18194,6 +18195,13 @@ fn App() -> impl IntoView {
                             let include_artifacts = is_delete_session && delete_artifacts.selected.get_untracked();
                             let include_children = if is_delete_session { delete_children.include_children() } else { None };
                             let artifact_previews = delete_artifacts.previews.get_untracked();
+                            // Selected conversation → the branches and subagents
+                            // whose files were reviewed to go with it.
+                            let artifact_children = if include_artifacts && include_children == Some(true) {
+                                delete_artifacts.children.get_untracked()
+                            } else {
+                                HashMap::new()
+                            };
                             ui_confirm.set(None);
                             match action_ok.clone() {
                                 UiConfirm::EnableFullPermission(target_session) => {
@@ -18252,14 +18260,23 @@ fn App() -> impl IntoView {
                                     spawn_local(async move {
                                         let mut deleted = HashSet::new();
                                         for id in ids {
-                                            // Already removed along with a selected parent.
-                                            if deleted.contains(&id) {
+                                            // Already removed along with a selected parent, or
+                                            // reviewed to be removed with it.
+                                            if deleted.contains(&id)
+                                                || artifact_children.values().any(|children| children.contains(&id))
+                                            {
                                                 continue;
                                             }
+                                            let child_fingerprints = artifact_children.get(&id).map(|children| {
+                                                children.iter().filter_map(|child| {
+                                                    Some((child.clone(), artifact_previews.get(child)?.fingerprint.clone()))
+                                                }).collect::<HashMap<_, _>>()
+                                            });
                                             let arg = to_value(&serde_json::json!({ "id": id.clone(),
                                                 "includeArtifacts": include_artifacts,
                                                 "artifactFingerprint": artifact_previews.get(&id).map(|p|p.fingerprint.clone()),
                                                 "includeChildren": include_children,
+                                                "childArtifactFingerprints": child_fingerprints,
                                             })).unwrap();
                                             match invoke_checked("delete_session", arg).await {
                                                 Ok(value) => {

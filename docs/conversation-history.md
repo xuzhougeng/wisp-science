@@ -221,6 +221,11 @@ snapshot used by another artifact also remains there. Protected records survive
 on an invisible deleted-session ownership frame so their existing references work.
 There is no recursive deletion of output directories or remote/GPU/SSH data.
 
+When a conversation is deleted together with its subagents and branches, the
+preview covers each of them, and references between conversations deleted
+together keep nothing. Each one's preview is rechecked before any is deleted
+(see [Agent delegation](agent-delegation.md)).
+
 Moving eligible artifacts transfers their complete recorded version histories,
 internal version dependencies, environment snapshots, and structured message
 attachment bindings. Current workspace files retain their relative paths in the

@@ -153,3 +153,72 @@ for (const includeChildren of [true, false]) {
     }
   });
 }
+
+// Every delete_session call, nested Map arguments included as plain objects.
+async function deleteCalls(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const plain = (value: any): any => value instanceof Map
+      ? Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]))
+      : value;
+    return ((window as any).__skillInvokeLog ?? [])
+      .filter((call: any) => call.cmd === 'delete_session')
+      .map((call: any) => plain(call.args));
+  });
+}
+
+const familyFiles = {
+  id: 'subagent-parent', includeChildren: true, includeArtifacts: true,
+  artifactFingerprint: 'subagent-parent:family',
+  childArtifactFingerprints: { 'subagent-child': 'subagent-child:family', 'subagent-done': 'subagent-done:family' },
+};
+
+test('deleting a parent with its subagents previews and deletes their files too', async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto('/?mockSubagent=1&mockSubagentActivity=1');
+  await page.locator('.proj-card-main').first().click();
+  await page.locator('.sidebar [data-session-id="subagent-parent"]').click({ button: 'right' });
+  await page.locator('.ctx-menu').getByRole('button', { name: 'Delete', exact: true }).click();
+
+  const modal = page.locator('.confirm-modal');
+  const cascade = modal.getByTestId('session-children-choice').getByRole('checkbox');
+  await expect(cascade).toBeChecked();
+  await modal.getByRole('checkbox', { name: 'Also delete associated artifacts and files' }).check();
+  await expect(modal).toContainText('3 artifacts · 3 files to process');
+  for (const id of ['subagent-parent', 'subagent-child', 'subagent-done']) {
+    await expect(modal).toContainText(`results/${id}.svg`);
+  }
+
+  // Keeping the subagents returns to the parent's own preview, and back.
+  await cascade.uncheck();
+  await expect(modal).toContainText('1 artifacts · 2 files to process');
+  await expect(modal).not.toContainText('results/subagent-child.svg');
+  await cascade.check();
+  await expect(modal).toContainText('3 artifacts · 3 files to process');
+  await modal.getByRole('button', { name: 'Delete', exact: true }).click();
+
+  await expect.poll(() => deleteCalls(page)).toEqual([expect.objectContaining(familyFiles)]);
+  await expect(page.locator('[data-session-id="subagent-parent"]')).toHaveCount(0);
+  await expect(page.locator('[data-session-id="subagent-child"]')).toHaveCount(0);
+  await expect(page.locator('[data-session-id="subagent-done"]')).toHaveCount(0);
+});
+
+test('a selected subagent is deleted with its selected parent, from the parent family preview', async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto('/?mockSubagent=1&mockSubagentActivity=1');
+  await page.locator('.proj-card-main').first().click();
+  const sidebar = page.locator('.sidebar');
+  await sidebar.getByRole('button', { name: 'Select', exact: true }).click();
+  await sidebar.locator('[data-session-id="subagent-parent"]').click();
+  await sidebar.locator('[data-session-id="subagent-child"]').click();
+  await sidebar.getByTestId('bulk-delete-sessions').click();
+
+  const modal = page.locator('.confirm-modal');
+  await expect(modal.getByTestId('session-children-choice')).toContainText('Subagents 1');
+  await modal.getByRole('checkbox', { name: 'Also delete associated artifacts and files' }).check();
+  await expect(modal).toContainText('3 artifacts · 3 files to process');
+  await modal.getByRole('button', { name: 'Delete', exact: true }).click();
+
+  // One call: the selected subagent goes with its parent, whatever the order.
+  await expect(page.locator('[data-session-id="subagent-parent"]')).toHaveCount(0);
+  expect(await deleteCalls(page)).toEqual([expect.objectContaining(familyFiles)]);
+});

@@ -1219,6 +1219,32 @@ fn session_children_preview_counts_each_kind() {
 }
 
 #[test]
+fn session_family_artifact_preview_keys_each_child_preview_by_id() {
+    let preview = |fingerprint: &str| wisp_dto::SessionArtifactPreview {
+        fingerprint: fingerprint.into(),
+        artifacts: vec!["plot.svg".into()],
+        files: vec!["results/plot.svg".into()],
+        retained: vec![],
+    };
+    let family = wisp_dto::SessionFamilyArtifactPreview {
+        id: "parent".into(),
+        preview: preview("parent-fp"),
+        children: vec![wisp_dto::SessionChildArtifactPreview {
+            id: "subagent".into(),
+            preview: preview("subagent-fp"),
+        }],
+    };
+    let value = serde_json::to_value(&family).unwrap();
+    assert_eq!(value["children"][0]["id"], "subagent");
+    assert_eq!(
+        value["children"][0]["preview"]["fingerprint"],
+        "subagent-fp"
+    );
+    let decoded: wisp_dto::SessionFamilyArtifactPreview = roundtrip(&family);
+    assert_eq!(decoded, family);
+}
+
+#[test]
 fn assistant_weixin_status_contract_is_separate_from_legacy_channels() {
     let status = wisp_dto::AssistantWeixinStatus {
         enabled: true,

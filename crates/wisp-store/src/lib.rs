@@ -100,6 +100,7 @@ pub use provenance::{canonical_json, canonical_json_sha256};
 pub use remote_staging::RemoteStagingEntry;
 pub use schedules::{next_slot_after, ScheduleRecord, ScheduleRunRecord};
 pub use server_turns::ServerTurn;
+pub use session_artifacts::SessionFamilyArtifacts;
 pub use session_imports::RecoveredWorkspaceSession;
 pub use sessions::{
     is_compaction_checkpoint, ModelTokenUsage, ProjectTokenUsage, SessionBranchDeltaMessage,
