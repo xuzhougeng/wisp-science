@@ -4643,22 +4643,6 @@ pub struct AgentWorkflowSnapshot {
     pub dynamic: DynamicAgentWorkflowSummary,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentCompletionPolicy {
-    #[default]
-    Inline,
-    Background,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AgentCompletionSettings {
-    #[serde(default)]
-    pub policy: AgentCompletionPolicy,
-    #[serde(default)]
-    pub auto_resume: bool,
-}
-
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentApprovalPolicy {

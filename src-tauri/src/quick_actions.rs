@@ -1517,13 +1517,8 @@ pub(crate) async fn run_quick_action(
     if started {
         snapshot =
             delegation_runtime::approve_created_automatic_workflow(&state.store, snapshot).await?;
-        delegation_runtime::spawn_agent_workflow_with_auto_resume(
-            &state,
-            project,
-            snapshot.workflow.id.clone(),
-            true,
-        )
-        .await?;
+        delegation_runtime::spawn_agent_workflow(&state, project, snapshot.workflow.id.clone())
+            .await?;
     }
     Ok(QuickActionRun {
         action,

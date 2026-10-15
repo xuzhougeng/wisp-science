@@ -165,9 +165,10 @@ are running. Select a worker and return to the overview; its selected state
 should clear without closing the window.
 
 1. Delegation is always available to a built-in conversation, like Skills and
-   MCP tools: there is no per-conversation switch to enable first. The composer
-   Agent menu only chooses how **Delegated tasks** complete (inline or in the
-   background).
+   MCP tools: there is no per-conversation switch to enable first, and the
+   composer Agent menu has no delegation settings. The main Agent decides per
+   call whether a batch returns in the same turn or in the background (see
+   [Background completion](#background-completion)).
 2. Ask the main Agent for an outcome that materially benefits from independent
    or parallel work. The main Agent decides whether delegation is useful and,
    when it is, calls `delegate_tasks` itself.
@@ -252,15 +253,19 @@ still apply.
 
 ## Background completion
 
-The composer Agent menu has a per-conversation **Delegated tasks** setting. Inline
-is the default and preserves the same-turn behavior above. Background returns
-a workflow handle as soon as the approved batch is scheduled, allowing the
-parent turn and the rest of the app to continue. The main Agent must not poll
-that handle.
+`delegate_tasks` runs inline by default, with the same-turn behavior above.
+For long work the user should not wait on, the main Agent sets
+`background: true` on that call; there is no per-conversation setting. A
+background call returns a workflow handle as soon as the approved batch is
+scheduled, so the parent turn and the rest of the app can continue. The main
+Agent must not poll that handle. A delegated child Agent cannot start a
+background batch, because nothing would resume it: the nested tool schema does
+not offer `background`, and a nested call that sets it is refused before any
+workflow is created.
 
-Workflows started outside a parent model turn, such as Quick Actions, use the
-durable background delivery path. The conversation's auto-resume setting still
-decides whether their parent is automatically synthesized.
+Workflows started outside a parent model turn use the same durable background
+delivery path. These include Quick Actions and Workflow runs approved or
+retried from the Agents panel.
 
 Each background execution reserves a persisted generation before any child
 starts. When the workflow reaches succeeded, failed, or cancelled, Wisp stores
@@ -272,17 +277,16 @@ turn's incremental message sequence. Retrying a failed or cancelled workflow
 creates a new generation, so the retry can deliver once without redelivering
 the earlier result.
 
-When **Background** is selected, enable **Auto-resume parent** to let an idle
-parent Agent synthesize newly delivered results without another user message;
-the option is hidden for inline completion, where it does not apply. Several
-completions that become ready together may be combined into one synthesis
-turn, but each generation's resume claim is made only once. If the app stops
-after claiming that turn, the
-claim is recorded as interrupted instead of being silently replayed on restart.
-Without auto-resume, the completion card remains in the owning conversation
-and enters the Native parent's context on its next turn. ACP parents receive
-the same result as internal context on their next prompt because their own
-transcript is maintained by the external Agent.
+Every background generation resumes its parent: once the result is
+delivered and the parent Agent is idle, Wisp starts one synthesis turn without
+another user message. Several completions that become ready together may be
+combined into one synthesis turn, but each generation's resume claim is made
+only once. If the app stops after claiming that turn, the claim is recorded as
+interrupted instead of being silently replayed on restart. Generations
+recorded before resumption became automatic keep their original choice; their
+completion card enters the Native parent's context on its next turn. ACP
+parents receive the result as internal context on their next prompt because
+their own transcript is maintained by the external Agent.
 
 On startup, queued/running child attempts become explicit failed attempts, and
 a background generation reserved before its first child started becomes an
@@ -819,12 +823,12 @@ list them and workflow actions reject them before approval, retry, or execution.
 Ask the main Agent to compare two project files using two independent
 temporary Agents. Confirm in the Agents panel that the two root
 tasks overlap, their dependent synthesis task waits, and the final chat
-response contains one synthesized comparison. Switch **Delegated tasks** to
-**Background**, repeat the request, and verify the initial tool result is a
-running handle followed later by exactly one completion card in the same
-conversation. Enable **Auto-resume parent** and verify an idle conversation
-adds one synthesized assistant update; start another parent turn and verify a
-completion waits behind it. Then create an equivalent graph in
+response contains one synthesized comparison. Repeat the request and ask for
+it to run in the background. Verify the `delegate_tasks` call sets
+`background`, and its initial tool result is a running handle. The same
+conversation should later show exactly one completion card, followed by one
+synthesized assistant update once the conversation is idle. Start another
+parent turn and verify a completion waits behind it. Then create an equivalent graph in
 **Settings → Workflows**, attach it from the composer, and confirm the Agents
 panel shows the run without showing workflow editing fields. Repeat with a
 write capability: Wisp should show the exact resolved authority and start zero

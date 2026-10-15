@@ -14,13 +14,11 @@ internal static class NativeComposerOptionsTests
         Check(model.CanEdit && model.Session?.SessionId == "session-a" && model.Failure?.FailureRateThreshold == 30 && model.MemoryEnabled, "loads real scopes and default state");
         Check(model.Reviewers.Select(c => c.Id).SequenceEqual(["http:", "follow_session", "http:chat", "acp:agent"]), "reviewer uses host-filtered HTTP and ACP options");
         Check(model.Specialists.Select(c => c.Id).SequenceEqual(["", "scientist"]), "internal specialists are excluded");
+        fake.Scoped["completion"] = new JsonObject { ["policy"] = "background", ["auto_resume"] = true }; await model.LoadAsync();
+        Check(model.CanEdit && model.Session?.SessionId == "session-a", "older hosts that still send the removed completion policy decode");
         Check(!await model.SetToggleAsync("full_permission", true) && fake.Writes == 0, "full permission cannot enable without confirmation");
-        Check(!await model.SetCompletionAsync("background", true) && fake.Writes == 0, "completion is disabled without delegation");
         Check(await model.SetToggleAsync("full_permission", true, true) && model.Session!.FullPermission, "confirmed permission is scoped and reread");
         Check(fake.LastArgs?["session_id"]?.GetValue<string>() == "session-a" && fake.LastProject == "project-a", "mutation carries exact project and session");
-        Check(await model.SetToggleAsync("delegation", true) && await model.SetCompletionAsync("background", true)
-            && model.Session!.Completion.AutoResume, "background completion enables auto resume");
-        Check(await model.SetCompletionAsync("inline", true) && !model.Session!.Completion.AutoResume, "inline clears auto resume");
         Check(await model.SetToggleAsync("auto_review", true) && model.Session!.AutoReview, "review is saved on conversation");
         var writes = fake.Writes;
         Check(!await model.SetFailureAsync(true, 0, 2) && !await model.SetFailureAsync(true, 30, 101) && fake.Writes == writes, "invalid thresholds cannot write");
@@ -81,7 +79,6 @@ internal static class NativeComposerOptionsTests
                 case "native_conversation_options_set":
                     var change = args["change"]!; var kind = change["kind"]!.GetValue<string>();
                     if (kind is "auto_review" or "full_permission" or "delegation") Scoped[kind] = change["enabled"]!.DeepClone();
-                    else if (kind == "completion") Scoped["completion"] = new JsonObject { ["policy"] = change["policy"]!.DeepClone(), ["auto_resume"] = change["auto_resume"]!.DeepClone() };
                     else if (kind == "specialist") Scoped["specialist"] = Specs.First(v => v?["id"]!.GetValue<string>() == change["id"]!.GetValue<string>())!.DeepClone();
                     value = Scoped; break;
                 case "get_auto_failure_analysis_settings": value = failure; break;

@@ -1974,12 +1974,6 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .agent-menu-chevron { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
 .agent-menu-chevron svg { width: 15px; height: 15px; }
 .agent-menu-toggle { margin-left: auto; }
-.agent-menu-select {
-  max-width: 150px; height: 32px; padding: 0 28px 0 9px; border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs); background: var(--bg-input) var(--select-chevron) no-repeat right 9px center / 10px 6px;
-  color: var(--text-muted); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); appearance: none;
-}
-.agent-menu-select:disabled { opacity: .5; }
 .agent-menu-setting { padding-left: 28px; }
 .agent-menu-number {
   width: 74px; height: 32px; margin-left: auto; padding: 0 8px; box-sizing: border-box;

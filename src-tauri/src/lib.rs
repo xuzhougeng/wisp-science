@@ -7591,8 +7591,6 @@ pub fn run() {
             swarm_progress::get_swarm_progress,
             plan_mode::get_session_plan_mode,
             plan_mode::set_session_plan_mode,
-            delegation_completion::get_session_agent_completion,
-            delegation_completion::set_session_agent_completion,
             scheduler::create_schedule,
             scheduler::set_session_timer,
             scheduler::list_schedules,

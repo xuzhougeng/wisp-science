@@ -3,7 +3,6 @@ use super::{Store, FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX};
 pub(super) const FRAME_SETTING_PREFIXES: &[&str] = &[
     "frame_specialist:",
     "frame_plan_mode:",
-    "frame_agent_completion:",
     "frame_auto_review:",
     FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX,
 ];

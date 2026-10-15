@@ -5,7 +5,7 @@ import WispProjectBrowser
 @testable import WispProjectBrowserUI
 
 private actor ComposerOptionsFake: NativeConversationQuerying {
-    var state: SettingsValue = .object(["session_id": .string("s"), "full_permission": .bool(false), "delegation": .bool(false), "completion": .object(["policy": .string("inline"), "auto_resume": .bool(false)]), "auto_review": .bool(false), "specialist": .null, "specialist_locked": .bool(false)])
+    var state: SettingsValue = .object(["session_id": .string("s"), "full_permission": .bool(false), "delegation": .bool(false), "auto_review": .bool(false), "specialist": .null, "specialist_locked": .bool(false)])
     var lose = false, wrongOwner = false, unconfirmed = false, hold = false
     var held: CheckedContinuation<Void, Never>?
     var writes: [(String, [String: SettingsValue])] = []
@@ -25,7 +25,6 @@ private actor ComposerOptionsFake: NativeConversationQuerying {
             if !unconfirmed {
                 let change = args["change"]!, kind = change["kind"].string
                 if ["full_permission", "delegation", "auto_review"].contains(kind) { state[kind] = change["enabled"] }
-                if kind == "completion" { state["completion"] = .object(["policy": change["policy"], "auto_resume": change["auto_resume"]]) }
                 if kind == "specialist" { state["specialist"] = change["id"].string.isEmpty ? .null : .object(["id": change["id"], "name": .string("Scientist")]) }
             }
         }
@@ -43,7 +42,7 @@ final class NativeComposerOptionsTests: XCTestCase {
         UserDefaults.standard.set("en", forKey: "nativeSettings.locale")
         let fake = ComposerOptionsFake(); let conversation = NativeConversationModel(client: fake)
         let model = NativeComposerOptionsModel(client: fake, project: "p", session: "s", writable: { true })
-        await model.load(); await model.setToggle("delegation", enabled: true); await model.setCompletion("background", autoResume: true)
+        await model.load(); await model.setToggle("delegation", enabled: true)
         for permission in [false, true] {
             let view: AnyView = permission ? AnyView(NativeFullPermissionConfirmation(busy: false, canConfirm: true, cancel: {}, confirm: {}))
                 : AnyView(NativeComposerOptionsSheet(conversation: conversation, model: model, close: {}))
@@ -56,32 +55,31 @@ final class NativeComposerOptionsTests: XCTestCase {
             try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent(permission ? "options-permission-en-dark.png" : "options-en-dark.png"))
         }
     }
-    func testSharedContractRejectsWrongOwnerAndUnknownCompletionPolicy() throws {
+    func testSharedContractRejectsWrongOwnerAndToleratesLegacyCompletionPolicy() throws {
         var root = URL(fileURLWithPath: #filePath); for _ in 0..<5 { root.deleteLastPathComponent() }
         var fixture = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-conversations/v1/composer-options.json")))
         XCTAssertFalse(try NativeComposerSessionOptions.decode(fixture, session: "session-a").full_permission)
         XCTAssertThrowsError(try NativeComposerSessionOptions.decode(fixture, session: "other"))
-        fixture["completion"]["policy"] = .string("unknown")
-        XCTAssertThrowsError(try NativeComposerSessionOptions.decode(fixture, session: "session-a"))
+        // Older backends still send the removed per-conversation completion policy.
+        fixture["completion"] = .object(["policy": .string("background"), "auto_resume": .bool(true)])
+        XCTAssertFalse(try NativeComposerSessionOptions.decode(fixture, session: "session-a").auto_review)
     }
     @MainActor func testScopedSettingsConfirmPermissionsAndEnforceDelegationAndSpecialistBoundaries() async {
         let fake = ComposerOptionsFake(); var writable = true
         let model = NativeComposerOptionsModel(client: fake, project: "p", session: "s", writable: { writable })
         await model.load(); XCTAssertTrue(model.canEdit); XCTAssertEqual(model.specialists.map(\.id), ["scientist"])
-        await model.setCompletion("background", autoResume: true); await model.setToggle("full_permission", enabled: true)
+        await model.setToggle("full_permission", enabled: true)
         await model.setSpecialist("reviewer"); await model.setToggle("unknown", enabled: true)
         var writes = await fake.recorded(); XCTAssertTrue(writes.isEmpty)
         await model.setToggle("delegation", enabled: true)
-        await model.setCompletion("background", autoResume: true); XCTAssertEqual(model.options?.completion.auto_resume, true)
-        await model.setCompletion("inline", autoResume: true); XCTAssertEqual(model.options?.completion.auto_resume, false)
         await model.setToggle("full_permission", enabled: true, confirmed: true); XCTAssertEqual(model.options?.full_permission, true)
         await model.setToggle("auto_review", enabled: true); await model.setSpecialist("scientist")
         XCTAssertEqual(model.options?.specialist?["id"].string, "scientist")
-        writes = await fake.recorded(); XCTAssertEqual(writes.count, 6); XCTAssertTrue(writes.allSatisfy { $0.0 == "p" && $0.1["session_id"] == .string("s") })
-        XCTAssertEqual(writes[3].1["change"], .object(["kind": .string("full_permission"), "enabled": .bool(true), "confirmed": .bool(true)]))
+        writes = await fake.recorded(); XCTAssertEqual(writes.count, 4); XCTAssertTrue(writes.allSatisfy { $0.0 == "p" && $0.1["session_id"] == .string("s") })
+        XCTAssertEqual(writes[1].1["change"], .object(["kind": .string("full_permission"), "enabled": .bool(true), "confirmed": .bool(true)]))
         await fake.setup(locked: true); await model.load(); await model.setSpecialist("")
         writable = false; await model.setToggle("auto_review", enabled: false)
-        let final = await fake.recorded(); XCTAssertEqual(final.count, 6)
+        let final = await fake.recorded(); XCTAssertEqual(final.count, 4)
     }
     @MainActor func testUnknownMismatchedAndUnconfirmedWritesNeverReplayAndNeedFreshRead() async {
         for scenario in ["lost", "owner", "unconfirmed"] {

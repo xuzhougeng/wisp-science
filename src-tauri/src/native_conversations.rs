@@ -728,15 +728,6 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 )?,
                 // Always on; kept on the wire for native clients.
                 delegation: true,
-                completion: decode(
-                    &call(
-                        broker,
-                        project,
-                        "get_session_agent_completion",
-                        session_args.clone(),
-                    )
-                    .await?,
-                )?,
                 auto_review: decode(
                     &call(broker, project, "get_auto_review_enabled", session_args).await?,
                 )?,

@@ -37,7 +37,7 @@ use wisp_store::{
 const RESULT_INSTRUCTIONS: &str = "Return one JSON object and no Markdown fence. Include summary (string), files_changed (array), diff_summary (string), artifacts (array), evidence (array), tests (array), and risks (array).";
 const DELEGATION_PROMPT_START: &str = "\n\n<delegation_capability>";
 const DELEGATION_PROMPT_END: &str = "</delegation_capability>";
-const DELEGATION_PROMPT_SECTION: &str = "\n\n<delegation_capability>\nControlled sub-Agent delegation is available in this conversation. When a task materially benefits from independent or parallel work, decompose it yourself and call delegate_tasks with the smallest useful temporary task DAG. Follow the tool's conversation completion policy: inline calls return ordered evidence to this turn, while background calls return a durable handle and deliver one completion later. Use capability IDs from the tool schema; omit specialist_id for generic temporary Agents. Do not delegate trivial work, do not poll a background batch, do not claim completion before its result arrives, and do not ask the user to visit the Agents panel merely to receive results.\n</delegation_capability>";
+const DELEGATION_PROMPT_SECTION: &str = "\n\n<delegation_capability>\nControlled sub-Agent delegation is available in this conversation. When a task materially benefits from independent or parallel work, decompose it yourself and call delegate_tasks with the smallest useful temporary task DAG. Calls return ordered evidence to this turn by default; set background only for long work the user should not wait on, which returns a durable handle, delivers one completion later, and resumes you to synthesize it. Use capability IDs from the tool schema; omit specialist_id for generic temporary Agents. Do not delegate trivial work, do not poll a background batch, do not claim completion before its result arrives, and do not ask the user to visit the Agents panel merely to receive results.\n</delegation_capability>";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AgentWorkflowSnapshot {
@@ -944,43 +944,23 @@ pub(crate) async fn run_agent_workflow_for_project(
     .await
 }
 
-async fn spawn_agent_workflow(
+/// Runs an approved workflow in the background. Its result is delivered to the
+/// owning conversation, which is always resumed to synthesize it.
+pub(crate) async fn spawn_agent_workflow(
     state: &crate::AppState,
     project: ActiveProject,
     workflow_id: String,
-) -> Result<(), String> {
-    spawn_agent_workflow_with_completion_override(state, project, workflow_id, None).await
-}
-
-pub(crate) async fn spawn_agent_workflow_with_auto_resume(
-    state: &crate::AppState,
-    project: ActiveProject,
-    workflow_id: String,
-    auto_resume: bool,
-) -> Result<(), String> {
-    spawn_agent_workflow_with_completion_override(state, project, workflow_id, Some(auto_resume))
-        .await
-}
-
-async fn spawn_agent_workflow_with_completion_override(
-    state: &crate::AppState,
-    project: ActiveProject,
-    workflow_id: String,
-    auto_resume: Option<bool>,
 ) -> Result<(), String> {
     let project_activity = state.begin_project_activity(&project.id)?;
     let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
-    let frame_id = workflow
-        .frame_id
-        .as_deref()
-        .ok_or_else(|| "Agent workflow has no owning conversation.".to_string())?;
-    let completion =
-        crate::delegation_completion::session_completion_settings(&state.store, frame_id).await;
+    if workflow.frame_id.is_none() {
+        return Err("Agent workflow has no owning conversation.".to_string());
+    }
     let plan = stored_dynamic_plan(&workflow)?;
     let display_ids = crate::delegation_tool::display_task_ids(&plan);
     let delivery = state
         .store
-        .create_agent_workflow_delivery(&workflow_id, auto_resume.unwrap_or(completion.auto_resume))
+        .create_agent_workflow_delivery(&workflow_id, true)
         .await
         .map_err(|error| error.to_string())?;
     let store = state.store.clone();

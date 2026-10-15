@@ -100,9 +100,6 @@ public sealed class NativeComposerOptionsModel(INativeSettingsClient? client)
         if (kind == "full_permission") change["confirmed"] = confirmed;
         return SaveSessionAsync(change, token);
     }
-    public Task<bool> SetCompletionAsync(string policy, bool autoResume, CancellationToken token = default) =>
-        Session?.Delegation != true || policy is not ("inline" or "background") ? Task.FromResult(false)
-        : SaveSessionAsync(new() { ["kind"] = "completion", ["policy"] = policy, ["auto_resume"] = policy == "background" && autoResume }, token);
     public Task<bool> SetSpecialistAsync(string id, CancellationToken token = default) =>
         Session?.SpecialistLocked != false || !Specialists.Any(v => v.Id == id) ? Task.FromResult(false)
         : SaveSessionAsync(new() { ["kind"] = "specialist", ["id"] = id }, token);

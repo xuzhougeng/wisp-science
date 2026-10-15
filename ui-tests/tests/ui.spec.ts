@@ -6924,7 +6924,7 @@ test("agent menu groups per-conversation options and links to Settings", async (
   const rows = menu.locator(".agent-menu-group, .agent-menu-row > span:first-child");
   await expect(rows).toHaveText([
     "Mode", "Plan first", "Full Permission",
-    "Agents", "Specialist", "Delegated tasks", "Auto-review", "Reviewer model",
+    "Agents", "Specialist", "Auto-review", "Reviewer model",
     "Resources", "Compute",
     "More in Settings",
   ]);
@@ -6946,28 +6946,17 @@ test("Escape closes the sidebar sort menu without closing the sidebar", async ({
   await expect(newSessionButton(page)).toBeVisible();
 });
 
-test("agent menu updates completion, review, and reviewer model preferences", async ({ page }) => {
+test("agent menu updates review and reviewer model preferences", async ({ page }) => {
   await enterApp(page);
   let menu = await openAgentMenu(page);
 
-  // Delegation is always available: no switch, and the completion policy is
-  // editable straight away.
+  // Delegation is always available, and the parent Agent chooses background
+  // per delegate_tasks call: neither a switch nor a completion policy remains.
   await expect(menu.locator("label.agent-menu-row", { hasText: "Delegation" })).toHaveCount(0);
-  const completion = page.getByTestId("agent-completion-policy");
-  await expect(completion).toHaveValue("inline");
-  await expect(menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" })).toHaveCount(0);
-  await completion.selectOption("background");
-  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
-    .toMatchObject({ policy: "background", autoResume: false });
-  const autoResume = menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" });
-  await expect(autoResume).toBeVisible();
-  await autoResume.click();
-  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
-    .toMatchObject({ policy: "background", autoResume: true });
-  await completion.selectOption("inline");
-  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
-    .toMatchObject({ policy: "inline", autoResume: false });
-  await expect(autoResume).toHaveCount(0);
+  await expect(menu.locator(".agent-menu-row", { hasText: "Delegated tasks" })).toHaveCount(0);
+  await expect(menu.locator(".agent-menu-row", { hasText: "Auto-resume parent" })).toHaveCount(0);
+  await expect(menu.locator("select")).toHaveCount(0);
+  expect(await invokeCount(page, "get_session_agent_completion")).toBe(0);
 
   const autoReview = menu.locator("label.agent-menu-row", { hasText: "Auto-review" });
   await autoReview.click();

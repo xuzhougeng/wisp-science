@@ -23,7 +23,7 @@ private actor ComposerHelpersFake: NativeConversationQuerying {
     func snapshot(projectID: String, sessionID: String, beforeSeq: Int64?) async throws -> ConversationSnapshot { throw ProjectBrowserError.invalidResponse }
     func invoke(_ command: String, args: [String: SettingsValue], projectID: String) async throws -> SettingsValue {
         if command == hold { await withCheckedContinuation { held = $0 } }
-        if command == "native_conversation_options" { return .object(["session_id": .string("s"), "full_permission": .bool(false), "delegation": .bool(true), "completion": .object(["policy": .string("background"), "auto_resume": .bool(true)]), "auto_review": .bool(true), "specialist": .null, "specialist_locked": .bool(false)]) }
+        if command == "native_conversation_options" { return .object(["session_id": .string("s"), "full_permission": .bool(false), "delegation": .bool(true), "auto_review": .bool(true), "specialist": .null, "specialist_locked": .bool(false)]) }
         let write = ["set_memory_enabled", "set_auto_failure_analysis_settings", "save_specialist_cmd"].contains(command)
         if write {
             writes.append((projectID, command, args))

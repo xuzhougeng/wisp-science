@@ -98,6 +98,10 @@ pub const COMMANDS: &[&str] = &[
 pub const DELEGATION_ALWAYS_ON: &str =
     "Sub-Agent delegation is always available; it can no longer be switched per conversation.";
 
+/// Reply to clients that still try to set a per-conversation completion policy.
+pub const DELEGATION_COMPLETION_PER_CALL: &str =
+    "Delegated tasks choose background per call; the conversation-level setting was removed.";
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ComposerOptions {
     pub session_id: String,
@@ -106,7 +110,6 @@ pub struct ComposerOptions {
     /// for older native clients.
     #[serde(default = "crate::default_true")]
     pub delegation: bool,
-    pub completion: crate::AgentCompletionSettings,
     pub auto_review: bool,
     pub specialist: Option<crate::Specialist>,
     pub specialist_locked: bool,
@@ -156,8 +159,13 @@ pub enum ComposerOptionChange {
     Delegation {
         enabled: bool,
     },
+    /// Legacy: the parent Agent chooses background per `delegate_tasks`
+    /// call. Still decoded for older clients, refused with
+    /// [`DELEGATION_COMPLETION_PER_CALL`].
     Completion {
-        policy: crate::AgentCompletionPolicy,
+        #[serde(default)]
+        policy: String,
+        #[serde(default)]
         auto_resume: bool,
     },
     AutoReview {
@@ -181,13 +189,7 @@ impl ComposerOptionChange {
                 json!({"sessionId":session,"enabled":enabled}),
             ),
             Self::Delegation { .. } => return Err(DELEGATION_ALWAYS_ON.into()),
-            Self::Completion {
-                policy,
-                auto_resume,
-            } => (
-                "set_session_agent_completion",
-                json!({"sessionId":session,"policy":policy,"autoResume":auto_resume}),
-            ),
+            Self::Completion { .. } => return Err(DELEGATION_COMPLETION_PER_CALL.into()),
             Self::AutoReview { enabled } => (
                 "set_auto_review_enabled",
                 json!({"sessionId":session,"enabled":enabled}),
@@ -1106,9 +1108,29 @@ mod tests {
         .unwrap();
         assert_eq!(options.session_id, "session-a");
         assert!(!options.full_permission && !options.delegation && !options.specialist_locked);
+        // Older payloads that still carry the removed completion policy decode.
+        let legacy: super::ComposerOptions = serde_json::from_value(serde_json::json!({
+            "session_id": "session-a",
+            "full_permission": false,
+            "completion": {"policy": "background", "auto_resume": true},
+            "auto_review": false,
+            "specialist": null,
+            "specialist_locked": false
+        }))
+        .unwrap();
+        assert!(legacy.delegation);
+        assert!(serde_json::to_value(&legacy)
+            .unwrap()
+            .get("completion")
+            .is_none());
+        let completion: super::ComposerOptionRequest = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "change": {"kind": "completion", "policy": "background", "auto_resume": true}
+        }))
+        .unwrap();
         assert_eq!(
-            options.completion.policy,
-            crate::AgentCompletionPolicy::Inline
+            completion.change.command("s").unwrap_err(),
+            super::DELEGATION_COMPLETION_PER_CALL
         );
         let denied = super::ComposerOptionChange::FullPermission {
             enabled: true,

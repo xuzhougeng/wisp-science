@@ -40,10 +40,6 @@ import WispProjectBrowser
         if kind == "full_permission" { change["confirmed"] = .bool(confirmed) }
         await save(.object(change))
     }
-    func setCompletion(_ policy: String, autoResume: Bool) async {
-        guard options?.delegation == true, ["inline", "background"].contains(policy) else { return }
-        await save(.object(["kind": .string("completion"), "policy": .string(policy), "auto_resume": .bool(policy == "background" && autoResume)]))
-    }
     func setSpecialist(_ id: String) async {
         guard options?.specialist_locked == false, id.isEmpty || specialists.contains(where: { $0.id == id }) else { return }
         await save(.object(["kind": .string("specialist"), "id": .string(id)]))
@@ -60,7 +56,6 @@ import WispProjectBrowser
             case "full_permission": confirmed = result.full_permission == change["enabled"].bool
             case "delegation": confirmed = result.delegation == change["enabled"].bool
             case "auto_review": confirmed = result.auto_review == change["enabled"].bool
-            case "completion": confirmed = result.completion.policy == change["policy"].string && result.completion.auto_resume == change["auto_resume"].bool
             case "specialist": confirmed = (result.specialist?["id"].string ?? "") == change["id"].string
             default: confirmed = false
             }

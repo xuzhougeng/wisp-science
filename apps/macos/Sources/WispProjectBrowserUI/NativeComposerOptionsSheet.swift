@@ -41,16 +41,6 @@ struct NativeComposerOptionsSheet: View {
                         else { Task { await model.setToggle("full_permission", enabled: false) } }
                     }))
                     Toggle(localized("子代理委派"), isOn: Binding(get: { options.delegation }, set: { enabled in Task { await model.setToggle("delegation", enabled: enabled) } }))
-                    Picker(localized("结果返回方式"), selection: Binding(get: { options.completion.policy }, set: { policy in
-                        Task { await model.setCompletion(policy, autoResume: options.completion.auto_resume) }
-                    })) {
-                        Text(localized("当前轮内返回")).tag("inline")
-                        Text(localized("后台返回")).tag("background")
-                    }.disabled(!options.delegation)
-                    if options.completion.policy == "background" {
-                        Toggle(localized("自动续接"), isOn: Binding(get: { options.completion.auto_resume }, set: { enabled in Task { await model.setCompletion("background", autoResume: enabled) } }))
-                            .disabled(!options.delegation)
-                    }
                     Toggle(localized("自动审查"), isOn: Binding(get: { options.auto_review }, set: { enabled in Task { await model.setToggle("auto_review", enabled: enabled) } }))
                     Picker(localized("专家"), selection: Binding(get: { options.specialist?["id"].string ?? "" }, set: { id in Task { await model.setSpecialist(id) } })) {
                         Text(localized("无")).tag("")

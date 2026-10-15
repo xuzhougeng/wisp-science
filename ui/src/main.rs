@@ -8438,8 +8438,6 @@ fn App() -> impl IntoView {
     let specialist_menu_open = create_rw_signal(false);
     let auto_review_enabled = create_rw_signal(false);
     let auto_failure_analysis = create_rw_signal(AutoFailureAnalysisSettings::default());
-    let agent_completion = create_rw_signal(AgentCompletionSettings::default());
-    let agent_completion_busy = create_rw_signal(false);
     create_effect(move |_| {
         full_permission_enabled.set(false);
         full_permission_busy.set(false);
@@ -8448,8 +8446,6 @@ fn App() -> impl IntoView {
         // on the new one for as long as the round trip takes.
         local_plan_mode.set(Some(false));
         auto_review_enabled.set(false);
-        agent_completion.set(AgentCompletionSettings::default());
-        agent_completion_busy.set(false);
         let Some(session_id) = active_session.get() else {
             return;
         };
@@ -8463,12 +8459,6 @@ fn App() -> impl IntoView {
                 .await
                 .ok()
                 .and_then(|value| value.as_bool());
-            let completion = invoke_checked("get_session_agent_completion", args.clone())
-                .await
-                .ok()
-                .and_then(|value| {
-                    serde_wasm_bindgen::from_value::<AgentCompletionSettings>(value).ok()
-                });
             let auto_review = invoke_checked("get_auto_review_enabled", args)
                 .await
                 .ok()
@@ -8476,7 +8466,6 @@ fn App() -> impl IntoView {
             if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
                 full_permission_enabled.set(full_permission.unwrap_or(false));
                 local_plan_mode.set(plan.unwrap_or(None));
-                agent_completion.set(completion.unwrap_or_default());
                 auto_review_enabled.set(auto_review.unwrap_or(false));
             }
         });
@@ -8584,49 +8573,6 @@ fn App() -> impl IntoView {
             },
         )
     };
-    let save_agent_completion = Callback::new(move |next: AgentCompletionSettings| {
-        let previous = agent_completion.get_untracked();
-        agent_completion.set(next);
-        agent_completion_busy.set(true);
-        spawn_local(async move {
-            // Like the other per-conversation rows: choosing a policy before
-            // the first message starts the conversation it applies to.
-            let (session_id, created_session) = match active_session.get_untracked() {
-                Some(session_id) => (session_id, false),
-                None => {
-                    let Some(session_id) =
-                        invoke("new_session", JsValue::UNDEFINED).await.as_string()
-                    else {
-                        agent_completion.set(previous);
-                        agent_completion_busy.set(false);
-                        return;
-                    };
-                    (session_id, true)
-                }
-            };
-            let args = to_value(&serde_json::json!({
-                "sessionId": session_id.clone(),
-                "policy": next.policy,
-                "autoResume": next.auto_resume,
-            }))
-            .unwrap();
-            let saved = invoke_checked("set_session_agent_completion", args)
-                .await
-                .ok()
-                .and_then(|value| {
-                    serde_wasm_bindgen::from_value::<AgentCompletionSettings>(value).ok()
-                });
-            if created_session {
-                active_session.set(Some(session_id.clone()));
-                items.set(vec![]);
-                refresh_session_history();
-            }
-            if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
-                agent_completion.set(saved.unwrap_or(previous));
-                agent_completion_busy.set(false);
-            }
-        });
-    });
     spawn_local(async move {
         let value = invoke("get_auto_failure_analysis_settings", JsValue::UNDEFINED).await;
         if let Ok(settings) = from_value::<AutoFailureAnalysisSettings>(value) {
@@ -15390,48 +15336,6 @@ fn App() -> impl IntoView {
                                             .unwrap_or_else(|| t(locale.get(), "composer.specialist.none"))}</span>
                                         <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
-                                    <label class="agent-menu-row">
-                                        <span>{move || t(locale.get(), "composer.agent_completion")}</span>
-                                        <select class="agent-menu-select"
-                                            data-testid="agent-completion-policy"
-                                            disabled=move || agent_completion_busy.get()
-                                            on:change=move |event| {
-                                                let mut next = agent_completion.get_untracked();
-                                                next.policy = if dom_value(&event) == "background" {
-                                                    AgentCompletionPolicy::Background
-                                                } else {
-                                                    AgentCompletionPolicy::Inline
-                                                };
-                                                if next.policy == AgentCompletionPolicy::Inline {
-                                                    next.auto_resume = false;
-                                                }
-                                                save_agent_completion.call(next);
-                                            }>
-                                            <option value="inline" prop:selected=move || agent_completion.get().policy == AgentCompletionPolicy::Inline>
-                                                {move || t(locale.get(), "composer.agent_completion.inline")}
-                                            </option>
-                                            <option value="background" prop:selected=move || agent_completion.get().policy == AgentCompletionPolicy::Background>
-                                                {move || t(locale.get(), "composer.agent_completion.background")}
-                                            </option>
-                                        </select>
-                                    </label>
-                                    {move || (agent_completion.get().policy == AgentCompletionPolicy::Background).then(|| view! {
-                                        <label class="agent-menu-row agent-menu-sub">
-                                            <span>{move || t(locale.get(), "composer.agent_auto_resume")}</span>
-                                            <span class="toggle agent-menu-toggle">
-                                                <input type="checkbox"
-                                                    data-testid="agent-auto-resume"
-                                                    prop:checked=move || agent_completion.get().auto_resume
-                                                    disabled=move || agent_completion_busy.get()
-                                                    on:change=move |event| {
-                                                        let mut next = agent_completion.get_untracked();
-                                                        next.auto_resume = event_target_checked(&event);
-                                                        save_agent_completion.call(next);
-                                                    } />
-                                                <span class="toggle-track" aria-hidden="true"></span>
-                                            </span>
-                                        </label>
-                                    })}
                                     <label class="agent-menu-row">
                                         <span>{move || t(locale.get(), "composer.auto_review")}</span>
                                         <span class="toggle agent-menu-toggle">

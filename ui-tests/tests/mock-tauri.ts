@@ -557,7 +557,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   const lastMessageBySession: Record<string, string> = {};
   const sessionPlanMode: Record<string, boolean> = {};
   const sessionFullPermission: Record<string, boolean> = {};
-  const sessionAgentCompletion: Record<string, { policy: "inline" | "background"; auto_resume: boolean }> = {};
   let lastDelegationSessionId = "s-current";
   // Mutable workspace fixture lets live FileChanged events prove that open
   // previews re-read content written by an agent tool.
@@ -5699,20 +5698,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const sessionId = String(arg("sessionId") ?? "");
             sessionFullPermission[sessionId] = Boolean(arg("enabled"));
             return sessionFullPermission[sessionId];
-          }
-          case "get_session_agent_completion": {
-            const sessionId = String(arg("sessionId") ?? "");
-            return sessionAgentCompletion[sessionId] ?? { policy: "inline", auto_resume: false };
-          }
-          case "set_session_agent_completion": {
-            const sessionId = String(arg("sessionId") ?? "");
-            const policy = arg("policy") === "background" ? "background" : "inline";
-            const value = {
-              policy,
-              auto_resume: policy === "background" && Boolean(arg("autoResume")),
-            } as const;
-            sessionAgentCompletion[sessionId] = value;
-            return value;
           }
           case "write_memory_file": {
             const name = String(arg("name") ?? "");

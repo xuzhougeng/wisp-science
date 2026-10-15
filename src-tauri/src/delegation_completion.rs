@@ -5,10 +5,9 @@
 //! responses remain in workflow attempts for `get_delegated_result`.
 
 use crate::{delegation_tool, AgentEvent, AppState, SessionRuntime};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use wisp_core::{
     AgentDelegationResponse, AgentUsage, DelegationExecutionResult, DelegationExecutionStatus,
     DelegationStatus, DelegationStepExecution,
@@ -28,116 +27,6 @@ fn completion_poll_delay(idle_polls: u32, found_work: bool) -> Duration {
     } else {
         COMPLETION_POLL_IDLE_INTERVAL
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AgentCompletionPolicy {
-    #[default]
-    Inline,
-    Background,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub(crate) struct AgentCompletionSettings {
-    #[serde(default)]
-    pub(crate) policy: AgentCompletionPolicy,
-    #[serde(default)]
-    pub(crate) auto_resume: bool,
-}
-
-fn completion_setting_key(frame_id: &str) -> String {
-    format!("frame_agent_completion:{frame_id}")
-}
-
-pub(crate) async fn session_completion_settings(
-    store: &Store,
-    frame_id: &str,
-) -> AgentCompletionSettings {
-    let mut settings: AgentCompletionSettings = store
-        .get_setting(&completion_setting_key(frame_id))
-        .await
-        .ok()
-        .flatten()
-        .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default();
-    settings.auto_resume &= settings.policy == AgentCompletionPolicy::Background;
-    settings
-}
-
-pub(crate) async fn save_session_completion_settings(
-    store: &Store,
-    project_id: &str,
-    frame_id: &str,
-    settings: AgentCompletionSettings,
-) -> Result<AgentCompletionSettings, String> {
-    match store
-        .frame_project_id(frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .as_deref()
-    {
-        Some(owner) if owner == project_id => {}
-        Some(_) => return Err("Conversation does not belong to the active project.".into()),
-        None => return Err("Conversation does not exist.".into()),
-    }
-    let settings = AgentCompletionSettings {
-        policy: settings.policy,
-        auto_resume: settings.policy == AgentCompletionPolicy::Background && settings.auto_resume,
-    };
-    store
-        .set_setting(
-            &completion_setting_key(frame_id),
-            &serde_json::to_string(&settings).map_err(|error| error.to_string())?,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(settings)
-}
-
-#[tauri::command]
-pub(crate) async fn get_session_agent_completion(
-    state: State<'_, AppState>,
-    window: crate::workspace_surface::WorkspaceSurface,
-    session_id: String,
-) -> Result<AgentCompletionSettings, String> {
-    let project = state.require_active(window.label())?;
-    match state
-        .store
-        .frame_project_id(&session_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .as_deref()
-    {
-        Some(owner) if owner == project.id => {
-            Ok(session_completion_settings(&state.store, &session_id).await)
-        }
-        Some(_) => Err("Conversation does not belong to the active project.".into()),
-        None => Err("Conversation does not exist.".into()),
-    }
-}
-
-#[tauri::command]
-pub(crate) async fn set_session_agent_completion(
-    state: State<'_, AppState>,
-    window: crate::workspace_surface::WorkspaceSurface,
-    session_id: String,
-    policy: AgentCompletionPolicy,
-    auto_resume: bool,
-) -> Result<AgentCompletionSettings, String> {
-    let project = state.require_active(window.label())?;
-    let settings = save_session_completion_settings(
-        &state.store,
-        &project.id,
-        &session_id,
-        AgentCompletionSettings {
-            policy,
-            auto_resume,
-        },
-    )
-    .await?;
-    crate::clear_idle_agents(&state).await;
-    Ok(settings)
 }
 
 pub(crate) async fn persist_execution_result(
@@ -542,10 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_policy_defaults_inline_and_disables_irrelevant_resume() {
-        let default = serde_json::from_str::<AgentCompletionSettings>("{}").unwrap();
-        assert_eq!(default.policy, AgentCompletionPolicy::Inline);
-        assert!(!default.auto_resume);
+    fn completion_status_reads_the_compact_result() {
         assert_eq!(
             completion_status(r#"{"result":{"status":"succeeded"}}"#),
             "succeeded"
@@ -564,14 +450,6 @@ mod tests {
             .create_frame("f", "p", "Agent", "model")
             .await
             .unwrap();
-        store
-            .set_setting(
-                &completion_setting_key("f"),
-                r#"{"policy":"inline","auto_resume":true}"#,
-            )
-            .await
-            .unwrap();
-        assert!(!session_completion_settings(&store, "f").await.auto_resume);
         let mut workflow = wisp_store::AgentWorkflow::new("wf", "p", "workspace", "batch").unwrap();
         workflow.frame_id = Some("f".into());
         store

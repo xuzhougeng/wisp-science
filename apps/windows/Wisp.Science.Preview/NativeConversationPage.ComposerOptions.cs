@@ -10,8 +10,7 @@ namespace Wisp.Science.Preview;
 
 internal sealed partial class NativeConversationPage
 {
-    private readonly ToggleSwitch fullPermission = new(), delegation = new(), autoReview = new(), failureAnalysis = new(), memory = new(), autoResume = new();
-    private readonly ComboBox completionChoice = new() { Width = 148, MinWidth = 0 };
+    private readonly ToggleSwitch fullPermission = new(), delegation = new(), autoReview = new(), failureAnalysis = new(), memory = new();
     private readonly NumberBox failureThreshold = new() { Minimum = 1, Maximum = 100, SmallChange = 1, Width = 82, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden };
     private readonly NumberBox failureMinimum = new() { Minimum = 1, Maximum = 100, SmallChange = 1, Width = 82, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden };
     private readonly Button reviewerChoice = new(), specialistChoice = new(), computeChoice = new();
@@ -19,13 +18,12 @@ internal sealed partial class NativeConversationPage
     private readonly Button optionReload = new() { Content = "重新读取" };
     private readonly Flyout optionSubmenu = new() { Placement = FlyoutPlacementMode.RightEdgeAlignedTop };
     private bool optionSubmenuOpen, updatingOptions;
-    private FrameworkElement? planRow, thresholdRow, minimumRow, resumeRow, specialistRow;
+    private FrameworkElement? planRow, thresholdRow, minimumRow, specialistRow;
     private readonly List<Control> submenuControls = [];
 
     public bool HandleComposerOptionsEscape()
     {
         if (optionSubmenuOpen) { optionSubmenu.Hide(); return true; }
-        if (completionChoice.IsDropDownOpen) { completionChoice.IsDropDownOpen = false; return true; }
         if (composerOptionsOpen) { composerOptions.Hide(); return true; }
         return false;
     }
@@ -66,7 +64,7 @@ internal sealed partial class NativeConversationPage
         presenter.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(16)));
         presenter.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(20, 12, 20, 12)));
         composerOptions.FlyoutPresenterStyle = optionSubmenu.FlyoutPresenterStyle = presenter;
-        foreach (var field in new Control[] { completionChoice, failureThreshold, failureMinimum })
+        foreach (var field in new Control[] { failureThreshold, failureMinimum })
         {
             field.CornerRadius = new CornerRadius(8); field.BorderThickness = new Thickness(1);
             field.Background = design.Brush("bg-elev"); field.BorderBrush = design.Brush("border-strong");
@@ -74,9 +72,6 @@ internal sealed partial class NativeConversationPage
         body.Children.Add(planRow = OptionRow("先计划", planMode));
         body.Children.Add(OptionRow("完全权限", fullPermission));
         body.Children.Add(OptionRow("子代理委派", delegation));
-        completionChoice.Items.Add("当前轮内返回"); completionChoice.Items.Add("后台返回");
-        body.Children.Add(OptionRow("结果返回方式", completionChoice));
-        body.Children.Add(resumeRow = OptionRow("自动续接", autoResume));
         body.Children.Add(OptionRow("自动审查", autoReview));
         body.Children.Add(OptionRow("自动分析工具失败", failureAnalysis));
         body.Children.Add(thresholdRow = OptionRow("失败率阈值 (%)", failureThreshold, true));
@@ -111,11 +106,6 @@ internal sealed partial class NativeConversationPage
         };
         delegation.Toggled += async (_, _) => { if (!updatingOptions) await model.Options.SetToggleAsync("delegation", delegation.IsOn, token: lifetime.Token); };
         autoReview.Toggled += async (_, _) => { if (!updatingOptions) await model.Options.SetToggleAsync("auto_review", autoReview.IsOn, token: lifetime.Token); };
-        completionChoice.SelectionChanged += async (_, _) =>
-        {
-            if (!updatingOptions) await model.Options.SetCompletionAsync(completionChoice.SelectedIndex == 1 ? "background" : "inline", model.Options.Session?.Completion.AutoResume == true, lifetime.Token);
-        };
-        autoResume.Toggled += async (_, _) => { if (!updatingOptions) await model.Options.SetCompletionAsync("background", autoResume.IsOn, lifetime.Token); };
         failureAnalysis.Toggled += async (_, _) => { if (!updatingOptions) await SaveFailureAsync(); };
         failureThreshold.ValueChanged += async (_, _) => { if (!updatingOptions) await SaveFailureAsync(); };
         failureMinimum.ValueChanged += async (_, _) => { if (!updatingOptions) await SaveFailureAsync(); };
@@ -156,15 +146,11 @@ internal sealed partial class NativeConversationPage
             fullPermission.IsOn = state.Session?.FullPermission == true;
             delegation.IsOn = state.Session?.Delegation == true;
             autoReview.IsOn = state.Session?.AutoReview == true;
-            completionChoice.SelectedIndex = state.Session?.Completion.Policy == "background" ? 1 : 0;
-            autoResume.IsOn = state.Session?.Completion.AutoResume == true;
-            resumeRow!.Visibility = completionChoice.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
             failureAnalysis.IsOn = state.Failure?.Enabled == true;
             failureThreshold.Value = state.Failure?.FailureRateThreshold ?? 30; failureMinimum.Value = state.Failure?.MinimumFailures ?? 2;
             thresholdRow!.Visibility = minimumRow!.Visibility = failureAnalysis.IsOn ? Visibility.Visible : Visibility.Collapsed;
             memory.IsOn = state.MemoryEnabled;
             foreach (var control in new Control[] { fullPermission, delegation, autoReview, failureAnalysis, failureThreshold, failureMinimum, memory, reviewerChoice, computeChoice }) control.IsEnabled = state.CanEdit;
-            completionChoice.IsEnabled = autoResume.IsEnabled = state.CanEdit && state.Session?.Delegation == true;
             specialistChoice.IsEnabled = state.CanEdit && state.Session?.SpecialistLocked == false
                 && model.Snapshot is { Running: false, Items.Length: 0 };
             specialistRow!.Opacity = specialistChoice.IsEnabled ? 1 : 0.45;
