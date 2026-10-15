@@ -51,6 +51,23 @@ class WorkspaceStateTest {
         assertEquals(calendar.month, journey.month)
         assertEquals(day, journey.selectedDay)
     }
+    @Test fun transcriptDetailIsADeviceSettingThatSurvivesClearingTheRemoteView() {
+        assertEquals(TranscriptDetail.STANDARD, WorkspaceState().transcriptDetail)
+        val note = LocalEntry("note", "notebook", "观察", "文字")
+        val cleared = state.copy(transcriptDetail = TranscriptDetail.MINIMAL, entries = listOf(note), detailMenu = true,
+            drafts = mapOf(route to "草稿")).cleared(demo = true)
+        assertEquals(TranscriptDetail.MINIMAL, cleared.transcriptDetail)
+        assertEquals(listOf(note), cleared.entries)
+        assertTrue(cleared.demo)
+        assertNull(cleared.snapshot)
+        assertTrue(cleared.drafts.isEmpty())
+        assertFalse(cleared.detailMenu)
+        assertEquals(listOf(WorkspaceTab.CONVERSATIONS.root), cleared.stack)
+    }
+    @Test fun openDetailMenuIsTheTopmostBackLayer() {
+        assertFalse(WorkspaceState().hasBack)
+        assertTrue(WorkspaceState(detailMenu = true).hasBack)
+    }
     @Test fun hostReasoningItemsAreLabelledAsThinking() {
         assertEquals("思考", roleLabel("reasoning"))
         assertEquals("工具", roleLabel("tool"))

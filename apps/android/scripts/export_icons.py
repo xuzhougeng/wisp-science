@@ -11,7 +11,7 @@ DEST = ROOT / "apps/android/app/src/main/res/drawable"
 ICONS = ("gear", "folder", "chevron-left", "chevron-right", "arrow-up",
          "notebook", "list", "research-trail", "square-pen", "chat", "calendar",
          "inbox", "camera", "edit", "book", "circle-help", "plus", "circle",
-         "circle-check", "chevron-down", "image")
+         "circle-check", "chevron-down", "image", "adjustments")
 
 
 def path_data(element):

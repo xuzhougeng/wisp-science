@@ -6,9 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,8 +60,11 @@ fun WorkspaceScreen(model: WorkspaceModel) {
                     }
                     PageKind.SESSIONS -> ToolbarAction(R.drawable.wisp_square_pen, "新建对话", enabled = !state.busy &&
                         state.status.phase == ConnectionPhase.ONLINE && "native_conversation_create" in state.status.commands, onClick = model::createConversation)
-                    PageKind.CONVERSATION -> ToolbarAction(R.drawable.wisp_folder, "项目文件") {
-                        model.open(Page(PageKind.FILES, "项目文件", page.project, page.session))
+                    PageKind.CONVERSATION -> {
+                        ToolbarAction(R.drawable.wisp_folder, "项目文件") {
+                            model.open(Page(PageKind.FILES, "项目文件", page.project, page.session))
+                        }
+                        TranscriptDetailMenu(state, model)
                     }
                     PageKind.CHECKLIST -> ToolbarAction(R.drawable.wisp_gear, "清单设置") { model.open(Page(PageKind.INFO, "清单设置", path = "checklist")) }
                     PageKind.NOTEBOOK -> ToolbarAction(R.drawable.wisp_circle_help, "记录本帮助") { model.open(Page(PageKind.INFO, "记录本帮助", path = "notebook")) }
@@ -230,6 +234,9 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
     var showCompleted by rememberSaveable { mutableStateOf(false) }
     val runs = snapshot?.value?.field("run_cards")?.rows().orEmpty()
     val completed = completedRuns(runs)
+    val rows = remember(snapshot, state.transcriptDetail) {
+        snapshot?.let { RemoteTranscript.rows(it.items, it.running, state.transcriptDetail) }.orEmpty()
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(state.page.route, snapshot?.items?.size) {
         if (snapshot != null) {
@@ -247,26 +254,13 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
             if (snapshot?.value?.field("next_before_seq")?.let { it != JsonNull } == true) item {
                 Text("当前显示最近一段对话；完整历史请在主机查看。", style = MaterialTheme.typography.bodySmall)
             }
-            itemsIndexed(snapshot?.items.orEmpty()) { index, item ->
-                val question = Question.parse(item)
-                Surface(color = if (item.field("role").text() == "user") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                    shape = MaterialTheme.shapes.medium) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(roleLabel(item.field("role").text()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        if (question != null) {
-                            Text(question.text)
-                            val answered = snapshot!!.items.drop(index + 1).any { it.field("role").text() == "user" }
-                            if (answered) Text("已回答", style = MaterialTheme.typography.labelMedium)
-                            else {
-                                Text("选择选项会填入输入框，确认后发送。", style = MaterialTheme.typography.bodySmall)
-                                question.options.forEach { (label, description) ->
-                                    OutlinedButton(onClick = { model.setDraft(listOf(label, description).filter { it.isNotEmpty() }.joinToString("\n")) },
-                                        enabled = state.can("native_conversation_send") && !snapshot.running) { Text(label) }
-                                }
-                            }
-                        } else if (item.field("role").text() in setOf("assistant", "user")) {
-                            MarkdownContent(item.field("text").text(), state, model, item.field("resources").rows())
-                        } else SelectionContainer { Text(item.field("text").text().ifBlank { item.field("tool_name").text() }) }
+            // Rows point into this snapshot; the epoch keeps expanded state from carrying over to another window.
+            snapshot?.let { current ->
+                items(rows, key = { "${current.epoch}:${it.key}" }) { row ->
+                    when (row) {
+                        is TranscriptRow.Item -> TranscriptItem(current, row.index, state, model)
+                        is TranscriptRow.Process -> ProcessGroup(row, current, state, model)
+                        is TranscriptRow.Failures -> FailureHint(row, current, state, model)
                     }
                 }
             }
@@ -293,6 +287,15 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
                 }
                 if (showCompleted) items(completed, key = { "run-${it.field("id").text()}" }) { RunCard(it) }
             }
+            // Without this, the minimal level would look frozen while folded tools run.
+            snapshot?.takeIf { it.running && fresh }?.let { live ->
+                item(key = "running") {
+                    Row(Modifier.testTag("transcript-running"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        MutedText(live.value.field("activity_status").text().ifBlank { "运行中…" })
+                    }
+                }
+            }
             if (snapshot == null && !state.loading) item { Text("连接后刷新，加载当前对话。") }
         }
         RowDivider()
@@ -318,6 +321,133 @@ private fun Conversation(state: WorkspaceState, model: WorkspaceModel) {
             Text("写文件和执行命令前，会请你批准", Modifier.align(Alignment.CenterHorizontally),
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+@Composable
+private fun TranscriptDetailMenu(state: WorkspaceState, model: WorkspaceModel) {
+    Box {
+        ToolbarAction(R.drawable.wisp_adjustments, "信息详细程度", onClick = model::openDetailMenu)
+        // Open state lives in WorkspaceState, so window-level Escape and Back close only this menu.
+        DropdownMenu(state.detailMenu, onDismissRequest = model::closeDetailMenu, modifier = Modifier.testTag("transcript-detail-menu")) {
+            Text("信息详细程度", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            TranscriptDetail.entries.forEach { level ->
+                val current = level == state.transcriptDetail
+                DropdownMenuItem(text = {
+                    Column {
+                        Text(level.label)
+                        Text(when (level) {
+                            TranscriptDetail.MINIMAL -> "只看对话和失败提示"
+                            TranscriptDetail.STANDARD -> "执行过程折叠为一行"
+                            TranscriptDetail.FULL -> "展开每一步工具调用"
+                        }, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                }, onClick = { model.setTranscriptDetail(level) }, leadingIcon = { RadioButton(current, onClick = null) },
+                    modifier = Modifier.semantics { selected = current })
+            }
+        }
+    }
+}
+
+private val TranscriptRow.key: String get() = when (this) {
+    is TranscriptRow.Item -> "item-$index"
+    is TranscriptRow.Process -> "process-${indices.first()}"
+    is TranscriptRow.Failures -> "failures-${indices.first()}"
+}
+
+@Composable
+private fun TranscriptItem(snapshot: RemoteSnapshot, index: Int, state: WorkspaceState, model: WorkspaceModel) {
+    val item = snapshot.items[index]
+    val role = item.field("role").text()
+    if (role in setOf("tool", "acp_tool", "reasoning")) {
+        StepRow(item, open = state.transcriptDetail == TranscriptDetail.FULL)
+        return
+    }
+    val question = Question.parse(item)
+    Surface(color = if (role == "user") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(roleLabel(role), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            if (question != null) {
+                Text(question.text)
+                val answered = snapshot.items.drop(index + 1).any { it.field("role").text() == "user" }
+                if (answered) Text("已回答", style = MaterialTheme.typography.labelMedium)
+                else {
+                    Text("选择选项会填入输入框，确认后发送。", style = MaterialTheme.typography.bodySmall)
+                    question.options.forEach { (label, description) ->
+                        OutlinedButton(onClick = { model.setDraft(listOf(label, description).filter { it.isNotEmpty() }.joinToString("\n")) },
+                            enabled = state.can("native_conversation_send") && !snapshot.running) { Text(label) }
+                    }
+                }
+            } else if (role in setOf("assistant", "user")) {
+                MarkdownContent(item.field("text").text(), state, model, item.field("resources").rows())
+            } else SelectionContainer { Text(item.field("text").text().ifBlank { item.field("tool_name").text() }) }
+        }
+    }
+}
+
+/** One tool or reasoning step: name and status, with input and output behind a tap. */
+@Composable
+private fun StepRow(item: JsonElement, open: Boolean) {
+    var expanded by rememberSaveable(open) { mutableStateOf(open) }
+    Surface(onClick = { expanded = !expanded }, color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(12.dp)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (item.field("role").text() == "reasoning") "思考" else item.field("tool_name").text().ifBlank { "工具" },
+                    Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                StatusBadge(if (item.field("ok") == JsonPrimitive(false)) "failed" else item.field("status").text())
+                WispChevron(expanded)
+            }
+            if (expanded) SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val input = item.field("input").text()
+                    if (input.isNotEmpty()) Text(input, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(item.field("text").text(), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProcessGroup(row: TranscriptRow.Process, snapshot: RemoteSnapshot, state: WorkspaceState, model: WorkspaceModel) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("process-group-${row.indices.first()}"),
+            color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(14.dp)) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(row.summary, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                if (row.failures > 0) Text("${row.failures} 项失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                WispChevron(expanded)
+            }
+        }
+        if (expanded) TranscriptSteps(row.indices, snapshot, state, model)
+    }
+}
+
+/** 简洁 keeps only a compact hint for groups with failures; a tap reveals that group's steps. */
+@Composable
+private fun FailureHint(row: TranscriptRow.Failures, snapshot: RemoteSnapshot, state: WorkspaceState, model: WorkspaceModel) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("failure-hint-${row.indices.first()}"),
+            color = MaterialTheme.colorScheme.error.copy(alpha = 0.08f), shape = RoundedCornerShape(10.dp)) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${row.count} 项失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+                WispChevron(expanded)
+            }
+        }
+        if (expanded) TranscriptSteps(row.indices, snapshot, state, model)
+    }
+}
+
+@Composable
+private fun TranscriptSteps(indices: List<Int>, snapshot: RemoteSnapshot, state: WorkspaceState, model: WorkspaceModel) {
+    Column(Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        indices.forEach { index -> key(index) { TranscriptItem(snapshot, index, state, model) } }
     }
 }
 

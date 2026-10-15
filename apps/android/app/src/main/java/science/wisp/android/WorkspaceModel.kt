@@ -41,9 +41,10 @@ data class WorkspaceState(
     val calendarMonth: CalendarHistory? = null, val calendarDay: CalendarHistory? = null,
     val loading: Boolean = false, val busy: Boolean = false, val localBusy: Boolean = true,
     val error: String? = null, val localError: String? = null,
+    val transcriptDetail: TranscriptDetail = TranscriptDetail.DEFAULT, val detailMenu: Boolean = false,
 ) {
     val page get() = stack.last()
-    val hasBack get() = stack.size > 1 || tab != WorkspaceTab.CONVERSATIONS
+    val hasBack get() = detailMenu || stack.size > 1 || tab != WorkspaceTab.CONVERSATIONS
     val showsTabs get() = page.kind in setOf(PageKind.PROJECTS, PageKind.SESSIONS, PageKind.CALENDAR, PageKind.CHECKLIST, PageKind.NOTEBOOK)
     fun switchingTab(next: WorkspaceTab): WorkspaceState = if (next == tab) this else copy(
         tab = next, stack = savedStacks[next] ?: listOf(next.root), savedStacks = savedStacks + (tab to stack),
@@ -53,6 +54,9 @@ data class WorkspaceState(
     fun shiftingJourneyMonth(delta: Long): WorkspaceState = copy(journeyMonth = journeyMonth.plusMonths(delta), detail = JsonNull, error = null)
     fun can(command: String): Boolean = !busy && page.route !in uncertain &&
         canAct(status, snapshot?.takeIf { it.route == page.route }, snapshotSession, command)
+    /** Switching server or demo clears the remote view; device-level data and settings stay. */
+    fun cleared(demo: Boolean): WorkspaceState = WorkspaceState(entries = entries, localError = localError, localBusy = localBusy,
+        demo = demo, transcriptDetail = transcriptDetail)
 }
 
 class WorkspaceModel(application: Application) : AndroidViewModel(application) {
@@ -62,6 +66,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     private val localStore = DeviceEntries(application)
     private val preferences = application.getSharedPreferences("workspace", 0)
     private val remote = RemoteConnection(viewModelScope)
+    private val detailKey = "transcript_detail"
     private var service: RemoteService = remote
     private var configuration: RemoteConfiguration? = null
     private var savedConnection = ""
@@ -74,6 +79,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
     private var foreground = false
 
     init {
+        mutable.update { it.copy(transcriptDetail = TranscriptDetail.from(preferences.getString(detailKey, null))) }
         viewModelScope.launch {
             try {
                 val entries = withContext(Dispatchers.IO) { localStore.load() }
@@ -134,7 +140,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         workspaceEpoch++
         reader?.cancel()
         service.disconnect()
-        mutable.update { WorkspaceState(entries = it.entries, localError = it.localError, localBusy = it.localBusy, demo = demo) }
+        mutable.update { it.cleared(demo) }
     }
     fun connect(address: String, code: String) {
         try {
@@ -177,7 +183,7 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
 
     fun open(page: Page) {
         revision++
-        mutable.update { it.copy(stack = it.stack + page, detail = JsonNull, error = null,
+        mutable.update { it.copy(stack = it.stack + page, detail = JsonNull, error = null, detailMenu = false,
             journeyMonth = if (page.kind == PageKind.JOURNEY) YearMonth.now() else it.journeyMonth,
             snapshot = if (page.route == it.snapshot?.route) it.snapshot else null,
             sessions = if (page.kind == PageKind.SESSIONS) emptyList() else it.sessions) }
@@ -190,6 +196,8 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         refresh()
     }
     fun back(): Boolean {
+        // The detail menu is the topmost layer: Escape and Back close it before leaving the page.
+        if (state.value.detailMenu) { closeDetailMenu(); return true }
         if (state.value.stack.size == 1) {
             if (state.value.tab == WorkspaceTab.CONVERSATIONS) return false
             selectTab(WorkspaceTab.CONVERSATIONS)
@@ -199,6 +207,12 @@ class WorkspaceModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(stack = it.stack.dropLast(1), detail = JsonNull, error = null) }
         refresh()
         return true
+    }
+    fun openDetailMenu() { mutable.update { it.copy(detailMenu = true) } }
+    fun closeDetailMenu() { mutable.update { it.copy(detailMenu = false) } }
+    fun setTranscriptDetail(detail: TranscriptDetail) {
+        preferences.edit().putString(detailKey, detail.id).apply()
+        mutable.update { it.copy(transcriptDetail = detail, detailMenu = false) }
     }
     fun setDraft(text: String) { mutable.update { it.copy(drafts = it.drafts + (it.page.route to text)) } }
     fun acknowledge() { mutable.update { it.copy(uncertain = it.uncertain - it.page.route, error = null) } }

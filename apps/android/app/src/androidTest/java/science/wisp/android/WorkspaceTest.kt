@@ -12,6 +12,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +24,7 @@ class WorkspaceTest {
     @Before fun startOffline() {
         // Set before Activity creation: tests never need or initiate a remote connection.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        context.getSharedPreferences("workspace", 0).edit().putBoolean("demo", true).commit()
+        context.getSharedPreferences("workspace", 0).edit().putBoolean("demo", true).remove("transcript_detail").commit()
         activity = ActivityScenario.launch(MainActivity::class.java)
     }
     @After fun close() { activity.close() }
@@ -58,6 +59,29 @@ class WorkspaceTest {
         compose.onNodeWithText("分析流程与审批").assertExists()
         escape()
         compose.onNodeWithText("记录本").assertExists()
+    }
+
+    @Test fun transcriptDetailMenuClosesFirstOnEscapeAndPersistsTheChoice() {
+        compose.onNodeWithText("RNA-seq 质控 · 演示").performClick()
+        compose.onNodeWithText("样本质控与报告").performClick()
+        compose.onNodeWithContentDescription("信息详细程度").performClick()
+        compose.onNodeWithText("标准").assertIsSelected()
+        escape()
+        compose.onNodeWithTag("transcript-detail-menu").assertDoesNotExist()
+        compose.onNodeWithContentDescription("消息").assertExists()
+        compose.onNodeWithContentDescription("信息详细程度").performClick()
+        compose.onNodeWithText("简洁").performClick()
+        compose.onNodeWithTag("transcript-detail-menu").assertDoesNotExist()
+        val preferences = InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("workspace", 0)
+        assertEquals("minimal", preferences.getString("transcript_detail", null))
+        activity.recreate()
+        compose.onNodeWithContentDescription("信息详细程度").performClick()
+        compose.onNodeWithText("简洁").assertIsSelected()
+        compose.onNodeWithText("标准").assertIsNotSelected()
+        escape()
+        compose.onNodeWithContentDescription("消息").assertExists()
+        escape()
+        compose.onNodeWithText("分析流程与审批").assertExists()
     }
 
     @Test fun demoMessageHasLocalReplyAndSurvivesActivityRecreation() {
