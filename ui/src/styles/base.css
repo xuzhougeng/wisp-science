@@ -92,6 +92,18 @@
   --motion-distance-xs: 6px;
   --motion-distance-sm: 12px;
   --motion-distance-md: 20px;
+  /* Agent status motion: one cadence and one color per state, shared by the
+     thread, composer, sidebar, swarm and pet so concurrent indicators stay in
+     step and a state reads the same wherever it shows. */
+  --agent-pulse-duration: 1.4s;
+  --agent-orbit-duration: 2.4s;
+  --agent-spin-duration: .8s;
+  --agent-motion-ease: ease-in-out;
+  --agent-running: var(--clay);
+  --agent-review: var(--info);
+  --agent-waiting: var(--warn);
+  --agent-failed: var(--err);
+  --agent-done: var(--ok);
 
   /* Latin first for UI chrome; CJK immediately after so mixed text doesn't fall through Segoe.
      Appearance settings can inject a user font ahead of the stack via --font-user-*. */

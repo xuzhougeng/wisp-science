@@ -192,10 +192,10 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 }
 .side-item.ses.running:not(.attention) .ses-live { display: inline-flex; }
 .side-item.ses.attention .ses-attention { display: inline-flex; }
-.ses-live { color: var(--ok); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ok) 50%, transparent)); }
-.ses-live svg { animation: ses-spin 1.05s linear infinite; }
-.ses-attention { color: var(--warn); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--warn) 45%, transparent)); }
-.ses-attention svg { animation: ses-breathe 1.8s ease-in-out infinite; }
+.ses-live { color: var(--agent-running); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--agent-running) 50%, transparent)); }
+.ses-live svg { animation: ses-spin var(--agent-orbit-duration) linear infinite; }
+.ses-attention { color: var(--agent-waiting); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--agent-waiting) 45%, transparent)); }
+.ses-attention svg { animation: ses-breathe var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
 .side-item-wrap { position: relative; min-width: 0; }
 /* Row menus are revealed only on hover/keyboard focus — including the active
    session — so the list reads as plain titles at rest. Opacity (not display)

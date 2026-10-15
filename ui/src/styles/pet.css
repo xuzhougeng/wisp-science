@@ -26,9 +26,9 @@
 .wisp-pet[data-state="running"] .wisp-pet-status,
 .wisp-pet[data-state="review"] .wisp-pet-status,
 .wisp-pet[data-state="waiting"] .wisp-pet-status { opacity: 1; transform: scale(1); }
-.wisp-pet[data-state="running"] .wisp-pet-status { background: var(--info); }
-.wisp-pet[data-state="review"] .wisp-pet-status { background: var(--clay); }
-.wisp-pet[data-state="waiting"] .wisp-pet-status { background: var(--warn); animation: pet-status-pulse 1.3s ease-in-out infinite; }
+.wisp-pet[data-state="running"] .wisp-pet-status { background: var(--agent-running); }
+.wisp-pet[data-state="review"] .wisp-pet-status { background: var(--agent-review); }
+.wisp-pet[data-state="waiting"] .wisp-pet-status { background: var(--agent-waiting); animation: pet-status-pulse var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
 .wisp-pet-state-label { display: none; }
 
 html.pet-window-shell,
@@ -85,7 +85,7 @@ html.pet-window-shell body {
 .pet-window-root .wisp-pet[data-state="failed"] .wisp-pet-state-label { display: -webkit-box; }
 
 @keyframes pet-arrive { from { opacity: 0; transform: translateX(var(--pet-x)) translateY(12px) scale(.92); } to { opacity: 1; transform: translateX(var(--pet-x)) translateY(0) scale(1); } }
-@keyframes pet-status-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 20%, transparent); } }
+@keyframes pet-status-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--agent-waiting) 20%, transparent); } }
 
 @media (max-width: 720px) {
   .wisp-pet { right: 14px; bottom: 132px; width: 72px; height: 78px; }

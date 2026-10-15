@@ -89,3 +89,54 @@ test("failed tools settle without a success check or a running animation", async
   await expect(indicator.locator("svg > path")).toHaveCSS("animation-name", "none");
   await expect(page.getByTestId("steps-wait-note")).toHaveCount(0);
 });
+
+// Resolve a status token to the computed rgb() the browser paints with.
+async function tokenColor(page: Page, token: string) {
+  return page.evaluate(name => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, token);
+}
+
+test("running tool, streaming caret and sidebar share the agent status tokens", async ({ page }) => {
+  const frameId = await start(page);
+  const running = await tokenColor(page, "--agent-running");
+  const runDot = page.locator(".steps .run-dot").first();
+  await expect(runDot).toBeVisible();
+  await expect(runDot).toHaveCSS("animation-name", "tool-pulse");
+  await expect(runDot).toHaveCSS("animation-duration", "1.4s");
+  await expect(runDot).toHaveCSS("background-color", running);
+  // The sidebar only renders `.ses-live` for a backgrounded running session
+  // (covered in visual-polish); probe the rule itself for its status color.
+  const sidebarLive = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.className = "ses-live";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  expect(sidebarLive).toBe(running);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(runDot).toHaveCSS("animation-name", "none");
+  await expect(runDot).toHaveCSS("opacity", "1");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await emit(page, frameId, { kind: "Text", delta: "Streaming the comparison" });
+  // Replies under the tail threshold render fully parsed, so the caret rides
+  // on the last prose block of the streaming prefix.
+  const tail = page.locator(".streaming-markdown-prefix > p:last-child");
+  await expect(tail).toContainText("Streaming the comparison");
+  const caret = () => tail.evaluate(el => {
+    const style = getComputedStyle(el, "::after");
+    return { content: style.content, animation: style.animationName, color: style.backgroundColor };
+  });
+  await expect.poll(caret).toEqual({ content: '""', animation: "tool-pulse", color: running });
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(caret).toEqual({ content: '""', animation: "none", color: running });
+});

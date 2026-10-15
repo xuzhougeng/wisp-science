@@ -12085,6 +12085,32 @@ test("inline approval scope is sent with confirmation", async ({ page }) => {
   });
 });
 
+test("approval waiting cues use the shared icon and waiting status color", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("NEEDCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const line = page.getByTestId("approval-wait-line");
+  await expect(line).toBeVisible({ timeout: 10_000 });
+  await expect(line.locator("svg")).toHaveCount(1);
+  await expect.poll(() => line.evaluate(el => getComputedStyle(el, "::before").content)).toBe("none");
+  const waiting = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--agent-waiting)";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(line).toHaveCSS("color", waiting);
+  const dot = page.locator(".approval-dot");
+  await expect(dot).toHaveCSS("background-color", waiting);
+  await expect(dot).toHaveCSS("animation-name", "approval-pulse");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(dot).toHaveCSS("animation-name", "none");
+  await expect(dot).toHaveCSS("opacity", "1");
+});
+
 test("R execution uses the language-specific approval label", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("NEEDRCONFIRM");

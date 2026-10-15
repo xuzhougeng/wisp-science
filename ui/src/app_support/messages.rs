@@ -1480,7 +1480,7 @@ pub(crate) fn ApprovalCard(
     let sid_feedback = create_rw_signal(session_id);
     view! {
         <div class="approval-wrap">
-            <div class="approval-wait-line">{move || t(locale.get(), "approval.waiting_line")}</div>
+            <div class="approval-wait-line" data-testid="approval-wait-line">{compose_icon("circle-alert")}{move || t(locale.get(), "approval.waiting_line")}</div>
             <div class="approval-card" class:plan=is_plan>
                 <div class="approval-head">
                     <span class="approval-title">{title}</span>
