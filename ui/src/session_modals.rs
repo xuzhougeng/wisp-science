@@ -208,19 +208,35 @@ impl SessionChildrenChoiceState {
     }
     /// Whether the conversations are deleted along with children (tracked).
     pub(crate) fn deletes_children(self) -> bool {
-        self.selected.get()
-            && self
-                .preview
-                .get()
-                .is_some_and(|preview| !preview.is_empty())
+        Self::cascade(self.preview.get().as_ref(), self.selected.get()) == Some(true)
     }
     /// `None` keeps the backend's original refusal for a conversation with
     /// branches: nothing was counted, or the count could not be loaded.
     pub(crate) fn include_children(self) -> Option<bool> {
+        Self::cascade(
+            self.preview.get_untracked().as_ref(),
+            self.selected.get_untracked(),
+        )
+    }
+    /// Selected conversations that go with a selected ancestor when children
+    /// are deleted, so they are not deleted on their own.
+    pub(crate) fn nested(self) -> std::collections::HashSet<String> {
         self.preview
             .get_untracked()
-            .filter(|preview| !preview.is_empty())
-            .map(|_| self.selected.get_untracked())
+            .map(|preview| preview.nested.into_iter().collect())
+            .unwrap_or_default()
+    }
+    /// A selection that already holds every branch and subagent shows no
+    /// choice; each family is still deleted as one, from its top conversation.
+    fn cascade(preview: Option<&SessionChildrenPreview>, selected: bool) -> Option<bool> {
+        let preview = preview?;
+        if !preview.is_empty() {
+            Some(selected)
+        } else if !preview.nested.is_empty() {
+            Some(true)
+        } else {
+            None
+        }
     }
 }
 

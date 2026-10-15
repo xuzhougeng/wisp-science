@@ -496,7 +496,11 @@ shared. Each conversation is checked against its own reviewed preview before
 any of them is deleted, then deleted deepest first with the files it reviewed,
 so a stale preview deletes nothing and asks for a fresh one. A subagent
 selected together with its parent is deleted, files included, as part of the
-parent's family.
+parent's family. When the selection already holds every subagent and branch,
+for example after **Select all** in the sidebar, there is nothing left to keep
+and the children box is not shown, but the family is still previewed and
+deleted as one, from its top selected conversation, rather than conversation
+by conversation.
 
 Each dispatch binds the child to the parent's chat model, reasoning effort and
 service tier, so a subagent runs on the model its parent uses rather than the

@@ -222,3 +222,38 @@ test('a selected subagent is deleted with its selected parent, from the parent f
   await expect(page.locator('[data-session-id="subagent-parent"]')).toHaveCount(0);
   expect(await deleteCalls(page)).toEqual([expect.objectContaining(familyFiles)]);
 });
+
+for (const withFiles of [true, false]) {
+  test(`selecting a parent with every subagent deletes them as one family${withFiles ? ', files included' : ''}`, async ({ page }) => {
+    await page.addInitScript(tauriMock);
+    await page.goto('/?mockSubagent=1&mockSubagentActivity=1');
+    await page.locator('.proj-card-main').first().click();
+    const sidebar = page.locator('.sidebar');
+    await sidebar.getByRole('button', { name: 'Select', exact: true }).click();
+    await sidebar.getByRole('checkbox', { name: 'Select all' }).click();
+    await sidebar.getByTestId('bulk-delete-sessions').click();
+
+    // Nothing is left to keep, so there is no choice, yet the subagents'
+    // files are previewed with family semantics like a cascade.
+    const modal = page.locator('.confirm-modal');
+    const confirm = modal.getByRole('button', { name: 'Delete', exact: true });
+    await expect(confirm).toBeEnabled();
+    await expect(modal.getByTestId('session-children-choice')).toHaveCount(0);
+    if (withFiles) {
+      await modal.getByRole('checkbox', { name: 'Also delete associated artifacts and files' }).check();
+      await expect(modal).toContainText('3 artifacts · 3 files to process');
+      for (const id of ['subagent-parent', 'subagent-child', 'subagent-done']) {
+        await expect(modal).toContainText(`results/${id}.svg`);
+      }
+    }
+    await confirm.click();
+
+    // One call for the parent, whatever order the selection is in.
+    for (const id of ['subagent-parent', 'subagent-child', 'subagent-done']) {
+      await expect(page.locator(`[data-session-id="${id}"]`)).toHaveCount(0);
+    }
+    expect(await deleteCalls(page)).toEqual([expect.objectContaining(withFiles
+      ? familyFiles
+      : { id: 'subagent-parent', includeChildren: true, includeArtifacts: false })]);
+  });
+}

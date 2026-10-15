@@ -224,7 +224,9 @@ There is no recursive deletion of output directories or remote/GPU/SSH data.
 When a conversation is deleted together with its subagents and branches, the
 preview covers each of them, and references between conversations deleted
 together keep nothing. Each one's preview is rechecked before any is deleted
-(see [Agent delegation](agent-delegation.md)).
+(see [Agent delegation](agent-delegation.md)). Selecting a conversation with
+all of its subagents and branches, such as with **Select all**, deletes them the
+same way.
 
 Moving eligible artifacts transfers their complete recorded version histories,
 internal version dependencies, environment snapshots, and structured message

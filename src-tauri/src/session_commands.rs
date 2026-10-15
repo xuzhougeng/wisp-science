@@ -929,7 +929,8 @@ async fn session_children(
 }
 
 /// What deleting `ids` together with their children would also remove. A
-/// selected conversation nested under another selected one is not counted.
+/// selected conversation nested under another selected one is not counted
+/// but listed as nested: deleting children takes it along with that one.
 #[tauri::command]
 pub(super) async fn preview_session_children(
     state: State<'_, AppState>,
@@ -937,16 +938,24 @@ pub(super) async fn preview_session_children(
     ids: Vec<String>,
 ) -> Result<wisp_dto::SessionChildrenPreview, String> {
     let ap = state.require_active(window.label())?;
+    children_preview(&state.store, &ap.id, &ids).await
+}
+
+async fn children_preview(
+    store: &Store,
+    project_id: &str,
+    ids: &[String],
+) -> Result<wisp_dto::SessionChildrenPreview, String> {
     let mut subagents = HashSet::new();
     let mut branches = HashSet::new();
     let mut explorations = HashSet::new();
-    for id in &ids {
-        let (descendants, rounds) = session_children(&state.store, &ap.id, id).await?;
-        for child in descendants
-            .into_iter()
-            .filter(|child| !ids.contains(&child.id))
-        {
-            if child.subagent {
+    let mut nested = BTreeSet::new();
+    for id in ids {
+        let (descendants, rounds) = session_children(store, project_id, id).await?;
+        for child in descendants {
+            if ids.contains(&child.id) {
+                nested.insert(child.id);
+            } else if child.subagent {
                 subagents.insert(child.id);
             } else {
                 branches.insert(child.id);
@@ -958,6 +967,7 @@ pub(super) async fn preview_session_children(
         subagents: subagents.len(),
         branches: branches.len(),
         explorations: explorations.len(),
+        nested: nested.into_iter().collect(),
     })
 }
 
@@ -2951,5 +2961,54 @@ mod delete_children_tests {
         assert!(explorations.is_empty());
         let (descendants, _) = session_children(&store, "p", "other").await.unwrap();
         assert!(descendants.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_selection_holding_a_whole_family_lists_it_as_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("wisp.sqlite")).await.unwrap();
+        store.create_project("p", "P", "").await.unwrap();
+        for id in ["main", "branch", "sub", "sub-branch", "other"] {
+            store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        }
+        store
+            .set_session_branch_point("branch", "main", 0, "before_user")
+            .await
+            .unwrap();
+        store
+            .set_session_dispatched_from("sub", "main")
+            .await
+            .unwrap();
+        store
+            .set_session_branch_point("sub-branch", "sub", 0, "after_response")
+            .await
+            .unwrap();
+        let select = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+
+        // Select all: nothing is left to count, but every conversation under
+        // `main` goes with it rather than on its own.
+        let all = children_preview(
+            &store,
+            "p",
+            &select(&["sub-branch", "other", "branch", "sub", "main"]),
+        )
+        .await
+        .unwrap();
+        assert!(all.is_empty());
+        assert_eq!(all.nested, ["branch", "sub", "sub-branch"]);
+
+        // A partly selected family counts what is left and lists the rest.
+        let partial = children_preview(&store, "p", &select(&["main", "sub"]))
+            .await
+            .unwrap();
+        assert_eq!((partial.subagents, partial.branches), (0, 2));
+        assert_eq!(partial.nested, ["sub"]);
+
+        // Unrelated conversations are not nested in one another.
+        let apart = children_preview(&store, "p", &select(&["sub-branch", "other"]))
+            .await
+            .unwrap();
+        assert!(apart.is_empty());
+        assert!(apart.nested.is_empty());
     }
 }

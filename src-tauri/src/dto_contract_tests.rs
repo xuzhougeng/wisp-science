@@ -1211,11 +1211,25 @@ fn session_children_preview_counts_each_kind() {
         subagents: 2,
         branches: 1,
         explorations: 3,
+        nested: vec!["subagent".into()],
     };
     let decoded: wisp_dto::SessionChildrenPreview = roundtrip(&preview);
     assert_eq!(decoded, preview);
     assert!(!decoded.is_empty());
     assert!(wisp_dto::SessionChildrenPreview::default().is_empty());
+    // A selection that already holds every child leaves nothing to count.
+    let whole_family: wisp_dto::SessionChildrenPreview = serde_json::from_value(
+        serde_json::json!({"subagents": 0, "branches": 0, "explorations": 0, "nested": ["subagent"]}),
+    )
+    .unwrap();
+    assert!(whole_family.is_empty());
+    assert_eq!(whole_family.nested, ["subagent"]);
+    // Payloads from before `nested` still decode.
+    let older: wisp_dto::SessionChildrenPreview = serde_json::from_value(
+        serde_json::json!({"subagents": 1, "branches": 0, "explorations": 0}),
+    )
+    .unwrap();
+    assert!(older.nested.is_empty());
 }
 
 #[test]

@@ -18202,6 +18202,12 @@ fn App() -> impl IntoView {
                             } else {
                                 HashMap::new()
                             };
+                            // Selected conversations deleted along with a selected ancestor.
+                            let nested = if include_children == Some(true) {
+                                delete_children.nested()
+                            } else {
+                                HashSet::new()
+                            };
                             ui_confirm.set(None);
                             match action_ok.clone() {
                                 UiConfirm::EnableFullPermission(target_session) => {
@@ -18260,11 +18266,10 @@ fn App() -> impl IntoView {
                                     spawn_local(async move {
                                         let mut deleted = HashSet::new();
                                         for id in ids {
-                                            // Already removed along with a selected parent, or
-                                            // reviewed to be removed with it.
-                                            if deleted.contains(&id)
-                                                || artifact_children.values().any(|children| children.contains(&id))
-                                            {
+                                            // Already removed, or removed with a selected
+                                            // ancestor, reviewed files included: one call per
+                                            // family, whatever order the selection is in.
+                                            if deleted.contains(&id) || nested.contains(&id) {
                                                 continue;
                                             }
                                             let child_fingerprints = artifact_children.get(&id).map(|children| {

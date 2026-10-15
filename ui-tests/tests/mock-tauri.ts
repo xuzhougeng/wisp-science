@@ -2992,6 +2992,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               subagents: children.filter((row) => row.dispatched_from).length,
               branches: children.filter((row) => !row.dispatched_from).length,
               explorations: mockExplorations.filter((item) => family.has(item.source_frame_id)).length,
+              // Selected conversations under another selected one, not counted above.
+              nested: ids.filter((id) => ids.some((other) =>
+                mockSessionChildren([other]).children.some((row) => row.id === id))).sort(),
             };
           }
           case "preview_session_family_artifacts": {
