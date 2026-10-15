@@ -971,9 +971,11 @@ test.describe("mobile workspace aligned with the native research tabs", () => {
     await page.goto(`/remote#${CODE}/p/p-1/s/s-2`);
     await page.locator("#files").click();
     await page.keyboard.press("Escape");
+    // The URL first: the pane can still look closed before hashchange opens it.
+    await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
+    await expect(page.locator("#files")).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator("#panel")).toBeHidden();
     await expect(page.locator("#main")).toContainText("Second conversation.");
-    await expect(page).toHaveURL(/\/p\/p-1\/s\/s-2$/);
   });
 });
 

@@ -313,8 +313,8 @@
     if (!route.session) route.file = null;
     return route;
   }
-  function href(patch) {
-    const route = { ...state.route, ...patch };
+  function href(patch, base = state.route) {
+    const route = { ...base, ...patch };
     let hash = `#${state.code}`;
     if (route.tab && route.tab !== "chats") return `${hash}/t/${route.tab}`;
     if (!route.project) return hash;
@@ -324,7 +324,10 @@
     if (route.file) return `${hash}/f/${encodeURIComponent(route.file)}`;
     return route.dir ? `${hash}/d/${encodeURIComponent(route.dir)}` : hash;
   }
-  const go = (patch) => (location.hash = href(patch));
+  // location.hash changes at once, but hashchange applies it to state.route a
+  // task later. Build on the live hash so a key or click right after a
+  // navigation keeps that navigation instead of acting on the previous route.
+  const go = (patch) => (location.hash = href(patch, readRoute()));
   const noFiles = { dir: null, file: null };
   const parentDir = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".");
   function resolvePath(dir, target) {
@@ -591,9 +594,12 @@
   }
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    // The live hash, not state.route: Escape pressed right after opening the
+    // file pane can arrive before hashchange has applied it.
+    const route = readRoute();
     if (sheetStack.length) {
       event.preventDefault(); event.stopImmediatePropagation(); closeSheet(false);
-    } else if (state.route.dir != null || state.route.file != null) {
+    } else if (route.dir != null || route.file != null) {
       event.preventDefault(); event.stopImmediatePropagation(); go(noFiles);
     }
   }, true);
