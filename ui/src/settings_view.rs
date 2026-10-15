@@ -8,7 +8,8 @@ use crate::app_support::{
     quick_action_label, reviewer_backend_key, reviewer_backend_label,
     reviewer_missing_acp_profile_id, set_reviewer_backend, settings_nav_entry_matches,
     settings_section_label, settings_subpage_label, show_toast, skill_matches_filter,
-    start_session_drag, DefaultAnalysisSelect, CRED_GROUPS, SETTINGS_NAV_GROUPS,
+    start_session_drag, DefaultAnalysisSelect, SpecialistTransfer, CRED_GROUPS,
+    SETTINGS_NAV_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked, is_mac, is_windows, open_external_url};
 use crate::dto::*;
@@ -1558,6 +1559,7 @@ pub(super) struct SettingsViewState {
     pub(super) conn_form: RwSignal<Option<ConnForm>>,
     pub(super) memory_selected: RwSignal<Option<String>>,
     pub(super) specialist_form: RwSignal<Option<Specialist>>,
+    pub(super) specialist_transfer: RwSignal<Option<SpecialistTransfer>>,
     pub(super) settings: RwSignal<Settings>,
     pub(super) bootstrap: RwSignal<Option<BootstrapStatus>>,
     pub(super) settings_message: RwSignal<Option<(bool, String)>>,
@@ -1892,6 +1894,288 @@ fn ProjectApprovalSettings(
     }
 }
 
+/// One skill/connector whitelist in the import preview. `None` (inherit) and
+/// `Some([])` (allow none) read differently; missing entries are marked.
+fn specialist_whitelist_view(
+    locale: RwSignal<Locale>,
+    entries: Option<Vec<String>>,
+    missing: Vec<String>,
+    test_id: &'static str,
+) -> View {
+    match entries {
+        None => view! {
+            <span class="hint" data-testid=test_id>{move || t(locale.get(), "specialists.inherit")}</span>
+        }
+        .into_view(),
+        Some(list) if list.is_empty() => view! {
+            <span class="hint" data-testid=test_id>{move || t(locale.get(), "specialists.import.none_allowed")}</span>
+        }
+        .into_view(),
+        Some(list) => view! {
+            <ul class="specialist-transfer-list" data-testid=test_id>
+                {list.into_iter().map(|entry| {
+                    let absent = missing.contains(&entry);
+                    view! {
+                        <li class:missing=absent>
+                            <code>{entry}</code>
+                            {absent.then(|| view! {
+                                <small>{move || t(locale.get(), "specialists.import.missing")}</small>
+                            })}
+                        </li>
+                    }
+                }).collect_view()}
+            </ul>
+        }
+        .into_view(),
+    }
+}
+
+fn secret_kind_label(locale: Locale, kind: &str) -> String {
+    t(
+        locale,
+        match kind {
+            "private_key" => "specialists.secret.private_key",
+            "token_prefix" => "specialists.secret.token_prefix",
+            "bearer" => "specialists.secret.bearer",
+            _ => "specialists.secret.assignment",
+        },
+    )
+}
+
+/// The Specialists import preview / export secret warning. The preview shows
+/// the full instructions and needs an explicit "I reviewed this" before
+/// Import enables. Escape is handled by the Settings capture listener.
+fn specialist_transfer_dialog(
+    locale: RwSignal<Locale>,
+    transfer: RwSignal<Option<SpecialistTransfer>>,
+    settings_busy: RwSignal<bool>,
+    export_specialist: Callback<(String, bool)>,
+    confirm_import: Callback<()>,
+) -> impl IntoView {
+    // Keyed on the preview itself so toggling the checkbox or the model does
+    // not remount the dialog (and reset the instructions scroll position).
+    let import_preview = create_memo(move |_| {
+        transfer.with(|current| match current {
+            Some(SpecialistTransfer::Import { preview, .. }) => Some(preview.clone()),
+            _ => None,
+        })
+    });
+    let secret_warning = create_memo(move |_| {
+        transfer.with(|current| match current {
+            Some(SpecialistTransfer::SecretWarning { id, name, findings }) => {
+                Some((id.clone(), name.clone(), findings.clone()))
+            }
+            _ => None,
+        })
+    });
+    let import_model_id = move || {
+        transfer.with(|current| match current {
+            Some(SpecialistTransfer::Import { model_id, .. }) => model_id.clone(),
+            _ => String::new(),
+        })
+    };
+    let import_reviewed = move || {
+        transfer.with(|current| {
+            matches!(
+                current,
+                Some(SpecialistTransfer::Import { reviewed: true, .. })
+            )
+        })
+    };
+    let import_error = move || {
+        transfer.with(|current| match current {
+            Some(SpecialistTransfer::Import { error, .. }) => error.clone(),
+            _ => None,
+        })
+    };
+    let close = move || {
+        if !settings_busy.get_untracked() {
+            transfer.set(None);
+        }
+    };
+    view! {
+        {move || import_preview.get().map(|preview| {
+            let package = preview.package.clone();
+            let conflict = preview.name_conflict.clone();
+            let has_conflict = conflict.is_some();
+            let matches = preview.model_matches.clone();
+            let has_matches = !matches.is_empty();
+            let hint = package.model_hint.clone();
+            let any_missing = !preview.missing_skills.is_empty() || !preview.missing_connectors.is_empty();
+            let unchecked_skills = !preview.skills_checked
+                && package.skills.as_ref().is_some_and(|skills| !skills.is_empty());
+            let source = format!("{} · {}", preview.file_name, format_bytes(preview.bytes));
+            let instructions = package.instructions.clone();
+            let instructions_empty = instructions.trim().is_empty();
+            view! {
+                <div class="overlay" on:click=move |_| close()>
+                    <section class="modal specialist-transfer-dialog" role="dialog" aria-modal="true"
+                        aria-labelledby="specialist-import-title" data-testid="specialist-import-preview"
+                        on:click=|event| event.stop_propagation()>
+                        <div class="ps-head">
+                            <h2 id="specialist-import-title">{move || t(locale.get(), "specialists.import.title")}</h2>
+                            <button type="button" class="ps-close"
+                                title=move || t(locale.get(), "settings.cancel")
+                                aria-label=move || t(locale.get(), "settings.cancel")
+                                disabled=move || settings_busy.get()
+                                on:click=move |_| close()>{compose_icon("close")}</button>
+                        </div>
+                        <p class="hint">{move || t(locale.get(), "specialists.import.safety")}</p>
+                        {conflict.map(|conflict| view! {
+                            <p class="err" role="alert" data-testid="specialist-import-conflict">
+                                {move || tf(locale.get(), "specialists.import.conflict", &[("name", &conflict.name)])}
+                            </p>
+                        })}
+                        <dl class="specialist-transfer-fields">
+                            <dt>{move || t(locale.get(), "specialists.name")}</dt>
+                            <dd data-testid="specialist-import-name">{package.name.clone()}</dd>
+                            {(!package.description.trim().is_empty()).then(|| view! {
+                                <dt>{move || t(locale.get(), "specialists.description")}</dt>
+                                <dd>{package.description.clone()}</dd>
+                            })}
+                            <dt>{move || t(locale.get(), "specialists.import.source")}</dt>
+                            <dd>{source}</dd>
+                        </dl>
+                        <div class="specialist-transfer-section">
+                            <strong>{move || t(locale.get(), "specialists.instructions")}</strong>
+                            <pre class="specialist-transfer-instructions" tabindex="0"
+                                data-testid="specialist-import-instructions">{if instructions_empty {
+                                    t(locale.get_untracked(), "specialists.import.no_instructions")
+                                } else {
+                                    instructions
+                                }}</pre>
+                        </div>
+                        <div class="specialist-transfer-section">
+                            <strong>{move || t(locale.get(), "specialists.skills")}</strong>
+                            {specialist_whitelist_view(locale, package.skills.clone(), preview.missing_skills.clone(), "specialist-import-skills")}
+                            {unchecked_skills.then(|| view! {
+                                <span class="hint">{move || t(locale.get(), "specialists.import.skills_unchecked")}</span>
+                            })}
+                        </div>
+                        <div class="specialist-transfer-section">
+                            <strong>{move || t(locale.get(), "specialists.connectors")}</strong>
+                            {specialist_whitelist_view(locale, package.connectors.clone(), preview.missing_connectors.clone(), "specialist-import-connectors")}
+                        </div>
+                        {any_missing.then(|| view! {
+                            <p class="hint" data-testid="specialist-import-missing-hint">{move || t(locale.get(), "specialists.import.missing_hint")}</p>
+                        })}
+                        <div class="specialist-transfer-section">
+                            <strong>{move || t(locale.get(), "specialists.model")}</strong>
+                            {hint.map(|hint| view! {
+                                <span class="hint" data-testid="specialist-import-model-hint">
+                                    {move || tf(locale.get(), "specialists.import.model_hint", &[("provider", &hint.provider), ("model", &hint.model)])}
+                                </span>
+                            })}
+                            {if has_matches {
+                                view! {
+                                    <select data-testid="specialist-import-model"
+                                        aria-label=move || t(locale.get(), "specialists.model")
+                                        on:change=move |ev| {
+                                            let value = dom_value(&ev);
+                                            transfer.update(|current| {
+                                                if let Some(SpecialistTransfer::Import { model_id, .. }) = current {
+                                                    *model_id = value;
+                                                }
+                                            });
+                                        }>
+                                        <option value="" prop:selected=move || import_model_id().is_empty()>
+                                            {move || t(locale.get(), "specialists.model.follow")}
+                                        </option>
+                                        {matches.into_iter().map(|matched| {
+                                            let value = matched.id.clone();
+                                            let selected = matched.id.clone();
+                                            let label = format!("{} · {}", matched.label, matched.provider);
+                                            view! {
+                                                <option value=value prop:selected=move || import_model_id() == selected>{label}</option>
+                                            }
+                                        }).collect_view()}
+                                    </select>
+                                }.into_view()
+                            } else {
+                                view! {
+                                    <span class="hint" data-testid="specialist-import-model-follow">
+                                        {move || t(locale.get(), "specialists.import.model_follow")}
+                                    </span>
+                                }.into_view()
+                            }}
+                        </div>
+                        <label class="specialist-transfer-confirm">
+                            <input type="checkbox" data-testid="specialist-import-reviewed"
+                                prop:checked=import_reviewed
+                                disabled=has_conflict
+                                on:change=move |ev| {
+                                    let checked = event_target_checked(&ev);
+                                    transfer.update(|current| {
+                                        if let Some(SpecialistTransfer::Import { reviewed, .. }) = current {
+                                            *reviewed = checked;
+                                        }
+                                    });
+                                } />
+                            <span>{move || t(locale.get(), "specialists.import.reviewed")}</span>
+                        </label>
+                        {move || import_error().map(|message| view! {
+                            <p class="err" role="alert" data-testid="specialist-import-error">{message}</p>
+                        })}
+                        <div class="row">
+                            <button type="button" disabled=move || settings_busy.get() on:click=move |_| close()>
+                                {move || t(locale.get(), "settings.cancel")}
+                            </button>
+                            <button type="button" class="primary" data-testid="specialist-import-confirm"
+                                disabled=move || has_conflict || !import_reviewed() || settings_busy.get()
+                                on:click=move |_| confirm_import.call(())>
+                                {move || t(locale.get(), "specialists.import.confirm")}
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            }
+        })}
+        {move || secret_warning.get().map(|(id, name, findings)| view! {
+            <div class="overlay" on:click=move |_| close()>
+                <section class="modal specialist-transfer-dialog" role="alertdialog" aria-modal="true"
+                    aria-labelledby="specialist-secret-title" data-testid="specialist-export-warning"
+                    on:click=|event| event.stop_propagation()>
+                    <div class="ps-head">
+                        <h2 id="specialist-secret-title">{move || t(locale.get(), "specialists.export.secret_title")}</h2>
+                        <button type="button" class="ps-close"
+                            title=move || t(locale.get(), "settings.cancel")
+                            aria-label=move || t(locale.get(), "settings.cancel")
+                            disabled=move || settings_busy.get()
+                            on:click=move |_| close()>{compose_icon("close")}</button>
+                    </div>
+                    <p class="hint">{move || tf(locale.get(), "specialists.export.secret_body", &[("name", &name)])}</p>
+                    <ul class="specialist-transfer-list" data-testid="specialist-secret-findings">
+                        {findings.into_iter().map(|finding| {
+                            let line = finding.line.to_string();
+                            let kind = finding.kind;
+                            view! {
+                                <li>
+                                    <span>{move || {
+                                        let loc = locale.get();
+                                        let label = secret_kind_label(loc, &kind);
+                                        tf(loc, "specialists.export.secret_line", &[("line", &line), ("kind", &label)])
+                                    }}</span>
+                                    <code>{finding.excerpt}</code>
+                                </li>
+                            }
+                        }).collect_view()}
+                    </ul>
+                    <div class="row">
+                        <button type="button" disabled=move || settings_busy.get() on:click=move |_| close()>
+                            {move || t(locale.get(), "settings.cancel")}
+                        </button>
+                        <button type="button" class="primary" data-testid="specialist-export-anyway"
+                            disabled=move || settings_busy.get()
+                            on:click=move |_| export_specialist.call((id.clone(), true))>
+                            {move || t(locale.get(), "specialists.export.anyway")}
+                        </button>
+                    </div>
+                </section>
+            </div>
+        })}
+    }
+}
+
 #[component]
 pub(super) fn SettingsView(
     state: SettingsViewState,
@@ -1922,6 +2206,9 @@ pub(super) fn SettingsView(
     use_plugin: Callback<(String, String, String, Vec<String>, bool)>,
     remove_plugin: Callback<(String, String)>,
     remove_specialist: Callback<String>,
+    export_specialist: Callback<(String, bool)>,
+    pick_specialist_import: Callback<()>,
+    confirm_specialist_import: Callback<()>,
     open_add_host: Callback<()>,
     edit_ssh_host: Callback<String>,
     import_ssh_hosts: Callback<()>,
@@ -1957,6 +2244,7 @@ pub(super) fn SettingsView(
         conn_form,
         memory_selected,
         specialist_form,
+        specialist_transfer,
         settings,
         bootstrap,
         settings_message,
@@ -2458,6 +2746,14 @@ pub(super) fn SettingsView(
     // Specialist skill whitelist picker: search query + filtered results, so a
     // large skill library never renders as an unbounded checkbox list.
     let specialist_skill_query = create_rw_signal(String::new());
+    // Saved custom specialist open in the form, if any: only those export.
+    let specialist_export_id = create_memo(move |_| {
+        specialist_form.with(|form| {
+            form.as_ref()
+                .filter(|form| !form.id.is_empty() && !form.builtin)
+                .map(|form| form.id.clone())
+        })
+    });
     let specialist_filtered_skills = create_memo(move |_| {
         let query = specialist_skill_query.get();
         let query = query.trim().to_lowercase();
@@ -2483,6 +2779,15 @@ pub(super) fn SettingsView(
             || external_link_confirm.get_untracked().is_some()
         {
             return false;
+        }
+        // The specialist import preview / export warning sits above the
+        // Specialists page and its form. Keep it open while a save dialog or
+        // import is in flight, but never let Escape fall through to the page.
+        if specialist_transfer.get_untracked().is_some() {
+            if !settings_busy.get_untracked() {
+                specialist_transfer.set(None);
+            }
+            return true;
         }
         if joining.get_untracked() {
             joining.set(false);
@@ -3281,6 +3586,13 @@ pub(super) fn SettingsView(
                         </div>
                     </div>
                 }.into_view())}
+                {specialist_transfer_dialog(
+                    locale,
+                    specialist_transfer,
+                    settings_busy,
+                    export_specialist,
+                    confirm_specialist_import,
+                )}
                 {move || joining.get().then(|| view! {
                     <div class="overlay project-sync-join-overlay">
                         <div class="modal project-sync-join-modal" role="dialog"
@@ -5898,6 +6210,15 @@ pub(super) fn SettingsView(
                                                 {move || t(locale.get(), "specialists.reviewer.test")}
                                             </button>
                                         })}
+                                        {move || specialist_export_id.get().map(|id| view! {
+                                            <button type="button" class="specialist-export-button" data-testid="specialist-export-form"
+                                                title=move || t(locale.get(), "specialists.export.saved_hint")
+                                                disabled=move || settings_busy.get()
+                                                on:click=move |_| export_specialist.call((id.clone(), false))>
+                                                {compose_icon("download")}
+                                                <span>{move || t(locale.get(), "specialists.export")}</span>
+                                            </button>
+                                        })}
                                         <button type="button" disabled=move || settings_busy.get() on:click=move |_| close_settings_subpage.call(())>{move || t(locale.get(), "settings.cancel")}</button>
                                             <button type="button" class="primary" disabled=move || settings_busy.get() on:click=move |ev| save_specialist_form.call(ev)>{move || t(locale.get(), "settings.save")}</button>
                                     </div>
@@ -5935,8 +6256,19 @@ pub(super) fn SettingsView(
                                         <button type="button" on:click=move |ev| start_specialist_chat.call(ev)>
                                         {move || t(locale.get(), "specialists.add.chat")}
                                     </button>
+                                    <button type="button" data-testid="specialist-import"
+                                        disabled=move || settings_busy.get()
+                                        on:click=move |ev| {
+                                            close_details_ancestor(&ev);
+                                            pick_specialist_import.call(());
+                                        }>{move || t(locale.get(), "specialists.add.import")}</button>
                                 </details>
                             </div>
+                            {move || settings_message.get().map(|(ok, text)| view! {
+                                <div class="settings-status" data-testid="specialists-status"
+                                    class:ok=move || ok
+                                    class:fail=move || !ok>{text}</div>
+                            })}
                             <div class="conn-group-label">{move || t(locale.get(), "specialists.builtin")}</div>
                             <div class="settings-list">
                                 <For each=move || { specialists.get().into_iter().filter(|s| s.builtin).collect::<Vec<_>>() } key=|s| s.id.clone() let:s>
@@ -5969,6 +6301,7 @@ pub(super) fn SettingsView(
                                     {
                                         let edit = s.clone();
                                         let del_id = s.id.clone();
+                                        let export_id = s.id.clone();
                                         view! {
                                             <div class="settings-list-row settings-list-row-link"
                                                 on:click=move |_| {
@@ -5983,6 +6316,14 @@ pub(super) fn SettingsView(
                                                     })}
                                                 </div>
                                                 <div class="settings-list-actions">
+                                                    <button class="settings-list-export" type="button" data-testid="specialist-export"
+                                                        title=move || t(locale.get(), "specialists.export")
+                                                        aria-label=move || t(locale.get(), "specialists.export")
+                                                        disabled=move || settings_busy.get()
+                                                        on:click=move |ev| {
+                                                            ev.stop_propagation();
+                                                            export_specialist.call((export_id.clone(), false));
+                                                        }>{compose_icon("download")}</button>
                                                     {(!s.builtin).then(|| { let id = del_id.clone(); view! {
                                                         <button class="settings-list-remove" type="button" title=move || t(locale.get(), "specialists.remove")
                                                             on:click=move |ev| {

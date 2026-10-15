@@ -938,6 +938,7 @@ fn App() -> impl IntoView {
     let model_form_msg = model_settings.model_form_msg;
     let specialists = model_settings.specialists;
     let specialist_form = model_settings.specialist_form;
+    let specialist_transfer = model_settings.specialist_transfer;
     // Some/None memos (not the form contents) gate the sub-form panes; see the
     // comment on `conn_form_open` above.
     let model_form_open = create_memo(move |_| model_form.get().is_some());
@@ -6368,6 +6369,7 @@ fn App() -> impl IntoView {
         acp_form.set(None);
         acp_form_msg.set(None);
         specialist_form.set(None);
+        specialist_transfer.set(None);
         conn_form.set(None);
         open_conn_key.set(None);
         channels_open.set(None);
@@ -6384,7 +6386,11 @@ fn App() -> impl IntoView {
         settings_section.set(sec.into());
         match sec {
             "models" => refresh_models(),
-            "specialists" => refresh_specialists(),
+            "specialists" => {
+                // The list shows import/export status; drop other sections' messages.
+                settings_message.set(None);
+                refresh_specialists();
+            }
             "quick-actions" => {
                 refresh_quick_actions();
                 refresh_workflow_templates();
@@ -6519,6 +6525,14 @@ fn App() -> impl IntoView {
     let save_specialist_form = move |_| model_settings.save_specialist_form();
 
     let remove_specialist_fn = move |id: String| model_settings.remove_specialist(id);
+
+    let export_specialist_fn = move |(id, acknowledge_secrets): (String, bool)| {
+        model_settings.export_specialist(id, acknowledge_secrets)
+    };
+
+    let pick_specialist_import_fn = move |_: ()| model_settings.pick_specialist_import();
+
+    let confirm_specialist_import_fn = move |_: ()| model_settings.confirm_specialist_import();
 
     let start_new_session = Callback::new(move |_: ()| {
         show_publication_workspace.set(false);
@@ -18360,7 +18374,7 @@ fn App() -> impl IntoView {
             external_link_confirm=external_link_confirm
             state=SettingsViewState {
                 locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, ui_font_family, code_font_family, selection_popup_enabled, send_with_modifier, custom_css, update_check_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form, model_catalog_limits,
-                conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
+                conn_form, memory_selected, specialist_form, specialist_transfer, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
                 quick_actions, workflow_templates, workflow_studio: workflow_studio_state,
@@ -18399,6 +18413,9 @@ fn App() -> impl IntoView {
             use_plugin=use_plugin
             remove_plugin=remove_plugin
             remove_specialist=Callback::new(remove_specialist_fn)
+            export_specialist=Callback::new(export_specialist_fn)
+            pick_specialist_import=Callback::new(pick_specialist_import_fn)
+            confirm_specialist_import=Callback::new(confirm_specialist_import_fn)
             open_add_host=open_add_host_form
             edit_ssh_host=edit_ssh_host
             import_ssh_hosts=Callback::new(move |_: ()| {

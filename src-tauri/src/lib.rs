@@ -138,6 +138,7 @@ mod skill_commands;
 mod skill_portfolio;
 mod skill_store;
 pub(crate) use wisp_runs::snapshot_store;
+mod specialist_package;
 mod specialist_tool;
 mod specialists;
 pub(crate) use wisp_runs::ssh_guard;
@@ -7974,6 +7975,10 @@ pub fn run() {
             specialists::remove_specialist,
             specialists::set_session_specialist,
             specialists::get_session_specialist,
+            specialist_package::export_specialist,
+            specialist_package::pick_specialist_package,
+            specialist_package::preview_specialist_import,
+            specialist_package::import_specialist,
         ];
             handler(invoke)
         })

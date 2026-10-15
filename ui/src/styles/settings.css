@@ -1759,6 +1759,23 @@ button.workflow-graph-port.output {
 .settings-field-wide input { width: 100%; font-family: var(--font-mono); }
 .settings-list-version { color: var(--text-muted); font-weight: 500; }
 .plugin-install-dialog { width: min(620px, calc(100vw - 40px)); max-width: 620px; }
+.specialist-transfer-dialog { width: min(640px, calc(100vw - 40px)); max-width: 640px; }
+.specialist-transfer-dialog .hint { margin: 0; color: var(--text-muted); line-height: 1.45; }
+.specialist-transfer-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.specialist-transfer-fields dt { color: var(--text-muted); }
+.specialist-transfer-fields dd { margin: 0; overflow-wrap: anywhere; }
+.specialist-transfer-section { display: grid; gap: 6px; font-size: calc(13px * var(--ui-font-scale, 1)); }
+.specialist-transfer-section strong { font-weight: 600; }
+.specialist-transfer-instructions { margin: 0; max-height: 280px; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken); font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.specialist-transfer-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.specialist-transfer-list li { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--radius-xs); overflow-wrap: anywhere; }
+.specialist-transfer-list li.missing { border-style: dashed; color: var(--text-muted); }
+.specialist-transfer-list small { color: var(--text-faint); }
+.specialist-transfer-list code { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.specialist-transfer-dialog label.specialist-transfer-confirm { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); }
+.specialist-transfer-dialog .specialist-transfer-confirm input { width: auto; padding: 0; }
+.specialist-export-button { display: inline-flex; align-items: center; gap: 6px; }
+.specialist-export-button svg { width: 15px; height: 15px; }
 .plugin-install-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .plugin-install-dialog-head h3 { margin: 0 0 4px; font-size: calc(17px * var(--ui-font-scale, 1)); }
 .plugin-install-dialog-head p { margin: 0; line-height: 1.45; }
@@ -2939,7 +2956,8 @@ button.workflow-graph-port.output {
 .global-memory-editor .memory-editor-text { min-height: 100px; }
 .global-memory-editor .row { justify-content: flex-end; }
 .settings-list-remove,
-.settings-list-edit {
+.settings-list-edit,
+.settings-list-export {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2959,8 +2977,12 @@ button.workflow-graph-port.output {
 }
 .settings-list-row:hover .settings-list-remove,
 .settings-list-row:hover .settings-list-edit,
+.settings-list-row:hover .settings-list-export,
 .settings-list-remove:focus-visible,
-.settings-list-edit:focus-visible { opacity: 1; }
+.settings-list-edit:focus-visible,
+.settings-list-export:focus-visible { opacity: 1; }
+.settings-list-export svg { width: 15px; height: 15px; }
+.settings-list-export:hover { color: var(--text); background: var(--bg-sunken); }
 .settings-list-remove:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
 .settings-list-edit:hover { color: var(--text); background: var(--bg-sunken); }
 .settings-skill-remove {

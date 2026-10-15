@@ -97,7 +97,7 @@
 <p><strong>打开“设置 → 专家”，先读懂这张列表。</strong></p>
 <p><img src="../assets/specialists/01-overview.png" alt="专家设置页：三个内置专家，以及新建专家的“从零开始”和“通过对话创建”入口" loading="lazy" width="1612" height="710" /></p>
 <p><em>图 1：用户提供的专家设置截图。此时共有三个专家，自定义区域尚为空；右上角展开了“新建专家”菜单。</em></p>
-<p>页面分为 <strong>内置</strong> 和 <strong>自定义</strong> 两组。左上角“专家 (3)”表示当前列表共有三个专家；点击某一行，可以进入详情查看配置。右上角 <strong>新建专家</strong> 提供两条路径：已经想好规则，就选 <strong>从零开始</strong>；想让 Wisp 帮忙梳理需求，就选 <strong>通过对话创建</strong>。</p>
+<p>页面分为 <strong>内置</strong> 和 <strong>自定义</strong> 两组。左上角“专家 (3)”表示当前列表共有三个专家；点击某一行，可以进入详情查看配置。右上角 <strong>新建专家</strong> 提供两条创建路径：已经想好规则，就选 <strong>从零开始</strong>；想让 Wisp 帮忙梳理需求，就选 <strong>通过对话创建</strong>。同事分享的专家包可以用 <strong>从文件导入…</strong> 加进来，见后文“和同事分享专家”。</p>
 <p>截图中的三个内置专家各有明确用途：</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
 <thead>
@@ -210,6 +210,37 @@
 </blockquote>
 <p><strong>首条消息发送后，当前会话的专家选择会锁定。</strong> 想更换专家或回到普通对话，需要新建会话，再选择其他专家或“无”。设置页中的保存操作本身不会把已有对话切换到新专家。</p>
 <p>普通专家角色用于 Wisp 内置 Agent。Reviewer 单独支持 ACP 审查后端；不要据此假定所有自定义专家的指令和技能配置都会传递给外部 ACP Agent。</p>
+<p><strong>和同事分享专家：导出和导入 <code>.wisp-specialist.json</code> 包文件。</strong></p>
+<p>调好的自定义专家可以导出成一个包文件，发给同事或带到另一台电脑。在 <strong>自定义</strong> 列表中把鼠标移到专家所在行，点击下载图标；或者打开专家详情，点击底部的 <strong>导出</strong>。导出的是已保存的版本，表单里尚未保存的修改不会包含在内。内置专家不能导出。</p>
+<p>包文件是可以直接用文本编辑器查看的 JSON，只包含名称、描述、图标、颜色、指令、技能白名单和连接器白名单，外加一个可选的模型提示（导出时绑定模型的服务商和模型名）。它不包含专家 id、本机模型配置的 id、Reviewer 后端、API Key 或任何凭据。如果指令里有像 API Key、令牌或密码的内容，导出前会先弹出提醒，列出可疑的行号；可以先删掉密钥再导出，也可以选择 <strong>仍然导出</strong>。</p>
+<p>导入时打开 <strong>新建专家 → 从文件导入…</strong>，选择包文件。Wisp 会先显示完整预览：名称、描述、全部指令、技能和连接器白名单，以及本机缺少的技能和连接器。勾选“我已检查指令和白名单”后，<strong>导入</strong> 按钮才可用。</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>预览中的内容</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>已存在同名专家</td>
+<td>名称不区分大小写，与内置专家同名也算。重命名或删除现有专家后再导入</td>
+</tr>
+<tr>
+<td>继承项目设置 / 全部禁止</td>
+<td>白名单为空值表示继承项目设置；空列表表示什么都不允许，两者导入后保持不变</td>
+</tr>
+<tr>
+<td>本机没有</td>
+<td>这个技能或连接器在本机不存在。它会保留在白名单里，但安装之前不授予任何权限</td>
+</tr>
+<tr>
+<td>模型</td>
+<td>只有服务商和模型名都相同的本机配置会被预先选中；其他情况跟随当前模型，也可以手动选择匹配项</td>
+</tr>
+</tbody>
+</table></div>
+<p>导入的专家总是以新 id 加入 <strong>自定义</strong> 区域，不会覆盖已有专家，也不会覆盖内置专家。导入前请像审阅别人写的提示词一样读一遍指令：使用这个专家时，这些指令会进入智能体的提示词。</p>
 <p><strong>用一份熟悉的材料，检查专家是否真的帮你省下重复工作。</strong></p>
 <p>第一次试用时，可以挑一段你已经读过的摘要，检查三个地方：结构是否符合要求，关键结果是否有出处，是否把材料缺失的信息写成了确定事实。发现问题后，回到专家指令中补充具体规则，再开新会话验证。</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
@@ -243,6 +274,10 @@
 <tr>
 <td>科研绘图没有得到想要的格式</td>
 <td>是否明确指定 SVG 或 PNG；图像模型方式是否已经配置</td>
+</tr>
+<tr>
+<td>导入按钮一直是灰色</td>
+<td>是否勾选了确认框；是否已有同名专家</td>
 </tr>
 </tbody>
 </table></div>
@@ -286,7 +321,7 @@
 <p><strong>Open Settings → Specialists to see the available roles.</strong></p>
 <p><img src="../assets/tutorials/en/specialists/01-overview.png" alt="Specialists settings with Reviewer, Reader, Scientific Illustrator, and the expanded Add specialist menu" loading="lazy" width="1440" height="1000" /></p>
 <p><em>Figure 1: The English interface, captured with the mocked Tauri bridge for this tutorial. It shows the same three built-in Specialists and creation menu as the user-supplied Chinese screenshot.</em></p>
-<p>The list has <strong>Built-in</strong> and <strong>Custom</strong> groups. The count indicates how many Specialists are listed. Click a row to inspect its configuration. <strong>Add specialist</strong> offers <strong>Write from scratch</strong> and <strong>Chat with Claude</strong>, the current English label for creating one through a conversation.</p>
+<p>The list has <strong>Built-in</strong> and <strong>Custom</strong> groups. The count indicates how many Specialists are listed. Click a row to inspect its configuration. <strong>Add specialist</strong> offers <strong>Write from scratch</strong> and <strong>Chat with Claude</strong>, the current English label for creating one through a conversation. <strong>Import from file…</strong> adds a Specialist a colleague shared; see “Share a Specialist with colleagues” below.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
 <thead>
 <tr>
@@ -401,6 +436,37 @@ Finish with questions requiring source verification and the saved file path.
 </blockquote>
 <p><strong>The Specialist choice locks after the first message.</strong> Start another conversation to choose a different Specialist or <strong>None</strong>. Saving a role in Settings does not switch an existing conversation to it.</p>
 <p>Ordinary Specialist personas run in Wisp’s native Agent. Reviewer’s separate ACP backend support does not imply that every custom persona’s instructions and Skills are passed to external ACP Agents.</p>
+<p><strong>Share a Specialist with colleagues through a <code>.wisp-specialist.json</code> package.</strong></p>
+<p>Export a tuned custom Specialist to a package file and send it to a colleague or move it to another computer. Hover its row under <strong>Custom</strong> and click the download icon, or open the Specialist and click <strong>Export</strong> at the bottom. The export contains the saved version; unsaved form edits are not included. Built-in Specialists cannot be exported.</p>
+<p>The package is plain JSON you can read in any text editor. It holds the name, description, icon, color, instructions, the Skill and connector whitelists, and an optional model hint: the provider and model name the exporter had bound. It never contains the Specialist id, local model configuration ids, the Reviewer backend, API keys, or other credentials. If the instructions contain something that looks like an API key, token, or password, Wisp warns before writing the file and lists the suspicious lines. Remove the secret and export again, or choose <strong>Export anyway</strong>.</p>
+<p>To import, open <strong>Add specialist → Import from file…</strong> and pick the package. Wisp shows a full preview first: name, description, the complete instructions, both whitelists, and any Skills or connectors missing on this device. <strong>Import</strong> stays disabled until you check “I reviewed the instructions and whitelists”.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>In the preview</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A Specialist with this name already exists</td>
+<td>Names compare case-insensitively, built-ins included. Rename or remove the existing one, then import again</td>
+</tr>
+<tr>
+<td>Inherit project settings / None allowed</td>
+<td>A null whitelist inherits the project settings; an empty list allows nothing. Both survive the import unchanged</td>
+</tr>
+<tr>
+<td>not on this device</td>
+<td>The Skill or connector does not exist here. It stays in the whitelist but grants nothing until it is installed</td>
+</tr>
+<tr>
+<td>Model</td>
+<td>Only a local configuration with the same provider and model name is preselected. Otherwise the Specialist follows the active model, or you can pick a matching one</td>
+</tr>
+</tbody>
+</table></div>
+<p>An imported Specialist always joins <strong>Custom</strong> under a new id. It never replaces an existing or built-in Specialist. Read the instructions as you would any prompt someone else wrote: they are added to the agent's prompt whenever the Specialist is used.</p>
 <p><strong>Validate the role with material you already know.</strong></p>
 <p>Try a familiar abstract and check the requested structure, evidence locations, and treatment of missing information. Add concrete corrections to the instructions and test again in a new conversation.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
@@ -434,6 +500,10 @@ Finish with questions requiring source verification and the saved file path.
 <tr>
 <td>A figure has the wrong format</td>
 <td>Explicitly request SVG or PNG and configure image generation when needed</td>
+</tr>
+<tr>
+<td>Import stays disabled</td>
+<td>Check the review box; rename or remove a Specialist with the same name</td>
 </tr>
 </tbody>
 </table></div>

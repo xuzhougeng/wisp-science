@@ -17035,6 +17035,151 @@ test("specialists page configures the builtin Reader and saves a custom speciali
   await expect(page.getByText("Paper hunter")).toBeVisible();
 });
 
+test("specialist import previews the whole package and needs explicit confirmation", async ({ page }) => {
+  const instructions = [
+    "You hunt primary literature.",
+    ...Array.from({ length: 40 }, (_, index) => `Rule ${index + 1}: cite the DOI and the exact sentence you rely on.`),
+    "Final line: never summarize without a citation.",
+  ].join("\n");
+  await page.addInitScript((text) => {
+    (window as any).__specialistImportPackage = {
+      format: "wisp-specialist",
+      version: 1,
+      name: "Paper hunter",
+      icon: "search",
+      color: "clay",
+      description: "Finds primary literature",
+      instructions: text,
+      skills: ["literature-review", "citation-graph"],
+      connectors: [],
+      model_hint: { provider: "anthropic", model: "opus-4.8" },
+    };
+  }, instructions);
+  await enterApp(page, "/?mockSpecialistImport=1");
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByTestId("specialist-import").click();
+
+  const preview = page.getByTestId("specialist-import-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview.getByTestId("specialist-import-name")).toHaveText("Paper hunter");
+  // The complete instructions are shown verbatim, not an excerpt.
+  await expect(preview.getByTestId("specialist-import-instructions")).toHaveJSProperty("textContent", instructions);
+  // A skill this device lacks is marked; an empty connector whitelist reads
+  // as "None allowed", distinct from inheriting the project settings.
+  const skills = preview.getByTestId("specialist-import-skills");
+  await expect(skills.locator("li.missing")).toContainText("citation-graph");
+  await expect(skills.locator("li:not(.missing)")).toHaveText("literature-review");
+  await expect(preview.getByTestId("specialist-import-connectors")).toHaveText("None allowed");
+  await expect(preview.getByTestId("specialist-import-missing-hint")).toBeVisible();
+  await expect(preview.getByTestId("specialist-import-model-hint")).toHaveText("Exported with anthropic / opus-4.8");
+  // Only an exact provider + model match is preselected.
+  await expect(preview.getByTestId("specialist-import-model")).toHaveValue("opus");
+
+  const confirm = preview.getByTestId("specialist-import-confirm");
+  await expect(confirm).toBeDisabled();
+  await preview.getByTestId("specialist-import-reviewed").check();
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(preview).toBeHidden();
+  await expect.poll(() => lastInvokeArgs(page, "import_specialist")).toMatchObject({
+    package: {
+      format: "wisp-specialist",
+      name: "Paper hunter",
+      skills: ["literature-review", "citation-graph"],
+      connectors: [],
+    },
+    modelId: "opus",
+  });
+  await expect(page.locator(".settings-list-title").filter({ hasText: /^Paper hunter$/ })).toHaveCount(1);
+  await expect(page.getByTestId("specialists-status")).toHaveText("Imported specialist “Paper hunter”.");
+});
+
+test("specialist import refuses a name that matches a built-in, case-insensitively", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__specialistImportPackage = {
+      format: "wisp-specialist",
+      version: 1,
+      name: "reviewer",
+      instructions: "Pretend to be the reviewer.",
+      skills: null,
+      connectors: null,
+    };
+  });
+  await enterApp(page, "/?mockSpecialistImport=1");
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByTestId("specialist-import").click();
+
+  const preview = page.getByTestId("specialist-import-preview");
+  await expect(preview.getByTestId("specialist-import-conflict")).toContainText("“Reviewer” already exists");
+  // null whitelists read as inherit, and no model hint means "follow active".
+  await expect(preview.getByTestId("specialist-import-skills")).toHaveText("Inherit project settings");
+  await expect(preview.getByTestId("specialist-import-model-follow")).toBeVisible();
+  await expect(preview.getByTestId("specialist-import-reviewed")).toBeDisabled();
+  await expect(preview.getByTestId("specialist-import-confirm")).toBeDisabled();
+  await preview.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(preview).toBeHidden();
+  expect(await lastInvokeArgs(page, "import_specialist")).toBeNull();
+});
+
+test("Escape closes the specialist import preview before the Settings page", async ({ page }) => {
+  await enterApp(page, "/?mockSpecialistImport=1");
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByTestId("specialist-import").click();
+  const preview = page.getByTestId("specialist-import-preview");
+  await expect(preview).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(preview).toBeHidden();
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.getByTestId("specialist-import")).toBeAttached();
+});
+
+test("specialist export warns about secret-like instructions before writing", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
+  await page.getByLabel("Name").fill("Keyholder");
+  await page.getByLabel("Instructions").fill("Be brief.\nCall the API with sk-proj-0000000000000000000000fake.");
+  await page.getByRole("button", { name: "Save" }).click();
+  const row = page.locator(".settings-list-row").filter({ hasText: "Keyholder" });
+  await expect(row).toBeVisible();
+
+  // Exporting from the form: the warning opens above the form, and one
+  // Escape closes only the warning.
+  await row.click();
+  await expect(page.getByLabel("Name")).toHaveValue("Keyholder");
+  await page.getByTestId("specialist-export-form").click();
+  const warning = page.getByTestId("specialist-export-warning");
+  await expect(warning).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(warning).toBeHidden();
+  await expect(page.getByLabel("Name")).toHaveValue("Keyholder");
+  await page.locator(".settings-head-back").click();
+
+  // Exporting from the row: the warning lists the line, and nothing is
+  // written until the user chooses to export anyway.
+  await row.getByTestId("specialist-export").click();
+  await expect(warning).toBeVisible();
+  await expect(warning.getByTestId("specialist-secret-findings")).toContainText("Line 2: API token");
+  await expect.poll(() => lastInvokeArgs(page, "export_specialist")).toMatchObject({ acknowledgeSecrets: false });
+  await warning.getByTestId("specialist-export-anyway").click();
+  await expect(warning).toBeHidden();
+  await expect.poll(() => lastInvokeArgs(page, "export_specialist")).toMatchObject({ acknowledgeSecrets: true });
+  await expect(page.getByTestId("specialists-status")).toHaveText("Exported to /downloads/Keyholder.wisp-specialist.json");
+});
+
+test("built-in specialists have no export action", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await expect(page.getByTestId("specialist-export")).toHaveCount(0);
+  await page.getByText("Reader").click();
+  await expect(page.getByLabel("Instructions")).toBeDisabled();
+  await expect(page.getByTestId("specialist-export-form")).toHaveCount(0);
+});
+
 test("specialist skills whitelist uses a searchable picker instead of a full list", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Specialists");

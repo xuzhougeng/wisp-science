@@ -66,6 +66,25 @@ async fn catalog_limits_or_default(provider: &str, api_url: &str, model: &str) -
     }
 }
 
+/// The Specialists page's import/export dialog. One layer at a time: either a
+/// package preview awaiting explicit confirmation, or an export paused because
+/// the instructions look like they contain a secret.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SpecialistTransfer {
+    Import {
+        preview: specialist_package::SpecialistImportPreview,
+        /// Local profile to bind ("" follows the active model).
+        model_id: String,
+        reviewed: bool,
+        error: Option<String>,
+    },
+    SecretWarning {
+        id: String,
+        name: String,
+        findings: Vec<specialist_package::SecretFinding>,
+    },
+}
+
 /// Owned form state plus injected cross-domain wiring. `RwSignal` is `Copy`,
 /// so the whole struct is `Copy` and can be captured by every handler closure.
 #[derive(Clone, Copy)]
@@ -76,6 +95,7 @@ pub(crate) struct ModelSettingsState {
     pub(crate) model_form_msg: RwSignal<Option<(bool, String)>>,
     pub(crate) specialists: RwSignal<Vec<Specialist>>,
     pub(crate) specialist_form: RwSignal<Option<Specialist>>,
+    pub(crate) specialist_transfer: RwSignal<Option<SpecialistTransfer>>,
     // Cross-domain signals injected by `App`.
     pub(crate) models: RwSignal<Vec<ModelProfile>>,
     pub(crate) acp_agents: RwSignal<Vec<AcpAgentProfile>>,
@@ -101,6 +121,7 @@ impl ModelSettingsState {
             model_form_msg: create_rw_signal(None::<(bool, String)>),
             specialists: create_rw_signal(vec![]),
             specialist_form: create_rw_signal(None::<Specialist>),
+            specialist_transfer: create_rw_signal(None::<SpecialistTransfer>),
             models,
             acp_agents,
             settings,
@@ -698,6 +719,197 @@ impl ModelSettingsState {
                     Err(error) => model_form_msg.set(Some((false, error.to_string()))),
                 },
                 Err(error) => model_form_msg.set(Some((false, js_error_text(error)))),
+            }
+            settings_busy.set(false);
+        });
+    }
+
+    /// Export a saved custom specialist to a `.wisp-specialist.json` package.
+    /// The backend pauses with a secret warning until the user acknowledges it.
+    pub(crate) fn export_specialist(self, id: String, acknowledge_secrets: bool) {
+        let Self {
+            specialists,
+            specialist_form,
+            specialist_transfer,
+            model_form_msg,
+            settings_busy,
+            settings_message,
+            locale,
+            ..
+        } = self;
+        let report = move |ok: bool, text: String| {
+            if specialist_form.get_untracked().is_some() {
+                model_form_msg.set(Some((ok, text)));
+            } else {
+                settings_message.set(Some((ok, text)));
+            }
+        };
+        let loc = locale.get_untracked();
+        let name = specialists
+            .get_untracked()
+            .into_iter()
+            .find(|spec| spec.id == id)
+            .map(|spec| spec.name)
+            .unwrap_or_default();
+        settings_busy.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "id": id,
+                "acknowledgeSecrets": acknowledge_secrets,
+            }))
+            .unwrap();
+            match invoke_checked("export_specialist", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<
+                    specialist_package::SpecialistExportOutcome,
+                >(value)
+                {
+                    Ok(specialist_package::SpecialistExportOutcome::SecretWarning { findings }) => {
+                        specialist_transfer.set(Some(SpecialistTransfer::SecretWarning {
+                            id,
+                            name,
+                            findings,
+                        }));
+                    }
+                    Ok(specialist_package::SpecialistExportOutcome::Cancelled) => {
+                        specialist_transfer.set(None);
+                    }
+                    Ok(specialist_package::SpecialistExportOutcome::Exported { path }) => {
+                        specialist_transfer.set(None);
+                        report(true, tf(loc, "specialists.export.done", &[("path", &path)]));
+                    }
+                    Err(error) => {
+                        specialist_transfer.set(None);
+                        report(false, error.to_string());
+                    }
+                },
+                Err(error) => {
+                    specialist_transfer.set(None);
+                    report(
+                        false,
+                        tf(
+                            loc,
+                            "specialists.export.failed",
+                            &[("msg", &localize_backend(loc, &js_error_text(error)))],
+                        ),
+                    );
+                }
+            }
+            settings_busy.set(false);
+        });
+    }
+
+    /// Pick a package and open its preview. Nothing is written until the user
+    /// confirms the preview.
+    pub(crate) fn pick_specialist_import(self) {
+        let Self {
+            specialist_transfer,
+            settings_busy,
+            settings_message,
+            locale,
+            ..
+        } = self;
+        let loc = locale.get_untracked();
+        let fail = move |error: JsValue| {
+            settings_message.set(Some((
+                false,
+                tf(
+                    loc,
+                    "specialists.import.failed",
+                    &[("msg", &localize_backend(loc, &js_error_text(error)))],
+                ),
+            )));
+        };
+        settings_message.set(None);
+        spawn_local(async move {
+            let path = match invoke_checked("pick_specialist_package", JsValue::UNDEFINED).await {
+                Ok(value) => value.as_string(),
+                Err(error) => return fail(error),
+            };
+            let Some(path) = path else {
+                return;
+            };
+            settings_busy.set(true);
+            let args = to_value(&serde_json::json!({ "path": path })).unwrap();
+            match invoke_checked("preview_specialist_import", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<
+                    specialist_package::SpecialistImportPreview,
+                >(value)
+                {
+                    Ok(preview) => {
+                        // Only an exact provider + model match is preselected;
+                        // anything else follows the active model until chosen.
+                        let model_id = preview
+                            .model_matches
+                            .iter()
+                            .find(|matched| matched.same_provider)
+                            .map(|matched| matched.id.clone())
+                            .unwrap_or_default();
+                        specialist_transfer.set(Some(SpecialistTransfer::Import {
+                            preview,
+                            model_id,
+                            reviewed: false,
+                            error: None,
+                        }));
+                    }
+                    Err(error) => settings_message.set(Some((false, error.to_string()))),
+                },
+                Err(error) => fail(error),
+            }
+            settings_busy.set(false);
+        });
+    }
+
+    pub(crate) fn confirm_specialist_import(self) {
+        let Self {
+            specialists,
+            specialist_transfer,
+            settings_busy,
+            settings_message,
+            locale,
+            ..
+        } = self;
+        let Some(SpecialistTransfer::Import {
+            preview,
+            model_id,
+            reviewed,
+            ..
+        }) = specialist_transfer.get_untracked()
+        else {
+            return;
+        };
+        if !reviewed || preview.name_conflict.is_some() || settings_busy.get_untracked() {
+            return;
+        }
+        let loc = locale.get_untracked();
+        let name = preview.package.name.trim().to_string();
+        settings_busy.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "package": preview.package,
+                "modelId": model_id,
+            }))
+            .unwrap();
+            let failure = match invoke_checked("import_specialist", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
+                    Ok(list) => {
+                        specialists.set(list);
+                        specialist_transfer.set(None);
+                        settings_message.set(Some((
+                            true,
+                            tf(loc, "specialists.import.done", &[("name", &name)]),
+                        )));
+                        None
+                    }
+                    Err(error) => Some(error.to_string()),
+                },
+                Err(error) => Some(localize_backend(loc, &js_error_text(error))),
+            };
+            if let Some(message) = failure {
+                specialist_transfer.update(|transfer| {
+                    if let Some(SpecialistTransfer::Import { error, .. }) = transfer {
+                        *error = Some(message);
+                    }
+                });
             }
             settings_busy.set(false);
         });

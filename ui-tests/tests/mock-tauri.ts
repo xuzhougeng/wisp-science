@@ -6909,6 +6909,81 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "get_session_specialist":
             return mockSpecialists.find((s) => s.id === sessionSpecialists[arg("frameId")]) ?? null;
+          case "pick_specialist_package":
+            return query.get("mockSpecialistImport") === "1"
+              ? "/downloads/paper-hunter.wisp-specialist.json"
+              : null;
+          case "preview_specialist_import": {
+            // Mirrors src-tauri/src/specialist_package.rs: case-insensitive name
+            // conflicts (built-ins included), exact model-name matches, and
+            // whitelist entries that do not exist on this device.
+            const pkg = plain((window as any).__specialistImportPackage ?? {
+              format: "wisp-specialist",
+              version: 1,
+              name: "Paper hunter",
+              icon: "search",
+              color: "clay",
+              description: "Finds primary literature",
+              instructions: "You hunt papers.",
+              skills: ["literature-review"],
+              connectors: null,
+              model_hint: null,
+            });
+            const wanted = String(pkg.name ?? "").trim().toLowerCase();
+            const conflict = mockSpecialists.find((s) => String(s.name).trim().toLowerCase() === wanted);
+            const tail = (model: string) => String(model).trim().split("/").pop()!.toLowerCase();
+            const hint = pkg.model_hint;
+            const modelMatches = hint
+              ? mockModels
+                .filter((m) => tail(m.model) === tail(hint.model))
+                .map((m) => ({ id: m.id, label: m.label || m.model, provider: m.provider, model: m.model, same_provider: m.provider === hint.provider }))
+                .sort((a, b) => Number(b.same_provider) - Number(a.same_provider))
+              : [];
+            const knownConnectors = ["pubmed", "biorxiv", "literature", "uniprot"];
+            return {
+              package: pkg,
+              file_name: "paper-hunter.wisp-specialist.json",
+              bytes: JSON.stringify(pkg).length,
+              name_conflict: conflict ? { id: conflict.id, name: conflict.name, builtin: Boolean(conflict.builtin) } : null,
+              model_matches: modelMatches,
+              missing_skills: (pkg.skills ?? []).filter((name: string) => !skills.some((skill) => skill.name === name)),
+              missing_connectors: (pkg.connectors ?? []).filter((id: string) => !knownConnectors.includes(id)),
+              skills_checked: true,
+            };
+          }
+          case "import_specialist": {
+            const pkg = plain(arg("package") ?? {});
+            const wanted = String(pkg.name ?? "").trim().toLowerCase();
+            const conflict = mockSpecialists.find((s) => String(s.name).trim().toLowerCase() === wanted);
+            if (conflict) throw new Error(`A specialist named "${conflict.name}" already exists. Rename or remove it, then import again.`);
+            let n = 1;
+            while (mockSpecialists.some((s) => s.id === `sp${n}`)) n += 1;
+            mockSpecialists = [...mockSpecialists, {
+              id: `sp${n}`,
+              name: String(pkg.name).trim(),
+              icon: pkg.icon || "review",
+              color: pkg.color || "clay",
+              description: pkg.description ?? "",
+              instructions: pkg.instructions ?? "",
+              model_id: String(arg("modelId") ?? ""),
+              skills: pkg.skills ?? null,
+              connectors: pkg.connectors ?? null,
+              builtin: false,
+            }];
+            return mockSpecialists;
+          }
+          case "export_specialist": {
+            const spec = mockSpecialists.find((s) => s.id === arg("id"));
+            if (!spec) throw new Error(`Unknown specialist '${arg("id")}'.`);
+            if (spec.builtin) throw new Error("Built-in specialists ship with Wisp and cannot be exported.");
+            const lines = String(spec.instructions ?? "").split("\n");
+            const findings = lines.flatMap((line: string, index: number) =>
+              /\bsk-[A-Za-z0-9_-]{20,}/.test(line)
+                ? [{ kind: "token_prefix", line: index + 1, excerpt: `${line.match(/sk-[A-Za-z0-9_-]{2}/)![0]}…` }]
+                : []);
+            if (findings.length && !arg("acknowledgeSecrets")) return { status: "secret_warning", findings };
+            return { status: "exported", path: `/downloads/${String(spec.name).replace(/\s+/g, "-")}.wisp-specialist.json` };
+          }
           case "mcp_app_has_server_tools":
             return Boolean((window as any).__mcpAppLiveBridges);
           case "list_mcp_app_tools":

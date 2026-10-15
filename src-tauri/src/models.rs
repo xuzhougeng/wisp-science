@@ -1799,6 +1799,15 @@ pub(crate) async fn decorated_models(store: &wisp_store::Store) -> Vec<ModelProf
     decorated(store).await
 }
 
+/// Profiles a specialist may bind (the Settings specialist model picker list).
+pub(crate) async fn chat_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
+    ensure(store)
+        .await
+        .into_iter()
+        .filter(is_chat_model)
+        .collect()
+}
+
 pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
     decorated(store)
         .await

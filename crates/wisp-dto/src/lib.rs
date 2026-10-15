@@ -32,6 +32,7 @@ pub mod project_browser;
 mod project_chat_search;
 pub mod remote_access;
 pub mod research_checklist;
+pub mod specialist_package;
 pub use project_chat_search::*;
 mod session_artifacts;
 pub use session_artifacts::*;

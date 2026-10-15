@@ -23,7 +23,7 @@ Specialist instructions are appended to Wisp’s base prompt. Saving a Specialis
 
 *Figure 1: The English interface, captured with the mocked Tauri bridge for this tutorial. It shows the same three built-in Specialists and creation menu as the user-supplied Chinese screenshot.*
 
-The list has **Built-in** and **Custom** groups. The count indicates how many Specialists are listed. Click a row to inspect its configuration. **Add specialist** offers **Write from scratch** and **Chat with Claude**, the current English label for creating one through a conversation.
+The list has **Built-in** and **Custom** groups. The count indicates how many Specialists are listed. Click a row to inspect its configuration. **Add specialist** offers **Write from scratch** and **Chat with Claude**, the current English label for creating one through a conversation. **Import from file…** adds a Specialist a colleague shared; see “Share a Specialist with colleagues” below.
 
 | Specialist | Purpose | Usual entry point |
 | --- | --- | --- |
@@ -127,6 +127,23 @@ For example:
 
 Ordinary Specialist personas run in Wisp’s native Agent. Reviewer’s separate ACP backend support does not imply that every custom persona’s instructions and Skills are passed to external ACP Agents.
 
+**Share a Specialist with colleagues through a `.wisp-specialist.json` package.**
+
+Export a tuned custom Specialist to a package file and send it to a colleague or move it to another computer. Hover its row under **Custom** and click the download icon, or open the Specialist and click **Export** at the bottom. The export contains the saved version; unsaved form edits are not included. Built-in Specialists cannot be exported.
+
+The package is plain JSON you can read in any text editor. It holds the name, description, icon, color, instructions, the Skill and connector whitelists, and an optional model hint: the provider and model name the exporter had bound. It never contains the Specialist id, local model configuration ids, the Reviewer backend, API keys, or other credentials. If the instructions contain something that looks like an API key, token, or password, Wisp warns before writing the file and lists the suspicious lines. Remove the secret and export again, or choose **Export anyway**.
+
+To import, open **Add specialist → Import from file…** and pick the package. Wisp shows a full preview first: name, description, the complete instructions, both whitelists, and any Skills or connectors missing on this device. **Import** stays disabled until you check “I reviewed the instructions and whitelists”.
+
+| In the preview | Meaning |
+| --- | --- |
+| A Specialist with this name already exists | Names compare case-insensitively, built-ins included. Rename or remove the existing one, then import again |
+| Inherit project settings / None allowed | A null whitelist inherits the project settings; an empty list allows nothing. Both survive the import unchanged |
+| not on this device | The Skill or connector does not exist here. It stays in the whitelist but grants nothing until it is installed |
+| Model | Only a local configuration with the same provider and model name is preselected. Otherwise the Specialist follows the active model, or you can pick a matching one |
+
+An imported Specialist always joins **Custom** under a new id. It never replaces an existing or built-in Specialist. Read the instructions as you would any prompt someone else wrote: they are added to the agent's prompt whenever the Specialist is used.
+
 **Validate the role with material you already know.**
 
 Try a familiar abstract and check the requested structure, evidence locations, and treatment of missing information. Add concrete corrections to the instructions and test again in a new conversation.
@@ -139,6 +156,7 @@ Try a familiar abstract and check the requested structure, evidence locations, a
 | Expected Skills are absent | Check inheritance, selections, installation, and discovery |
 | Chat creation produced no list entry | Verify that saving completed; ask the Agent to save if necessary |
 | A figure has the wrong format | Explicitly request SVG or PNG and configure image generation when needed |
+| Import stays disabled | Check the review box; rename or remove a Specialist with the same name |
 
 Start with one role you use every week. Save stable requirements in the Specialist, keep changing materials and goals in each message, and refine the instructions from actual results.
 

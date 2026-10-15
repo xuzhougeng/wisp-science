@@ -286,6 +286,39 @@ pub async fn upsert(store: &Store, mut spec: Specialist) -> Result<Vec<Specialis
     Ok(ensure(store).await)
 }
 
+/// Case-insensitive name lookup, built-ins included.
+pub fn find_by_name<'a>(list: &'a [Specialist], name: &str) -> Option<&'a Specialist> {
+    let wanted = name.trim().to_lowercase();
+    list.iter()
+        .find(|spec| spec.name.trim().to_lowercase() == wanted)
+}
+
+/// Add a new custom specialist under a fresh id (package import). Unlike
+/// `upsert` this never updates an existing row, so a package cannot replace a
+/// built-in or another custom specialist; a name already in use is refused.
+pub async fn insert_new(
+    store: &Store,
+    mut spec: Specialist,
+) -> Result<(String, Vec<Specialist>), String> {
+    if spec.name.trim().is_empty() {
+        return Err("Specialist name is required.".into());
+    }
+    let mut list = ensure(store).await;
+    if let Some(existing) = find_by_name(&list, &spec.name) {
+        return Err(format!(
+            "A specialist named \"{}\" already exists. Rename or remove it, then import again.",
+            existing.name
+        ));
+    }
+    spec.id = fresh_id(&list);
+    spec.builtin = false;
+    spec.review_backend = None;
+    let id = spec.id.clone();
+    list.push(spec);
+    save_raw(store, &list).await?;
+    Ok((id, ensure(store).await))
+}
+
 pub async fn remove(store: &Store, id: &str) -> Result<Vec<Specialist>, String> {
     let mut list = ensure(store).await;
     if list.iter().any(|s| s.id == id && s.builtin) {
