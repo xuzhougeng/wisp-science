@@ -235,14 +235,17 @@ pub async fn get(store: &Store, id: &str) -> Option<Specialist> {
     ensure(store).await.into_iter().find(|s| s.id == id)
 }
 
+/// Random id for a new custom specialist, never handed out again. `remove`
+/// leaves session bindings (in each project's own store), workflow templates
+/// and draft plans naming the old id; a recycled id would silently rebind them
+/// to an unrelated persona. Ids are opaque, so legacy `sp{n}` rows still work.
 fn fresh_id(existing: &[Specialist]) -> String {
-    for n in 1..10_000 {
-        let id = format!("sp{n}");
+    loop {
+        let id = format!("sp-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
         if !existing.iter().any(|s| s.id == id) {
             return id;
         }
     }
-    "sp".into()
 }
 
 /// Create (empty id) or update (existing id). Builtin rows keep their
@@ -511,7 +514,13 @@ mod tests {
         };
         let list = upsert(&store, spec).await.unwrap();
         let created = list.iter().find(|s| !s.builtin).unwrap();
-        assert_eq!(created.id, "sp1");
+        let suffix = created.id.strip_prefix("sp-").unwrap();
+        assert_eq!(suffix.len(), 12, "{}", created.id);
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_hexdigit()),
+            "{}",
+            created.id
+        );
         assert_eq!(
             created.skills.as_deref(),
             Some(&["bear-support".to_string()][..])
@@ -522,9 +531,42 @@ mod tests {
         let list = upsert(&store, edited).await.unwrap();
         assert_eq!(list.iter().filter(|s| !s.builtin).count(), 1);
         assert_eq!(
-            list.iter().find(|s| s.id == "sp1").unwrap().name,
+            list.iter().find(|s| s.id == created.id).unwrap().name,
             "Paper hunter 2"
         );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn deleted_id_is_not_reissued_to_the_next_specialist() {
+        let (store, tmp) = test_store().await;
+        store.create_project("p1", "proj", "").await.unwrap();
+        store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
+        let custom = |name: &str| Specialist {
+            id: String::new(),
+            name: name.into(),
+            icon: String::new(),
+            color: String::new(),
+            description: String::new(),
+            instructions: format!("You are {name}."),
+            model_id: String::new(),
+            review_backend: None,
+            skills: None,
+            connectors: None,
+            builtin: false,
+        };
+        let list = upsert(&store, custom("Old persona")).await.unwrap();
+        let old_id = list.iter().find(|s| !s.builtin).unwrap().id.clone();
+        set_frame_specialist(&store, "f1", &old_id).await.unwrap();
+        remove(&store, &old_id).await.unwrap();
+
+        let list = upsert(&store, custom("New persona")).await.unwrap();
+        let new_id = list.iter().find(|s| !s.builtin).unwrap().id.clone();
+        assert_ne!(new_id, old_id);
+        assert!(get(&store, &old_id).await.is_none());
+        // The stale session binding stays dangling instead of adopting the
+        // unrelated new persona.
+        assert!(session_specialist(&store, "f1").await.is_none());
         let _ = std::fs::remove_file(&tmp);
     }
 

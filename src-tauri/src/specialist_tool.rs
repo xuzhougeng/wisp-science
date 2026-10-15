@@ -169,6 +169,12 @@ mod tests {
         async fn emit(&self, _e: wisp_tools::ToolEvent) {}
     }
 
+    /// The id from a "Created/Updated specialist '…' (id …)." result.
+    fn reported_id(content: &str) -> String {
+        let rest = content.split("(id ").nth(1).expect(content);
+        rest.split(')').next().unwrap().to_string()
+    }
+
     #[tokio::test]
     async fn creates_a_specialist_and_never_touches_builtin() {
         let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
@@ -184,10 +190,14 @@ mod tests {
             )
             .await;
         assert!(r.success, "{}", r.content);
-        // Same display name is fine — it created sp1, not the builtin.
+        // Same display name is fine — it created a new custom row, not the builtin.
         let reviewer = crate::specialists::get(&store, "reviewer").await.unwrap();
         assert_eq!(reviewer.instructions, crate::review::REVIEWER_RUBRIC);
-        assert!(crate::specialists::get(&store, "sp1").await.is_some());
+        let created = crate::specialists::get(&store, &reported_id(&r.content))
+            .await
+            .unwrap();
+        assert!(!created.builtin);
+        assert_eq!(created.instructions, "custom");
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -240,14 +250,13 @@ mod tests {
             .await;
         assert!(r2.success, "{}", r2.content);
 
-        assert!(r1.content.contains("(id sp1)"), "{}", r1.content);
-        assert!(r2.content.contains("(id sp2)"), "{}", r2.content);
-        assert_ne!(r1.content, r2.content);
+        let (id1, id2) = (reported_id(&r1.content), reported_id(&r2.content));
+        assert_ne!(id1, id2);
 
-        let sp1 = crate::specialists::get(&store, "sp1").await.unwrap();
-        assert_eq!(sp1.name, "First");
-        let sp2 = crate::specialists::get(&store, "sp2").await.unwrap();
-        assert_eq!(sp2.name, "Second");
+        let first = crate::specialists::get(&store, &id1).await.unwrap();
+        assert_eq!(first.name, "First");
+        let second = crate::specialists::get(&store, &id2).await.unwrap();
+        assert_eq!(second.name, "Second");
 
         let _ = std::fs::remove_file(&tmp);
     }
@@ -267,11 +276,12 @@ mod tests {
             )
             .await;
         assert!(created.success, "{}", created.content);
+        let id = reported_id(&created.content);
 
         let updated = tool
             .run(
                 &serde_json::json!({
-                    "id": "sp1",
+                    "id": id,
                     "name": "Paper hunter 2",
                     "instructions": "find newer papers"
                 }),
@@ -284,7 +294,7 @@ mod tests {
             "{}",
             updated.content
         );
-        let spec = crate::specialists::get(&store, "sp1").await.unwrap();
+        let spec = crate::specialists::get(&store, &id).await.unwrap();
         assert_eq!(spec.name, "Paper hunter 2");
         assert_eq!(spec.instructions, "find newer papers");
         assert_eq!(
