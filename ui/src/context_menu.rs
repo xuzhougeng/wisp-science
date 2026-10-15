@@ -448,7 +448,6 @@ pub fn session_menu(
     pinned: bool,
     is_branch: bool,
     branch_merged: bool,
-    has_branch_family: bool,
     has_exploration_round: bool,
     stale_prompt: bool,
     locale: Locale,
@@ -531,24 +530,24 @@ pub fn session_menu(
             i18n::t(locale, "ctx.export_debug_request"),
             session_id.to_string(),
         ));
-        if is_branch || (!has_branch_family && !has_exploration_round) {
-            items.push(item(
+        // A conversation with branches, subagents or an exploration round is
+        // deletable too: the confirmation offers to take them along.
+        items.push(item(
+            if is_branch {
+                "deleteSessionBranch"
+            } else {
+                "deleteSession"
+            },
+            i18n::t(
+                locale,
                 if is_branch {
-                    "deleteSessionBranch"
+                    "branch.delete"
                 } else {
-                    "deleteSession"
+                    "ctx.delete_session"
                 },
-                i18n::t(
-                    locale,
-                    if is_branch {
-                        "branch.delete"
-                    } else {
-                        "ctx.delete_session"
-                    },
-                ),
-                session_id.to_string(),
-            ));
-        }
+            ),
+            session_id.to_string(),
+        ));
     }
     CtxMenu { x, y, items }
 }
@@ -796,7 +795,6 @@ pub fn build(
         let is_branch = ses.get_attribute("data-session-branch").as_deref() == Some("true")
             || ses.class_list().contains("message-branch-link");
         let branch_merged = ses.get_attribute("data-branch-merged").as_deref() == Some("true");
-        let has_branch_family = ses.get_attribute("data-session-family").as_deref() == Some("true");
         let has_exploration_round =
             ses.get_attribute("data-exploration-round").as_deref() == Some("true");
         let stale_prompt = ses.get_attribute("data-session-stale").as_deref() == Some("true");
@@ -808,7 +806,6 @@ pub fn build(
             pinned,
             is_branch,
             branch_merged,
-            has_branch_family,
             has_exploration_round,
             stale_prompt,
             locale,

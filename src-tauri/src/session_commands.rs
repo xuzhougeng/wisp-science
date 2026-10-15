@@ -104,32 +104,7 @@ pub(super) async fn branch_session(
             .set_session_branch_point(&id, source, checkpoint_user_index, checkpoint_kind)
             .await
             .map_err(|error| error.to_string())?;
-        let model_id = models::session_profile_id(&state.store, source).await;
-        state
-            .store
-            .set_frame_model(&id, &ap.id, &model_id)
-            .await
-            .map_err(|error| error.to_string())?;
-        let reasoning_effort = state
-            .store
-            .frame_reasoning_effort(source)
-            .await
-            .map_err(|error| error.to_string())?;
-        state
-            .store
-            .set_frame_reasoning_effort(&id, &ap.id, reasoning_effort.as_deref())
-            .await
-            .map_err(|error| error.to_string())?;
-        let service_tier = state
-            .store
-            .frame_service_tier(source)
-            .await
-            .map_err(|error| error.to_string())?;
-        state
-            .store
-            .set_frame_service_tier(&id, &ap.id, service_tier.as_deref())
-            .await
-            .map_err(|error| error.to_string())?;
+        models::copy_session_model_settings(&state.store, source, &id, &ap.id).await?;
         ssh_hosts::copy_session_execution_environment(&state.store, source, &id).await?;
         let msgs = state
             .store
@@ -923,21 +898,174 @@ pub(super) async fn transfer_session_to_project(
     Ok(new_id)
 }
 
+/// A conversation's branches and subagents (deepest first), and the open
+/// explorations that it or any of them started.
+async fn session_children(
+    store: &Store,
+    project_id: &str,
+    id: &str,
+) -> Result<
+    (
+        Vec<wisp_store::SessionDescendant>,
+        Vec<wisp_store::ExplorationSummary>,
+    ),
+    String,
+> {
+    let descendants = store
+        .list_session_descendants(id, project_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let family: HashSet<&str> = std::iter::once(id)
+        .chain(descendants.iter().map(|child| child.id.as_str()))
+        .collect();
+    let explorations = store
+        .list_project_explorations(project_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|summary| family.contains(summary.source_frame_id.as_str()))
+        .collect();
+    Ok((descendants, explorations))
+}
+
+/// What deleting `ids` together with their children would also remove. A
+/// selected conversation nested under another selected one is not counted.
+#[tauri::command]
+pub(super) async fn preview_session_children(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    ids: Vec<String>,
+) -> Result<wisp_dto::SessionChildrenPreview, String> {
+    let ap = state.require_active(window.label())?;
+    let mut subagents = HashSet::new();
+    let mut branches = HashSet::new();
+    let mut explorations = HashSet::new();
+    for id in &ids {
+        let (descendants, rounds) = session_children(&state.store, &ap.id, id).await?;
+        for child in descendants
+            .into_iter()
+            .filter(|child| !ids.contains(&child.id))
+        {
+            if child.subagent {
+                subagents.insert(child.id);
+            } else {
+                branches.insert(child.id);
+            }
+        }
+        explorations.extend(rounds.into_iter().map(|summary| summary.exploration.id));
+    }
+    Ok(wisp_dto::SessionChildrenPreview {
+        subagents: subagents.len(),
+        branches: branches.len(),
+        explorations: explorations.len(),
+    })
+}
+
+/// What happens to a deleted conversation's branches and subagents.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChildLinks {
+    /// Clients that predate the choice: a conversation with branches is kept.
+    Refuse,
+    /// Branches and subagents stay as standalone conversations.
+    Detach,
+}
+
+/// Delete a conversation. `include_children` deletes its branches and
+/// subagents, nested ones included, and discards the exploration rounds they
+/// own; `Some(false)` keeps branches and subagents as standalone
+/// conversations. Returns every deleted conversation id.
 #[tauri::command]
 pub(super) async fn delete_session(
     state: State<'_, AppState>,
+    terminals: State<'_, crate::terminal_sessions::TerminalManager>,
     window: crate::workspace_surface::WorkspaceSurface,
     id: String,
     include_artifacts: Option<bool>,
     artifact_fingerprint: Option<String>,
+    include_children: Option<bool>,
+) -> Result<Vec<String>, String> {
+    let ap = state.require_active(window.label())?;
+    let include_artifacts = include_artifacts.unwrap_or(false);
+    let children = match include_children {
+        None => ChildLinks::Refuse,
+        Some(false) => ChildLinks::Detach,
+        Some(true) => {
+            let (descendants, explorations) = session_children(&state.store, &ap.id, &id).await?;
+            // Check every conversation first so a refusal deletes nothing.
+            for frame in std::iter::once(id.as_str())
+                .chain(descendants.iter().map(|child| child.id.as_str()))
+            {
+                state
+                    .store
+                    .require_unarchived_session(frame)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            let mut rounds = explorations
+                .into_iter()
+                .map(|summary| summary.source_frame_id)
+                .collect::<Vec<_>>();
+            rounds.sort();
+            rounds.dedup();
+            for source in rounds {
+                exploration_commands::abandon_round(&state, &terminals, &source).await?;
+            }
+            let mut deleted = Vec::new();
+            for child in descendants {
+                delete_one_session(
+                    &state,
+                    window.label(),
+                    &ap,
+                    &child.id,
+                    false,
+                    None,
+                    ChildLinks::Detach,
+                )
+                .await?;
+                deleted.push(child.id);
+            }
+            delete_one_session(
+                &state,
+                window.label(),
+                &ap,
+                &id,
+                include_artifacts,
+                artifact_fingerprint.as_deref(),
+                ChildLinks::Detach,
+            )
+            .await?;
+            deleted.push(id);
+            return Ok(deleted);
+        }
+    };
+    delete_one_session(
+        &state,
+        window.label(),
+        &ap,
+        &id,
+        include_artifacts,
+        artifact_fingerprint.as_deref(),
+        children,
+    )
+    .await?;
+    Ok(vec![id])
+}
+
+async fn delete_one_session(
+    state: &AppState,
+    window_label: &str,
+    ap: &ActiveProject,
+    id: &str,
+    include_artifacts: bool,
+    artifact_fingerprint: Option<&str>,
+    children: ChildLinks,
 ) -> Result<(), String> {
+    let id = id.to_string();
     state
         .store
         .require_unarchived_session(&id)
         .await
         .map_err(|e| e.to_string())?;
-    let ap = state.require_active(window.label())?;
-    let include_artifacts = include_artifacts.unwrap_or(false);
     if include_artifacts && artifact_fingerprint.is_none() {
         return Err("Deleting artifacts requires a fresh preview.".into());
     }
@@ -981,11 +1109,12 @@ pub(super) async fn delete_session(
     let _project_write_locked =
         exploration_commands::conversation_project_write_locked(&state.store, &scope, Some(&id))
             .await?;
-    if state
-        .store
-        .session_has_conversation_branches(&id, &ap.id)
-        .await
-        .map_err(|error| error.to_string())?
+    if children == ChildLinks::Refuse
+        && state
+            .store
+            .session_has_conversation_branches(&id, &ap.id)
+            .await
+            .map_err(|error| error.to_string())?
     {
         return Err("session_has_branches: delete its branches before deleting main".into());
     }
@@ -1014,6 +1143,20 @@ pub(super) async fn delete_session(
         None => None,
     };
     state.runtime_manager.stop_session(&ap.id, &id).await;
+    // The store refuses to delete a conversation that still has branches; kept
+    // ones are detached first. The artifact path can still refuse afterwards
+    // (a stale preview), leaving them standalone beside their parent.
+    if children == ChildLinks::Detach {
+        if let Err(error) = state.store.detach_session_children(&id, &ap.id).await {
+            if let Some(runtime) = runtime.as_ref() {
+                runtime.deleted.store(false, Ordering::SeqCst);
+                if include_artifacts {
+                    runtime.cancel.store(was_cancelled, Ordering::Relaxed);
+                }
+            }
+            return Err(error.to_string());
+        }
+    }
     let result = if include_artifacts {
         state
             .store
@@ -1021,7 +1164,7 @@ pub(super) async fn delete_session(
                 &id,
                 &ap.id,
                 None,
-                artifact_fingerprint.as_deref().unwrap_or_default(),
+                artifact_fingerprint.unwrap_or_default(),
             )
             .await
     } else {
@@ -1050,8 +1193,8 @@ pub(super) async fn delete_session(
     // later `tools/call` (e.g. from a reloaded iframe) fails stale instead of
     // pinning the MCP server process.
     state.remove_mcp_app_bridges_for_frame(&id);
-    if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
-        state.set_active_frame(window.label(), None);
+    if state.active_frame(window_label).as_deref() == Some(id.as_str()) {
+        state.set_active_frame(window_label, None);
     }
     Ok(())
 }
@@ -2698,5 +2841,44 @@ mod context_view_tests {
                 .unwrap(),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod delete_children_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_children_are_counted_through_nested_subagents_and_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("wisp.sqlite")).await.unwrap();
+        store.create_project("p", "P", "").await.unwrap();
+        for id in ["main", "branch", "sub", "sub-branch", "other"] {
+            store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        }
+        store
+            .set_session_branch_point("branch", "main", 0, "before_user")
+            .await
+            .unwrap();
+        store
+            .set_session_dispatched_from("sub", "main")
+            .await
+            .unwrap();
+        store
+            .set_session_branch_point("sub-branch", "sub", 0, "after_response")
+            .await
+            .unwrap();
+
+        let (descendants, explorations) = session_children(&store, "p", "main").await.unwrap();
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|child| (child.id.as_str(), child.subagent))
+                .collect::<Vec<_>>(),
+            [("sub-branch", false), ("branch", false), ("sub", true)]
+        );
+        assert!(explorations.is_empty());
+        let (descendants, _) = session_children(&store, "p", "other").await.unwrap();
+        assert!(descendants.is_empty());
     }
 }

@@ -206,6 +206,15 @@ pub struct SessionBranchLink {
     pub merge_summary: Option<String>,
 }
 
+/// A live branch or subagent conversation nested under another conversation,
+/// directly or through intermediate branches and subagents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionDescendant {
+    pub id: String,
+    /// Started by its parent's agent (#1061) rather than branched by the user.
+    pub subagent: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SessionBranchMergePreview {
     pub main_session_id: String,
@@ -399,6 +408,27 @@ pub(crate) const SESSION_UI_STDOUT_REPLAY_MAX_CHARS: usize = 64 * 1024;
 const RECENT_TURN_PREVIEW_MAX_CHARS: usize = 20_000;
 pub(crate) const RECENT_TURN_TOOL_PREVIEW_MAX_CHARS: usize = 4_000;
 
+/// Branches and subagents are conversations of their own. Without their
+/// parent they stand alone: a subagent nobody can instruct any more becomes
+/// writable, and a branch loses its merge target. Exploration frames keep
+/// their lineage; their round owns them.
+async fn detach_child_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -> Result<()> {
+    sqlx::query("UPDATE frames SET dispatched_from=NULL WHERE dispatched_from=? AND id<>?")
+        .bind(frame_id)
+        .bind(frame_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        "UPDATE frames SET branched_from=NULL,branch_point_user_index=NULL,\
+         branch_point_kind=NULL WHERE branched_from=? AND id<>? AND exploration_id IS NULL",
+    )
+    .bind(frame_id)
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Delete every database row owned by a conversation. Legacy databases do not
 /// consistently enable SQLite foreign keys, so the cascade must be explicit.
 /// Runs are project-level records and survive, but their stale frame reference
@@ -513,6 +543,7 @@ async fn delete_session_rows(
             .execute(&mut **tx)
             .await?;
     }
+    detach_child_rows(tx, frame_id).await?;
     // An Artifact promoted into Run lineage is project evidence, no longer
     // disposable Session state. Keep its root frame as an invisible ownership
     // tombstone because the legacy Artifact schema requires a frame FK. Session
@@ -564,6 +595,62 @@ impl Store {
         .bind(frame_id)
         .fetch_one(&self.pool)
         .await?)
+    }
+
+    /// Every live branch and subagent under a conversation, deepest first so
+    /// each can be deleted before the conversation it hangs from.
+    pub async fn list_session_descendants(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+    ) -> Result<Vec<SessionDescendant>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.list_session_descendants(frame_id, project_id)).await;
+        }
+        // The depth cap terminates malformed cyclic links.
+        let rows: Vec<(String, bool)> = sqlx::query_as(
+            "WITH RECURSIVE family(id, depth) AS ( \
+                SELECT id, 0 FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id \
+                UNION \
+                SELECT f.id, family.depth + 1 FROM frames f JOIN family \
+                    ON f.branched_from=family.id OR f.dispatched_from=family.id \
+                WHERE f.project_id=? AND f.parent_frame_id=f.id AND f.exploration_id IS NULL \
+                  AND f.status<>'deleted' AND family.depth < 32 \
+             ) SELECT f.id, f.dispatched_from IS NOT NULL FROM family JOIN frames f ON f.id=family.id \
+             WHERE family.id<>? GROUP BY f.id ORDER BY MAX(family.depth) DESC, f.id",
+        )
+        .bind(frame_id)
+        .bind(project_id)
+        .bind(project_id)
+        .bind(frame_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, subagent)| SessionDescendant { id, subagent })
+            .collect())
+    }
+
+    /// Let a conversation's direct branches and subagents stand alone, so the
+    /// conversation can be deleted without them.
+    pub async fn detach_session_children(&self, frame_id: &str, project_id: &str) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.detach_session_children(frame_id, project_id)).await;
+        }
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id)",
+        )
+        .bind(frame_id)
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !exists {
+            anyhow::bail!("Session not found");
+        }
+        let mut tx = self.begin_write().await?;
+        detach_child_rows(&mut tx, frame_id).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn list_project_frame_ids(&self, project_id: &str) -> Result<Vec<String>> {

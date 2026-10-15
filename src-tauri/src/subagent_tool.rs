@@ -198,7 +198,7 @@ impl Tool for DispatchSubagentTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "dispatch_subagent",
-            "Start a subagent: a separate conversation in this project, listed under this one in the sidebar, where another agent works on one focused task with its own context. The researcher can watch it but not reply in it. Use it when the researcher asks for a new or sub conversation for a task, or for long focused work that should not fill this conversation. Supply session_id to send a follow-up instruction to an idle subagent you started. Each dispatch synchronizes your selected execution contexts and default compute target to the child. Returns once the subagent accepts the instruction; its result or question is delivered here automatically and resumes you to handle it. You are responsible for answering its requests and sending follow-ups within the user's authorization. Do not poll while waiting.",
+            "Start a subagent: a separate conversation in this project, listed under this one in the sidebar, where another agent works on one focused task with its own context. The researcher can watch it but not reply in it. Use it when the researcher asks for a new or sub conversation for a task, or for long focused work that should not fill this conversation. Supply session_id to send a follow-up instruction to an idle subagent you started. Each dispatch synchronizes your model, selected execution contexts and default compute target to the child. Returns once the subagent accepts the instruction; its result or question is delivered here automatically and resumes you to handle it. You are responsible for answering its requests and sending follow-ups within the user's authorization. Do not poll while waiting.",
             json!({
                 "type": "object",
                 "properties": {
@@ -254,8 +254,20 @@ impl Tool for DispatchSubagentTool {
         if let Err(error) = prepare_execution_contexts(&state.store, &self.parent, &session).await {
             return ToolResult::fail(error);
         }
-        // A follow-up may select a different server; rebuild cached runtime
-        // wiring before the next turn, under the same reservation.
+        // Like its execution contexts, the subagent follows its parent's model
+        // at every dispatch rather than the global default.
+        if let Err(error) = crate::models::copy_session_model_settings(
+            &state.store,
+            &self.parent,
+            &session,
+            &self.project_id,
+        )
+        .await
+        {
+            return ToolResult::fail(error);
+        }
+        // A follow-up may select a different server or model; rebuild cached
+        // runtime wiring before the next turn, under the same reservation.
         crate::clear_session_agent(&state, &session).await;
         let dispatcher = Arc::new(SubagentDispatcher {
             parent: self.parent.clone(),
@@ -272,7 +284,7 @@ impl Tool for DispatchSubagentTool {
         )
         .await
         {
-            Ok(()) => ToolResult::ok(format!("Subagent {session} has started and runs in the background with this conversation's selected execution contexts; the researcher can watch it in the sidebar. Tell them it has started, then finish this turn. Its result or request automatically resumes you here to answer, resolve prerequisites, or send a follow-up. Do not poll.")),
+            Ok(()) => ToolResult::ok(format!("Subagent {session} has started and runs in the background with this conversation's model and selected execution contexts; the researcher can watch it in the sidebar. Tell them it has started, then finish this turn. Its result or request automatically resumes you here to answer, resolve prerequisites, or send a follow-up. Do not poll.")),
             Err(error) => ToolResult::fail(error),
         }
     }

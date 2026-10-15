@@ -111,3 +111,45 @@ test('Full Permission confirmation keeps the child target when navigation change
   await page.getByRole('button', { name: 'Agent options', exact: true }).click();
   await expect(page.getByTestId('full-permission-toggle')).not.toBeChecked();
 });
+
+async function lastDeleteArgs(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === 'delete_session');
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : (args ?? null);
+  });
+}
+
+for (const includeChildren of [true, false]) {
+  test(`deleting a parent ${includeChildren ? 'also deletes' : 'can keep'} its subagents`, async ({ page }) => {
+    await page.addInitScript(tauriMock);
+    await page.goto('/?mockSubagent=1&mockSubagentActivity=1');
+    await page.locator('.proj-card-main').first().click();
+    await page.locator('.sidebar [data-session-id="subagent-parent"]').click({ button: 'right' });
+    await page.locator('.ctx-menu').getByRole('button', { name: 'Delete', exact: true }).click();
+
+    const modal = page.locator('.confirm-modal');
+    const choice = modal.getByTestId('session-children-choice');
+    await expect(choice).toContainText('Subagents 2');
+    const box = choice.getByRole('checkbox');
+    await expect(box).toBeChecked();
+    if (!includeChildren) {
+      await box.uncheck();
+      await expect(choice).toContainText('standalone conversations');
+    }
+    await modal.getByRole('button', { name: 'Delete', exact: true }).click();
+
+    await expect.poll(() => lastDeleteArgs(page)).toMatchObject({ id: 'subagent-parent', includeChildren });
+    await expect(page.locator('[data-session-id="subagent-parent"]')).toHaveCount(0);
+    const child = page.locator('.sidebar [data-session-id="subagent-child"]');
+    if (includeChildren) {
+      await expect(child).toHaveCount(0);
+      await expect(page.locator('[data-session-id="subagent-done"]')).toHaveCount(0);
+    } else {
+      // A kept subagent is an ordinary, writable conversation now.
+      await expect(child).toHaveAttribute('data-session-subagent', 'false');
+      await child.click();
+      await expect(page.locator('#composer-input')).toBeEnabled();
+    }
+  });
+}

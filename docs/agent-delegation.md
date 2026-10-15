@@ -476,6 +476,19 @@ persisted subagent/branch subtree, including conversations outside the loaded
 sidebar page. Older subagents with mismatched folder metadata still nest under
 their visible parent.
 
+Deleting the parent asks what happens to its subagents, branches and
+explorations, nested ones included. **Also delete its subagents, branches and
+explorations** is checked by default; it discards the open exploration rounds
+they started and deletes those conversations' transcripts with the parent
+(their artifact files stay; the artifact option applies to the parent only).
+Unchecked, subagents and branches stay as standalone, writable conversations.
+An open exploration round cannot outlive its source conversation, so with one
+present the deletion requires the box to stay checked.
+
+Each dispatch binds the child to the parent's chat model, reasoning effort and
+service tier, so a subagent runs on the model its parent uses rather than the
+global default. Switching the parent's model takes effect at the next dispatch.
+
 Each initial dispatch and follow-up also synchronizes the parent's selected
 execution contexts and resolved default compute target to the child. A server
 selected in the parent, such as `ssh:CPU3`, is therefore available for explicit
@@ -504,7 +517,8 @@ The parent conversation gets three tools:
 
 - `dispatch_subagent` starts a subagent with a self-contained instruction, or
   sends a follow-up to an idle one it started (`session_id`). It returns once the
-  subagent accepts the instruction, after synchronizing execution contexts.
+  subagent accepts the instruction, after synchronizing the parent's model and
+  execution contexts.
 - `subagent_status` reports whether a subagent is running and its latest
   answer; without `session_id` it lists this conversation's subagents.
 - `stop_subagent` cancels a subagent's running turn.

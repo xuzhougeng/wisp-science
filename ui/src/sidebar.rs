@@ -143,7 +143,6 @@ pub(super) fn Sidebar(
         bool,
         bool,
         bool,
-        bool,
     )>,
     open_folder_actions: Callback<(web_sys::MouseEvent, String, String)>,
     open_capabilities: Callback<web_sys::MouseEvent>,
@@ -836,7 +835,7 @@ pub(super) fn Sidebar(
                                     on:click=move |ev: web_sys::MouseEvent| {
                                         ev.prevent_default();
                                         ev.stop_propagation();
-                                        show_actions.call((ev, id_actions.clone(), title_actions.clone(), pinned, is_branch, branch_merged, has_branch_family, has_exploration_round, stale_prompt));
+                                        show_actions.call((ev, id_actions.clone(), title_actions.clone(), pinned, is_branch, branch_merged, has_exploration_round, stale_prompt));
                                     }>{compose_icon("more")}</button>
                             </div>
                         }.into_view()

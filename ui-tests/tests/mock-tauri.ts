@@ -326,6 +326,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       ]
     : [];
   let mockExplorationRoundResolved = false;
+  // Branches and subagents nested under `ids`, mirroring `list_session_descendants`.
+  const mockSessionChildren = (ids: string[]) => {
+    const family = new Set(ids);
+    const children: any[] = [];
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const row of mockSessions) {
+        const parent = row.dispatched_from ?? row.branched_from;
+        if (parent && family.has(parent) && !family.has(row.id)) {
+          family.add(row.id);
+          children.push(row);
+          grew = true;
+        }
+      }
+    }
+    return { family, children };
+  };
   const explorationTranscript = (frameId: string) => {
     const suffix = frameId === "exploration-mainline" ? "Mainline result" : frameId.endsWith("-a") ? "Exploration A result" : frameId.endsWith("-b") ? "Exploration B result" : "New exploration result";
     const branches = frameId === "exploration-mainline" && mockBranchFlow
@@ -2969,6 +2986,36 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if (!row) throw new Error("Exploration not found");
             mockExplorations = mockExplorations.filter((item) => item.exploration.id !== row.exploration.id);
             return null;
+          }
+          case "preview_session_children": {
+            const ids = ((arg("ids") as string[] | undefined) ?? []).map(String);
+            const { family, children } = mockSessionChildren(ids);
+            return {
+              subagents: children.filter((row) => row.dispatched_from).length,
+              branches: children.filter((row) => !row.dispatched_from).length,
+              explorations: mockExplorations.filter((item) => family.has(item.source_frame_id)).length,
+            };
+          }
+          case "delete_session": {
+            const id = String(arg("id"));
+            const { family, children } = mockSessionChildren([id]);
+            const removed = arg("includeChildren") === true ? [...children.map((row) => row.id), id] : [id];
+            if (arg("includeChildren") === true) {
+              mockExplorations = mockExplorations.filter((item) => !family.has(item.source_frame_id));
+            } else {
+              for (const row of mockSessions) {
+                if (row.dispatched_from === id) delete row.dispatched_from;
+                if (row.branched_from === id) {
+                  delete row.branched_from;
+                  delete row.branch_state;
+                }
+              }
+            }
+            for (const removedId of removed) {
+              const index = mockSessions.findIndex((row) => row.id === removedId);
+              if (index >= 0) mockSessions.splice(index, 1);
+            }
+            return removed;
           }
           case "abandon_exploration_round": {
             const sourceFrameId = String(arg("sourceFrameId"));
@@ -7201,10 +7248,12 @@ export function parallelMock(): void {
               retained: [{ name: "uploads/input.csv", reason: "upload" }, { name: "shared.csv", reason: "shared" }],
             };
           }
+          case "preview_session_children":
+            return { subagents: 0, branches: 0, explorations: 0 };
           case "delete_session": {
             const index = sessions.findIndex((entry) => entry.id === arg("id"));
             if (index >= 0) sessions.splice(index, 1);
-            return null;
+            return [String(arg("id"))];
           }
           case "reload_project_rules": {
             const session = sessions.find((entry) => entry.id === String(arg("frameId")));

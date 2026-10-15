@@ -2331,6 +2331,87 @@ async fn main_session_cannot_be_deleted_until_its_conversation_branches_are_dele
 }
 
 #[tokio::test]
+async fn a_deleted_conversations_branches_and_subagents_are_listed_or_left_standalone() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("descendants.sqlite"))
+        .await
+        .unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for id in ["main", "branch", "sub", "sub-branch", "unrelated"] {
+        store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        store
+            .append_message(id, 1, &Message::user(id))
+            .await
+            .unwrap();
+    }
+    store
+        .set_session_branch_point("branch", "main", 0, "before_user")
+        .await
+        .unwrap();
+    store
+        .set_session_dispatched_from("sub", "main")
+        .await
+        .unwrap();
+    store
+        .set_session_branch_point("sub-branch", "sub", 0, "before_user")
+        .await
+        .unwrap();
+
+    // Deepest first, so each one is deleted before the conversation it hangs from.
+    let descendants = store.list_session_descendants("main", "p").await.unwrap();
+    assert_eq!(
+        descendants,
+        vec![
+            SessionDescendant {
+                id: "sub-branch".into(),
+                subagent: false
+            },
+            SessionDescendant {
+                id: "branch".into(),
+                subagent: false
+            },
+            SessionDescendant {
+                id: "sub".into(),
+                subagent: true
+            },
+        ]
+    );
+    assert!(store
+        .list_session_descendants("unrelated", "p")
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Kept children stand alone; only direct links to the deleted parent go.
+    store.detach_session_children("main", "p").await.unwrap();
+    assert_eq!(store.session_branch_state("branch").await.unwrap(), None);
+    assert_eq!(store.session_dispatched_from("sub").await.unwrap(), None);
+    assert!(store
+        .session_has_conversation_branches("sub", "p")
+        .await
+        .unwrap());
+    store.delete_session("main", "p").await.unwrap();
+    assert!(store.frame_project_id("main").await.unwrap().is_none());
+    assert_eq!(
+        store.frame_project_id("branch").await.unwrap().as_deref(),
+        Some("p")
+    );
+
+    // Deleting a parent never leaves its subagent watch-only for a missing owner.
+    store
+        .set_session_dispatched_from("unrelated", "branch")
+        .await
+        .unwrap();
+    store.delete_session("branch", "p").await.unwrap();
+    assert_eq!(
+        store.session_dispatched_from("unrelated").await.unwrap(),
+        None
+    );
+    assert!(store.detach_session_children("branch", "p").await.is_err());
+    store.pool.close().await;
+}
+
+#[tokio::test]
 async fn legacy_branch_lineage_is_not_treated_as_a_mergeable_branch() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_legacy_branch_{}.sqlite",

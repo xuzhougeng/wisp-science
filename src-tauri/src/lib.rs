@@ -7715,6 +7715,7 @@ pub fn run() {
             research_recap::generate_research_recap,
             research_recap::update_research_recap,
             session_commands::delete_session,
+            session_commands::preview_session_children,
             session_commands::preview_session_artifacts,
             session_commands::rename_session,
             session_commands::set_session_pinned,

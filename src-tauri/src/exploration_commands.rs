@@ -1100,6 +1100,22 @@ pub(crate) async fn abandon_exploration_round(
     window: WorkspaceSurface,
     source_frame_id: String,
 ) -> Result<(), String> {
+    let project_id = abandon_round(&state, &terminals, &source_frame_id).await?;
+    let (project, _, _) = crate::project_commands::load_active_project(&state, &project_id).await?;
+    state.set_active(window.label(), project);
+    state.set_active_frame(window.label(), Some(source_frame_id));
+    Ok(())
+}
+
+/// Abandon the current round owned by `source_frame_id` and return its
+/// project. Also used when that mainline is deleted together with its
+/// explorations.
+pub(crate) async fn abandon_round(
+    state: &AppState,
+    terminals: &crate::terminal_sessions::TerminalManager,
+    source_frame_id: &str,
+) -> Result<String, String> {
+    let source_frame_id = source_frame_id.to_string();
     let owner = state
         .store
         .frame_state_scope(&source_frame_id)
@@ -1167,7 +1183,7 @@ pub(crate) async fn abandon_exploration_round(
         ));
     }
     crate::exploration_promotion::ensure_no_queued_turns(
-        state.inner(),
+        state,
         std::iter::once(&source_frame_id)
             .chain(candidates.iter().map(|candidate| &candidate.frame_id)),
     )
@@ -1237,10 +1253,7 @@ pub(crate) async fn abandon_exploration_round(
     )
     .dispose_resolved_round_workspaces(&candidates, &snapshots, &context_archives)
     .await;
-    let (project, _, _) = crate::project_commands::load_active_project(&state, &project_id).await?;
-    state.set_active(window.label(), project);
-    state.set_active_frame(window.label(), Some(source_frame_id));
-    Ok(())
+    Ok(project_id)
 }
 
 #[cfg(test)]

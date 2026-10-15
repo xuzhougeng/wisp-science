@@ -467,7 +467,8 @@ test("mainline stays frozen and can abandon the complete exploration round", asy
     "Mainline is frozen while this exploration round is unresolved",
   );
   await mainline.click({ button: "right" });
-  await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  // Delete is offered too; its confirmation discards the round along with it.
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Abandon exploration", exact: true }).click();
   await expect(page.locator(".confirm-modal")).toContainText("permanently remove every exploration");
   await page.locator(".confirm-modal").getByRole("button", { name: "Abandon exploration" }).click();
@@ -542,5 +543,34 @@ test("promotion merges one exploration into the original mainline and discards t
   await expect(page.getByTestId("mainline-exploration-banner")).toBeHidden();
   await expect(page.locator("#composer-input")).toBeEnabled();
   await expect(page.locator('[data-exploration-id="exploration-b"]')).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-explorations")).toHaveCount(0);
+});
+
+test("deleting a mainline takes its branch and exploration round along by default", async ({ page }) => {
+  await page.goto("/?mockExplorations=1&mockBranches=1");
+  await page.locator(".proj-card-main").first().click();
+  const mainline = page.locator('.sidebar [data-session-id="exploration-mainline"]');
+  await mainline.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Delete", exact: true }).click();
+
+  const modal = page.locator(".confirm-modal");
+  const choice = modal.getByTestId("session-children-choice");
+  await expect(choice).toContainText("Branches 1 · Explorations 2");
+  const keep = choice.getByRole("checkbox");
+  await expect(keep).toBeChecked();
+  const remove = modal.getByRole("button", { name: "Delete", exact: true });
+  await expect(remove).toBeEnabled();
+  // An open round cannot outlive its source conversation.
+  await keep.uncheck();
+  await expect(choice).toContainText("cannot outlive");
+  await expect(remove).toBeDisabled();
+  await keep.check();
+  await remove.click();
+
+  await expect.poll(() => lastInvokeArgs(page, "delete_session")).toMatchObject({
+    id: "exploration-mainline", includeChildren: true,
+  });
+  await expect(mainline).toHaveCount(0);
+  await expect(page.locator('.sidebar [data-session-id="conversation-branch"]')).toHaveCount(0);
   await expect(page.getByTestId("sidebar-explorations")).toHaveCount(0);
 });

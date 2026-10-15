@@ -132,6 +132,101 @@ pub(crate) fn SessionArtifactChoice(
     }
 }
 
+/// Whether deleting conversations also deletes their subagents, branches and
+/// explorations. Checked by default; unchecked keeps them standalone.
+#[derive(Clone, Copy)]
+pub(crate) struct SessionChildrenChoiceState {
+    pub selected: RwSignal<bool>,
+    /// `None` until the backend has counted the children.
+    pub preview: RwSignal<Option<SessionChildrenPreview>>,
+    pub failed: RwSignal<bool>,
+}
+impl SessionChildrenChoiceState {
+    pub(crate) fn new() -> Self {
+        Self {
+            selected: create_rw_signal(true),
+            preview: create_rw_signal(None),
+            failed: create_rw_signal(false),
+        }
+    }
+    /// Delete waits for the count, so nothing unseen is removed, and an open
+    /// exploration round cannot be kept.
+    pub(crate) fn blocked(self) -> bool {
+        match self.preview.get() {
+            None => !self.failed.get(),
+            Some(preview) => !self.selected.get() && preview.explorations > 0,
+        }
+    }
+    /// `None` keeps the backend's original refusal for a conversation with
+    /// branches: nothing was counted, or the count could not be loaded.
+    pub(crate) fn include_children(self) -> Option<bool> {
+        self.preview
+            .get_untracked()
+            .filter(|preview| !preview.is_empty())
+            .map(|_| self.selected.get_untracked())
+    }
+}
+
+#[component]
+pub(crate) fn SessionChildrenChoice(
+    locale: RwSignal<Locale>,
+    ids: Vec<String>,
+    state: SessionChildrenChoiceState,
+) -> impl IntoView {
+    state.selected.set(true);
+    state.preview.set(None);
+    state.failed.set(false);
+    let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+    let cleanup = alive.clone();
+    on_cleanup(move || cleanup.set(false));
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({ "ids": ids })).unwrap();
+        let preview = invoke_checked("preview_session_children", args)
+            .await
+            .ok()
+            .and_then(|value| serde_wasm_bindgen::from_value::<SessionChildrenPreview>(value).ok());
+        if !alive.get() {
+            return;
+        }
+        match preview {
+            Some(preview) => state.preview.set(Some(preview)),
+            None => state.failed.set(true),
+        }
+    });
+    move || {
+        let preview = state.preview.get().filter(|preview| !preview.is_empty())?;
+        let loc = locale.get();
+        let counts = [
+            ("subagent.group", preview.subagents),
+            ("branch.group", preview.branches),
+            ("exploration.group", preview.explorations),
+        ]
+        .into_iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(key, n)| format!("{} {n}", t(loc, key)))
+        .collect::<Vec<_>>()
+        .join(" · ");
+        let keep_hint = if preview.explorations > 0 {
+            "session.children.exploration_blocks"
+        } else {
+            "session.children.keep"
+        };
+        Some(view! {
+            <div class="session-artifact-choice" data-testid="session-children-choice">
+                <label class="session-artifact-toggle">
+                    <input type="checkbox" prop:checked=move || state.selected.get()
+                        on:change=move |ev| state.selected.set(event_target_checked(&ev)) />
+                    <span>{t(loc, "session.children.delete")}</span>
+                </label>
+                <div class="hint">{counts}</div>
+                {move || (!state.selected.get()).then(|| view! {
+                    <p role="status">{t(loc, keep_hint)}</p>
+                })}
+            </div>
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct SessionTransferOverlayState {
     pub(crate) locale: RwSignal<Locale>,

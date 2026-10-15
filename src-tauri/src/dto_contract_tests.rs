@@ -1206,6 +1206,19 @@ fn session_artifact_preview_includes_review_token_and_retention_reasons() {
 }
 
 #[test]
+fn session_children_preview_counts_each_kind() {
+    let preview = wisp_dto::SessionChildrenPreview {
+        subagents: 2,
+        branches: 1,
+        explorations: 3,
+    };
+    let decoded: wisp_dto::SessionChildrenPreview = roundtrip(&preview);
+    assert_eq!(decoded, preview);
+    assert!(!decoded.is_empty());
+    assert!(wisp_dto::SessionChildrenPreview::default().is_empty());
+}
+
+#[test]
 fn assistant_weixin_status_contract_is_separate_from_legacy_channels() {
     let status = wisp_dto::AssistantWeixinStatus {
         enabled: true,

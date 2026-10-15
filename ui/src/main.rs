@@ -88,8 +88,9 @@ use session_modals::{
     FileEntryOverlay, FileEntryOverlayState, FolderModalOverlay, FolderModalOverlayState,
     ModelSwitchConfirmOverlay, ModelSwitchConfirmOverlayState, ProjSettingsOverlay,
     ProjSettingsOverlayState, RenameSessionOverlay, RenameSessionOverlayState,
-    SessionArtifactChoice, SessionArtifactChoiceState, SessionTransferOverlay,
-    SessionTransferOverlayState, ShelvedSessionsOverlay, TurnUndoOverlay, TurnUndoOverlayState,
+    SessionArtifactChoice, SessionArtifactChoiceState, SessionChildrenChoice,
+    SessionChildrenChoiceState, SessionTransferOverlay, SessionTransferOverlayState,
+    ShelvedSessionsOverlay, TurnUndoOverlay, TurnUndoOverlayState,
 };
 use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
@@ -2563,6 +2564,7 @@ fn App() -> impl IntoView {
     let full_permission_busy = create_rw_signal(false);
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
     let delete_artifacts = SessionArtifactChoiceState::new();
+    let delete_children = SessionChildrenChoiceState::new();
     // `/share` preview dialog: Some(rows) while open, None when closed.
     let share_draft = create_rw_signal::<Option<Vec<ShareMessage>>>(None);
     let open_share = Callback::new(move |()| {
@@ -12374,7 +12376,7 @@ fn App() -> impl IntoView {
                     }
                 });
             })
-            open_session_actions=Callback::new(move |(ev, id, title, pinned, is_branch, branch_merged, has_branch_family, has_exploration_round, stale_prompt): (web_sys::MouseEvent, String, String, bool, bool, bool, bool, bool, bool)| {
+            open_session_actions=Callback::new(move |(ev, id, title, pinned, is_branch, branch_merged, has_exploration_round, stale_prompt): (web_sys::MouseEvent, String, String, bool, bool, bool, bool, bool)| {
                 ctx_menu.set(Some(context_menu::session_menu(
                     ev.client_x() as f64,
                     ev.client_y() as f64,
@@ -12383,7 +12385,6 @@ fn App() -> impl IntoView {
                     pinned,
                     is_branch,
                     branch_merged,
-                    has_branch_family,
                     has_exploration_round,
                     stale_prompt,
                     locale.get(),
@@ -18265,14 +18266,16 @@ fn App() -> impl IntoView {
                     <h2>{move || t(locale.get(), title_key)}</h2>
                     <div class="hint">{message}</div>
                     {if let UiConfirm::DeleteSessions(ids) = action { Some(view! {
+                        <SessionChildrenChoice locale=locale ids=ids.clone() state=delete_children />
                         <SessionArtifactChoice locale=locale ids=ids target=None state=delete_artifacts />
                     }) } else { None }}
                     <div class="row">
                         <button on:click=move |_| ui_confirm.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
                         <button class="primary" class:danger=is_full_permission
-                            disabled=move || is_delete_session && delete_artifacts.blocked()
+                            disabled=move || is_delete_session && (delete_artifacts.blocked() || delete_children.blocked())
                             on:click=move |_| {
                             let include_artifacts = is_delete_session && delete_artifacts.selected.get_untracked();
+                            let include_children = if is_delete_session { delete_children.include_children() } else { None };
                             let artifact_previews = delete_artifacts.previews.get_untracked();
                             ui_confirm.set(None);
                             match action_ok.clone() {
@@ -18332,14 +18335,26 @@ fn App() -> impl IntoView {
                                     spawn_local(async move {
                                         let mut deleted = HashSet::new();
                                         for id in ids {
+                                            // Already removed along with a selected parent.
+                                            if deleted.contains(&id) {
+                                                continue;
+                                            }
                                             let arg = to_value(&serde_json::json!({ "id": id.clone(),
                                                 "includeArtifacts": include_artifacts,
                                                 "artifactFingerprint": artifact_previews.get(&id).map(|p|p.fingerprint.clone()),
+                                                "includeChildren": include_children,
                                             })).unwrap();
                                             match invoke_checked("delete_session", arg).await {
-                                                Ok(_) => { deleted.insert(id); }
+                                                Ok(value) => {
+                                                    let removed = serde_wasm_bindgen::from_value::<Vec<String>>(value).unwrap_or_default();
+                                                    deleted.insert(id);
+                                                    deleted.extend(removed);
+                                                }
                                                 Err(error) => show_toast(&localize_backend(locale.get_untracked(), &js_error_text(error))),
                                             }
+                                        }
+                                        if include_children == Some(true) {
+                                            refresh_explorations(explorations);
                                         }
                                         if !deleted.is_empty() {
                                             transcripts.update(|stored| {

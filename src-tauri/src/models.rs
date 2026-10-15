@@ -811,6 +811,38 @@ pub async fn session_profile_id(store: &wisp_store::Store, frame_id: &str) -> St
     resolve_session_profile(store, frame_id).await.0
 }
 
+/// Bind `target` to the chat model, reasoning effort and service tier that
+/// `source` runs on, so a branch or subagent keeps its origin's model instead
+/// of falling back to the global default.
+pub(crate) async fn copy_session_model_settings(
+    store: &wisp_store::Store,
+    source: &str,
+    target: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let model_id = session_profile_id(store, source).await;
+    store
+        .set_frame_model(target, project_id, &model_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let reasoning_effort = store
+        .frame_reasoning_effort(source)
+        .await
+        .map_err(|error| error.to_string())?;
+    store
+        .set_frame_reasoning_effort(target, project_id, reasoning_effort.as_deref())
+        .await
+        .map_err(|error| error.to_string())?;
+    let service_tier = store
+        .frame_service_tier(source)
+        .await
+        .map_err(|error| error.to_string())?;
+    store
+        .set_frame_service_tier(target, project_id, service_tier.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Chat profile for `frame_id`. A leftover id (deleted LM Studio profile, etc.)
 /// falls back to the active chat model and is rewritten on the frame so later
 /// turns do not keep resolving a dead binding (#1070).
@@ -2488,6 +2520,75 @@ mod tests {
 
         assert_eq!(session_profile_id(&store, "a").await, "m2");
         assert_eq!(session_profile_id(&store, "b").await, "m1");
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn derived_session_inherits_source_model_not_global_default() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_session_model_copy_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        save_raw(
+            &store,
+            &[
+                test_profile("m1", "first", "model-1"),
+                test_profile("m2", "second", "model-2"),
+            ],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "m1").await.unwrap();
+        store
+            .create_frame("parent", "p", "OPERON", "m1")
+            .await
+            .unwrap();
+        store
+            .create_frame("child", "p", "OPERON", "m1")
+            .await
+            .unwrap();
+        store.set_frame_model("parent", "p", "m2").await.unwrap();
+        store
+            .set_frame_reasoning_effort("parent", "p", Some("high"))
+            .await
+            .unwrap();
+        store
+            .set_frame_service_tier("parent", "p", Some("priority"))
+            .await
+            .unwrap();
+
+        copy_session_model_settings(&store, "parent", "child", "p")
+            .await
+            .unwrap();
+        assert_eq!(session_profile_id(&store, "child").await, "m2");
+        assert_eq!(
+            store.frame_reasoning_effort("child").await.unwrap(),
+            Some("high".into())
+        );
+        assert_eq!(
+            store.frame_service_tier("child").await.unwrap(),
+            Some("priority".into())
+        );
+
+        // A later copy follows the source's switch, including cleared overrides.
+        store.set_frame_model("parent", "p", "m1").await.unwrap();
+        store
+            .set_frame_reasoning_effort("parent", "p", None)
+            .await
+            .unwrap();
+        store
+            .set_frame_service_tier("parent", "p", None)
+            .await
+            .unwrap();
+        copy_session_model_settings(&store, "parent", "child", "p")
+            .await
+            .unwrap();
+        assert_eq!(session_profile_id(&store, "child").await, "m1");
+        assert_eq!(store.frame_reasoning_effort("child").await.unwrap(), None);
+        assert_eq!(store.frame_service_tier("child").await.unwrap(), None);
         drop(store);
         let _ = std::fs::remove_file(&tmp);
     }
