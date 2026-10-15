@@ -1,0 +1,184 @@
+{
+  "levels": ["minimal", "standard", "full"],
+  "default_level": "standard",
+  "labels": {"minimal": "简洁", "standard": "标准", "full": "详细"},
+  "rules": [
+    "Presentation only: every level reads the same snapshot items; nothing is sent to the host.",
+    "standard: the existing process grouping (apps/ios RemoteTranscript.groups). Tool steps, reasoning, file_changed and finished-turn commentary fold into one process row; result tools and assistant resources stay outside.",
+    "minimal: start from standard rows. Drop every process row whose failures count is 0; replace the others with one failures row. Also drop usage items. Live commentary stays visible as progress text; the existing running indicator stays.",
+    "full: one item row per snapshot item, in order, with tool and reasoning content shown expanded.",
+    "Row kinds: item {index}; process {indices, tools, files, failures}; failures {indices, count}. indices point into the case's items."
+  ],
+  "cases": [
+    {
+      "name": "finished-turn",
+      "running": false,
+      "items": [
+        {"role":"user","text":"绘制表达热图"},
+        {"role":"reasoning","text":"检查数据"},
+        {"role":"assistant","text":"准备绘图"},
+        {"role":"tool","tool_name":"shell","input":"python plot.py","text":"done","ok":true},
+        {"role":"file_changed","text":"figures/heatmap.png"},
+        {"role":"file_changed","text":"figures/heatmap.pdf"},
+        {"role":"tool","tool_name":"read","input":"results/summary.csv","text":"gene,logFC","ok":true},
+        {"role":"file_changed","text":"figures/heatmap.png"},
+        {"role":"assistant","text":"# 分析完成\n\n已生成热图。"},
+        {"role":"usage","text":"{\"input_tokens\":1200,\"output_tokens\":300}"}
+      ],
+      "expect": {
+        "minimal": [
+          {"kind":"item","index":0},
+          {"kind":"item","index":8}
+        ],
+        "standard": [
+          {"kind":"item","index":0},
+          {"kind":"process","indices":[1,2,3,4,5,6,7],"tools":2,"files":2,"failures":0},
+          {"kind":"item","index":8},
+          {"kind":"item","index":9}
+        ],
+        "full": [
+          {"kind":"item","index":0}, {"kind":"item","index":1}, {"kind":"item","index":2},
+          {"kind":"item","index":3}, {"kind":"item","index":4}, {"kind":"item","index":5},
+          {"kind":"item","index":6}, {"kind":"item","index":7}, {"kind":"item","index":8},
+          {"kind":"item","index":9}
+        ]
+      }
+    },
+    {
+      "name": "failures-and-result-tools",
+      "running": false,
+      "items": [
+        {"role":"user","text":"比较两组样本"},
+        {"role":"tool","tool_name":"grep","input":"condition","text":"2 matches","ok":true},
+        {"role":"acp_tool","tool_name":"read","input":"data/missing.csv","text":"not found","ok":false},
+        {"role":"tool","tool_name":"shell","input":"Rscript deseq.R","text":"","status":"timed_out"},
+        {"role":"tool","tool_name":"generate_image","input":"figures/volcano.png","text":"saved","ok":true},
+        {"role":"reasoning","text":"整理结论"},
+        {"role":"tool","tool_name":"attempt_completion","text":"火山图已生成","ok":true}
+      ],
+      "expect": {
+        "minimal": [
+          {"kind":"item","index":0},
+          {"kind":"failures","indices":[1,2,3],"count":2},
+          {"kind":"item","index":4},
+          {"kind":"item","index":6}
+        ],
+        "standard": [
+          {"kind":"item","index":0},
+          {"kind":"process","indices":[1,2,3],"tools":3,"files":0,"failures":2},
+          {"kind":"item","index":4},
+          {"kind":"process","indices":[5],"tools":0,"files":0,"failures":0},
+          {"kind":"item","index":6}
+        ],
+        "full": [
+          {"kind":"item","index":0}, {"kind":"item","index":1}, {"kind":"item","index":2},
+          {"kind":"item","index":3}, {"kind":"item","index":4}, {"kind":"item","index":5},
+          {"kind":"item","index":6}
+        ]
+      }
+    },
+    {
+      "name": "boundaries-stay-visible",
+      "running": false,
+      "items": [
+        {"role":"user","text":"清洗数据"},
+        {"role":"tool","tool_name":"read","input":"data/raw.csv","text":"id,value","ok":true},
+        {"role":"plan","text":"","proposal":{"entries":[{"content":"读取原始数据"},{"content":"剔除异常值"}]}},
+        {"role":"tool","tool_name":"edit","input":"clean.py","text":"edited","ok":true},
+        {"role":"system","text":"上下文已压缩"},
+        {"role":"tool","tool_name":"shell","input":"python clean.py","text":"ValueError","ok":false},
+        {"role":"question","text":"{\"source\":\"native\",\"question\":\"保留异常值吗？\",\"options\":[{\"label\":\"保留\",\"description\":\"\"},{\"label\":\"剔除\",\"description\":\"\"}],\"allow_freeform\":true}"},
+        {"role":"future-role","text":"未知类型"}
+      ],
+      "expect": {
+        "minimal": [
+          {"kind":"item","index":0},
+          {"kind":"item","index":2},
+          {"kind":"item","index":4},
+          {"kind":"failures","indices":[5],"count":1},
+          {"kind":"item","index":6},
+          {"kind":"item","index":7}
+        ],
+        "standard": [
+          {"kind":"item","index":0},
+          {"kind":"process","indices":[1],"tools":1,"files":0,"failures":0},
+          {"kind":"item","index":2},
+          {"kind":"process","indices":[3],"tools":1,"files":0,"failures":0},
+          {"kind":"item","index":4},
+          {"kind":"process","indices":[5],"tools":1,"files":0,"failures":1},
+          {"kind":"item","index":6},
+          {"kind":"item","index":7}
+        ],
+        "full": [
+          {"kind":"item","index":0}, {"kind":"item","index":1}, {"kind":"item","index":2},
+          {"kind":"item","index":3}, {"kind":"item","index":4}, {"kind":"item","index":5},
+          {"kind":"item","index":6}, {"kind":"item","index":7}
+        ]
+      }
+    },
+    {
+      "name": "running-current-turn",
+      "running": true,
+      "items": [
+        {"role":"user","text":"上一轮"},
+        {"role":"assistant","text":"旧进度"},
+        {"role":"tool","tool_name":"read","input":"notes.md","text":"ok","ok":true},
+        {"role":"assistant","text":"旧回答"},
+        {"role":"usage","text":"{\"input_tokens\":800,\"output_tokens\":120}"},
+        {"role":"user","text":"这一轮"},
+        {"role":"assistant","text":"正在绘图"},
+        {"role":"tool","tool_name":"shell","input":"python plot.py","text":"","status":"running"},
+        {"role":"file_changed","text":"figure.png"}
+      ],
+      "expect": {
+        "minimal": [
+          {"kind":"item","index":0},
+          {"kind":"item","index":3},
+          {"kind":"item","index":5},
+          {"kind":"item","index":6}
+        ],
+        "standard": [
+          {"kind":"item","index":0},
+          {"kind":"process","indices":[1,2],"tools":1,"files":0,"failures":0},
+          {"kind":"item","index":3},
+          {"kind":"item","index":4},
+          {"kind":"item","index":5},
+          {"kind":"item","index":6},
+          {"kind":"process","indices":[7,8],"tools":1,"files":1,"failures":0}
+        ],
+        "full": [
+          {"kind":"item","index":0}, {"kind":"item","index":1}, {"kind":"item","index":2},
+          {"kind":"item","index":3}, {"kind":"item","index":4}, {"kind":"item","index":5},
+          {"kind":"item","index":6}, {"kind":"item","index":7}, {"kind":"item","index":8}
+        ]
+      }
+    },
+    {
+      "name": "assistant-resources-stay-outside",
+      "running": false,
+      "items": [
+        {"role":"user","text":"画图"},
+        {"role":"assistant","text":"![图](fig.png)","resources":[{"id":"image-a"}]},
+        {"role":"tool","tool_name":"read","input":"fig.png","text":"ok","ok":true},
+        {"role":"assistant","text":"完成"}
+      ],
+      "expect": {
+        "minimal": [
+          {"kind":"item","index":0},
+          {"kind":"item","index":1},
+          {"kind":"item","index":3}
+        ],
+        "standard": [
+          {"kind":"item","index":0},
+          {"kind":"item","index":1},
+          {"kind":"process","indices":[2],"tools":1,"files":0,"failures":0},
+          {"kind":"item","index":3}
+        ],
+        "full": [
+          {"kind":"item","index":0}, {"kind":"item","index":1},
+          {"kind":"item","index":2}, {"kind":"item","index":3}
+        ]
+      }
+    }
+  ]
+}
