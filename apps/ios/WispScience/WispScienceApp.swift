@@ -37,15 +37,18 @@ final class WispSceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         #if DEBUG
         let model = PreviewHost.workspace() ?? RemoteWorkspace()
+        let preferences = PreviewHost.preferences() ?? .standard
         #else
         let model = RemoteWorkspace()
+        let preferences = UserDefaults.standard
         #endif
         workspace = model
         let window = WispWindow(windowScene: scene)
         window.dismissTopSurface = { [weak model] in model?.dismissTopSurface() }
         window.hasSurface = { [weak model] in model?.hasDismissibleSurface == true }
         window.installPageBackGesture(workspace: model)
-        window.rootViewController = UIHostingController(rootView: WorkspaceView(model: model, connection: model.connection))
+        window.rootViewController = UIHostingController(rootView: WorkspaceView(model: model, connection: model.connection)
+            .defaultAppStorage(preferences))
         self.window = window
         window.makeKeyAndVisible()
     }

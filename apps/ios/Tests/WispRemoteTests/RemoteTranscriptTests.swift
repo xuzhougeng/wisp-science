@@ -67,4 +67,53 @@ final class RemoteTranscriptTests: XCTestCase {
         XCTAssertEqual(Array(paged.suffix(original.count)), original)
         XCTAssertEqual(Set(paged.map(\.id)).count, paged.count)
     }
+
+    /// Rows in the shared contract's shape, with positions relative to `items`.
+    private func contractRow(_ row: RemoteTranscript.Row, items: [RemoteValue], offset: Int) -> RemoteValue {
+        func indices(_ group: RemoteTranscript.Group) -> RemoteValue {
+            let start = group.id - offset
+            if start >= 0 && start + group.items.count <= items.count {
+                XCTAssertEqual(group.items, Array(items[start..<start + group.items.count]), "A fold keeps its items in order")
+            } else { XCTFail("Fold \(group.id) is outside the items") }
+            return .array(group.items.indices.map { .integer(Int64(start + $0)) })
+        }
+        switch row {
+        case .item(let id, let item):
+            XCTAssertEqual(items.indices.contains(id - offset) ? items[id - offset] : nil, item)
+            return .object(["kind": .string("item"), "index": .integer(Int64(id - offset))])
+        case .process(let group):
+            return .object(["kind": .string("process"), "indices": indices(group), "tools": .integer(Int64(group.toolCount)),
+                            "files": .integer(Int64(group.changedFileCount)), "failures": .integer(Int64(group.failureCount))])
+        case .failures(let group):
+            return .object(["kind": .string("failures"), "indices": indices(group), "count": .integer(Int64(group.failureCount))])
+        }
+    }
+
+    func testDetailLevelsMatchTheSharedMobileContract() throws {
+        let contract = try fixture("native-conversations/v1/transcript-detail.json")
+        let levels = RemoteTranscript.DetailLevel.allCases
+        XCTAssertEqual(levels.map(\.rawValue), contract["levels"].array.map(\.string))
+        XCTAssertEqual(RemoteTranscript.DetailLevel.default.rawValue, contract["default_level"].string)
+        for level in levels { XCTAssertEqual(level.label, contract["labels"][level.rawValue].string) }
+        let cases = contract["cases"].array
+        XCTAssertFalse(cases.isEmpty)
+        for sample in cases {
+            let items = sample["items"].array
+            let running = sample["running"].bool
+            for level in levels {
+                let expected = sample["expect"][level.rawValue].array
+                XCTAssertFalse(expected.isEmpty, "\(sample["name"].string) has no \(level.rawValue) rows")
+                // An earlier history page shifts identities but never the rows themselves.
+                for offset in [0, -3] {
+                    let rows = RemoteTranscript.rows(items, level: level, running: running, indexOffset: offset)
+                    XCTAssertEqual(rows.map { contractRow($0, items: items, offset: offset) }, expected,
+                                   "\(sample["name"].string) · \(level.rawValue) · offset \(offset)")
+                    XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+                }
+            }
+            let standard = RemoteTranscript.rows(items, level: .standard, running: running)
+            XCTAssertEqual(standard.map(\.id), RemoteTranscript.groups(items, running: running).map(\.id),
+                           "标准 keeps the existing grouping and identities")
+        }
+    }
 }

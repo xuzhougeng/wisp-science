@@ -41,6 +41,7 @@ struct WispIcon: View {
         case list, notebook, camera, edit, book, check, square, checkSquare = "check-square"
         case image, calendar, researchTrail = "research-trail", arrowUp = "arrow-up"
         case chevronRight = "chevron-right", chevronDown = "chevron-down", chevronLeft = "chevron-left"
+        case adjustments
     }
     let kind: Kind
     @ScaledMetric private var size: CGFloat
@@ -95,6 +96,32 @@ struct WispToolbarButton: View {
         .accessibilityLabel(title).accessibilityValue(status)
         .accessibilityShowsLargeContentViewer {
             Label { Text(status.isEmpty ? title : status) } icon: { WispIcon(icon) }
+        }
+    }
+}
+
+/// A toolbar menu with the same icon-only bar treatment as `WispToolbarButton`.
+struct WispToolbarMenu<Content: View>: View {
+    let title: String
+    let icon: WispIcon.Kind
+    var value = ""
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            Label {
+                Text(title)
+            } icon: {
+                WispIcon(icon)
+            }
+            .labelStyle(.iconOnly).dynamicTypeSize(.large)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .tint(WispStyle.navigationAction).foregroundStyle(WispStyle.navigationAction)
+        .accessibilityLabel(title).accessibilityValue(value)
+        .accessibilityShowsLargeContentViewer {
+            Label { Text(value.isEmpty ? title : "\(title)：\(value)") } icon: { WispIcon(icon) }
         }
     }
 }

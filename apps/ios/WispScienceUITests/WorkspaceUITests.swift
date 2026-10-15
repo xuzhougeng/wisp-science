@@ -817,6 +817,60 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(commentary.isHittable)
     }
 
+    func testDetailLevelMenuChangesHowMuchProcessIsShown() {
+        let app = launch("process")
+        openConversation(app)
+        let menu = app.buttons["transcript-detail"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertEqual(menu.label, "信息详细程度")
+        XCTAssertEqual(menu.value as? String, "标准", "Each launch starts from the default level")
+        XCTAssertTrue(app.buttons["process-group-1"].exists)
+
+        // One Escape closes only the menu; the conversation underneath stays open.
+        menu.tap()
+        XCTAssertTrue(app.buttons["简洁"].waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["简洁"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["conversation-files"].exists)
+
+        menu.tap()
+        app.buttons["简洁"].tap()
+        XCTAssertEqual(menu.value as? String, "简洁")
+        let hint = app.buttons["failure-hint-1"]
+        revealEarlier(hint, in: app)
+        XCTAssertEqual(hint.label, "1 项失败")
+        XCTAssertEqual(hint.value as? String, "已折叠")
+        XCTAssertGreaterThanOrEqual(hint.frame.height, 44)
+        XCTAssertFalse(app.buttons["process-group-1"].exists)
+        XCTAssertFalse(app.buttons["shell"].exists)
+        XCTAssertFalse(app.staticTexts["正在整理表达数据并生成图片。"].exists)
+        XCTAssertTrue(app.staticTexts["表达分析完成"].exists)
+        hint.tap()
+        XCTAssertEqual(hint.value as? String, "已展开")
+        XCTAssertTrue(app.buttons["shell"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["python heatmap.py"].exists, "Steps inside the hint start collapsed")
+
+        menu.tap()
+        app.buttons["详细"].tap()
+        XCTAssertEqual(menu.value as? String, "详细")
+        XCTAssertFalse(app.buttons["failure-hint-1"].exists)
+        XCTAssertFalse(app.buttons["process-group-1"].exists)
+        let shell = app.buttons["shell"].firstMatch
+        revealEarlier(shell, in: app)
+        XCTAssertEqual(shell.value as? String, "已展开")
+        XCTAssertTrue(app.staticTexts["python heatmap.py"].exists)
+        shell.tap()
+        XCTAssertEqual(shell.value as? String, "已折叠")
+        XCTAssertFalse(app.staticTexts["python heatmap.py"].exists)
+
+        menu.tap()
+        app.buttons["标准"].tap()
+        let group = app.buttons["process-group-1"]
+        revealEarlier(group, in: app)
+        XCTAssertEqual(group.value as? String, "已折叠")
+        XCTAssertFalse(app.buttons["shell"].exists)
+    }
+
     func testUsageIsCollapsedAndRawPayloadRequiresExplicitExpansion() {
         let app = launch("appearance")
         openConversation(app)

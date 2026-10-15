@@ -25,6 +25,16 @@ import WispRemote
         let offline = FileManager.default.temporaryDirectory.appendingPathComponent("wisp-ui-research-" + offlineID.uuidString)
         return RemoteWorkspace(connection: connection, credentials: credential, preferences: nil, cache: cache, offlineDirectory: offline)
     }
+    /// View preferences such as the transcript detail level, emptied at each UI-test
+    /// launch so a choice made by one test never reaches the next.
+    static func preferences() -> UserDefaults? {
+        let environment = ProcessInfo.processInfo.environment
+        let suite = "science.wisp.ui-testing"
+        guard environment["WISP_UI_TESTING"] != nil || environment["WISP_TESTING"] == "1",
+              let store = UserDefaults(suiteName: suite) else { return nil }
+        store.removePersistentDomain(forName: suite)
+        return store
+    }
     private struct MemoryCredential: RemoteCredentialStoring {
         let connected: Bool
         func load() throws -> RemoteConfiguration? {

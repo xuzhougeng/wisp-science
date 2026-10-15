@@ -73,4 +73,53 @@ public enum RemoteTranscript {
         flush()
         return result
     }
+
+    /// How much of a turn's intermediate work the transcript shows. A per-device
+    /// presentation choice; contracts/native-conversations/v1/transcript-detail.json
+    /// pins the rows each level produces for the iOS and Android clients.
+    public enum DetailLevel: String, CaseIterable, Identifiable, Sendable {
+        case minimal, standard, full
+        public static let `default` = DetailLevel.standard
+        public var id: String { rawValue }
+        public var label: String {
+            switch self {
+            case .minimal: return "简洁"
+            case .standard: return "标准"
+            case .full: return "详细"
+            }
+        }
+    }
+
+    public enum Row: Identifiable, Equatable, Sendable {
+        /// One item shown on its own; `id` is its position including `indexOffset`.
+        case item(id: Int, RemoteValue)
+        /// Folded process steps, as produced by `groups`.
+        case process(Group)
+        /// A process fold reduced to its failure count.
+        case failures(Group)
+
+        public var id: Int {
+            switch self {
+            case .item(let id, _): return id
+            case .process(let group), .failures(let group): return group.id
+            }
+        }
+    }
+
+    /// `standard` is exactly `groups`. `minimal` keeps only process folds that
+    /// failed, as failure rows, and hides usage. `full` puts every item on its
+    /// own row. Row identities follow the same positions as `groups`.
+    public static func rows(_ items: [RemoteValue], level: DetailLevel, running: Bool = false, indexOffset: Int = 0) -> [Row] {
+        if level == .full {
+            return items.enumerated().map { .item(id: $0.offset + indexOffset, $0.element) }
+        }
+        return groups(items, running: running, indexOffset: indexOffset).compactMap { group in
+            guard group.isProcess else {
+                if level == .minimal && group.items.first?["role"].string == "usage" { return nil }
+                return .item(id: group.id, group.items[0])
+            }
+            guard level == .minimal else { return .process(group) }
+            return group.failureCount > 0 ? .failures(group) : nil
+        }
+    }
 }
