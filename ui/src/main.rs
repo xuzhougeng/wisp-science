@@ -14660,6 +14660,9 @@ fn App() -> impl IntoView {
                     let Some(snapshot) = active_context_usage.get() else {
                         return None;
                     };
+                    let health = context_epochs.with(|rows| {
+                        session_health(head_epoch.get(), rows, &snapshot)
+                    });
                     (context_usage_open.get()
                         && context_usage_mode.get() == ContextUsageMode::Docked)
                         .then(|| {
@@ -14695,6 +14698,7 @@ fn App() -> impl IntoView {
                                                 )
                                             }),
                                         )
+                                        health=health
                                     />
                                 </div>
                             }
@@ -17969,6 +17973,9 @@ fn App() -> impl IntoView {
             let Some(snapshot) = active_context_usage.get() else {
                 return None;
             };
+            let health = context_epochs.with(|rows| {
+                session_health(head_epoch.get(), rows, &snapshot)
+            });
             (context_usage_open.get()
                 && context_usage_mode.get() == ContextUsageMode::Floating)
                 .then(|| {
@@ -18003,6 +18010,7 @@ fn App() -> impl IntoView {
                                     )
                                 }),
                             )
+                            health=health
                         />
                     }
                 })

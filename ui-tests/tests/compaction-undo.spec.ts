@@ -44,7 +44,8 @@ async function openCompactedSession(page: Page, payload = compactionPayload(), l
     const original = w.__TAURI__.core.invoke;
     const epochs = Array.from({ length: w.__compactionItem.epoch }, (_, index) => ({
       epoch: index + 1, parent_epoch: index, strategy: "manual", kind: "semantic",
-      before_tokens: 1000, after_tokens: 200, initial_head_seq: 9 + index * 4,
+      before_tokens: w.__epochTokens?.[index]?.[0] ?? 1000,
+      after_tokens: w.__epochTokens?.[index]?.[1] ?? 200, initial_head_seq: 9 + index * 4,
       first_kept_seq: 4, checkpoint_seq: 7 + index * 4, has_new_turns: false,
     }));
     w.__compactionCards = epochs.map(row => ({ ...w.__compactionItem, epoch: row.epoch,
@@ -664,4 +665,32 @@ test("a turn sent during model loading remains after the checkpoint", async ({ p
     w.__finishEpochSend();
   });
   await expect(page.locator(".thread").getByText("sent while loading", { exact: true })).toHaveCount(1);
+});
+
+test("session health flags shrinking compaction yield at low usage (#1541)", async ({ page }) => {
+  // The first fold freed 80%, the second only 20%: usage is back to 20%,
+  // but compaction has stopped buying room.
+  await page.addInitScript(() => { (window as any).__epochTokens = [[1000, 200], [1000, 800]]; });
+  await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  const trigger = page.getByTestId("context-usage-trigger");
+  await expect(trigger).toHaveText("20%");
+  await expect(trigger).not.toHaveAttribute("data-tone", "danger");
+  await trigger.click();
+  const panel = page.getByTestId("context-usage-panel");
+  const health = panel.getByTestId("context-usage-health");
+  await expect(health).toHaveText("Health: split soon · compacted 2× · last freed 20%");
+  await expect(health).toHaveAttribute("data-level", "split-soon");
+  const nudge = panel.getByTestId("context-usage-nudge");
+  await expect(nudge).toBeVisible();
+  await expect(nudge).toContainText("Compaction is freeing less each time");
+  await expect(nudge.getByRole("button", { name: "Compact" })).toBeVisible();
+  await expect(nudge.getByRole("button", { name: "New session" })).toBeVisible();
+});
+
+test("session health stays OK when every compaction frees most of the window (#1541)", async ({ page }) => {
+  await openCompactedSession(page, compactionPayload({ epoch: 3 }));
+  await page.getByTestId("context-usage-trigger").click();
+  const panel = page.getByTestId("context-usage-panel");
+  await expect(panel.getByTestId("context-usage-health")).toHaveText("Health: OK · compacted 3× · last freed 80%");
+  await expect(panel.getByTestId("context-usage-nudge")).toHaveCount(0);
 });

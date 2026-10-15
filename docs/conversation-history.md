@@ -124,11 +124,36 @@ event. Cumulative input/output billing totals remain unchanged.
 Retained-tail markers follow copied messages through earlier epochs; when a
 legacy or ambiguous copy has no reliable origin, the marker remains unknown.
 
+### Session health
+
+Because the percentage drops back after every compaction, the usage panel also
+shows a health line under the epoch line, for example `Health: split soon ·
+compacted 3× · last freed 20%`. It counts only compactions on the current
+epoch chain (undone epochs are excluded) and measures each compaction's freed
+ratio as `(before − after) / before`:
+
+- **OK**: fewer than two compactions, or compaction still frees plenty of
+  room. Many compactions alone never change the level, so sessions that
+  monitor long runs stay OK as long as each fold frees space.
+- **Split soon**: after two or more compactions, the latest freed less than
+  25% of its window, or less than half of what the previous one freed while
+  also staying under 50%.
+- **Split now**: the last two compactions both freed less than 15%; the
+  window is above 90% again after a compaction; or a split-soon session's
+  conversation already fills half the window.
+
+Whenever the level is not OK, the panel shows the same status row as a nearly
+full window, with **Compact** and **New session**. It is passive: no modal and
+no throttling, so it stays visible until the level recovers.
+
 ## Manual smoke checks
 
 - Compact twice, undo the latest compact, and verify the parent epoch, its
   summary, and its undo action return without reopening the conversation.
 - Undo and compact again; verify the new card is not marked as already undone.
+- Compact twice where the second compact frees little room; verify the usage
+  panel shows `Health: split soon` and the Compact / New session row at a low
+  percentage, and that undoing the latest compact returns the line to OK.
 - Trigger automatic compaction, let the turn finish, and expand its summary in
   the same window. Switch conversations during refresh and verify neither
   conversation receives the other's metadata or loses pending/live messages.

@@ -461,6 +461,11 @@
 .context-usage-epoch {
   margin-top: 10px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4;
 }
+.context-usage-health {
+  margin-top: 4px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4;
+}
+.context-usage-health[data-level="split-soon"] { color: var(--warn); }
+.context-usage-health[data-level="split-now"] { color: var(--err); }
 .context-usage-view-toggle { margin-top: 10px; }
 .review-live {
   display: flex; align-items: center; gap: 9px; flex: 0 1 280px; min-width: 0;
@@ -1853,6 +1858,10 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--err) 8%, var(--bg-elev));
   color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.35;
+}
+.context-usage-nudge[data-health="split-soon"] {
+  border-color: color-mix(in srgb, var(--warn) 32%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-elev));
 }
 .context-usage-nudge-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
 .context-usage-nudge-action {

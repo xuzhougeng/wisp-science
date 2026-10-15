@@ -2831,6 +2831,18 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "context_usage.epoch_line_no_checkpoint") => {
             Some("Epoch {epoch} · system + {turns} kept turns")
         }
+        (Locale::En, "context_usage.health.ok") => Some("OK"),
+        (Locale::En, "context_usage.health.split_soon") => Some("split soon"),
+        (Locale::En, "context_usage.health.split_now") => Some("split now"),
+        (Locale::En, "context_usage.health.line") => {
+            Some("Health: {level} · compacted {count}× · last freed {freed}%")
+        }
+        (Locale::En, "context_usage.health.line_no_ratio") => {
+            Some("Health: {level} · compacted {count}×")
+        }
+        (Locale::En, "context_usage.health.nudge") => {
+            Some("Compaction is freeing less each time — consider a new session")
+        }
         (Locale::En, "compact.title") => Some("Compact context"),
         (Locale::En, "compact.subtitle") => Some("Choose regular pruning or a semantic checkpoint before rewriting the model context."),
         (Locale::En, "compact.mode_regular") => Some("Regular compact"),
@@ -5915,6 +5927,18 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "context_usage.epoch_line_no_checkpoint") => {
             Some("纪元 {epoch} · system + {turns} 轮 tail")
         }
+        (Locale::Zh, "context_usage.health.ok") => Some("良好"),
+        (Locale::Zh, "context_usage.health.split_soon") => Some("建议尽快拆分"),
+        (Locale::Zh, "context_usage.health.split_now") => Some("建议立即拆分"),
+        (Locale::Zh, "context_usage.health.line") => {
+            Some("健康度：{level} · 已压缩 {count} 次 · 最近释放 {freed}%")
+        }
+        (Locale::Zh, "context_usage.health.line_no_ratio") => {
+            Some("健康度：{level} · 已压缩 {count} 次")
+        }
+        (Locale::Zh, "context_usage.health.nudge") => {
+            Some("压缩释放的空间越来越少，建议新开对话")
+        }
         (Locale::Zh, "compact.title") => Some("压缩上下文"),
         (Locale::Zh, "compact.subtitle") => Some("先选择常规压缩或语义压缩，再重写模型实际使用的上下文。"),
         (Locale::Zh, "compact.mode_regular") => Some("常规压缩"),
@@ -7570,6 +7594,21 @@ mod queue_label_tests {
         assert_eq!(t(Locale::Zh, "context_usage.dock"), "停靠面板");
         assert_eq!(t(Locale::En, "context_usage.resize"), "Resize panel");
         assert_eq!(t(Locale::Zh, "context_usage.resize"), "调整面板大小");
+    }
+
+    #[test]
+    fn context_usage_health_labels_exist_in_both_locales() {
+        for key in [
+            "context_usage.health.ok",
+            "context_usage.health.split_soon",
+            "context_usage.health.split_now",
+            "context_usage.health.line",
+            "context_usage.health.line_no_ratio",
+            "context_usage.health.nudge",
+        ] {
+            assert_ne!(t(Locale::En, key), key);
+            assert_ne!(t(Locale::Zh, key), key);
+        }
     }
 
     #[test]

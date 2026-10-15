@@ -102,6 +102,160 @@ pub(crate) fn context_epoch_line(
     ))
 }
 
+/// Session health thresholds (#1541). The usage percentage drops back after
+/// every compaction, so it cannot tell whether compaction is still buying
+/// room. Health looks at the compaction history on the head epoch's chain:
+///
+/// - Fewer than [`HEALTH_MIN_COMPACTIONS`] compactions never judge the freed
+///   ratio, and the count alone never triggers anything: sessions that
+///   monitor long runs compact often and legitimately.
+/// - `SplitSoon` when the latest compaction freed less than
+///   [`HEALTH_SPLIT_SOON_FREED`] of its window, or freed less than
+///   [`HEALTH_SPLIT_SOON_DROP`] of what the previous one freed while staying
+///   under [`HEALTH_HEALTHY_FREED`] (a fold that still frees half the window
+///   is healthy however it compares).
+/// - `SplitNow` when the last two compactions both freed less than
+///   [`HEALTH_SPLIT_NOW_FREED`], when the window is in the danger band after
+///   at least one compaction, or when a `SplitSoon` session's conversation
+///   already takes [`HEALTH_SPLIT_NOW_CONVERSATION_SHARE`] of the window (the
+///   residue left by folding is itself filling the window).
+///
+/// The freed ratio of one compaction is `(before - after) / before`.
+pub(crate) const HEALTH_MIN_COMPACTIONS: usize = 2;
+pub(crate) const HEALTH_SPLIT_SOON_FREED: f64 = 0.25;
+pub(crate) const HEALTH_SPLIT_SOON_DROP: f64 = 0.5;
+pub(crate) const HEALTH_HEALTHY_FREED: f64 = 0.5;
+pub(crate) const HEALTH_SPLIT_NOW_FREED: f64 = 0.15;
+pub(crate) const HEALTH_SPLIT_NOW_CONVERSATION_SHARE: f64 = 0.5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionHealth {
+    Ok,
+    SplitSoon,
+    SplitNow,
+}
+
+impl SessionHealth {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::SplitSoon => "split-soon",
+            Self::SplitNow => "split-now",
+        }
+    }
+
+    fn label_key(self) -> &'static str {
+        match self {
+            Self::Ok => "context_usage.health.ok",
+            Self::SplitSoon => "context_usage.health.split_soon",
+            Self::SplitNow => "context_usage.health.split_now",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SessionHealthReport {
+    pub(crate) level: SessionHealth,
+    /// Compactions on the head epoch's parent chain (undone epochs excluded).
+    pub(crate) compactions: usize,
+    /// Freed ratio of the latest compaction, when its token counts are known.
+    pub(crate) latest_freed: Option<f64>,
+}
+
+fn freed_ratio(epoch: &ContextEpochDto) -> Option<f64> {
+    (epoch.before_tokens > 0).then(|| {
+        epoch.before_tokens.saturating_sub(epoch.after_tokens) as f64 / epoch.before_tokens as f64
+    })
+}
+
+/// Epochs from the head back to the root, newest first. Undone epochs and
+/// sibling branches are not on the chain, so they do not count.
+fn head_epoch_chain(head_epoch: u64, epochs: &[ContextEpochDto]) -> Vec<&ContextEpochDto> {
+    let mut chain = Vec::new();
+    let mut cursor = head_epoch;
+    while cursor != 0 && chain.len() < epochs.len() {
+        let Some(row) = epochs.iter().find(|row| row.epoch == cursor) else {
+            break;
+        };
+        chain.push(row);
+        cursor = row.parent_epoch;
+    }
+    chain
+}
+
+pub(crate) fn session_health(
+    head_epoch: u64,
+    epochs: &[ContextEpochDto],
+    snapshot: &ContextUsageSnapshot,
+) -> SessionHealthReport {
+    let chain = head_epoch_chain(head_epoch, epochs);
+    let compactions = chain.len();
+    let latest_freed = chain.first().and_then(|row| freed_ratio(row));
+    let previous_freed = chain.get(1).and_then(|row| freed_ratio(row));
+    let report = |level| SessionHealthReport {
+        level,
+        compactions,
+        latest_freed,
+    };
+    if compactions == 0 {
+        return report(SessionHealth::Ok);
+    }
+    if context_usage_tone(snapshot.used, snapshot.max) == ContextUsageTone::Danger {
+        return report(SessionHealth::SplitNow);
+    }
+    if compactions < HEALTH_MIN_COMPACTIONS {
+        return report(SessionHealth::Ok);
+    }
+    let Some(latest) = latest_freed else {
+        return report(SessionHealth::Ok);
+    };
+    if previous_freed.is_some_and(|previous| {
+        latest < HEALTH_SPLIT_NOW_FREED && previous < HEALTH_SPLIT_NOW_FREED
+    }) {
+        return report(SessionHealth::SplitNow);
+    }
+    let diminishing = latest < HEALTH_SPLIT_SOON_FREED
+        || previous_freed.is_some_and(|previous| {
+            latest < HEALTH_HEALTHY_FREED && latest < previous * HEALTH_SPLIT_SOON_DROP
+        });
+    if !diminishing {
+        return report(SessionHealth::Ok);
+    }
+    let conversation_share = snapshot
+        .breakdown
+        .filter(|_| snapshot.max > 0)
+        .map(|usage| usage.conversation as f64 / snapshot.max as f64);
+    if conversation_share.is_some_and(|share| share >= HEALTH_SPLIT_NOW_CONVERSATION_SHARE) {
+        report(SessionHealth::SplitNow)
+    } else {
+        report(SessionHealth::SplitSoon)
+    }
+}
+
+pub(crate) fn session_health_line(locale: Locale, report: &SessionHealthReport) -> Option<String> {
+    if report.compactions == 0 {
+        return None;
+    }
+    let level = t(locale, report.level.label_key());
+    let count = report.compactions.to_string();
+    Some(match report.latest_freed {
+        Some(freed) => tf(
+            locale,
+            "context_usage.health.line",
+            &[
+                ("level", &level),
+                ("count", &count),
+                ("freed", &format!("{:.0}", freed * 100.0)),
+            ],
+        ),
+        None => tf(
+            locale,
+            "context_usage.health.line_no_ratio",
+            &[("level", &level), ("count", &count)],
+        ),
+    })
+}
+
 fn context_usage_event_target(ev: &web_sys::MouseEvent) -> Option<web_sys::Element> {
     ev.target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
@@ -351,10 +505,18 @@ pub(crate) fn ContextUsagePanel(
     on_new_session: Callback<()>,
     compact_disabled: Signal<bool>,
     epoch_line: Option<String>,
+    health: SessionHealthReport,
 ) -> impl IntoView {
     let loc = locale.get();
     let pct = context_percent(snapshot.used, snapshot.max);
     let danger = context_usage_tone(snapshot.used, snapshot.max) == ContextUsageTone::Danger;
+    let health_line = session_health_line(loc, &health);
+    let show_nudge = danger || health.level != SessionHealth::Ok;
+    let nudge_copy = if danger {
+        "context_usage.nudge"
+    } else {
+        "context_usage.health.nudge"
+    };
     let used = fmt_context_tokens(snapshot.used);
     let total = if snapshot.max == 0 {
         tf(loc, "context_usage.total_used", &[("used", &used)])
@@ -439,10 +601,15 @@ pub(crate) fn ContextUsagePanel(
                     <div class="context-usage-epoch" data-testid="context-usage-epoch">{line}</div>
                 }
             })}
+            {health_line.map(|line| view! {
+                <div class="context-usage-health" data-testid="context-usage-health"
+                    data-level=health.level.as_str()>{line}</div>
+            })}
             <TranscriptViewToggle in_panel=true />
-            {danger.then(|| view! {
-                <div class="context-usage-nudge" data-testid="context-usage-nudge" role="status">
-                    <span class="context-usage-nudge-copy">{t(loc, "context_usage.nudge")}</span>
+            {show_nudge.then(|| view! {
+                <div class="context-usage-nudge" data-testid="context-usage-nudge" role="status"
+                    data-health=health.level.as_str()>
+                    <span class="context-usage-nudge-copy">{t(loc, nudge_copy)}</span>
                     <div class="context-usage-nudge-actions">
                         <button type="button" class="context-usage-nudge-action"
                             data-testid="context-usage-compact"
@@ -523,8 +690,145 @@ pub(crate) fn ContextUsagePanel(
 
 #[cfg(test)]
 mod tests {
-    use super::context_epoch_line;
+    use super::{
+        context_epoch_line, session_health, session_health_line, SessionHealth, SessionHealthReport,
+    };
+    use crate::dto::{ContextEpochDto, ContextUsage, ContextUsageSnapshot};
     use crate::i18n::Locale;
+
+    /// A linear chain of compactions, oldest first, as `(before, after)`.
+    fn chain(folds: &[(u64, u64)]) -> Vec<ContextEpochDto> {
+        folds
+            .iter()
+            .enumerate()
+            .map(|(index, &(before_tokens, after_tokens))| ContextEpochDto {
+                epoch: index as u64 + 1,
+                parent_epoch: index as u64,
+                strategy: "auto".into(),
+                kind: "semantic".into(),
+                before_tokens,
+                after_tokens,
+                initial_head_seq: 0,
+                first_kept_seq: None,
+                checkpoint_seq: None,
+                ui_event_seq: None,
+                has_new_turns: false,
+            })
+            .collect()
+    }
+
+    fn usage(used: usize, conversation: Option<usize>) -> ContextUsageSnapshot {
+        ContextUsageSnapshot {
+            used,
+            max: 1_000,
+            breakdown: conversation.map(|conversation| ContextUsage {
+                conversation,
+                ..ContextUsage::default()
+            }),
+            estimated: false,
+        }
+    }
+
+    fn level(folds: &[(u64, u64)], snapshot: &ContextUsageSnapshot) -> SessionHealth {
+        session_health(folds.len() as u64, &chain(folds), snapshot).level
+    }
+
+    #[test]
+    fn health_is_ok_and_silent_without_compaction() {
+        let report = session_health(0, &[], &usage(950, None));
+        assert_eq!(report.level, SessionHealth::Ok);
+        assert_eq!(report.compactions, 0);
+        assert_eq!(session_health_line(Locale::En, &report), None);
+    }
+
+    #[test]
+    fn one_compaction_is_ok_unless_the_window_is_full_again() {
+        assert_eq!(level(&[(1_000, 950)], &usage(200, None)), SessionHealth::Ok);
+        assert_eq!(
+            level(&[(1_000, 200)], &usage(950, None)),
+            SessionHealth::SplitNow
+        );
+    }
+
+    #[test]
+    fn diminishing_freed_ratios_recommend_a_split() {
+        // 80% then 20%: the latest is under the split-soon floor.
+        assert_eq!(
+            level(&[(1_000, 200), (1_000, 800)], &usage(200, None)),
+            SessionHealth::SplitSoon
+        );
+        // 80% then 35%: above the floor but less than half the previous one.
+        assert_eq!(
+            level(&[(1_000, 200), (1_000, 650)], &usage(200, None)),
+            SessionHealth::SplitSoon
+        );
+        // Both of the last two under 15%.
+        assert_eq!(
+            level(
+                &[(1_000, 200), (1_000, 900), (1_000, 880)],
+                &usage(200, None)
+            ),
+            SessionHealth::SplitNow
+        );
+        // Diminishing, and the conversation residue already fills half the window.
+        assert_eq!(
+            level(&[(1_000, 200), (1_000, 800)], &usage(600, Some(500))),
+            SessionHealth::SplitNow
+        );
+    }
+
+    #[test]
+    fn run_monitoring_with_many_healthy_compactions_stays_ok() {
+        let folds = vec![(1_000, 280); 12];
+        assert_eq!(level(&folds, &usage(300, Some(250))), SessionHealth::Ok);
+        // A fold that still frees half the window is healthy even after a better one.
+        assert_eq!(
+            level(&[(1_000, 100), (1_000, 450)], &usage(300, None)),
+            SessionHealth::Ok
+        );
+    }
+
+    #[test]
+    fn undone_epochs_off_the_head_chain_do_not_count() {
+        let mut epochs = chain(&[(1_000, 200), (1_000, 900)]);
+        // Epoch 2 was undone and epoch 3 forked from epoch 1 instead.
+        let fork = ContextEpochDto {
+            epoch: 3,
+            parent_epoch: 1,
+            before_tokens: 1_000,
+            after_tokens: 250,
+            ..epochs[0].clone()
+        };
+        epochs.push(fork);
+        let report = session_health(3, &epochs, &usage(200, None));
+        assert_eq!(report.compactions, 2);
+        assert_eq!(report.level, SessionHealth::Ok);
+    }
+
+    #[test]
+    fn health_line_names_level_count_and_latest_freed_ratio() {
+        let report = SessionHealthReport {
+            level: SessionHealth::SplitSoon,
+            compactions: 3,
+            latest_freed: Some(0.204),
+        };
+        assert_eq!(
+            session_health_line(Locale::En, &report).as_deref(),
+            Some("Health: split soon · compacted 3× · last freed 20%")
+        );
+        assert_eq!(
+            session_health_line(Locale::Zh, &report).as_deref(),
+            Some("健康度：建议尽快拆分 · 已压缩 3 次 · 最近释放 20%")
+        );
+        let unknown = SessionHealthReport {
+            latest_freed: None,
+            ..report
+        };
+        assert_eq!(
+            session_health_line(Locale::En, &unknown).as_deref(),
+            Some("Health: split soon · compacted 3×")
+        );
+    }
 
     #[test]
     fn epoch_line_hidden_without_compaction() {
