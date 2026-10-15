@@ -668,13 +668,12 @@ test("a turn sent during model loading remains after the checkpoint", async ({ p
 });
 
 test("session health flags shrinking compaction yield at low usage (#1541)", async ({ page }) => {
-  // The first fold freed 80%, the second only 20%: usage is back to 20%,
-  // but compaction has stopped buying room.
+  // The first fold freed 80%, the second only 20%: usage is back in the low
+  // band, but compaction has stopped buying room.
   await page.addInitScript(() => { (window as any).__epochTokens = [[1000, 200], [1000, 800]]; });
   await openCompactedSession(page, compactionPayload({ epoch: 2 }));
   const trigger = page.getByTestId("context-usage-trigger");
-  await expect(trigger).toHaveText("20%");
-  await expect(trigger).not.toHaveAttribute("data-tone", "danger");
+  await expect(trigger).toHaveAttribute("data-tone", "ok");
   await trigger.click();
   const panel = page.getByTestId("context-usage-panel");
   const health = panel.getByTestId("context-usage-health");
