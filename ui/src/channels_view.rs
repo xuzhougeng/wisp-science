@@ -557,7 +557,10 @@ pub(super) fn ChannelsPane(
     let copy_remote = move |text: Option<String>| {
         if let Some(text) = text {
             copy_text(text);
-            msg.set(Some((true, t(locale.get_untracked(), "channels.remote.copied").into())));
+            msg.set(Some((
+                true,
+                t(locale.get_untracked(), "channels.remote.copied").into(),
+            )));
         }
     };
 

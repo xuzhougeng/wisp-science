@@ -160,7 +160,11 @@ pub(super) fn LabPane(
     };
     let set_inbox = move |project_id: String| {
         let args = to_value(&serde_json::json!({ "projectId": project_id })).unwrap();
-        run("lab_set_inbox_project", args, Some("channels.lab.inbox_saved"));
+        run(
+            "lab_set_inbox_project",
+            args,
+            Some("channels.lab.inbox_saved"),
+        );
     };
     let join_kb = move |_: web_sys::MouseEvent| {
         if busy.get_untracked() {
@@ -192,33 +196,31 @@ pub(super) fn LabPane(
     };
 
     // First click arms the button, second click runs `action`.
-    let confirm_button = move |id: String,
-                               label: &'static str,
-                               testid: String,
-                               action: Callback<()>| {
-        let armed = {
-            let id = id.clone();
-            move || confirming.get().as_deref() == Some(id.as_str())
-        };
-        let label_armed = armed.clone();
-        view! {
-            <button type="button" class="danger" data-testid=testid
-                prop:disabled=move || busy.get()
-                on:click=move |_| {
-                    if armed() {
-                        action.call(());
+    let confirm_button =
+        move |id: String, label: &'static str, testid: String, action: Callback<()>| {
+            let armed = {
+                let id = id.clone();
+                move || confirming.get().as_deref() == Some(id.as_str())
+            };
+            let label_armed = armed.clone();
+            view! {
+                <button type="button" class="danger" data-testid=testid
+                    prop:disabled=move || busy.get()
+                    on:click=move |_| {
+                        if armed() {
+                            action.call(());
+                        } else {
+                            confirming.set(Some(id.clone()));
+                        }
+                    }>
+                    {move || if label_armed() {
+                        t(locale.get(), "channels.lab.confirm")
                     } else {
-                        confirming.set(Some(id.clone()));
-                    }
-                }>
-                {move || if label_armed() {
-                    t(locale.get(), "channels.lab.confirm")
-                } else {
-                    t(locale.get(), label)
-                }}
-            </button>
-        }
-    };
+                        t(locale.get(), label)
+                    }}
+                </button>
+            }
+        };
 
     let token_row = move || {
         view! {
@@ -365,8 +367,9 @@ pub(super) fn LabPane(
         let current = status.get().unwrap_or_default();
         let knowledge_base = current.knowledge_base.clone();
         let summary = match &knowledge_base {
-            Some(kb) if kb.local => t(locale.get(), "channels.lab.kb_local")
-                .replace("{name}", &kb.project_name),
+            Some(kb) if kb.local => {
+                t(locale.get(), "channels.lab.kb_local").replace("{name}", &kb.project_name)
+            }
             Some(_) => t(locale.get(), "channels.lab.kb_remote"),
             None => t(locale.get(), "channels.lab.kb_none"),
         };

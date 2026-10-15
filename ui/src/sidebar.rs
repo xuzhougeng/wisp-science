@@ -19,7 +19,9 @@ fn nest_in_use(
     attention: &HashSet<String>,
 ) -> bool {
     active.is_some_and(|id| id == parent || kids.iter().any(|kid| kid == id))
-        || kids.iter().any(|kid| running.contains(kid) || attention.contains(kid))
+        || kids
+            .iter()
+            .any(|kid| running.contains(kid) || attention.contains(kid))
 }
 
 #[cfg(test)]
@@ -40,7 +42,13 @@ mod nest_tests {
         assert!(nest_in_use("main", &kids, Some("other"), &busy_kid, &none));
         assert!(nest_in_use("main", &kids, None, &none, &busy_kid));
         // A busy parent already shows its own status; that alone does not unfold it.
-        assert!(!nest_in_use("main", &kids, Some("other"), &busy_parent, &busy_parent));
+        assert!(!nest_in_use(
+            "main",
+            &kids,
+            Some("other"),
+            &busy_parent,
+            &busy_parent
+        ));
     }
 }
 

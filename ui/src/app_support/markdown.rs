@@ -1807,7 +1807,10 @@ mod prefix_tests {
     fn short_prefix_cuts_on_char_boundaries() {
         assert_eq!(super::short_prefix("abcdefghij"), "abcdefgh");
         assert_eq!(super::short_prefix("分析结果"), "分析结果");
-        assert_eq!(super::short_prefix("一二三四五六七八九十"), "一二三四五六七八");
+        assert_eq!(
+            super::short_prefix("一二三四五六七八九十"),
+            "一二三四五六七八"
+        );
         assert!(!super::artifact_matches_token("分析结果", "abc"));
     }
 }

@@ -210,8 +210,8 @@ fn status_label(loc: Locale, status: &str) -> &'static str {
 fn end_of_day(value: &str) -> Option<i64> {
     let mut parts = value.split('-').map(|part| part.parse::<i32>().ok());
     let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
-    let ts = js_sys::Date::new_with_year_month_day_hr_min_sec(y as u32, m - 1, d, 23, 59, 59)
-        .get_time();
+    let ts =
+        js_sys::Date::new_with_year_month_day_hr_min_sec(y as u32, m - 1, d, 23, 59, 59).get_time();
     ts.is_finite().then_some((ts / 1000.0) as i64)
 }
 
@@ -357,19 +357,32 @@ pub(crate) fn MandateSection(
         let loc = locale.get_untracked();
         if f.project_id.is_empty() || f.goal.trim().is_empty() {
             form_error.set(Some(
-                j(loc, "Choose a project and write a goal.", "请选择项目并填写目标。").into(),
+                j(
+                    loc,
+                    "Choose a project and write a goal.",
+                    "请选择项目并填写目标。",
+                )
+                .into(),
             ));
             return;
         }
         if !f.end_date.is_empty() && end_of_day(&f.end_date).is_none_or(|end| end <= now()) {
             form_error.set(Some(
-                j(loc, "Choose an end date in the future, or leave it empty.", "请选择将来的结束日期，或留空。").into(),
+                j(
+                    loc,
+                    "Choose an end date in the future, or leave it empty.",
+                    "请选择将来的结束日期，或留空。",
+                )
+                .into(),
             ));
             return;
         }
         let draft = serde_json::to_value(draft_from(&f)).unwrap_or_default();
         let (command, args) = match &f.id {
-            Some(id) => ("update_mandate", serde_json::json!({"id": id, "draft": draft})),
+            Some(id) => (
+                "update_mandate",
+                serde_json::json!({"id": id, "draft": draft}),
+            ),
             None => ("create_mandate", serde_json::json!({"draft": draft})),
         };
         spawn_local(async move {
@@ -385,10 +398,14 @@ pub(crate) fn MandateSection(
     let project_name =
         move |id: &str| projects.with(|ps| ps.iter().find(|p| p.id == id).map(|p| p.name.clone()));
     // One KPI cell: reads and writes field `get`/`set` of row `i`.
-    let kpi_input = move |i: usize, label: &'static str, class: &'static str, get: fn(&MandateKpi) -> String, set: fn(&mut MandateKpi, String)| {
+    let kpi_input = move |i: usize,
+                          label: &'static str,
+                          class: &'static str,
+                          get: fn(&MandateKpi) -> String,
+                          set: fn(&mut MandateKpi, String)| {
         view! {<input type="text" class=class aria-label=label placeholder=label
-            prop:value=move || form.with(|f| f.kpis.get(i).map(get).unwrap_or_default())
-            on:input=move |ev| form.update(|f| if let Some(k) = f.kpis.get_mut(i) { set(k, event_target_value(&ev)) })/>}
+        prop:value=move || form.with(|f| f.kpis.get(i).map(get).unwrap_or_default())
+        on:input=move |ev| form.update(|f| if let Some(k) = f.kpis.get_mut(i) { set(k, event_target_value(&ev)) })/>}
     };
     view! {
         {move || (form_open.get() && mandate_form.get()).then(|| {

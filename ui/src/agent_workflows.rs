@@ -914,7 +914,8 @@ pub(super) fn refresh_agent_workflows(state: AgentPanelState) {
             Err(invoke_error) => state.error.set(Some(js_error_text(invoke_error))),
         }
         let args = serde_json::json!({ "sessionId": state.session_id.get_untracked() });
-        if let Ok(value) = invoke_checked("list_subagent_activity", to_value(&args).unwrap()).await {
+        if let Ok(value) = invoke_checked("list_subagent_activity", to_value(&args).unwrap()).await
+        {
             if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<SubagentActivity>>(value) {
                 if state.activity.with_untracked(|current| current != &items) {
                     state.activity.set(items);
@@ -4416,7 +4417,10 @@ fn activity_meta(item: &SubagentActivity, locale: Locale) -> String {
             &[("count", &item.tool_calls.to_string())],
         ));
     }
-    if let Some(end) = item.ended_at.filter(|end| item.started_at > 0 && *end >= item.started_at) {
+    if let Some(end) = item
+        .ended_at
+        .filter(|end| item.started_at > 0 && *end >= item.started_at)
+    {
         parts.push(format_duration(end - item.started_at));
     }
     parts.join(" · ")
