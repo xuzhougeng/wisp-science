@@ -12105,6 +12105,8 @@ test("awaiting approval marks the session dot and requests a desktop notificatio
   await expect(waiting).toHaveCount(1);
   await expect(waiting.locator(".ses-attention")).toBeVisible();
   await expect(waiting.locator(".ses-attention svg")).toBeVisible();
+  await expect(waiting.locator(".ses-status-label")).toHaveText("Needs you");
+  await expect(page.getByTestId("sidebar-needs-you")).toContainText("1 need you");
   await expect(waiting.locator(".ses-live")).toBeHidden();
   // The UI asked the backend for a desktop notification carrying the session
   // title (the backend decides visibility from window focus + settings).

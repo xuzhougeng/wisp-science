@@ -86,6 +86,9 @@ pub(super) struct SidebarState {
     pub(super) running: RwSignal<HashSet<String>>,
     /// Sessions blocked on a tool-approval / permission card (#327).
     pub(super) attention: RwSignal<HashSet<String>>,
+    /// All saved sessions needing attention, including replies outside the
+    /// sidebar's loaded history page. Shared with the topbar inbox.
+    pub(super) inbox_sessions: RwSignal<Vec<SessionSearchInfo>>,
     pub(super) rename_session_input: RwSignal<String>,
     pub(super) rename_session_target: RwSignal<Option<(String, String)>>,
     pub(super) collapsed_folders: RwSignal<HashSet<String>>,
@@ -158,6 +161,7 @@ pub(super) fn Sidebar(
         active_session,
         running,
         attention,
+        inbox_sessions,
         rename_session_input,
         rename_session_target,
         collapsed_folders,
@@ -190,6 +194,41 @@ pub(super) fn Sidebar(
     // open while its family is in use; a manual toggle (keyed by parent id) overrides that.
     let nest_choice = create_rw_signal(HashMap::<String, bool>::new());
     let selecting_sessions = create_rw_signal(false);
+    let needs_you_only = create_rw_signal(false);
+    create_effect(move |_| {
+        project_info.track();
+        needs_you_only.set(false);
+    });
+    let attention_rows = create_memo(move |_| {
+        let Some(project) = project_info.get() else {
+            return Vec::new();
+        };
+        let mut rows: Vec<_> = inbox_sessions
+            .get()
+            .into_iter()
+            .filter(|session| session.project_id == project.id)
+            .collect();
+        // Live approval events arrive before the saved inbox refresh. Include
+        // those immediately without counting a session twice.
+        let live = attention.get();
+        for session in sessions.get() {
+            if live.contains(&session.id) && !rows.iter().any(|row| row.id == session.id) {
+                rows.push(SessionSearchInfo {
+                    id: session.id,
+                    project_id: project.id.clone(),
+                    project_name: project.name.clone(),
+                    title: session.title,
+                    ts: session.ts,
+                    activity_at: session.ts,
+                    status: "needs_you".into(),
+                });
+            }
+        }
+        rows
+    });
+    let session_attention = create_memo(move |_| {
+        attention_rows.with(|rows| rows.iter().map(|row| row.id.clone()).collect::<HashSet<_>>())
+    });
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     let bulk_move_open = create_rw_signal(false);
     // The group being dragged to a new slot, with its index in `folders`.
@@ -413,6 +452,7 @@ pub(super) fn Sidebar(
                                     <button type="button" class="side-select-btn"
                                         disabled=move || sessions.get().is_empty()
                                         on:click=move |_| {
+                                            needs_you_only.set(false);
                                             selecting_sessions.set(true);
                                             selected_sessions.set(HashSet::new());
                                             sort_menu_open.set(false);
@@ -508,6 +548,23 @@ pub(super) fn Sidebar(
                     </div>
                 }
             })}
+            {move || (!demo_mode.get() && !selecting_sessions.get()
+                && (!attention_rows.get().is_empty() || needs_you_only.get())).then(|| view! {
+                <div class="side-session-filters" role="group" aria-label=move || t(locale.get(), "sidebar.sessions")>
+                    <button type="button" data-testid="sidebar-all-sessions"
+                        aria-pressed=move || (!needs_you_only.get()).to_string()
+                        on:click=move |_| needs_you_only.set(false)>
+                        {move || t(locale.get(), "sidebar.all_sessions")}
+                    </button>
+                    <button type="button" data-testid="sidebar-needs-you"
+                        aria-pressed=move || needs_you_only.get().to_string()
+                        title=move || t(locale.get(), "sess_status.needs_you_hint")
+                        on:click=move |_| needs_you_only.set(true)>
+                        {compose_icon("circle-alert")}
+                        {move || tf(locale.get(), "sess_status.needs_you_n", &[("n", &attention_rows.get().len().to_string())])}
+                    </button>
+                </div>
+            })}
             <div class="side-list">
                 {move || {
                     let loc = locale.get();
@@ -541,6 +598,34 @@ pub(super) fn Sidebar(
                                             open_demo_btn.call((ev, d_actions.id.clone(), d_actions.title.clone()));
                                         }>{compose_icon("more")}</button>
                                 </div>
+                            }
+                        }).collect_view();
+                    }
+                    if needs_you_only.get() {
+                        let pending = attention_rows.get();
+                        if pending.is_empty() {
+                            return view! { <div class="side-hint">{t(loc, "inbox.empty")}</div> }.into_view();
+                        }
+                        // A flat inbox makes old, nested and folded-away sessions
+                        // reachable without changing the saved grouping choices.
+                        return pending.into_iter().map(|session| {
+                            let id = session.id.clone();
+                            let active_id = id.clone();
+                            let title = if session.title.trim().is_empty() {
+                                t(loc, "sidebar.untitled").to_string()
+                            } else {
+                                session.title
+                            };
+                            view! {
+                                <button type="button" class="side-item side-attention-item"
+                                    data-testid="sidebar-attention-session" data-session-id=session.id
+                                    class:active=move || active_session.get().as_deref() == Some(active_id.as_str())
+                                    title=format!("{} · {}", title, t(loc, "sess_status.needs_you"))
+                                    on:click=move |_| load_session.call(id.clone())>
+                                    <span class="side-attention-icon" aria-hidden="true">{compose_icon("circle-alert")}</span>
+                                    <span class="ses-title">{title}</span>
+                                    <span class="ses-status-label needs-you">{t(loc, "sess_status.needs_you")}</span>
+                                </button>
                             }
                         }).collect_view();
                     }
@@ -607,7 +692,16 @@ pub(super) fn Sidebar(
                         let id_active = id.clone();
                         let id_attr = id.clone();
                         let id_running = id.clone();
-                        let id_attention = id.clone();
+                        let id_status = id.clone();
+                        let session_status = Signal::derive(move || {
+                            if session_attention.with(|ids| ids.contains(&id_status)) {
+                                Some(SessionStatusKind::NeedsYou)
+                            } else if running.with(|ids| ids.contains(&id_status)) {
+                                Some(SessionStatusKind::Running)
+                            } else {
+                                None
+                            }
+                        });
                         let id_drag = id.clone();
                         let id_dragcls = id.clone();
                         let id_selected = id.clone();
@@ -643,11 +737,14 @@ pub(super) fn Sidebar(
                                 <button type="button" class="side-item ses"
                                     class:pinned=pinned
                                     class:branch-session=is_branch
-                                    title=title_tooltip
+                                    title=move || session_status.get().map_or_else(
+                                        || title_tooltip.clone(),
+                                        |status| format!("{} · {}", title_tooltip, t(locale.get(), status.i18n_key())),
+                                    )
                                     aria-description=kind_label
                                     class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                     class:running=move || running.get().contains(&id_running)
-                                    class:attention=move || attention.get().contains(&id_attention)
+                                    class:attention=move || session_status.get() == Some(SessionStatusKind::NeedsYou)
                                     class:dragging=move || drag_session.get().as_deref() == Some(id_dragcls.as_str())
                                     class:selecting=move || selecting_sessions.get()
                                     class:selected=move || selected_sessions.get().contains(&id_selected)
@@ -716,6 +813,11 @@ pub(super) fn Sidebar(
                                     </span>
                                     <span class="ses-initial" aria-hidden="true">{initial}</span>
                                     <span class="ses-title">{title}</span>
+                                    {move || session_status.get().map(|status| view! {
+                                        <span class=format!("ses-status-label {}", status.css())>
+                                            {t(locale.get(), status.i18n_key())}
+                                        </span>
+                                    })}
                                 </button>
                                 {nest}
                                 <button type="button" class="session-actions"
@@ -811,7 +913,7 @@ pub(super) fn Sidebar(
                             let parent_id = parent_id.clone();
                             Signal::derive(move || {
                                 nest_choice.with(|choice| choice.get(&parent_id).copied()).unwrap_or_else(|| {
-                                    active_session.with(|active| running.with(|running| attention.with(|attention| {
+                                    active_session.with(|active| running.with(|running| session_attention.with(|attention| {
                                         nest_in_use(&parent_id, &kid_ids, active.as_deref(), running, attention)
                                     })))
                                 })
@@ -1113,7 +1215,7 @@ pub(super) fn Sidebar(
             </div>
             {move || {
                 let load_older = load_older_sessions_button.clone();
-                (!demo_mode.get() && session_history_cursor.get().is_some()).then(|| view! {
+                (!demo_mode.get() && !needs_you_only.get() && session_history_cursor.get().is_some()).then(|| view! {
                     <button type="button" class="side-load-more"
                         disabled=move || session_history_loading.get()
                         on:click=move |_| load_older.call(())>

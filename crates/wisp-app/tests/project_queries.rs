@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde_json::json;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tempfile::TempDir;
-use wisp_app::projects::{list_projects, project_status_counts};
+use wisp_app::projects::{list_needs_you_sessions, list_projects, project_status_counts};
 use wisp_llm::Message;
 use wisp_store::{ProjectSyncState, Store};
 
@@ -259,6 +259,18 @@ async fn activity_is_project_scoped_with_approval_and_unseen_reply_precedence() 
     assert_eq!((project.running_count, project.needs_you_count), (1, 3));
     let other = projects.iter().find(|p| p.id == "other").unwrap();
     assert_eq!((other.running_count, other.needs_you_count), (0, 1));
+    let inbox = list_needs_you_sessions(&db.store, &running, &awaiting)
+        .await
+        .unwrap();
+    assert_eq!(
+        inbox
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<HashSet<_>>(),
+        HashSet::from(["pending", "reply", "internal", "foreign"])
+    );
+    assert!(inbox.iter().all(|row| row.status == "needs_you"));
+    assert_eq!(inbox.iter().filter(|row| row.project_id == "p").count(), 3);
 
     for id in ["reply", "internal"] {
         db.store.mark_frame_seen(id).await.unwrap();
@@ -267,11 +279,89 @@ async fn activity_is_project_scoped_with_approval_and_unseen_reply_precedence() 
         project_status_counts(&db.store, "p", &running, &awaiting).await,
         (1, 1)
     );
+    let inbox = list_needs_you_sessions(&db.store, &running, &awaiting)
+        .await
+        .unwrap();
+    assert_eq!(
+        inbox
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<HashSet<_>>(),
+        HashSet::from(["pending", "foreign"])
+    );
     // A subsequent query uses the new snapshot, not cached live activity.
     let idle = HashSet::new();
     assert_eq!(
         project_status_counts(&db.store, "p", &idle, &idle).await,
         (0, 1)
+    );
+}
+
+#[tokio::test]
+async fn needs_you_inbox_is_not_limited_by_recent_history_or_search_page_size() {
+    let db = TestDb::new().await;
+    db.project("p").await;
+    db.project("assistant:research").await;
+    db.session("assistant-reply", "assistant:research").await;
+    db.store
+        .append_message("assistant-reply", 2, &Message::assistant("Hidden"))
+        .await
+        .unwrap();
+    db.session("exploration-reply", "p").await;
+    db.store
+        .append_message(
+            "exploration-reply",
+            2,
+            &Message::assistant("Exploration result"),
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE frames SET exploration_id='exploration' WHERE id='exploration-reply'")
+        .execute(&db.sql)
+        .await
+        .unwrap();
+    for index in 0..105 {
+        let id = format!("reply-{index:03}");
+        db.session(&id, "p").await;
+        db.store
+            .append_message(&id, 2, &Message::assistant("Unread result"))
+            .await
+            .unwrap();
+    }
+    for index in 0..55 {
+        db.session(&format!("newer-{index:03}"), "p").await;
+    }
+    sqlx::query("UPDATE messages SET ts=CASE WHEN frame_id LIKE 'newer-%' THEN 200 ELSE 100 END")
+        .execute(&db.sql)
+        .await
+        .unwrap();
+    db.store
+        .set_session_shelved("reply-104", "p", true)
+        .await
+        .unwrap();
+    db.store.mark_frame_seen("reply-000").await.unwrap();
+    let idle = HashSet::new();
+    let rows = list_needs_you_sessions(&db.store, &idle, &idle)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 103);
+    assert!(rows
+        .iter()
+        .all(|row| row.project_id == "p" && row.id.starts_with("reply-")));
+    assert!(rows
+        .iter()
+        .all(|row| row.id != "reply-104" && row.id != "reply-000"));
+    assert_eq!(
+        project_status_counts(&db.store, "p", &idle, &idle).await,
+        (0, 103)
+    );
+    // Listing is read-only: replies remain pending until actually opened.
+    assert_eq!(
+        list_needs_you_sessions(&db.store, &idle, &idle)
+            .await
+            .unwrap()
+            .len(),
+        103
     );
 }
 

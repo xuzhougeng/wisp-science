@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use wisp_dto::ProjectSummary;
+use wisp_dto::{ProjectSummary, SessionSearchInfo};
 use wisp_store::Store;
 
 /// List projects in the store's order (starred first, then latest activity).
@@ -80,15 +80,60 @@ pub async fn project_status_counts(
     let mut running_count = 0;
     let mut needs_you_count = 0;
     for (id, role, unseen) in rows {
-        if awaiting.contains(&id) {
+        if session_needs_attention(&id, role.as_deref(), unseen, running, awaiting) {
             needs_you_count += 1;
         } else if running.contains(&id) {
             running_count += 1;
-        } else if matches!(role.as_deref(), Some("assistant" | "internal")) && unseen {
-            needs_you_count += 1;
         }
     }
     (running_count, needs_you_count)
+}
+
+fn session_needs_attention(
+    id: &str,
+    role: Option<&str>,
+    unseen: bool,
+    running: &HashSet<String>,
+    awaiting: &HashSet<String>,
+) -> bool {
+    awaiting.contains(id)
+        || (!running.contains(id) && unseen && matches!(role, Some("assistant" | "internal")))
+}
+
+/// The inbox must cover the same saved sessions as the project counts. Filtering
+/// a bounded recent-search result first hides older replies behind unrelated
+/// completed conversations. Read status metadata for every visible project, then
+/// fetch titles only for sessions that need attention; never load transcripts.
+pub async fn list_needs_you_sessions(
+    store: &Store,
+    running: &HashSet<String>,
+    awaiting: &HashSet<String>,
+) -> Result<Vec<SessionSearchInfo>> {
+    let mut sessions = Vec::new();
+    for (project_id, ..) in store.list_projects().await? {
+        for (id, role, unseen) in store.list_session_last_roles(&project_id).await? {
+            if !session_needs_attention(&id, role.as_deref(), unseen, running, awaiting) {
+                continue;
+            }
+            if let Some(row) = store.get_session_reference(&id).await? {
+                sessions.push(SessionSearchInfo {
+                    id: row.id,
+                    project_id: row.project_id,
+                    project_name: row.project_name,
+                    title: row.title,
+                    ts: row.created_at,
+                    activity_at: row.activity_at,
+                    status: "needs_you".into(),
+                });
+            }
+        }
+    }
+    sessions.sort_by(|a, b| {
+        b.activity_at
+            .cmp(&a.activity_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(sessions)
 }
 
 /// The home page uses the same five recent sessions as the WebView. A project

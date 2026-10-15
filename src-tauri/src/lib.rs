@@ -7892,6 +7892,7 @@ pub fn run() {
             artifact_commands::list_artifacts,
             artifact_commands::search_artifacts,
             session_commands::search_sessions,
+            session_commands::list_needs_you_sessions,
             session_commands::search_project_chats,
             session_commands::locate_project_chat_match,
             artifact_commands::read_artifact,

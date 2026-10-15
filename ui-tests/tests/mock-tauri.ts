@@ -255,7 +255,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     ? [{ id: "s1", title: "Plan mode regression", ts: 2000, running: false }]
     : mockPublication
       ? [{ id: "publication-session", title: "Publication evidence", ts: 2000, running: false }]
-    : query.get("mockManySessions") === "1"
+    : query.get("mockManySessions") === "1" || query.get("mockNeedsYou") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
         title: `Paged session ${index + 1}`,
@@ -281,6 +281,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               },
             ]
       : [];
+  if (query.get("mockNeedsYou") === "1") {
+    for (const session of mockSessions) {
+      session.needs_you = ["session-002", "session-004", "session-005", "session-101"].includes(session.id);
+      session.running = ["session-003", "session-004"].includes(session.id);
+      session.awaiting = session.id === "session-004";
+    }
+    Object.assign(mockSessions[1], { folder_id: "pending-folder", title: "Unread report in a collapsed group with a long conversation title" });
+    Object.assign(mockSessions[4], { branched_from: "session-001", branch_state: "active", title: "Branch: Unread branch report" });
+  }
   if (query.get("mockNamedUnusedDraft") === "1") {
     mockSessions.unshift({
       id: "named-unused-draft",
@@ -404,6 +413,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   }));
   const mockFolders: Array<{ id: string; name: string }> = query.get("mockSubagentFolder") === "1"
     ? [{ id: "subagent-folder", name: "Analysis" }]
+    : query.get("mockNeedsYou") === "1"
+    ? [{ id: "pending-folder", name: "Pending reports" }]
     : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
@@ -2494,6 +2505,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "load_session":
             activeMockFrame = String(arg("id") ?? "");
+            if (query.get("mockNeedsYou") === "1") {
+              const session = mockSessions.find((row) => row.id === activeMockFrame);
+              if (session && !session.awaiting) session.needs_you = false;
+              return {
+                items: [
+                  { role: "user", text: session?.title ?? "Question", tool_name: null, ok: null },
+                  { role: "assistant", text: `Saved reply for ${activeMockFrame}`, tool_name: null, ok: null },
+                ],
+                next_before_seq: null,
+                user_offset: 0,
+              };
+            }
             if (mockExplorationFlow && String(arg("id") ?? "").startsWith("exploration-")) {
               activeMockFrame = String(arg("id"));
               return explorationTranscript(activeMockFrame);
@@ -3075,7 +3098,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               ...(new URL(location.href).searchParams.get("mockCalendar") === "dense" ? Array.from({length:32}, (_, index) => ({id:`calendar-project-${index}`,name:["跨物种单细胞图谱", "水稻基因组", "转录组分析", "长期研究项目与文献证据整理"][index % 4] + ` ${index + 1}`,workspace_dir:`/mock/calendar-${index}`,session_count:0,updated_at:0,running_count:0,needs_you_count:0,sync_configured:false,last_synced_at:null})) : []),
               { id: "default", name: projectNames.default ?? project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("default"), last_synced_at: syncedProjects.has("default") ? Math.floor(Date.now() / 1000) : null, folder_sync: folderSync.default ?? null },
               { id: "other", name: projectNames.other ?? "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("other"), last_synced_at: syncedProjects.has("other") ? Math.floor(Date.now() / 1000) : null, folder_sync: folderSync.other ?? null },
-            ].map(p => ({ ...p, starred: localStorage.getItem("mock-project-star:" + p.id) === "true" }))
+            ].map(p => ({
+              ...p,
+              ...(query.get("mockNeedsYou") === "1" && p.id === "default" ? {
+                session_count: mockSessions.length,
+                running_count: mockSessions.filter((session) => session.running && !session.awaiting).length,
+                needs_you_count: mockSessions.filter((session) => session.needs_you && !shelvedSessionIds.has(session.id)).length,
+              } : {}),
+              starred: localStorage.getItem("mock-project-star:" + p.id) === "true",
+            }))
               .sort((a, b) => Number(b.starred) - Number(a.starred));
 
           case "list_recent_sessions":
@@ -5049,6 +5080,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const q = String(arg("query") ?? "").toLowerCase();
             return q ? artifacts.filter((a) => a.name.toLowerCase().includes(q)) : artifacts;
           }
+          case "list_needs_you_sessions": {
+            const other = { id: "s-other", project_id: "other", project_name: "Other project", title: "Cross-project counts", ts: 1, activity_at: 1, status: "needs_you" };
+            const rows = query.get("mockNeedsYou") === "1"
+              ? [...mockSessions.filter((session) => session.needs_you && !shelvedSessionIds.has(session.id)).map((session) => ({
+                  id: session.id, project_id: "default", project_name: project.name,
+                  title: session.title, ts: session.ts, activity_at: session.ts, status: "needs_you",
+                })), other]
+              : [other];
+            if ((window as any).__holdNextNeedsYouRead) {
+              (window as any).__holdNextNeedsYouRead = false;
+              await new Promise<void>((resolve) => { (window as any).__releaseNeedsYouRead = resolve; });
+              (window as any).__heldNeedsYouReadReturned = true;
+            }
+            return rows;
+          }
           case "search_sessions": {
             const q = String(arg("query") ?? "").toLowerCase();
             const requestedProject = arg("projectId");
@@ -6996,6 +7042,7 @@ export function parallelMock(): void {
           };
           case "latest_used_session":
             return sessions.find((session) => session.has_user_turn !== false)?.id ?? null;
+          case "list_needs_you_sessions": return [];
           case "list_folders": return folders.slice();
           case "create_folder": {
             const folder = { id: `folder-${folders.length + 1}`, name: String(arg("name") ?? "") };

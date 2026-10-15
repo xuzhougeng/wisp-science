@@ -2241,6 +2241,17 @@ pub(super) async fn locate_project_chat_match(
 }
 
 #[tauri::command]
+pub(super) async fn list_needs_you_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<wisp_dto::SessionSearchInfo>, String> {
+    let running = state.running_turns.lock().await.clone();
+    let awaiting = state.awaiting_confirm.lock().unwrap().clone();
+    wisp_app::projects::list_needs_you_sessions(&state.store, &running, &awaiting)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(super) async fn search_sessions(
     state: State<'_, AppState>,
     query: Option<String>,

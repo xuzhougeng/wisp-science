@@ -153,6 +153,23 @@
   padding: 7px 10px; border-radius: var(--radius-sm);
   font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text-muted); white-space: nowrap;
 }
+.side-session-filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 6px 6px; }
+.side-session-filters button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-muted); font: inherit; font-size: calc(11px * var(--ui-font-scale, 1)); cursor: pointer;
+}
+.side-session-filters button[aria-pressed="true"] { color: var(--clay-strong); border-color: var(--clay); background: var(--clay-soft); }
+.side-session-filters button:hover { background: var(--bg-elev); }
+.side-session-filters svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.ses-status-label {
+  flex: 0 0 auto; margin-left: auto; padding: 1px 5px; border-radius: var(--radius-xs);
+  font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap;
+}
+.ses-status-label.needs-you { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.ses-status-label.running { color: var(--clay); background: var(--clay-soft); }
+.side-attention-icon { display: inline-flex; flex: 0 0 auto; color: var(--warn); }
+.side-attention-icon svg { width: 16px; height: 16px; }
 .side-item:hover { background: var(--bg-elev); color: var(--text); }
 button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
 button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; }
@@ -337,6 +354,8 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
   .sidebar .proj-name,
   .sidebar .side-group-title,
   .sidebar .side-sessions-head,
+  .sidebar .side-session-filters,
+  .sidebar .ses-status-label,
   .sidebar .side-folder-caret,
   .sidebar .side-folder-name,
   .sidebar .side-folder-count,

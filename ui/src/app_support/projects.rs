@@ -1231,8 +1231,6 @@ pub(crate) fn ProjectsScreen(
                             let id_code = p.id.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
                             let artifacts_meta = tf(loc, "projects.artifacts_n", &[("n", &p.artifact_count.to_string())]);
-                            let active = p.running_count + p.needs_you_count;
-                            let dot_class = if p.running_count > 0 { "running" } else { "ready" };
                             let when = format_relative_time(p.updated_at, loc);
                             let sync_when = p.last_synced_at
                                 .map(|timestamp| format_relative_time(timestamp, loc))
@@ -1271,18 +1269,22 @@ pub(crate) fn ProjectsScreen(
                                                         {t(locale.get(), "projects.transfer.export_locked_badge")}
                                                     </span>
                                                 })}
-                                            {(active > 0).then(|| view! {
-                                                <span class=format!("pc-dot {dot_class}")>
-                                                    <span class="pc-dot-mark"></span>
-                                                    <span class="pc-dot-n">{active}</span>
-                                                </span>
-                                            })}
                                             {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
                                         </div>
                                         {(!workspace_path.trim().is_empty()).then(|| view! {
                                             <div class="pc-path" title=workspace_path.clone()>{workspace_path.clone()}</div>
                                         })}
                                         <div class="pc-meta-row">
+                                            {(p.needs_you_count > 0).then(|| view! {
+                                                <span class="sess-status sess-status-needs-you" title=t(loc, "sess_status.needs_you_hint")>
+                                                    {tf(loc, "sess_status.needs_you_n", &[("n", &p.needs_you_count.to_string())])}
+                                                </span>
+                                            })}
+                                            {(p.running_count > 0).then(|| view! {
+                                                <span class="sess-status sess-status-running">
+                                                    {tf(loc, "sess_status.running_n", &[("n", &p.running_count.to_string())])}
+                                                </span>
+                                            })}
                                             <span class="pc-meta">{meta}</span>
                                             <span class="pc-meta">{artifacts_meta}</span>
                                             {sync_label.clone().map(|label| view! { <span class="pc-sync-state" data-folder-sync=p.folder_sync.clone()>{label}</span> })}

@@ -105,11 +105,6 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-transfer-lock { flex: 0 0 auto; color: var(--clay); font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 650; }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }
-.pc-dot { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-.pc-dot-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--info); flex: 0 0 auto; }
-.pc-dot.running .pc-dot-mark { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
-.pc-dot.ready .pc-dot-mark { background: var(--ok); }
-.pc-dot-n { font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .sess-status { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }

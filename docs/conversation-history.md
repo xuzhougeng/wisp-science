@@ -1,5 +1,18 @@
 # Browsing conversation history
 
+Project cards show separate **Needs you** and **Running** counts. **Needs you**
+(**待处理** in Chinese) includes unread assistant replies and requests waiting for
+your confirmation; it does not mean every listed conversation is still running.
+
+The sidebar marks these conversations with an icon and a visible status label.
+Choose **Needs you** above the conversation list to see all pending conversations
+in the current project, including older history and sessions in collapsed groups
+or branches. **All sessions** restores the normal grouping and sort order. The
+topbar inbox uses the same complete list and also offers other projects. Opening
+an unread reply clears its marker after the conversation loads; an outstanding
+approval remains pending until you respond. Navigation, completed turns and
+approval changes refresh the list, with periodic refreshes for other windows.
+
 After a turn finishes, its commentary, reasoning, tool calls, and execution-plan
 updates collapse into one **Processed** disclosure before the final report.
 Per-round usage and context-compaction records between phases stay inside that
@@ -125,6 +138,14 @@ Retained-tail markers follow copied messages through earlier epochs; when a
 legacy or ambiguous copy has no reliable origin, the marker remains unknown.
 
 ## Manual smoke checks
+
+- In a project with unread replies and a running conversation, verify that the
+  home card shows separate labeled counts. Open the project and use **Needs you**
+  to find an older unread reply, including one in a collapsed group or branch.
+  Open it and check that its pending count decreases while unanswered approvals
+  remain listed. Return to **All sessions** and check that grouping is preserved.
+- Check the labels at a narrow sidebar width and increased UI font size in both
+  Chinese and English; status text must remain visible when titles are truncated.
 
 - Compact twice, undo the latest compact, and verify the parent epoch, its
   summary, and its undo action return without reopening the conversation.

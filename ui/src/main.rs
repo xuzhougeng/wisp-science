@@ -9285,22 +9285,32 @@ fn App() -> impl IntoView {
     // that are waiting on the user, surfaced from any window's topbar.
     let inbox_open = create_rw_signal(false);
     let inbox_sessions = create_rw_signal::<Vec<SessionSearchInfo>>(vec![]);
+    let inbox_request_epoch = create_rw_signal(0u64);
     let refresh_inbox = move || {
+        let epoch = inbox_request_epoch.get_untracked().wrapping_add(1);
+        inbox_request_epoch.set(epoch);
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "query": "", "limit": 50 })).unwrap();
-            let v = invoke("search_sessions", arg).await;
+            let v = invoke("list_needs_you_sessions", JsValue::UNDEFINED).await;
+            if inbox_request_epoch.get_untracked() != epoch {
+                return;
+            }
             if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(v) {
-                let rows: Vec<_> = rows
-                    .into_iter()
-                    .filter(|s| s.status == "needs_you")
-                    .collect();
                 if inbox_sessions.with_untracked(|current| current != &rows) {
                     inbox_sessions.set(rows);
                 }
             }
         });
     };
-    refresh_inbox();
+    create_effect(move |_| {
+        // Refresh after navigation/hydration (which marks replies seen), turn
+        // completion, approvals, and sidebar mutations such as shelving.
+        project_info.track();
+        transcript_loading.track();
+        sessions.track();
+        running.track();
+        approval_pending.track();
+        refresh_inbox();
+    });
     // Other projects stay listed in the dropdown, but only this project's
     // sessions light the badge — a fresh window must not flag unrelated work.
     let inbox_in_this_project = move |s: &SessionSearchInfo| {
@@ -12271,6 +12281,7 @@ fn App() -> impl IntoView {
                 sessions, folders, drag_session, drop_target, active_session, running,
                 explorations,
                 attention: approval_pending,
+                inbox_sessions,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
                 update_banner,

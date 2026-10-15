@@ -701,7 +701,8 @@ impl Store {
     }
 
     /// Last message role and unseen flag per saved session in a project (for
-    /// dashboard counts).
+    /// dashboard counts). Exploration frames have their own sidebar surface and
+    /// are excluded, just as in session search and recent conversations.
     ///
     /// Deliberately requires a user turn, unlike `list_sessions_page` (#888):
     /// a message-less draft has no last role, and `last_role_needs_you(None)`
@@ -719,6 +720,7 @@ impl Store {
                 (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) > f.seen_at AS unseen \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id \
+               AND f.exploration_id IS NULL \
                AND {used}",
             used = format!("({SESSION_HAS_USER_TURN_SQL}) AND ({})", self.session_shelved_sql(Some(false)).await?),
         );
