@@ -5527,7 +5527,9 @@ mod tests {
         sync_delegation_prompt(&mut prompt, true);
         assert_eq!(prompt.matches("<delegation_capability>").count(), 1);
         assert!(prompt.contains("call delegate_tasks"));
-        assert!(prompt.contains("background calls return a durable handle"));
+        assert!(prompt.contains("set background only for long work"));
+        assert!(prompt.contains("resumes you to synthesize it"));
+        assert!(!prompt.contains("completion policy"));
         assert!(prompt.contains("do not poll a background batch"));
         assert!(prompt.contains("## Specialist\nKeep this section."));
         sync_delegation_prompt(&mut prompt, false);
