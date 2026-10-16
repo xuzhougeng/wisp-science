@@ -816,7 +816,9 @@ mod tests {
         let (id, list) = import_package(&store, &package("Paper hunter"), "")
             .await
             .unwrap();
-        assert_eq!(id, "sp1");
+        // A fresh custom id (`sp-<hex>`, never reused), not a built-in's.
+        assert!(id.starts_with("sp-"), "{id}");
+        assert!(!builtin_ids.contains(&id), "{id}");
         let imported = list.iter().find(|s| s.id == id).unwrap();
         assert!(!imported.builtin);
         assert!(imported.model_id.is_empty());
