@@ -212,9 +212,10 @@ fn termination_cancels_the_queued_slurm_job() {
         std::thread::sleep(Duration::from_millis(50));
     }
     // The Run supervisor's cancel and timeout both TERM the whole group.
+    // `-s TERM --` is the POSIX form; dash rejects `kill -TERM -- -pgid`.
     let group = child.id().to_string();
     let sent = Command::new("sh")
-        .args(["-c", r#"kill -TERM -- "-$1""#, "sh", &group])
+        .args(["-c", r#"kill -s TERM -- "-$1""#, "sh", &group])
         .status()
         .unwrap();
     assert!(sent.success());
