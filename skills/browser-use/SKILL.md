@@ -74,8 +74,8 @@ relay the install steps only if that call fails too.
 ## The loop
 
 1. **`web_open_tab`** `{url}` — open the page (works even with no tab
-   open yet). Waits until the document is complete, then returns the new
-   tab id plus `ready`. If `ready` is false, the load timed out — call
+   or window open yet). Waits until the document is complete, then returns
+   the new tab id plus `ready`. If `ready` is false, the load timed out — call
    `web_scan` before acting.
 2. **`web_scan`** — read the page (after waiting for document complete).
    Returns `page.text`, `page.title`, `page.ready_state`, and

@@ -5,6 +5,13 @@ function isTransientTabError(error) {
   return /Tabs cannot be edited right now|user may be dragging|being dragged|No tab with id/i.test(message);
 }
 
+// Chrome can outlive its last window (background mode on Windows, the app on
+// macOS). tabs.create without a windowId then has nowhere to go.
+function isNoWindowError(error) {
+  var message = (error && error.message) || String(error || "");
+  return /No current window/i.test(message);
+}
+
 async function withTabRetry(operation, attempts) {
   var max = attempts || 4;
   var lastError = null;
@@ -29,6 +36,26 @@ async function withTabRetry(operation, attempts) {
 
 function createTabOps(chromeLike, managedIds) {
   var managed = managedIds || new Set();
+  var pendingWindow = null;
+
+  // Parallel opens that all find no window share the first new window
+  // instead of each opening their own.
+  var openInNewWindow = async function (url, active) {
+    if (pendingWindow) {
+      var shared = await pendingWindow;
+      return await withTabRetry(function () {
+        return chromeLike.tabs.create({ windowId: shared.id, url: url, active: active ?? false });
+      });
+    }
+    pendingWindow = withTabRetry(function () {
+      return chromeLike.windows.create({ url: url, focused: !!active });
+    });
+    try {
+      return (await pendingWindow).tabs[0];
+    } finally {
+      pendingWindow = null;
+    }
+  };
 
   var publicTab = function (tab) {
     if (!tab) return null;
@@ -58,9 +85,15 @@ function createTabOps(chromeLike, managedIds) {
       return true;
     },
     create: async function (url, active) {
-      var tab = await withTabRetry(function () {
-        return chromeLike.tabs.create({ url: url, active: active ?? false });
-      });
+      var tab;
+      try {
+        tab = await withTabRetry(function () {
+          return chromeLike.tabs.create({ url: url, active: active ?? false });
+        });
+      } catch (error) {
+        if (!isNoWindowError(error)) throw error;
+        tab = await openInNewWindow(url, active);
+      }
       managed.add(tab.id);
       return publicTab(tab);
     },
@@ -99,5 +132,6 @@ function createTabOps(chromeLike, managedIds) {
 if (typeof self !== "undefined") {
   self.createTabOps = createTabOps;
   self.isTransientTabError = isTransientTabError;
+  self.isNoWindowError = isNoWindowError;
   self.withTabRetry = withTabRetry;
 }
