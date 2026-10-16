@@ -130,10 +130,26 @@ inside the exploration window. Finished cards have a close button: hiding the
 card leaves its results available under **Agents → Parallel tasks**, which also
 shows the current live batch. Open that entry to inspect per-task progress and
 results, or use **Stop this turn** while it is running. This stops the whole
-conversation turn; individual Reader chunks cannot be stopped or retried from
-the panel. Hiding applies to the current app window and survives switching
-conversations; a new batch shows a new card. The panel uses the existing latest
-batch snapshot, not a new history of all batches.
+conversation turn; individual chunks cannot be stopped on their own. Hiding
+applies to the current app window and survives switching conversations; a new
+batch shows a new card. The panel uses the existing latest batch snapshot, not
+a new history of all batches.
+
+### Retrying failed Reader tasks
+
+When a Reader batch finishes with gaps, the card, the **Agents** entry, and the
+exploration window offer **Retry failed tasks (N)**; a failed assistant's own
+page offers **Retry this task**. A retry continues the same batch in place: the
+chosen assistants go back to work, only their failed transcript chunks are
+re-read (an older snapshot without chunk bookkeeping re-reads the whole saved
+conversation), and the batch ends as complete or still partial depending on
+what remains. **Stop this turn** cancels a running retry. The recovered
+evidence is not sent to the model on its own; it is added, under a
+**Reader retry** heading, to the context of the next message in that
+conversation, whether or not that message references the project again. Only
+one retry runs per conversation at a time, and a retry is refused while a turn
+is running. `map_items` and `explore` batches are not retried from the panel:
+ask the assistant to resume the batch instead.
 
 The overview separates the task description from
 the total, working, completed, and failed counts; long paths wrap as body text.
@@ -145,6 +161,9 @@ chunks by saved conversation and shows completed/total chunks for each one.
 An invalid or incomplete Reader JSON response triggers one retry with shorter
 output. Its progress entry stays on the same chunk; a recovered retry counts
 as one completed chunk, and a chunk is marked failed only if recovery fails.
+Each assistant with several chunks shows a thin bar of completed and failed
+chunks, and the six nodes of the overview illustration mirror the state of the
+first six assistants.
 Private model reasoning is not included. The selected assistant is highlighted
 and exposed as selected to assistive technology. Text follows the global UI font
 size setting on both desktop and narrow windows.

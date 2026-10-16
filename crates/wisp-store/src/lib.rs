@@ -73,7 +73,7 @@ pub use explorations::{
     ArtifactHead, ContextArchiveRecord, Exploration, ExplorationBaselineArtifactHead,
     ExplorationBaselineEntity, ExplorationCheckpoint, ExplorationEffect, ExplorationFamily,
     ExplorationPromotion, ExplorationPromotionStatus, ExplorationStatus, ExplorationSummary,
-    StateScope, WorkspaceSnapshotRecord, MAINLINE_SCOPE_KEY,
+    StateScope, WorkspaceSnapshotRecord, FRAME_READER_RETRY_PREFIX, MAINLINE_SCOPE_KEY,
 };
 pub use external_session_cache::ExternalSessionCacheRecord;
 pub use global_memories::GlobalMemory;

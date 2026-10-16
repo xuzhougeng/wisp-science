@@ -3749,6 +3749,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "get_swarm_progress": {
             return null;
           }
+          case "retry_swarm_tasks": {
+            if ((window as any).__failSwarmRetry) throw new Error("Wait for the current turn to finish before retrying.");
+            return null;
+          }
           case "list_subagent_activity": {
             if (query.get("mockSubagentActivity") !== "1" || arg("sessionId") !== "subagent-parent") return [];
             return [

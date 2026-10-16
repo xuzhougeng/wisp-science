@@ -71,6 +71,9 @@ pub struct SwarmViewState {
     pub open: RwSignal<bool>,
     pub selected: RwSignal<Option<String>>,
     pub error: RwSignal<Option<String>>,
+    /// A retry request is on its way to the backend; the batch's own progress
+    /// events take over as soon as it starts.
+    pub retrying: RwSignal<bool>,
 }
 
 impl SwarmViewState {
@@ -81,6 +84,7 @@ impl SwarmViewState {
             open: create_rw_signal(false),
             selected: create_rw_signal(None),
             error: create_rw_signal(None),
+            retrying: create_rw_signal(false),
         }
     }
 
@@ -130,6 +134,65 @@ fn stop_turn(state: SwarmViewState, session: RwSignal<Option<String>>) {
                 state.error.set(Some(js_error_text(error)));
             }
         });
+    }
+}
+
+/// Re-run failed Reader tasks (all of them, or the given ids) in the latest
+/// finished batch of this conversation. Progress arrives as swarm events; the
+/// recovered evidence is handed to the next message.
+fn retry_tasks(state: SwarmViewState, session: RwSignal<Option<String>>, task_ids: Option<Vec<String>>) {
+    let Some(id) = session.get_untracked() else {
+        return;
+    };
+    if state.retrying.get_untracked() {
+        return;
+    }
+    state.error.set(None);
+    state.retrying.set(true);
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({"sessionId": id, "taskIds": task_ids})).unwrap();
+        if let Err(error) = invoke_checked("retry_swarm_tasks", args).await {
+            state.error.set(Some(js_error_text(error)));
+        }
+        state.retrying.set(false);
+    });
+}
+
+fn retryable_count(current: CurrentSwarm) -> usize {
+    current
+        .get()
+        .map(|p| p.retryable_task_ids().len())
+        .unwrap_or(0)
+}
+
+/// Offered only for finished Reader batches with failed tasks. `compact`
+/// renders an icon-only button for the dock row.
+#[component]
+fn RetryButton(
+    current: CurrentSwarm,
+    state: SwarmViewState,
+    session: RwSignal<Option<String>>,
+    locale: RwSignal<Locale>,
+    #[prop(optional)] compact: bool,
+) -> impl IntoView {
+    let text = move || {
+        let count = retryable_count(current);
+        if locale.get() == Locale::Zh {
+            format!("重试失败任务 ({count})")
+        } else {
+            format!("Retry failed tasks ({count})")
+        }
+    };
+    view! {
+        <Show when=move || (retryable_count(current) > 0)>
+            <button type="button" class="swarm-retry" class:swarm-retry-compact=compact data-testid="swarm-retry"
+                aria-label=text title=move || label(locale.get(), "Re-read the failed parts; the recovered evidence joins your next message", "重新读取失败的部分；恢复的证据会随下一条消息提供给助手")
+                disabled=move || state.retrying.get()
+                on:click=move |_| retry_tasks(state, session, None)>
+                {compose_icon("refresh")}
+                <Show when=move || !compact><span>{text}</span></Show>
+            </button>
+        </Show>
     }
 }
 
@@ -265,6 +328,12 @@ fn WorkerRow(
             <span class="swarm-worker-copy">
                 <strong>{move || task.get().map(|t| t.title)}</strong>
                 <small>{move || task.get().map(|t| if t.total_units > 1 { format!("{} · {}/{}", task_label(locale.get(), t.status), t.completed_units, t.total_units) } else { task_label(locale.get(), t.status) })}</small>
+                <Show when=move || task.get().is_some_and(|t| t.total_units > 1)>
+                    <span class="swarm-worker-bar" aria-hidden="true">
+                        <span class="swarm-worker-bar-done" style:width=move || task.get().map(|t| format!("{}%", 100.0 * t.completed_units.saturating_sub(t.failed_units) as f64 / t.total_units.max(1) as f64)).unwrap_or_default()></span>
+                        <span class="swarm-worker-bar-failed" style:width=move || task.get().map(|t| format!("{}%", 100.0 * t.failed_units as f64 / t.total_units.max(1) as f64)).unwrap_or_default()></span>
+                    </span>
+                </Show>
             </span>
             <span class="swarm-worker-dot" aria-hidden="true"></span>
         </button>
@@ -308,6 +377,7 @@ pub fn SwarmDock(
                     </span>
                     <span class="swarm-open-action"><span class="swarm-open-label">{move || label(locale.get(), "View assistants", "查看助手")}</span>{compose_icon("chevron-right")}</span>
                 </button>
+                <RetryButton current=current state=state session=session locale=locale compact=true/>
                 <Show when=move || current.get().is_some_and(|p| p.phase.terminal())>
                     <button type="button" class="swarm-dismiss" data-testid="swarm-dismiss"
                         aria-label=move || label(locale.get(), "Hide finished progress", "关闭已结束的进度卡片")
@@ -360,6 +430,7 @@ pub fn SwarmPanel(
                     <Show when=move || current.get().is_some_and(|p| !p.phase.terminal())>
                         <button type="button" class="swarm-stop" on:click=move |_| stop_turn(state, session)>{compose_icon("stop")}<span>{move || label(locale.get(), "Stop this turn", "停止本轮")}</span></button>
                     </Show>
+                    <RetryButton current=current state=state session=session locale=locale/>
                     {move || state.error.get().map(|error| view! { <p class="swarm-panel-error" role="alert">{error}</p> })}
                 </div>
             </section>
@@ -432,6 +503,7 @@ pub fn SwarmOverlay(
                                 <Show when=move || current.get().is_some_and(|p| !p.phase.terminal())>
                                     <button type="button" class="swarm-stop" on:click=move |_| stop_turn(state, session)>{compose_icon("stop")}<span>{move || label(locale.get(), "Stop this turn", "停止本轮")}</span></button>
                                 </Show>
+                                <RetryButton current=current state=state session=session locale=locale/>
                             </div>
                         </aside>
                         <main class="swarm-detail">
@@ -445,7 +517,12 @@ pub fn SwarmOverlay(
                                         </div>
                                         <div class="swarm-constellation" aria-hidden="true">
                                             <span class="swarm-hub">{compose_icon("swarm")}</span>
-                                            {(0..6).map(|i| view! { <span class=format!("swarm-orbit swarm-orbit-{i}")><span>{compose_icon("bot")}</span></span> }).collect_view()}
+                                            {(0..6).map(|i| view! {
+                                                <span class=format!("swarm-orbit swarm-orbit-{i}")
+                                                    data-status=move || current.get().and_then(|p| p.tasks.get(i).map(|t| status_name(t.status))).unwrap_or("idle")>
+                                                    <span>{compose_icon("bot")}</span>
+                                                </span>
+                                            }).collect_view()}
                                         </div>
                                     </div>
                                     <section class="swarm-request">
@@ -454,6 +531,11 @@ pub fn SwarmOverlay(
                                     </section>
                                     {overview_metrics(current, locale)}
                                     {task_meter(current)}
+                                    <Show when=move || (retryable_count(current) > 0)>
+                                        <p class="swarm-help swarm-retry-note" data-testid="swarm-retry-note">{move || label(locale.get(),
+                                            "Failed assistants can be retried from the roster or from their own page. Only the failed parts are re-read, and the recovered evidence joins your next message.",
+                                            "失败的任务助手可以在左侧列表或任务页中重试。重试只重新读取失败的部分，恢复的证据会随你的下一条消息提供给助手。")}</p>
+                                    </Show>
                                     <Show when=move || current.get().is_some_and(|p| !p.summary.is_empty())>
                                         <section class="swarm-result"><h4>{move || label(locale.get(), "Summary", "任务汇总")}</h4><pre data-testid="swarm-summary">{move || current.get().map(|p| p.summary.clone())}</pre></section>
                                     </Show>
@@ -463,6 +545,17 @@ pub fn SwarmOverlay(
                                     <div class="swarm-task-toolbar">
                                         <button type="button" class="swarm-back" on:click=move |_| state.selected.set(None)>{compose_icon("arrow-left")}{move || label(locale.get(), "Overview", "返回总览")}</button>
                                         <p class="swarm-task-state" role="status" data-status=move || selected.get().map(|t| status_name(t.status))>{move || selected.get().map(|t| task_label(locale.get(), t.status))}</p>
+                                        <Show when=move || {
+                                            let Some(task) = selected.get() else { return false };
+                                            current.get().is_some_and(|p| p.retryable_task_ids().contains(&task.id))
+                                        }>
+                                            <button type="button" class="swarm-retry" data-testid="swarm-retry-task"
+                                                disabled=move || state.retrying.get()
+                                                title=move || label(locale.get(), "Re-read only this assistant's failed parts", "只重新读取这个任务助手失败的部分")
+                                                on:click=move |_| { if let Some(task) = selected.get_untracked() { retry_tasks(state, session, Some(vec![task.id])); } }>
+                                                {compose_icon("refresh")}<span>{move || label(locale.get(), "Retry this task", "重试此任务")}</span>
+                                            </button>
+                                        </Show>
                                     </div>
                                     <h3>{move || selected.get().map(|t| t.title)}</h3>
                                     <section class="swarm-request">

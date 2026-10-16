@@ -318,3 +318,88 @@ test('the swarm Escape layer leaves an underlying Agents detail open', async ({ 
   await expect(page.getByTestId('swarm-window')).toHaveCount(0);
   await expect(page.getByTestId('agent-activity-detail')).toBeVisible();
 });
+
+const lastCall = (page: Page, cmd: string) => page.evaluate(cmd => {
+  const call = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === cmd).at(-1);
+  const args = call?.args instanceof Map ? Object.fromEntries(call.args) : call?.args;
+  return args ? { sessionId: args.sessionId, taskIds: args.taskIds ?? null } : null;
+}, cmd);
+
+test('finished Reader batches can retry their failed assistants, all at once or one at a time', async ({ page }) => {
+  await open(page);
+  const progress = {
+    ...batch('reader'), phase: 'partial', revision: 4,
+    tasks: [
+      { ...task('a', 'completed', 4), total_units: 3, completed_units: 3 },
+      { ...task('b', 'failed', 4), total_units: 10, completed_units: 10, failed_units: 1, failed_unit_indexes: [7],
+        log: ['Reading part 8 / 10', 'Part 8 failed: Reader returned incomplete JSON.'] },
+      { ...task('c', 'failed', 4), total_units: 2, completed_units: 2, failed_units: 2 },
+    ],
+    summary: 'One session read; two could not be read.',
+  };
+  await emit(page, progress);
+  const dock = page.getByTestId('swarm-dock');
+  await expect(dock.getByTestId('swarm-retry')).toHaveAttribute('aria-label', 'Retry failed tasks (2)');
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
+  const panel = page.getByTestId('swarm-window');
+  await expect(panel.getByTestId('swarm-retry-note')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCount(0);
+  // Chunk counts render as a per-assistant bar with the failed share kept distinct.
+  const bar = panel.locator('[data-task-id="b"] .swarm-worker-bar');
+  await expect(bar).toBeVisible();
+  expect((await bar.locator('.swarm-worker-bar-failed').boundingBox())!.width).toBeGreaterThan(0);
+  await expect(panel.locator('.swarm-orbit').nth(1)).toHaveAttribute('data-status', 'failed');
+  await expect(panel.locator('.swarm-orbit').nth(3)).toHaveAttribute('data-status', 'idle');
+
+  // One task from its own page.
+  await panel.locator('[data-task-id="b"]').click();
+  await panel.getByTestId('swarm-retry-task').click();
+  await expect.poll(() => lastCall(page, 'retry_swarm_tasks')).toEqual({ sessionId: frame, taskIds: ['b'] });
+  // The backend resumes the same batch: failed task back to work, controls swap.
+  await emit(page, { ...progress, revision: 5, phase: 'running', summary: '',
+    tasks: [{ ...task('b', 'queued', 5), total_units: 10, completed_units: 9, log: ['Retry: re-reading failed part(s) 8'] }] });
+  await expect(panel.getByTestId('swarm-task-detail')).toContainText('Retry: re-reading failed part(s) 8');
+  await expect(panel.getByTestId('swarm-retry-task')).toHaveCount(0);
+  await expect(panel.getByTestId('swarm-retry')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Stop this turn' })).toBeVisible();
+  await expect(panel).toHaveClass(/swarm-moving/);
+  await expect(dock).toContainText('1 working');
+  await emit(page, { ...progress, revision: 6, phase: 'running',
+    tasks: [{ ...task('b', 'running', 6), total_units: 10, completed_units: 9, log: ['Retry: re-reading failed part(s) 8', 'Reading part 8 / 10'] }] });
+  await expect(panel.locator('[data-task-id="b"] .swarm-avatar')).toHaveCSS('animation-name', 'swarm-ring');
+  await emit(page, { ...progress, revision: 7, phase: 'partial', summary: '## Reader retry\nRecovered evidence.',
+    tasks: [{ ...task('b', 'completed', 7), total_units: 10, completed_units: 10, result: '\n[8] recovered quote\n' }] });
+  await expect(panel.getByTestId('swarm-task-result')).toContainText('recovered quote');
+  await page.keyboard.press('Escape');
+  await expect(panel.getByTestId('swarm-summary')).toContainText('Recovered evidence.');
+  await expect(panel.getByTestId('swarm-retry')).toContainText('Retry failed tasks (1)');
+
+  // The remaining failure, from the roster; a backend refusal is shown in place.
+  await page.evaluate(() => { (window as any).__failSwarmRetry = true; });
+  await panel.getByTestId('swarm-retry').click();
+  await expect.poll(() => lastCall(page, 'retry_swarm_tasks')).toEqual({ sessionId: frame, taskIds: null });
+  await expect(panel.getByRole('alert')).toContainText('Wait for the current turn to finish');
+  await expect(panel.getByTestId('swarm-retry')).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+});
+
+test('batches that are not Reader retrieval, or still running, offer no retry', async ({ page }) => {
+  await open(page);
+  await emit(page, { ...batch('map_items'), phase: 'partial', revision: 3, tasks: [task('a', 'completed', 3), task('b', 'failed', 3), task('c', 'failed', 3)] });
+  const dock = page.getByTestId('swarm-dock');
+  await expect(dock).toContainText('2 failed');
+  await expect(dock.getByTestId('swarm-retry')).toHaveCount(0);
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
+  const panel = page.getByTestId('swarm-window');
+  await expect(panel.getByTestId('swarm-retry')).toHaveCount(0);
+  await expect(panel.getByTestId('swarm-retry-note')).toHaveCount(0);
+  await panel.locator('[data-task-id="b"]').click();
+  await expect(panel.getByTestId('swarm-retry-task')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await emit(page, { ...batch('reader'), id: 'swarm-live', started_at_ms: 300, phase: 'running', revision: 3, tasks: [task('a', 'failed', 3), task('b', 'running', 3), task('c')] });
+  await expect(dock).toContainText('1 failed');
+  await expect(dock.getByTestId('swarm-retry')).toHaveCount(0);
+  await expect(page.getByTestId('swarm-dismiss')).toHaveCount(0);
+});

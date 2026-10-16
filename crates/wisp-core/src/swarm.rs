@@ -55,6 +55,30 @@ impl<'a> SwarmReporter<'a> {
         }
     }
 
+    /// Continue a finished batch in place: same id, start time, and tasks, so
+    /// the UI keeps one card. The named tasks go back to `Queued` with their
+    /// failed units cleared; everything else keeps its final state.
+    pub fn resume(
+        mut state: SwarmProgress,
+        task_ids: &[String],
+        emit: impl Fn(SwarmProgress) + Send + Sync + 'a,
+    ) -> Self {
+        state.revision += 1;
+        state.phase = SwarmPhase::Running;
+        state.summary = String::new();
+        for task in &mut state.tasks {
+            if task_ids.contains(&task.id) {
+                task.reset_for_retry();
+                task.revision = state.revision;
+            }
+        }
+        emit(state.clone());
+        Self {
+            state: Mutex::new(state),
+            emit: Box::new(emit),
+        }
+    }
+
     pub fn for_tool(
         source: &str,
         title: &str,
@@ -135,6 +159,12 @@ impl<'a> SwarmReporter<'a> {
     }
 }
 
+impl SwarmReporter<'_> {
+    pub fn snapshot(&self) -> SwarmProgress {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+}
+
 impl Drop for SwarmReporter<'_> {
     fn drop(&mut self) {
         let active = !self
@@ -172,5 +202,47 @@ impl crate::Output for SwarmOutput<'_, '_> {
                 clip(content, 320)
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_keeps_the_batch_identity_and_requeues_only_the_named_tasks() {
+        let updates = Mutex::new(Vec::new());
+        let reporter = SwarmReporter::new("reader", "find it", "fake", |event| {
+            updates.lock().unwrap().push(event)
+        });
+        let mut done = SwarmTask::queued("done".into(), "Done".into(), "find it".into(), 1);
+        done.status = SwarmTaskStatus::Completed;
+        done.completed_units = 1;
+        let mut failed = SwarmTask::queued("bad".into(), "Bad".into(), "find it".into(), 3);
+        failed.status = SwarmTaskStatus::Failed;
+        failed.completed_units = 3;
+        failed.failed_units = 1;
+        failed.failed_unit_indexes = vec![2];
+        reporter.tasks(vec![done, failed], "fake");
+        reporter.phase(SwarmPhase::Partial, "one chunk failed");
+        let finished = reporter.snapshot();
+        drop(reporter);
+
+        let resumed = SwarmReporter::resume(finished.clone(), &["bad".into()], |event| {
+            updates.lock().unwrap().push(event)
+        });
+        let state = resumed.snapshot();
+        assert_eq!(state.id, finished.id);
+        assert_eq!(state.started_at_ms, finished.started_at_ms);
+        assert_eq!(state.phase, SwarmPhase::Running);
+        assert!(state.revision > finished.revision);
+        assert_eq!(state.tasks[0].status, SwarmTaskStatus::Completed);
+        assert_eq!(state.tasks[1].status, SwarmTaskStatus::Queued);
+        assert_eq!(state.tasks[1].completed_units, 2);
+        assert_eq!(state.tasks[1].failed_units, 0);
+        let first = updates.lock().unwrap().last().unwrap().clone();
+        assert_eq!(first.tasks.len(), 2, "resume re-sends the whole roster");
+        resumed.phase(SwarmPhase::Completed, "recovered");
+        assert_eq!(resumed.snapshot().tasks[1].status, SwarmTaskStatus::Paused);
     }
 }
