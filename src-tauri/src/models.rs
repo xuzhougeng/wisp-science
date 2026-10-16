@@ -1807,15 +1807,17 @@ pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelP
         .collect()
 }
 
-/// A short unique id derived from the label (or a counter) that isn't taken.
+/// Random id for a new profile, never handed out again. `remove_model` leaves
+/// Specialist `model_id`s, reviewer backends and per-session model choices
+/// naming the old id; a recycled id would silently rebind them to an unrelated
+/// profile. Ids are opaque, so legacy `m{n}` and `default` profiles still work.
 fn fresh_id(existing: &[ModelProfile]) -> String {
-    for n in 1..10_000 {
-        let id = format!("m{n}");
+    loop {
+        let id = format!("m-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
         if !existing.iter().any(|p| p.id == id) {
             return id;
         }
     }
-    "m".into()
 }
 
 #[tauri::command]
@@ -2937,10 +2939,51 @@ mod tests {
     }
 
     #[test]
-    fn fresh_id_skips_taken() {
+    fn fresh_id_is_random_and_ignores_legacy_counters() {
         let existing = vec![test_profile("m1", "a", "x"), test_profile("m2", "b", "y")];
-        assert_eq!(fresh_id(&existing), "m3");
-        assert_eq!(fresh_id(&[]), "m1");
+        let id = fresh_id(&existing);
+        let suffix = id.strip_prefix("m-").unwrap();
+        assert_eq!(suffix.len(), 12, "{id}");
+        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+        assert_ne!(fresh_id(&existing), id);
+    }
+
+    #[tokio::test]
+    async fn deleted_profile_id_is_not_reissued_to_the_next_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("reuse.sqlite"))
+            .await
+            .unwrap();
+        save_raw(&store, &[test_profile("daily", "Everyday", "daily-model")])
+            .await
+            .unwrap();
+        store.set_setting(ACTIVE_KEY, "daily").await.unwrap();
+        let saved = save_model_profile(&store, test_profile("", "Old", "old-model"), None, false)
+            .await
+            .unwrap();
+        let old_id = saved
+            .iter()
+            .find(|p| p.model == "old-model")
+            .unwrap()
+            .id
+            .clone();
+        // The persistence step of remove_model.
+        let remaining: Vec<_> = saved.into_iter().filter(|p| p.id != old_id).collect();
+        save_raw(&store, &remaining).await.unwrap();
+
+        let saved = save_model_profile(&store, test_profile("", "New", "new-model"), None, false)
+            .await
+            .unwrap();
+        let new_id = saved
+            .iter()
+            .find(|p| p.model == "new-model")
+            .unwrap()
+            .id
+            .clone();
+        assert_ne!(new_id, old_id);
+        // A Specialist or session still naming the deleted id resolves to
+        // nothing instead of adopting the unrelated new profile.
+        assert!(profile_owned(&store, &old_id).await.is_none());
     }
 
     #[test]

@@ -1114,11 +1114,20 @@ fn inspectable_template(template: &WorkflowTemplate) -> bool {
     validate_template(&inspection).is_ok()
 }
 
+/// Random id for a new template, never handed out again. Removing a template
+/// leaves composer Workflow references in drafts and queued messages naming
+/// the old id; a recycled id would silently run an unrelated Workflow. Ids are
+/// opaque, so legacy `workflow_{n}` and CLI-created UUID templates still work.
 fn fresh_template_id(templates: &[WorkflowTemplate]) -> String {
-    (1..100_000)
-        .map(|index| format!("workflow_{index}"))
-        .find(|id| !templates.iter().any(|template| template.id == *id))
-        .unwrap_or_else(|| format!("workflow_{}", uuid::Uuid::new_v4().simple()))
+    loop {
+        let id = format!(
+            "workflow-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        );
+        if !templates.iter().any(|template| template.id == id) {
+            return id;
+        }
+    }
 }
 
 async fn upsert_template(
@@ -1802,7 +1811,13 @@ mod tests {
     async fn custom_template_persists_and_receives_untrusted_selection_context() {
         let (store, path) = store().await;
         let saved = upsert_template(&store, custom_template()).await.unwrap();
-        assert_eq!(saved.id, "workflow_1");
+        let suffix = saved.id.strip_prefix("workflow-").unwrap();
+        assert_eq!(suffix.len(), 12, "{}", saved.id);
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_hexdigit()),
+            "{}",
+            saved.id
+        );
         let templates = ensure_templates(&store).await;
         assert_eq!(templates.len(), 5);
         let action = QuickAction {
@@ -1826,6 +1841,25 @@ mod tests {
         assert!(proposal.context.starts_with(&custom.proposal.context));
         assert!(proposal.context.contains("untrusted content"));
         assert!(proposal.context.contains("A testable biological claim."));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn deleted_template_id_is_not_reissued_to_the_next_template() {
+        let (store, path) = store().await;
+        let old_id = upsert_template(&store, custom_template()).await.unwrap().id;
+        // The persistence step of remove_workflow_template.
+        let mut templates = load_raw_templates(&store).await;
+        templates.retain(|template| template.id != old_id);
+        save_raw_templates(&store, &templates).await.unwrap();
+
+        let mut next = custom_template();
+        next.name = "Unrelated workflow".into();
+        let new_id = upsert_template(&store, next).await.unwrap().id;
+        assert_ne!(new_id, old_id);
+        // A composer reference still naming the removed id fails instead of
+        // running the unrelated new Workflow.
+        assert!(render_workflow_reference(&store, &old_id).await.is_err());
         let _ = std::fs::remove_file(path);
     }
 
