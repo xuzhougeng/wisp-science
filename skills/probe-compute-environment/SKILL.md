@@ -20,7 +20,10 @@ After probing:
    use `sudo`, system package managers, or system paths; prefer user-space
    environments, modules, containers already installed by the administrator,
    or ask the user for an administrator-installed dependency.
-4. Use a detected scheduler rather than running long work on a login node.
+4. Use a detected scheduler rather than running long work on a login node:
+   submit through the scheduler wrapper in `remote-compute-ssh`. A detected
+   `qsub` is reported as `pbs` even when it is Grid Engine; let the wrapper
+   identify it.
 5. Use the recorded interpreter paths and environment managers. Do not assume
    `python`, `Rscript`, conda, mamba, or modulecmd exists when absent.
 6. If the probe failed, inspect the saved error and ask the user to check the

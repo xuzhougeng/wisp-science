@@ -1592,7 +1592,11 @@ fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     assert!(skill.contains("call `monitor_run` again"));
     assert!(skill.contains("never call it repeatedly"));
     assert!(!skill.contains("ssh <alias>"));
-    assert!(skill.contains("Scheduler lifecycle is not implemented yet"));
+    // Scheduler jobs go through the bundled wrapper, never a bare submit.
+    assert!(!skill.contains("Scheduler lifecycle is not implemented yet"));
+    assert!(skill.contains("bash scheduler_job.sh"));
+    assert!(skill.contains(r#""scripts/scheduler_job.sh""#));
+    assert!(skill.contains("Never put a bare `sbatch`, `qsub`, or `bsub`"));
 }
 
 /// Single-response fake that records every command it receives, so tests can

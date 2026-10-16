@@ -1,6 +1,6 @@
 ---
 name: remote-compute-ssh
-description: Submit recoverable SSH-direct research Runs with live progress cards and model-free monitoring.
+description: Submit recoverable SSH-direct research Runs with live progress cards and model-free monitoring, including Slurm, PBS, LSF, and Grid Engine batch jobs from a cluster login node.
 license: Apache-2.0
 ---
 
@@ -11,6 +11,11 @@ job lifecycle locally: `run_in_context` creates the Run record, stages explicit
 inputs with persisted byte progress, and starts a detached supervisor on the server.
 The Runs panel and SQLite record remain authoritative if the conversation ends
 or Wisp restarts.
+
+When the context reports a `scheduler` or the server is a cluster login node,
+submit heavy work through the scheduler wrapper described in
+[Cluster scheduler jobs](#cluster-scheduler-jobs), not directly on the login
+node.
 
 ## Dispatch workflow
 
@@ -111,6 +116,85 @@ they no longer need it — that marks the artifact's source discarded. Explicit
 `ssh://…` URIs in `output_specs` still register a remote reference without
 any download.
 
+## Cluster scheduler jobs
+
+On a cluster, the Run's command is the bundled wrapper
+`scripts/scheduler_job.sh` (in this skill's directory). It submits one batch
+job, blocks until the job ends, and exits with the job's exit code. So the Run
+stays `running` while the job is queued or running, and it finishes with the
+job's real result. `cancel_run` and the Run timeout both send TERM, and the
+wrapper then cancels the job with `scancel`, `qdel`, or `bkill`.
+
+1. Write the job script in the project, for example `jobs/align.sbatch`.
+   - Put scheduler directives at the top: `#SBATCH`, `#PBS`, `#BSUB`, or `#$`.
+   - Write the job log to a known file: `#SBATCH -o job.out`,
+     `#PBS -j oe -o job.out`, `#BSUB -o job.out`, or `#$ -j y -o job.out`.
+   - Put environment setup (`module load`, conda activation) inside the job
+     script.
+   - Take the partition or queue, account, and resources from the user or the
+     server notes. Never guess an account or allocation.
+2. Copy `scripts/scheduler_job.sh` from this skill's directory into the
+   project, for example as `scripts/scheduler_job.sh`. The Run's staged inputs
+   then record exactly what was submitted.
+3. Submit both files in one `run_in_context` call and watch it with
+   `monitor_run`, the same as any other Run:
+
+```json
+{
+  "context_id": "ssh:hpc-login",
+  "title": "STAR alignment for 24 samples",
+  "command": "bash scheduler_job.sh --follow job.out align.sbatch",
+  "timeout_secs": 259200,
+  "input_paths": ["scripts/scheduler_job.sh", "jobs/align.sbatch"],
+  "output_specs": [
+    { "glob": "job.out", "kind": "log", "residency": "local" },
+    { "glob": "counts/*.tsv", "kind": "table", "residency": "auto" }
+  ]
+}
+```
+
+- **Time limit.** `timeout_secs` covers queue wait plus run time, so set it
+  well above the job's own wall-time directive. When the Run times out, the
+  wrapper cancels the job.
+- **Working directory.** The job runs in the Run's `inputs/` directory on every
+  scheduler, because the wrapper changes to it. Relative paths and
+  `output_specs` globs therefore behave as in any SSH-direct Run. This assumes
+  the home directory is shared with the compute nodes, which is normal on
+  clusters. If outputs never appear, ask the user.
+- **Scheduler detection.** The wrapper detects the scheduler itself:
+  - `sbatch` means Slurm.
+  - `bsub` means LSF.
+  - `qsub` means PBS Professional/OpenPBS or Grid Engine.
+
+  The probe reports every `qsub` as `pbs`, so do not pass `--scheduler` from
+  the probe. Pass it only when the user names the scheduler. Torque's `qsub`
+  cannot wait for a job to end, so the wrapper refuses it without submitting.
+  Tell the user instead of submitting by hand.
+- **Exit codes.** The wrapper exits with the job's exit code, with these
+  exceptions:
+  - 64: bad usage or a missing job script.
+  - 69: no supported scheduler.
+  - 143: the job was cancelled.
+  - 1: a PBS job was killed by the scheduler (wall time, memory) before its
+    script finished.
+
+  The wrapper's stderr names the job id and the scheduler's own messages.
+- **One job per Run.** Array jobs are fine: the Run waits for every task and
+  reports the highest task exit code. Jobs submitted from inside the job script
+  (pipelines, dependencies) are neither tracked nor cancelled by the Run.
+- **No direct submission.** Never put a bare `sbatch`, `qsub`, or `bsub` in
+  `run_in_context`, and never write your own submit-and-poll loop. Either way
+  the Run would track only the submit command. The wrapper is the one
+  exception to the no-polling rule above, because it runs inside the Run and
+  ends with it.
+- **Multiple login nodes.** Some clusters put several login nodes behind one
+  SSH name. Wisp checks the wrapper process on whichever node a poll reaches,
+  so a poll that lands on another login node marks the Run `lost` while the job
+  keeps running. Sites that kill long-lived login-node processes cause the same
+  result. When a scheduler Run is `lost`, tell the user the job may still be
+  queued or running and give them the job id from the Run's stderr. If it
+  recurs, ask them to point the SSH alias at one specific login node.
+
 ## Cleanup: servers are disposable
 
 Tasks and artifacts belong to the project; the server only computes. After the
@@ -194,8 +278,6 @@ This implementation is SSH-direct and assumes a Linux-like server with `sh`,
 `bash`, `nohup`, `setsid`, and `/proc`. Do not daemonize or create a new session
 inside the job, because that escapes process-group cancellation.
 
-Scheduler lifecycle is not implemented yet. Do not submit `sbatch`, `qsub`, or
-`bsub` through this direct runner: the Run would only track the short submit
-command, not the scheduler job. On a shared login node, ask the user for a
-dedicated compute host or explain that scheduler-aware submit/poll/cancel is a
-separate capability still needed.
+Scheduler jobs go through `scripts/scheduler_job.sh` only. It supports Slurm,
+PBS Professional/OpenPBS, LSF, and Grid Engine. Torque and queue-template
+management are not supported.

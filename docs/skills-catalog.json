@@ -156,8 +156,8 @@
     "id": "remote-compute-ssh",
     "title_zh": "管理 SSH 计算任务",
     "title_en": "SSH research runs",
-    "summary_zh": "通过已登记的 SSH 环境提交可追踪任务，查看实时进度并持续监控状态。",
-    "summary_en": "Submit traceable research runs through registered SSH contexts with live progress and status monitoring."
+    "summary_zh": "通过已登记的 SSH 环境提交可追踪任务，查看实时进度并持续监控状态；在集群登录节点上可通过 Slurm、PBS、LSF 或 Grid Engine 投递作业。",
+    "summary_en": "Submit traceable research runs through registered SSH contexts with live progress and status monitoring, including Slurm, PBS, LSF, or Grid Engine jobs from a cluster login node."
   },
   {
     "group": "extension",
