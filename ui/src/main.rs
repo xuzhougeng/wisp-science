@@ -14384,12 +14384,10 @@ fn App() -> impl IntoView {
                 </div>
             </Show>
 
-            <div class:center-hidden=move || center_file_open.get() && !center_split.get()>
-                <swarm::SwarmDock state=swarm_state session=active_session locale=locale/>
-            </div>
             <div class="composer"
                 class:center-hidden=move || center_file_open.get() && !center_split.get()
                 class:demo-read-only=move || demo_mode.get()>
+                <swarm::SwarmDock state=swarm_state session=active_session locale=locale/>
                 {move || browser_extension_status.get().map(|status| {
                     let loc = locale.get();
                     let current = status
@@ -16704,7 +16702,7 @@ fn App() -> impl IntoView {
                                 refresh_agent_resources(workflow_studio_state, specialists);
                             }),
                             load_session,
-                            swarm_state.open,
+                            swarm_state,
                         ).into_view(),
                         RightTab::Notebook => {
                             view! {

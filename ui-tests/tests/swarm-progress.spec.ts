@@ -33,14 +33,17 @@ test('map swarm shows real phases and keeps the selected assistant live', async 
   await emit(page, progress);
   const dock = page.getByTestId('swarm-dock');
   await expect(dock).toContainText('Starting tasks');
-  await dock.getByRole('button').click();
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
   const panel = page.getByTestId('swarm-window');
   await expect(panel.getByTestId('swarm-worker')).toHaveCount(3);
   await expect(panel).toHaveClass(/swarm-starting/);
+  await expect(panel.locator('.swarm-metric[data-status="total"] dd')).toHaveText('3');
+  await expect(panel.locator('.swarm-stages .current')).toHaveAttribute('aria-current', 'step');
   await page.screenshot({ path: test.info().outputPath('swarm-start.png') });
 
   await emit(page, { ...progress, revision: 3, phase: 'running', tasks: [task('a', 'running', 3), task('b', 'running', 3)] });
   await expect(dock).toContainText('2 working');
+  await expect(panel.locator('.swarm-metric[data-status="running"] dd')).toHaveText('2');
   const worker = panel.locator('[data-task-id="a"]');
   await expect(worker).toHaveAttribute('aria-pressed', 'false');
   await worker.click();
@@ -66,6 +69,8 @@ test('map swarm shows real phases and keeps the selected assistant live', async 
   await expect(panel.getByTestId('swarm-summary')).toHaveText('Three methods compared; evidence is ready.');
   await expect(panel).not.toHaveClass(/swarm-moving/);
   await expect(dock).toContainText('3/3 completed');
+  await expect(panel.locator('.swarm-metric[data-status="completed"] dd')).toHaveText('3');
+  await expect(panel.locator('.swarm-metric[data-status="failed"] dd')).toHaveText('0');
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
   await expect(dock).toBeVisible();
@@ -77,10 +82,12 @@ test('swarm typography follows the UI font size on desktop and narrow screens', 
   await emit(page, batch());
   const dock = page.getByTestId('swarm-dock');
   await expect(dock.locator('.swarm-dock-copy strong')).toHaveCSS('font-size', '19.5px');
-  await expect(dock.locator('.swarm-stages li').first()).toHaveCSS('font-size', '18px');
-  await dock.getByRole('button').click();
+  await expect(dock.locator('.swarm-phase-badge')).toHaveCSS('font-size', '16.5px');
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
   const panel = page.getByTestId('swarm-window');
   await expect(panel.locator('h2')).toHaveCSS('font-size', '27px');
+  await expect(panel.getByTestId('swarm-request')).toHaveCSS('font-size', '19.5px');
+  await expect(panel.locator('.swarm-stages li').first()).toHaveCSS('font-size', '18px');
   await expect(panel.locator('.swarm-worker-copy strong').first()).toHaveCSS('font-size', '18px');
   await expect(panel.locator('.swarm-worker-copy small').first()).toHaveCSS('font-size', '16.5px');
   await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCSS('font-size', '18px');
@@ -91,18 +98,170 @@ test('swarm typography follows the UI font size on desktop and narrow screens', 
   expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
+test('the compact swarm dock follows the composer column on wide and narrow panes', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await open(page);
+  await emit(page, { ...batch('reader'), phase: 'running', tasks: [task('a', 'running'), task('b'), task('c')] });
+  const dock = page.locator('.composer > [data-testid="swarm-dock"]');
+  await expect(dock).toBeVisible();
+  await expect(dock.locator('.swarm-stages')).toHaveCount(0);
+  for (const width of [1920, 1024]) {
+    await page.setViewportSize({ width, height: 1080 });
+    await expect.poll(async () => {
+      const card = await dock.boundingBox();
+      const composer = await page.locator('.composer-inner').boundingBox();
+      return !!card && !!composer && Math.abs(card.x - composer.x) <= 1 && Math.abs(card.width - composer.width) <= 1;
+    }).toBe(true);
+    expect((await dock.boundingBox())!.height).toBeLessThan(90);
+  }
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('swarm-window')).toHaveCount(0);
+  await expect(dock).toBeVisible();
+});
+
+test('long Reader requests remain body text and partial failures keep their own counts', async ({ page }) => {
+  await open(page);
+  const request = '重新整理 BAM 输入路径，生成 samples.csv 和分析计划。' +
+    '/data2/project/long-read-isoform-quantification/workflow-output/sample-34/pass.untagged.bam '.repeat(4);
+  const progress = {
+    ...batch('reader'), phase: 'partial', title: request, total: 28,
+    tasks: Array.from({ length: 28 }, (_, i) => ({
+      ...task(String(i), i === 0 ? 'completed' : 'failed'),
+      title: `样本 ${i + 1}：整理长读长测序输入路径与分析结果`,
+      completed_units: 3, total_units: 3, failed_units: i === 0 ? 0 : 3,
+    })),
+  };
+  await emit(page, progress);
+  const dock = page.getByTestId('swarm-dock');
+  await expect(dock).toContainText('1/28 completed');
+  await expect(dock).toContainText('27 failed');
+  await expect(dock.locator('.swarm-phase-badge')).toHaveText('Finished with gaps');
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
+  const panel = page.getByTestId('swarm-window');
+  await expect(panel).toHaveAttribute('data-phase', 'partial');
+  await expect(panel.getByRole('heading', { name: 'Task overview', exact: true })).toBeVisible();
+  await expect(panel.getByTestId('swarm-request')).toHaveText(request);
+  await expect(panel.getByTestId('swarm-request')).toHaveCSS('font-weight', '400');
+  for (const [status, count] of [['total', '28'], ['running', '0'], ['completed', '1'], ['failed', '27']]) {
+    await expect(panel.locator(`.swarm-metric[data-status="${status}"] dd`)).toHaveText(count);
+  }
+  const meter = panel.locator('.swarm-overview > .swarm-meter');
+  const completed = meter.locator('[data-status="completed"]');
+  const failed = meter.locator('[data-status="failed"]');
+  expect((await failed.boundingBox())!.width / (await completed.boundingBox())!.width).toBeCloseTo(27, 0);
+  expect(await failed.evaluate(el => getComputedStyle(el).backgroundColor))
+    .not.toBe(await completed.evaluate(el => getComputedStyle(el).backgroundColor));
+  await expect(panel.locator('.swarm-hub')).toHaveCSS('animation-name', 'none');
+  await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('reader-partial-overview.png') });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await expect.poll(() => panel.evaluate(el => [el, ...el.querySelectorAll('.swarm-detail, .swarm-request, .swarm-metrics')]
+    .every(node => node.scrollWidth <= node.clientWidth + 1))).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('reader-partial-mobile.png') });
+  await panel.locator('[data-task-id="1"]').click();
+  await page.keyboard.press('Escape');
+  await expect(panel.getByTestId('swarm-task-detail')).toHaveCount(0);
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+});
+
+test('finished Reader progress can be dismissed and its results stay in Agents', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Toggle panel' }).click();
+  await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
+  const agents = page.getByTestId('agent-workflows');
+  await expect(agents).toContainText('No subagents in this conversation yet');
+  const progress = {
+    ...batch('reader'), phase: 'partial', revision: 4,
+    tasks: [
+      { ...task('a', 'completed', 4), result: 'Grounded evidence from the saved conversation.' },
+      task('b', 'failed', 4), task('c', 'failed', 4),
+    ],
+    summary: 'One relevant session; two sessions could not be read.',
+  };
+  await emit(page, progress);
+  const card = agents.getByTestId('swarm-panel');
+  await expect(card).toContainText('Session retrieval');
+  await expect(card).toContainText('1/3 completed');
+  await expect(agents).not.toContainText('No subagents in this conversation yet');
+  await expect(card.getByRole('button', { name: 'Stop this turn' })).toHaveCount(0);
+  await page.getByTestId('swarm-dismiss').click();
+  await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
+  await expect(page.getByTestId('swarm-window')).toHaveCount(0);
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'View parallel tasks and results' }).click();
+  const overlay = page.getByTestId('swarm-window');
+  await expect(overlay.getByTestId('swarm-summary')).toHaveText(progress.summary);
+  await overlay.locator('[data-task-id="a"]').click();
+  await expect(overlay.getByTestId('swarm-task-result')).toHaveText('Grounded evidence from the saved conversation.');
+  await page.keyboard.press('Escape');
+  await expect(overlay.getByTestId('swarm-task-detail')).toHaveCount(0);
+  await expect(overlay).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(overlay).toHaveCount(0);
+  await expect(agents).toBeVisible();
+  await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
+
+  // Neither a snapshot refresh nor switching conversations revives this dock.
+  await emit(page, { ...progress, revision: 5 });
+  await page.locator('.sidebar [data-session-id="subagent-child"]').click();
+  await expect(card).toHaveCount(0);
+  await page.locator(`.sidebar [data-session-id="${frame}"]`).click();
+  await expect(card).toContainText('Session retrieval');
+  await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
+  await emit(page, { ...batch('reader'), id: 'swarm-new', started_at_ms: 200 });
+  await expect(page.getByTestId('swarm-dock')).toBeVisible();
+  await expect(page.getByTestId('swarm-dismiss')).toHaveCount(0);
+});
+
+test('Agents shows live parallel batches and stops the current turn', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Toggle panel' }).click();
+  await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
+  const card = page.getByTestId('agent-workflows').getByTestId('swarm-panel');
+  for (const [index, source] of ['reader', 'map_items', 'explore'].entries()) {
+    const progress = {
+      ...batch(source), id: `parallel-${source}`, started_at_ms: 200 + index,
+      phase: 'running', tasks: [task('a', 'running'), task('b'), task('c')],
+    };
+    await emit(page, progress);
+    await expect(card).toContainText('1 working');
+    await expect(page.getByTestId('swarm-dismiss')).toHaveCount(0);
+    await card.getByRole('button', { name: 'View parallel tasks and results' }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('swarm-window')).toHaveCount(0);
+    await expect(card).toBeVisible();
+    await card.getByRole('button', { name: 'Stop this turn' }).click();
+    await expect.poll(() => page.evaluate(() =>
+      ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === 'stop_agent').length,
+    )).toBe(index + 1);
+    await expect.poll(() => page.evaluate(() => {
+      const call = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === 'stop_agent').at(-1);
+      return call?.args instanceof Map ? call.args.get('sessionId') : call?.args?.sessionId;
+    })).toBe(frame);
+    await emit(page, { ...progress, phase: 'cancelled', revision: 3, tasks: [task('a', 'cancelled', 3), task('b', 'cancelled', 3), task('c', 'cancelled', 3)] });
+    await expect(card.getByRole('button', { name: 'Stop this turn' })).toHaveCount(0);
+    await page.getByTestId('swarm-dismiss').click();
+    await expect(card).toContainText('Stopped');
+  }
+});
+
 for (const source of ['reader', 'explore']) {
   test(`${source} uses the same view, reduced motion and immediate Escape`, async ({ page }) => {
     await open(page);
     await emit(page, { ...batch(source), phase: 'running' });
     const dock = page.getByTestId('swarm-dock');
-    await dock.getByRole('button').click();
+    await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
     const panel = page.getByTestId('swarm-window');
     await expect(panel.locator('.swarm-hub')).toHaveCSS('animation-name', 'swarm-breathe');
     await page.keyboard.press('Escape');
     await expect(panel).toHaveCount(0);
     await expect(dock).toBeVisible();
-    await dock.getByRole('button').click();
+    await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(panel.locator('.swarm-hub')).toHaveCSS('animation-name', 'none');
     await page.setViewportSize({ width: 390, height: 844 });
@@ -123,7 +282,7 @@ test('failed and paused tasks stay honest; snapshots do not regress or leak betw
   await emit(page, progress);
   const dock = page.getByTestId('swarm-dock');
   await expect(dock).toContainText('1/3 completed');
-  await dock.getByRole('button').click();
+  await dock.getByRole('button', { name: 'View assistants', exact: true }).click();
   await expect(page.getByTestId('swarm-worker')).toHaveCount(3);
   await page.getByRole('button', { name: 'Stop this turn' }).click();
   await expect.poll(() => page.evaluate(() => {
@@ -154,7 +313,7 @@ test('the swarm Escape layer leaves an underlying Agents detail open', async ({ 
   await page.locator('[data-activity-id="subagent-done"]').click();
   await expect(page.getByTestId('agent-activity-detail')).toBeVisible();
   await emit(page, batch());
-  await page.getByTestId('swarm-dock').getByRole('button').click();
+  await page.getByTestId('swarm-dock').getByRole('button', { name: 'View assistants', exact: true }).click();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('swarm-window')).toHaveCount(0);
   await expect(page.getByTestId('agent-activity-detail')).toBeVisible();

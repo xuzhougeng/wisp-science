@@ -124,10 +124,27 @@ boundary.
 The WebView desktop shows an **Agent swarm** progress card above the composer
 for `map_items`, project/session Reader retrieval, and `explore`. Open **View
 assistants** to see the three stages: starting tasks, parallel execution, and
-summary. The animation follows actual execution events; it does not estimate
-completion time or invent a percentage. Select a task to read its instruction,
-recent tool/progress observations, and result preview. Reader groups transcript
+summary. The compact card shares the input box's column and shows a phase badge,
+task counts, and a thin strip of observed task states. The full stage list stays
+inside the exploration window. Finished cards have a close button: hiding the
+card leaves its results available under **Agents → Parallel tasks**, which also
+shows the current live batch. Open that entry to inspect per-task progress and
+results, or use **Stop this turn** while it is running. This stops the whole
+conversation turn; individual Reader chunks cannot be stopped or retried from
+the panel. Hiding applies to the current app window and survives switching
+conversations; a new batch shows a new card. The panel uses the existing latest
+batch snapshot, not a new history of all batches.
+
+The overview separates the task description from
+the total, working, completed, and failed counts; long paths wrap as body text.
+Partial results use an amber status badge, while failed tasks retain their red
+counts and strip segments. The animation follows actual execution events; it
+does not estimate completion time or invent a percentage. Select a task to read
+its instruction, recent tool/progress observations, and result preview. Reader groups transcript
 chunks by saved conversation and shows completed/total chunks for each one.
+An invalid or incomplete Reader JSON response triggers one retry with shorter
+output. Its progress entry stays on the same chunk; a recovered retry counts
+as one completed chunk, and a chunk is marked failed only if recovery fails.
 Private model reasoning is not included. The selected assistant is highlighted
 and exposed as selected to assistive technology. Text follows the global UI font
 size setting on both desktop and narrow windows.
@@ -147,11 +164,21 @@ progress is available live during preparation and its final snapshot is saved
 before the main turn. A resumed `map_items` call starts a new view with already
 finished items restored. This display does not change worker concurrency,
 Reader's search scope/time budget, or approval policy. Workflow delegation and
-watch-only child conversations retain their existing Agents panel.
+watch-only child conversations retain their existing entries alongside the
+parallel batch in the Agents panel.
 
 中文：`map_items`、项目／会话 Reader 和 `explore` 共用“并行探索”视图。
-聊天输入框上方显示当前阶段，点击“查看助手”可查看每项任务的进展与结果。
-Reader 按历史会话分组显示扫描分块数。动画由实际事件驱动；失败、暂停与停止
+聊天输入框上方的紧凑卡片与输入框对齐，显示阶段标签、任务计数与按真实状态分段的
+细色条；完整三阶段导航保留在弹窗内。点击“查看助手”可查看每项任务的进展与结果。
+已结束的卡片可以关闭，结果仍保留在 **Agents → 并行任务**。该入口也显示当前正在
+运行的批次，可以打开详情或“停止本轮”；停止会取消整个会话轮次，不支持单独停止
+或重跑 Reader 分块。关闭状态在当前窗口切换会话后仍保留，新批次会重新显示卡片；
+Agents 展示当前会话最近一个批次的快照。
+弹窗总览把任务说明与状态统计分开，长路径按正文换行；部分失败显示琥珀色阶段标签，
+失败项的计数与色条保持红色。任务详情将说明、执行进展和结果分区展示。
+Reader 按历史会话分组显示扫描分块数。JSON 格式错误或内容不完整时，会在原分块
+内自动重试一次，并显示重试进展；恢复成功只计为一个完成分块，重试仍失败才记为
+失败。动画由实际事件驱动；失败、暂停与停止
 不会显示为全部完成。关闭视图不取消工作，“停止本轮”沿用现有停止行为。
 `map_items` 续跑时保留已经完成的项目，完整结果仍在原有输出文件中。
 
@@ -163,6 +190,15 @@ progress appears before the primary response. Check a narrow window, dark
 theme, reduced motion, a larger UI font size, and switching away/back while tasks
 are running. Select a worker and return to the overview; its selected state
 should clear without closing the window.
+Check a Reader batch with a long request and mixed results: the dock should align
+with the input box in both normal and split views, the description should wrap
+without widening the window, and failed counts must remain separate from
+completed counts. At narrow widths, the roster sits above the detail and the
+overview counts use two columns.
+Close a finished dock, switch away and back, then reopen the results from
+**Agents → Parallel tasks**. A new batch should restore the dock. For a running
+batch, confirm that the panel's stop action targets the current conversation
+and that one Escape closes only the overlaid exploration view.
 
 1. Delegation is always available to a built-in conversation, like Skills and
    MCP tools: there is no per-conversation switch to enable first, and the

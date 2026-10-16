@@ -51,9 +51,23 @@ fn status_name(status: SwarmTaskStatus) -> &'static str {
     }
 }
 
+fn phase_icon(phase: SwarmPhase) -> &'static str {
+    match phase {
+        SwarmPhase::Starting => "clock",
+        SwarmPhase::Running => "activity-orbit",
+        SwarmPhase::Summarizing => "layers",
+        SwarmPhase::Completed => "check",
+        SwarmPhase::Partial | SwarmPhase::Failed => "circle-alert",
+        SwarmPhase::Paused => "pause",
+        SwarmPhase::Cancelled => "stop",
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct SwarmViewState {
     pub progress: RwSignal<HashMap<String, Rc<SwarmProgress>>>,
+    /// Hide only this window's dock for a finished batch; keep its results.
+    pub dismissed: RwSignal<HashMap<String, String>>,
     pub open: RwSignal<bool>,
     pub selected: RwSignal<Option<String>>,
     pub error: RwSignal<Option<String>>,
@@ -63,6 +77,7 @@ impl SwarmViewState {
     pub fn new() -> Self {
         Self {
             progress: create_rw_signal(HashMap::new()),
+            dismissed: create_rw_signal(HashMap::new()),
             open: create_rw_signal(false),
             selected: create_rw_signal(None),
             error: create_rw_signal(None),
@@ -79,6 +94,19 @@ impl SwarmViewState {
         });
     }
 
+    pub fn dismiss_finished(self, frame: &str) {
+        let batch = self.progress.with_untracked(|all| {
+            all.get(frame)
+                .filter(|p| p.phase.terminal())
+                .map(|p| p.id.clone())
+        });
+        if let Some(batch) = batch {
+            self.dismissed.update(|all| {
+                all.insert(frame.into(), batch);
+            });
+        }
+    }
+
     /// Root-owned overlay participates in the app's window Escape stack.
     pub fn escape(self) -> bool {
         if !self.open.get_untracked() {
@@ -90,6 +118,18 @@ impl SwarmViewState {
             self.open.set(false);
         }
         true
+    }
+}
+
+fn stop_turn(state: SwarmViewState, session: RwSignal<Option<String>>) {
+    if let Some(id) = session.get_untracked() {
+        state.error.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({"sessionId": id})).unwrap();
+            if let Err(error) = invoke_checked("stop_agent", args).await {
+                state.error.set(Some(js_error_text(error)));
+            }
+        });
     }
 }
 
@@ -119,6 +159,7 @@ fn stages(current: CurrentSwarm, locale: RwSignal<Locale>) -> impl IntoView {
         <ol class="swarm-stages" aria-label=move || label(locale.get(), "Task stages", "任务阶段")>
             {(0..3).map(|index| view! {
                 <li class:current=move || current.get().is_some_and(|p| !p.phase.terminal() && phase_index(p.phase) == index)
+                    aria-current=move || current.get().and_then(|p| (!p.phase.terminal() && phase_index(p.phase) == index).then_some("step"))
                     class:passed=move || current.get().is_some_and(|p| p.phase == SwarmPhase::Completed || (!p.phase.terminal() && phase_index(p.phase) > index))>
                     <span class="swarm-stage-number">{index + 1}</span>
                     <span>{move || match index {
@@ -132,6 +173,14 @@ fn stages(current: CurrentSwarm, locale: RwSignal<Locale>) -> impl IntoView {
     }
 }
 
+fn task_count(progress: &SwarmProgress, status: SwarmTaskStatus) -> usize {
+    progress
+        .tasks
+        .iter()
+        .filter(|task| task.status == status)
+        .count()
+}
+
 fn counts(progress: &SwarmProgress, loc: Locale) -> String {
     if progress.total == 0 {
         return if progress.phase == SwarmPhase::Starting {
@@ -140,21 +189,9 @@ fn counts(progress: &SwarmProgress, loc: Locale) -> String {
             label(loc, "No tasks in this scope", "当前范围内没有任务")
         };
     }
-    let done = progress
-        .tasks
-        .iter()
-        .filter(|task| task.status == SwarmTaskStatus::Completed)
-        .count();
-    let running = progress
-        .tasks
-        .iter()
-        .filter(|task| task.status == SwarmTaskStatus::Running)
-        .count();
-    let failed = progress
-        .tasks
-        .iter()
-        .filter(|task| task.status == SwarmTaskStatus::Failed)
-        .count();
+    let done = task_count(progress, SwarmTaskStatus::Completed);
+    let running = task_count(progress, SwarmTaskStatus::Running);
+    let failed = task_count(progress, SwarmTaskStatus::Failed);
     if loc == Locale::Zh {
         format!(
             "{done}/{} 已完成 · {running} 执行中 · {failed} 失败",
@@ -165,6 +202,41 @@ fn counts(progress: &SwarmProgress, loc: Locale) -> String {
             "{done}/{} completed · {running} working · {failed} failed",
             progress.total
         )
+    }
+}
+
+/// Shares of observed task states, not an estimate of time remaining.
+fn task_meter(current: CurrentSwarm) -> impl IntoView {
+    view! {
+        <div class="swarm-meter" aria-hidden="true">
+            {[SwarmTaskStatus::Completed, SwarmTaskStatus::Failed, SwarmTaskStatus::Running, SwarmTaskStatus::Paused, SwarmTaskStatus::Cancelled]
+                .into_iter().map(|status| view! {
+                    <span data-status=status_name(status) style:width=move || {
+                        let share = current.get().map(|p| {
+                            100.0 * task_count(&p, status) as f64 / p.total.max(p.tasks.len()).max(1) as f64
+                        }).unwrap_or(0.0);
+                        format!("{share}%")
+                    }></span>
+                }).collect_view()}
+        </div>
+    }
+}
+
+fn overview_metrics(current: CurrentSwarm, locale: RwSignal<Locale>) -> impl IntoView {
+    view! {
+        <dl class="swarm-metrics" aria-label=move || label(locale.get(), "Task counts", "任务统计")>
+            {[
+                (None, "total", "All tasks", "全部任务", "layers"),
+                (Some(SwarmTaskStatus::Running), "running", "Working", "执行中", "activity-orbit"),
+                (Some(SwarmTaskStatus::Completed), "completed", "Completed", "已完成", "check"),
+                (Some(SwarmTaskStatus::Failed), "failed", "Failed", "失败", "circle-alert"),
+            ].into_iter().map(|(status, name, en, zh, icon)| view! {
+                <div class="swarm-metric" data-status=name>
+                    <dt>{compose_icon(icon)}<span>{move || label(locale.get(), en, zh)}</span></dt>
+                    <dd>{move || current.get().map(|p| status.map(|s| task_count(&p, s)).unwrap_or(p.total))}</dd>
+                </div>
+            }).collect_view()}
+        </dl>
     }
 }
 
@@ -185,6 +257,7 @@ fn WorkerRow(
     let data_id = id.clone();
     view! {
         <button type="button" class="swarm-worker" data-testid="swarm-worker" data-task-id=data_id
+            title=move || task.get().map(|t| t.title)
             aria-pressed=move || (state.selected.get().as_deref() == Some(selected_id.as_str())).to_string()
             data-status=move || task.get().map(|t| status_name(t.status)).unwrap_or("queued")
             on:click=move |_| state.selected.set(Some(id.clone()))>
@@ -209,19 +282,86 @@ pub fn SwarmDock(
             .get()
             .and_then(|id| state.progress.with(|all| all.get(&id).cloned()))
     });
+    let visible = create_memo(move |_| {
+        let Some(progress) = current.get() else {
+            return false;
+        };
+        !progress.phase.terminal()
+            || !session.get().is_some_and(|id| {
+                state
+                    .dismissed
+                    .with(|all| all.get(&id) == Some(&progress.id))
+            })
+    });
     view! {
-        <Show when=move || current.get().is_some()>
+        <Show when=move || visible.get()>
             <section class="swarm-dock" data-testid="swarm-dock" data-phase=move || current.get().map(|p| format!("{:?}", p.phase).to_lowercase())>
-                <button type="button" class="swarm-dock-open" on:click=move |_| { state.selected.set(None); state.open.set(true); }>
-                    <span class="swarm-dock-icon" class:active=move || current.get().is_some_and(|p| !p.phase.terminal())>{compose_icon("swarm")}</span>
+                <div class="swarm-dock-row">
+                <button type="button" class="swarm-dock-open" aria-label=move || label(locale.get(), "View assistants", "查看助手") on:click=move |_| { state.selected.set(None); state.open.set(true); }>
+                    <span class="swarm-dock-icon" class:active=move || current.get().is_some_and(|p| !p.phase.terminal())>{move || compose_icon(current.get().map(|p| phase_icon(p.phase)).unwrap_or("swarm"))}</span>
                     <span class="swarm-dock-copy">
-                        <strong>{move || current.get().map(|p| phase_label(locale.get(), p.phase))}</strong>
+                        <span class="swarm-dock-heading">
+                            <strong>{move || label(locale.get(), "Agent swarm", "并行探索")}</strong>
+                            <span class="swarm-phase-badge">{move || current.get().map(|p| phase_label(locale.get(), p.phase))}</span>
+                        </span>
                         <small>{move || current.get().map(|p| counts(&p, locale.get()))}</small>
                     </span>
-                    <span class="swarm-open-label">{move || label(locale.get(), "View assistants", "查看助手")}</span>
-                    {compose_icon("chevron-right")}
+                    <span class="swarm-open-action"><span class="swarm-open-label">{move || label(locale.get(), "View assistants", "查看助手")}</span>{compose_icon("chevron-right")}</span>
                 </button>
-                {stages(current, locale)}
+                <Show when=move || current.get().is_some_and(|p| p.phase.terminal())>
+                    <button type="button" class="swarm-dismiss" data-testid="swarm-dismiss"
+                        aria-label=move || label(locale.get(), "Hide finished progress", "关闭已结束的进度卡片")
+                        title=move || label(locale.get(), "Hide progress; results remain in Agents", "关闭进度卡片，结果仍可在 Agents 中查看")
+                        on:click=move |_| { if let Some(id) = session.get_untracked() { state.dismiss_finished(&id); } }>{compose_icon("close")}</button>
+                </Show>
+                </div>
+                {task_meter(current)}
+            </section>
+        </Show>
+    }
+}
+
+/// The Agents pane shares the same live/persisted batch as the dock. Reader
+/// workers do not need fabricated child conversations to expose their results.
+#[component]
+pub fn SwarmPanel(
+    state: SwarmViewState,
+    session: RwSignal<Option<String>>,
+    locale: RwSignal<Locale>,
+) -> impl IntoView {
+    let current = create_memo(move |_| {
+        session
+            .get()
+            .and_then(|id| state.progress.with(|all| all.get(&id).cloned()))
+    });
+    view! {
+        <Show when=move || current.get().is_some()>
+            <section class="swarm-panel" data-testid="swarm-panel"
+                data-phase=move || current.get().map(|p| format!("{:?}", p.phase).to_lowercase())>
+                <h2>{move || label(locale.get(), "Parallel tasks", "并行任务")}</h2>
+                <div class="swarm-panel-card">
+                    <button type="button" class="swarm-panel-open"
+                        aria-label=move || label(locale.get(), "View parallel tasks and results", "查看并行任务与结果")
+                        on:click=move |_| { state.selected.set(None); state.open.set(true); }>
+                        <span class="swarm-panel-icon">{compose_icon("swarm")}</span>
+                        <span class="swarm-panel-copy">
+                            <strong>{move || current.get().map(|p| match p.source.as_str() {
+                                "reader" => label(locale.get(), "Session retrieval", "会话检索"),
+                                "map_items" => label(locale.get(), "Batch tasks", "批量任务"),
+                                _ => label(locale.get(), "Parallel exploration", "并行探索"),
+                            })}</strong>
+                            <span class="swarm-phase-badge">{move || current.get().map(|p| phase_label(locale.get(), p.phase))}</span>
+                        </span>
+                        {compose_icon("chevron-right")}
+                    </button>
+                    <p class="swarm-panel-title" title=move || current.get().map(|p| p.title.clone())>{move || current.get().map(|p| p.title.clone())}</p>
+                    <p class="swarm-panel-counts">{move || current.get().map(|p| counts(&p, locale.get()))}</p>
+                    {task_meter(current)}
+                    <Show when=move || current.get().is_some_and(|p| !p.phase.terminal())>
+                        <button type="button" class="swarm-stop" on:click=move |_| stop_turn(state, session)>{compose_icon("stop")}<span>{move || label(locale.get(), "Stop this turn", "停止本轮")}</span></button>
+                    </Show>
+                    {move || state.error.get().map(|error| view! { <p class="swarm-panel-error" role="alert">{error}</p> })}
+                </div>
             </section>
         </Show>
     }
@@ -266,13 +406,14 @@ pub fn SwarmOverlay(
             <div class="swarm-backdrop" on:click=move |_| { state.open.set(false); state.selected.set(None); }>
                 <section class="swarm-window" role="dialog" aria-modal="true" aria-labelledby="swarm-title"
                     data-testid="swarm-window" on:click=move |event| event.stop_propagation()
+                    data-phase=move || current.get().map(|p| format!("{:?}", p.phase).to_lowercase())
                     class:swarm-moving=move || current.get().is_some_and(|p| !p.phase.terminal())
                     class:swarm-starting=move || current.get().is_some_and(|p| p.phase == SwarmPhase::Starting)
                     class:swarm-gathering=move || current.get().is_some_and(|p| p.phase == SwarmPhase::Summarizing)>
                     <header class="swarm-header">
                         <span class="swarm-brand">{compose_icon("swarm")}</span>
-                        <div><h2 id="swarm-title">{move || label(locale.get(), "Agent swarm", "并行探索")}</h2>
-                            <p role="status">{move || current.get().map(|p| phase_label(locale.get(), p.phase))}</p></div>
+                        <div class="swarm-header-copy"><h2 id="swarm-title">{move || label(locale.get(), "Agent swarm", "并行探索")}</h2>
+                            <p class="swarm-phase-badge" role="status">{move || compose_icon(current.get().map(|p| phase_icon(p.phase)).unwrap_or("swarm"))}{move || current.get().map(|p| phase_label(locale.get(), p.phase))}</p></div>
                         <button type="button" class="swarm-close" aria-label=move || label(locale.get(), "Close exploration", "关闭探索视图") on:click=move |_| state.open.set(false)>{compose_icon("close")}</button>
                     </header>
                     {stages(current, locale)}
@@ -287,16 +428,9 @@ pub fn SwarmOverlay(
                                 </Show>
                             </div>
                             <div class="swarm-roster-footer">
-                                <small>{move || current.get().map(|p| p.model.clone())}</small>
+                                <div class="swarm-model"><span>{move || label(locale.get(), "Model", "模型")}</span><small>{move || current.get().map(|p| p.model.clone())}</small></div>
                                 <Show when=move || current.get().is_some_and(|p| !p.phase.terminal())>
-                                    <button type="button" class="swarm-stop" on:click=move |_| {
-                                        if let Some(id) = session.get_untracked() {
-                                            spawn_local(async move {
-                                                let args = to_value(&serde_json::json!({"sessionId": id})).unwrap();
-                                                if let Err(error) = invoke_checked("stop_agent", args).await { state.error.set(Some(js_error_text(error))); }
-                                            });
-                                        }
-                                    }>{compose_icon("stop")}<span>{move || label(locale.get(), "Stop this turn", "停止本轮")}</span></button>
+                                    <button type="button" class="swarm-stop" on:click=move |_| stop_turn(state, session)>{compose_icon("stop")}<span>{move || label(locale.get(), "Stop this turn", "停止本轮")}</span></button>
                                 </Show>
                             </div>
                         </aside>
@@ -304,25 +438,39 @@ pub fn SwarmOverlay(
                             {move || state.error.get().map(|error| view! { <p role="alert">{error}</p> })}
                             <Show when=move || selected.get().is_some() fallback=move || view! {
                                 <div class="swarm-overview" data-testid="swarm-overview">
-                                    <div class="swarm-constellation" aria-hidden="true">
-                                        <span class="swarm-hub">{compose_icon("swarm")}</span>
-                                        {(0..6).map(|i| view! { <span class=format!("swarm-orbit swarm-orbit-{i}")><span>{compose_icon("bot")}</span></span> }).collect_view()}
+                                    <div class="swarm-overview-hero">
+                                        <div class="swarm-overview-copy">
+                                            <h3>{move || label(locale.get(), "Task overview", "任务总览")}</h3>
+                                            <p class="swarm-help">{move || label(locale.get(), "Select an assistant to follow its progress and results.", "选择任务助手，查看进展与结果。")}</p>
+                                        </div>
+                                        <div class="swarm-constellation" aria-hidden="true">
+                                            <span class="swarm-hub">{compose_icon("swarm")}</span>
+                                            {(0..6).map(|i| view! { <span class=format!("swarm-orbit swarm-orbit-{i}")><span>{compose_icon("bot")}</span></span> }).collect_view()}
+                                        </div>
                                     </div>
-                                    <h3>{move || current.get().map(|p| p.title.clone())}</h3>
-                                    <p>{move || current.get().map(|p| counts(&p, locale.get()))}</p>
-                                    <p class="swarm-help">{move || label(locale.get(), "Select an assistant to follow its progress and results.", "点击助手，查看当前进展与结果。")}</p>
+                                    <section class="swarm-request">
+                                        <h4>{move || label(locale.get(), "Task", "任务目标")}</h4>
+                                        <p data-testid="swarm-request">{move || current.get().map(|p| p.title.clone())}</p>
+                                    </section>
+                                    {overview_metrics(current, locale)}
+                                    {task_meter(current)}
                                     <Show when=move || current.get().is_some_and(|p| !p.summary.is_empty())>
                                         <section class="swarm-result"><h4>{move || label(locale.get(), "Summary", "任务汇总")}</h4><pre data-testid="swarm-summary">{move || current.get().map(|p| p.summary.clone())}</pre></section>
                                     </Show>
                                 </div>
                             }>
                                 <div class="swarm-task-detail" data-testid="swarm-task-detail">
-                                    <button type="button" class="swarm-back" on:click=move |_| state.selected.set(None)>{compose_icon("arrow-left")}{move || label(locale.get(), "Overview", "返回总览")}</button>
+                                    <div class="swarm-task-toolbar">
+                                        <button type="button" class="swarm-back" on:click=move |_| state.selected.set(None)>{compose_icon("arrow-left")}{move || label(locale.get(), "Overview", "返回总览")}</button>
+                                        <p class="swarm-task-state" role="status" data-status=move || selected.get().map(|t| status_name(t.status))>{move || selected.get().map(|t| task_label(locale.get(), t.status))}</p>
+                                    </div>
                                     <h3>{move || selected.get().map(|t| t.title)}</h3>
-                                    <p class="swarm-task-state" role="status">{move || selected.get().map(|t| task_label(locale.get(), t.status))}</p>
-                                    <p class="swarm-task-instruction">{move || selected.get().map(|t| t.instruction)}</p>
+                                    <section class="swarm-request">
+                                        <h4>{move || label(locale.get(), "Instructions", "任务说明")}</h4>
+                                        <p class="swarm-task-instruction">{move || selected.get().map(|t| t.instruction)}</p>
+                                    </section>
                                     <h4>{move || label(locale.get(), "Progress", "执行进展")}</h4>
-                                    <ol class="swarm-task-log">{move || selected.get().map(|t| t.log.into_iter().map(|line| view! { <li>{line}</li> }).collect_view())}</ol>
+                                    <ol class="swarm-task-log">{move || selected.get().map(|t| t.log.into_iter().map(|line| view! { <li><span>{line}</span></li> }).collect_view())}</ol>
                                     <Show when=move || selected.get().is_some_and(|t| t.log.is_empty())><p class="swarm-help">{move || label(locale.get(), "Waiting for the next progress update.", "等待下一条进度更新。")}</p></Show>
                                     <Show when=move || selected.get().is_some_and(|t| !t.result.is_empty())>
                                         <section class="swarm-result"><h4>{move || label(locale.get(), "Result", "任务结果")}</h4><pre data-testid="swarm-task-result">{move || selected.get().map(|t| t.result)}</pre></section>
