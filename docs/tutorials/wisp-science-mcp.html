@@ -206,6 +206,7 @@
 <p>请使用“Notion 研究笔记”连接，搜索标题包含“文献阅读”的页面，只返回页面标题和链接。</p>
 </blockquote>
 <p>从搜索和读取开始，能比较容易确认授权范围是否符合预期。后续需要创建或更新笔记时，再明确目标页面和要写入的内容。</p>
+<p>如果要让 Agent 搭建需要后端的应用，可以再添加一个 <a href="https://cohesivity.ai?ref=gh-wisp-science">Cohesivity</a> 远程 URL 连接：名称填 <code>cohesivity</code>，URL 填 <code>https://cohesivity.ai/mcp</code>，认证方式选“无”。之后 Agent 可以自行创建后端，并按需开通网站托管、Postgres、存储、登录认证、邮箱和 AI 模型 API，开始使用无需注册账号或 API Key。后端默认 72 小时后过期，认领后可长期保留。</p>
 <p>其他远程服务可能使用 API Key，而非 OAuth。这时按服务商文档填写“请求头”。例如，服务商要求 Bearer Token 时，添加名称为 <code>Authorization</code> 的请求头，其值填写 <code>Bearer 你的实际密钥</code>。这类手动请求头配置通常将认证方式选为“无”，表示不走 OAuth 流程；请求本身仍通过填写的请求头认证。</p>
 <p>Wisp 会把连接级环境变量值、请求头值和 OAuth Token 保存在操作系统密钥环中。编辑已有连接时，密钥值留空会保留原值，删除对应行才会清除。完整操作说明见<a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/basic-configuration.md">Wisp 基础配置教程</a>。</p>
 <p><strong>配置完成后，把“用什么、做什么、交付什么”写进任务。</strong></p>
@@ -405,6 +406,7 @@
 <p>Use Notion research notes to find pages with “Literature reading” in the title. Return only page titles and links.</p>
 </blockquote>
 <p>Search and reading are useful initial checks of authorization scope. When you later want to create or update notes, specify the target page and the exact content.</p>
+<p>For apps that need a backend, add another remote URL connection for <a href="https://cohesivity.ai?ref=gh-wisp-science">Cohesivity</a>: name <code>cohesivity</code>, URL <code>https://cohesivity.ai/mcp</code>, Authentication <strong>None</strong>. The agent can then create a backend and provision hosting, Postgres, storage, auth, email, and AI model APIs, with no account or API key needed to start. The backend expires after 72 hours unless you claim it.</p>
 <p>Other remote services may use API keys instead of OAuth. Fill request headers according to their documentation. For a required Bearer token, use <code>Authorization</code> with value <code>Bearer YOUR_ACTUAL_KEY</code>. Such manual-header configurations normally select authentication <strong>None</strong>, meaning no OAuth flow; the header still authenticates the request.</p>
 <p>Wisp stores connection-level environment values, header values, and OAuth tokens in the OS keyring. When editing, leaving an existing secret blank preserves it; removing its row clears it. See <a href="https://github.com/xuzhougeng/wisp-science/blob/main/docs/basic-configuration.md">Basic Configuration</a>.</p>
 <p><strong>Specify the source, task, and deliverable.</strong></p>

@@ -102,6 +102,8 @@ In a new conversation, try:
 
 Search and reading are useful initial checks of authorization scope. When you later want to create or update notes, specify the target page and the exact content.
 
+For apps that need a backend, add another remote URL connection for [Cohesivity](https://cohesivity.ai?ref=gh-wisp-science): name `cohesivity`, URL `https://cohesivity.ai/mcp`, Authentication **None**. The agent can then create a backend and provision hosting, Postgres, storage, auth, email, and AI model APIs, with no account or API key needed to start. The backend expires after 72 hours unless you claim it.
+
 Other remote services may use API keys instead of OAuth. Fill request headers according to their documentation. For a required Bearer token, use `Authorization` with value `Bearer YOUR_ACTUAL_KEY`. Such manual-header configurations normally select authentication **None**, meaning no OAuth flow; the header still authenticates the request.
 
 Wisp stores connection-level environment values, header values, and OAuth tokens in the OS keyring. When editing, leaving an existing secret blank preserves it; removing its row clears it. See [Basic Configuration](https://github.com/xuzhougeng/wisp-science/blob/main/docs/basic-configuration.md).
