@@ -234,7 +234,11 @@ pub(super) fn Sidebar(
         rows
     });
     let session_attention = create_memo(move |_| {
-        attention_rows.with(|rows| rows.iter().map(|row| row.id.clone()).collect::<HashSet<_>>())
+        attention_rows.with(|rows| {
+            rows.iter()
+                .map(|row| row.id.clone())
+                .collect::<HashSet<_>>()
+        })
     });
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     let bulk_move_open = create_rw_signal(false);
