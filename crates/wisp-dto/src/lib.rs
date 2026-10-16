@@ -4570,6 +4570,8 @@ pub enum RightTab {
     Provenance,
     Hosts,
     SideChat,
+    /// Researcher-private project memos; never read by the agent.
+    Memos,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -5761,6 +5763,8 @@ pub struct NetworkSettings {
 
 mod research_journey;
 pub use research_journey::*;
+mod project_memos;
+pub use project_memos::*;
 mod automation;
 pub use automation::*;
 mod mandate;

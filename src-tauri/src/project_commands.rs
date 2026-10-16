@@ -84,6 +84,72 @@ pub(super) async fn add_research_journal_entry(
         .map_err(|e| e.to_string())
 }
 
+/// Memos are read for the window's working project only, so a project hidden
+/// by privacy mode is never reachable by id from the UI.
+async fn memo_project(
+    state: &AppState,
+    window: &crate::workspace_surface::WorkspaceSurface,
+) -> Result<String, String> {
+    let (project, _) =
+        exploration_commands::working_project_for_active_frame(state, window.label()).await?;
+    Ok(project.id)
+}
+
+#[tauri::command]
+pub(super) async fn list_project_memos(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+) -> Result<Vec<wisp_dto::ProjectMemo>, String> {
+    let project_id = memo_project(&state, &window).await?;
+    state
+        .store
+        .list_project_memos(&project_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(super) async fn add_project_memo(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    input: wisp_dto::ProjectMemoInput,
+) -> Result<wisp_dto::ProjectMemo, String> {
+    let project_id = memo_project(&state, &window).await?;
+    state
+        .store
+        .add_project_memo(&project_id, &input)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(super) async fn update_project_memo(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    patch: wisp_dto::ProjectMemoPatch,
+) -> Result<wisp_dto::ProjectMemo, String> {
+    let project_id = memo_project(&state, &window).await?;
+    state
+        .store
+        .update_project_memo(&project_id, &patch)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(super) async fn delete_project_memo(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    memo_id: String,
+) -> Result<(), String> {
+    let project_id = memo_project(&state, &window).await?;
+    state
+        .store
+        .delete_project_memo(&project_id, &memo_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub(super) async fn get_research_journey_source(
     state: State<'_, AppState>,

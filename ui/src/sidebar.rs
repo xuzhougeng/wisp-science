@@ -122,6 +122,8 @@ pub(super) fn Sidebar(
     open_files: Callback<web_sys::MouseEvent>,
     open_research_graph: Callback<web_sys::MouseEvent>,
     research_journey_open: ReadSignal<bool>,
+    open_memos: Callback<web_sys::MouseEvent>,
+    memos_open: Signal<bool>,
     open_publication_workspace: Callback<web_sys::MouseEvent>,
     publication_open: ReadSignal<bool>,
     open_library: Callback<web_sys::MouseEvent>,
@@ -270,7 +272,7 @@ pub(super) fn Sidebar(
         true
     });
     let never = Signal::derive(|| false);
-    let nav_entries: [NavEntry; 5] = [
+    let nav_entries: [NavEntry; 6] = [
         (
             "folder-plus",
             "sidebar.new_folder",
@@ -285,6 +287,13 @@ pub(super) fn Sidebar(
             "nav-tier-1",
             research_journey_open.into(),
             open_research_graph,
+        ),
+        (
+            "notebook",
+            "sidebar.memos",
+            "nav-tier-1",
+            memos_open,
+            open_memos,
         ),
         (
             "book",

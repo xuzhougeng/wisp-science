@@ -16,6 +16,7 @@ mod lab_view;
 mod library;
 mod mandates;
 mod mcp_app;
+mod memos;
 mod network_settings;
 mod notebook;
 mod overlays;
@@ -2210,6 +2211,9 @@ fn App() -> impl IntoView {
     let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
+    // An unsaved memo survives closing the Memos panel; it is dropped only on
+    // an explicit discard or when another project becomes active.
+    let memo_draft = create_rw_signal(None::<memos::MemoDraft>);
     let right_tab_add_menu_open = create_rw_signal(false);
     let rp_tab_drag = create_rw_signal(None::<RightTab>);
     let rp_tab_drop = create_rw_signal(None::<RightTab>);
@@ -2725,6 +2729,9 @@ fn App() -> impl IntoView {
     let slash_command_runner = create_rw_signal(None::<Callback<String, bool>>);
     let picker_artifacts = create_rw_signal(Vec::<ArtifactInfo>::new());
     let picker_sessions = create_rw_signal(Vec::<SessionSearchInfo>::new());
+    // `None` until the first `/memo` load answers, so an empty project shows
+    // the "no memos" row only once that is known.
+    let picker_memos = create_rw_signal(None::<Vec<ProjectMemo>>);
     // Declared up here (not with the other context-view signals) so the
     // composer @ menu can offer servers and runtimes alongside artifacts.
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
@@ -2787,6 +2794,23 @@ fn App() -> impl IntoView {
                 }
                 if workflow_templates.get_untracked().is_empty() {
                     refresh_workflow_templates();
+                }
+            }
+            // Memos are private to the researcher: the list is fetched for the
+            // picker only and filtered locally while the query changes.
+            ComposerPickerMode::Memo => {
+                if query.is_empty() {
+                    spawn_local(async move {
+                        let rows = research_journey::call::<Vec<ProjectMemo>>(
+                            "list_project_memos",
+                            serde_json::json!({}),
+                        )
+                        .await
+                        .unwrap_or_default();
+                        if picker_mode.get_untracked() == Some(mode) {
+                            picker_memos.set(Some(rows));
+                        }
+                    });
                 }
             }
         }
@@ -2910,25 +2934,72 @@ fn App() -> impl IntoView {
                 );
                 commands
             }
+            Some(ComposerPickerMode::Memo) => match picker_memos.get() {
+                None => vec![],
+                Some(memos) if memos.is_empty() => vec![ComposerPickerItem::OpenMemos],
+                Some(memos) => memos::filter_memos(&memos, &query)
+                    .into_iter()
+                    .map(ComposerPickerItem::Memo)
+                    .collect(),
+            },
             None => vec![],
         }
     });
+    // Remove the active picker token from the composer: the token start and
+    // the text that remains. `None` when the recorded range no longer fits.
+    let strip_picker_token = move || -> Option<(usize, String)> {
+        let current = input.get_untracked();
+        let (start, end) = picker_token_range.get_untracked()?;
+        (start <= end
+            && end <= current.len()
+            && current.is_char_boundary(start)
+            && current.is_char_boundary(end))
+        .then(|| (start, format!("{}{}", &current[..start], &current[end..])))
+    };
+    // Open the memo picker over a `/memo <query>` token that already sits at
+    // `start` in the composer.
+    let open_memo_picker = move |start: usize, query: &str| {
+        picker_token_range.set(Some((start, start + MEMO_TOKEN.len() + query.len())));
+        picker_query.set(query.trim_start().to_string());
+        picker_index.set(0);
+        picker_mode.set(Some(ComposerPickerMode::Memo));
+    };
     let select_picker_item = Callback::new(move |i: usize| {
         let Some(item) = picker_items.get().get(i).cloned() else {
             return;
         };
+        // Memo rows never attach a chip: a memo pastes its body after the
+        // draft that preceded the token, the placeholder opens the Memos pane.
+        match &item {
+            ComposerPickerItem::Memo(memo) => {
+                let rest = strip_picker_token()
+                    .map(|(_, rest)| rest)
+                    .unwrap_or_else(|| input.get_untracked());
+                picker_mode.set(None);
+                let next =
+                    sanitize_composer_text(&memos::compose_insert(&rest, &memo.body)).into_owned();
+                let caret = next.encode_utf16().count() as u32;
+                input.set(next);
+                focus_composer_at(caret);
+                return;
+            }
+            ComposerPickerItem::OpenMemos => {
+                if let Some((_, rest)) = strip_picker_token() {
+                    input.set(rest);
+                }
+                picker_mode.set(None);
+                ensure_right_tab(RightTab::Memos, show_right, open_right_tabs, right_tab);
+                focus_composer();
+                return;
+            }
+            _ => {}
+        }
         // Built-in commands run in the shell, not the model: payload commands
         // (/compact, /fork …, /btw …) fill the composer, action commands run
         // immediately. Neither attaches a reference chip.
         if let ComposerPickerItem::Command { name, .. } = item {
-            let current = input.get_untracked();
-            let stripped = picker_token_range.get_untracked().and_then(|(start, end)| {
-                (start <= end
-                    && end <= current.len()
-                    && current.is_char_boundary(start)
-                    && current.is_char_boundary(end))
-                .then(|| (start, format!("{}{}", &current[..start], &current[end..])))
-            });
+            let stripped = strip_picker_token();
+            let token_start = stripped.as_ref().map(|(start, _)| *start);
             picker_mode.set(None);
             if slash_command_fills_text(&name) {
                 // Payload commands keep a trailing space so the trigger token
@@ -2948,6 +3019,13 @@ fn App() -> impl IntoView {
                     focus_composer_at(caret);
                 } else {
                     focus_composer();
+                }
+                // `/memo ` is a token, not a payload: keep the picker open on
+                // the researcher's memos right away.
+                if name == "memo" {
+                    if let Some(start) = token_start {
+                        open_memo_picker(start, "");
+                    }
                 }
             } else {
                 let remaining = stripped.map(|(start, rest)| {
@@ -2971,8 +3049,11 @@ fn App() -> impl IntoView {
             return;
         }
         let reference = match item {
-            // Commands were handled above; they never become reference chips.
-            ComposerPickerItem::Command { .. } => return,
+            // Commands and memo rows were handled above; they never become
+            // reference chips.
+            ComposerPickerItem::Command { .. }
+            | ComposerPickerItem::Memo(_)
+            | ComposerPickerItem::OpenMemos => return,
             ComposerPickerItem::Artifact(a) => ComposerReferenceChip::Artifact {
                 id: a.id,
                 name: a.name,
@@ -5358,6 +5439,15 @@ fn App() -> impl IntoView {
                 }
                 "Escape" => {
                     ev.prevent_default();
+                    // Leaving the memo picker returns to plain input: the
+                    // `/memo …` token goes with it, the draft before it stays.
+                    if picker_mode.get_untracked() == Some(ComposerPickerMode::Memo) {
+                        if let Some((start, rest)) = strip_picker_token() {
+                            let caret = rest[..start].encode_utf16().count() as u32;
+                            input.set(rest);
+                            focus_composer_at(caret);
+                        }
+                    }
                     picker_mode.set(None);
                 }
                 _ => {}
@@ -7730,6 +7820,15 @@ fn App() -> impl IntoView {
             // rows are listed but deselected (hidden from the export).
             "share" => open_share.call(()),
             "trajectory" => trajectory_open.set(true),
+            // A typed `/memo [query]` never reaches the model: it becomes the
+            // memo token and opens the picker over it.
+            "memo" => {
+                let token = format!("{MEMO_TOKEN}{payload}");
+                let caret = token.encode_utf16().count() as u32;
+                input.set(token);
+                open_memo_picker(0, payload);
+                focus_composer_at(caret);
+            }
             _ => {}
         }
         true
@@ -12296,6 +12395,12 @@ fn App() -> impl IntoView {
                 show_research_graph.set(true);
                 refresh_research_graph(research_graph);
             })
+            memos_open=Signal::derive(move || show_right.get() && right_tab.get() == RightTab::Memos)
+            open_memos=Callback::new(move |_| {
+                show_publication_workspace.set(false);
+                show_research_graph.set(false);
+                ensure_right_tab(RightTab::Memos, show_right, open_right_tabs, right_tab);
+            })
             publication_open=show_publication_workspace.read_only()
             open_publication_workspace=Callback::new(move |_| {
                 show_research_graph.set(false);
@@ -15068,6 +15173,7 @@ fn App() -> impl IntoView {
                                 ComposerPickerMode::Artifact => Some("composer.ref_artifacts"),
                                 ComposerPickerMode::Session => Some("composer.ref_sessions"),
                                 ComposerPickerMode::Skill => None,
+                                ComposerPickerMode::Memo => Some("composer.ref_memos"),
                             };
                             let mut last_section = None;
                             view! {
@@ -15107,6 +15213,24 @@ fn App() -> impl IntoView {
                                                 "branch",
                                             ),
                                             ComposerPickerItem::Context { id, label } => (label, id, "server"),
+                                            ComposerPickerItem::Memo(memo) => {
+                                                let titled = !memo.title.trim().is_empty();
+                                                let name = memos::memo_heading(&memo)
+                                                    .unwrap_or_else(|| t(loc, "memos.untitled"));
+                                                // Untitled memos already show their first line as
+                                                // the name, so the preview continues from the next.
+                                                let sub = memo.body.lines().map(str::trim)
+                                                    .filter(|line| !line.is_empty())
+                                                    .nth(usize::from(!titled))
+                                                    .unwrap_or_default()
+                                                    .to_string();
+                                                (name, sub, "notebook")
+                                            }
+                                            ComposerPickerItem::OpenMemos => (
+                                                t(loc, "composer.memo_none"),
+                                                t(loc, "composer.memo_open"),
+                                                "notebook",
+                                            ),
                                             ComposerPickerItem::Runtime { context_id, context_label, language } => (
                                                 format!("{} runtime", language_display(&language)),
                                                 format!("{context_label} · {context_id}"),
@@ -16270,6 +16394,7 @@ fn App() -> impl IntoView {
                                     RightTab::File => t(loc, "right.file").into(),
                                     RightTab::Hosts => t(loc, "contexts.title").into(),
                                     RightTab::SideChat => t(loc, "sidechat.title").into(),
+                                    RightTab::Memos => t(loc, "right.memos").into(),
                                 };
                                 let is_active = active == tab;
                                 view! {
@@ -16388,6 +16513,7 @@ fn App() -> impl IntoView {
                                             RightTab::File => t(loc, "right.file").into(),
                                             RightTab::Hosts => t(loc, "contexts.title").into(),
                                             RightTab::SideChat => t(loc, "sidechat.title").into(),
+                                            RightTab::Memos => t(loc, "right.memos").into(),
                                         };
                                         let is_open = open.contains(&tab);
                                         view! {
@@ -17498,6 +17624,20 @@ fn App() -> impl IntoView {
                                 </div>
                             }.into_view()
                         }
+                        RightTab::Memos => view! {
+                            <memos::MemosPane
+                                locale=locale
+                                project_id=Signal::derive(move || project_info.get().map(|p| p.id))
+                                draft=memo_draft
+                                on_insert=Callback::new(move |body: String| {
+                                    let next = memos::compose_insert(&input.get_untracked(), &body);
+                                    let next = sanitize_composer_text(&next).into_owned();
+                                    let caret = next.encode_utf16().count() as u32;
+                                    input.set(next);
+                                    focus_composer_at(caret);
+                                }) />
+                        }
+                        .into_view(),
                         RightTab::SideChat => {
                             view! {
                                 <div class="sidechat-in-pane">

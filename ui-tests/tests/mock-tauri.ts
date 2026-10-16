@@ -1748,6 +1748,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     ],
   };
   const researchArchives: Record<string, any> = {};
+  // Researcher-private project memos (src-tauri project_commands). The agent
+  // mock never reads them; only the Memos pane does. `?mockMemos=seeded`
+  // starts with two memos, `window.__memoSaveError` fails the next write.
+  const projectMemos: any[] = new URL(location.href).searchParams.get("mockMemos") === "seeded"
+    ? [
+        { id: "memo-habits", project_id: "default", title: "Server habits", body: "ssh gpu02 first\nthen conda activate wisp", pinned: true, created_at: 1_757_000_000, updated_at: 1_757_000_000 },
+        { id: "memo-prompt", project_id: "default", title: "", body: "You are a careful analyst. Start from the QC table.", pinned: false, created_at: 1_757_100_000, updated_at: 1_757_100_000 },
+      ]
+    : [];
+  const sortMemos = () => projectMemos.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updated_at - a.updated_at || (b.id < a.id ? -1 : 1));
+  const memoWriteGuard = () => {
+    if ((window as any).__memoSaveError) { (window as any).__memoSaveError = false; throw new Error("Memo store unavailable"); }
+  };
   const journeyZh = new URL(location.href).searchParams.get("mockJourney") === "design";
   const journeyText = (en: string, zh: string) => journeyZh ? zh : en;
   const journeyTime = (daysAgo: number, hour = 12, minute = 0) => {
@@ -2207,6 +2220,41 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "get_research_graph":
             return researchGraph;
+          case "list_project_memos":
+            return sortMemos().map((memo) => ({ ...memo }));
+          case "add_project_memo": {
+            memoWriteGuard();
+            const input = plain(arg("input"));
+            const body = String(input.body ?? "").trim();
+            if (!body) throw new Error("A memo body of 1–20000 characters is required");
+            const latest = Math.max(0, ...projectMemos.map((memo) => memo.updated_at));
+            const now = Math.max(Math.floor(Date.now() / 1000), latest + 1);
+            const memo = { id: `memo-${projectMemos.length + 1}-${now}`, project_id: "default", title: String(input.title ?? "").trim(), body, pinned: false, created_at: now, updated_at: now };
+            projectMemos.push(memo);
+            return { ...memo };
+          }
+          case "update_project_memo": {
+            memoWriteGuard();
+            const patch = plain(arg("patch"));
+            const memo = projectMemos.find((entry) => entry.id === patch.id);
+            if (!memo) throw new Error("Memo not found");
+            if (patch.title != null) memo.title = String(patch.title).trim();
+            if (patch.body != null) {
+              const body = String(patch.body).trim();
+              if (!body) throw new Error("A memo body of 1–20000 characters is required");
+              memo.body = body;
+            }
+            if (patch.pinned != null) memo.pinned = Boolean(patch.pinned);
+            memo.updated_at = Math.max(Math.floor(Date.now() / 1000), memo.updated_at + 1);
+            return { ...memo };
+          }
+          case "delete_project_memo": {
+            memoWriteGuard();
+            const index = projectMemos.findIndex((entry) => entry.id === arg("memoId"));
+            if (index < 0) throw new Error("Memo not found");
+            projectMemos.splice(index, 1);
+            return null;
+          }
           case "list_publication_sources": {
             const category = arg("kind");
             const sources = category === "messages" ? [{kind:"message_span",id:"message-7",title:"Root cap review",detail:"assistant",text:"A水稻🌱结果",frame_id:"publication-session",message_seq:7}]
