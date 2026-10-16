@@ -106,9 +106,12 @@ class GitDiffTests(unittest.TestCase):
         self.base = self.commit({"README.md": "initial"})
 
     def git(self, *args):
+        # Auto maintenance detaches into the background (Git >= 2.47) and can
+        # still be writing objects/pack while the temp directory is removed.
         return subprocess.run(
             ["git", "-c", "user.name=CI scope test", "-c", "user.email=ci@example.test",
-             "-c", "commit.gpgsign=false", *args],
+             "-c", "commit.gpgsign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+             *args],
             cwd=self.root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         ).stdout.decode().strip()
 
