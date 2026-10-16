@@ -346,12 +346,18 @@ The built-in Reader used by `#` session references inherits that profile's
 model, not its reasoning effort. Retrieval turns disable DeepSeek thinking
 (the V4 default is thinking-on at `high`) and cap each transcript chunk well
 below a 1M context window so a long session from another project cannot fill
-a single JSON-extraction call. The first pass is still capped at 2048 output
-tokens; if the JSON is truncated or lands in a thinking field, Reader retries
-once with the profile's full output budget and parses the last complete JSON
-object from either field. If structured retrieval still fails, a head-and-tail
-excerpt of the cited transcript is injected so the main turn can still use the
-reference.
+a single JSON-extraction call. The first pass is capped at 2048 output tokens
+and asks for short summaries and exact quotes. Reader accepts a complete JSON
+result from either the answer or thinking field. If the result is missing,
+malformed, or incomplete, it retries the same transcript once with stricter
+length limits, even when the provider reports a normal stop or omits the stop
+reason. The retry uses the profile's full output budget when it is larger;
+otherwise it uses the original budget. Progress shows the retry within the
+same transcript chunk, and returned quotes still go through source grounding.
+Network/API errors, timeouts, and cancellation do not trigger this JSON retry.
+If all chunks still fail, a head-and-tail excerpt of the cited transcript is
+injected so the main turn can still use the reference; partial failures retain
+a coverage warning.
 
 Model profiles describe model access and capabilities for the **built-in Wisp
 agent**. External coding agents (Codex / Claude via ACP) are configured under
