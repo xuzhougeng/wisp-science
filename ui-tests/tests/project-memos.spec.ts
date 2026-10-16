@@ -56,6 +56,46 @@ test("a new memo is private to the pane and Insert fills then appends to the com
   expect(await invokes(page, "add_project_memo")).toBe(1);
 });
 
+// Typed key by key, not with fill(): fill() sends one input event, which hid an
+// editor that re-rendered on every keystroke and dropped focus after one letter.
+test("typing in the memo editor keeps focus in the field for new and existing memos", async ({ page }) => {
+  const pane = await openMemos(page, "?mockMemos=seeded");
+  await pane.getByTestId("memos-new").click();
+  const editor = pane.getByTestId("memo-editor");
+  const title = editor.getByTestId("memo-title-input");
+  const body = editor.getByTestId("memo-body-input");
+  await title.click();
+  await page.keyboard.type("Lab notes");
+  await expect(title).toHaveValue("Lab notes");
+  await expect(title).toBeFocused();
+
+  await body.click();
+  await expect(pane.getByTestId("memo-save")).toBeDisabled();
+  for (const [index, line] of ["one", "two", "three", "four", "five", "six", "seven"].entries()) {
+    if (index > 0) await page.keyboard.press("Enter");
+    await page.keyboard.type(line);
+  }
+  await expect(body).toHaveValue("one\ntwo\nthree\nfour\nfive\nsix\nseven");
+  await expect(body).toBeFocused();
+  await expect(body).toHaveAttribute("rows", "8");
+  await expect(pane.getByTestId("memo-save")).toBeEnabled();
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect(editor).toHaveCount(0);
+  await expect(pane.getByTestId("memo-card").filter({ hasText: "Lab notes" })).toHaveCount(1);
+
+  const card = pane.getByTestId("memo-card").filter({ hasText: "Server habits" });
+  await card.hover();
+  await card.getByTestId("memo-edit").click();
+  await title.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" v2");
+  await expect(title).toHaveValue("Server habits v2");
+  await expect(title).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect(editor).toHaveCount(0);
+  await expect(pane.getByTestId("memo-card").locator(".memo-title", { hasText: "Server habits v2" })).toHaveCount(1);
+});
+
 test("Escape closes the topmost memo layer only: menu, then discard prompt, then editor", async ({ page }) => {
   const pane = await openMemos(page, "?mockMemos=seeded");
   const cards = pane.getByTestId("memo-card");

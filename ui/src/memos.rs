@@ -152,6 +152,13 @@ pub(crate) fn MemosPane(
     let menu = create_rw_signal(None::<String>);
     let inserted = create_rw_signal(None::<String>);
     let confirm_discard = create_rw_signal(false);
+    // Which memo is open in the editor, if any. Views that mount or place the
+    // editor track this instead of `draft`: the draft changes on every
+    // keystroke, and re-rendering the editor then would replace the focused
+    // input after each character.
+    let open_draft = create_memo(move |_| {
+        draft.with(|d| d.as_ref().map(|d| (d.project_id.clone(), d.id.clone())))
+    });
 
     create_effect(move |_| {
         let project = project_id.get();
@@ -327,10 +334,13 @@ pub(crate) fn MemosPane(
         );
     };
 
+    // Built once per open draft: the inputs take their starting text untracked
+    // and only write back, so typing never rebuilds them.
     let editor = move || {
-        let current = draft.get()?;
-        let rows = current.editor_rows();
-        let can_save = current.can_save();
+        let current = draft.get_untracked()?;
+        let rows =
+            move || draft.with(|d| d.as_ref().map_or(EDITOR_MIN_ROWS, MemoDraft::editor_rows));
+        let can_save = move || draft.with(|d| d.as_ref().is_some_and(MemoDraft::can_save));
         let discard = move |_| {
             confirm_discard.set(false);
             draft.set(None);
@@ -347,12 +357,12 @@ pub(crate) fn MemosPane(
                 <input type="text" class="memo-title-input" data-testid="memo-title-input"
                     placeholder=move || t(locale.get(), "memos.title_placeholder")
                     aria-label=move || t(locale.get(), "memos.title_placeholder")
-                    prop:value=current.title.clone()
+                    prop:value=current.title
                     on:input=move |ev| draft.update(|d| if let Some(d) = d { d.title = event_target_value(&ev); }) />
                 <textarea class="memo-body-input" data-testid="memo-body-input" rows=rows
                     placeholder=move || t(locale.get(), "memos.body_placeholder")
                     aria-label=move || t(locale.get(), "memos.body_placeholder")
-                    prop:value=current.body.clone()
+                    prop:value=current.body
                     on:input=move |ev| draft.update(|d| if let Some(d) = d { d.body = event_target_value(&ev); })></textarea>
                 {move || save_error.get().map(|message| view! { <div class="memo-error" role="alert">{message}</div> })}
                 {move || if confirm_discard.get() {
@@ -370,7 +380,7 @@ pub(crate) fn MemosPane(
                             <span class="memo-shortcut" aria-hidden="true">"⌘↩ / Ctrl+↩"</span>
                             <button type="button" class="memo-btn" on:click=move |_| close_editor()>{move || t(locale.get(), "memos.cancel")}</button>
                             <button type="button" class="memo-btn primary" data-testid="memo-save"
-                                disabled=move || !can_save || busy.get()
+                                disabled=move || !can_save() || busy.get()
                                 on:click=move |_| save()>{move || t(locale.get(), "memos.save")}</button>
                         </div>
                     }.into_view()
@@ -501,7 +511,7 @@ pub(crate) fn MemosPane(
                     <span>{move || t(locale.get(), "memos.private")}</span>
                 </span>
                 <button type="button" class="memo-btn primary memos-new" data-testid="memos-new"
-                    disabled=move || draft.get().is_some() || project_id.get().is_none()
+                    disabled=move || open_draft.get().is_some() || project_id.get().is_none()
                     on:click=move |_| start_new()>
                     {compose_icon("plus")}
                     <span>{move || t(locale.get(), "memos.new")}</span>
@@ -521,13 +531,14 @@ pub(crate) fn MemosPane(
                 <div class="memo-error" role="alert">{move || t(locale.get(), "memos.load_error")}" "{message}</div>
             })}
             <div class="memos-list">
-                {move || draft.get().filter(|d| d.id.is_none()).map(|_| editor())}
+                {move || open_draft.get().filter(|(_, id)| id.is_none()).and_then(|_| editor())}
                 {move || {
                     let all = memos.get();
                     let shown = filter_memos(&all, &query.get());
-                    let editing = draft.get().and_then(|d| d.id);
+                    let open = open_draft.get();
+                    let editing = open.clone().and_then(|(_, id)| id);
                     if all.is_empty() {
-                        if loading.get() || draft.get().is_some() {
+                        if loading.get() || open.is_some() {
                             return ().into_view();
                         }
                         return view! {
