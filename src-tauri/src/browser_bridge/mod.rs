@@ -4177,8 +4177,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.4.1");
-        assert_eq!(info["extension_version"], "0.4.1");
+        assert_eq!(info["bundled_extension_version"], "0.4.2");
+        assert_eq!(info["extension_version"], "0.4.2");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -5040,7 +5040,7 @@ mod tests {
         let status = bridge.extension_status().await;
         assert!(status.connected);
         assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.4.1"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.4.2"));
         assert!(status.update_required);
         assert!(!status.automatic_reload_available);
         assert!(status.integrity_verified);
@@ -5101,7 +5101,7 @@ mod tests {
                 &json!({
                     "type": "ext_ready",
                     "protocol_version": 2,
-                    "extension_version": "0.4.1",
+                    "extension_version": "0.4.2",
                     "capabilities": ["runtime_reload", "article_scan"],
                     "tabs": []
                 })
@@ -5113,7 +5113,7 @@ mod tests {
         assert_eq!(update.outcome, "updated");
         assert!(update.status.connected);
         assert!(!update.status.update_required);
-        assert_eq!(update.status.current_version.as_deref(), Some("0.4.1"));
+        assert_eq!(update.status.current_version.as_deref(), Some("0.4.2"));
     }
 
     #[test]

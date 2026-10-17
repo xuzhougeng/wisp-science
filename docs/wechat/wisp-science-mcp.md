@@ -104,6 +104,8 @@ Windows 上若遇到编码相关异常，可以按 Fetch 文档在“环境变�
 
 从搜索和读取开始，能比较容易确认授权范围是否符合预期。后续需要创建或更新笔记时，再明确目标页面和要写入的内容。
 
+如果要让 Agent 搭建需要后端的应用，可以再添加一个 [Cohesivity](https://cohesivity.ai?ref=gh-wisp-science) 远程 URL 连接：名称填 `cohesivity`，URL 填 `https://cohesivity.ai/mcp`，认证方式选“无”。之后 Agent 可以自行创建后端，并按需开通网站托管、Postgres、存储、登录认证、邮箱和 AI 模型 API，开始使用无需注册账号或 API Key。后端默认 72 小时后过期，认领后可长期保留。
+
 其他远程服务可能使用 API Key，而非 OAuth。这时按服务商文档填写“请求头”。例如，服务商要求 Bearer Token 时，添加名称为 `Authorization` 的请求头，其值填写 `Bearer 你的实际密钥`。这类手动请求头配置通常将认证方式选为“无”，表示不走 OAuth 流程；请求本身仍通过填写的请求头认证。
 
 Wisp 会把连接级环境变量值、请求头值和 OAuth Token 保存在操作系统密钥环中。编辑已有连接时，密钥值留空会保留原值，删除对应行才会清除。完整操作说明见[Wisp 基础配置教程](https://github.com/xuzhougeng/wisp-science/blob/main/docs/basic-configuration.md)。

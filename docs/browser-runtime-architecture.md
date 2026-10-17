@@ -1,6 +1,6 @@
 # Browser Runtime architecture
 
-Wisp extension 0.4.0 treats the Chrome extension as a **controlled access adapter**.
+Wisp extension 0.4.2 treats the Chrome extension as a **controlled access adapter**.
 The desktop process owns sessions, waits, staging, and approval.
 
 ```

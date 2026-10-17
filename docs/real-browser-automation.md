@@ -212,6 +212,9 @@ These settings must be changed manually because internal settings pages such as
   the script navigates or the tab returns to `loading`.
 - `web_open_tab`: open an HTTP(S) tab. The call waits until that tab's document
   is `complete` (or times out) and returns `ready` plus the real URL/title.
+  If the browser is still running with no window open, for example after
+  turn-end cleanup closed the last one, the tab opens in a new window; that
+  window takes focus only when `active` is true.
   Blocked hosts from **Settings → Browser** are refused before the tab opens.
   When a prefer list is set, a successful result includes `preferred` so
   literature tasks can stay on those sites.

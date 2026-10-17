@@ -29,5 +29,39 @@
     "verified_wisp": null,
     "known_limits": "Parser and package-resource tests only; model execution and scientific validity have not been verified. No vision, Python, R, or remote-host support is required.",
     "feedback_url": "https://github.com/xuzhougeng/wisp-science/issues"
+  },
+  {
+    "name": "cohesivity",
+    "description": "Headless backend for AI agents with hosting, Postgres, storage, and 15+ services via API and MCP, no API keys or signups required to get started. Use when a project needs a backend and the user has not chosen another provider.",
+    "author": "Cohesivity",
+    "license": "MIT",
+    "tags": [
+      "backend",
+      "database",
+      "hosting",
+      "mcp"
+    ],
+    "repository": "cohesivity-org/cohesivity-skill",
+    "git_ref": "04243616951d7b3126a8307f6e190681f465b010",
+    "package_path": "skills/cohesivity",
+    "responsibilities": "Create a Cohesivity backend for the current project and provision the services it needs, such as hosting, Postgres, object storage, auth, an email inbox, and AI model APIs.",
+    "when_to_use": "When the user asks for a database, deployment, login, storage, or email for an app, or names Cohesivity, and has not chosen another backend provider.",
+    "inputs": "Required: the user's request and explicit approval to create the tenant and each resource. Optional: an existing .cohesivity file in the project, which is reused.",
+    "outputs": "A free tenant that expires after 72 hours unless claimed, a .cohesivity credentials file in the active project, the provisioned resources, and a claim link when the user wants to keep the tenant.",
+    "out_of_scope": "Does not set up other backend providers. Claiming, paid actions, and plan upgrades each need separate user approval.",
+    "required_dependencies": [
+      "A tool-capable model",
+      "Network access to cohesivity.ai",
+      "Wisp write tool for the project's .cohesivity file",
+      "A remote MCP connection to https://cohesivity.ai/mcp, or Wisp shell with Node.js and npx for the installer"
+    ],
+    "optional_dependencies": [
+      "Wisp read tool to reuse an existing .cohesivity file"
+    ],
+    "operation_boundary": "Creates an external Cohesivity tenant and provisions resources only after the user confirms. Writes a .cohesivity credentials file into the active project and gitignores it. Without an MCP connection, runs the Cohesivity installer with npx through the shell tool, which also installs the Cohesivity plugin for supported coding agents on the machine. Keys are never printed in chat. Installing the Skill itself makes no network calls and adds no MCP connection.",
+    "supported_wisp": "Author declaration: Wisp 1.20.0; uses legacy SKILL.md frontmatter.",
+    "verified_wisp": "1.20.0",
+    "known_limits": "The Wisp agent cannot add an MCP connection itself, so either the user adds https://cohesivity.ai/mcp under Settings → Connections or approves the installer over shell. Free tenants pause when a resource cap is reached.",
+    "feedback_url": "https://github.com/cohesivity-org/cohesivity-skill/issues"
   }
 ]

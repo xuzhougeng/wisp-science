@@ -9,11 +9,19 @@ const serveCommand = process.platform === "win32"
 // at :1422 by default; Playwright injects a mocked `window.__TAURI__` before the page
 // loads so the UI's invoke/listen calls resolve against canned data — no Rust
 // backend or API key required.
+//
+// Every test boots its own page (addInitScript + goto) against the shared dev
+// server, so tests are independent and run fully parallel, including within one
+// file: ui.spec.ts alone holds half the suite and would otherwise pin one worker
+// for the whole run. CI (4 vCPUs) uses 4 workers and splits the suite across
+// runners with `--shard`; locally Playwright picks half the cores. Pass
+// `--workers=1` to debug in file order. No `retries`: a failing test is a bug.
 export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   expect: { timeout: 10_000 },
-  fullyParallel: false,
+  fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   use: {
     baseURL: `http://localhost:${port}`,
     browserName: "chromium",
