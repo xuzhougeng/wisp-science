@@ -554,6 +554,14 @@ wisp-science/
   npx playwright test
   ```
 
+  The suite is fully parallel: every test boots its own page, so Playwright
+  spreads tests across workers even within one file (`ui.spec.ts` alone holds
+  half of them). Locally it uses half the CPU cores; CI runs four workers on
+  each of four shards (`npx playwright test --shard=1/4`), which brings the
+  `ui-e2e` jobs from about 40 minutes to under ten. Tests must not depend on
+  another test having run first or on module-level state another test
+  mutated. Pass `--workers=1` to run a file in order while debugging.
+
 ## Roadmap
 
 - `FlashThinking` — phase-aware structured thinking-framework injection.

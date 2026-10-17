@@ -273,10 +273,20 @@ jobs:
       - name: Test incremental frontend asset staging
         run: node --test ui/build-fast.test.mjs
 
-  ui-e2e:
+  # The suite (1,100 tests) is fully parallel (see ui-tests/playwright.config.ts)
+  # and split across runners: one runner with two workers needed ~40 minutes,
+  # four shards of four workers each finish in well under ten. A hang must fail
+  # fast instead of holding a runner for the six-hour default.
+  ui-e2e-shard:
     needs: changes
     if: needs.changes.outputs.ui == 'true'
+    name: ui-e2e (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -284,10 +294,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      # Every shard builds the same wasm crate, so they share one cache entry;
+      # the first shard to finish saves it and the others only restore.
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ui -> target
           cache-on-failure: true
+          shared-key: ui-e2e
 
       - name: Cache Trunk
         uses: actions/cache@v4
@@ -312,4 +325,25 @@ jobs:
 
       - name: Playwright E2E
         working-directory: ui-tests
-        run: npx playwright test
+        run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # One stable "ui-e2e" check over the shards for branch rules and PR monitors:
+  # green when every shard passed, or when the suite was skipped because no UI
+  # file changed; red when any shard failed or was cancelled.
+  ui-e2e:
+    needs: [changes, ui-e2e-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check shard results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          SHARDS: ${{ needs.ui-e2e-shard.result }}
+        run: |
+          echo "changes: ${CHANGES}; ui-e2e shards: ${SHARDS}"
+          [ "${CHANGES}" = success ] || exit 1
+          case "${SHARDS}" in
+            success|skipped) exit 0 ;;
+            *) exit 1 ;;
+          esac
