@@ -313,3 +313,16 @@ jobs:
       - name: Playwright E2E
         working-directory: ui-tests
         run: npx playwright test
+
+      # Failure diagnostics: error-context.md, screenshots and traces from
+      # test-results/, plus the HTML report when a reporter writes one.
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            ui-tests/test-results/
+            ui-tests/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
