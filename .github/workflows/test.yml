@@ -327,6 +327,20 @@ jobs:
         working-directory: ui-tests
         run: npx playwright test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
+      # Failure diagnostics: error-context.md, screenshots and traces from
+      # test-results/, plus the HTML report when a reporter writes one. One
+      # artifact per shard so the four runners do not collide.
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ matrix.shard }}
+          path: |
+            ui-tests/test-results/
+            ui-tests/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # One stable "ui-e2e" check over the shards for branch rules and PR monitors:
   # green when every shard passed, or when the suite was skipped because no UI
   # file changed; red when any shard failed or was cancelled.

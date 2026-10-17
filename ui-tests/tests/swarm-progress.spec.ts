@@ -207,10 +207,15 @@ test('finished Reader progress can be dismissed and its results stay in Agents',
   await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
 
   // Neither a snapshot refresh nor switching conversations revives this dock.
+  // Loading a conversation returns the right pane to Artifacts, so Agents is
+  // reopened after each switch; the child conversation has no batch of its own.
   await emit(page, { ...progress, revision: 5 });
   await page.locator('.sidebar [data-session-id="subagent-child"]').click();
+  await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
+  await expect(agents).toContainText('No subagents in this conversation yet');
   await expect(card).toHaveCount(0);
   await page.locator(`.sidebar [data-session-id="${frame}"]`).click();
+  await page.locator('.rightpane').getByRole('button', { name: 'Agents', exact: true }).click();
   await expect(card).toContainText('Session retrieval');
   await expect(page.getByTestId('swarm-dock')).toHaveCount(0);
   await emit(page, { ...batch('reader'), id: 'swarm-new', started_at_ms: 200 });
@@ -363,9 +368,11 @@ test('finished Reader batches can retry their failed assistants, all at once or 
   await expect(panel.getByTestId('swarm-retry')).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Stop this turn' })).toBeVisible();
   await expect(panel).toHaveClass(/swarm-moving/);
-  await expect(dock).toContainText('1 working');
+  // A re-queued assistant is waiting, not working, until the backend starts it.
+  await expect(dock).toContainText('1/3 completed · 0 working · 1 failed');
   await emit(page, { ...progress, revision: 6, phase: 'running',
     tasks: [{ ...task('b', 'running', 6), total_units: 10, completed_units: 9, log: ['Retry: re-reading failed part(s) 8', 'Reading part 8 / 10'] }] });
+  await expect(dock).toContainText('1 working');
   await expect(panel.locator('[data-task-id="b"] .swarm-avatar')).toHaveCSS('animation-name', 'swarm-ring');
   await emit(page, { ...progress, revision: 7, phase: 'partial', summary: '## Reader retry\nRecovered evidence.',
     tasks: [{ ...task('b', 'completed', 7), total_units: 10, completed_units: 10, result: '\n[8] recovered quote\n' }] });
