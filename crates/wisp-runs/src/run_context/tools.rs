@@ -71,6 +71,12 @@ impl Tool for RunInContextTool {
                             "allow_warnings": {
                                 "type": "boolean",
                                 "description": "Proceed after non-fatal preflight warnings only after the user has approved them (default false)"
+                            },
+                            "timeout_secs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 600,
+                                "description": "Interpreter/package handshake budget in seconds. Default scales with the language and package count (R 15s + 10s per package, Python 10s + 2s per package) and a timed-out handshake is retried once with twice the budget; raise this for packages that cold-start slowly"
                             }
                         },
                         "required": ["language"]

@@ -686,6 +686,17 @@ impl BrowserBridge {
         }
         let slot = session_slot(&mut state, session);
         fail_pending(slot, "browser extension connection was replaced");
+        // Close the superseded socket instead of waiting for TCP to notice.
+        // A half-open connection from a previous service worker would
+        // otherwise linger ESTABLISHED, and the extension side would keep
+        // treating it as live (#1568).
+        if let Some(previous) = slot
+            .client
+            .take()
+            .filter(|previous| previous.connection_id != connection_id)
+        {
+            let _ = previous.tx.send(Message::Close(None));
+        }
         slot.client = Some(BridgeClient {
             connection_id,
             session: session.to_string(),
@@ -770,6 +781,18 @@ impl BrowserBridge {
                         .unwrap_or(false);
                 }
                 replace_tabs(slot, &message);
+            }
+            // The extension's keepalive is a JSON text frame (browser JS cannot
+            // send protocol-level pings). Answer it so the extension sees
+            // inbound traffic on a healthy socket and can tear down one that
+            // has gone half-open. Only the registered connection is answered:
+            // a replaced socket gets silence, which is exactly the signal the
+            // extension uses to drop it.
+            "ping" => {
+                if let Some(client) = slot.client.as_ref() {
+                    let pong = json!({ "type": "pong", "session": session }).to_string();
+                    let _ = client.tx.send(Message::Text(pong.into()));
+                }
             }
             "result" | "error" => {
                 let Some(id) = message.get("id").and_then(Value::as_str) else {
@@ -4154,8 +4177,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.4.0");
-        assert_eq!(info["extension_version"], "0.4.0");
+        assert_eq!(info["bundled_extension_version"], "0.4.1");
+        assert_eq!(info["extension_version"], "0.4.1");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -4357,6 +4380,54 @@ mod tests {
         let result = running.await.unwrap().unwrap();
         assert_eq!(result.tab_id, 42);
         assert_eq!(result.value, "Example");
+    }
+
+    #[tokio::test]
+    async fn json_ping_from_the_registered_extension_is_answered_with_a_pong() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+
+        bridge
+            .handle_text(1, r#"{"type":"ping","session":"shared"}"#)
+            .await;
+
+        let reply = rx.recv().await.unwrap().into_text().unwrap();
+        let reply: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["type"], "pong");
+        assert_eq!(reply["session"], "shared");
+        assert!(
+            reply.get("id").is_none(),
+            "pong must not look like a request"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_registration_closes_the_replaced_socket_and_stops_answering_it() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (old_tx, mut old_rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, old_tx).await;
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
+        bridge.install_client(2, new_tx).await;
+
+        assert!(
+            matches!(old_rx.recv().await, Some(Message::Close(_))),
+            "the superseded connection must be told to close"
+        );
+
+        bridge
+            .handle_text(1, r#"{"type":"ping","session":"shared"}"#)
+            .await;
+        assert!(
+            old_rx.try_recv().is_err(),
+            "a stale connection's ping gets no pong"
+        );
+
+        bridge
+            .handle_text(2, r#"{"type":"ping","session":"shared"}"#)
+            .await;
+        let reply = new_rx.recv().await.unwrap().into_text().unwrap();
+        assert!(reply.contains("\"pong\""), "{reply}");
     }
 
     #[tokio::test]
@@ -4969,7 +5040,7 @@ mod tests {
         let status = bridge.extension_status().await;
         assert!(status.connected);
         assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.4.0"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.4.1"));
         assert!(status.update_required);
         assert!(!status.automatic_reload_available);
         assert!(status.integrity_verified);
@@ -5030,7 +5101,7 @@ mod tests {
                 &json!({
                     "type": "ext_ready",
                     "protocol_version": 2,
-                    "extension_version": "0.4.0",
+                    "extension_version": "0.4.1",
                     "capabilities": ["runtime_reload", "article_scan"],
                     "tabs": []
                 })
@@ -5042,7 +5113,7 @@ mod tests {
         assert_eq!(update.outcome, "updated");
         assert!(update.status.connected);
         assert!(!update.status.update_required);
-        assert_eq!(update.status.current_version.as_deref(), Some("0.4.0"));
+        assert_eq!(update.status.current_version.as_deref(), Some("0.4.1"));
     }
 
     #[test]

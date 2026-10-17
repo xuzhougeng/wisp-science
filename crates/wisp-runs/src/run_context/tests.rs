@@ -1599,11 +1599,205 @@ fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     assert!(skill.contains("Never put a bare `sbatch`, `qsub`, or `bsub`"));
 }
 
+#[test]
+fn preflight_handshake_budget_scales_with_language_and_packages() {
+    let none: Vec<String> = Vec::new();
+    let six: Vec<String> = (0..6).map(|i| format!("pkg{i}")).collect();
+    let fifty: Vec<String> = (0..50).map(|i| format!("pkg{i}")).collect();
+
+    assert_eq!(
+        preflight_handshake_timeout("python", &none, None).as_secs(),
+        10
+    );
+    assert_eq!(
+        preflight_handshake_timeout("python", &six, None).as_secs(),
+        22
+    );
+    assert_eq!(
+        preflight_handshake_timeout("python", &fifty, None).as_secs(),
+        60
+    );
+    // R attaches every package; six Bioconductor packages get 75s, not 5s.
+    assert_eq!(preflight_handshake_timeout("r", &none, None).as_secs(), 15);
+    assert_eq!(preflight_handshake_timeout("r", &six, None).as_secs(), 75);
+    assert_eq!(
+        preflight_handshake_timeout("r", &fifty, None).as_secs(),
+        120
+    );
+    // An explicit budget wins and is clamped into 1..=600.
+    assert_eq!(
+        preflight_handshake_timeout("r", &six, Some(300)).as_secs(),
+        300
+    );
+    assert_eq!(preflight_handshake_timeout("r", &six, Some(0)).as_secs(), 1);
+    assert_eq!(
+        preflight_handshake_timeout("r", &six, Some(9_999)).as_secs(),
+        600
+    );
+}
+
+#[tokio::test]
+async fn r_preflight_handshake_gets_a_package_scaled_budget() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_run_preflight_budget_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let runner = Arc::new(FakeRunRunner::new(Ok(RunCommandOutput {
+        exit_code: 9,
+        stdout: "R version 4.4.1\n".into(),
+        stderr: "missing packages: limma".into(),
+    })));
+    let manager = RunManager::with_runner(runner.clone());
+    let tool = RunInContextTool::new(store.clone(), manager, "p".into(), None);
+
+    let result = tool
+        .run(
+            &serde_json::json!({
+                "context_id": "local",
+                "command": "Rscript analysis.R",
+                "preflight": {
+                    "language": "r",
+                    "packages": ["DESeq2", "edgeR", "limma", "SummarizedExperiment"]
+                }
+            }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(!result.success);
+    let timeouts = runner.timeouts.lock().unwrap();
+    assert_eq!(timeouts.len(), 1, "a non-timeout failure is not retried");
+    assert_eq!(timeouts[0], Duration::from_secs(15 + 10 * 4));
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn cold_start_handshake_timeout_is_retried_once_with_double_budget() {
+    use wisp_tools::Tool;
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_run_preflight_retry_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let runner = Arc::new(FakeRunRunner::new(Err(
+        "run_in_context timed out after 20s".into(),
+    )));
+    let manager = RunManager::with_runner(runner.clone());
+    let tool = RunInContextTool::new(store.clone(), manager, "p".into(), None);
+
+    let result = tool
+        .run(
+            &serde_json::json!({
+                "context_id": "local",
+                "command": "Rscript analysis.R",
+                "preflight": {
+                    "language": "r",
+                    "packages": ["DESeq2"],
+                    "timeout_secs": 20
+                }
+            }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert!(result.content.contains("\"run_submitted\":false"));
+    assert!(
+        result
+            .content
+            .contains("cold-start handshake timed out after 20s and again after 40s"),
+        "{}",
+        result.content
+    );
+    assert!(result.content.contains("preflight.timeout_secs"));
+    let timeouts = runner.timeouts.lock().unwrap();
+    assert_eq!(
+        *timeouts,
+        vec![Duration::from_secs(20), Duration::from_secs(40)],
+        "explicit budget, then one doubled retry"
+    );
+    let commands = runner.commands.lock().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert!(commands
+        .iter()
+        .all(|command| command.script == "r interpreter/package preflight"));
+    assert!(store.list_runs_by_project("p").await.unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn handshake_that_recovers_on_retry_passes_preflight() {
+    use wisp_tools::Tool;
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_run_preflight_warm_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let runner = Arc::new(ScriptedRunRunner::new(vec![
+        Err("run_in_context timed out after 25s".into()),
+        ok_output("R version 4.4.1\n"),
+        ok_output("__WISP_PREPARED__\n"),
+        ok_output("__WISP_HANDLE__:token-will-be-replaced"),
+        ok_output(&poll_response("finished:0", "analysis complete", "")),
+    ]));
+    runner
+        .synthesize_launch_ack
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let manager = RunManager::with_runner(runner.clone());
+    let tool = RunInContextTool::new(store.clone(), manager, "p".into(), None);
+
+    let result = tool
+        .run(
+            &serde_json::json!({
+                "context_id": "local",
+                "command": "Rscript analysis.R",
+                "wait_for_completion": true,
+                "preflight": {
+                    "language": "r",
+                    "packages": ["DESeq2"]
+                }
+            }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(result.success, "{}", result.content);
+    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let snapshot: serde_json::Value = serde_json::from_str(&run.env_snapshot_json).unwrap();
+    assert_eq!(snapshot["preflight"]["status"], "passed");
+    let commands = runner.commands.lock().unwrap();
+    assert_eq!(commands[0].script, "r interpreter/package preflight");
+    assert_eq!(commands[1].script, "r interpreter/package preflight");
+    assert!(commands[2].script.starts_with("prepare "));
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
 /// Single-response fake that records every command it receives, so tests can
 /// assert what actually reached the runner (or that nothing did).
 struct FakeRunRunner {
     output: Result<RunCommandOutput, String>,
     commands: StdMutex<Vec<RunCommand>>,
+    timeouts: StdMutex<Vec<Duration>>,
 }
 
 impl FakeRunRunner {
@@ -1611,6 +1805,7 @@ impl FakeRunRunner {
         Self {
             output,
             commands: StdMutex::new(Vec::new()),
+            timeouts: StdMutex::new(Vec::new()),
         }
     }
 }
@@ -1743,9 +1938,10 @@ impl RunCommandRunner for FakeRunRunner {
     async fn run(
         &self,
         command: RunCommand,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> Result<RunCommandOutput, String> {
         self.commands.lock().unwrap().push(command);
+        self.timeouts.lock().unwrap().push(timeout);
         self.output.clone()
     }
 }

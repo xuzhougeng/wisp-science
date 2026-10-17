@@ -1,7 +1,8 @@
 //! `shell` — execute a shell command. On Windows this runs via PowerShell
-//! (`powershell -NoProfile -Command`); the safety layer flags destructive
-//! patterns for explicit confirmation. Output is capped and, for directory
-//! traversals, filtered.
+//! (`powershell -NoProfile -Command`) with the command wrapped so the reported
+//! status is the native tool's `$LASTEXITCODE` rather than PowerShell's `$?`;
+//! the safety layer flags destructive patterns for explicit confirmation.
+//! Output is capped and, for directory traversals, filtered.
 
 use crate::env::{ToolEnv, ToolEvent, ToolResult};
 use crate::tool::{arg_str, Tool};
@@ -63,6 +64,27 @@ fn decode_stdout_chunk(carry: &mut Vec<u8>, chunk: &[u8], flush: bool) -> String
 
 pub struct ShellTool;
 
+/// Wraps the agent's command for `powershell -Command` so the process exit
+/// status reflects what actually happened:
+///
+/// * A native command (Rscript, python, git, ...) decides the status through
+///   `$LASTEXITCODE`. Without this wrapper Windows PowerShell 5.1 exits 1 when
+///   native stderr is merged into the pipeline (`2>&1 | Tee-Object`), because
+///   the stderr lines become ErrorRecords that flip `$?` even though the tool
+///   itself exited 0 — a successful run was reported as failed (#1570).
+/// * When no native command ran, `$?` of the script block still decides, so a
+///   failing cmdlet keeps exiting 1 and a terminating error still aborts
+///   before our `exit` runs.
+/// * An explicit `exit N` inside the command exits the host with N as before.
+///
+/// The closing brace sits on its own line so a trailing `# comment` in the
+/// command cannot swallow it.
+fn windows_shell_script(cmd: &str) -> String {
+    format!(
+        "& {{\n{cmd}\n}}\n$__wisp_ok = $?\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}\nif ($__wisp_ok) {{ exit 0 }} else {{ exit 1 }}\n"
+    )
+}
+
 fn shell_description() -> String {
     let shell = if cfg!(target_os = "windows") {
         "PowerShell"
@@ -99,7 +121,7 @@ async fn run_shell(args: &serde_json::Value, env: &dyn ToolEnv, timeout: Duratio
         c.arg("-NoProfile")
             .arg("-NonInteractive")
             .arg("-Command")
-            .arg(&cmd);
+            .arg(windows_shell_script(&cmd));
         c
     } else {
         let mut c = Command::new("sh");
@@ -449,6 +471,72 @@ mod tests {
         assert!(!result.success);
         assert!(result.content.contains("output exceeded"));
         assert!(result.content.len() <= MAX_OUTPUT_BYTES + 100);
+    }
+
+    #[test]
+    fn windows_script_reports_the_native_exit_code_not_powershell_dollar_question() {
+        let script = windows_shell_script("Rscript.exe run.R 2>&1 | Tee-Object run.log # log");
+        let lines: Vec<&str> = script.lines().collect();
+        assert_eq!(lines[0], "& {");
+        assert_eq!(
+            lines[1],
+            "Rscript.exe run.R 2>&1 | Tee-Object run.log # log"
+        );
+        // A trailing comment must not swallow the closing brace.
+        assert_eq!(lines[2], "}");
+        assert_eq!(lines[3], "$__wisp_ok = $?");
+        assert!(lines[4].contains("if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }"));
+        assert!(lines[5].contains("if ($__wisp_ok) { exit 0 } else { exit 1 }"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn chatty_native_stderr_merged_into_the_pipeline_is_still_success() {
+        let env = TestEnv(std::env::current_dir().unwrap());
+        let result = run_shell(
+            &json!({ "cmd": "cmd.exe /c \"echo done & echo warn 1>&2\" 2>&1 | Out-String" }),
+            &env,
+            Duration::from_secs(20),
+        )
+        .await;
+        assert!(result.success, "{}", result.content);
+        assert!(result.content.contains("done"), "{}", result.content);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn native_nonzero_exit_and_failing_cmdlets_still_fail() {
+        let env = TestEnv(std::env::current_dir().unwrap());
+        let native = run_shell(
+            &json!({ "cmd": "cmd.exe /c \"exit 7\"" }),
+            &env,
+            Duration::from_secs(20),
+        )
+        .await;
+        assert!(!native.success);
+        assert!(native.content.starts_with("exit 7:"), "{}", native.content);
+
+        let cmdlet = run_shell(
+            &json!({ "cmd": "Get-Item .\\definitely-missing-wisp-file.txt" }),
+            &env,
+            Duration::from_secs(20),
+        )
+        .await;
+        assert!(!cmdlet.success);
+        assert!(cmdlet.content.starts_with("exit 1:"), "{}", cmdlet.content);
+
+        let explicit = run_shell(
+            &json!({ "cmd": "Write-Output hi; exit 3" }),
+            &env,
+            Duration::from_secs(20),
+        )
+        .await;
+        assert!(!explicit.success);
+        assert!(
+            explicit.content.starts_with("exit 3:"),
+            "{}",
+            explicit.content
+        );
     }
 
     #[test]

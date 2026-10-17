@@ -32,3 +32,27 @@ there is no dismiss action and transcript dismissals never hide a row here. Only
 work that produces a Run record appears: `run_in_context` Runs and
 `transfer_between_contexts` transfers. The synchronous `shell` tool and agent
 workflows do not; workflows stay on the **Agents** tab.
+
+## Preflight budget
+
+A `run_in_context` preflight runs the interpreter/package handshake with a
+budget that scales with the language and the declared packages: R gets 15 s
+plus 10 s per package (capped at 120 s) because every package is attached, and
+Python gets 10 s plus 2 s per package (capped at 60 s) because only import specs
+are resolved. A handshake that times out is retried once with twice the budget,
+so a cold Bioconductor library on a fresh session is not reported as a broken
+interpreter. The agent can set `preflight.timeout_secs` (1–600) explicitly when
+a package is known to start slowly; a second timeout fails the `interpreter`
+check with a message that names both budgets. Syntax parsing has its own fixed
+15 s budget.
+
+## Shell exit status on Windows
+
+The synchronous `shell` tool runs its command inside a PowerShell script block
+and reports the native tool's `$LASTEXITCODE` when one ran. Windows PowerShell
+5.1 otherwise exits 1 whenever native stderr is merged into the pipeline
+(`Rscript … 2>&1 | Tee-Object run.log`), because the stderr lines become error
+records even though the tool succeeded. When no native command ran, a failing
+cmdlet still yields exit 1, and an explicit `exit N` is passed through. A cmdlet
+failure that follows a successful native command in the same script is still
+masked by that native exit code; end such scripts with an explicit `exit`.

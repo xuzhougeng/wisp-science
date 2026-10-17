@@ -1,6 +1,6 @@
 # Browser Runtime acceptance
 
-Use a Wisp build that bundles extension **0.4.0**. Load the unpacked extension from `browser_setup.extension_path` before testing.
+Use a Wisp build that bundles extension **0.4.1**. Load the unpacked extension from `browser_setup.extension_path` before testing.
 
 For #1107, test on Windows, macOS, and Linux with automatic launch enabled:
 close daily Chrome, call `browser_setup` with no action, and verify its normal
@@ -13,7 +13,11 @@ action must behave like an omitted action. Existing blank/new-tab pages are neve
 cleaned up by startup; ordinary per-turn cleanup still applies only to recorded
 tool-created tabs.
 
-1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.4.0, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.4.0. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.4.0, and `required_protocol` 2.
+1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.4.1, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.4.1. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.4.1, and `required_protocol` 2.
+   With the extension connected, quit Wisp without closing Chrome, wait two
+   minutes, and restart Wisp: the extension must reconnect on its own within
+   about two minutes (keepalive staleness plus the one-minute alarm) without a
+   Reload in `chrome://extensions`.
 2. Open a WeChat article, `web_scan` with `mode=article`, confirm `images[]` includes the body figures, then `web_save_assets` copies them under the project `browser-assets/` with SHA-256. Do not use page `fetch`.
 3. `web_open_tab` on a GitHub repo and a Zenodo DOI returns a non-empty final `tab.url` / `tab.title`.
 4. `browser_setup` `action=start_workspace` opens a second Chrome only when the user explicitly requests isolation. Both sessions stay connected, and omitting `session` still uses `shared`; pass `session=workspace` to target the isolated browser.

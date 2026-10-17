@@ -12,6 +12,7 @@ const REQUIRED_FILES: &[&str] = &[
     "capture.js",
     "chat_adapter.js",
     "downloads.js",
+    "keepalive.js",
     "manifest.json",
     "markdown.js",
     "popup.html",
@@ -276,7 +277,7 @@ mod tests {
         let destination = root.join("browser-extension");
 
         let package = sync(&source, &destination, EXTENSION_ID).unwrap();
-        assert_eq!(package.version, "0.4.0");
+        assert_eq!(package.version, "0.4.1");
         assert_eq!(
             verify(&source, &destination, EXTENSION_ID).unwrap(),
             package
