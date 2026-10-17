@@ -15139,9 +15139,15 @@ test("project cards show the workspace path and aligned action icons", async ({ 
   // instead of floating between the meta line and the action icons.
   const when = cards.first().locator(".pc-name-row .pc-when");
   await expect(when).toBeVisible();
-  const nameBox = await cards.first().locator(".pc-name").boundingBox();
-  const whenBox = await when.boundingBox();
-  expect(Math.abs((nameBox!.y + nameBox!.height / 2) - (whenBox!.y + whenBox!.height / 2))).toBeLessThanOrEqual(4);
+  // Measure both in one frame: the column's entry animation translates the
+  // card for ~350 ms, and two separate boundingBox() round trips can straddle
+  // it when four workers share the runner's CPUs (#1579).
+  const offset = await cards.first().evaluate((card) => {
+    const name = card.querySelector(".pc-name")!.getBoundingClientRect();
+    const stamp = card.querySelector(".pc-name-row .pc-when")!.getBoundingClientRect();
+    return Math.abs((name.y + name.height / 2) - (stamp.y + stamp.height / 2));
+  });
+  expect(offset).toBeLessThanOrEqual(4);
   // Action glyphs share one uniform box and one vertical center line.
   const boxes = await cards.first().locator(".pc-actions button").evaluateAll((els) =>
     els.map((el) => {
