@@ -1,7 +1,7 @@
 // Wisp Real Browser Bridge protocol constants (Protocol v2).
 var WISP_PROTOCOL = {
   version: 2,
-  extensionVersion: "0.4.1",
+  extensionVersion: "0.4.2",
   capabilities: [
     "article_scan",
     "asset_download",

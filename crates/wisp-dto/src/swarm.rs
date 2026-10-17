@@ -43,6 +43,10 @@ pub struct SwarmTask {
     pub completed_units: usize,
     pub total_units: usize,
     pub failed_units: usize,
+    /// Zero-based units that failed, so a retry can re-run only those parts.
+    /// Older snapshots omit it; a retry then re-runs the whole task.
+    #[serde(default)]
+    pub failed_unit_indexes: Vec<usize>,
     /// Bounded tool/progress observations, never hidden reasoning.
     pub log: Vec<String>,
     pub result: String,
@@ -59,9 +63,34 @@ impl SwarmTask {
             revision: 0,
             completed_units: 0,
             failed_units: 0,
+            failed_unit_indexes: vec![],
             log: vec![],
             result: String::new(),
         }
+    }
+
+    /// Put a failed task back to work on its failed units only. Completed
+    /// units and their evidence are kept; the failure bookkeeping is cleared so
+    /// the retry can report fresh outcomes.
+    pub fn reset_for_retry(&mut self) {
+        self.completed_units = self.completed_units.saturating_sub(self.failed_units);
+        self.failed_units = 0;
+        self.failed_unit_indexes.clear();
+        self.status = SwarmTaskStatus::Queued;
+    }
+}
+
+impl SwarmProgress {
+    /// Reader batches can re-run their failed tasks after the batch ended.
+    pub fn retryable_task_ids(&self) -> Vec<String> {
+        if !self.phase.terminal() || self.source != "reader" {
+            return vec![];
+        }
+        self.tasks
+            .iter()
+            .filter(|task| task.status == SwarmTaskStatus::Failed)
+            .map(|task| task.id.clone())
+            .collect()
     }
 }
 
@@ -151,5 +180,40 @@ mod tests {
         previous_run.started_at_ms = 0;
         live.merge(previous_run);
         assert_eq!(live.id, "batch");
+    }
+
+    #[test]
+    fn older_snapshots_without_failed_unit_indexes_still_deserialize() {
+        let raw = r#"{"id":"a","title":"A","instruction":"Read","status":"failed","revision":3,
+            "completed_units":3,"total_units":3,"failed_units":1,"log":[],"result":""}"#;
+        let task: SwarmTask = serde_json::from_str(raw).unwrap();
+        assert!(task.failed_unit_indexes.is_empty());
+    }
+
+    #[test]
+    fn retry_reset_keeps_completed_units_and_only_reader_batches_offer_retries() {
+        let mut progress = snapshot();
+        progress.source = "reader".into();
+        progress.phase = SwarmPhase::Partial;
+        progress.tasks[0].status = SwarmTaskStatus::Completed;
+        progress.tasks[0].completed_units = 1;
+        let failed = &mut progress.tasks[1];
+        failed.status = SwarmTaskStatus::Failed;
+        failed.total_units = 3;
+        failed.completed_units = 3;
+        failed.failed_units = 1;
+        failed.failed_unit_indexes = vec![1];
+        assert_eq!(progress.retryable_task_ids(), vec!["b".to_string()]);
+        progress.tasks[1].reset_for_retry();
+        let task = &progress.tasks[1];
+        assert_eq!(task.status, SwarmTaskStatus::Queued);
+        assert_eq!(task.completed_units, 2);
+        assert_eq!(task.failed_units, 0);
+        assert!(task.failed_unit_indexes.is_empty());
+        progress.phase = SwarmPhase::Running;
+        assert!(progress.retryable_task_ids().is_empty());
+        progress.phase = SwarmPhase::Partial;
+        progress.source = "map_items".into();
+        assert!(progress.retryable_task_ids().is_empty());
     }
 }

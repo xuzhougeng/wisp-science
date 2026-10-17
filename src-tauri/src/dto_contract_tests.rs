@@ -756,6 +756,37 @@ fn lab_status_contract_keeps_members_and_the_knowledge_base() {
 }
 
 #[test]
+fn project_memo_contract_keeps_private_fields_and_partial_patches() {
+    let backend = wisp_dto::ProjectMemo {
+        id: "memo".into(),
+        project_id: "p".into(),
+        title: String::new(),
+        body: "ssh gpu02 first".into(),
+        pinned: true,
+        created_at: 10,
+        updated_at: 20,
+    };
+    let ui: wisp_dto::ProjectMemo = roundtrip(&backend);
+    assert_eq!(ui, backend);
+    // The UI may omit the title on create and send only the changed fields
+    // on update; absent fields stay untouched instead of clearing.
+    let input: wisp_dto::ProjectMemoInput =
+        serde_json::from_value(json!({ "body": "Opening prompt" })).unwrap();
+    assert_eq!(input.title, "");
+    let patch: wisp_dto::ProjectMemoPatch =
+        serde_json::from_value(json!({ "id": "memo", "pinned": false })).unwrap();
+    assert_eq!(
+        patch,
+        wisp_dto::ProjectMemoPatch {
+            id: "memo".into(),
+            title: None,
+            body: None,
+            pinned: Some(false),
+        }
+    );
+}
+
+#[test]
 fn research_journey_contract_preserves_version_and_occurrence_time() {
     let backend = wisp_dto::ResearchJourney {
         entries: vec![wisp_dto::ResearchJourneyEntry {

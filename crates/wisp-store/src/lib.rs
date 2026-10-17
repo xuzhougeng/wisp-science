@@ -26,6 +26,7 @@ mod models;
 mod persist_seq;
 mod plugins;
 mod project_chat_search;
+mod project_memos;
 mod project_snapshots;
 mod project_state_revisions;
 mod project_storage;
@@ -72,7 +73,7 @@ pub use explorations::{
     ArtifactHead, ContextArchiveRecord, Exploration, ExplorationBaselineArtifactHead,
     ExplorationBaselineEntity, ExplorationCheckpoint, ExplorationEffect, ExplorationFamily,
     ExplorationPromotion, ExplorationPromotionStatus, ExplorationStatus, ExplorationSummary,
-    StateScope, WorkspaceSnapshotRecord, MAINLINE_SCOPE_KEY,
+    StateScope, WorkspaceSnapshotRecord, FRAME_READER_RETRY_PREFIX, MAINLINE_SCOPE_KEY,
 };
 pub use external_session_cache::ExternalSessionCacheRecord;
 pub use global_memories::GlobalMemory;
@@ -913,6 +914,10 @@ impl Store {
         }
         // Mainline daily recaps, one per project and local day.
         sqlx::raw_sql(include_str!("../migrations/0060_research_recaps.sql"))
+            .execute(pool)
+            .await?;
+        // Researcher-private project memos; never read by the agent.
+        sqlx::raw_sql(include_str!("../migrations/0067_project_memos.sql"))
             .execute(pool)
             .await?;
         // The research assistant's dated plan items.

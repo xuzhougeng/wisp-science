@@ -12812,18 +12812,18 @@ test("short windows fold the sidebar nav tail into a More flyout instead of scro
   // A long session list must not squeeze the nav into its own scroller.
   await expect.poll(() => nav.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
 
-  // 720px tall: the last three entries fold; New group / Files stay inline.
+  // 720px tall: the last four entries fold; New group / Files stay inline.
   await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeHidden();
   await more.click();
-  await expect(menu.getByRole("button")).toHaveText(["Research journey", "Publication", "Library"]);
+  await expect(menu.getByRole("button")).toHaveText(["Research journey", "Memos", "Publication", "Library"]);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(page.locator(".sidebar")).toBeVisible();
 
   await page.setViewportSize({ width: 1280, height: 600 });
   await more.click();
-  await expect(menu.getByRole("button")).toHaveText(["New group", "Files", "Research journey", "Publication", "Library"]);
+  await expect(menu.getByRole("button")).toHaveText(["New group", "Files", "Research journey", "Memos", "Publication", "Library"]);
   await menu.getByRole("button", { name: "Library", exact: true }).click();
   await expect(menu).toHaveCount(0);
   await expect(page.getByTestId("library-screen")).toBeVisible();

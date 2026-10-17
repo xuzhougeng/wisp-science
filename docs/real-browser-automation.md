@@ -95,6 +95,19 @@ reconnects to `ws://127.0.0.1:18765` when Wisp is running. Only loopback
 connections whose WebSocket origin is a Chrome extension with Wisp's bundled,
 stable extension ID are accepted.
 
+Extension 0.4.1 adds liveness detection for the bridge socket. The service
+worker sends a JSON ping every 20 seconds and Wisp answers each one with a
+pong, so a healthy connection always carries inbound traffic. If Wisp has been
+silent for more than 90 seconds while the socket still reports open (a
+half-open TCP connection after an app restart, sleep/resume, or a dropped
+network path), the extension closes that socket itself and reconnects instead
+of waiting for a close that never arrives. On the app side a new extension
+registration closes the superseded socket at once, and only the registered
+connection receives pongs, so a stale service worker drops out on its own.
+Reloading the extension in `chrome://extensions` is no longer needed to recover
+from a `WISP_BROWSER_DISCONNECTED` state that `netstat` still shows as
+`ESTABLISHED`.
+
 ## Ask about the current page (side panel)
 
 Extension 0.4.0 adds a Chrome side panel that answers questions about the tab

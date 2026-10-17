@@ -4538,8 +4538,16 @@ fn activity_list(
     sessions: RwSignal<Vec<SessionInfo>>,
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
+    swarm: crate::swarm::SwarmViewState,
 ) -> View {
+    let has_swarm = create_memo(move |_| {
+        state
+            .session_id
+            .get()
+            .is_some_and(|id| swarm.progress.with(|all| all.contains_key(&id)))
+    });
     view! {
+        <crate::swarm::SwarmPanel state=swarm session=state.session_id locale=locale/>
         <div class="agent-activity-list" aria-live="polite">
             {move || {
                 let loc = locale.get();
@@ -4554,6 +4562,9 @@ fn activity_list(
                 if active.is_empty() && done.is_empty() && explore_done.is_empty()
                     && state.workflows.with(|workflows| workflows.is_empty())
                 {
+                    if has_swarm.get() {
+                        return view! {}.into_view();
+                    }
                     return view! {
                         <div class="rp-empty"><p>{t(loc, "agents.activity.empty")}</p></div>
                     }.into_view();
@@ -4646,13 +4657,13 @@ pub(super) fn agent_workflows_panel(
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
     open_session: Callback<String>,
-    swarm_open: RwSignal<bool>,
+    swarm: crate::swarm::SwarmViewState,
 ) -> impl IntoView {
     // The detail page is the topmost layer of this pane: Escape returns to the
     // list (component-local state; the scoped window listener is removed on
     // cleanup). A workflow result dialog above it closes first.
     window_capture_escape(move || {
-        if swarm_open.get_untracked()
+        if swarm.open.get_untracked()
             || state.result.get_untracked().is_some()
             || state.selected.get_untracked().is_none()
         {
@@ -4677,7 +4688,7 @@ pub(super) fn agent_workflows_panel(
                 });
                 match item {
                     Some(item) => activity_detail(item, state, locale.get(), open_session),
-                    None => activity_list(state, sessions, locale, open_workflows),
+                    None => activity_list(state, sessions, locale, open_workflows, swarm),
                 }
             }}
             {workflow_result_dialog(state, locale)}

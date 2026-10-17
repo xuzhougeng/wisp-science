@@ -4,8 +4,11 @@ pub(super) const FRAME_SETTING_PREFIXES: &[&str] = &[
     "frame_specialist:",
     "frame_plan_mode:",
     "frame_auto_review:",
+    FRAME_READER_RETRY_PREFIX,
     FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX,
 ];
+/// Reader evidence recovered by a manual retry, waiting for the next turn.
+pub const FRAME_READER_RETRY_PREFIX: &str = "frame_reader_retry:";
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

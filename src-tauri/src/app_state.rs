@@ -629,6 +629,8 @@ pub(crate) struct AppState {
     /// plugin contributed no tools to a new session.
     pub(crate) plugin_runtime_errors: StdMutex<HashMap<String, HashMap<String, Vec<String>>>>,
     pub(crate) swarm_progress: crate::swarm_progress::SwarmCache,
+    /// Frames with a manual Reader retry in flight; one per conversation.
+    pub(crate) swarm_retries: StdMutex<HashSet<String>>,
     /// Session ids with an in-flight manual or automatic review. Reviews in
     /// unrelated conversations remain independent.
     pub(crate) reviewing: Arc<StdMutex<HashSet<String>>>,

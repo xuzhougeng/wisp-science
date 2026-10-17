@@ -11,11 +11,22 @@ pub(crate) enum ComposerPickerMode {
     Artifact,
     Session,
     Skill,
+    /// Researcher-private memos behind `/memo `; selecting one pastes its
+    /// body into the composer and nothing is sent.
+    Memo,
 }
+
+/// The composer prefix that opens the memo picker. The text after it, up to
+/// the caret, filters the list; Escape removes the whole token again.
+pub(crate) const MEMO_TOKEN: &str = "/memo ";
 
 #[derive(Clone, PartialEq)]
 pub(crate) enum ComposerPickerItem {
     Artifact(ArtifactInfo),
+    /// A private project memo offered by `/memo`; selecting it pastes the body.
+    Memo(crate::dto::ProjectMemo),
+    /// Shown instead of memos when the project has none: opens the Memos pane.
+    OpenMemos,
     Session(SessionSearchInfo),
     Project {
         id: String,
@@ -637,6 +648,9 @@ pub(crate) fn active_composer_trigger(
     caret_utf16: usize,
 ) -> Option<(usize, usize, ComposerPickerMode, String)> {
     let end = utf16_to_byte_index(text, caret_utf16)?;
+    if let Some((at, query)) = memo_token(&text[..end]) {
+        return Some((at, end, ComposerPickerMode::Memo, query));
+    }
     let (at, trigger) = text[..end]
         .char_indices()
         .rev()
@@ -659,6 +673,26 @@ pub(crate) fn active_composer_trigger(
         _ => return None,
     };
     Some((at, end, mode, query.to_string()))
+}
+
+/// `/memo <query>` ending at the caret: the token start and the filter text.
+/// The same boundary rules as the single-character triggers apply to the
+/// slash, and the query stays on one line.
+fn memo_token(head: &str) -> Option<(usize, String)> {
+    let at = head.rfind(MEMO_TOKEN)?;
+    if let Some(previous) = head[..at].chars().next_back() {
+        if previous.is_ascii_alphanumeric()
+            || previous == '_'
+            || matches!(previous, ':' | '/' | '\\' | '.')
+        {
+            return None;
+        }
+    }
+    let query = &head[at + MEMO_TOKEN.len()..];
+    if query.contains('\n') {
+        return None;
+    }
+    Some((at, query.trim_start().to_string()))
 }
 
 /// Whether an input edit should keep or open the picker for the active token.
@@ -706,6 +740,7 @@ pub(crate) const SLASH_COMMANDS: &[&str] = &[
     "upload",
     "share",
     "trajectory",
+    "memo",
 ];
 
 /// Each command owns a distinct icon in the `/` picker so rows scan by
@@ -730,6 +765,7 @@ pub(crate) fn slash_command_icon(name: &str) -> &'static str {
         "share" => "share",
         "trajectory" => "timeline",
         "timer" => "clock",
+        "memo" => "notebook",
         _ => "terminal",
     }
 }
@@ -773,10 +809,14 @@ pub(crate) fn parse_slash_command(text: &str) -> Option<(&'static str, &str)> {
 
 /// True for commands the picker fills into the composer — `/compact` for
 /// confirmation, `/fork`, `/btw`, and `/permission` because they need a
-/// payload. Action commands (`/rewind`, `/review`, …) run immediately on
-/// selection instead.
+/// payload, `/memo` because its token keeps the memo picker open while the
+/// researcher filters. Action commands (`/rewind`, `/review`, …) run
+/// immediately on selection instead.
 pub(crate) fn slash_command_fills_text(name: &str) -> bool {
-    matches!(name, "compact" | "fork" | "btw" | "permission" | "timer")
+    matches!(
+        name,
+        "compact" | "fork" | "btw" | "permission" | "timer" | "memo"
+    )
 }
 
 /// How far to move `scrollTop` so the row spanning `item_top..item_bottom`
@@ -922,6 +962,7 @@ mod mention_tests {
         assert!(slash_command_matches("s").contains(&"save-as-skill"));
         assert_eq!(slash_command_matches("shar"), vec!["share"]);
         assert_eq!(slash_command_matches("traj"), vec!["trajectory"]);
+        assert_eq!(slash_command_matches("me"), vec!["remember", "memo"]);
         assert!(slash_command_matches("literature-review").is_empty());
     }
 
@@ -953,6 +994,7 @@ mod mention_tests {
         );
         assert_eq!(parse_slash_command("/share"), Some(("share", "")));
         assert_eq!(parse_slash_command("/trajectory"), Some(("trajectory", "")));
+        assert_eq!(parse_slash_command("/memo gpu"), Some(("memo", "gpu")));
         // Unknown commands, substrings, and embedded commands are not intercepted.
         assert_eq!(parse_slash_command("/compact2"), None);
         assert_eq!(parse_slash_command("/quit"), None);
@@ -966,6 +1008,7 @@ mod mention_tests {
         assert!(slash_command_fills_text("fork"));
         assert!(slash_command_fills_text("btw"));
         assert!(slash_command_fills_text("permission"));
+        assert!(slash_command_fills_text("memo"));
         assert!(!slash_command_fills_text("rewind"));
         assert!(!slash_command_fills_text("plan"));
         assert!(!slash_command_fills_text("upload"));
@@ -984,6 +1027,29 @@ mod mention_tests {
         assert!(
             matches!(active_composer_trigger("/literature-review", 18), Some((0, 18, ComposerPickerMode::Skill, q)) if q == "literature-review")
         );
+    }
+
+    #[test]
+    fn memo_token_opens_the_memo_picker_and_filters_after_the_space() {
+        assert!(
+            matches!(active_composer_trigger("/memo ", 6), Some((0, 6, ComposerPickerMode::Memo, q)) if q.is_empty())
+        );
+        assert!(
+            matches!(active_composer_trigger("/memo gpu 02", 12), Some((0, 12, ComposerPickerMode::Memo, q)) if q == "gpu 02")
+        );
+        // Draft text before the token stays; the token itself is the range.
+        assert!(
+            matches!(active_composer_trigger("Compare methods /memo ssh", 25), Some((16, 25, ComposerPickerMode::Memo, q)) if q == "ssh")
+        );
+        // Without the space it is still the `/` command list.
+        assert!(
+            matches!(active_composer_trigger("/memo", 5), Some((0, 5, ComposerPickerMode::Skill, q)) if q == "memo")
+        );
+        // A path or a word glued to the slash is not a memo token, nor is a
+        // token the caret has left on an earlier line.
+        assert_eq!(active_composer_trigger("docs/memo notes", 15), None);
+        assert_eq!(active_composer_trigger("x/memo notes", 12), None);
+        assert_eq!(active_composer_trigger("/memo a\nb", 9), None);
     }
 
     #[test]

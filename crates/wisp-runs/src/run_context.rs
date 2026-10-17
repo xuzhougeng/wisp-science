@@ -98,6 +98,10 @@ pub struct RunPreflightSpec {
     pub syntax_paths: Vec<String>,
     #[serde(default)]
     pub allow_warnings: bool,
+    /// Optional interpreter handshake budget in seconds. When absent the budget
+    /// scales with the language and the number of declared packages.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 impl RunPreflightReport {
@@ -776,7 +780,12 @@ impl RunManager {
             Some(root.clone()),
             format!("{language} interpreter/package preflight"),
         )?;
-        match self.runner.run(handshake, Duration::from_secs(5)).await {
+        let handshake_budget =
+            preflight_handshake_timeout(&language, &spec.packages, spec.timeout_secs);
+        match self
+            .run_handshake_with_cold_start_retry(handshake, handshake_budget)
+            .await
+        {
             Ok(output) if output.exit_code == 0 => {
                 let version = output.stdout.trim();
                 report.push(
@@ -841,7 +850,7 @@ impl RunManager {
                     Some(root),
                     format!("{language} syntax preflight"),
                 )?;
-                match self.runner.run(syntax, Duration::from_secs(5)).await {
+                match self.runner.run(syntax, PREFLIGHT_SYNTAX_TIMEOUT).await {
                     Ok(output) if output.exit_code == 0 => report.push(
                         "syntax",
                         RunPreflightStatus::Passed,
@@ -865,6 +874,33 @@ impl RunManager {
             }
         }
         Ok(report)
+    }
+
+    /// Runs the interpreter/package handshake, retrying once with a doubled
+    /// budget when the first attempt times out. A cold library attach (R with
+    /// several Bioconductor packages on a fresh session) is the usual cause,
+    /// and the second attempt benefits from the warmed file cache, so a single
+    /// retry separates "slow start" from "broken interpreter" without making
+    /// every preflight slow.
+    async fn run_handshake_with_cold_start_retry(
+        &self,
+        handshake: RunCommand,
+        budget: Duration,
+    ) -> Result<RunCommandOutput, String> {
+        match self.runner.run(handshake.clone(), budget).await {
+            Err(error) if is_runner_timeout(&error) => {
+                let retry_budget = budget * 2;
+                match self.runner.run(handshake, retry_budget).await {
+                    Err(error) if is_runner_timeout(&error) => Err(format!(
+                        "cold-start handshake timed out after {}s and again after {}s; the interpreter and declared packages could not be verified in time. Set preflight.timeout_secs higher or warm the library once before submitting",
+                        budget.as_secs(),
+                        retry_budget.as_secs()
+                    )),
+                    other => other,
+                }
+            }
+            other => other,
+        }
     }
 
     pub async fn download_ssh_file(
@@ -2272,6 +2308,41 @@ fn preflight_interpreter(
         _ => return Err(format!("unsupported preflight language: {language}")),
     };
     Ok(context_json_string(context, keys).unwrap_or_else(|| fallback.into()))
+}
+
+/// Parsing a handful of files is quick, but Rscript/python startup on a busy
+/// machine is not instantaneous; leave headroom beyond the old 5s literal.
+const PREFLIGHT_SYNTAX_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Explicit `preflight.timeout_secs` values are clamped into this range.
+const PREFLIGHT_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 1..=600;
+
+/// Budget for the interpreter/package handshake. R attaches every declared
+/// package, and a cold Bioconductor attach routinely takes several seconds per
+/// package, so R scales faster than Python, whose handshake only resolves import
+/// specs. Both are capped so a hung interpreter still fails in bounded time.
+fn preflight_handshake_timeout(
+    language: &str,
+    packages: &[String],
+    override_secs: Option<u64>,
+) -> Duration {
+    if let Some(secs) = override_secs {
+        return Duration::from_secs(secs.clamp(
+            *PREFLIGHT_TIMEOUT_RANGE.start(),
+            *PREFLIGHT_TIMEOUT_RANGE.end(),
+        ));
+    }
+    let (base, per_package, cap) = if language == "r" {
+        (15u64, 10u64, 120u64)
+    } else {
+        (10u64, 2u64, 60u64)
+    };
+    let scaled = base.saturating_add(per_package.saturating_mul(packages.len() as u64));
+    Duration::from_secs(scaled.min(cap))
+}
+
+fn is_runner_timeout(error: &str) -> bool {
+    error.starts_with("run_in_context timed out after ")
 }
 
 fn preflight_handshake_args(language: &str, packages: &[String]) -> Vec<String> {

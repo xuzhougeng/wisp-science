@@ -1,0 +1,76 @@
+/* Project memos: a right-pane tab of researcher-only notes. The agent never
+   reads them; Insert drops one into the composer. */
+.memos-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--bg-elev); color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); }
+.memos-pane button { font: inherit; cursor: pointer; }
+.memos-pane button:disabled { cursor: not-allowed; opacity: .55; }
+.memos-pane svg { width: 16px; height: 16px; flex: 0 0 16px; }
+
+.memos-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px 6px; }
+.memos-private { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.memos-private svg { width: 13px; height: 13px; flex-basis: 13px; }
+.memos-private span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.memo-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap; }
+.memo-btn:hover:not(:disabled) { background: var(--bg-sunken); }
+.memo-btn.primary { border-color: transparent; background: var(--clay-strong); color: #fff; }
+.memo-btn.primary:hover:not(:disabled) { background: var(--clay); }
+.memo-btn.danger { border-color: color-mix(in srgb, var(--danger, #b4473a) 45%, var(--border-strong)); color: var(--danger, #b4473a); }
+.memo-btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger, #b4473a) 10%, var(--bg-elev)); }
+.memos-new svg { width: 14px; height: 14px; flex-basis: 14px; }
+
+.memos-search { display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-input); color: var(--text-faint); }
+.memos-search input { flex: 1 1 auto; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.memos-search:focus-within { border-color: var(--clay); }
+
+.memos-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; padding: 2px 12px 14px; }
+.memos-empty { margin: auto 0; padding: 28px 18px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; color: var(--text-muted); }
+.memos-empty p { margin: 0; max-width: 280px; line-height: 1.55; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+.memos-empty.muted { padding: 18px; color: var(--text-faint); }
+.memos-empty-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-faint); }
+.memos-empty-icon svg { width: 20px; height: 20px; }
+
+.memo-card { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-panel, var(--bg-sunken)); transition: border-color .12s ease, box-shadow .12s ease; }
+.memo-card:hover, .memo-card:focus-within { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.memo-card.pinned { border-color: color-mix(in srgb, var(--clay) 40%, var(--border)); }
+.memo-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.memo-pin { display: inline-flex; color: var(--clay-strong); }
+.memo-pin svg { width: 13px; height: 13px; flex-basis: 13px; }
+.memo-heading { flex: 1 1 auto; min-width: 0; padding: 2px 0; border: 0; background: transparent; color: var(--text); text-align: left; }
+.memo-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.memo-title.untitled { color: var(--text-faint); font-style: italic; font-weight: 500; }
+.memo-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .12s ease; }
+.memo-card:hover .memo-actions, .memo-card:focus-within .memo-actions, .memo-card.expanded .memo-actions { opacity: 1; }
+.memo-actions .icon-btn { width: 26px; height: 26px; }
+.memo-insert { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid transparent; border-radius: var(--radius-xs); background: var(--clay-soft); color: var(--clay-strong); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap; }
+.memo-insert:hover { border-color: color-mix(in srgb, var(--clay-strong) 35%, transparent); }
+.memo-insert.done { background: color-mix(in srgb, var(--clay-strong) 16%, var(--bg-elev)); }
+.memo-insert svg { width: 14px; height: 14px; flex-basis: 14px; }
+/* Pointer-only widths cannot hover: keep the primary action reachable. */
+@media (hover: none) { .memo-actions { opacity: 1; } }
+
+.memo-body { margin: 0; padding: 0; background: transparent; border: 0; color: var(--text-muted); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+.memo-body.clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.memo-card.expanded .memo-body { color: var(--text); }
+.memo-meta { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+
+.memo-more-wrap { position: relative; }
+.memo-menu-backdrop { position: fixed; inset: 0; z-index: 60; border: 0; background: transparent; cursor: default; }
+.memo-menu { position: absolute; z-index: 61; top: calc(100% + 4px); right: 0; min-width: 160px; padding: 4px; display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both; }
+.memo-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); text-align: left; }
+.memo-menu-item:hover { background: var(--bg-sunken); }
+.memo-menu-item.danger { color: var(--danger, #b4473a); }
+.memo-menu-item svg { width: 14px; height: 14px; flex-basis: 14px; }
+
+.memo-editor { gap: 8px; border-color: var(--clay); background: var(--bg-elev); }
+.memo-title-input, .memo-body-input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.memo-title-input { font-weight: 600; }
+.memo-body-input { resize: vertical; min-height: 0; }
+.memo-title-input:focus-visible, .memo-body-input:focus-visible { outline: 2px solid var(--clay); outline-offset: 1px; }
+.memo-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.memo-shortcut { margin-right: auto; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.memo-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--danger, #b4473a) 8%, var(--bg-elev)); color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+.memo-confirm > span { flex: 1 1 auto; font-weight: 600; }
+.memo-error { padding: 6px 10px; margin: 0 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--danger, #b4473a) 10%, var(--bg-elev)); color: var(--danger, #b4473a); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.memo-card .memo-error { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) { .memo-menu { animation: none; } }

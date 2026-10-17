@@ -5,6 +5,7 @@
 importScripts(
   "session_config.js",
   "protocol.js",
+  "keepalive.js",
   "wait_tab.js",
   "wait_engine.js",
   "tab_ops.js",
@@ -26,10 +27,16 @@ var waitEngine = createWaitEngine(chrome);
 var tabOps = createTabOps(chrome, new Set());
 var scans = pageScanFunctions();
 
+var KEEPALIVE_INTERVAL_MS = 20000;
+// Four unanswered pings. Wisp answers each JSON ping with a pong, so a healthy
+// socket sees inbound traffic at least every KEEPALIVE_INTERVAL_MS.
+var STALE_AFTER_MS = 90000;
+
 var socket = null;
 var keepAliveTimer = null;
 var lastError = "";
 var paused = false;
+var liveness = createLivenessTracker({ staleAfterMs: STALE_AFTER_MS });
 
 chrome.storage.local.get(["wisp_paused"], function (stored) {
   paused = !!stored.wisp_paused;
@@ -64,42 +71,70 @@ async function sendHandshake() {
   send(handshakePayload(await browserTabs(), paused));
 }
 
+// Drop a socket that still says OPEN but has not heard from Wisp in
+// STALE_AFTER_MS. send() on a half-open connection buffers silently and
+// onclose never fires by itself, so without this the one-minute reconnect
+// alarm would see readyState === OPEN forever and never rebuild the link.
+function dropStaleSocket() {
+  var stale = socket;
+  socket = null;
+  liveness.reset();
+  lastError = "Wisp stopped answering keepalive pings; reconnecting";
+  try { stale.close(); } catch (_) {}
+  connect();
+}
+
 function startKeepAlive() {
   clearInterval(keepAliveTimer);
   keepAliveTimer = setInterval(function () {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      send({ type: "ping", session: SESSION });
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (liveness.isStale()) {
+      dropStaleSocket();
+      return;
     }
-  }, 20000);
+    send({ type: "ping", session: SESSION });
+  }, KEEPALIVE_INTERVAL_MS);
 }
 
 function connect() {
   if (socket && socket.readyState <= WebSocket.OPEN) return;
+  var ws;
   try {
-    socket = new WebSocket(BRIDGE_URL);
+    ws = new WebSocket(BRIDGE_URL);
   } catch (error) {
     lastError = error.message;
     socket = null;
     return;
   }
-  socket.onopen = async function () {
+  socket = ws;
+  // Every handler checks it still owns `socket`: a stale socket dropped by
+  // dropStaleSocket() may fire onclose long after its replacement connected
+  // and must not clear the live one.
+  ws.onopen = async function () {
+    if (socket !== ws) return;
     lastError = "";
+    liveness.reset();
     startKeepAlive();
     await sendHandshake();
   };
-  socket.onmessage = async function (event) {
+  ws.onmessage = async function (event) {
+    if (socket !== ws) return;
+    liveness.touch();
     try {
       var request = JSON.parse(event.data);
+      if (request && request.type === "pong") return;
       if (isSideMessage(request)) sideRelay.broadcast(request);
       else if (request.id) await handleRequest(request);
     } catch (error) {
       lastError = error.message;
     }
   };
-  socket.onerror = function () {
+  ws.onerror = function () {
+    if (socket !== ws) return;
     lastError = "Cannot connect to Wisp on " + BRIDGE_URL.replace("ws://", "");
   };
-  socket.onclose = function () {
+  ws.onclose = function () {
+    if (socket !== ws) return;
     clearInterval(keepAliveTimer);
     keepAliveTimer = null;
     socket = null;
