@@ -60,8 +60,8 @@
     ],
     "operation_boundary": "Creates an external Cohesivity tenant and provisions resources only after the user confirms. Writes a .cohesivity credentials file into the active project and gitignores it. Without an MCP connection, runs the Cohesivity installer with npx through the shell tool, which also installs the Cohesivity plugin for supported coding agents on the machine. Keys are never printed in chat. Installing the Skill itself makes no network calls and adds no MCP connection.",
     "supported_wisp": "Author declaration: Wisp 1.20.0; uses legacy SKILL.md frontmatter.",
-    "verified_wisp": null,
-    "known_limits": "Parser and package-resource checks only; not run inside Wisp. The Wisp agent cannot add an MCP connection itself, so either the user adds https://cohesivity.ai/mcp under Settings → Connections or approves the installer over shell. Free tenants pause when a resource cap is reached.",
+    "verified_wisp": "1.20.0",
+    "known_limits": "The Wisp agent cannot add an MCP connection itself, so either the user adds https://cohesivity.ai/mcp under Settings → Connections or approves the installer over shell. Free tenants pause when a resource cap is reached.",
     "feedback_url": "https://github.com/cohesivity-org/cohesivity-skill/issues"
   }
 ]
