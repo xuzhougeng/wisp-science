@@ -13094,6 +13094,9 @@ for (const staleOutcome of ["success", "failure"]) {
 }
 
 test("a 62-turn history with a large message reaches its first question (#1199)", async ({ page }) => {
+  // Each earlier page re-renders a 380 KB message; with four workers sharing
+  // the runner's CPUs the three loads exceed the default timeout (#1578).
+  test.slow();
   await page.goto("/?mockLongPages=4&mockLongRows=40");
   await page.evaluate(() => {
     const core = (window as any).__TAURI__.core;
@@ -13456,7 +13459,9 @@ test("a continuously open conversation unloads old live rows after a completed t
 });
 
 test("a multi-megabyte transcript stays interactive while an answer streams", async ({ page }) => {
-  test.setTimeout(45_000);
+  // Mounts 160 rows of 32 KB; slow() scales with the configured timeout instead
+  // of a fixed budget that four parallel workers on one runner overran (#1578).
+  test.slow();
   await page.goto(`/?mockLongPages=1&mockLongRows=160&mockLongRowBytes=${32 * 1024}`);
   await page.locator(".proj-card-main").first().click();
   await expect(page.getByText(/Window page 0 row 159/)).toBeVisible({ timeout: 15_000 });
@@ -15134,9 +15139,15 @@ test("project cards show the workspace path and aligned action icons", async ({ 
   // instead of floating between the meta line and the action icons.
   const when = cards.first().locator(".pc-name-row .pc-when");
   await expect(when).toBeVisible();
-  const nameBox = await cards.first().locator(".pc-name").boundingBox();
-  const whenBox = await when.boundingBox();
-  expect(Math.abs((nameBox!.y + nameBox!.height / 2) - (whenBox!.y + whenBox!.height / 2))).toBeLessThanOrEqual(4);
+  // Measure both in one frame: the column's entry animation translates the
+  // card for ~350 ms, and two separate boundingBox() round trips can straddle
+  // it when four workers share the runner's CPUs (#1579).
+  const offset = await cards.first().evaluate((card) => {
+    const name = card.querySelector(".pc-name")!.getBoundingClientRect();
+    const stamp = card.querySelector(".pc-name-row .pc-when")!.getBoundingClientRect();
+    return Math.abs((name.y + name.height / 2) - (stamp.y + stamp.height / 2));
+  });
+  expect(offset).toBeLessThanOrEqual(4);
   // Action glyphs share one uniform box and one vertical center line.
   const boxes = await cards.first().locator(".pc-actions button").evaluateAll((els) =>
     els.map((el) => {
