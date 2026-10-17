@@ -13094,6 +13094,9 @@ for (const staleOutcome of ["success", "failure"]) {
 }
 
 test("a 62-turn history with a large message reaches its first question (#1199)", async ({ page }) => {
+  // Each earlier page re-renders a 380 KB message; with four workers sharing
+  // the runner's CPUs the three loads exceed the default timeout (#1578).
+  test.slow();
   await page.goto("/?mockLongPages=4&mockLongRows=40");
   await page.evaluate(() => {
     const core = (window as any).__TAURI__.core;
@@ -13456,7 +13459,9 @@ test("a continuously open conversation unloads old live rows after a completed t
 });
 
 test("a multi-megabyte transcript stays interactive while an answer streams", async ({ page }) => {
-  test.setTimeout(45_000);
+  // Mounts 160 rows of 32 KB; slow() scales with the configured timeout instead
+  // of a fixed budget that four parallel workers on one runner overran (#1578).
+  test.slow();
   await page.goto(`/?mockLongPages=1&mockLongRows=160&mockLongRowBytes=${32 * 1024}`);
   await page.locator(".proj-card-main").first().click();
   await expect(page.getByText(/Window page 0 row 159/)).toBeVisible({ timeout: 15_000 });
