@@ -161,6 +161,9 @@ pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> 
         "api.kimi.com" => &["kimi-code-plan-cn", "kimi-for-coding"],
         "api.kimi.ai" => &["kimi-code-plan-global", "kimi-for-coding"],
         "open.bigmodel.cn" => &["zhipuai"],
+        // Command Code is an OpenAI-compatible gateway with its own models.dev
+        // namespace; the `openai` provider fallback knows none of its ids.
+        "api.commandcode.ai" => &["commandcode"],
         _ => &[],
     };
     out.extend_from_slice(by_host);
@@ -283,6 +286,37 @@ mod tests {
         )
         .expect("the renamed namespace resolves");
         assert_eq!((entry.c, entry.o), (262_144, 131_072));
+    }
+
+    #[test]
+    fn commandcode_host_resolves_gateway_ids_in_its_own_namespace() {
+        assert_eq!(
+            namespace_candidates("openai", "https://api.commandcode.ai/provider/v1"),
+            vec!["commandcode", "openai"]
+        );
+        let catalog: Catalog = serde_json::from_str(
+            r#"{
+            "commandcode": {
+                "deepseek/deepseek-v4.1-flash": { "c": 1000000, "o": 384000, "e": ["low", "high", "max"] },
+                "claude-opus-5-5": { "c": 1000000, "o": 128000, "e": ["low", "medium", "high", "xhigh", "max"] }
+            },
+            "openai": {
+                "gpt-5.6-sol": { "c": 400000, "o": 128000 }
+            }
+        }"#,
+        )
+        .unwrap();
+        let base = "https://api.commandcode.ai/provider/v1";
+        let entry = lookup(&catalog, "openai", base, "deepseek/deepseek-v4.1-flash")
+            .expect("vendor-prefixed id resolves under commandcode");
+        assert_eq!(entry.e, vec!["low", "high", "max"]);
+        let entry = lookup(&catalog, "openai", base, "claude-opus-5-5").unwrap();
+        assert_eq!(entry.e, vec!["low", "medium", "high", "xhigh", "max"]);
+        // The provider fallback still serves ids the gateway namespace lacks.
+        assert_eq!(
+            lookup(&catalog, "openai", base, "gpt-5.6-sol").unwrap().c,
+            400_000
+        );
     }
 
     #[test]

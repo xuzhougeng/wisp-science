@@ -93,6 +93,16 @@ an inline error instead of failing mid-turn with a provider 400, and a context
 window above the ceiling is clamped down on save. Models absent from the
 catalog keep manually entered values.
 
+The catalog namespace is chosen from the Base URL host first, then from the
+protocol: Anthropic, OpenAI, xAI, DeepSeek, Moonshot, Kimi Code, Zhipu,
+OpenCode Go/Zen and Command Code (`https://api.commandcode.ai/provider/v1`)
+hosts resolve against their own models.dev namespaces, so a gateway model such
+as `deepseek/deepseek-v4.1-flash` or `claude-opus-5-5` on Command Code gets its
+documented ceilings and reasoning-effort levels. Any other OpenAI-compatible
+host only sees the `openai` namespace. Side tasks that turn thinking off
+(Reader, Archivist, Recap) recognize DeepSeek models by host or by the last
+segment of a `vendor/deepseek-*` gateway ID.
+
 When editing a chat model, **Max output tokens** and **Context window** support
 continuous typing and deletion without losing focus. Changes take effect when
 you save the profile; the same catalog ceilings still apply.

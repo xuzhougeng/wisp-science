@@ -1080,6 +1080,20 @@ mod tests {
     }
 
     #[test]
+    fn gateway_vendor_prefixed_deepseek_id_sets_reasoning_effort_none() {
+        let mut cfg = crate::provider::ProviderConfig::openai_responses(
+            "https://api.commandcode.ai/provider/v1",
+            "sk-test",
+            "deepseek/deepseek-v4.1-flash",
+        );
+        cfg.thinking_enabled = Some(false);
+        cfg.reasoning_effort = Some("high".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[]);
+        assert_eq!(body["reasoning"]["effort"], "none");
+    }
+
+    #[test]
     fn default_service_tier_is_omitted_from_responses_body() {
         let mut cfg = crate::provider::ProviderConfig::openai_responses(
             "https://api.openai.com/v1",

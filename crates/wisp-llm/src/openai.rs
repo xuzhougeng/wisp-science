@@ -1448,6 +1448,21 @@ mod tests {
     }
 
     #[test]
+    fn gateway_vendor_prefixed_deepseek_id_still_disables_thinking() {
+        let mut cfg = crate::ProviderConfig::openai(
+            "https://api.commandcode.ai/provider/v1",
+            "",
+            "deepseek/deepseek-v4.1-flash",
+        );
+        cfg.thinking_enabled = Some(false);
+        cfg.reasoning_effort = Some("high".into());
+        let provider = OpenAiProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[], false);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
     fn thinking_toggle_is_omitted_for_non_deepseek_hosts() {
         let mut cfg = crate::ProviderConfig::openai("https://api.openai.com/v1", "", "gpt-5.6-sol");
         cfg.thinking_enabled = Some(false);

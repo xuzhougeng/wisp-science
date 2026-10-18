@@ -599,12 +599,15 @@ pub fn is_opencode_endpoint(base_url: &str) -> bool {
 /// True when the request will hit DeepSeek's thinking-mode default.
 ///
 /// Match the public API host or a `deepseek-*` model id so a custom gateway
-/// that still serves V4 Flash/Pro gets the same toggle. Other OpenAI-compatible
-/// hosts must not receive `thinking`, which they reject.
+/// that still serves V4 Flash/Pro gets the same toggle. Gateway-style
+/// `vendor/model` ids (`deepseek/deepseek-v4.1-flash`) match on their last
+/// path segment, like the model catalog lookup. Other OpenAI-compatible hosts
+/// must not receive `thinking`, which they reject.
 pub(crate) fn is_deepseek_endpoint(base_url: &str, model: &str) -> bool {
     let url = base_url.to_ascii_lowercase();
-    let model = model.to_ascii_lowercase();
-    url.contains("deepseek.com") || model.starts_with("deepseek-")
+    let model = model.trim().to_ascii_lowercase();
+    let tail = model.rsplit('/').next().unwrap_or(model.as_str());
+    url.contains("deepseek.com") || tail.starts_with("deepseek-")
 }
 
 /// Callbacks the agent loop receives while a streamed completion is in flight.
@@ -707,6 +710,44 @@ impl Utf8Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deepseek_endpoint_matches_host_or_model_tail_segment() {
+        assert!(is_deepseek_endpoint(
+            "https://api.deepseek.com",
+            "deepseek-v4-flash"
+        ));
+        assert!(is_deepseek_endpoint(
+            "https://API.DeepSeek.com/v1",
+            "anything"
+        ));
+        assert!(is_deepseek_endpoint(
+            "https://gateway.test/v1",
+            "deepseek-v4-pro"
+        ));
+        // Gateway ids carry a vendor prefix; the toggle keys off the last segment.
+        assert!(is_deepseek_endpoint(
+            "https://api.commandcode.ai/provider/v1",
+            "deepseek/deepseek-v4.1-flash"
+        ));
+        assert!(is_deepseek_endpoint(
+            "https://gateway.test/v1",
+            " DeepSeek/DeepSeek-V4-Pro "
+        ));
+        // Other vendors behind the same gateway never receive `thinking`.
+        assert!(!is_deepseek_endpoint(
+            "https://api.commandcode.ai/provider/v1",
+            "google/gemini-3.8-flash"
+        ));
+        assert!(!is_deepseek_endpoint(
+            "https://gateway.test/v1",
+            "deepseek/other-v1"
+        ));
+        assert!(!is_deepseek_endpoint(
+            "https://api.openai.com/v1",
+            "gpt-5.6-sol"
+        ));
+    }
 
     #[test]
     fn opencode_identity_is_scoped_to_the_endpoint_and_conversation() {
