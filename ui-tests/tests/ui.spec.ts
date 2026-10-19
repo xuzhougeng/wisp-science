@@ -7316,6 +7316,12 @@ test("method-search Run reviews the frozen contract before start and exposes con
     .toMatchObject({ runId: "method-search-001" });
   await expect(details.getByTestId("method-search-resume")).toBeVisible();
   await expectPrimaryButton(details.getByTestId("method-search-resume"));
+  // The status change makes the next list refresh rebuild every run card;
+  // the contract under review must stay open with its controls instead of
+  // collapsing (it raced the one-second poll before).
+  await page.locator(".control-head-actions").getByRole("button", { name: "Refresh runs" }).click();
+  await expect(card).toContainText("paused");
+  await expect(details.getByTestId("method-search-resume")).toBeVisible();
   await details.getByTestId("method-search-resume").click();
   await expect.poll(() => lastInvokeArgs(page, "resume_method_search"))
     .toMatchObject({ runId: "method-search-001" });

@@ -6,6 +6,28 @@ thread_local! {
     static RUN_REFRESH_INITIALIZED: Cell<bool> = const { Cell::new(false) };
     static RUN_REFRESH_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
     static SSH_RETRY_TOASTED_RUNS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    static METHOD_SEARCH_PANELS: RefCell<HashMap<String, MethodSearchPanelMemory>> =
+        RefCell::new(HashMap::new());
+}
+
+/// What a method-search panel showed before the run list rebuilt its card.
+/// Run cards are re-created whenever the polled list changes (a status change
+/// included), so without this the contract a researcher was reviewing
+/// collapsed on every poll and its controls vanished mid-click.
+#[derive(Clone, Default)]
+struct MethodSearchPanelMemory {
+    expanded: bool,
+    details: Option<MethodSearchRunDetails>,
+}
+
+/// Whether remembered details lag behind the card's polled status, so an
+/// open panel must reload instead of showing controls for a stale state.
+fn method_search_memory_stale(memory: &MethodSearchPanelMemory, status: &str) -> bool {
+    memory.expanded
+        && memory
+            .details
+            .as_ref()
+            .is_none_or(|details| details.run.status != status)
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -299,9 +321,27 @@ pub(crate) fn refresh_runs(
 
 #[cfg(test)]
 mod run_refresh_guard_tests {
-    use super::{run_lists_render_eq, run_refresh_warning, RunRefreshGuard, RunRefreshState};
+    use super::{
+        method_search_memory_stale, run_lists_render_eq, run_refresh_warning,
+        MethodSearchPanelMemory, RunRefreshGuard, RunRefreshState,
+    };
     use crate::dto::RunSummary;
     use crate::i18n::Locale;
+
+    #[test]
+    fn method_search_memory_reloads_only_an_open_panel_without_current_details() {
+        // A collapsed panel never fetches on rebuild; an open one whose load
+        // was interrupted by the rebuild fetches again.
+        assert!(!method_search_memory_stale(
+            &MethodSearchPanelMemory::default(),
+            "paused"
+        ));
+        let interrupted = MethodSearchPanelMemory {
+            expanded: true,
+            details: None,
+        };
+        assert!(method_search_memory_stale(&interrupted, "paused"));
+    }
 
     #[test]
     fn pending_refreshes_are_coalesced_and_release_the_guard() {
@@ -2972,14 +3012,31 @@ fn control_method_search(
 #[component]
 fn MethodSearchRunPanel(
     run_id: String,
+    status: String,
     locale: RwSignal<Locale>,
     modal: RwSignal<Option<(String, ContextModalKind)>>,
     modal_artifact: RwSignal<Option<ModalArtifact>>,
 ) -> impl IntoView {
-    let expanded = create_rw_signal(false);
+    let remembered = METHOD_SEARCH_PANELS
+        .with(|panels| panels.borrow().get(&run_id).cloned())
+        .unwrap_or_default();
+    let expanded = create_rw_signal(remembered.expanded);
     let loading = create_rw_signal(false);
-    let details = create_rw_signal(None::<MethodSearchRunDetails>);
+    let details = create_rw_signal(remembered.details.clone());
     let error = create_rw_signal(None::<String>);
+    let memory_id = run_id.clone();
+    create_effect(move |_| {
+        let memory = MethodSearchPanelMemory {
+            expanded: expanded.get(),
+            details: details.get(),
+        };
+        METHOD_SEARCH_PANELS.with(|panels| {
+            panels.borrow_mut().insert(memory_id.clone(), memory);
+        });
+    });
+    if method_search_memory_stale(&remembered, &status) {
+        load_method_search_details(run_id.clone(), details, loading, error);
+    }
     let inspect_run_id = run_id.clone();
     let refresh_run_id = run_id.clone();
     view! {
@@ -3537,6 +3594,7 @@ pub(crate) fn ContextDetailsOverlay(
                                                 .flatten();
                                             let method_progress = method_search_progress(&run);
                                             let method_run_id = run.id.clone();
+                                            let method_status = run.status.clone();
                                             let detail_run_id = run.id.clone();
                                             let meta = match run.exit_code {
                                                 Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
@@ -3639,6 +3697,7 @@ pub(crate) fn ContextDetailsOverlay(
                                                     {method_search.then(|| view! {
                                                         <MethodSearchRunPanel
                                                             run_id=method_run_id
+                                                            status=method_status
                                                             locale=locale
                                                             modal=modal
                                                             modal_artifact=modal_artifact
