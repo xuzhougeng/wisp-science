@@ -733,7 +733,10 @@ test("handoff summary is generated, editable, and starts the new session with it
   await expect(page.getByTestId("context-usage-panel")).toBeVisible();
   const draft = page.getByTestId("handoff-draft");
   await expect(draft).toHaveValue(/Align sample A reads/);
-  expect(await lastInvokeArgs(page, "generate_session_handoff")).toEqual({ id: "s-compact", instruction: null });
+  // `None` crosses the bridge as undefined (serde_wasm_bindgen), i.e. the key is absent.
+  const generated = await lastInvokeArgs(page, "generate_session_handoff");
+  expect(generated.id).toBe("s-compact");
+  expect(generated.instruction).toBeUndefined();
   await expect(page.getByTestId("handoff-progress")).toHaveCount(0);
 
   const edited = "## Goal\nAlign sample A reads.\n\n## Next\nRun QC on results/sample_a.bam";
