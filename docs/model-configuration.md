@@ -94,14 +94,23 @@ window above the ceiling is clamped down on save. Models absent from the
 catalog keep manually entered values.
 
 The catalog namespace is chosen from the Base URL host first, then from the
-protocol: Anthropic, OpenAI, xAI, DeepSeek, Moonshot, Kimi Code, Zhipu,
-OpenCode Go/Zen and Command Code (`https://api.commandcode.ai/provider/v1`)
-hosts resolve against their own models.dev namespaces, so a gateway model such
-as `deepseek/deepseek-v4.1-flash` or `claude-opus-5-5` on Command Code gets its
-documented ceilings and reasoning-effort levels. Any other OpenAI-compatible
-host only sees the `openai` namespace. Side tasks that turn thinking off
-(Reader, Archivist, Recap) recognize DeepSeek models by host or by the last
-segment of a `vendor/deepseek-*` gateway ID.
+protocol. Any host that models.dev lists as a provider's API base URL resolves
+to that provider's namespace automatically, so a gateway model such as
+`deepseek/deepseek-v4.1-flash` or `claude-opus-5-5` on Command Code
+(`https://api.commandcode.ai/provider/v1`) gets its documented ceilings and
+reasoning-effort levels without a Wisp release. When several namespaces share
+a host, the one whose published API path is the longest prefix of your Base
+URL path wins: `https://open.bigmodel.cn/api/coding/paas/v4` picks the Zhipu
+coding plan over the general `/api/paas/v4` namespace, and `api.z.ai`,
+`api.minimax.io`, `api.stepfun.com` and `ark.cn-beijing.volces.com` behave the
+same way. Loopback hosts (`localhost`, `127.0.0.1`) are never mapped, since
+every local server claims them. A small built-in table still covers hosts
+models.dev publishes no base URL for (Anthropic, OpenAI, xAI, DeepSeek,
+Moonshot) and public routes that differ from the published one (Kimi Code,
+OpenCode Go/Zen). Any other host only sees the namespace of its protocol
+(`openai` or `anthropic`). Side tasks that turn thinking off (Reader,
+Archivist, Recap) recognize DeepSeek models by host or by the last segment of
+a `vendor/deepseek-*` gateway ID.
 
 When editing a chat model, **Max output tokens** and **Context window** support
 continuous typing and deletion without losing focus. Changes take effect when

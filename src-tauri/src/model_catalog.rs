@@ -61,12 +61,24 @@ mod tests {
     #[test]
     fn baked_catalog_parses_and_covers_key_models() {
         let catalog = super::catalog();
-        assert!(catalog.len() > 100, "catalog should cover many vendors");
+        assert!(
+            catalog.models.len() > 100,
+            "catalog should cover many vendors"
+        );
+        assert!(
+            catalog.api.len() > 100,
+            "snapshot records models.dev api base URLs"
+        );
         // Regression anchor: this entry is what stops the kimi-k3 prefix
         // swallow. If a catalog refresh changes it, update this expectation
         // deliberately alongside scripts/refresh_model_catalog.sh.
         let entry = super::lookup("openai", "https://api.kimi.com/coding/v1", "k3-256k")
             .expect("k3-256k must resolve under kimi-for-coding");
         assert_eq!((entry.c, entry.o), (262_144, 131_072));
+        // No hand-written row knows api.z.ai: the namespace comes from the
+        // baked `api` map alone (`zai` -> https://api.z.ai/api/paas/v4).
+        let entry = super::lookup("openai", "https://api.z.ai/api/paas/v4", "glm-5.1")
+            .expect("glm-5.1 must resolve under zai via the derived host map");
+        assert_eq!((entry.c, entry.o), (200_000, 131_072));
     }
 }

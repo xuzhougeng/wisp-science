@@ -8,7 +8,47 @@ use std::collections::BTreeMap;
 
 /// vendor namespace -> (model id -> entry). BTreeMap keeps the distilled
 /// snapshot deterministic for diff-friendly refreshes.
-pub type Catalog = BTreeMap<String, BTreeMap<String, CatalogEntry>>;
+pub type Namespaces = BTreeMap<String, BTreeMap<String, CatalogEntry>>;
+
+/// The baked catalog: model limits per namespace plus each namespace's
+/// models.dev `api` base URL, which lets a Base URL host the hand-written
+/// table in [`namespace_candidates`] never heard of still find its namespace.
+///
+/// Serialized as `{"models": {...}, "api": {...}}`. The flat pre-`api` shape
+/// (namespaces at the root) still deserializes, so an older committed
+/// snapshot keeps building.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "CatalogWire")]
+pub struct Catalog {
+    pub models: Namespaces,
+    /// namespace -> models.dev `api` base URL. Absent for providers that
+    /// publish none (`openai`, `anthropic`, `xai`, ...).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub api: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CatalogWire {
+    Wide {
+        models: Namespaces,
+        #[serde(default)]
+        api: BTreeMap<String, String>,
+    },
+    Flat(Namespaces),
+}
+
+impl From<CatalogWire> for Catalog {
+    fn from(wire: CatalogWire) -> Self {
+        match wire {
+            CatalogWire::Wide { models, api } => Catalog { models, api },
+            CatalogWire::Flat(models) => Catalog {
+                models,
+                api: BTreeMap::new(),
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CatalogEntry {
@@ -36,14 +76,15 @@ fn is_false(value: &bool) -> bool {
 
 /// Distill a full models.dev `api.json` into the compact catalog baked into
 /// the binary. Models without a usable `limit.context`/`limit.output` are
-/// skipped — a missing output cap must never read as "0 allowed".
+/// skipped — a missing output cap must never read as "0 allowed". Each kept
+/// namespace also records its `api` base URL when models.dev publishes one.
 pub fn distill(api_json: &str) -> Result<String, String> {
     let root: serde_json::Value =
         serde_json::from_str(api_json).map_err(|e| format!("api.json parse: {e}"))?;
     let providers = root
         .as_object()
         .ok_or_else(|| "api.json root is not an object".to_string())?;
-    let mut catalog = Catalog::new();
+    let mut catalog = Catalog::default();
     for (provider, pdata) in providers {
         let Some(models) = pdata.get("models").and_then(|m| m.as_object()) else {
             continue;
@@ -105,8 +146,17 @@ pub fn distill(api_json: &str) -> Result<String, String> {
             };
             entries.insert(id.clone(), entry);
         }
-        if !entries.is_empty() {
-            catalog.insert(provider.clone(), entries);
+        if entries.is_empty() {
+            continue;
+        }
+        catalog.models.insert(provider.clone(), entries);
+        if let Some(api) = pdata
+            .get("api")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|api| !api.is_empty())
+        {
+            catalog.api.insert(provider.clone(), api.to_string());
         }
     }
     serde_json::to_string(&catalog).map_err(|e| format!("catalog encode: {e}"))
@@ -117,34 +167,80 @@ pub fn normalize_model_id(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
 
-fn host_of(api_url: &str) -> String {
-    let rest = api_url.trim().split("://").nth(1).unwrap_or(api_url.trim());
-    rest.split('/')
+/// `(host, path)` of a base URL: host lowercased without port, path without
+/// scheme, query, fragment, or trailing slash.
+fn host_and_path(url: &str) -> (String, &str) {
+    let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority
+        .rsplit('@')
         .next()
         .unwrap_or("")
         .split(':')
         .next()
         .unwrap_or("")
-        .to_ascii_lowercase()
-}
-
-/// Candidate vendor namespaces, most specific first: api_url host mapping,
-/// then the profile's protocol-level provider field as a fallback.
-pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = Vec::new();
-    let host = host_of(api_url);
-    let path = api_url
-        .trim()
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(api_url.trim())
-        .split_once('/')
-        .map(|(_, path)| path)
-        .unwrap_or("")
+        .to_ascii_lowercase();
+    let path = path
         .split(['?', '#'])
         .next()
         .unwrap_or("")
         .trim_end_matches('/');
+    (host, path)
+}
+
+/// Local servers all claim the same loopback address (lmstudio, atomic-chat,
+/// lynkr, ...), so it identifies nothing.
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host.starts_with("127.")
+        || host == "::1"
+        || host.starts_with('[')
+}
+
+/// Namespaces whose models.dev `api` host equals `host`, best match first:
+/// those whose `api` path is a segment prefix of `path` ordered by prefix
+/// length, longest first (so `/api/coding/paas/v4` picks a coding-plan
+/// namespace over its `/api/paas/v4` sibling), then the remaining same-host
+/// namespaces alphabetically.
+fn derived_namespaces<'a>(catalog: &'a Catalog, host: &str, path: &str) -> Vec<&'a str> {
+    if host.is_empty() || is_loopback_host(host) {
+        return Vec::new();
+    }
+    let mut matches: Vec<(usize, &str)> = catalog
+        .api
+        .iter()
+        .filter_map(|(ns, api)| {
+            let (api_host, api_path) = host_and_path(api);
+            if api_host != host {
+                return None;
+            }
+            let is_prefix = api_path.is_empty()
+                || path == api_path
+                || path
+                    .strip_prefix(api_path)
+                    .is_some_and(|rest| rest.starts_with('/'));
+            Some((if is_prefix { api_path.len() + 1 } else { 0 }, ns.as_str()))
+        })
+        .collect();
+    matches.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    matches.into_iter().map(|(_, ns)| ns).collect()
+}
+
+/// Candidate vendor namespaces, most specific first: the hand-written host
+/// overrides below, then namespaces whose models.dev `api` host matches the
+/// Base URL (see [`derived_namespaces`]), then the profile's protocol-level
+/// provider field as a fallback.
+pub fn namespace_candidates<'a>(
+    catalog: &'a Catalog,
+    provider: &str,
+    api_url: &str,
+) -> Vec<&'a str> {
+    let mut out: Vec<&'a str> = Vec::new();
+    let (host, path) = host_and_path(api_url);
+    // Overrides: public URLs that differ from the namespace's `api` field
+    // (OpenCode's `/zen` routes), providers that publish no `api` at all, and
+    // renamed namespaces an older snapshot may still carry.
     let by_host: &[&'static str] = match host.as_str() {
         "opencode.ai" if path == "zen/go" || path.starts_with("zen/go/") => &["opencode-go"],
         "opencode.ai" if path == "zen" || path.starts_with("zen/") => &["opencode"],
@@ -167,6 +263,11 @@ pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> 
         _ => &[],
     };
     out.extend_from_slice(by_host);
+    for ns in derived_namespaces(catalog, &host, path) {
+        if !out.contains(&ns) {
+            out.push(ns);
+        }
+    }
     let by_provider = match provider.trim() {
         "anthropic" => Some("anthropic"),
         "openai" | "openai_responses" | "openai_codex" | "openai_chatgpt" => Some("openai"),
@@ -195,8 +296,8 @@ pub fn lookup<'a>(
         return None;
     }
     let tail = id.rsplit('/').next().unwrap_or(&id);
-    for ns in namespace_candidates(provider, api_url) {
-        if let Some(models) = catalog.get(ns) {
+    for ns in namespace_candidates(catalog, provider, api_url) {
+        if let Some(models) = catalog.models.get(ns) {
             if let Some(entry) = models.get(&id) {
                 return Some(entry);
             }
@@ -232,19 +333,23 @@ mod tests {
             assert!(lookup(&catalog, "openai", base, "kimi-k3-longer").is_none());
         }
         assert_eq!(
-            namespace_candidates("anthropic", "https://opencode.ai/zen/go/v1"),
+            namespace_candidates(&catalog, "anthropic", "https://opencode.ai/zen/go/v1"),
             vec!["opencode-go", "anthropic"]
         );
         assert_eq!(
-            namespace_candidates("openai", "https://opencode.ai/zen/v1"),
+            namespace_candidates(&catalog, "openai", "https://opencode.ai/zen/v1"),
             vec!["opencode", "openai"]
         );
         assert_eq!(
-            namespace_candidates("openai", "https://opencode.ai.evil.test/zen/go/v1"),
+            namespace_candidates(
+                &catalog,
+                "openai",
+                "https://opencode.ai.evil.test/zen/go/v1"
+            ),
             vec!["openai"]
         );
         assert_eq!(
-            namespace_candidates("openai", "https://opencode.ai/zen/gopher"),
+            namespace_candidates(&catalog, "openai", "https://opencode.ai/zen/gopher"),
             vec!["opencode", "openai"]
         );
     }
@@ -267,11 +372,19 @@ mod tests {
     #[test]
     fn kimi_code_host_accepts_the_renamed_and_legacy_namespaces() {
         assert_eq!(
-            namespace_candidates("openai", "https://api.kimi.com/coding/v1"),
+            namespace_candidates(
+                &Catalog::default(),
+                "openai",
+                "https://api.kimi.com/coding/v1"
+            ),
             vec!["kimi-code-plan-cn", "kimi-for-coding", "openai"]
         );
         assert_eq!(
-            namespace_candidates("openai", "https://api.kimi.ai/coding/v1"),
+            namespace_candidates(
+                &Catalog::default(),
+                "openai",
+                "https://api.kimi.ai/coding/v1"
+            ),
             vec!["kimi-code-plan-global", "kimi-for-coding", "openai"]
         );
         let renamed: Catalog = serde_json::from_str(
@@ -291,7 +404,11 @@ mod tests {
     #[test]
     fn commandcode_host_resolves_gateway_ids_in_its_own_namespace() {
         assert_eq!(
-            namespace_candidates("openai", "https://api.commandcode.ai/provider/v1"),
+            namespace_candidates(
+                &Catalog::default(),
+                "openai",
+                "https://api.commandcode.ai/provider/v1"
+            ),
             vec!["commandcode", "openai"]
         );
         let catalog: Catalog = serde_json::from_str(
@@ -322,7 +439,7 @@ mod tests {
     #[test]
     fn xai_host_maps_to_xai_namespace() {
         assert_eq!(
-            namespace_candidates("openai", "https://api.x.ai/v1"),
+            namespace_candidates(&Catalog::default(), "openai", "https://api.x.ai/v1"),
             vec!["xai", "openai"]
         );
     }
@@ -400,7 +517,7 @@ mod tests {
     #[test]
     fn distill_keeps_limits_and_flags() {
         let api = r#"{
-            "vendor": { "models": {
+            "vendor": { "api": "https://api.vendor.test/v1", "models": {
                 "m-full": {
                     "id": "m-full",
                     "limit": { "context": 1000000, "output": 128000, "input": 272000 },
@@ -414,11 +531,30 @@ mod tests {
                 "m-min": { "id": "m-min", "limit": { "context": 32000, "output": 4096 } },
                 "m-no-output": { "id": "m-no-output", "limit": { "context": 32000 } },
                 "m-zero": { "id": "m-zero", "limit": { "context": 0, "output": 4096 } }
+            } },
+            "empty": { "api": "https://api.empty.test/v1", "models": {
+                "m-no-output": { "id": "m-no-output", "limit": { "context": 32000 } }
+            } },
+            "no-api": { "models": {
+                "m-min": { "id": "m-min", "limit": { "context": 32000, "output": 4096 } }
             } }
         }"#;
         let distilled = distill(api).unwrap();
+        assert!(
+            distilled.starts_with(r#"{"models":{"#),
+            "snapshot uses the wide shape: {distilled}"
+        );
         let catalog: Catalog = serde_json::from_str(&distilled).unwrap();
-        let models = catalog.get("vendor").unwrap();
+        assert_eq!(
+            catalog.api,
+            BTreeMap::from([(
+                "vendor".to_string(),
+                "https://api.vendor.test/v1".to_string()
+            )]),
+            "api is recorded only for namespaces that kept models"
+        );
+        assert_eq!(catalog.models.len(), 2);
+        let models = catalog.models.get("vendor").unwrap();
         assert_eq!(models.len(), 2, "missing/zero limits are skipped");
         let full = &models["m-full"];
         assert_eq!(
@@ -433,5 +569,220 @@ mod tests {
         assert!(!min.v);
         assert!(min.e.is_empty());
         assert_eq!(min.p, None);
+    }
+
+    /// Namespaces with `api` base URLs the hand-written table knows nothing
+    /// about, including the shared-host pairs models.dev publishes.
+    fn derived_fixture() -> Catalog {
+        serde_json::from_str(
+            r#"{
+            "models": {
+                "newvendor": { "nv-1": { "c": 200000, "o": 32000, "e": ["low", "high"] } },
+                "zhipuai": { "glm-5": { "c": 204800, "o": 131072 } },
+                "zhipuai-coding-plan": { "glm-5": { "c": 1000000, "o": 131072 } },
+                "openai": { "gpt-5": { "c": 400000, "o": 128000 } },
+                "lmstudio": { "nv-1": { "c": 4096, "o": 1024 } },
+                "lynkr": { "nv-1": { "c": 8192, "o": 2048 } },
+                "umans": { "u-1": { "c": 1, "o": 1 } },
+                "umans-plan": { "u-1": { "c": 2, "o": 2 } }
+            },
+            "api": {
+                "newvendor": "https://API.NewVendor.test:443/v1/",
+                "zhipuai": "https://open.bigmodel.cn/api/paas/v4",
+                "zhipuai-coding-plan": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "lmstudio": "http://127.0.0.1:1234/v1",
+                "lynkr": "http://127.0.0.1:8081/v1",
+                "umans": "https://api.umans.test/v1",
+                "umans-plan": "https://api.umans.test/v1"
+            }
+        }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn wide_and_flat_snapshots_both_parse() {
+        let flat: Catalog =
+            serde_json::from_str(r#"{"vendor": {"m": {"c": 1000, "o": 100}}}"#).unwrap();
+        let wide: Catalog = serde_json::from_str(
+            r#"{"models": {"vendor": {"m": {"c": 1000, "o": 100}}},
+                "api": {"vendor": "https://api.vendor.test/v1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(flat.models, wide.models);
+        assert!(flat.api.is_empty());
+        assert_eq!(wide.api["vendor"], "https://api.vendor.test/v1");
+        let encoded = serde_json::to_string(&wide).unwrap();
+        assert_eq!(serde_json::from_str::<Catalog>(&encoded).unwrap(), wide);
+        // An old flat snapshot without `api` re-encodes as the wide shape.
+        assert_eq!(
+            serde_json::to_string(&flat).unwrap(),
+            r#"{"models":{"vendor":{"m":{"c":1000,"o":100}}}}"#
+        );
+    }
+
+    #[test]
+    fn host_only_the_derived_map_knows_resolves_its_namespace() {
+        let catalog = derived_fixture();
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://api.newvendor.test/v1"),
+            vec!["newvendor", "openai"]
+        );
+        // Port and path differences do not matter: the host alone selects it.
+        assert_eq!(
+            namespace_candidates(
+                &catalog,
+                "anthropic",
+                "https://api.newvendor.test/anthropic"
+            ),
+            vec!["newvendor", "anthropic"]
+        );
+        let entry = lookup(&catalog, "openai", "https://api.newvendor.test/v1", "nv-1")
+            .expect("nv-1 resolves via the derived host map");
+        assert_eq!(entry.c, 200_000);
+        assert_eq!(entry.e, ["low", "high"]);
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://api.unknown.test/v1"),
+            vec!["openai"]
+        );
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://sub.api.newvendor.test/v1"),
+            vec!["openai"]
+        );
+    }
+
+    #[test]
+    fn shared_host_prefers_the_longest_api_path_prefix() {
+        let catalog = derived_fixture();
+        // Hand table: open.bigmodel.cn -> zhipuai; the derived map then adds
+        // the coding-plan sibling, so both URLs list both namespaces.
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://open.bigmodel.cn/api/paas/v4"),
+            vec!["zhipuai", "zhipuai-coding-plan", "openai"]
+        );
+        // The derived step alone: the coding-plan path wins for its own URL
+        // and anything below it, and loses for the generic one.
+        assert_eq!(
+            derived_namespaces(&catalog, "open.bigmodel.cn", "api/coding/paas/v4"),
+            vec!["zhipuai-coding-plan", "zhipuai"]
+        );
+        assert_eq!(
+            derived_namespaces(&catalog, "open.bigmodel.cn", "api/coding/paas/v4/chat"),
+            vec!["zhipuai-coding-plan", "zhipuai"]
+        );
+        assert_eq!(
+            derived_namespaces(&catalog, "open.bigmodel.cn", "api/paas/v4"),
+            vec!["zhipuai", "zhipuai-coding-plan"]
+        );
+        // A prefix must be segment-aligned: `/api/paas/v4x` matches neither,
+        // so both fall back to alphabetical order.
+        assert_eq!(
+            derived_namespaces(&catalog, "open.bigmodel.cn", "api/paas/v4x"),
+            vec!["zhipuai", "zhipuai-coding-plan"]
+        );
+        // Identical `api` URLs stay deterministic (alphabetical).
+        assert_eq!(
+            derived_namespaces(&catalog, "api.umans.test", "v1"),
+            vec!["umans", "umans-plan"]
+        );
+        let entry = lookup(&catalog, "openai", "https://api.umans.test/v1", "u-1").unwrap();
+        assert_eq!(entry.c, 1);
+    }
+
+    #[test]
+    fn loopback_hosts_are_ignored() {
+        let catalog = derived_fixture();
+        for base in [
+            "http://127.0.0.1:1234/v1",
+            "http://localhost:1234/v1",
+            "http://app.localhost/v1",
+            "http://[::1]:8081/v1",
+        ] {
+            assert_eq!(
+                namespace_candidates(&catalog, "openai", base),
+                vec!["openai"],
+                "{base}"
+            );
+            assert!(lookup(&catalog, "openai", base, "nv-1").is_none(), "{base}");
+        }
+    }
+
+    #[test]
+    fn hand_written_table_wins_over_the_derived_map() {
+        let mut catalog = derived_fixture();
+        // models.dev's `api` for OpenCode is `/inference/openai/v1`, not the
+        // public `/zen` routes; the override still picks the Go namespace
+        // first, and a conflicting derived entry is only appended.
+        catalog.models.insert(
+            "opencode-go".to_string(),
+            BTreeMap::from([(
+                "kimi-k3".to_string(),
+                CatalogEntry {
+                    c: 1,
+                    o: 1,
+                    ..Default::default()
+                },
+            )]),
+        );
+        catalog.models.insert(
+            "opencode".to_string(),
+            BTreeMap::from([(
+                "kimi-k3".to_string(),
+                CatalogEntry {
+                    c: 2,
+                    o: 2,
+                    ..Default::default()
+                },
+            )]),
+        );
+        catalog.api.insert(
+            "opencode".to_string(),
+            "https://opencode.ai/inference/openai/v1".to_string(),
+        );
+        catalog.api.insert(
+            "opencode-go".to_string(),
+            "https://opencode.ai/inference/go/openai/v1".to_string(),
+        );
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://opencode.ai/zen/go/v1"),
+            vec!["opencode-go", "opencode", "openai"]
+        );
+        assert_eq!(
+            lookup(
+                &catalog,
+                "openai",
+                "https://opencode.ai/zen/go/v1",
+                "kimi-k3"
+            )
+            .unwrap()
+            .c,
+            1
+        );
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://opencode.ai/zen/v1"),
+            vec!["opencode", "opencode-go", "openai"]
+        );
+        // A derived entry that points a hand-written host elsewhere comes
+        // after the override.
+        catalog
+            .api
+            .insert("impostor".to_string(), "https://api.x.ai/v1".to_string());
+        assert_eq!(
+            namespace_candidates(&catalog, "openai", "https://api.x.ai/v1"),
+            vec!["xai", "impostor", "openai"]
+        );
+    }
+
+    #[test]
+    fn host_and_path_strips_scheme_port_credentials_and_query() {
+        assert_eq!(
+            host_and_path("https://user:pw@API.Example.test:8443/a/b/?x=1#f"),
+            ("api.example.test".to_string(), "a/b")
+        );
+        assert_eq!(
+            host_and_path("api.example.test"),
+            ("api.example.test".to_string(), "")
+        );
+        assert_eq!(host_and_path(""), (String::new(), ""));
     }
 }
