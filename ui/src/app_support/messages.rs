@@ -834,9 +834,14 @@ pub(crate) fn UserMessage(
     busy: ReadSignal<bool>,
     can_modify: bool,
     can_branch: Signal<bool>,
+    /// Quoting turns into a new conversation is available for this row.
+    can_excerpt: Signal<bool>,
+    /// Transcript row where a quote range was started, if any.
+    excerpt_start: Signal<Option<usize>>,
     on_copy: Callback<String>,
     on_edit: Callback<usize>,
     on_branch: Callback<usize>,
+    on_excerpt: Callback<usize>,
     on_file: Callback<ModalArtifact>,
 ) -> impl IntoView {
     let locale = use_locale();
@@ -937,6 +942,7 @@ pub(crate) fn UserMessage(
     .collect_view();
     view! {
         <div class="user-bubble"
+            class:excerpt-start=move || excerpt_start.get() == Some(ui_index)
             data-branch-ui-index=move || can_branch.get().then(|| ui_index.to_string())>
             {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
             {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
@@ -993,6 +999,18 @@ pub(crate) fn UserMessage(
                         title=move || t(locale.get(), "msg.branch")
                         on:click=move |_| on_branch.call(ui_index)
                     >{move || t(locale.get(), "msg.branch")}</button>
+                })}
+                {move || can_excerpt.get().then(|| {
+                    let selecting = move || excerpt_start.get().is_some();
+                    view! {
+                        <button
+                            type="button"
+                            class="msg-btn msg-excerpt"
+                            data-testid="turn-excerpt"
+                            title=move || t(locale.get(), if selecting() { "msg.excerpt_end_hint" } else { "msg.excerpt_start_hint" })
+                            on:click=move |_| on_excerpt.call(ui_index)
+                        >{move || t(locale.get(), if selecting() { "msg.excerpt_end" } else { "msg.excerpt_start" })}</button>
+                    }
                 })}
             </div>
         </div>

@@ -215,6 +215,23 @@ const HANDOFF_PROMPT: &str = "Return only the handoff note, in Markdown, using t
 /// Largest rendered transcript block a handoff request includes per turn.
 const HANDOFF_BLOCK_MAX_BYTES: usize = SUMMARY_TRANSCRIPT_TEXT_MAX_BYTES;
 
+/// Largest excerpt a quoted span of turns may hand to a new conversation's
+/// first message. Beyond this the middle is cut so the quote cannot consume
+/// the new session's window before the user has typed anything.
+pub const EXCERPT_MAX_BYTES: usize = 24 * 1024;
+/// Largest single user or assistant message inside an excerpt.
+const EXCERPT_MESSAGE_MAX_BYTES: usize = 8 * 1024;
+const EXCERPT_ARCHIVE_NOTE: &str = "the full conversation stays in the original session";
+
+/// A span of completed turns rendered as plain, quotable Markdown: user and
+/// assistant text only, no tool protocol, images, reasoning, or checkpoints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationExcerpt {
+    pub text: String,
+    /// True when a message or the excerpt as a whole was cut to fit.
+    pub truncated: bool,
+}
+
 /// Stands in for an image part when the target model cannot read images.
 pub const IMAGE_UNSUPPORTED_NOTE: &str =
     "[image omitted: the active model does not accept image input]";
@@ -1379,6 +1396,64 @@ impl ContextManager {
         }
         request.push(Message::user(HANDOFF_PROMPT));
         Ok(request)
+    }
+
+    /// Render `messages` (whole turns, oldest first) as a quotable excerpt for
+    /// the composer. Unlike the summary blocks this is read by a person first
+    /// and a model second, so it keeps only what the transcript showed: user
+    /// text and assistant answers. Tool calls, tool results, system prompts,
+    /// workflow completion notices and compaction checkpoints are dropped;
+    /// an image part becomes a short note. Errors when nothing quotable
+    /// remains.
+    pub fn render_excerpt(
+        messages: &[Message],
+        max_bytes: usize,
+    ) -> Result<ConversationExcerpt, String> {
+        let mut blocks = Vec::new();
+        let mut truncated = false;
+        for message in messages {
+            let label = match message.role {
+                Role::User if message.tool_name.is_none() => "User",
+                Role::Assistant => "Assistant",
+                _ => continue,
+            };
+            if Self::is_summary_checkpoint(message) {
+                continue;
+            }
+            let mut text = message.content.as_text().trim().to_string();
+            if matches!(&message.content, Content::Parts(parts) if parts.iter().any(|part| matches!(part, Part::Image { .. })))
+            {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str("[image omitted from the excerpt]");
+            }
+            if text.is_empty() {
+                continue;
+            }
+            if text.len() > EXCERPT_MESSAGE_MAX_BYTES {
+                truncated = true;
+                text = Self::bound_text_to_bytes(
+                    &text,
+                    EXCERPT_MESSAGE_MAX_BYTES,
+                    &format!("[... middle of this message omitted; {EXCERPT_ARCHIVE_NOTE} ...]"),
+                );
+            }
+            blocks.push(format!("{label}:\n{text}"));
+        }
+        if blocks.is_empty() {
+            return Err("The selected turns contain no text to quote.".into());
+        }
+        let mut text = blocks.join("\n\n");
+        if text.len() > max_bytes {
+            truncated = true;
+            text = Self::bound_text_to_bytes(
+                &text,
+                max_bytes,
+                &format!("[... middle of the excerpt omitted; {EXCERPT_ARCHIVE_NOTE} ...]"),
+            );
+        }
+        Ok(ConversationExcerpt { text, truncated })
     }
 
     fn summary_output_token_cap(&self) -> usize {
@@ -3481,6 +3556,102 @@ mod tests {
         );
         assert_eq!(request[4].content.as_text(), HANDOFF_PROMPT);
         assert_eq!(request.len(), 5);
+    }
+
+    #[test]
+    fn render_excerpt_keeps_only_user_and_assistant_text() {
+        let mut completion = Message::user("workflow finished");
+        completion.tool_name = Some("agent_workflow_completion".into());
+        let mut call_only = Message::assistant("");
+        call_only.tool_calls.push(ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: wisp_llm::FunctionCall {
+                name: "shell".into(),
+                arguments: "{\"cmd\":\"ls\"}".into(),
+            },
+        });
+        let mut image_turn = Message::user("Here is the plot");
+        image_turn.content = Content::Parts(vec![
+            Part::Text {
+                kind: "text".into(),
+                text: "Here is the plot".into(),
+            },
+            Part::Image {
+                kind: "image_url".into(),
+                image_url: wisp_llm::ImageUrl {
+                    url: "data:image/png;base64,AAAA".into(),
+                },
+            },
+        ]);
+        let messages = vec![
+            Message::system("You are Wisp."),
+            Message::user(format!(
+                "{COMPACTION_SUMMARY_PREFIX}\n\nObjective: earlier work."
+            )),
+            Message::user("  Which normalization fits counts? "),
+            call_only,
+            Message::tool("c1", "shell", "secret tool output"),
+            Message::assistant("Use TMM; it is robust to composition bias."),
+            completion,
+            image_turn,
+            Message::assistant("The plot shows two clusters."),
+        ];
+        let excerpt = ContextManager::render_excerpt(&messages, EXCERPT_MAX_BYTES).unwrap();
+        assert_eq!(
+            excerpt.text,
+            "User:\nWhich normalization fits counts?\n\n\
+             Assistant:\nUse TMM; it is robust to composition bias.\n\n\
+             User:\nHere is the plot\n[image omitted from the excerpt]\n\n\
+             Assistant:\nThe plot shows two clusters."
+        );
+        assert!(!excerpt.truncated);
+        assert!(!excerpt.text.contains("secret tool output"));
+        assert!(!excerpt.text.contains("workflow finished"));
+        assert!(!excerpt.text.contains("You are Wisp."));
+        assert!(!excerpt.text.contains("AAAA"));
+    }
+
+    #[test]
+    fn render_excerpt_bounds_long_messages_and_the_whole_excerpt() {
+        let long = "x".repeat(EXCERPT_MESSAGE_MAX_BYTES * 2);
+        let messages = vec![Message::user("q"), Message::assistant(long.clone())];
+        let excerpt = ContextManager::render_excerpt(&messages, EXCERPT_MAX_BYTES).unwrap();
+        assert!(excerpt.truncated);
+        assert!(excerpt.text.len() < long.len());
+        assert!(excerpt
+            .text
+            .contains("[... middle of this message omitted;"));
+
+        let many = (0..40)
+            .flat_map(|turn| {
+                [
+                    Message::user(format!("question {turn} {}", "u".repeat(600))),
+                    Message::assistant(format!("answer {turn} {}", "a".repeat(600))),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let excerpt = ContextManager::render_excerpt(&many, 4_000).unwrap();
+        assert!(excerpt.truncated);
+        assert!(excerpt.text.len() <= 4_000 + 64);
+        assert!(excerpt.text.starts_with("User:\nquestion 0"));
+        assert!(excerpt.text.contains("[... middle of the excerpt omitted;"));
+        assert!(excerpt.text.ends_with(&"a".repeat(600)));
+        assert!(excerpt.text.contains("answer 39"));
+    }
+
+    #[test]
+    fn render_excerpt_rejects_spans_without_quotable_text() {
+        let error = ContextManager::render_excerpt(
+            &[
+                Message::system("sys"),
+                Message::tool("c1", "shell", "ok"),
+                Message::user(format!("{COMPACTION_SUMMARY_PREFIX}\n\nfolded")),
+            ],
+            EXCERPT_MAX_BYTES,
+        )
+        .unwrap_err();
+        assert_eq!(error, "The selected turns contain no text to quote.");
     }
 
     #[test]

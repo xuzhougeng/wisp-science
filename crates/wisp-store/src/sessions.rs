@@ -2979,6 +2979,29 @@ impl Store {
         Ok(())
     }
 
+    /// Display title of one conversation as the sidebar shows it: the custom
+    /// title when set, else the first user message, else `None` for a frame
+    /// that does not exist or has no user turn yet.
+    pub async fn session_title(&self, frame_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.session_title(frame_id)).await;
+        }
+        let row = sqlx::query(
+            "SELECT f.title AS custom_title, \
+             (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' \
+              ORDER BY m.seq LIMIT 1) AS first_user \
+             FROM frames f WHERE f.id=?",
+        )
+        .bind(frame_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let title = session_display_title(row.try_get("custom_title")?, row.try_get("first_user")?);
+        Ok((!title.trim().is_empty()).then_some(title))
+    }
+
     pub async fn list_folders(&self, project_id: &str) -> Result<Vec<(String, String, i64)>> {
         if let Some(store) = self.route_project(project_id).await? {
             return Box::pin(store.list_folders(project_id)).await;

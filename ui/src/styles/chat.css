@@ -625,6 +625,7 @@
 .exploration-banner button.primary { background: var(--clay); color: var(--on-clay); border-color: var(--clay); }
 .exploration-banner button.danger-text { color: var(--err); }
 .exploration-banner.browser-offline,
+.exploration-banner.excerpt-selection,
 .exploration-banner.browser-extension-update {
   /* Match composer-inner / runtime strip: these sit in .composer, which is the
      full center pane, not the 920px chat column. */
@@ -790,6 +791,8 @@
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; box-sizing: border-box; line-height: 1.55; font-size: calc(var(--ui-font-size, 14px) + 0.5px); font-family: var(--font-ui); }
 .msg.user { align-self: flex-end; width: auto; max-width: min(78%, 760px); min-width: 0; }
 .msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; min-width: 0; max-width: 100%; }
+/* First turn of a quote range being chosen (see ExcerptSelection). */
+.msg.user .user-bubble.excerpt-start { outline: 2px solid var(--clay); outline-offset: 4px; border-radius: 12px; }
 .msg.user .body {
   background: var(--bg-panel); border: 0; padding: 10px 15px;
   border-radius: 18px 18px 6px 18px; box-shadow: inset 0 0 0 1px var(--border);

@@ -179,6 +179,25 @@ being generated) and leaves the usage panel open; a second Escape closes the
 panel. The button is unavailable while a turn is running and in ACP
 conversations.
 
+### Quote turns into a new conversation
+
+A stretch of one conversation can seed another without copying or
+summarizing it. **Quote to new chat** on a user turn starts a range and shows
+a banner naming that turn; **End quote here** on the same or a later user turn
+ends it (clicking an earlier turn swaps the two ends). Wisp renders the
+completed turns in between as plain `User:` / `Assistant:` text, without tool
+calls, tool output, images, reasoning, or compaction checkpoints, and opens a
+new conversation with that text staged as a composer quote labelled with the
+source conversation's title and turn range. You write the first message on
+top of it; the quote is sent as part of that message. Nothing changes in the
+original conversation, which stays in the sidebar and keeps its own history.
+
+Escape or **Cancel** on the banner abandons the selection; switching to
+another conversation drops it too. Very long spans are shortened in the
+middle and the status line says so. The action is available on completed
+turns of ordinary conversations, branches, and explorations, including while
+a later turn is running; ACP conversations do not offer it.
+
 ## Manual smoke checks
 
 - In a project with unread replies and a running conversation, verify that the

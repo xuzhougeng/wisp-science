@@ -249,6 +249,17 @@ pub(crate) mod tauri_args {
         }
         payload
     }
+    pub fn render_session_excerpt(
+        session_id: &str,
+        start_user_index: usize,
+        end_user_index: usize,
+    ) -> Value {
+        json!({
+            "id": session_id,
+            "startUserIndex": start_user_index,
+            "endUserIndex": end_user_index,
+        })
+    }
     pub fn start_exploration(
         source_frame_id: &str,
         turn_index: Option<usize>,
@@ -350,6 +361,12 @@ mod tauri_args_tests {
         assert_eq!(v["checkpointKind"], "before_user");
         assert!(v.get("session_id").is_none());
         assert!(v.get("user_index").is_none());
+
+        let v = tauri_args::render_session_excerpt("frame-1", 1, 3);
+        assert_eq!(v["id"], "frame-1");
+        assert_eq!(v["startUserIndex"], 1);
+        assert_eq!(v["endUserIndex"], 3);
+        assert!(v.get("start_user_index").is_none());
 
         let v = tauri_args::start_exploration("frame-1", Some(2), "Try A");
         assert_eq!(v["sourceFrameId"], "frame-1");

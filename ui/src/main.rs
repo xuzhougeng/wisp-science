@@ -2588,6 +2588,21 @@ fn App() -> impl IntoView {
     // carries ordinary text, but the agent now knows which workspace file a
     // "change this" request must edit.
     let composer_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
+    // Quote-range selection (first clicked user turn) for "Quote to new chat".
+    // Root-owned so the window-level Escape stack can cancel it, and dropped
+    // when the conversation it belongs to is no longer the active one.
+    let excerpt_selection = create_rw_signal::<Option<ExcerptSelection>>(None);
+    create_effect(move |_| {
+        let active = active_session.get();
+        let stale = excerpt_selection.with_untracked(|selection| {
+            selection
+                .as_ref()
+                .is_some_and(|selection| active.as_deref() != Some(selection.session_id.as_str()))
+        });
+        if stale {
+            excerpt_selection.set(None);
+        }
+    });
     let close_assistant = Callback::new(move |_: ()| {
         spawn_local(async move {
             let _ = invoke("close_research_assistant", JsValue::UNDEFINED).await;
@@ -5661,6 +5676,104 @@ fn App() -> impl IntoView {
                 }
             }
             turn_undo_busy.set(false);
+        });
+    });
+    // Quote a span of completed turns into a new conversation: one click on a
+    // user turn starts the range, a second click on the same or another user
+    // turn ends it. The source conversation is left untouched; the rendered
+    // excerpt becomes a composer quote of the new session, so the user writes
+    // their own first message on top of it.
+    let excerpt_message = Callback::new(move |ui_index: usize| {
+        if demo_mode.get_untracked() {
+            return;
+        }
+        let Some(sid) = active_session
+            .get_untracked()
+            .filter(|id| !id.is_empty())
+        else {
+            excerpt_selection.set(None);
+            return;
+        };
+        let Some(user_idx) = items.with_untracked(|list| user_message_index(list, ui_index)) else {
+            return;
+        };
+        let user_idx = user_idx
+            + transcript_pages.with_untracked(|pages| {
+                pages.get(&sid).map_or(0, |page| page.user_offset)
+            });
+        let start = match excerpt_selection.get_untracked() {
+            Some(selection) if selection.session_id == sid => selection,
+            _ => {
+                excerpt_selection.set(Some(ExcerptSelection {
+                    session_id: sid,
+                    ui_index,
+                    user_index: user_idx,
+                }));
+                return;
+            }
+        };
+        excerpt_selection.set(None);
+        let (start_idx, end_idx) = if start.user_index <= user_idx {
+            (start.user_index, user_idx)
+        } else {
+            (user_idx, start.user_index)
+        };
+        spawn_local(async move {
+            let args =
+                to_value(&tauri_args::render_session_excerpt(&sid, start_idx, end_idx)).unwrap();
+            let excerpt = match invoke_checked("render_session_excerpt", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<SessionExcerpt>(value) {
+                    Ok(excerpt) => excerpt,
+                    Err(_) => {
+                        let loc = locale.get_untracked();
+                        status.set(tf(loc, "excerpt.failed", &[("error", &t(loc, "err.unknown"))]));
+                        return;
+                    }
+                },
+                Err(error) => {
+                    let loc = locale.get_untracked();
+                    status.set(tf(
+                        loc,
+                        "excerpt.failed",
+                        &[("error", &localize_backend(loc, &js_error_text(error)))],
+                    ));
+                    return;
+                }
+            };
+            // The quote only has a home once the new frame exists; a failed
+            // session create leaves the source conversation on screen.
+            let id = match invoke_new_session().await {
+                Ok(id) => id,
+                Err(error) => {
+                    status.set(send_failed(locale.get_untracked(), &error));
+                    return;
+                }
+            };
+            restore_chat_session_scroll(&id);
+            replace_visible_transcript(
+                active_session.get_untracked(),
+                None,
+                Vec::new(),
+                items,
+                transcripts,
+                running,
+            );
+            active_session.set(Some(id));
+            attachments.set(vec![]);
+            composer_references.set(vec![]);
+            mcp_app_context.set(None);
+            feedback_context.set(None);
+            sel_artifact.set(0);
+            right_tab.set(RightTab::Artifacts);
+            let loc = locale.get_untracked();
+            composer_quotes.set(vec![excerpt_quote(&excerpt, loc)]);
+            status.set(if excerpt.truncated {
+                t(loc, "excerpt.truncated")
+            } else {
+                String::new()
+            });
+            refresh_session_history();
+            focus_composer();
         });
     });
     let branch_message = {
@@ -10691,6 +10804,14 @@ fn App() -> impl IntoView {
             return;
         }
 
+        // A quote-range selection is a transient mode the user just started:
+        // it closes before the panes underneath it.
+        if excerpt_selection.get().is_some() {
+            ev.prevent_default();
+            excerpt_selection.set(None);
+            return;
+        }
+
         // --- right pane ---
         // Close regardless of focus: mention/skill pickers already preventDefault
         // Escape locally, so they still win when open.
@@ -14082,6 +14203,20 @@ fn App() -> impl IntoView {
                                             && active_acp_agent_id.get().is_none()
                                             && !active_is_exploration.get()
                                     });
+                                    // Quoting only reads the transcript, so branches and
+                                    // explorations qualify; ACP transcripts have no rows to read.
+                                    let can_excerpt = Signal::derive(move || {
+                                        show_actions.get() && active_acp_agent_id.get().is_none()
+                                    });
+                                    let excerpt_start = Signal::derive(move || {
+                                        excerpt_selection
+                                            .get()
+                                            .filter(|selection| {
+                                                active_session.get().as_deref()
+                                                    == Some(selection.session_id.as_str())
+                                            })
+                                            .map(|selection| selection.ui_index)
+                                    });
                                     let show_explore = Signal::derive(move || {
                                         if model_view_active() {
                                             return false;
@@ -14160,7 +14295,7 @@ fn App() -> impl IntoView {
                                                     !model_view_active_untracked()
                                                         && active_acp_agent_id.get().is_none()
                                                         && !matches!(active_branch_state.get_untracked().as_deref(), Some("merged" | "orphaned")),
-                                                    can_branch, show_actions, can_undo, show_explore, can_explore, edit_message, branch_message, undo_message, explore_turn_index.unwrap_or_default(), start_exploration_from_turn, session_id,
+                                                    can_branch, can_excerpt, excerpt_start, show_actions, can_undo, show_explore, can_explore, edit_message, branch_message, excerpt_message, undo_message, explore_turn_index.unwrap_or_default(), start_exploration_from_turn, session_id,
                                                     request_turn_memory, request_session_review, respond_confirm, on_resume,
                                                     step_disclosure_state,
                                                     plan_mode_active, plan_compat, on_plan_decision,
@@ -14760,6 +14895,26 @@ fn App() -> impl IntoView {
                     }
                 })}
                 {move || {
+                    let selection = excerpt_selection.get()?;
+                    (active_session.get().as_deref() == Some(selection.session_id.as_str())).then(|| {
+                        let turn = (selection.user_index + 1).to_string();
+                        view! {
+                            <section class="exploration-banner excerpt-selection" data-testid="excerpt-selection-banner" role="status">
+                                <div class="exploration-banner-copy">
+                                    <span class="exploration-banner-eyebrow">{t(locale.get(), "excerpt.banner_eyebrow")}</span>
+                                    <strong>{t(locale.get(), "excerpt.banner_title")}</strong>
+                                    <span>{tf(locale.get(), "excerpt.banner_body", &[("n", &turn)])}</span>
+                                </div>
+                                <div class="exploration-banner-actions">
+                                    <button type="button"
+                                        on:click=move |_| excerpt_selection.set(None)
+                                    >{t(locale.get(), "excerpt.cancel")}</button>
+                                </div>
+                            </section>
+                        }
+                    })
+                }}
+                {move || {
                     let Some(notice) = browser_offline_notice.get() else {
                         return None;
                     };
@@ -15154,7 +15309,7 @@ fn App() -> impl IntoView {
                                         <span class="composer-attachment-icon">{compose_icon("chat")}</span>
                                         <span class="composer-attachment-copy">
                                             <span class="composer-attachment ready">{label}</span>
-                                            <span class="composer-attachment-meta">{move || source.clone().unwrap_or_else(|| t(locale.get(), "attachment.quote").into())}</span>
+                                            <span class="composer-attachment-meta">{move || source.as_deref().map_or_else(|| t(locale.get(), "attachment.quote"), |source| quote_source_label(source).to_string())}</span>
                                         </span>
                                         <button type="button" class="composer-attachment-remove"
                                             title=move || t(locale.get(), "composer.remove_attachment")
@@ -17858,7 +18013,7 @@ fn App() -> impl IntoView {
                                                             <span class="composer-attachment-icon">{compose_icon("chat")}</span>
                                                             <span class="composer-attachment-copy">
                                                                 <span class="composer-attachment ready">{label}</span>
-                                                                <span class="composer-attachment-meta">{move || source.clone().unwrap_or_else(|| t(locale.get(), "attachment.quote").into())}</span>
+                                                                <span class="composer-attachment-meta">{move || source.as_deref().map_or_else(|| t(locale.get(), "attachment.quote"), |source| quote_source_label(source).to_string())}</span>
                                                             </span>
                                                             <button type="button" class="composer-attachment-remove"
                                                                 title=move || t(locale.get(), "composer.remove_attachment")

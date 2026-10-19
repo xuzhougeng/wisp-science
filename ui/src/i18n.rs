@@ -3145,6 +3145,19 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "msg.edit") => Some("Rewind"),
         (Locale::En, "msg.branch") => Some("Branch"),
         (Locale::En, "msg.branch_to_new_chat") => Some("Branch to new conversation"),
+        (Locale::En, "msg.excerpt_start") => Some("Quote to new chat"),
+        (Locale::En, "msg.excerpt_start_hint") => Some("Start a new conversation with turns from here as quoted context"),
+        (Locale::En, "msg.excerpt_end") => Some("End quote here"),
+        (Locale::En, "msg.excerpt_end_hint") => Some("Quote through this turn and open a new conversation"),
+        (Locale::En, "excerpt.banner_eyebrow") => Some("Quote to new chat"),
+        (Locale::En, "excerpt.banner_title") => Some("Choose the last turn to quote"),
+        (Locale::En, "excerpt.banner_body") => Some("Quoting starts at turn {n}. Click “End quote here” on that turn or a later one; Esc cancels."),
+        (Locale::En, "excerpt.cancel") => Some("Cancel"),
+        (Locale::En, "excerpt.source") => Some("{title} · turns {start}–{end}"),
+        (Locale::En, "excerpt.source_single") => Some("{title} · turn {n}"),
+        (Locale::En, "excerpt.untitled") => Some("Conversation"),
+        (Locale::En, "excerpt.truncated") => Some("The quoted excerpt was shortened to fit."),
+        (Locale::En, "excerpt.failed") => Some("Could not quote these turns: {error}"),
         (Locale::En, "exploration.start") => Some("Start exploration"),
         (Locale::En, "exploration.history_unavailable") => Some("The selected response’s context is unavailable; it may have been compacted or rewound."),
         (Locale::En, "exploration.default_name") => Some("Exploration {n}"),
@@ -6322,6 +6335,19 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "msg.edit") => Some("回溯"),
         (Locale::Zh, "msg.branch") => Some("分支"),
         (Locale::Zh, "msg.branch_to_new_chat") => Some("分支到新会话"),
+        (Locale::Zh, "msg.excerpt_start") => Some("引用到新会话"),
+        (Locale::Zh, "msg.excerpt_start_hint") => Some("以从此轮开始的对话作为引用上下文，开启新会话"),
+        (Locale::Zh, "msg.excerpt_end") => Some("引用至此"),
+        (Locale::Zh, "msg.excerpt_end_hint") => Some("引用到此轮为止，并开启新会话"),
+        (Locale::Zh, "excerpt.banner_eyebrow") => Some("引用到新会话"),
+        (Locale::Zh, "excerpt.banner_title") => Some("选择要引用的最后一轮"),
+        (Locale::Zh, "excerpt.banner_body") => Some("引用从第 {n} 轮开始。在该轮或之后的某一轮点击“引用至此”；按 Esc 取消。"),
+        (Locale::Zh, "excerpt.cancel") => Some("取消"),
+        (Locale::Zh, "excerpt.source") => Some("{title} · 第 {start}–{end} 轮"),
+        (Locale::Zh, "excerpt.source_single") => Some("{title} · 第 {n} 轮"),
+        (Locale::Zh, "excerpt.untitled") => Some("会话"),
+        (Locale::Zh, "excerpt.truncated") => Some("引用内容过长，已截短。"),
+        (Locale::Zh, "excerpt.failed") => Some("无法引用这些对话轮次：{error}"),
         (Locale::Zh, "exploration.start") => Some("开始探索"),
         (Locale::Zh, "exploration.history_unavailable") => Some("所选回答的上下文已不可用，可能已被压缩或回溯。"),
         (Locale::Zh, "exploration.default_name") => Some("探索 {n}"),
@@ -7807,6 +7833,40 @@ mod queue_label_tests {
             assert_ne!(t(Locale::En, key), key);
             assert_ne!(t(Locale::Zh, key), key);
         }
+    }
+
+    #[test]
+    fn excerpt_labels_exist_in_both_locales() {
+        for key in [
+            "msg.excerpt_start",
+            "msg.excerpt_start_hint",
+            "msg.excerpt_end",
+            "msg.excerpt_end_hint",
+            "excerpt.banner_eyebrow",
+            "excerpt.banner_title",
+            "excerpt.banner_body",
+            "excerpt.cancel",
+            "excerpt.source",
+            "excerpt.source_single",
+            "excerpt.untitled",
+            "excerpt.truncated",
+            "excerpt.failed",
+        ] {
+            assert_ne!(t(Locale::En, key), key);
+            assert_ne!(t(Locale::Zh, key), key);
+        }
+        assert_eq!(
+            tf(
+                Locale::En,
+                "excerpt.source",
+                &[("title", "QC"), ("start", "2"), ("end", "4")]
+            ),
+            "QC · turns 2–4"
+        );
+        assert_eq!(
+            tf(Locale::Zh, "excerpt.source_single", &[("title", "QC"), ("n", "2")]),
+            "QC · 第 2 轮"
+        );
     }
 
     #[test]

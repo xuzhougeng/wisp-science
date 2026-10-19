@@ -3100,6 +3100,89 @@ mod context_epoch_tests {
             .any(wisp_core::ContextManager::is_summary_checkpoint));
     }
 
+    #[tokio::test]
+    async fn visual_turn_range_messages_reads_each_turn_from_its_anchor_epoch() {
+        let store = store_with_frame().await;
+        // Twelve long turns overflow a 10k window, so the compaction below
+        // folds the early turns into epoch 1 and copies only the kept tail.
+        let mut ctx = seeded_context(&store, long_turns(12), 10_000).await;
+        let mut event_seq = 1i64;
+        // system + (user, assistant) * 12 → user seqs 2,4,…,24
+        for index in 0..12 {
+            let seq = 2 + 2 * index as i64;
+            persist_visual_turn(&store, &mut event_seq, seq, &format!("q{index}")).await;
+        }
+        ctx.compact(
+            &SummaryProvider("Objective\nkeep going"),
+            &archive("excerpt.json"),
+        )
+        .await
+        .unwrap();
+        persist_compaction_epoch(&store, "f", &ctx, "manual", true)
+            .await
+            .unwrap();
+        assert_eq!(store.frame_head_epoch("f").await.unwrap(), 1);
+
+        let middle = crate::session_commands::visual_turn_range_messages(&store, "f", 1, 2)
+            .await
+            .unwrap();
+        let texts = middle
+            .iter()
+            .map(|m| {
+                m.content
+                    .as_text()
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            texts,
+            vec!["question 1", "answer 1", "question 2", "answer 2"]
+        );
+        assert!(!middle
+            .iter()
+            .any(wisp_core::ContextManager::is_summary_checkpoint));
+
+        // The last turn runs to the end of its epoch; the kept-tail copies in
+        // the compacted epoch are not read twice.
+        let tail = crate::session_commands::visual_turn_range_messages(&store, "f", 11, 11)
+            .await
+            .unwrap();
+        assert_eq!(tail.len(), 2);
+        assert!(tail[0].content.as_text().starts_with("question 11"));
+
+        let error = crate::session_commands::visual_turn_range_messages(&store, "f", 11, 13)
+            .await
+            .unwrap_err();
+        assert_eq!(error, "The selected turns are not available.");
+        assert_eq!(
+            crate::session_commands::visual_turn_range_messages(&store, "f", 2, 1)
+                .await
+                .unwrap_err(),
+            "Invalid excerpt range."
+        );
+    }
+
+    #[tokio::test]
+    async fn visual_turn_range_messages_falls_back_to_row_indexes_without_user_events() {
+        let store = store_with_frame().await;
+        let _ctx = seeded_context(&store, long_turns(3), 10_000).await;
+        let rows = crate::session_commands::visual_turn_range_messages(&store, "f", 1, 1)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].content.as_text().starts_with("question 1"));
+        assert!(rows[1].content.as_text().starts_with("answer 1"));
+        assert_eq!(
+            crate::session_commands::visual_turn_range_messages(&store, "f", 7, 8)
+                .await
+                .unwrap_err(),
+            "The selected turns are not available."
+        );
+    }
+
     #[test]
     fn head_keep_seq_maps_row_counts_onto_durable_seqs() {
         let rows = vec![

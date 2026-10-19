@@ -2679,12 +2679,15 @@ pub(crate) fn render_item(
     compact_assistant: bool,
     can_modify: bool,
     can_branch: Signal<bool>,
+    can_excerpt: Signal<bool>,
+    excerpt_start: Signal<Option<usize>>,
     show_actions: Signal<bool>,
     can_undo: Signal<bool>,
     show_explore: Signal<bool>,
     can_explore: Signal<bool>,
     on_edit: impl Fn(usize) + Clone + 'static,
     on_branch: impl Fn(usize) + Clone + 'static,
+    on_excerpt: Callback<usize>,
     on_undo: Callback<usize>,
     explore_turn_index: usize,
     on_explore: Callback<usize>,
@@ -2712,9 +2715,12 @@ pub(crate) fn render_item(
                 busy=busy
                 can_modify=can_modify
                 can_branch=can_branch
+                can_excerpt=can_excerpt
+                excerpt_start=excerpt_start
                 on_copy=Callback::new(copy_text)
                 on_edit=Callback::new(on_edit)
                 on_branch=Callback::new(on_branch)
+                on_excerpt=on_excerpt
                 on_file=on_file
             />
         }

@@ -269,9 +269,58 @@ mod start_user_turn_tests {
         selection_targets_center_file, start_user_turn, trailing_queue_start, ComposerQuote,
         ComposerReferenceChip,
     };
-    use crate::dto::{AppContextNotice, ChatItem, ContextUsage, PlanCard, ReviewTransitionPhase};
+    use super::super::{excerpt_quote, quote_source_label, EXCERPT_SOURCE_PREFIX};
+    use crate::dto::{
+        AppContextNotice, ChatItem, ContextUsage, PlanCard, ReviewTransitionPhase, SessionExcerpt,
+    };
+    use crate::i18n::Locale;
     use leptos::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn excerpt_quotes_name_the_conversation_and_stay_out_of_the_edit_path() {
+        let excerpt = SessionExcerpt {
+            session_id: "s-1".into(),
+            title: "  counts.csv  ".into(),
+            start_user_index: 2,
+            end_user_index: 4,
+            text: "User:\nq\n\nAssistant:\na\n".into(),
+            truncated: false,
+        };
+        let quote = excerpt_quote(&excerpt, Locale::En);
+        assert_eq!(
+            quote.source.as_deref(),
+            Some("conversation:counts.csv · turns 3–5")
+        );
+        // A file-like title must not turn the quote into an editable file.
+        assert_eq!(quote.workspace_source(), None);
+        assert_eq!(
+            quote_source_label(quote.source.as_deref().unwrap()),
+            "counts.csv · turns 3–5"
+        );
+        assert_eq!(quote_source_label("notes.md"), "notes.md");
+        let message = message_with_quotes("continue from here", &[quote]);
+        assert_eq!(
+            message,
+            "Quoted turns from an earlier conversation `counts.csv · turns 3–5`:\n\
+             > User:\n> q\n> \n> Assistant:\n> a\n\ncontinue from here"
+        );
+        assert!(!message.contains("AI source-edit instruction"));
+
+        let single = excerpt_quote(
+            &SessionExcerpt {
+                title: String::new(),
+                start_user_index: 0,
+                end_user_index: 0,
+                ..excerpt
+            },
+            Locale::Zh,
+        );
+        assert_eq!(
+            single.source.as_deref(),
+            Some(&*format!("{EXCERPT_SOURCE_PREFIX}会话 · 第 1 轮"))
+        );
+    }
 
     #[test]
     fn dismiss_follow_up_questions_removes_only_that_session() {

@@ -2078,6 +2078,36 @@ async fn session_pages_are_stable_when_timestamps_match() {
 }
 
 #[tokio::test]
+async fn session_title_prefers_the_custom_title_over_the_first_user_turn() {
+    let tmp = std::env::temp_dir().join(format!("wisp_title_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    assert_eq!(store.session_title("f").await.unwrap(), None);
+    assert_eq!(store.session_title("missing").await.unwrap(), None);
+
+    store
+        .append_message("f", 1, &Message::system("sys"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 2, &Message::user("Normalize the count matrix"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_title("f").await.unwrap().as_deref(),
+        Some("Normalize the count matrix")
+    );
+
+    store.rename_session("f", "p", "  QC notes ").await.unwrap();
+    assert_eq!(
+        store.session_title("f").await.unwrap().as_deref(),
+        Some("QC notes")
+    );
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn branched_from_survives_listing() {
     let tmp = std::env::temp_dir().join(format!("wisp_branched_{}.sqlite", uuid::Uuid::new_v4()));
     let store = Store::open(&tmp).await.unwrap();

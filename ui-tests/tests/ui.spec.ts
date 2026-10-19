@@ -4998,6 +4998,61 @@ test("branch on an earlier user message opens a new session from that point", as
   });
 });
 
+test("quote a range of turns into a new conversation as composer context", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("first idea");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await composer(page).fill("second idea");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator(".msg.user", { hasText: "second idea" })).toBeVisible();
+  const sourceId = (await lastInvokeArgs(page, "send_message"))!.sessionId;
+
+  const firstUser = page.locator(".msg.user", { hasText: "first idea" });
+  const secondUser = page.locator(".msg.user", { hasText: "second idea" });
+  const banner = page.getByTestId("excerpt-selection-banner");
+
+  // Escape pressed right after starting the range cancels only the selection.
+  await firstUser.getByRole("button", { name: "Quote to new chat" }).click();
+  await expect(banner).toBeVisible();
+  await expect(firstUser.locator(".user-bubble")).toHaveClass(/excerpt-start/);
+  await expect(secondUser.getByRole("button", { name: "End quote here" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(banner).toHaveCount(0);
+  await expect(firstUser.locator(".user-bubble")).not.toHaveClass(/excerpt-start/);
+  await expect(secondUser).toBeVisible();
+  expect(await lastInvokeArgs(page, "render_session_excerpt")).toBeNull();
+
+  // Start, then end on a later turn: the excerpt is rendered from the source
+  // and a fresh conversation opens with it staged as a composer quote.
+  await firstUser.getByRole("button", { name: "Quote to new chat" }).click();
+  await secondUser.getByRole("button", { name: "End quote here" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "render_session_excerpt")).toMatchObject({
+    id: sourceId,
+    startUserIndex: 0,
+    endUserIndex: 1,
+  });
+  await expect(banner).toHaveCount(0);
+  await expect(page.locator(".msg.user", { hasText: "second idea" })).toHaveCount(0);
+  const quote = page.locator(".composer-reference-card.quote");
+  await expect(quote).toContainText("Mock conversation · turns 1–2");
+  await expect(composer(page)).toHaveValue("");
+
+  await composer(page).fill("Continue from this discussion");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(async () => (await lastInvokeArgs(page, "send_message"))?.message ?? "")
+    .toContain("Continue from this discussion");
+  const sent = await lastInvokeArgs(page, "send_message");
+  expect(sent.sessionId).toMatch(/^s-/);
+  expect(sent.sessionId).not.toBe(sourceId);
+  expect(sent.message).toContain(
+    "Quoted turns from an earlier conversation `Mock conversation · turns 1–2`:",
+  );
+  expect(sent.message).toContain("> User:\n> first idea");
+  expect(sent.message).not.toContain("AI source-edit instruction");
+  await expect(quote).toHaveCount(0);
+});
+
 for (const branchFrom of ["assistant", "user"] as const) {
   test(`historical message actions work during a running turn (${branchFrom} branch)`, async ({ page }) => {
     await enterApp(page);

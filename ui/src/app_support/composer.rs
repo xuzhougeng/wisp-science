@@ -96,6 +96,53 @@ pub(crate) struct ComposerQuote {
     pub(crate) source: Option<String>,
 }
 
+/// Source prefix of a quote that holds turns of an earlier conversation. It
+/// keeps such a quote out of the workspace-file edit path, whatever the
+/// conversation was titled.
+pub(crate) const EXCERPT_SOURCE_PREFIX: &str = "conversation:";
+
+/// Range selection for quoting turns into a new conversation: the first
+/// clicked user turn, remembered until a second click or Escape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExcerptSelection {
+    pub(crate) session_id: String,
+    /// Transcript row of the first turn, for highlighting.
+    pub(crate) ui_index: usize,
+    /// Absolute visual user index (history paging offset applied).
+    pub(crate) user_index: usize,
+}
+
+/// Composer quote for a rendered excerpt. The source names the conversation
+/// and the 1-based turn range the way the sidebar and transcript count them.
+pub(crate) fn excerpt_quote(excerpt: &SessionExcerpt, locale: Locale) -> ComposerQuote {
+    let title = excerpt.title.trim();
+    let title = if title.is_empty() {
+        t(locale, "excerpt.untitled")
+    } else {
+        title.to_string()
+    };
+    let start = (excerpt.start_user_index + 1).to_string();
+    let end = (excerpt.end_user_index + 1).to_string();
+    let label = if excerpt.start_user_index == excerpt.end_user_index {
+        tf(locale, "excerpt.source_single", &[("title", &title), ("n", &start)])
+    } else {
+        tf(
+            locale,
+            "excerpt.source",
+            &[("title", &title), ("start", &start), ("end", &end)],
+        )
+    };
+    ComposerQuote::from_selection(
+        excerpt.text.trim(),
+        Some(format!("{EXCERPT_SOURCE_PREFIX}{label}")),
+    )
+}
+
+/// Chip caption for a quote source: an excerpt source drops its prefix.
+pub(crate) fn quote_source_label(source: &str) -> &str {
+    source.strip_prefix(EXCERPT_SOURCE_PREFIX).unwrap_or(source)
+}
+
 impl ComposerQuote {
     pub(crate) fn plain(text: impl Into<String>) -> Self {
         Self {
@@ -115,6 +162,7 @@ impl ComposerQuote {
         self.source.as_deref().filter(|source| {
             !source.starts_with("artifact:")
                 && !source.starts_with("artifact-version:")
+                && !source.starts_with(EXCERPT_SOURCE_PREFIX)
                 && remote_file_path(source).is_none()
                 && matches!(
                     file_kind(source),
@@ -507,13 +555,18 @@ fn message_with_quotes_inner(
     let mut out = String::new();
     for quote in quotes {
         if let Some(source) = quote.source.as_deref() {
-            let source = prompt_safe_source(source);
-            if quote.workspace_source().is_some() {
-                out.push_str("Selected excerpt from workspace file `");
+            if let Some(label) = source.strip_prefix(EXCERPT_SOURCE_PREFIX) {
+                out.push_str("Quoted turns from an earlier conversation `");
+                out.push_str(&prompt_safe_source(label));
             } else {
-                out.push_str("Selected excerpt from reference `");
+                let source = prompt_safe_source(source);
+                if quote.workspace_source().is_some() {
+                    out.push_str("Selected excerpt from workspace file `");
+                } else {
+                    out.push_str("Selected excerpt from reference `");
+                }
+                out.push_str(&source);
             }
-            out.push_str(&source);
             out.push_str("`:\n");
         }
         for line in quote.text.trim().lines() {

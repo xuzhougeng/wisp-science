@@ -193,6 +193,32 @@ fn restored_acp_session_state_contract() {
     assert_eq!(ui.modes.unwrap()["availableModes"][0]["id"], "plan");
 }
 
+#[test]
+fn session_excerpt_keeps_turn_range_and_defaults_truncated() {
+    let excerpt = wisp_dto::SessionExcerpt {
+        session_id: "frame-1".into(),
+        title: "QC notes".into(),
+        start_user_index: 2,
+        end_user_index: 4,
+        text: "User:\nq\n\nAssistant:\na".into(),
+        truncated: true,
+    };
+    let wire = serde_json::to_value(&excerpt).unwrap();
+    assert_eq!(wire["session_id"], "frame-1");
+    assert_eq!(wire["start_user_index"], 2);
+    assert_eq!(wire["end_user_index"], 4);
+    assert_eq!(wire["truncated"], true);
+    let decoded: wisp_dto::SessionExcerpt = roundtrip(&excerpt);
+    assert_eq!(decoded, excerpt);
+    assert_eq!(decoded.turn_count(), 3);
+    let legacy: wisp_dto::SessionExcerpt = serde_json::from_value(json!({
+        "session_id": "frame-1", "title": "", "start_user_index": 0,
+        "end_user_index": 0, "text": "User:\nq"
+    }))
+    .unwrap();
+    assert!(!legacy.truncated);
+}
+
 fn roundtrip<T: serde::Serialize, D: serde::de::DeserializeOwned>(value: &T) -> D {
     let json = serde_json::to_value(value).expect("backend value must serialize");
     serde_json::from_value(json).expect("UI DTO must accept the backend payload")

@@ -5799,6 +5799,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return "research-assistant";
           case "close_research_assistant":
             return null;
+          case "render_session_excerpt": {
+            const start = Number(arg("startUserIndex") ?? 0);
+            const end = Number(arg("endUserIndex") ?? start);
+            if (start > end) throw new Error("Invalid excerpt range.");
+            return {
+              session_id: String(arg("id") ?? ""),
+              title: "Mock conversation",
+              start_user_index: start,
+              end_user_index: end,
+              text: "User:\nfirst idea\n\nAssistant:\nHello from mock wisp-science.\n\nUser:\nsecond idea\n\nAssistant:\nHello from mock wisp-science.",
+              truncated: false,
+            };
+          }
           case "branch_session": {
             const source = String(arg("sessionId") ?? "");
             const sourceSession = mockSessions.find((session) => session.id === source);

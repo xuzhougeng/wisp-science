@@ -372,6 +372,136 @@ pub(super) async fn generate_session_handoff(
     Ok(summary.to_string())
 }
 
+/// Render completed visual turns `start_user_index..=end_user_index` of a
+/// conversation as a quotable excerpt for a new conversation's composer. The
+/// source conversation is only read. Unlike a handoff this needs no model
+/// call, so it also works while a later turn of the source is running: only
+/// finished turns are offered by the UI.
+#[tauri::command]
+pub(super) async fn render_session_excerpt(
+    state: State<'_, AppState>,
+    id: String,
+    start_user_index: usize,
+    end_user_index: usize,
+) -> Result<wisp_dto::SessionExcerpt, String> {
+    let frame_id = id.trim().to_string();
+    if frame_id.is_empty() {
+        return Err("No session to quote from.".into());
+    }
+    if start_user_index > end_user_index {
+        return Err("Invalid excerpt range.".into());
+    }
+    if state
+        .store
+        .get_acp_session(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("ACP conversations cannot be quoted into a new conversation.".into());
+    }
+    let runtime = state.sessions.lock().await.get(&frame_id).cloned();
+    if let Some(runtime) = runtime.as_deref() {
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    let messages =
+        visual_turn_range_messages(&state.store, &frame_id, start_user_index, end_user_index)
+            .await?;
+    let excerpt = wisp_core::ContextManager::render_excerpt(
+        &messages,
+        wisp_core::context::EXCERPT_MAX_BYTES,
+    )?;
+    let title = state
+        .store
+        .session_title(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    Ok(wisp_dto::SessionExcerpt {
+        session_id: frame_id,
+        title,
+        start_user_index,
+        end_user_index,
+        text: excerpt.text,
+        truncated: excerpt.truncated,
+    })
+}
+
+/// Model-context rows of the visual turns `start..=end`, oldest first. Each
+/// turn is read from the epoch its User event anchors to, so a compaction
+/// between two turns neither hides the earlier turn nor duplicates the kept
+/// tail copied into the newer epoch. Sessions without User events (legacy
+/// transcripts) fall back to epoch-0 row indexes. Errors when the range runs
+/// past the completed turns.
+pub(super) async fn visual_turn_range_messages(
+    store: &Store,
+    frame_id: &str,
+    start: usize,
+    end: usize,
+) -> Result<Vec<wisp_llm::Message>, String> {
+    const UNAVAILABLE: &str = "The selected turns are not available.";
+    if start > end {
+        return Err("Invalid excerpt range.".into());
+    }
+    let first_anchor = store
+        .visual_turn_anchor(frame_id, start)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let Some(mut anchor) = first_anchor else {
+        // Legacy transcript: no persisted User events to anchor on.
+        let rows = store
+            .load_messages_in_epoch(frame_id, 0)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let msgs = rows
+            .into_iter()
+            .map(|(_, message)| message)
+            .collect::<Vec<_>>();
+        let from = user_message_start(&msgs, start);
+        let to = user_message_start(&msgs, end.saturating_add(1));
+        if from >= msgs.len() {
+            return Err(UNAVAILABLE.into());
+        }
+        return Ok(msgs[from..to].to_vec());
+    };
+    let mut epochs: HashMap<i64, Vec<(i64, wisp_llm::Message)>> = HashMap::new();
+    let mut out = Vec::new();
+    for user_index in start..=end {
+        let next = store
+            .visual_turn_anchor(frame_id, user_index.saturating_add(1))
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let epoch = store
+            .resolve_message_epoch(frame_id, anchor)
+            .await
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or(0);
+        if !epochs.contains_key(&epoch) {
+            let rows = store
+                .load_messages_in_epoch(frame_id, epoch)
+                .await
+                .map_err(|e| format!("{e}"))?;
+            epochs.insert(epoch, rows);
+        }
+        let end_seq = next.map_or(i64::MAX, |seq| seq - 1);
+        out.extend(
+            epochs[&epoch]
+                .iter()
+                .filter(|(seq, _)| *seq >= anchor && *seq <= end_seq)
+                .map(|(_, message)| message.clone()),
+        );
+        match next {
+            Some(seq) if user_index < end => anchor = seq,
+            None if user_index < end => return Err(UNAVAILABLE.into()),
+            _ => {}
+        }
+    }
+    if out.is_empty() {
+        return Err(UNAVAILABLE.into());
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub(super) async fn merge_session_branch_summary(
     state: State<'_, AppState>,
