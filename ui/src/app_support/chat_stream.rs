@@ -318,7 +318,7 @@ mod start_user_turn_tests {
         );
         assert_eq!(
             single.source.as_deref(),
-            Some(&*format!("{EXCERPT_SOURCE_PREFIX}会话 · 第 1 轮"))
+            Some(&*format!("{EXCERPT_SOURCE_PREFIX}未命名会话 · 第 1 轮"))
         );
     }
 
