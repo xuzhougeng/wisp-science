@@ -446,6 +446,11 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .compact-progress-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: compact-progress-pulse 1s ease-in-out infinite; }
 @keyframes compact-progress-pulse { 50% { opacity: .3; transform: scale(.7); } }
 @media (prefers-reduced-motion: reduce) { .compact-progress-dot { animation: none; } }
+.handoff-overlay { z-index: 140; animation: none; }
+.handoff-modal { width: min(680px, 100%); max-width: min(680px, 100%); }
+.handoff-field { display: grid; gap: 6px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.handoff-instruction { min-height: 56px; }
+.handoff-draft { min-height: 240px; max-height: 50vh; font-family: var(--font-mono); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 .context-compaction-flag {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.35;

@@ -1464,6 +1464,131 @@ pub(crate) fn CompactOverlay(
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct HandoffOverlayState {
+    pub(crate) locale: RwSignal<Locale>,
+    /// Session the note is generated from; `None` keeps the dialog closed.
+    pub(crate) dialog: RwSignal<Option<String>>,
+    /// Editable note that becomes the first message of the new session.
+    pub(crate) draft: RwSignal<String>,
+    pub(crate) instruction: RwSignal<String>,
+    pub(crate) busy: RwSignal<bool>,
+    pub(crate) error: RwSignal<Option<String>>,
+}
+
+/// Handoff from the context usage nudge (#1575): the current context is
+/// summarized into a note the user reviews and edits, then starts a new
+/// session with. Generation is read-only, so the dialog can be dismissed at
+/// any time; the parent (usage panel) stays open underneath.
+#[component]
+pub(crate) fn HandoffOverlay(
+    state: HandoffOverlayState,
+    on_generate: Callback<String>,
+    on_start: Callback<(String, String)>,
+    on_close: Callback<()>,
+) -> impl IntoView {
+    let HandoffOverlayState {
+        locale,
+        dialog,
+        draft,
+        instruction,
+        busy,
+        error,
+    } = state;
+    view! {
+        {move || dialog.get().map(|frame_id| {
+            let generate_id = frame_id.clone();
+            let start_id = frame_id.clone();
+            view! {
+                <div class="overlay handoff-overlay" data-testid="handoff-overlay">
+                    <div
+                        class="modal compact-modal handoff-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="handoff-title"
+                        aria-busy=move || busy.get().to_string()
+                        data-testid="handoff-modal"
+                    >
+                        <div class="ps-head">
+                            <div>
+                                <h2 id="handoff-title">{move || t(locale.get(), "handoff.title")}</h2>
+                                <p class="compact-modal-subtitle">{move || t(locale.get(), "handoff.subtitle")}</p>
+                            </div>
+                            <button
+                                type="button"
+                                class="ps-close"
+                                data-testid="handoff-close"
+                                title=move || t(locale.get(), "handoff.close")
+                                aria-label=move || t(locale.get(), "handoff.close")
+                                on:click=move |_| on_close.call(())
+                            >
+                                {compose_icon("close")}
+                            </button>
+                        </div>
+                        <label for="handoff-instruction" class="compact-instruction-field handoff-field">
+                            {move || t(locale.get(), "handoff.instruction_label")}
+                            <textarea
+                                id="handoff-instruction"
+                                class="compact-instruction handoff-instruction"
+                                data-testid="handoff-instruction"
+                                rows="2"
+                                placeholder=move || t(locale.get(), "handoff.instruction_placeholder")
+                                prop:value=move || instruction.get()
+                                disabled=move || busy.get()
+                                on:input=move |ev| instruction.set(event_target_value(&ev))
+                            ></textarea>
+                        </label>
+                        {move || busy.get().then(|| view! {
+                            <div class="compact-progress" data-testid="handoff-progress" role="status" aria-live="polite">
+                                <span class="compact-progress-dot" aria-hidden="true"></span>
+                                <span>{move || t(locale.get(), "handoff.generating")}</span>
+                            </div>
+                        })}
+                        {move || error.get().map(|message| view! {
+                            <div class="context-recovery-error" data-testid="handoff-error" role="alert">{message}</div>
+                        })}
+                        <label for="handoff-draft" class="compact-instruction-field handoff-field">
+                            {move || t(locale.get(), "handoff.draft_label")}
+                            <textarea
+                                id="handoff-draft"
+                                class="compact-instruction handoff-draft"
+                                data-testid="handoff-draft"
+                                rows="14"
+                                placeholder=move || t(locale.get(), "handoff.draft_placeholder")
+                                prop:value=move || draft.get()
+                                disabled=move || busy.get()
+                                on:input=move |ev| draft.set(event_target_value(&ev))
+                            ></textarea>
+                        </label>
+                        <div class="row">
+                            <button type="button" data-testid="handoff-cancel" on:click=move |_| on_close.call(())>
+                                {move || t(locale.get(), "handoff.cancel")}
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="handoff-regenerate"
+                                disabled=move || busy.get()
+                                on:click=move |_| on_generate.call(generate_id.clone())
+                            >
+                                {move || t(locale.get(), "handoff.regenerate")}
+                            </button>
+                            <button
+                                type="button"
+                                class="primary"
+                                data-testid="handoff-start"
+                                disabled=move || busy.get() || draft.with(|text| text.trim().is_empty())
+                                on:click=move |_| on_start.call((start_id.clone(), draft.get_untracked()))
+                            >
+                                {move || t(locale.get(), "handoff.start")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        })}
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct CompactIdlePromptOverlayState {
     pub(crate) locale: RwSignal<Locale>,
     pub(crate) prompt: RwSignal<Option<(String, u64)>>,

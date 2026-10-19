@@ -2889,6 +2889,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "context_usage.nudge") => Some("Window is almost full"),
         (Locale::En, "context_usage.nudge_compact") => Some("Compact"),
         (Locale::En, "context_usage.nudge_new_session") => Some("New session"),
+        (Locale::En, "context_usage.nudge_handoff") => Some("Handoff summary"),
         (Locale::En, "context_usage.epoch_line") => {
             Some("Epoch {epoch} · system + checkpoint + {turns} kept turns")
         }
@@ -2926,6 +2927,17 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "compact.cancel") => Some("Cancel"),
         (Locale::En, "compact.close") => Some("Close compaction dialog"),
         (Locale::En, "compact.running") => Some("Compacting context — this window is locked until the new context is ready."),
+        (Locale::En, "handoff.title") => Some("Hand off to a new session"),
+        (Locale::En, "handoff.subtitle") => Some("The current context is summarized into a note you can edit. Confirm it to open a new session with the note as its first message."),
+        (Locale::En, "handoff.instruction_label") => Some("Optional instruction for the note"),
+        (Locale::En, "handoff.instruction_placeholder") => Some("For example: keep the unresolved QC thresholds and exact file paths."),
+        (Locale::En, "handoff.draft_label") => Some("Handoff note"),
+        (Locale::En, "handoff.draft_placeholder") => Some("The generated note appears here. Edit it freely before starting."),
+        (Locale::En, "handoff.generating") => Some("Generating the handoff note from the current context…"),
+        (Locale::En, "handoff.regenerate") => Some("Regenerate"),
+        (Locale::En, "handoff.start") => Some("Start new session"),
+        (Locale::En, "handoff.cancel") => Some("Cancel"),
+        (Locale::En, "handoff.close") => Some("Close handoff dialog"),
         (Locale::En, "chat.view_full") => Some("Full transcript"),
         (Locale::En, "chat.view_model") => Some("Model view"),
         (Locale::En, "chat.out_of_context") => {
@@ -6056,6 +6068,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "context_usage.nudge") => Some("窗口快满了"),
         (Locale::Zh, "context_usage.nudge_compact") => Some("压缩"),
         (Locale::Zh, "context_usage.nudge_new_session") => Some("新开对话"),
+        (Locale::Zh, "context_usage.nudge_handoff") => Some("生成交接摘要"),
         (Locale::Zh, "context_usage.epoch_line") => {
             Some("纪元 {epoch} · system + checkpoint + {turns} 轮 tail")
         }
@@ -6093,6 +6106,17 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "compact.cancel") => Some("取消"),
         (Locale::Zh, "compact.close") => Some("关闭压缩对话框"),
         (Locale::Zh, "compact.running") => Some("正在压缩上下文——新上下文准备好前，当前界面不可退出。"),
+        (Locale::Zh, "handoff.title") => Some("交接到新会话"),
+        (Locale::Zh, "handoff.subtitle") => Some("已将当前上下文整理成一段可编辑的交接摘要。确认后会新开一个会话，并以这段摘要作为第一条消息。"),
+        (Locale::Zh, "handoff.instruction_label") => Some("可选的生成指令"),
+        (Locale::Zh, "handoff.instruction_placeholder") => Some("例如：保留尚未解决的 QC 阈值和确切的文件路径。"),
+        (Locale::Zh, "handoff.draft_label") => Some("交接摘要"),
+        (Locale::Zh, "handoff.draft_placeholder") => Some("生成的摘要会显示在这里，开始前可以自由编辑。"),
+        (Locale::Zh, "handoff.generating") => Some("正在根据当前上下文生成交接摘要…"),
+        (Locale::Zh, "handoff.regenerate") => Some("重新生成"),
+        (Locale::Zh, "handoff.start") => Some("开启新会话"),
+        (Locale::Zh, "handoff.cancel") => Some("取消"),
+        (Locale::Zh, "handoff.close") => Some("关闭交接对话框"),
         (Locale::Zh, "chat.view_full") => Some("完整记录"),
         (Locale::Zh, "chat.view_model") => Some("模型视角"),
         (Locale::Zh, "chat.out_of_context") => Some("不在当前上下文，已由摘要代表"),
@@ -7775,6 +7799,31 @@ mod queue_label_tests {
             "context_usage.health.line",
             "context_usage.health.line_no_ratio",
             "context_usage.health.nudge",
+        ] {
+            assert_ne!(t(Locale::En, key), key);
+            assert_ne!(t(Locale::Zh, key), key);
+        }
+    }
+
+    #[test]
+    fn handoff_labels_exist_in_both_locales() {
+        assert_eq!(
+            t(Locale::En, "context_usage.nudge_handoff"),
+            "Handoff summary"
+        );
+        assert_eq!(t(Locale::Zh, "context_usage.nudge_handoff"), "生成交接摘要");
+        for key in [
+            "handoff.title",
+            "handoff.subtitle",
+            "handoff.instruction_label",
+            "handoff.instruction_placeholder",
+            "handoff.draft_label",
+            "handoff.draft_placeholder",
+            "handoff.generating",
+            "handoff.regenerate",
+            "handoff.start",
+            "handoff.cancel",
+            "handoff.close",
         ] {
             assert_ne!(t(Locale::En, key), key);
             assert_ne!(t(Locale::Zh, key), key);

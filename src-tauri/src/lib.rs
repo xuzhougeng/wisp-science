@@ -7669,6 +7669,7 @@ pub fn run() {
             session_commands::branch_session,
             session_commands::preview_session_branch_merge,
             session_commands::summarize_session_branch_merge,
+            session_commands::generate_session_handoff,
             session_commands::merge_session_branch_summary,
             exploration_commands::start_exploration,
             exploration_commands::list_project_explorations,

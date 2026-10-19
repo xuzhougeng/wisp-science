@@ -282,6 +282,96 @@ pub(super) async fn summarize_session_branch_merge(
     Ok(summary.to_string())
 }
 
+/// One-shot handoff note for opening a fresh session: the head-epoch context
+/// (checkpoint plus retained turns) rendered the same way semantic compaction
+/// renders its summary input, sent to the session model. Read-only: the
+/// session's context and history are not touched.
+#[tauri::command]
+pub(super) async fn generate_session_handoff(
+    state: State<'_, AppState>,
+    id: String,
+    instruction: Option<String>,
+) -> Result<String, String> {
+    let frame_id = id.trim().to_string();
+    if frame_id.is_empty() {
+        return Err("No session to hand off.".into());
+    }
+    if let Some(instruction) = instruction.as_deref() {
+        if instruction.chars().count() > 8_000 {
+            return Err("Handoff instruction is too long.".into());
+        }
+    }
+    if session_branch_is_busy(&state, &[frame_id.clone()]).await {
+        return Err("Wait for the current turn to finish before generating a handoff.".into());
+    }
+    if state
+        .store
+        .get_acp_session(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("ACP conversations cannot generate a handoff summary.".into());
+    }
+    let runtime = state.sessions.lock().await.get(&frame_id).cloned();
+    if let Some(runtime) = runtime.as_deref() {
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    let messages = state
+        .store
+        .load_messages(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let request = wisp_core::ContextManager::handoff_request(&messages, instruction.as_deref())?;
+    let (
+        provider,
+        api_url,
+        model,
+        api_key,
+        profile_max_tokens,
+        reasoning_effort,
+        service_tier,
+        user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
+    ) = load_session_settings(&state.store, &frame_id).await;
+    let config = build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        branch_summary_output_budget(
+            profile_max_tokens,
+            crate::model_catalog::output_tokens(&provider, &api_url, &model),
+        ),
+        &reasoning_effort,
+        &service_tier,
+        &user_agent,
+        send_user_agent,
+        send_session_id,
+        &session_header_name,
+        Some(&frame_id),
+    )?;
+    let completion = tokio::time::timeout(
+        BRANCH_SUMMARY_TIMEOUT,
+        wisp_llm::build(config).complete(&request, &[]),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "Handoff model timed out after {} seconds.",
+            BRANCH_SUMMARY_TIMEOUT.as_secs()
+        )
+    })?
+    .map_err(|error| format!("Handoff model failed: {error}"))?;
+    let summary = completion.content.trim();
+    if summary.is_empty() {
+        return Err("Handoff model returned an empty note.".into());
+    }
+    Ok(summary.to_string())
+}
+
 #[tauri::command]
 pub(super) async fn merge_session_branch_summary(
     state: State<'_, AppState>,

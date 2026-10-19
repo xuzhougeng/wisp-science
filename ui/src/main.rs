@@ -50,10 +50,10 @@ use app_overlays::{
     BrowserNeedsHumanOverlay, BrowserNeedsHumanOverlayState, BrowserTabCleanupOverlay,
     BrowserTabCleanupOverlayState, CompactDialogMode, CompactIdlePromptOverlay,
     CompactIdlePromptOverlayState, CompactOverlay, CompactOverlayState, ContextRecoveryOverlay,
-    ContextRecoveryOverlayState, ExternalLinkConfirm, ProjectExportPrompt,
-    ProjectExportPromptState, ProjectTransferOverlay, ProjectTransferOverlayState,
-    SshConnectivityOverlay, SshConnectivityOverlayState, TurnMemoryOverlay, TurnMemoryOverlayState,
-    UpdateCheckOverlay, UpdateCheckOverlayState,
+    ContextRecoveryOverlayState, ExternalLinkConfirm, HandoffOverlay, HandoffOverlayState,
+    ProjectExportPrompt, ProjectExportPromptState, ProjectTransferOverlay,
+    ProjectTransferOverlayState, SshConnectivityOverlay, SshConnectivityOverlayState,
+    TurnMemoryOverlay, TurnMemoryOverlayState, UpdateCheckOverlay, UpdateCheckOverlayState,
 };
 use bindings::{
     add_workspace_file_to_motif, attach_chat_autoscroll, cancel_saved_marks_apply, clear_selection,
@@ -1486,6 +1486,74 @@ fn App() -> impl IntoView {
     // turn still has to resume once the new epoch is durable. Cancelling the
     // dialog clears it.
     let compact_resume = create_rw_signal::<Option<String>>(None);
+    // Handoff (#1575): summarize the current context into an editable note
+    // and open a new session with it as the first message. Generation is
+    // read-only, so the dialog may be dismissed while a request is in
+    // flight; `handoff_request_seq` lets a stale completion be ignored.
+    let handoff_dialog = create_rw_signal::<Option<String>>(None);
+    let handoff_draft = create_rw_signal(String::new());
+    let handoff_instruction = create_rw_signal(String::new());
+    let handoff_busy = create_rw_signal(false);
+    let handoff_error = create_rw_signal::<Option<String>>(None);
+    let handoff_request_seq = create_rw_signal(0u64);
+    let generate_handoff = Callback::new(move |id: String| {
+        if id.trim().is_empty() || handoff_busy.get_untracked() {
+            return;
+        }
+        let seq = handoff_request_seq.get_untracked() + 1;
+        handoff_request_seq.set(seq);
+        handoff_busy.set(true);
+        handoff_error.set(None);
+        let instruction = handoff_instruction.get_untracked();
+        let instruction = (!instruction.trim().is_empty()).then(|| instruction.trim().to_string());
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "id": id.clone(),
+                "instruction": instruction,
+            }))
+            .unwrap();
+            let note = invoke_checked("generate_session_handoff", args)
+                .await
+                .and_then(|value| {
+                    value.as_string().ok_or_else(|| {
+                        wasm_bindgen::JsValue::from_str("Handoff returned invalid text.")
+                    })
+                });
+            // Closed, or regenerated since: this result belongs to nobody.
+            if handoff_request_seq.get_untracked() != seq
+                || handoff_dialog.get_untracked().as_deref() != Some(id.as_str())
+            {
+                return;
+            }
+            match note {
+                Ok(text) => handoff_draft.set(text),
+                Err(error) => handoff_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
+            handoff_busy.set(false);
+        });
+    });
+    let open_handoff_dialog = Callback::new(move |id: String| {
+        if id.trim().is_empty() {
+            return;
+        }
+        handoff_draft.set(String::new());
+        handoff_instruction.set(String::new());
+        handoff_error.set(None);
+        handoff_busy.set(false);
+        handoff_dialog.set(Some(id.clone()));
+        generate_handoff.call(id);
+    });
+    let close_handoff_dialog = Callback::new(move |_: ()| {
+        handoff_request_seq.update(|seq| *seq += 1);
+        handoff_busy.set(false);
+        handoff_dialog.set(None);
+        handoff_draft.set(String::new());
+        handoff_instruction.set(String::new());
+        handoff_error.set(None);
+    });
     let open_compact_dialog = Callback::new(
         move |(id, instruction, mode): (String, String, CompactDialogMode)| {
             if id.trim().is_empty() || compact_busy.get_untracked() {
@@ -6673,88 +6741,115 @@ fn App() -> impl IntoView {
         start_new_session.call(());
     });
 
-    let start_env_setup = {
-        let items = items;
-        let running = running;
-        let status = status;
-        let locale = locale;
-        let show_capabilities = show_capabilities;
-        let active_session = active_session;
-        let sel_artifact = sel_artifact;
-        let right_tab = right_tab;
-        let models = models;
-        move |_| {
-            if demo_mode.get_untracked() || busy.get() {
-                return;
-            }
-            show_capabilities.set(false);
-            attachments.set(vec![]);
-            sel_artifact.set(0);
-            right_tab.set(RightTab::Artifacts);
-            let text: String = t(locale.get(), "caps.env_setup_prompt").into();
-            let turn_model = active_model_label(&models.get());
-            items.set(vec![
+    // Open a fresh session whose first user turn is `text`. The visible
+    // transcript switches to the pending turn at once, so the new frame never
+    // shows empty while the session is created.
+    let start_session_with_first_message = Callback::new(move |text: String| {
+        attachments.set(vec![]);
+        sel_artifact.set(0);
+        right_tab.set(RightTab::Artifacts);
+        let turn_model = active_model_label(&models.get_untracked());
+        replace_visible_transcript(
+            active_session.get_untracked(),
+            None,
+            vec![
                 ChatItem::User(text.clone()),
                 ChatItem::Assistant {
                     text: String::new(),
                     model: turn_model,
                     resources: Vec::new(),
                 },
-            ]);
-            force_chat_bottom();
-            spawn_local(async move {
-                // Fresh frame for the setup turn; route events to it.
-                let id = match invoke_new_session().await {
-                    Ok(id) => id,
-                    Err(error) => {
-                        status.set(send_failed(locale.get(), &error));
-                        return;
-                    }
-                };
-                active_session.set(Some(id.clone()));
-                running.update(|r| {
-                    r.insert(id.clone());
-                });
-                refresh_session_history();
-                let arg = to_value(&SendMessageArgs {
-                    session_id: Some(id.clone()),
-                    message: text,
-                    attachments: vec![],
-                    references: vec![],
-                    resume: false,
-                    acp_agent_id: None,
-                    guide: None,
-                    replace: None,
-                })
-                .unwrap();
-                match invoke_checked("send_message", arg).await {
-                    // The awaited command resolving is the reliable turn-complete
-                    // signal; clear `running` here so a dropped `Done` broadcast
-                    // can't pin the session on "运行中" (#34).
-                    Ok(_) => {
-                        running.update(|r| {
-                            r.remove(&id);
-                        });
-                        refresh_session_history();
-                    }
-                    Err(err) => {
-                        let loc = locale.get();
-                        let raw = js_error_text(err);
-                        if raw.contains(NO_API_KEY_MARK) {
-                            needs_api_key.set(true);
-                        }
-                        status.set(tf(
-                            loc,
-                            "status.send_failed",
-                            &[("msg", &localize_backend(loc, &raw))],
-                        ));
-                        running.update(|r| {
-                            r.clear();
-                        });
-                    }
+            ],
+            items,
+            transcripts,
+            running,
+        );
+        force_chat_bottom();
+        spawn_local(async move {
+            // Fresh frame for the turn; route events to it.
+            let id = match invoke_new_session().await {
+                Ok(id) => id,
+                Err(error) => {
+                    status.set(send_failed(locale.get(), &error));
+                    return;
                 }
+            };
+            active_session.set(Some(id.clone()));
+            running.update(|r| {
+                r.insert(id.clone());
             });
+            refresh_session_history();
+            let arg = to_value(&SendMessageArgs {
+                session_id: Some(id.clone()),
+                message: text,
+                attachments: vec![],
+                references: vec![],
+                resume: false,
+                acp_agent_id: None,
+                guide: None,
+                replace: None,
+            })
+            .unwrap();
+            match invoke_checked("send_message", arg).await {
+                // The awaited command resolving is the reliable turn-complete
+                // signal; clear `running` here so a dropped `Done` broadcast
+                // can't pin the session on "运行中" (#34).
+                Ok(_) => {
+                    running.update(|r| {
+                        r.remove(&id);
+                    });
+                    refresh_session_history();
+                }
+                Err(err) => {
+                    let loc = locale.get();
+                    let raw = js_error_text(err);
+                    if raw.contains(NO_API_KEY_MARK) {
+                        needs_api_key.set(true);
+                    }
+                    status.set(tf(
+                        loc,
+                        "status.send_failed",
+                        &[("msg", &localize_backend(loc, &raw))],
+                    ));
+                    running.update(|r| {
+                        r.clear();
+                    });
+                }
+            }
+        });
+    });
+    let handoff_from_usage = Callback::new(move |_: ()| {
+        let Some(id) = active_session.get_untracked() else {
+            return;
+        };
+        if busy.get_untracked() || active_acp_agent_id.get_untracked().is_some() {
+            return;
         }
+        // The usage panel stays open underneath: Escape closes the dialog
+        // first, then the panel.
+        open_handoff_dialog.call(id);
+    });
+    let start_handoff_session = Callback::new(move |(id, note): (String, String)| {
+        let note = note.trim().to_string();
+        if note.is_empty()
+            || demo_mode.get_untracked()
+            || handoff_dialog.get_untracked().as_deref() != Some(id.as_str())
+        {
+            return;
+        }
+        close_handoff_dialog.call(());
+        context_usage_open.set(false);
+        show_publication_workspace.set(false);
+        publication_binding_source.set(None);
+        start_session_with_first_message.call(note);
+    });
+
+    let start_env_setup = move |_| {
+        if demo_mode.get_untracked() || busy.get() {
+            return;
+        }
+        show_capabilities.set(false);
+        start_session_with_first_message.call(t(locale.get(), "caps.env_setup_prompt").into());
     };
 
     let start_issue_report = {
@@ -10140,6 +10235,11 @@ fn App() -> impl IntoView {
                 });
             }
             compact_idle_prompt.set(None);
+            return;
+        }
+        if handoff_dialog.get().is_some() {
+            ev.prevent_default();
+            close_handoff_dialog.call(());
             return;
         }
         if compact_dialog.get().is_some() {
@@ -14780,6 +14880,7 @@ fn App() -> impl IntoView {
                                         on_resize_start=on_context_usage_resize_start
                                         on_compact=compact_from_usage
                                         on_new_session=new_session_from_usage
+                                        on_handoff=handoff_from_usage
                                         compact_disabled=Signal::derive(move || busy.get())
                                         epoch_line=context_epoch_line(
                                             locale.get(),
@@ -18014,6 +18115,7 @@ fn App() -> impl IntoView {
                             on_resize_start=on_context_usage_resize_start
                             on_compact=compact_from_usage
                             on_new_session=new_session_from_usage
+                            on_handoff=handoff_from_usage
                             compact_disabled=Signal::derive(move || busy.get())
                             epoch_line=context_epoch_line(
                                 locale.get(),
@@ -18777,6 +18879,19 @@ fn App() -> impl IntoView {
             }
             on_start=start_compact_dialog
             on_close=close_compact_dialog
+        />
+        <HandoffOverlay
+            state=HandoffOverlayState {
+                locale,
+                dialog: handoff_dialog,
+                draft: handoff_draft,
+                instruction: handoff_instruction,
+                busy: handoff_busy,
+                error: handoff_error,
+            }
+            on_generate=generate_handoff
+            on_start=start_handoff_session
+            on_close=close_handoff_dialog
         />
         <CompactIdlePromptOverlay
             state=CompactIdlePromptOverlayState {

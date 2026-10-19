@@ -693,3 +693,86 @@ test("session health stays OK when every compaction frees most of the window (#1
   await expect(panel.getByTestId("context-usage-health")).toHaveText("Health: OK · compacted 3× · last freed 80%");
   await expect(panel.getByTestId("context-usage-nudge")).toHaveCount(0);
 });
+
+async function invokeCount(page: Page, cmd: string) {
+  return page.evaluate(
+    (name) => ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === name).length,
+    cmd,
+  );
+}
+
+/// Split-soon session whose handoff generation is mocked. `note` is the model
+/// output; `null` keeps the request pending forever.
+async function openSplitSoonSessionWithHandoff(page: Page, note: string | null) {
+  await page.addInitScript(() => { (window as any).__epochTokens = [[1000, 200], [1000, 800]]; });
+  await openCompactedSession(page, compactionPayload({ epoch: 2 }));
+  await page.evaluate((text) => {
+    const w = window as any;
+    const original = w.__TAURI__.core.invoke;
+    w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
+      if (cmd === "generate_session_handoff") {
+        (w.__skillInvokeLog ??= []).push({ cmd, args });
+        if (text === null) return new Promise(() => {});
+        return text;
+      }
+      return original(cmd, args);
+    };
+  }, note);
+  await page.getByTestId("context-usage-trigger").click();
+  await page.getByTestId("context-usage-nudge").getByRole("button", { name: "Handoff summary" }).click();
+}
+
+test("handoff summary is generated, editable, and starts the new session with it (#1575)", async ({ page }) => {
+  await openSplitSoonSessionWithHandoff(
+    page,
+    "## Goal and current stage\nAlign sample A reads.\n\n## Pending work and next steps\nRun QC.",
+  );
+  const modal = page.getByTestId("handoff-modal");
+  await expect(modal).toBeVisible();
+  // The usage panel is the parent layer and stays open underneath.
+  await expect(page.getByTestId("context-usage-panel")).toBeVisible();
+  const draft = page.getByTestId("handoff-draft");
+  await expect(draft).toHaveValue(/Align sample A reads/);
+  expect(await lastInvokeArgs(page, "generate_session_handoff")).toEqual({ id: "s-compact", instruction: null });
+  await expect(page.getByTestId("handoff-progress")).toHaveCount(0);
+
+  const edited = "## Goal\nAlign sample A reads.\n\n## Next\nRun QC on results/sample_a.bam";
+  await draft.fill(edited);
+  await page.getByTestId("handoff-start").click();
+  await expect(modal).toHaveCount(0);
+  await expect(page.getByTestId("context-usage-panel")).toHaveCount(0);
+  await expect.poll(() => invokeCount(page, "send_message")).toBe(1);
+  const sent = await lastInvokeArgs(page, "send_message");
+  expect(sent.message).toBe(edited);
+  expect(sent.sessionId).toMatch(/^s-/);
+  expect(sent.sessionId).not.toBe("s-compact");
+  await expect(page.locator(".thread").getByText("Run QC on results/sample_a.bam")).toBeVisible();
+});
+
+test("regenerating the handoff passes the instruction and keeps the dialog open (#1575)", async ({ page }) => {
+  await openSplitSoonSessionWithHandoff(page, "## Goal and current stage\nFirst draft.");
+  await expect(page.getByTestId("handoff-draft")).toHaveValue(/First draft/);
+  await page.getByTestId("handoff-instruction").fill("  keep the QC thresholds  ");
+  await page.getByTestId("handoff-regenerate").click();
+  await expect.poll(() => invokeCount(page, "generate_session_handoff")).toBe(2);
+  expect(await lastInvokeArgs(page, "generate_session_handoff")).toEqual({
+    id: "s-compact",
+    instruction: "keep the QC thresholds",
+  });
+  await expect(page.getByTestId("handoff-modal")).toBeVisible();
+  expect(await invokeCount(page, "new_session")).toBe(0);
+});
+
+test("Escape closes only the handoff dialog, even while generating (#1575)", async ({ page }) => {
+  await openSplitSoonSessionWithHandoff(page, null);
+  await expect(page.getByTestId("handoff-modal")).toBeVisible();
+  await expect(page.getByTestId("handoff-progress")).toBeVisible();
+  await expect(page.getByTestId("handoff-start")).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("handoff-modal")).toHaveCount(0);
+  await expect(page.getByTestId("context-usage-panel")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("context-usage-panel")).toHaveCount(0);
+  expect(await invokeCount(page, "new_session")).toBe(0);
+  expect(await invokeCount(page, "send_message")).toBe(0);
+});

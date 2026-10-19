@@ -503,6 +503,7 @@ pub(crate) fn ContextUsagePanel(
     on_resize_start: Callback<web_sys::MouseEvent>,
     on_compact: Callback<()>,
     on_new_session: Callback<()>,
+    on_handoff: Callback<()>,
     compact_disabled: Signal<bool>,
     epoch_line: Option<String>,
     health: SessionHealthReport,
@@ -627,6 +628,15 @@ pub(crate) fn ContextUsagePanel(
                                 on_new_session.call(());
                             }>
                             {t(loc, "context_usage.nudge_new_session")}
+                        </button>
+                        <button type="button" class="context-usage-nudge-action"
+                            data-testid="context-usage-handoff"
+                            disabled=move || compact_disabled.get()
+                            on:click=move |ev| {
+                                ev.stop_propagation();
+                                on_handoff.call(());
+                            }>
+                            {t(loc, "context_usage.nudge_handoff")}
                         </button>
                     </div>
                 </div>

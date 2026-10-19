@@ -156,8 +156,28 @@ ratio as `(before − after) / before`:
   conversation already fills half the window.
 
 Whenever the level is not OK, the panel shows the same status row as a nearly
-full window, with **Compact** and **New session**. It is passive: no modal and
-no throttling, so it stays visible until the level recovers.
+full window, with **Compact**, **New session**, and **Handoff summary**. It is
+passive: no modal and no throttling, so it stays visible until the level
+recovers.
+
+### Handoff summary
+
+**Handoff summary** turns the model's current context (the compaction
+checkpoint plus the retained turns, rendered the same way semantic compaction
+feeds its summary model) into a note for a fresh session, written by the
+conversation's model. The note uses four headings: goal and current stage,
+completed work and confirmed decisions (with the files they touched), pending
+work and next steps, and state to keep outside the conversation (facts that
+belong in a project status file or memo rather than in chat).
+
+The note opens in an editable dialog over the usage panel. An optional
+instruction steers emphasis; **Regenerate** asks again with it. **Start new
+session** closes the dialog and opens a new conversation whose first message is
+the note as edited. Nothing is changed in the original conversation, which
+stays in the sidebar. Escape closes the dialog (also while the note is still
+being generated) and leaves the usage panel open; a second Escape closes the
+panel. The button is unavailable while a turn is running and in ACP
+conversations.
 
 ## Manual smoke checks
 
@@ -175,6 +195,11 @@ no throttling, so it stays visible until the level recovers.
 - Compact twice where the second compact frees little room; verify the usage
   panel shows `Health: split soon` and the Compact / New session row at a low
   percentage, and that undoing the latest compact returns the line to OK.
+- From that row, click **Handoff summary**: the note should name the current
+  goal, finished items with their paths, the next item to resume, and state to
+  write down. Edit it, click **Start new session**, and verify the new
+  conversation's first user message is the edited note while the original
+  conversation remains unchanged.
 - Trigger automatic compaction, let the turn finish, and expand its summary in
   the same window. Switch conversations during refresh and verify neither
   conversation receives the other's metadata or loses pending/live messages.
