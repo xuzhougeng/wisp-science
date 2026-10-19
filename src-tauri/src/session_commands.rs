@@ -2482,17 +2482,24 @@ pub(super) async fn search_sessions(
     limit: Option<i64>,
     project_id: Option<String>,
     preferred_project_id: Option<String>,
+    include_shelved: Option<bool>,
 ) -> Result<Vec<SessionSearchInfo>, String> {
     let running = state.running_turns.lock().await.clone();
     let awaiting = state.awaiting_confirm.lock().unwrap().clone();
+    // `includeShelved` only widens keyword searches (the composer `#` picker);
+    // the store keeps shelved rows out of the empty-query recent list.
     let rows = state
         .store
-        .search_sessions(
+        .search_sessions_with_options(
             project_id.as_deref(),
             query.as_deref().unwrap_or(""),
             limit.unwrap_or(12),
             None,
             preferred_project_id.as_deref(),
+            &[],
+            wisp_store::SessionSearchOptions {
+                include_shelved: include_shelved.unwrap_or(false),
+            },
         )
         .await
         .map_err(|e| format!("{e}"))?;
@@ -2513,6 +2520,7 @@ pub(super) async fn search_sessions(
             title: s.title,
             ts: s.created_at,
             activity_at: s.activity_at,
+            shelved: s.shelved,
         })
         .collect())
 }

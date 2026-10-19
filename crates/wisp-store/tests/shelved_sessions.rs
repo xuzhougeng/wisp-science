@@ -1,6 +1,6 @@
 use wisp_dto::ResearchArchive;
 use wisp_llm::Message;
-use wisp_store::Store;
+use wisp_store::{SessionSearchOptions, Store};
 
 async fn conversation(store: &Store, id: &str, title: &str) {
     store.create_frame(id, "p", "OPERON", "fake").await.unwrap();
@@ -50,6 +50,36 @@ async fn shelving_filters_discovery_preserves_references_and_survives_reopen() {
                 .is_empty());
         }
     }
+    // The composer `#` picker opts into shelved rows for keyword searches
+    // (title or body) and badges them; its empty-query recent list never
+    // includes them.
+    let include_shelved = SessionSearchOptions {
+        include_shelved: true,
+    };
+    for project in [None, Some("p")] {
+        assert!(store
+            .search_sessions_with_options(project, "", 100, None, None, &[], include_shelved)
+            .await
+            .unwrap()
+            .is_empty());
+        for query in ["Temporary", "needle"] {
+            let rows = store
+                .search_sessions_with_options(project, query, 100, None, None, &[], include_shelved)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1, "{query}");
+            assert_eq!(rows[0].id, "f");
+            assert!(rows[0].shelved);
+        }
+    }
+    assert!(
+        store
+            .get_session_reference("f")
+            .await
+            .unwrap()
+            .unwrap()
+            .shelved
+    );
     // Existing # links and ownership/export enumeration remain valid.
     assert!(store.last_user_message_session().await.unwrap().is_none());
     assert!(store.get_session_reference("f").await.unwrap().is_some());
@@ -87,14 +117,12 @@ async fn shelving_filters_discovery_preserves_references_and_survives_reopen() {
         before
     );
     assert_eq!(reopened.list_pinned_sessions("p").await.unwrap().len(), 1);
-    assert_eq!(
-        reopened
-            .search_sessions(None, "needle", 100, None, None)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
+    let restored = reopened
+        .search_sessions(None, "needle", 100, None, None)
+        .await
+        .unwrap();
+    assert_eq!(restored.len(), 1);
+    assert!(!restored[0].shelved);
 }
 
 #[tokio::test]

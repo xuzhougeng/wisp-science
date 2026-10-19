@@ -675,6 +675,23 @@ pub(crate) fn active_composer_trigger(
     Some((at, end, mode, query.to_string()))
 }
 
+/// Order the `#` picker's session candidates: the current project's sessions
+/// first, otherwise exactly the server's rank (title hits before body-only
+/// hits, newest first), which the stable sort keeps. A session never offers
+/// itself as a reference.
+pub(crate) fn order_session_candidates(
+    rows: Vec<SessionSearchInfo>,
+    current_project: Option<&str>,
+    active_session: Option<&str>,
+) -> Vec<SessionSearchInfo> {
+    let mut rows: Vec<_> = rows
+        .into_iter()
+        .filter(|s| active_session != Some(s.id.as_str()))
+        .collect();
+    rows.sort_by_key(|s| current_project != Some(s.project_id.as_str()));
+    rows
+}
+
 /// `/memo <query>` ending at the caret: the token start and the filter text.
 /// The same boundary rules as the single-character triggers apply to the
 /// slash, and the query stays on one line.
@@ -947,10 +964,51 @@ mod picker_scroll_tests {
 #[cfg(test)]
 mod mention_tests {
     use super::{
-        active_composer_trigger, composer_picker_accepts_edit, parse_slash_command,
-        slash_command_fills_text, slash_command_icon, slash_command_matches, ComposerPickerMode,
-        SLASH_COMMANDS,
+        active_composer_trigger, composer_picker_accepts_edit, order_session_candidates,
+        parse_slash_command, slash_command_fills_text, slash_command_icon, slash_command_matches,
+        ComposerPickerMode, SLASH_COMMANDS,
     };
+    use crate::dto::SessionSearchInfo;
+
+    fn session(id: &str, project: &str, activity_at: i64) -> SessionSearchInfo {
+        SessionSearchInfo {
+            id: id.into(),
+            project_id: project.into(),
+            project_name: project.into(),
+            title: id.into(),
+            ts: activity_at,
+            activity_at,
+            status: "complete".into(),
+            shelved: false,
+        }
+    }
+
+    #[test]
+    fn session_candidates_keep_server_rank_within_each_project_group() {
+        // The server already ranks title hits above newer body-only hits;
+        // regrouping by project must not reorder them by activity again.
+        let rows = vec![
+            session("other-title", "other", 9),
+            session("current-title", "current", 1),
+            session("current-body", "current", 5),
+            session("me", "current", 7),
+        ];
+        let ordered = order_session_candidates(rows, Some("current"), Some("me"));
+        assert_eq!(
+            ordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["current-title", "current-body", "other-title"]
+        );
+    }
+
+    #[test]
+    fn session_candidates_without_a_project_keep_server_order() {
+        let rows = vec![session("a", "p1", 1), session("b", "p2", 9)];
+        let ordered = order_session_candidates(rows, None, None);
+        assert_eq!(
+            ordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+    }
 
     #[test]
     fn slash_commands_filter_by_query() {

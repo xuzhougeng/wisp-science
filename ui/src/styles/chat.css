@@ -2039,6 +2039,8 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .mention-item-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(13.5px * var(--ui-font-scale, 1)); }
 .mention-item-text { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; }
 .mention-item-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+/* Keyword search with no hits: a plain row the arrow keys never land on. */
+.mention-empty { padding: 10px 14px; color: var(--text-faint); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 .mention-menu-hint { position: sticky; bottom: 0; padding: 6px 14px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-elev); }
 
 /* Structured Reviewer card: findings stay beside the answer they audit. */

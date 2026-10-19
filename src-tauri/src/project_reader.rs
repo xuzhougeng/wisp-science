@@ -606,6 +606,7 @@ async fn resolve_reference_sessions(
                 activity_at: 0,
                 last_role: None,
                 unseen: false,
+                shelved: false,
             });
         }
     }
@@ -1774,6 +1775,7 @@ mod tests {
                     activity_at: 0,
                     last_role: None,
                     unseen: false,
+                    shelved: false,
                 },
                 chunk: SessionChunk {
                     transcript: "[message seq=1 USER]\nevidence".into(),
@@ -1885,6 +1887,7 @@ mod tests {
                 activity_at: 0,
                 last_role: None,
                 unseen: false,
+                shelved: false,
             },
             chunk: SessionChunk {
                 transcript: "[message seq=1 USER]\nevidence".into(),
@@ -2217,6 +2220,7 @@ mod tests {
                 activity_at: 0,
                 last_role: None,
                 unseen: false,
+                shelved: false,
             },
             messages: seq_messages(vec![Message::user(user_text)]),
         }

@@ -124,6 +124,7 @@ pub async fn list_needs_you_sessions(
                     ts: row.created_at,
                     activity_at: row.activity_at,
                     status: "needs_you".into(),
+                    shelved: row.shelved,
                 });
             }
         }

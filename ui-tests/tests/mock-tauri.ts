@@ -5207,6 +5207,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const requestedProject = arg("projectId");
             const preferredProject = arg("preferredProjectId");
             const limit = Math.max(1, Math.min(100, Number(arg("limit") ?? 12)));
+            // Shelved sessions only answer keyword searches that opt in (the
+            // composer # picker); the empty-query recent list never lists them.
+            const reachesShelved = Boolean(arg("includeShelved")) && q !== "";
             if (requestedProject != null) {
               return mockSessions
                 .filter((session) => !shelvedSessionIds.has(session.id))
@@ -5224,7 +5227,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 }));
             }
             const rows = query.get("mockManySessions") === "1"
-              ? mockSessions.filter((session) => !shelvedSessionIds.has(session.id)).map((session) => ({
+              ? mockSessions.filter((session) => reachesShelved || !shelvedSessionIds.has(session.id)).map((session) => ({
                   id: session.id,
                   project_id: "default",
                   project_name: project.name,
@@ -5233,13 +5236,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                   ts: session.ts,
                   activity_at: session.ts,
                   status: session.running ? "running" : "complete",
+                  shelved: shelvedSessionIds.has(session.id),
                 }))
               : [
-                  { id: "s-current", project_id: "default", project_name: "wisp-science", title: "Current analysis", body: "The counts table is discussed in this transcript.", ts: 1, activity_at: 3, status: "complete" },
-                  { id: "s-old", project_id: "default", project_name: "wisp-science", title: "Older structure run", body: "", ts: 1, activity_at: 2, status: "complete" },
-                  { id: "s-other", project_id: "other", project_name: "Other project", title: "Cross-project counts", body: "", ts: 1, activity_at: 1, status: "needs_you" },
-                  { id: "s-complete", project_id: "default", project_name: "wisp-science", title: "Enumerate MCP bio-tools databases", body: "", ts: 1, activity_at: 1, status: "complete" },
-                ];
+                  { id: "s-current", project_id: "default", project_name: "wisp-science", title: "Current analysis", body: "The counts table is discussed in this transcript.", ts: 1, activity_at: 3, status: "complete", shelved: false },
+                  { id: "s-old", project_id: "default", project_name: "wisp-science", title: "Older structure run", body: "", ts: 1, activity_at: 2, status: "complete", shelved: false },
+                  { id: "s-other", project_id: "other", project_name: "Other project", title: "Cross-project counts", body: "", ts: 1, activity_at: 1, status: "needs_you", shelved: false },
+                  { id: "s-complete", project_id: "default", project_name: "wisp-science", title: "Enumerate MCP bio-tools databases", body: "", ts: 1, activity_at: 1, status: "complete", shelved: false },
+                  { id: "s-archived", project_id: "default", project_name: "wisp-science", title: "Archived genome assembly notes", body: "", ts: 1, activity_at: 0, status: "complete", shelved: true },
+                ].filter((session) => reachesShelved || !session.shelved);
             return rows
               .filter((session) => !q
                 || session.title.toLowerCase().includes(q)

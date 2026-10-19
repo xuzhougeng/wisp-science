@@ -725,6 +725,8 @@ struct SessionSearchInfo {
     ts: i64,
     activity_at: i64,
     status: String,
+    /// Shelved rows only answer keyword searches that opt in (`includeShelved`).
+    shelved: bool,
 }
 
 use wisp_dto::ComposerReferenceArg;

@@ -1,7 +1,7 @@
 use super::context_epochs::{HEAD_EPOCH_ROWS, LIVE_LOG_ROWS};
 use super::{
     parse_role, session_display_title, MessageResourceLink, RecentSessionDetail,
-    SessionSearchResult, Store,
+    SessionSearchOptions, SessionSearchResult, Store,
 };
 use anyhow::Result;
 use chrono::{Datelike, Duration, Local};
@@ -3508,18 +3508,44 @@ impl Store {
         preferred_project_id: Option<&str>,
         excluded_project_ids: &[String],
     ) -> Result<Vec<SessionSearchResult>> {
+        self.search_sessions_with_options(
+            project_id,
+            query,
+            limit,
+            session_id,
+            preferred_project_id,
+            excluded_project_ids,
+            SessionSearchOptions::default(),
+        )
+        .await
+    }
+
+    /// The full session search: project visibility and the shelved filter are
+    /// applied before ranking/limiting. A keyword search may opt into shelved
+    /// sessions; the empty-query recent list never includes them.
+    pub async fn search_sessions_with_options(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        session_id: Option<&str>,
+        preferred_project_id: Option<&str>,
+        excluded_project_ids: &[String],
+        options: SessionSearchOptions,
+    ) -> Result<Vec<SessionSearchResult>> {
         if let Some(project_id) = project_id {
             if excluded_project_ids.iter().any(|id| id == project_id) {
                 return Ok(Vec::new());
             }
             if let Some(store) = self.route_project(project_id).await? {
-                return Box::pin(store.search_sessions_excluding_projects(
+                return Box::pin(store.search_sessions_with_options(
                     Some(project_id),
                     query,
                     limit,
                     session_id,
                     preferred_project_id,
                     excluded_project_ids,
+                    options,
                 ))
                 .await;
             }
@@ -3528,13 +3554,14 @@ impl Store {
             let q = query.trim().to_lowercase();
             let pattern = format!("%{q}%");
             for store in stores {
-                let matches = Box::pin(store.search_sessions_excluding_projects(
+                let matches = Box::pin(store.search_sessions_with_options(
                     project_id,
                     query,
                     limit,
                     session_id,
                     preferred_project_id,
                     excluded_project_ids,
+                    options,
                 ))
                 .await?;
                 for row in matches {
@@ -3558,11 +3585,22 @@ impl Store {
         }
         let q = query.trim().to_lowercase();
         let pattern = format!("%{q}%");
+        // Older read-only project databases have no `shelved` column: nothing
+        // there is shelved, and the visibility filter is a constant for them.
+        let shelved_expr = if Self::has_column(&self.pool, "frames", "shelved").await? {
+            "COALESCE(f.shelved, 0)"
+        } else {
+            "0"
+        };
+        // A reference lookup by id ignores shelving, as does a keyword search
+        // that opts in; the empty-query recent list never lists shelved rows.
+        let shelved_filter =
+            (session_id.is_none() && !(options.include_shelved && !q.is_empty())).then_some(false);
         let sql = format!(
             "WITH searchable_sessions AS ( \
                 SELECT f.rowid AS frame_rowid, f.id AS id, f.project_id AS project_id, \
                     COALESCE(p.name,'') AS project_name, f.created_at AS created_at, \
-                    COALESCE(f.title,'') AS custom_title, \
+                    COALESCE(f.title,'') AS custom_title, {shelved_expr} AS shelved, \
                     (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
                     (SELECT role FROM messages m WHERE m.frame_id=f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
                     (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) AS activity_at, \
@@ -3584,7 +3622,7 @@ impl Store {
                 CASE WHEN ?='' OR lower(COALESCE(NULLIF(s.custom_title,''), s.first_user, '')) LIKE ? THEN 0 ELSE 1 END, \
                 s.activity_at DESC, s.frame_rowid DESC LIMIT ?",
             listable = format!("({}) AND ({})", self.session_listable_sql().await?,
-                self.session_shelved_sql(session_id.is_none().then_some(false)).await?),
+                self.session_shelved_sql(shelved_filter).await?),
         );
         let rows = sqlx::query(&sql)
             .bind(serde_json::to_string(excluded_project_ids)?)
@@ -3616,6 +3654,7 @@ impl Store {
                     activity_at: row.try_get("activity_at")?,
                     last_role: row.try_get("last_role")?,
                     unseen: row.try_get("unseen")?,
+                    shelved: row.try_get::<i64, _>("shelved")? != 0,
                 })
             })
             .collect()

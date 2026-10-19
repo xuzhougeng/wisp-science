@@ -230,6 +230,7 @@ pub(super) fn Sidebar(
                     ts: session.ts,
                     activity_at: session.ts,
                     status: "needs_you".into(),
+                    shelved: false,
                 });
             }
         }

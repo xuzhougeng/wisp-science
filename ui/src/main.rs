@@ -2762,8 +2762,17 @@ fn App() -> impl IntoView {
                 }
             }),
             ComposerPickerMode::Session => spawn_local(async move {
-                let needs_project = project_info.get_untracked().is_none();
-                let arg = to_value(&serde_json::json!({ "query": query, "limit": 40 })).unwrap();
+                let current_project = project_info.get_untracked().map(|p| p.id);
+                let needs_project = current_project.is_none();
+                // A keyword search also reaches shelved conversations (badged
+                // in the list); the empty-query recent list never does.
+                let arg = to_value(&serde_json::json!({
+                    "query": query,
+                    "limit": 40,
+                    "preferredProjectId": current_project,
+                    "includeShelved": true,
+                }))
+                .unwrap();
                 let v = invoke("search_sessions", arg).await;
                 if picker_mode.get_untracked() == Some(mode)
                     && picker_query.get_untracked() == query
@@ -2841,17 +2850,11 @@ fn App() -> impl IntoView {
             }
             Some(ComposerPickerMode::Session) => {
                 let current_project = project_info.get().map(|p| p.id);
-                let mut rows: Vec<_> = picker_sessions
-                    .get()
-                    .into_iter()
-                    .filter(|s| active_session.get().as_deref() != Some(s.id.as_str()))
-                    .collect();
-                rows.sort_by_key(|s| {
-                    (
-                        current_project.as_deref() != Some(s.project_id.as_str()),
-                        std::cmp::Reverse(s.activity_at),
-                    )
-                });
+                let rows = order_session_candidates(
+                    picker_sessions.get(),
+                    current_project.as_deref(),
+                    active_session.get().as_deref(),
+                );
                 let mut items: Vec<_> = rows.into_iter().map(ComposerPickerItem::Session).collect();
                 if let Some(project) = project_info.get() {
                     if query.is_empty()
@@ -15174,10 +15177,16 @@ fn App() -> impl IntoView {
                                 ComposerPickerMode::Memo => Some("composer.ref_memos"),
                             };
                             let mut last_section = None;
+                            // A keyword with no session hits says so instead of
+                            // showing an empty menu; the row is not selectable.
+                            let no_session_hits = mode == ComposerPickerMode::Session
+                                && matches.is_empty()
+                                && !picker_query.get().is_empty();
                             view! {
                                 <div class="mention-backdrop" on:mousedown=move |_| picker_mode.set(None)></div>
                                 <div class="mention-menu">
                                     {title.map(|key| view! { <div class="mention-group-label">{t(loc, key)}</div> })}
+                                    {no_session_hits.then(|| view! { <div class="mention-empty">{t(loc, "composer.ref_no_sessions")}</div> })}
                                     {matches.into_iter().enumerate().map(|(i, item)| {
                                         let section = if grouped { picker_item_section(&item) } else { None };
                                         let header = (section != last_section).then_some(section).flatten();
@@ -15194,7 +15203,14 @@ fn App() -> impl IntoView {
                                                     (a.name, source, "attach")
                                                 }
                                             }
-                                            ComposerPickerItem::Session(s) => (s.title, s.project_name, "review"),
+                                            ComposerPickerItem::Session(s) => {
+                                                let sub = if s.shelved {
+                                                    format!("{} · {}", s.project_name, t(loc, "composer.ref_archived"))
+                                                } else {
+                                                    s.project_name
+                                                };
+                                                (s.title, sub, "review")
+                                            }
                                             ComposerPickerItem::Project { id: _, name } => (
                                                 "#project".to_string(),
                                                 tf(loc, "composer.ref_project_sub", &[("project", &name)]),

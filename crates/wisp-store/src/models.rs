@@ -926,6 +926,18 @@ pub struct SessionSearchResult {
     pub last_role: Option<String>,
     /// Activity newer than the last time the user viewed the session.
     pub unseen: bool,
+    /// Shelved (archived) out of everyday navigation; only keyword searches
+    /// that opt in via [`SessionSearchOptions::include_shelved`] return it.
+    pub shelved: bool,
+}
+
+/// Widens the default discovery scope of a session search.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionSearchOptions {
+    /// Also match shelved sessions when the query is non-empty. The empty
+    /// "recent sessions" list never includes them, so a shelved conversation
+    /// stays out of everyday navigation but can still be found by name.
+    pub include_shelved: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

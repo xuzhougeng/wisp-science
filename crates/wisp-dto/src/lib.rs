@@ -1609,6 +1609,10 @@ pub struct SessionSearchInfo {
     pub activity_at: i64,
     #[serde(default)]
     pub status: String,
+    /// Shelved out of everyday navigation; returned only by keyword searches
+    /// that ask for shelved sessions, so the row can carry an archived badge.
+    #[serde(default)]
+    pub shelved: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

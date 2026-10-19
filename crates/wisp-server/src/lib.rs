@@ -155,6 +155,7 @@ impl Server {
                 ts: row.created_at,
                 activity_at: row.activity_at,
                 status: status.into(),
+                shelved: row.shelved,
             });
         }
         Ok(serde_json::to_value(rows)?)

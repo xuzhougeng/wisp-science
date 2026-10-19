@@ -7,7 +7,8 @@ recorded local intermediate files.
 
 To keep a temporary conversation out of everyday navigation, right-click its
 sidebar row and choose **Shelve conversation**. Shelved conversations leave the
-main list, recent sessions, default search and `#` suggestions. Use **Shelved
+main list, recent sessions, default search and the `#` picker's recent list;
+typing a keyword after `#` still finds them, marked **Archived**. Use **Shelved
 conversations** beside the sidebar's conversation heading to search, open or
 **Restore to main list**. Existing references remain usable; messages, files,
 pins and folders are retained. This display preference persists across restarts
