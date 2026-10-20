@@ -1248,6 +1248,30 @@ fn after_turn_hook_events_roundtrip_to_ui() {
 }
 
 #[test]
+fn branch_opened_event_roundtrips_to_ui() {
+    let backend = super::AgentEvent::BranchOpened {
+        frame_id: "parent".into(),
+        branch_id: "branch".into(),
+        title: "Try method B".into(),
+        brief: "Compare method B against the baseline.".into(),
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::BranchOpened {
+            frame_id,
+            branch_id,
+            title,
+            brief,
+        } => {
+            assert_eq!(frame_id, "parent");
+            assert_eq!(branch_id, "branch");
+            assert_eq!(title, "Try method B");
+            assert_eq!(brief, "Compare method B against the baseline.");
+        }
+        _ => panic!("expected BranchOpened"),
+    }
+}
+
+#[test]
 fn session_artifact_preview_includes_review_token_and_retention_reasons() {
     let preview = wisp_dto::SessionArtifactPreview {
         fingerprint: "content-and-ownership-hash".into(),

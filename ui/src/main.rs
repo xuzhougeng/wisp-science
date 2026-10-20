@@ -4352,6 +4352,19 @@ fn App() -> impl IntoView {
                     });
                 }
             }
+            AgentEvent::BranchOpened {
+                branch_id, brief, ..
+            } => {
+                // The agent's brief is the branch's unsent composer text, kept
+                // like any other per-session draft (#1406): it appears when the
+                // branch is opened and stays with it when the user leaves.
+                if !brief.trim().is_empty() {
+                    composer_drafts_by_session.update(|drafts| {
+                        drafts.insert(branch_id, brief);
+                    });
+                }
+                refresh_session_history();
+            }
             AgentEvent::MemoryProposal { proposal, .. } => {
                 if turn_memory_proposal.get_untracked().is_none() {
                     turn_memory_editor.set(proposal.content.clone());
@@ -4371,6 +4384,8 @@ fn App() -> impl IntoView {
                     status_cb.set(tf(locale, "memory.proposal.failed", &[("msg", &message)]));
                 } else if hook == "project_hooks" {
                     status_cb.set(t(locale, "hooks.project_notice"));
+                } else if hook == "open_branch" {
+                    status_cb.set(tf(locale, "branch.agent_open_failed", &[("msg", &message)]));
                 } else if HookEvent::ALL.iter().any(|event| event.as_str() == hook) {
                     // User command hooks; built-in follow-ups stay silent.
                     status_cb.set(tf(

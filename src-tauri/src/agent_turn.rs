@@ -1150,6 +1150,22 @@ async fn send_message_inner_with_continuation(
                 for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization) {
                     agent.add_tool(tool);
                 }
+                // An agent-opened branch is a `/fork` of this conversation and
+                // keeps its limits: never from a branch, never inside an
+                // exploration (above), never from a subagent.
+                if state
+                    .store
+                    .session_branch_state(&frame_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .is_none()
+                {
+                    agent.add_tool(Box::new(branch_tool::OpenBranchTool::new(
+                        state.store.clone(),
+                        state.branch_intents.clone(),
+                        frame_id.clone(),
+                    )));
+                }
             }
         }
         if lab_member {

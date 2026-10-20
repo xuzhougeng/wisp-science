@@ -1897,7 +1897,7 @@ async fn undo_inspected_compaction(
         .map_err(|e| e.to_string())
 }
 
-async fn last_user_index(store: &Store, frame_id: &str) -> Result<usize, String> {
+pub(crate) async fn last_user_index(store: &Store, frame_id: &str) -> Result<usize, String> {
     let visual = store
         .visual_user_count(frame_id)
         .await

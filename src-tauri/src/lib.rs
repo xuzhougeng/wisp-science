@@ -26,6 +26,7 @@ mod app_state;
 mod app_updates;
 mod approval_commands;
 mod artifact_commands;
+mod branch_tool;
 mod browser_bridge;
 mod browser_url_filters;
 mod channels;
@@ -353,6 +354,15 @@ enum AgentEvent {
         frame_id: String,
         questions: Vec<String>,
     },
+    /// AfterTurn: a branch the agent asked for with `open_branch` now exists
+    /// (`branch_tool`). Windows refresh the sidebar and keep `brief` as the
+    /// branch's composer draft. Not persisted: the parent's notice is.
+    BranchOpened {
+        frame_id: String,
+        branch_id: String,
+        title: String,
+        brief: String,
+    },
     /// A hook failed; the turn it ran for is unaffected.
     HookFailed {
         frame_id: String,
@@ -391,6 +401,7 @@ impl AgentEvent {
             | Self::CorrectionStarted { frame_id, .. }
             | Self::MemoryProposal { frame_id, .. }
             | Self::FollowUps { frame_id, .. }
+            | Self::BranchOpened { frame_id, .. }
             | Self::HookFailed { frame_id, .. } => frame_id,
         }
     }
@@ -7479,6 +7490,7 @@ pub fn run() {
                 swarm_retries: StdMutex::new(HashSet::new()),
                 reviewing: Arc::new(StdMutex::new(HashSet::new())),
                 after_turn_generations: StdMutex::new(HashMap::new()),
+                branch_intents: Arc::new(branch_tool::BranchIntentRegistry::default()),
                 assistant_windows: std::sync::RwLock::new(HashMap::new()),
             };
             app.manage(state);
