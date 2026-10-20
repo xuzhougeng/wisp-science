@@ -5473,12 +5473,26 @@ test("workspace drag hover clears on cancellation and ignores text drags", async
 test("dragging a sidebar conversation or group onto the composer attaches them as context", async ({ page }) => {
   await enterApp(page, "/?mockContextDrag=1");
   const sidebar = page.locator(".sidebar");
+  const group = sidebar.locator('.side-folder[data-folder-name="Reviews"]');
+  const cards = page.locator('[data-reference-kind="session"]');
+  const labels = cards.locator(".composer-attachment.ready");
+
+  // The project opens on its newest conversation, "QC review". Like `#`,
+  // the open conversation never references itself, so its group drops
+  // only the other member.
+  await expect(sidebar.locator('[data-session-id="drag-qc"]')).toHaveClass(/active/);
+  await group.dragTo(composer(page));
+  await expect(labels).toHaveText(["wisp-science / Alignment notes"]);
+  await cards.first().getByRole("button").click();
+  await expect(cards).toHaveCount(0);
+
+  // From a new conversation, every member of the group is a candidate.
+  await newSessionButton(page).click();
+  await expect(sidebar.locator('[data-session-id="drag-qc"]')).not.toHaveClass(/active/);
   const loose = sidebar.locator('[data-session-id="drag-loose"]');
   await expect(loose).toHaveAttribute("draggable", "true");
   await composer(page).fill("Compare these");
   await loose.dragTo(composer(page));
-  const cards = page.locator('[data-reference-kind="session"]');
-  const labels = cards.locator(".composer-attachment.ready");
   await expect(cards).toHaveCount(1);
   await expect(cards).toHaveAttribute("title", "wisp-science / Loose notes");
   await expect(composer(page)).toHaveValue("Compare these");
@@ -5491,9 +5505,9 @@ test("dragging a sidebar conversation or group onto the composer attaches them a
 
   // A group adds every conversation in it, after the chips already there,
   // and moves nothing in the sidebar.
-  await sidebar.locator('.side-folder[data-folder-name="Reviews"]').dragTo(composer(page));
+  await group.dragTo(composer(page));
   await expect(labels).toHaveText(["wisp-science / Loose notes", "wisp-science / QC review", "wisp-science / Alignment notes"]);
-  await sidebar.locator('.side-folder[data-folder-name="Reviews"]').dragTo(composer(page));
+  await group.dragTo(composer(page));
   await expect(cards).toHaveCount(3);
   expect(await page.evaluate(() =>
     ((window as any).__sendInvokeLog ?? []).some((entry: any) => entry.cmd === "move_session"))).toBe(false);
