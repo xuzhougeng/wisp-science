@@ -18,7 +18,7 @@ struct NativeConversationView: View {
     @State private var confirmResend = false
     @State private var confirmRequeue = false
     @State private var followLatest = true
-    @State private var expandedTools: Set<Int> = []
+    @State private var expandedTools: Set<String> = []
     @State private var feedbackApproval: ConversationApproval?
     @State private var historyAction: NativeHistoryTarget?
     @State private var undoAction: NativeHistoryTarget?
@@ -47,8 +47,8 @@ struct NativeConversationView: View {
                             if conversation.showingHistory { Button("返回最新消息") { conversation.latest() } }
                             Spacer()
                         }
-                        ForEach(Array(conversation.visibleItems.enumerated()), id: \.offset) { index, item in
-                            message(item, index: index).id(index)
+                        ForEach(conversation.visibleRows) { row in
+                            message(row.item, index: row.index, rowID: row.id).id(row.id)
                         }
                         if conversation.loading { ProgressView().frame(maxWidth: .infinity) }
                         else if conversation.visibleItems.isEmpty { Text("向 Wisp Science 提问，开始这个会话。").foregroundStyle(color("text-muted")).padding(.vertical, 48).frame(maxWidth: .infinity) }
@@ -59,7 +59,9 @@ struct NativeConversationView: View {
                     }.frame(maxWidth: 800).padding(.horizontal, 16).padding(.vertical, 16).frame(maxWidth: .infinity)
                 }
                 .onChange(of: conversation.scrollRevision) { _ in
-                    if let target = conversation.scrollTarget { expandedTools.insert(target); followLatest = false; scroll.scrollTo(target, anchor: .center) }
+                    if let target = conversation.scrollTarget, let row = conversation.visibleRows.first(where: { $0.index == target }) {
+                        expandedTools.insert(row.id); followLatest = false; scroll.scrollTo(row.id, anchor: .center)
+                    }
                 }
                 .onChange(of: conversation.snapshot?.sequence) { _ in
                     if followLatest && !conversation.showingHistory { scroll.scrollTo("latest", anchor: .bottom) }
@@ -143,7 +145,7 @@ struct NativeConversationView: View {
         }
         return text
     }
-    @ViewBuilder private func message(_ item: ConversationItem, index: Int) -> some View {
+    @ViewBuilder private func message(_ item: ConversationItem, index: Int, rowID: String) -> some View {
         if item.role == "usage" {
             if let usage = NativeConversationUsage(item) { NativeConversationUsageView(usage: usage) }
         } else if let compaction = NativeTranscriptCompaction(item) {
@@ -164,25 +166,25 @@ struct NativeConversationView: View {
                 }
                 if item.role == "tool" {
                     DisclosureGroup(isExpanded: Binding(get: {
-                        expandedTools.contains(index)
+                        expandedTools.contains(rowID)
                     }, set: { expanded in
-                        if expanded { expandedTools.insert(index) } else { expandedTools.remove(index) }
+                        if expanded { expandedTools.insert(rowID) } else { expandedTools.remove(rowID) }
                     })) {
-                        if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, input: true) }
-                        selectableMessage(item, index: index)
+                        if let input = item.input, !input.isEmpty { selectableMessage(item, index: index, rowID: rowID, input: true) }
+                        selectableMessage(item, index: index, rowID: rowID)
                     } label: { Text(item.text.isEmpty ? "执行中…" : String(item.text.prefix(180))).font(WispDesign.font(size: 13)).lineLimit(3) }
                     if let path = NativeMessageImageRequest.generatedPath(item) {
                         NativeMessageBody(text: AttributedString(""), markdown: NativeMessageImageRequest.attachmentMarkdown([path]), resources: item.resources ?? [], saved: [], revealed: nil, monospaced: false,
                                           client: conversation.client, project: projectID ?? "", session: sessionID ?? "", quote: nil, save: nil)
-                            .id((projectID ?? "") + ":" + (sessionID ?? "") + ":generated:" + String(index))
+                            .id((projectID ?? "") + ":" + (sessionID ?? "") + ":generated:" + rowID)
                     }
                 } else if item.role == "question", let question = NativeQuestion(item.text) {
                     NativeQuestionCard(conversation: conversation, target: conversation.questionTarget(item, index: index), question: question)
-                        .id((sessionID ?? "") + ":" + String(index) + ":" + item.text)
+                        .id((sessionID ?? "") + ":" + rowID + ":" + item.text)
                 } else if item.role == "plan" {
                     NativePlanProposalCard(conversation: conversation, item: item, target: !conversation.showingHistory && conversation.snapshot?.items.lastIndex(where: { $0.role == "plan" }) == index ? conversation.latestProposal : nil)
                 } else {
-                    selectableMessage(item, index: index)
+                    selectableMessage(item, index: index, rowID: rowID)
                     if item.role == "user" {
                         let files = SavedAttachments.files(in: item.text)
                         ForEach(Array(files.filter { !NativeMessageImageRequest.isImageFile($0) }.enumerated()), id: \.offset) { _, file in
@@ -221,7 +223,7 @@ struct NativeConversationView: View {
                 .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
         }
     }
-    private func selectableMessage(_ item: ConversationItem, index: Int, input: Bool = false) -> some View {
+    private func selectableMessage(_ item: ConversationItem, index: Int, rowID: String, input: Bool = false) -> some View {
         let source = item.role == "user" ? SavedAttachments.body(in: item.text) : item.text
         let attachments = item.role == "user" ? NativeMessageImageRequest.attachmentMarkdown(SavedAttachments.files(in: item.text)) : ""
         let markdown = item.role == "tool" || input ? nil : source + (attachments.isEmpty ? "" : "\n\n" + attachments)
@@ -230,7 +232,7 @@ struct NativeConversationView: View {
                           client: conversation.client, project: projectID ?? "", session: sessionID ?? "", quote: quoteSelection, save: { selection in
             guard let projectID, let sessionID else { return }
             Task { await conversation.saveSelection(selection, project: projectID, session: sessionID) }
-        }).id((projectID ?? "") + ":" + (sessionID ?? "") + ":" + String(index) + (input ? ":input" : ":body"))
+        }).id((projectID ?? "") + ":" + (sessionID ?? "") + ":" + rowID + (input ? ":input" : ":body"))
     }
     private var composer: some View {
         VStack(spacing: 8) {

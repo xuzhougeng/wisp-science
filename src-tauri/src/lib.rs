@@ -1214,6 +1214,11 @@ struct UiItem {
     locations: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     resources: Vec<resource_refs::UiMessageResource>,
+    /// Persisted message `seq` this row was folded from. Rows folded from one
+    /// message keep their emitted order; live rows not yet bound to a saved
+    /// message omit it. Clients key transcript rows by it, never by offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seq: Option<i64>,
 }
 
 /// Index in `msgs` where the `user_index`‑th user turn starts (0-based user count).
@@ -1252,6 +1257,15 @@ fn messages_to_context_view_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
 }
 
 fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode) -> Vec<UiItem> {
+    messages_to_items_ends(msgs, mode).0
+}
+
+/// Same fold, also returning the item count reached after each message so the
+/// caller can map persisted message seqs onto row ranges without refolding.
+fn messages_to_items_ends(
+    msgs: &[wisp_llm::Message],
+    mode: MessagesToItemsMode,
+) -> (Vec<UiItem>, Vec<usize>) {
     let tool_inputs: HashMap<&str, String> = msgs
         .iter()
         .flat_map(|message| message.tool_calls.iter())
@@ -1268,6 +1282,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
         })
         .collect();
     let mut out = vec![];
+    let mut ends = Vec::with_capacity(msgs.len());
     for m in msgs {
         match m.role {
             wisp_llm::Role::User => {
@@ -1286,6 +1301,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: Some("background_completion".into()),
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 } else if !t.trim().is_empty() {
@@ -1303,6 +1319,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                                 kind: Some("checkpoint".into()),
                                 status: None,
                                 locations: None,
+                                seq: None,
                                 resources: Vec::new(),
                             });
                         }
@@ -1319,6 +1336,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                             kind: None,
                             status: None,
                             locations: None,
+                            seq: None,
                             resources: Vec::new(),
                         });
                     }
@@ -1339,6 +1357,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                             kind: None,
                             status: None,
                             locations: None,
+                            seq: None,
                             resources: Vec::new(),
                         });
                     }
@@ -1357,6 +1376,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 }
@@ -1385,6 +1405,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                             kind: None,
                             status: None,
                             locations: None,
+                            seq: None,
                             resources: Vec::new(),
                         });
                     }
@@ -1402,6 +1423,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 } else if matches!(
@@ -1423,6 +1445,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 } else if let Some(envelope) =
@@ -1440,6 +1463,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: (!envelope.kind.is_empty()).then_some(envelope.kind),
                         status: Some(envelope.status),
                         locations: (!envelope.locations.is_empty()).then_some(envelope.locations),
+                        seq: None,
                         resources: Vec::new(),
                     });
                 } else {
@@ -1463,6 +1487,7 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                         kind: tombstone.then(|| "tombstone".into()),
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 }
@@ -1483,14 +1508,16 @@ fn messages_to_items_with(msgs: &[wisp_llm::Message], mode: MessagesToItemsMode)
                             kind: Some("system".into()),
                             status: None,
                             locations: None,
+                            seq: None,
                             resources: Vec::new(),
                         });
                     }
                 }
             }
         }
+        ends.push(out.len());
     }
-    out
+    (out, ends)
 }
 
 /// Tool cards need their complete JSON bodies, but ordinary tool output is a
@@ -1619,6 +1646,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                     kind: None,
                     status: None,
                     locations: None,
+                    seq: None,
                     resources: Vec::new(),
                 });
             }
@@ -1691,6 +1719,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                     kind: None,
                     status: None,
                     locations: None,
+                    seq: None,
                     resources: Vec::new(),
                 });
             }
@@ -1719,6 +1748,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 kind: None,
                 status: None,
                 locations: None,
+                seq: None,
                 resources: Vec::new(),
             }),
             AgentEvent::Error { message, .. } => items.push(UiItem {
@@ -1733,6 +1763,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 kind: None,
                 status: None,
                 locations: None,
+                seq: None,
                 resources: Vec::new(),
             }),
             AgentEvent::Text { delta, .. } | AgentEvent::Reasoning { delta, .. } => {
@@ -1756,6 +1787,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 }
@@ -1772,6 +1804,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 kind: None,
                 status: None,
                 locations: None,
+                seq: None,
                 resources: Vec::new(),
             }),
             AgentEvent::ToolResult {
@@ -1810,6 +1843,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                     continue;
@@ -1843,6 +1877,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                             kind: None,
                             status: None,
                             locations: None,
+                            seq: None,
                             resources: Vec::new(),
                         });
                     }
@@ -1864,6 +1899,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 kind: None,
                 status: None,
                 locations: None,
+                seq: None,
                 resources: Vec::new(),
             }),
             AgentEvent::MessageBoundary { seq, .. } => {
@@ -1892,6 +1928,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         kind: None,
                         status: None,
                         locations: None,
+                        seq: None,
                         resources: Vec::new(),
                     });
                 }
@@ -1937,6 +1974,7 @@ fn usage_item(
         kind: None,
         status: None,
         locations: None,
+        seq: None,
         resources: Vec::new(),
     }
 }

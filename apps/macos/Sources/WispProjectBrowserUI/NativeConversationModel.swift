@@ -94,6 +94,8 @@ final class NativeConversationModel: ObservableObject {
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client; composer = NativeComposerModel(client: client); completions = NativeComposerCompletionModel(client: client) }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
+    /// Row identities for the displayed page; `index` still addresses `visibleItems`.
+    var visibleRows: [NativeTranscriptRow] { NativeTranscriptRows.rows(visibleItems) }
     var isAcp: Bool { snapshot?.acp_agent_id != nil || snapshot?.model_id.hasPrefix("acp:") == true }
     var modelLabel: String {
         if isAcp {

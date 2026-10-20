@@ -157,6 +157,7 @@ fn snapshot_item(item: crate::UiItem) -> dto::Item {
         timestamp: None,
         attachments,
         run: None,
+        seq: item.seq,
     }
 }
 
@@ -176,6 +177,7 @@ mod context_contract_tests {
             call_id: None,
             kind: None,
             locations: None,
+            seq: None,
             resources: Vec::new(),
         };
         let items: Vec<wisp_dto::native_conversations::Item> =
@@ -1450,9 +1452,18 @@ mod tests {
             text: r#"{"source":"native","entries":[{"content":"Inspect **samples**","priority":"high"}]}"#.into(),
             tool_name: None, ok: None, duration_ms: None, input: None,
             model_name: None, call_id: None, kind: None, status: None,
-            locations: None, resources: vec![],
+            locations: None, seq: None, resources: vec![],
         };
         let item = super::snapshot_item(source.clone());
+        assert_eq!(item.seq, None);
+        assert_eq!(
+            super::snapshot_item(crate::UiItem {
+                seq: Some(9),
+                ..source.clone()
+            })
+            .seq,
+            Some(9)
+        );
         let plan = item.proposal.unwrap();
         assert_eq!(plan.source, wisp_dto::PlanSource::Native);
         assert_eq!(plan.entries[0].content, "Inspect **samples**");
@@ -1485,6 +1496,7 @@ mod tests {
             kind: Some("execute".into()),
             status: Some("completed".into()),
             locations: Some("analysis.py:4".into()),
+            seq: None,
             resources: vec![],
         };
         let projected = super::snapshot_item(source.clone());
@@ -1881,6 +1893,7 @@ mod tests {
             kind: None,
             status: None,
             locations: None,
+            seq: None,
             resources: Vec::new(),
         });
         assert_eq!(item.attachments, vec!["uploads/notes.csv".to_string()]);

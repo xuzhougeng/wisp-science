@@ -631,6 +631,16 @@ there is no missing delta to replay. Swift preserves unsent drafts during in-app
 navigation; drafts are not persisted to disk. Persisted sent messages survive
 reopening the app.
 
+Each snapshot item carries an optional `seq`: the persisted message the host
+folded that row from. Rows from one message (reasoning, then answer) share the
+seq in their emitted order; review cards take the seq of the message they
+follow. Rows the host cannot bind yet omit it: a turn still streaming, a pending
+`ask_user` row, or a saved message whose boundary event was never persisted.
+Older hosts omit the field everywhere. The macOS transcript keys its rows by
+`seq` and ordinal, then by question request ID or compaction epoch, and only
+then by page offset, so a replaced snapshot keeps existing row views, their
+disclosure state and selection instead of rebuilding every row below a change.
+
 Send returns acceptance immediately; the host owns the turn through completion.
 Disconnecting/closing the view does not cancel it. The host records accepted UUIDs
 and message hashes for its lifetime and rejects payload changes using the same ID.

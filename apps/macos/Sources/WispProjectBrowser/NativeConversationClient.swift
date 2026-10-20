@@ -12,6 +12,9 @@ public struct ConversationItem: Codable, Equatable, Sendable {
     public let timestamp: Int64?
     public let resources: [ConversationMessageResource]?
     public let proposal: ConversationPlanProposal?
+    /// Persisted message sequence this row was folded from. Older hosts and
+    /// live rows not yet saved omit it; rows from one message keep their order.
+    public let seq: Int64?
 }
 
 /// Shared wisp-dto MessageResource uses camelCase on the wire.

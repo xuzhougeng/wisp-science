@@ -1849,10 +1849,40 @@ async fn ask_user_items(state: &AppState, frame_id: &str) -> Vec<UiItem> {
                 kind: None,
                 status: None,
                 locations: None,
+                seq: None,
                 resources: Vec::new(),
             }
         })
         .collect()
+}
+
+/// Message seq → item offset reached once that message was folded, the same
+/// shape `events_to_items` reports for persisted `MessageBoundary` events.
+fn message_boundaries(
+    messages: &[(i64, wisp_llm::Message)],
+    ends: &[usize],
+) -> HashMap<i64, usize> {
+    messages
+        .iter()
+        .zip(ends)
+        .map(|((seq, _), end)| (*seq, *end))
+        .collect()
+}
+
+/// Bind each folded row to the persisted message whose boundary first covers
+/// it. Rows after the last boundary (a live turn still streaming, or a saved
+/// message whose boundary event was never persisted) keep `None`.
+fn assign_item_seqs(items: &mut [UiItem], boundaries: &HashMap<i64, usize>) {
+    let mut ends: Vec<(i64, usize)> = boundaries.iter().map(|(seq, end)| (*seq, *end)).collect();
+    ends.sort_unstable();
+    let mut cursor = 0usize;
+    for (seq, end) in ends {
+        let end = end.min(items.len());
+        for item in &mut items[cursor.min(end)..end] {
+            item.seq = Some(seq);
+        }
+        cursor = cursor.max(end);
+    }
 }
 
 pub(super) fn transcript_page_items(
@@ -1882,9 +1912,12 @@ pub(super) fn transcript_page_items(
         })
         .collect();
     let (mut items, boundaries) = if events.is_empty() {
+        let prefix_len = page.event_message_prefix_len.unwrap_or(msgs.len());
+        let (items, ends) =
+            messages_to_items_ends(&msgs[..prefix_len], MessagesToItemsMode::Transcript);
         (
-            messages_to_items(&msgs[..page.event_message_prefix_len.unwrap_or(msgs.len())]),
-            HashMap::new(),
+            items,
+            message_boundaries(&page.messages[..prefix_len], &ends),
         )
     } else {
         let first_seq = events.iter().find_map(|event| match event {
@@ -1899,18 +1932,20 @@ pub(super) fn transcript_page_items(
                     .count()
             })
         });
-        let mut prefix = messages_to_items(&msgs[..prefix_len]);
+        let (mut prefix, ends) =
+            messages_to_items_ends(&msgs[..prefix_len], MessagesToItemsMode::Transcript);
         let prefix_items = prefix.len();
+        let mut boundaries = message_boundaries(&page.messages[..prefix_len], &ends);
         let (event_items, event_boundaries) = events_to_items(&events);
         prefix.extend(event_items);
-        (
-            prefix,
+        boundaries.extend(
             event_boundaries
                 .into_iter()
-                .map(|(seq, offset)| (seq, prefix_items + offset))
-                .collect(),
-        )
+                .map(|(seq, offset)| (seq, prefix_items + offset)),
+        );
+        (prefix, boundaries)
     };
+    assign_item_seqs(&mut items, &boundaries);
     let mut resources_by_seq = HashMap::<i64, Vec<resource_refs::UiMessageResource>>::new();
     for resource in &page.resources {
         resources_by_seq
@@ -2015,6 +2050,7 @@ pub(super) fn transcript_page_items(
                 kind: None,
                 status: None,
                 locations: None,
+                seq: Some(*message_seq),
                 resources: Vec::new(),
             },
         );
@@ -2270,6 +2306,7 @@ async fn read_session_context_state(
             kind: None,
             status: None,
             locations: None,
+            seq: None,
             resources: Vec::new(),
         })
         .collect::<Vec<_>>();
@@ -2873,6 +2910,7 @@ mod compaction_undo_tests {
             kind: None,
             status: None,
             locations: None,
+            seq: None,
             resources: Vec::new(),
         }];
         let (epochs, head) = load_context_epoch_page(&store, "f", &mut items)
@@ -2914,6 +2952,7 @@ mod compaction_undo_tests {
             kind: None,
             status: None,
             locations: None,
+            seq: None,
             resources: Vec::new(),
         }];
         let (epochs, head) = load_context_epoch_page(&store, "f", &mut items)

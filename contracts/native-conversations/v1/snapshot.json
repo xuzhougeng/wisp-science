@@ -11,7 +11,8 @@
       "tool_name": null,
       "input": null,
       "ok": null,
-      "status": null
+      "status": null,
+      "seq": 1
     },
     {
       "role": "assistant",
@@ -19,7 +20,8 @@
       "tool_name": null,
       "input": null,
       "ok": null,
-      "status": null
+      "status": null,
+      "seq": 2
     }
   ],
   "next_before_seq": null,

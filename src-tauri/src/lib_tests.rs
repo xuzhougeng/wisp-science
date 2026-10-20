@@ -2261,6 +2261,86 @@ fn branch_merge_projection_never_relabels_the_previous_answer() {
 }
 
 #[test]
+fn transcript_rows_bind_to_their_persisted_message_seq() {
+    let mut assistant = wisp_llm::Message::assistant("answer");
+    assistant.reasoning = Some("thinking".into());
+    let page = wisp_store::SessionTranscriptPage {
+        event_message_prefix_len: None,
+        messages: vec![(4, wisp_llm::Message::user("question")), (6, assistant)],
+        branch_merges: vec![],
+        reviews: vec![],
+        resources: vec![],
+        ui_events: vec![],
+        next_before_seq: None,
+        user_offset: 0,
+        latest_seq: 6,
+    };
+    let items = transcript_page_items(&page).unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (item.role.as_str(), item.seq))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", Some(4)),
+            ("reasoning", Some(6)),
+            ("assistant", Some(6))
+        ]
+    );
+
+    let events = [
+        AgentEvent::User {
+            frame_id: "f".into(),
+            text: "question".into(),
+            queue_id: None,
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: "f".into(),
+            seq: 4,
+        },
+        AgentEvent::Text {
+            frame_id: "f".into(),
+            delta: "answer".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: "f".into(),
+            seq: 6,
+        },
+        AgentEvent::ToolCall {
+            frame_id: "f".into(),
+            name: "python".into(),
+            preview: "print(1)".into(),
+        },
+    ];
+    let page = wisp_store::SessionTranscriptPage {
+        event_message_prefix_len: Some(0),
+        messages: vec![
+            (4, wisp_llm::Message::user("question")),
+            (6, wisp_llm::Message::assistant("answer")),
+        ],
+        branch_merges: vec![],
+        reviews: vec![],
+        resources: vec![],
+        ui_events: events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect(),
+        next_before_seq: None,
+        user_offset: 0,
+        latest_seq: 6,
+    };
+    let items = transcript_page_items(&page).unwrap();
+    // The live tool call after the last boundary has no saved message yet.
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (item.role.as_str(), item.seq))
+            .collect::<Vec<_>>(),
+        vec![("user", Some(4)), ("assistant", Some(6)), ("tool", None)]
+    );
+}
+
+#[test]
 fn resource_bindings_cover_messages_rendered_as_assistant_output() {
     assert!(message_uses_resource_bindings(
         &wisp_llm::Message::assistant("answer")

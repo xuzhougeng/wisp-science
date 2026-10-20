@@ -857,6 +857,11 @@ pub struct Item {
     pub attachments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<TranscriptRun>,
+    /// Persisted message sequence this row was folded from. Rows that share a
+    /// seq keep their emitted order; live rows not yet saved and older hosts
+    /// omit it. Clients key transcript rows by it instead of the page offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlanProposal {
@@ -1494,6 +1499,25 @@ mod tests {
         assert_eq!(rows[0].before_seq, Some(8));
         assert_eq!(rows[1].before_seq, None);
         assert_eq!(rows[1].user_index, 1);
+    }
+    #[test]
+    fn transcript_items_carry_optional_persisted_seq() {
+        let snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/snapshot.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            snapshot
+                .items
+                .iter()
+                .map(|item| item.seq)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        let older: Item =
+            serde_json::from_value(serde_json::json!({"role":"user","text":"older host"})).unwrap();
+        assert_eq!(older.seq, None);
+        assert!(serde_json::to_value(&older).unwrap().get("seq").is_none());
     }
     #[test]
     fn shared_native_conversation_fixtures_roundtrip() {
