@@ -9,10 +9,12 @@ import { tauriMock } from "./mock-tauri";
 const HOST_ACTION_TIMEOUT_MS = 10_000;
 // Longest single main-thread task, and longest 50 ms timer lag, the host may
 // show while two apps and two streams are live and its controls are used.
-// The stalls this guards were multi-second; a task this long is already a
-// visible freeze, and tighter bounds flake on CI clocks (see
-// long-session-stress.spec.ts).
-const HOST_STALL_LIMIT_MS = 2_000;
+// The stalls this guards were multi-second; a gap this long is already a
+// visible freeze. Measured on a 4-worker M-series Mac: tasks up to ~90 ms,
+// timer lag up to ~230 ms (end-of-turn tasks queue back to back); CI ran the
+// same clicks over 4x slower, so this keeps about a 3x margin. Twice the
+// single-frame bound of long-session-stress.spec.ts for the same reason.
+const HOST_STALL_LIMIT_MS = 3_000;
 
 async function lastArgs(page: Page, command: string) {
   return page.evaluate((cmd) => {

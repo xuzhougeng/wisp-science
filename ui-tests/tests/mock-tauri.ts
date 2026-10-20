@@ -6304,9 +6304,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 (window as any).__healthStressFinish = () => {
                   clearInterval(timer);
                   delete (window as any).__healthStressFinish;
-                  emit("agent", { kind: "Done", frame_id: fid });
-                  emit("agent", { kind: "Done", frame_id: background });
-                  resolve(fid);
+                  // As with the native command, each Done lands in its own task
+                  // after stop_agent returns, never inside the click that asked
+                  // for the stop.
+                  setTimeout(() => emit("agent", { kind: "Done", frame_id: fid }), 0);
+                  setTimeout(() => {
+                    emit("agent", { kind: "Done", frame_id: background });
+                    resolve(fid);
+                  }, 0);
                 };
                 // Bound a failed test's producer as well.
                 setTimeout(() => (window as any).__healthStressFinish?.(), 25_000);

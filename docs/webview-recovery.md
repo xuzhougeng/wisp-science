@@ -89,8 +89,8 @@ One App remains parked while the other is visible. The test clicks a candidate,
 Stop, tab close and New session, and checks numeric diagnostics. Each App must
 finish rendering its thumbnails before it is clicked, and host responsiveness
 is bounded by the page's own clock: the stream's 50 ms timer must keep firing,
-and no main-thread task or timer lag may exceed two seconds while the controls
-are used. The Playwright clicks themselves only have to complete within ten
+and no main-thread task or timer lag may exceed three seconds while the
+controls are used. The Playwright clicks themselves only have to complete within ten
 seconds, so a busy CI runner cannot fail the test unless the host stalls. It
 also guards against a model picker overflowing over Stop in a narrow chat
 split.
