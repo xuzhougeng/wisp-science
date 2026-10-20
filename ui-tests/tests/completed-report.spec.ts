@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { clickInChat } from "./chat-scroll";
 
 function monitoredReportFixture(options: { active?: boolean; unowned?: boolean; review?: boolean } = {}) {
   const w = window as any;
@@ -74,14 +75,15 @@ for (const width of [1280, 540]) {
     await expect(page.locator(".run-monitor-wrap")).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: `test-results/completed-monitored-report-${width}.png`, fullPage: true, animations: "disabled" });
-    await activity.locator(".steps-head").click();
+    // Steps sit above the fold once the activity expands; see chat-scroll.ts.
+    await clickInChat(activity.locator(".steps-head"));
     await expect(activity.locator(".step-progress")).toHaveCount(10);
     await expect(activity.locator(".step-think")).toHaveCount(10);
     const submission = activity.locator(".step").filter({ has: page.locator(".step-name", { hasText: /^run_in_context$/ }) }).first();
-    await submission.locator(".step-head").click();
+    await clickInChat(submission.locator(".step-head"));
     await expect(submission.getByTestId("run-monitor-card")).toHaveAttribute("data-run-id", "report-run-0");
     await expect(submission).toContainText("Output for phase 1");
-    await activity.locator(".steps-head").click();
+    await clickInChat(activity.locator(".steps-head"));
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.reload();
     await openMonitoredReport(page);
