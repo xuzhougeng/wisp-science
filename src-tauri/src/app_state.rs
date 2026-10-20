@@ -637,6 +637,9 @@ pub(crate) struct AppState {
     /// Latest AfterTurn hook run per session; an older run's results are
     /// dropped instead of emitted (`turn_hooks::spawn_after_turn`).
     pub(crate) after_turn_generations: StdMutex<HashMap<String, u64>>,
+    /// `open_branch` calls made during each conversation's running turn,
+    /// realized when the turn ends (`branch_tool`). Shared with the tool.
+    pub(crate) branch_intents: Arc<branch_tool::BranchIntentRegistry>,
     /// Windows showing the research assistant → the project to restore on
     /// close (`None`: a blank window returns home).
     pub(crate) assistant_windows: std::sync::RwLock<HashMap<String, Option<String>>>,

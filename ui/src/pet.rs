@@ -148,6 +148,7 @@ impl DesktopPetActivity {
             | AgentEvent::Resources { .. }
             | AgentEvent::MemoryProposal { .. }
             | AgentEvent::FollowUps { .. }
+            | AgentEvent::BranchOpened { .. }
             | AgentEvent::HookFailed { .. } => {}
         }
     }

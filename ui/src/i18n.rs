@@ -2435,6 +2435,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "memory.proposal.ready") => Some("Memory draft ready."),
         (Locale::En, "memory.proposal.none") => Some("No durable memory was proposed."),
         (Locale::En, "memory.proposal.failed") => Some("Could not prepare memory: {msg}"),
+        (Locale::En, "branch.agent_open_failed") => {
+            Some("Could not open the branch the agent asked for: {msg}")
+        }
         (Locale::En, "memory.proposal.empty") => Some("Memory content cannot be empty."),
         (Locale::En, "memory.proposal.saved") => Some("Memory saved."),
         (Locale::En, "memory.proposal.saved_global") => Some("Global memory saved. It will be used from the next turn."),
@@ -5734,6 +5737,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "memory.proposal.ready") => Some("记忆草稿已生成。"),
         (Locale::Zh, "memory.proposal.none") => Some("这一轮没有值得长期保存的内容。"),
         (Locale::Zh, "memory.proposal.failed") => Some("无法生成记忆：{msg}"),
+        (Locale::Zh, "branch.agent_open_failed") => Some("无法开启 agent 请求的分支：{msg}"),
         (Locale::Zh, "memory.proposal.empty") => Some("记忆内容不能为空。"),
         (Locale::Zh, "memory.proposal.saved") => Some("记忆已保存。"),
         (Locale::Zh, "memory.proposal.saved_global") => Some("全局记忆已保存，将从下一轮开始使用。"),

@@ -403,6 +403,14 @@ pub enum AgentEvent {
         frame_id: String,
         questions: Vec<String>,
     },
+    /// AfterTurn: the agent's `open_branch` call was realized. `branch_id` is
+    /// a new branch of `frame_id`; `brief` is its unsent composer draft.
+    BranchOpened {
+        frame_id: String,
+        branch_id: String,
+        title: String,
+        brief: String,
+    },
     /// An AfterTurn hook failed; the finished turn is unaffected.
     HookFailed {
         frame_id: String,
