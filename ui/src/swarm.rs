@@ -140,7 +140,11 @@ fn stop_turn(state: SwarmViewState, session: RwSignal<Option<String>>) {
 /// Re-run failed Reader tasks (all of them, or the given ids) in the latest
 /// finished batch of this conversation. Progress arrives as swarm events; the
 /// recovered evidence is handed to the next message.
-fn retry_tasks(state: SwarmViewState, session: RwSignal<Option<String>>, task_ids: Option<Vec<String>>) {
+fn retry_tasks(
+    state: SwarmViewState,
+    session: RwSignal<Option<String>>,
+    task_ids: Option<Vec<String>>,
+) {
     let Some(id) = session.get_untracked() else {
         return;
     };
