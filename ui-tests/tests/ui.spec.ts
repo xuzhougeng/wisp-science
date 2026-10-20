@@ -3284,6 +3284,7 @@ test("context usage keeps the running agent window until a model switch boundary
   // the old 128K Agent until Done.
   await expect.poll(() => trigger.evaluate((el) =>
     getComputedStyle(el).getPropertyValue("--context-gauge-angle").trim())).toBe("-34.2deg");
+  await page.evaluate(() => (window as any).__finishContextUsageRunning());
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({ timeout: 3_000 });
   await expect.poll(() => trigger.evaluate((el) =>
     getComputedStyle(el).getPropertyValue("--context-gauge-angle").trim())).toBe("-54.0deg");
@@ -5474,7 +5475,9 @@ test("dragging a sidebar conversation or group onto the composer attaches them a
   await enterApp(page, "/?mockContextDrag=1");
   const sidebar = page.locator(".sidebar");
   const group = sidebar.locator('.side-folder[data-folder-name="Reviews"]');
-  const cards = page.locator('[data-reference-kind="session"]');
+  // Scoped to the composer: a sent message renders its references with
+  // the same data-reference-kind.
+  const cards = page.locator('.composer-reference-chips [data-reference-kind="session"]');
   const labels = cards.locator(".composer-attachment.ready");
 
   // The project opens on its newest conversation, "QC review". Like `#`,
@@ -5521,6 +5524,7 @@ test("dragging a sidebar conversation or group onto the composer attaches them a
     references: [{ kind: "session", id: "drag-loose" }, { kind: "session", id: "drag-align" }],
   });
   await expect(cards).toHaveCount(0);
+  await expect(page.locator('.msg.user [data-reference-kind="session"]')).toHaveCount(2);
   expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
 });
 

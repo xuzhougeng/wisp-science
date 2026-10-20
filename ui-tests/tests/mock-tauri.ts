@@ -6425,10 +6425,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                     max_context: 128_000,
                   });
                 }, 30);
-                setTimeout(() => {
+                // The turn ends only when the test says so: a fixed timer
+                // raced the model-switch clicks on slow runners.
+                (window as any).__finishContextUsageRunning = () => {
                   emit("agent", { kind: "Done", frame_id: fid });
                   resolve(fid);
-                }, 1_200);
+                };
               });
             }
             if (String(arg("message") ?? "").includes("CONTEXTUSAGEWARN")) {
