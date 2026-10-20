@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { tauriMock, parallelMock, parallelReplyTailText } from "./mock-tauri";
 import { openSidebarEntry } from "./sidebar-nav";
 import { expectPrimaryButton } from "./button-style";
+import { clickInChat } from "./chat-scroll";
 
 const officeFixtures = {
   xlsxBase64: readFileSync(resolve(__dirname, "../fixtures/office-preview.xlsx")).toString("base64"),
@@ -13141,12 +13142,13 @@ for (const failure of ["command", "payload"]) {
         return original(cmd, args);
       };
     }, failure);
-    await loadEarlier.click();
+    // The button heads a thread that follows its latest row; see chat-scroll.ts.
+    await clickInChat(loadEarlier);
     await expect(page.getByRole("button", { name: "Loading earlier messages…", exact: true })).toBeDisabled();
     await page.evaluate(() => (window as any).__releaseHistory());
     await expect(page.getByRole("alert")).toContainText("Could not load earlier messages:");
     await expect(loadEarlier).toBeEnabled();
-    await loadEarlier.click();
+    await clickInChat(loadEarlier);
     await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
