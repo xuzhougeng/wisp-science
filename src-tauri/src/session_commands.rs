@@ -34,6 +34,133 @@ pub(super) async fn new_session(
     Ok(id)
 }
 
+/// Where a conversation branch forks off its source: a visual user turn and
+/// whether the fork keeps that turn's reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BranchCheckpointKind {
+    /// The cut is just before the user turn; the branch starts with the turn's
+    /// predecessor as its last message.
+    BeforeUser,
+    /// The branch keeps the user turn and its reply.
+    AfterResponse,
+}
+
+impl BranchCheckpointKind {
+    /// The wire form (`frames.branch_point_kind`); `None` means `after_response`.
+    pub(crate) fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw.unwrap_or("after_response") {
+            "before_user" => Ok(Self::BeforeUser),
+            "after_response" => Ok(Self::AfterResponse),
+            _ => Err("Invalid conversation branch checkpoint kind.".into()),
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::BeforeUser => "before_user",
+            Self::AfterResponse => "after_response",
+        }
+    }
+}
+
+/// The in-memory, session-scoped permission state a branch inherits from its
+/// source (`approval_commands::copy_session_permissions`).
+pub(crate) struct BranchPermissions<'a> {
+    pub(crate) approval_grants: &'a StdMutex<ApprovalGrants>,
+    pub(crate) full_permission_sessions: &'a StdRwLock<HashSet<String>>,
+}
+
+impl BranchPermissions<'_> {
+    pub(crate) fn of(state: &AppState) -> BranchPermissions<'_> {
+        BranchPermissions {
+            approval_grants: &state.approval_grants,
+            full_permission_sessions: &state.full_permission_sessions,
+        }
+    }
+}
+
+/// Create a conversation branch of `source` in `project_id` and return the new
+/// frame id. The branch holds the source's transcript up to the checkpoint
+/// (`user_index` `None`: the source's last visual user turn), the source's
+/// model settings, execution environment and session permissions, and the
+/// branch point that nests it under the source in the sidebar.
+///
+/// This is the kernel shared by the `/fork` command and agent-opened
+/// branches; it needs no window. Callers decide whether a branch may be
+/// created here at all (a branch of a branch, a branch inside an exploration,
+/// a frozen exploration round): this function only builds one.
+pub(crate) async fn create_branch_from(
+    store: &Store,
+    permissions: BranchPermissions<'_>,
+    project_id: &str,
+    source: &str,
+    user_index: Option<usize>,
+    checkpoint_kind: BranchCheckpointKind,
+    title: Option<&str>,
+) -> Result<String, String> {
+    let id = create_session_frame(store, project_id).await?;
+    let checkpoint_user_index = match user_index {
+        Some(index) => index,
+        None => last_user_index(store, source).await?,
+    };
+    let (epoch, keep_seq) = resolve_visual_keep(
+        store,
+        source,
+        checkpoint_user_index,
+        checkpoint_kind == BranchCheckpointKind::AfterResponse,
+    )
+    .await?;
+    store
+        .set_session_branch_point(&id, source, checkpoint_user_index, checkpoint_kind.as_str())
+        .await
+        .map_err(|error| error.to_string())?;
+    models::copy_session_model_settings(store, source, &id, project_id).await?;
+    ssh_hosts::copy_session_execution_environment(store, source, &id).await?;
+    let msgs = store
+        .load_messages_in_epoch(source, epoch)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    for (idx, (_, msg)) in msgs.iter().filter(|(seq, _)| *seq <= keep_seq).enumerate() {
+        store
+            .append_message(&id, idx as i64 + 1, msg)
+            .await
+            .map_err(|e| format!("{e}"))?;
+    }
+    approval_commands::copy_session_permissions(
+        permissions.approval_grants,
+        permissions.full_permission_sessions,
+        source,
+        &id,
+    )?;
+    if let Some(t) = branch_title(title) {
+        let _ = store.rename_session(&id, project_id, &t).await;
+    }
+    Ok(id)
+}
+
+/// Why `source` cannot be branched right now, if it cannot. Shared by the
+/// `/fork` command and the `open_branch` tool so both refuse the same cases.
+pub(crate) async fn require_branchable(store: &Store, source: &str) -> Result<(), String> {
+    let scope = store
+        .frame_state_scope(source)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Session state scope was not found.".to_string())?;
+    exploration_commands::require_writable_scope(store, &scope).await?;
+    if store
+        .session_branch_state(source)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("Conversation branches cannot be branched again.".into());
+    }
+    if matches!(scope, wisp_store::StateScope::Exploration { .. }) {
+        return Err("Conversation branches cannot be created inside an exploration.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(super) async fn branch_session(
     state: State<'_, AppState>,
@@ -51,83 +178,34 @@ pub(super) async fn branch_session(
         .await?
         .0;
     let _project_activity = state.begin_project_activity(&ap.id)?;
-    if let Some(source) = session_id.as_deref().filter(|s| !s.is_empty()) {
-        let scope = state
-            .store
-            .frame_state_scope(source)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "Session state scope was not found.".to_string())?;
-        exploration_commands::require_writable_scope(&state.store, &scope).await?;
-        if state
-            .store
-            .session_branch_state(source)
-            .await
-            .map_err(|error| error.to_string())?
-            .is_some()
-        {
-            return Err("Conversation branches cannot be branched again.".into());
-        }
-        if matches!(
-            state
-                .store
-                .frame_state_scope(source)
-                .await
-                .map_err(|error| error.to_string())?,
-            Some(wisp_store::StateScope::Exploration { .. })
-        ) {
-            return Err("Conversation branches cannot be created inside an exploration.".into());
-        }
+    let source = session_id.as_deref().filter(|s| !s.is_empty());
+    if let Some(source) = source {
+        require_branchable(&state.store, source).await?;
     }
     // Copying conversation history does not change the frozen workspace.
     // The branched frame receives the same read-only project-tool restriction
     // as any other non-source mainline conversation during an active round.
-    let id = create_session_frame(&state.store, &ap.id).await?;
-    if let Some(source) = session_id.as_deref().filter(|s| !s.is_empty()) {
-        let checkpoint_kind = checkpoint_kind.as_deref().unwrap_or("after_response");
-        if !matches!(checkpoint_kind, "before_user" | "after_response") {
-            return Err("Invalid conversation branch checkpoint kind.".into());
+    let id = match source {
+        Some(source) => {
+            create_branch_from(
+                &state.store,
+                BranchPermissions::of(&state),
+                &ap.id,
+                source,
+                user_index,
+                BranchCheckpointKind::parse(checkpoint_kind.as_deref())?,
+                title.as_deref(),
+            )
+            .await?
         }
-        let checkpoint_user_index = match user_index {
-            Some(index) => index,
-            None => last_user_index(&state.store, source).await?,
-        };
-        let (epoch, keep_seq) = resolve_visual_keep(
-            &state.store,
-            source,
-            checkpoint_user_index,
-            checkpoint_kind == "after_response",
-        )
-        .await?;
-        state
-            .store
-            .set_session_branch_point(&id, source, checkpoint_user_index, checkpoint_kind)
-            .await
-            .map_err(|error| error.to_string())?;
-        models::copy_session_model_settings(&state.store, source, &id, &ap.id).await?;
-        ssh_hosts::copy_session_execution_environment(&state.store, source, &id).await?;
-        let msgs = state
-            .store
-            .load_messages_in_epoch(source, epoch)
-            .await
-            .map_err(|e| format!("{e}"))?;
-        for (idx, (_, msg)) in msgs.iter().filter(|(seq, _)| *seq <= keep_seq).enumerate() {
-            state
-                .store
-                .append_message(&id, idx as i64 + 1, msg)
-                .await
-                .map_err(|e| format!("{e}"))?;
+        None => {
+            let id = create_session_frame(&state.store, &ap.id).await?;
+            if let Some(t) = branch_title(title.as_deref()) {
+                let _ = state.store.rename_session(&id, &ap.id, &t).await;
+            }
+            id
         }
-        approval_commands::copy_session_permissions(
-            &state.approval_grants,
-            &state.full_permission_sessions,
-            source,
-            &id,
-        )?;
-    }
-    if let Some(t) = branch_title(title.as_deref()) {
-        let _ = state.store.rename_session(&id, &ap.id, &t).await;
-    }
+    };
     state.set_active(window.label(), ap);
     state.set_active_frame(window.label(), Some(id.clone()));
     Ok(id)
@@ -3277,5 +3355,219 @@ mod delete_children_tests {
             .unwrap();
         assert!(apart.is_empty());
         assert!(apart.nested.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod branch_kernel_tests {
+    use super::*;
+
+    /// A conversation with two completed visual turns, persisted the way a
+    /// real turn leaves it: messages plus the User/MessageBoundary UI events
+    /// that `resolve_visual_keep` maps checkpoints through.
+    async fn store_with_two_turns(dir: &std::path::Path) -> Store {
+        let store = Store::open(&dir.join("wisp.sqlite")).await.unwrap();
+        store.create_project("p", "P", "").await.unwrap();
+        store
+            .create_frame("main", "p", "OPERON", "m")
+            .await
+            .unwrap();
+        for (seq, message) in [
+            (1, Message::system("sys")),
+            (2, Message::user("q1")),
+            (3, Message::assistant("a1")),
+            (4, Message::user("q2")),
+            (5, Message::assistant("a2")),
+        ] {
+            store.append_message("main", seq, &message).await.unwrap();
+        }
+        let mut event_seq = 1i64;
+        for (text, user_seq) in [("q1", 2), ("q2", 4)] {
+            for event in [
+                format!(r#"{{"kind":"User","frame_id":"main","text":"{text}"}}"#),
+                format!(r#"{{"kind":"MessageBoundary","frame_id":"main","seq":{user_seq}}}"#),
+                format!(r#"{{"kind":"Text","frame_id":"main","delta":"a"}}"#),
+                format!(
+                    r#"{{"kind":"MessageBoundary","frame_id":"main","seq":{}}}"#,
+                    user_seq + 1
+                ),
+            ] {
+                store
+                    .append_session_ui_event("main", event_seq, &event)
+                    .await
+                    .unwrap();
+                event_seq += 1;
+            }
+        }
+        store
+    }
+
+    fn texts(messages: &[Message]) -> Vec<(wisp_llm::Role, String)> {
+        messages
+            .iter()
+            .map(|message| (message.role, message.content.as_text()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn create_branch_from_copies_the_prefix_settings_and_branch_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_two_turns(dir.path()).await;
+        store
+            .set_frame_reasoning_effort("main", "p", Some("high"))
+            .await
+            .unwrap();
+        store
+            .upsert_execution_context(
+                &wisp_store::ExecutionContext::new("ssh:cpu1", "CPU1").unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .set_session_execution_context_enabled("main", "ssh:cpu1", true)
+            .await
+            .unwrap();
+        let grants = StdMutex::new(ApprovalGrants::default());
+        grants
+            .lock()
+            .unwrap()
+            .session
+            .insert("main".into(), HashSet::new());
+        let full_permission = StdRwLock::new(HashSet::from(["main".to_string()]));
+        let permissions = || BranchPermissions {
+            approval_grants: &grants,
+            full_permission_sessions: &full_permission,
+        };
+
+        // Default checkpoint: the last completed turn, reply included — the
+        // same (epoch, keep_seq) the `/fork` command path resolves.
+        assert_eq!(last_user_index(&store, "main").await.unwrap(), 1);
+        assert_eq!(
+            resolve_visual_keep(&store, "main", 1, true).await.unwrap(),
+            (0, 5)
+        );
+        let branch = create_branch_from(
+            &store,
+            permissions(),
+            "p",
+            "main",
+            None,
+            BranchCheckpointKind::AfterResponse,
+            Some("  Try method B  "),
+        )
+        .await
+        .unwrap();
+        assert_ne!(branch, "main");
+        assert_eq!(
+            texts(&store.load_messages(&branch).await.unwrap()),
+            texts(&store.load_messages("main").await.unwrap())
+        );
+        let links = store.list_session_branches("main", "p").await.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, branch);
+        assert_eq!(links[0].source_session_id, "main");
+        assert_eq!(links[0].checkpoint_user_index, 1);
+        assert_eq!(links[0].checkpoint_kind, "after_response");
+        assert_eq!(links[0].title, "Try method B");
+        assert_eq!(
+            store.session_branch_state(&branch).await.unwrap(),
+            Some("active")
+        );
+        assert_eq!(
+            store.frame_model(&branch).await.unwrap().as_deref(),
+            Some(models::session_profile_id(&store, "main").await.as_str())
+        );
+        assert_eq!(
+            store.frame_reasoning_effort(&branch).await.unwrap(),
+            Some("high".into())
+        );
+        assert_eq!(
+            store
+                .list_session_execution_context_ids(&branch)
+                .await
+                .unwrap(),
+            vec!["ssh:cpu1".to_string()]
+        );
+        assert!(grants.lock().unwrap().session.contains_key(&branch));
+        assert!(full_permission.read().unwrap().contains(&branch));
+
+        // An explicit earlier checkpoint before the first user turn keeps only
+        // the system prompt, and is recorded as such.
+        let early = create_branch_from(
+            &store,
+            permissions(),
+            "p",
+            "main",
+            Some(0),
+            BranchCheckpointKind::BeforeUser,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            texts(&store.load_messages(&early).await.unwrap()),
+            vec![(wisp_llm::Role::System, "sys".to_string())]
+        );
+        let early_link = store
+            .list_session_branches("main", "p")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|link| link.id == early)
+            .unwrap();
+        assert_eq!(
+            (
+                early_link.checkpoint_user_index,
+                early_link.checkpoint_kind.as_str()
+            ),
+            (0, "before_user")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_branch_is_not_branchable_again_and_kinds_parse_strictly() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_two_turns(dir.path()).await;
+        let grants = StdMutex::new(ApprovalGrants::default());
+        let full_permission = StdRwLock::new(HashSet::new());
+        assert!(require_branchable(&store, "main").await.is_ok());
+        assert!(require_branchable(&store, "missing").await.is_err());
+        let branch = create_branch_from(
+            &store,
+            BranchPermissions {
+                approval_grants: &grants,
+                full_permission_sessions: &full_permission,
+            },
+            "p",
+            "main",
+            None,
+            BranchCheckpointKind::AfterResponse,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            require_branchable(&store, &branch).await,
+            Err("Conversation branches cannot be branched again.".into())
+        );
+        // The source's permissions were absent, so the branch's are too.
+        assert!(!grants.lock().unwrap().session.contains_key(&branch));
+        assert!(!full_permission.read().unwrap().contains(&branch));
+
+        assert_eq!(
+            BranchCheckpointKind::parse(None).unwrap(),
+            BranchCheckpointKind::AfterResponse
+        );
+        assert_eq!(
+            BranchCheckpointKind::parse(Some("before_user")).unwrap(),
+            BranchCheckpointKind::BeforeUser
+        );
+        assert!(BranchCheckpointKind::parse(Some("after")).is_err());
+        for kind in [
+            BranchCheckpointKind::BeforeUser,
+            BranchCheckpointKind::AfterResponse,
+        ] {
+            assert_eq!(BranchCheckpointKind::parse(Some(kind.as_str())), Ok(kind));
+        }
     }
 }
