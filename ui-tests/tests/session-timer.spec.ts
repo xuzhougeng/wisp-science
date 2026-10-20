@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { clickInChat } from "./chat-scroll";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(tauriMock);
@@ -117,7 +118,8 @@ test("replacing a timer in paged history keeps the current reading window", asyn
   await input.press("Enter");
   await expect(page.getByTestId("session-timer-button")).toBeVisible();
   for (let index = 1; index <= 4; index++) {
-    await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+    // The button heads a thread that follows its latest row; see chat-scroll.ts.
+    await clickInChat(page.getByRole("button", { name: "Load earlier messages", exact: true }));
     await expect(page.getByText(new RegExp(`Window page ${index} row 0 `))).toBeAttached();
   }
   await page.getByRole("button", { name: "Show newer messages", exact: true }).click();

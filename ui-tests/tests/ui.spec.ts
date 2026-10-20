@@ -13167,7 +13167,8 @@ test("earlier history remains available while the current turn is running (#1199
   });
   await composer(page).fill("Keep working while I read the earlier context");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+  // The button heads a thread that follows its latest row; see chat-scroll.ts.
+  await clickInChat(page.getByRole("button", { name: "Load earlier messages", exact: true }));
   await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
   await expect.poll(() => page.evaluate(() => (window as any).__transcriptPageCalls)).toEqual([null, 41]);
   await emitTauriEvent(page, "agent", {
@@ -13176,7 +13177,8 @@ test("earlier history remains available while the current turn is running (#1199
   await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
   await page.getByRole("button", { name: "Show newer messages", exact: true }).click();
   await expect(page.getByText("Still working on the latest answer", { exact: true })).toBeAttached();
-  await page.getByRole("button", { name: "Show earlier loaded messages", exact: true }).click();
+  // Also at the top of the loaded window; see chat-scroll.ts.
+  await clickInChat(page.getByRole("button", { name: "Show earlier loaded messages", exact: true }));
   await page.locator("#chat-scroller").evaluate((el) => {
     el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
     el.scrollTop = 100;
@@ -13203,7 +13205,8 @@ test("a stale earlier page does not duplicate history after reloading a session 
       return original(cmd, args);
     };
   });
-  await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+  // The button heads a thread that follows its latest row; see chat-scroll.ts.
+  await clickInChat(page.getByRole("button", { name: "Load earlier messages", exact: true }));
   await expect(page.getByRole("button", { name: "Loading earlier messages…", exact: true })).toBeDisabled();
   await newSessionButton(page).click();
   await page.locator(".side-item.ses", { hasText: "Long transcript" }).click();
@@ -13236,11 +13239,12 @@ for (const staleOutcome of ["success", "failure"]) {
     }, staleOutcome);
     const loadEarlier = page.getByRole("button", { name: "Load earlier messages", exact: true });
     const loading = page.getByRole("button", { name: "Loading earlier messages…", exact: true });
-    await loadEarlier.click();
+    // The button heads a thread that follows its latest row; see chat-scroll.ts.
+    await clickInChat(loadEarlier);
     await expect(loading).toBeDisabled();
     await newSessionButton(page).click();
     await page.locator(".side-item.ses", { hasText: "Long transcript" }).click();
-    await loadEarlier.click();
+    await clickInChat(loadEarlier);
     await expect.poll(() => page.evaluate(() => (window as any).__historyRequests.length)).toBe(2);
     await page.evaluate(() => (window as any).__historyRequests[0]());
     // Flush the rejected promise / decoded response and the browser render.
@@ -13277,7 +13281,8 @@ test("a 62-turn history with a large message reaches its first question (#1199)"
   });
   await page.locator(".proj-card-main").first().click();
   for (let index = 1; index <= 3; index++) {
-    await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+    // The button heads a thread that follows its latest row; see chat-scroll.ts.
+    await clickInChat(page.getByRole("button", { name: "Load earlier messages", exact: true }));
     await expect(page.getByText(new RegExp(`Window page ${index} row 0 `))).toBeAttached();
   }
   await expect(page.getByRole("button", { name: "Load earlier messages", exact: true })).toHaveCount(0);
@@ -13295,7 +13300,8 @@ test("long transcripts load earlier turns without jumping to the new top", async
   const scroller = page.locator("#chat-scroller");
   const loadEarlier = page.getByRole("button", { name: "Load earlier messages" });
   await expect(loadEarlier).toBeVisible();
-  await loadEarlier.click();
+  // The button heads a thread that follows its latest row; see chat-scroll.ts.
+  await clickInChat(loadEarlier);
 
   await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
   await expect(loadEarlier).toHaveCount(0);
@@ -13545,7 +13551,8 @@ test("long transcript rendering keeps a bounded turn window", async ({ page }) =
   await page.locator(".proj-card-main").first().click();
 
   for (let loaded = 1; loaded < pageCount; loaded += 1) {
-    await page.getByRole("button", { name: "Load earlier messages" }).click();
+    // The button heads a thread that follows its latest row; see chat-scroll.ts.
+    await clickInChat(page.getByRole("button", { name: "Load earlier messages" }));
     await expect.poll(() => page.evaluate(() =>
       ((window as any).__transcriptPageCalls ?? []).length,
     )).toBe(loaded + 1);
@@ -13613,7 +13620,8 @@ test("a continuously open conversation unloads old live rows after a completed t
     element.scrollHeight - element.clientHeight - element.scrollTop,
   )).toBeLessThan(8);
 
-  await loadEarlier.click();
+  // The button heads a thread that follows its latest row; see chat-scroll.ts.
+  await clickInChat(loadEarlier);
   await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({
     id: frameId,
     beforeSeq: 142,

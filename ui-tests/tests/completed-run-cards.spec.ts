@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { tauriMock } from "./mock-tauri";
+import { clickInChat, revealInChat } from "./chat-scroll";
 
 type Options = { status?: string; monitor?: boolean; fallback?: boolean; foreign?: boolean };
 
@@ -47,12 +48,13 @@ async function setup(page: Page, options: Options = {}) {
 
 async function openRunStep(page: Page, index: number) {
   const group = page.locator(".steps").filter({ has: page.locator(".steps-head") }).first();
+  // Heads sit above the fold once a run card expands below them; see chat-scroll.ts.
   if (await group.locator(".steps-head").getAttribute("aria-expanded") !== "true") {
-    await group.locator(".steps-head").click();
+    await clickInChat(group.locator(".steps-head"));
   }
   const step = group.locator(".step").nth(index);
   await expect(step.locator(".step-head")).toHaveAttribute("aria-expanded", "false");
-  await step.locator(".step-head").click();
+  await clickInChat(step.locator(".step-head"));
   return step;
 }
 
@@ -73,8 +75,9 @@ test("completed Runs are collapsed under their exact submission rows and survive
   const before = await page.evaluate(() => (window as any).__skillInvokeLog.filter((call: any) => call.cmd === "list_runs").length);
   await expect.poll(() => page.evaluate(() => (window as any).__skillInvokeLog.filter((call: any) => call.cmd === "list_runs").length)).toBeGreaterThan(before + 1);
   expect(await first.getByTestId("run-monitor-card").evaluate(el => (el as any).__stableProbe)).toBe(true);
-  await second.locator(".step-head").click();
-  await first.locator(".step-head").scrollIntoViewIfNeeded();
+  await clickInChat(second.locator(".step-head"));
+  // A plain scrollIntoView is undone the same way; park the first card for the screenshot.
+  await revealInChat(first.locator(".step-head"));
   await page.screenshot({ path: "test-results/completed-runs-expanded.png", fullPage: true, animations: "disabled" });
   await page.reload();
   await page.getByTestId("recent-session-card").nth(1).click();

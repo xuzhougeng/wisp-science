@@ -11,12 +11,18 @@ import type { Locator } from "@playwright/test";
 // event's hit target). CI's loaded runners hit that window; a fast laptop
 // rarely does.
 //
-// Reveal the control the way a reader would: a wheel gesture parks the thread,
-// the element is centred in the same task, and the click then needs no scroll.
-export async function clickInChat(target: Locator) {
+// Reveal the control the way a reader would: a wheel gesture parks the thread
+// and the element is centred in the same task, so the position sticks.
+export async function revealInChat(target: Locator) {
   await target.evaluate((el) => {
     document.getElementById("chat-scroller")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     el.scrollIntoView({ block: "center" });
   });
+}
+
+// Reveal, then click: the click itself needs no scroll, so nothing moves
+// between mousedown and mouseup.
+export async function clickInChat(target: Locator) {
+  await revealInChat(target);
   await target.click();
 }
