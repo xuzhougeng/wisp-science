@@ -30,6 +30,17 @@ still apply. **Review**, **Rewind**, **Undo**, and **Start exploration** remain
 unavailable during a running turn; the unfinished turn cannot become a memory
 or branch checkpoint yet.
 
+A branch can also be **opened by the agent**: when a conversation's Agent calls
+`open_branch` during a turn, the branch is created as that turn ends, at the
+same `after_response` checkpoint **Branch** on that reply would use. It is an
+ordinary branch, nested under the conversation in the sidebar, and the
+conversation gets a reply saying the branch was opened and quoting the agent's
+brief. Opening the branch shows the brief in its composer as an unsent draft;
+edit or send it to continue there. Nothing in the branch reaches the original
+conversation unless you **Merge back**. See
+[Agent-opened branches](agent-delegation.md#agent-opened-branches) for how
+this differs from a subagent conversation.
+
 When a completed Run is already attached to its matching submission step,
 `monitor_run` / `wisp_monitor_run` records and their progress messages join the
 same Processed disclosure, including when reopening a conversation. Expanding

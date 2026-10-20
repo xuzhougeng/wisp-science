@@ -187,6 +187,7 @@ impl DeviceHub {
             | AgentEvent::FileChanged { .. }
             | AgentEvent::MemoryProposal { .. }
             | AgentEvent::FollowUps { .. }
+            | AgentEvent::BranchOpened { .. }
             | AgentEvent::HookFailed { .. }
             | AgentEvent::BackgroundReply(_) => return,
         };

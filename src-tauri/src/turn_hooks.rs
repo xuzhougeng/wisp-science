@@ -286,7 +286,18 @@ const AFTER_TURN_HOOKS: [HookId; 2] = [HookId::FollowUps, HookId::MemoryProposal
 /// AfterTurn hooks, detached from the turn. A newer turn in the same session
 /// (started or finished) supersedes these results before they are emitted.
 pub(crate) fn spawn_after_turn(app: &AppHandle, end: &TurnEnd<'_>) {
+    // Branches the turn asked for (`open_branch`) are built now that its
+    // final messages are persisted. A cancelled or cut-off turn drops them:
+    // their checkpoint would not be a finished turn.
+    let branch_intents = app.state::<AppState>().branch_intents.take(end.frame_id);
     if !end.completed() {
+        if !branch_intents.is_empty() {
+            tracing::info!(
+                "dropping {} open_branch intent(s) of {}: the turn did not complete",
+                branch_intents.len(),
+                end.frame_id
+            );
+        }
         return;
     }
     let app = app.clone();
@@ -302,6 +313,12 @@ pub(crate) fn spawn_after_turn(app: &AppHandle, end: &TurnEnd<'_>) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
         let state = state.inner();
+        // Not gated on `after_turn_current`: the checkpoint is pinned to the
+        // turn that asked, so a queued turn that already started changes
+        // nothing about the branch.
+        if !branch_intents.is_empty() {
+            branch_tool::realize_pending(&app, &frame_id, &project_id, branch_intents).await;
+        }
         for hook in AFTER_TURN_HOOKS {
             if !after_turn_current(state, &frame_id, generation).await {
                 return;

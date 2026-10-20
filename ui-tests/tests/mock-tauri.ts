@@ -64,6 +64,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
         planProgressSnapshots.set(request.frame_id, request.content);
       }
     }
+    // An agent-opened branch (src-tauri/src/branch_tool.rs) is stored before
+    // the window hears of it, so the next sidebar refresh lists it under its
+    // parent like any other branch.
+    if (event === "agent" && request.kind === "BranchOpened"
+      && !mockSessions.some((row) => row.id === request.branch_id)) {
+      mockSessions.unshift({
+        id: String(request.branch_id), title: String(request.title), ts: 2200, running: false,
+        branched_from: String(request.frame_id), branch_state: "active",
+      });
+    }
     if (event === "confirm-request") {
       hydrationApprovals.set(request.frame_id, { ...request, approval_id: request.approval_id ?? `mock-${request.frame_id}` });
     } else if (event === "confirm-resolved" || (event === "agent" && request.kind === "Done")) {

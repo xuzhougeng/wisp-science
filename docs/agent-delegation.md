@@ -647,6 +647,62 @@ while an earlier result is being reviewed; the older report must not restart
 the task. These steps require an already configured host; automated regressions
 use a temporary store and a fake tool, with no SSH connection or real model.
 
+## Agent-opened branches
+
+A conversation's Agent can also open a **branch** of its own conversation with
+the `open_branch` tool: the same kind of conversation branch `/fork` or
+**Branch** on a message creates, nested under the conversation in the sidebar,
+with **Merge back**, move and delete working as for any branch. The agent gives
+it a title and a brief. The branch is created when the turn that asked for it
+ends, from the conversation's history up to and including that turn's reply, so
+it already knows everything the parent knew when it was opened. The parent
+conversation gets a reply saying the branch was opened and quoting the brief,
+and opening the branch shows the brief in its composer as an unsent draft for
+the researcher to edit and send.
+
+The tool and `dispatch_subagent` solve different problems, and the difference
+is who continues the new conversation:
+
+| | `open_branch` | `dispatch_subagent` |
+| --- | --- | --- |
+| Starts with | the parent's history through this turn | nothing but the instruction |
+| Driven by | the researcher and the branch's own agent | the parent's agent (follow-ups, status, stop) |
+| Researcher can write | yes, as in any branch | no, watch-only |
+| Reports back | never; nothing wakes the parent | automatically, and the parent continues |
+| Permissions | the researcher's, copied like `/fork` | reviewed against the parent turn's captured request |
+
+Use `open_branch` for a line of work the researcher should own: an alternative
+approach, a tangent worth its own conversation, a long follow-up that needs
+this context to start from. Use `dispatch_subagent` when the agent must run the
+work itself and act on the result. The tool returns as soon as the request is
+recorded and tells the model not to wait or poll; the branch appears after the
+turn. A turn may ask for at most three branches.
+
+`open_branch` is offered only in ordinary conversations: not in branches
+(branches cannot be branched again), not in explorations or subagent
+conversations, not in the research assistant, and ACP conversations have no
+built-in tools. Asking from a conversation whose exploration round is frozen
+fails like `/fork` does. A cancelled or cut-off turn drops the request, since
+its checkpoint would not be a finished turn. If the branch cannot be created
+after the turn, the status line says so and the parent is unchanged.
+
+Limitations for now: the branch always starts with the full prefix
+(`context: "prefix"`; a hand-over summary or a fresh start are not offered),
+and the researcher sends the brief (`autostart: false`; the branch's agent
+does not start on its own). The composer draft is held in the window, like
+other unsent text, so it does not survive a restart; the brief quoted in the
+parent's notice does.
+
+Manual smoke steps (run only with user permission): in an ordinary
+conversation, ask the agent to "open a branch to try the other normalization
+and leave me a brief". After the turn ends, the sidebar shows the new branch
+under the conversation and the conversation ends with a reply naming it.
+Open the branch: the composer holds the brief, the history matches the parent
+through that turn, and sending the brief starts the branch's own agent. The
+parent does not react to anything done in the branch. **Merge back** on the
+branch works as for a `/fork` branch. Ask for a branch from inside a branch or
+an exploration: the agent has no such tool there.
+
 ## Persistence and safety
 
 - Wisp persists the resolved v2 plan before execution. Stored steps contain the
