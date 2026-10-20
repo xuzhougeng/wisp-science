@@ -1,6 +1,7 @@
 use crate::app_support::{
     allow_drop, bucket_sessions_by_date, compose_icon, drag_session_id, load_view_pref,
-    nest_branch_sessions, save_view_pref, start_session_drag, AvailableUpdate, FolderModal,
+    nest_branch_sessions, save_view_pref, start_conversation_drag, start_folder_drag,
+    AvailableUpdate, FolderModal,
 };
 use crate::bindings::is_mac;
 use crate::dto::*;
@@ -813,7 +814,7 @@ pub(super) fn Sidebar(
                                             ev.prevent_default();
                                             return;
                                         }
-                                        start_session_drag(&ev, &id_drag);
+                                        start_conversation_drag(&ev, &id_drag);
                                         drag_session.set(Some(id_drag.clone()));
                                     }
                                     on:dragend=move |_| {
@@ -1126,12 +1127,7 @@ pub(super) fn Sidebar(
                                             ev.prevent_default();
                                             return;
                                         }
-                                        ev.stop_propagation();
-                                        if let Some(dt) = ev.data_transfer() {
-                                            let _ = dt.set_effect_allowed("move");
-                                            // Not text/plain: session drop zones read that as a session id.
-                                            let _ = dt.set_data("application/x-wisp-folder", &fid_drag);
-                                        }
+                                        start_folder_drag(&ev, &fid_drag);
                                         drag_folder.set(Some((fid_drag.clone(), idx)));
                                     }
                                     on:dragend=move |_| {

@@ -692,6 +692,47 @@ pub(crate) fn order_session_candidates(
     rows
 }
 
+/// Reference chips for a sidebar drag dropped on the composer: the one
+/// conversation, or every conversation directly in the group, in sidebar
+/// order. The open conversation never references itself (as with `#`), and
+/// unknown ids attach nothing.
+pub(crate) fn dropped_session_chips(
+    drop: &ContextDrop,
+    sessions: &[SessionInfo],
+    project_name: &str,
+    active_session: Option<&str>,
+) -> Vec<ComposerReferenceChip> {
+    sessions
+        .iter()
+        .filter(|s| match drop {
+            ContextDrop::Session(id) => s.id == *id,
+            ContextDrop::Folder(folder) => s.folder_id.as_deref() == Some(folder.as_str()),
+        })
+        .filter(|s| active_session != Some(s.id.as_str()))
+        .map(|s| ComposerReferenceChip::Session {
+            id: s.id.clone(),
+            title: s.title.clone(),
+            project_name: project_name.to_string(),
+        })
+        .collect()
+}
+
+/// Append chips the composer does not hold yet, keyed like every other
+/// reference, so repeated drops of the same conversation stay one chip.
+pub(crate) fn push_unique_references(
+    items: &mut Vec<ComposerReferenceChip>,
+    chips: Vec<ComposerReferenceChip>,
+) -> usize {
+    let mut added = 0;
+    for chip in chips {
+        if !items.iter().any(|item| item.key() == chip.key()) {
+            items.push(chip);
+            added += 1;
+        }
+    }
+    added
+}
+
 /// `/memo <query>` ending at the caret: the token start and the filter text.
 /// The same boundary rules as the single-character triggers apply to the
 /// slash, and the query stays on one line.
@@ -964,11 +1005,118 @@ mod picker_scroll_tests {
 #[cfg(test)]
 mod mention_tests {
     use super::{
-        active_composer_trigger, composer_picker_accepts_edit, order_session_candidates,
-        parse_slash_command, slash_command_fills_text, slash_command_icon, slash_command_matches,
-        ComposerPickerMode, SLASH_COMMANDS,
+        active_composer_trigger, composer_picker_accepts_edit, dropped_session_chips,
+        order_session_candidates, parse_slash_command, push_unique_references,
+        slash_command_fills_text, slash_command_icon, slash_command_matches, ComposerPickerMode,
+        ComposerReferenceChip, ContextDrop, SLASH_COMMANDS,
     };
-    use crate::dto::SessionSearchInfo;
+    use crate::dto::{SessionInfo, SessionSearchInfo};
+
+    fn sidebar_session(id: &str, title: &str, folder: Option<&str>) -> SessionInfo {
+        SessionInfo {
+            running: false,
+            id: id.into(),
+            title: title.into(),
+            ts: 0,
+            folder_id: folder.map(str::to_string),
+            branched_from: None,
+            dispatched_from: None,
+            pinned: false,
+            branch_state: None,
+            stale_prompt: false,
+        }
+    }
+
+    fn chip_ids(chips: &[ComposerReferenceChip]) -> Vec<String> {
+        chips
+            .iter()
+            .map(|chip| match chip {
+                ComposerReferenceChip::Session { id, .. } => id.clone(),
+                other => panic!("not a session chip: {}", other.key()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dropped_conversation_becomes_one_session_chip_labelled_by_project() {
+        let sessions = vec![sidebar_session("s1", "QC review", None)];
+        let chips = dropped_session_chips(
+            &ContextDrop::Session("s1".into()),
+            &sessions,
+            "Atlas",
+            Some("other"),
+        );
+        assert_eq!(chips.len(), 1);
+        assert_eq!(chips[0].label(), "Atlas / QC review");
+        assert_eq!(chips[0].key(), "session:s1");
+    }
+
+    #[test]
+    fn dropped_group_attaches_its_conversations_but_not_the_open_one() {
+        let sessions = vec![
+            sidebar_session("a", "First", Some("g1")),
+            sidebar_session("loose", "Loose", None),
+            sidebar_session("me", "Open", Some("g1")),
+            sidebar_session("b", "Second", Some("g1")),
+            sidebar_session("c", "Elsewhere", Some("g2")),
+        ];
+        let chips = dropped_session_chips(
+            &ContextDrop::Folder("g1".into()),
+            &sessions,
+            "Atlas",
+            Some("me"),
+        );
+        assert_eq!(chip_ids(&chips), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn dropping_the_open_conversation_or_an_unknown_id_attaches_nothing() {
+        let sessions = vec![sidebar_session("me", "Open", None)];
+        assert!(dropped_session_chips(
+            &ContextDrop::Session("me".into()),
+            &sessions,
+            "Atlas",
+            Some("me")
+        )
+        .is_empty());
+        assert!(dropped_session_chips(
+            &ContextDrop::Session("ghost".into()),
+            &sessions,
+            "Atlas",
+            None
+        )
+        .is_empty());
+        assert!(dropped_session_chips(
+            &ContextDrop::Folder("empty".into()),
+            &sessions,
+            "Atlas",
+            None
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn repeated_drops_do_not_duplicate_chips() {
+        let sessions = vec![
+            sidebar_session("a", "First", Some("g1")),
+            sidebar_session("b", "Second", Some("g1")),
+        ];
+        let mut items =
+            dropped_session_chips(&ContextDrop::Session("a".into()), &sessions, "Atlas", None);
+        let added = push_unique_references(
+            &mut items,
+            dropped_session_chips(&ContextDrop::Folder("g1".into()), &sessions, "Atlas", None),
+        );
+        assert_eq!(added, 1);
+        assert_eq!(chip_ids(&items), vec!["a", "b"]);
+        assert_eq!(
+            push_unique_references(
+                &mut items,
+                dropped_session_chips(&ContextDrop::Folder("g1".into()), &sessions, "Atlas", None)
+            ),
+            0
+        );
+    }
 
     fn session(id: &str, project: &str, activity_at: i64) -> SessionSearchInfo {
         SessionSearchInfo {

@@ -89,3 +89,53 @@ pub(crate) fn start_session_drag(ev: &web_sys::DragEvent, id: &str) {
         let _ = dt.set_data("text/plain", id);
     }
 }
+
+/// Set only by sidebar conversation rows: the composer attaches the dropped
+/// conversation as context. The `text/plain` id stays for the folder drop
+/// zones, and a plain text drag never carries this type.
+pub(crate) const SESSION_DRAG_TYPE: &str = "application/x-wisp-session";
+/// Set only by sidebar group rows (not `text/plain`: session drop zones read
+/// that as a session id). The composer attaches every conversation in it.
+pub(crate) const FOLDER_DRAG_TYPE: &str = "application/x-wisp-folder";
+
+/// A sidebar conversation drag: moves between groups as before, and copies
+/// into the composer as a reference. `copyMove` keeps both drop effects
+/// permitted; a `move`-only drag is refused by a `copy` drop zone.
+pub(crate) fn start_conversation_drag(ev: &web_sys::DragEvent, id: &str) {
+    start_session_drag(ev, id);
+    if let Some(dt) = ev.data_transfer() {
+        let _ = dt.set_effect_allowed("copyMove");
+        let _ = dt.set_data(SESSION_DRAG_TYPE, id);
+    }
+}
+
+pub(crate) fn start_folder_drag(ev: &web_sys::DragEvent, id: &str) {
+    ev.stop_propagation();
+    if let Some(dt) = ev.data_transfer() {
+        let _ = dt.set_effect_allowed("copyMove");
+        let _ = dt.set_data(FOLDER_DRAG_TYPE, id);
+    }
+}
+
+/// What a sidebar drag dropped on the composer refers to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ContextDrop {
+    Session(String),
+    Folder(String),
+}
+
+pub(crate) fn has_context_drop(dt: &web_sys::DataTransfer) -> bool {
+    has_drag_type(dt, SESSION_DRAG_TYPE) || has_drag_type(dt, FOLDER_DRAG_TYPE)
+}
+
+pub(crate) fn context_drop(dt: &web_sys::DataTransfer) -> Option<ContextDrop> {
+    let read = |kind: &str| {
+        has_drag_type(dt, kind)
+            .then(|| dt.get_data(kind).ok())
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+    };
+    read(SESSION_DRAG_TYPE)
+        .map(ContextDrop::Session)
+        .or_else(|| read(FOLDER_DRAG_TYPE).map(ContextDrop::Folder))
+}

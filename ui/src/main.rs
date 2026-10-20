@@ -6188,7 +6188,10 @@ fn App() -> impl IntoView {
         let Some(dt) = ev.data_transfer() else {
             return;
         };
-        if !has_drag_type(&dt, WORKSPACE_PATH_DRAG_TYPE) && !has_drag_type(&dt, "Files") {
+        if !has_drag_type(&dt, WORKSPACE_PATH_DRAG_TYPE)
+            && !has_context_drop(&dt)
+            && !has_drag_type(&dt, "Files")
+        {
             return;
         }
         ev.prevent_default();
@@ -6232,6 +6235,28 @@ fn App() -> impl IntoView {
                         });
                         focus_composer();
                     }
+                }
+                return;
+            }
+            // A sidebar conversation or group dropped here becomes session
+            // reference chips, like picking it from `#`; several drops
+            // accumulate, and a repeated one stays a single chip.
+            if let Some(drop) = context_drop(&dt) {
+                let project_name = project_info
+                    .get_untracked()
+                    .map(|p| p.name)
+                    .unwrap_or_default();
+                let chips = dropped_session_chips(
+                    &drop,
+                    &sessions.get_untracked(),
+                    &project_name,
+                    active_session.get_untracked().as_deref(),
+                );
+                if !chips.is_empty() {
+                    composer_references.update(|items| {
+                        push_unique_references(items, chips);
+                    });
+                    focus_composer();
                 }
                 return;
             }

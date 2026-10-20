@@ -262,6 +262,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
         ts: 2000 - index,
         running: false,
       }))
+    : query.get("mockContextDrag") === "1"
+      ? [
+          { id: "drag-qc", title: "QC review", ts: 2100, running: false, folder_id: "drag-folder" },
+          { id: "drag-align", title: "Alignment notes", ts: 2090, running: false, folder_id: "drag-folder" },
+          { id: "drag-loose", title: "Loose notes", ts: 2080, running: false },
+        ]
     : mockLongSession
       ? [{ id: "long-session", title: "Long transcript", ts: 2000, running: false }]
       : mockMcpAppSession
@@ -432,6 +438,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     ? [{ id: "subagent-folder", name: "Analysis" }]
     : query.get("mockNeedsYou") === "1"
     ? [{ id: "pending-folder", name: "Pending reports" }]
+    : query.get("mockContextDrag") === "1"
+    ? [{ id: "drag-folder", name: "Reviews" }]
     : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
