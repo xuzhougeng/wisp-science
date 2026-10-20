@@ -256,6 +256,9 @@ pub fn item(role: &str, text: &str) -> Item {
         timestamp: None,
         attachments: vec![],
         run: None,
+        // The server folds raw messages without persisted seqs; remote
+        // clients keep their existing offset keys until that is wired.
+        seq: None,
     }
 }
 
