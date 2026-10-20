@@ -10,8 +10,9 @@ fn show_clickable_notification(
     body: String,
     target: Option<serde_json::Value>,
     focus_fallback_armed: bool,
+    silent: bool,
 ) -> Result<(), String> {
-    use tauri_winrt_notification::Toast;
+    use tauri_winrt_notification::{Sound, Toast};
 
     // Unpackaged development binaries do not have an AppUserModelID. Keep the
     // same PowerShell fallback used by the notification plugin in that case.
@@ -22,9 +23,13 @@ fn show_clickable_notification(
     };
     let callback_app = app.clone();
     let callback_label = window_label.clone();
+    // Toasts play the scheme's default sound unless told otherwise. While the
+    // app's own sound cue is on, that cue replaces it.
+    let sound = if silent { None } else { Some(Sound::Default) };
     Toast::new(&app_id)
         .title(&title)
         .text1(&body)
+        .sound(sound)
         .on_activated(move |_| {
             // The native callback identifies the notification exactly, so it
             // takes precedence over the latest-session focus fallback.
@@ -49,6 +54,8 @@ fn show_clickable_notification(
     body: String,
     target: Option<serde_json::Value>,
     focus_fallback_armed: bool,
+    // The banner never sets a sound here, so the sound cue already plays alone.
+    _silent: bool,
 ) -> Result<(), String> {
     let application = if tauri::is_dev() {
         "com.apple.Terminal".to_string()
@@ -89,6 +96,8 @@ fn show_clickable_notification(
     body: String,
     _target: Option<serde_json::Value>,
     _focus_fallback_armed: bool,
+    // The plugin's builder sets no sound, so the sound cue already plays alone.
+    _silent: bool,
 ) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
     app.notification()
@@ -100,9 +109,10 @@ fn show_clickable_notification(
 }
 
 /// Desktop notification for task status (#327). No-op while any app window is
-/// focused (the in-app UI already shows the state) or when disabled in settings.
-/// Clicking the notification navigates to the session it was about (#434) —
-/// native callbacks also restore a hidden/minimized window (#499).
+/// focused (the in-app UI already shows the state). The banner and the sound
+/// cue (#1595) are switched separately in settings; this is a no-op only when
+/// both are off. Clicking the notification navigates to the session it was
+/// about (#434) — native callbacks also restore a hidden/minimized window (#499).
 #[tauri::command]
 pub(super) async fn notify_user(
     window: tauri::Window,
@@ -111,9 +121,15 @@ pub(super) async fn notify_user(
     body: String,
     session_id: String,
 ) -> Result<(), String> {
-    if app_is_foreground(window.app_handle()) || !load_notifications_enabled(&state.store).await {
+    if app_is_foreground(window.app_handle()) {
         return Ok(());
     }
+    let Some(announcement) = crate::notification_sound::Announcement::new(
+        load_notifications_enabled(&state.store).await,
+        crate::notification_sound::load_cue(&state.store).await,
+    ) else {
+        return Ok(());
+    };
     // The done/attention agent events are broadcast to every window, so every
     // window calls this command for every session. Select one exact owner,
     // rather than only checking the project: two windows may legitimately show
@@ -129,6 +145,17 @@ pub(super) async fn notify_user(
         return Ok(());
     };
     if selection.label != window.label() {
+        return Ok(());
+    }
+    // Only the owning window gets here, so one event plays one sound.
+    if let Some(sound) = announcement.sound {
+        if let Err(error) = crate::notification_sound::play(sound) {
+            tracing::warn!(target: "wisp", %error, "notification sound failed");
+        }
+    }
+    if !announcement.banner {
+        // Without a banner there is nothing to click, so leave the focus
+        // fallback unarmed: refocusing the window must not switch sessions.
         return Ok(());
     }
     // Keep the taskbar/Dock focus fallback only when this window still belongs
@@ -152,6 +179,7 @@ pub(super) async fn notify_user(
         body,
         target,
         focus_fallback_armed,
+        announcement.silent_banner(),
     )
 }
 

@@ -1940,6 +1940,21 @@ pub struct Settings {
     pub pet_directory: String,
     #[serde(default = "default_notifications_enabled")]
     pub notifications_enabled: bool,
+    /// Play a sound for task notifications, independent of the banner (#1595).
+    #[serde(default)]
+    pub notification_sound_enabled: bool,
+    /// Sound id from `list_notification_sounds`; empty means the platform default.
+    #[serde(default)]
+    pub notification_sound: String,
+}
+
+/// One entry of the platform sound catalog returned by `list_notification_sounds`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationSound {
+    pub id: String,
+    /// English fallback label; the UI localizes the ids it knows.
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -2352,6 +2367,8 @@ impl Default for Settings {
             pet_enabled: false,
             pet_directory: String::new(),
             notifications_enabled: true,
+            notification_sound_enabled: false,
+            notification_sound: String::new(),
         }
     }
 }

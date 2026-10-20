@@ -3445,7 +3445,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               has_sync_relay_token: !mockSyncUnconfigured || mockLabSeededSync !== "",
               pet_enabled: mockPetEnabled,
               pet_directory: mockPetDirectory,
+              notifications_enabled: true,
+              notification_sound_enabled: false,
+              notification_sound: "Glass",
             };
+          case "list_notification_sounds":
+            return ["Basso", "Glass", "Hero", "Ping"].map((id) => ({ id, label: id }));
           case "get_browser_url_filters":
             return mockBrowserUrlFilters;
           case "get_browser_auto_launch":

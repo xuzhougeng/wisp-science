@@ -158,6 +158,18 @@ const CATALOG: &[SettingSpec] = &[
         summary: "Desktop notifications when the window is in the background.",
     },
     SettingSpec {
+        key: "notification_sound_enabled",
+        kind: ValueKind::Bool,
+        writable: true,
+        summary: "Play a sound when a background task finishes, fails, or waits for approval. Independent of notifications_enabled.",
+    },
+    SettingSpec {
+        key: "notification_sound",
+        kind: ValueKind::Enum,
+        writable: true,
+        summary: "Sound for notification_sound_enabled. macOS: a system sound such as Glass, Ping, or Hero. Windows: Notification.Default, Notification.IM, Notification.Mail, Notification.Reminder, Notification.SMS, SystemAsterisk, SystemExclamation, SystemNotification. Linux: complete, message, message-new-instant, bell, dialog-information, dialog-warning. Empty restores the platform default.",
+    },
+    SettingSpec {
         key: "selection_popup_enabled",
         kind: ValueKind::Bool,
         writable: true,
@@ -796,6 +808,16 @@ async fn current_values(store: &Store) -> Result<Map<String, Value>, String> {
             .map_err(|e| e.to_string())?),
     );
     values.insert("notifications_enabled".into(), json!(notifications_enabled));
+    values.insert(
+        "notification_sound_enabled".into(),
+        json!(crate::notification_sound::load_enabled(store).await),
+    );
+    values.insert(
+        "notification_sound".into(),
+        json!(crate::notification_sound::effective_choice(
+            &crate::notification_sound::load_choice(store).await
+        )),
+    );
     Ok(values)
 }
 
@@ -1061,6 +1083,22 @@ async fn apply_one(
         }
         "notifications_enabled" => {
             write_bool_setting(store, "notifications_enabled", incoming).await
+        }
+        "notification_sound_enabled" => {
+            write_bool_setting(
+                store,
+                crate::notification_sound::SOUND_ENABLED_KEY,
+                incoming,
+            )
+            .await
+        }
+        "notification_sound" => {
+            let choice = crate::notification_sound::normalize_choice(&string_value(incoming)?)?;
+            store
+                .set_setting(crate::notification_sound::SOUND_KEY, &choice)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(crate::notification_sound::effective_choice(&choice))
         }
         other => Err(format!("unhandled setting '{other}'")),
     }
@@ -1488,6 +1526,58 @@ mod tests {
             .await;
         assert!(!result.success);
         assert!(result.content.contains("outside"), "{}", result.content);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[tokio::test]
+    async fn notification_sound_switch_and_choice_roundtrip_independently_of_banner() {
+        let (store, root, db) = test_store().await;
+        let env = NoEnv(root.clone());
+        let configure = tool(store.clone(), root.clone());
+        let values = current_values(&store).await.unwrap();
+        assert_eq!(values["notifications_enabled"], json!(true));
+        assert_eq!(values["notification_sound_enabled"], json!(false));
+
+        let result = configure
+            .run(
+                &json!({"action": "set", "values": {
+                    "notifications_enabled": false,
+                    "notification_sound_enabled": true,
+                }}),
+                &env,
+            )
+            .await;
+        assert!(result.success, "{}", result.content);
+        let values = current_values(&store).await.unwrap();
+        assert_eq!(values["notifications_enabled"], json!(false));
+        assert_eq!(values["notification_sound_enabled"], json!(true));
+
+        let sounds = crate::notification_sound::list_notification_sounds();
+        if let Some(last) = sounds.last() {
+            let result = configure
+                .run(
+                    &json!({"action": "set", "values": {"notification_sound": last.id}}),
+                    &env,
+                )
+                .await;
+            assert!(result.success, "{}", result.content);
+            assert_eq!(
+                current_values(&store).await.unwrap()["notification_sound"],
+                json!(last.id)
+            );
+        }
+        let invalid = configure
+            .run(
+                &json!({"action": "set", "values": {"notification_sound": "../evil"}}),
+                &env,
+            )
+            .await;
+        assert!(!invalid.success);
+        assert_eq!(
+            current_values(&store).await.unwrap()["notification_sound"],
+            json!(sounds.last().map(|sound| sound.id.as_str()).unwrap_or(""))
+        );
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_file(db);
     }

@@ -297,6 +297,18 @@ impl DeleteConfirm {
     }
 }
 
+/// Localized name for a catalog sound. macOS sound names are proper nouns and
+/// have no translation keys, so they keep the backend label.
+fn notification_sound_label(locale: Locale, sound: &NotificationSound) -> String {
+    let key = format!("notify_sound.{}", sound.id);
+    let text = t(locale, &key);
+    if text == key {
+        sound.label.clone()
+    } else {
+        text
+    }
+}
+
 fn trust_alias(context_id: &str) -> &str {
     context_id.strip_prefix("ssh:").unwrap_or(context_id)
 }
@@ -2337,6 +2349,37 @@ pub(super) fn SettingsView(
     let browser_prefer_reason = create_rw_signal(String::new());
     let browser_auto_launch = create_rw_signal(true);
     let browser_auto_close_tabs = create_rw_signal(false);
+    // The platform's sound catalog for the notification-sound picker (#1595).
+    // It stays empty where the backend has no sounds, which hides the picker.
+    let notification_sounds = create_rw_signal(Vec::<NotificationSound>::new());
+    create_effect(move |_| {
+        if show_settings.get()
+            && settings_section.get() == "general"
+            && notification_sounds.with_untracked(Vec::is_empty)
+        {
+            spawn_local(async move {
+                if let Ok(value) =
+                    invoke_checked("list_notification_sounds", JsValue::UNDEFINED).await
+                {
+                    if let Ok(sounds) =
+                        serde_wasm_bindgen::from_value::<Vec<NotificationSound>>(value)
+                    {
+                        notification_sounds.set(sounds);
+                    }
+                }
+            });
+        }
+    });
+    // Plays the selected (possibly unsaved) sound, ignoring window focus and the switch.
+    let preview_notification_sound = move |_| {
+        let sound = settings.get_untracked().notification_sound;
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "sound": sound })).unwrap();
+            if let Err(error) = invoke_checked("preview_notification_sound", arg).await {
+                settings_message.set(Some((false, js_error_text(error))));
+            }
+        });
+    };
     create_effect(move |_| {
         if show_settings.get() && settings_section.get() == "browser" {
             spawn_local(async move {
@@ -3172,6 +3215,41 @@ pub(super) fn SettingsView(
                                 <input type="checkbox" data-testid="notifications-enabled" aria-labelledby="general-notifications-label"
                                     prop:checked=move || settings.get().notifications_enabled
                                     on:change=move |ev| settings.update(|current| current.notifications_enabled = event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
+                        <div class="appearance-config-row notification-sound-row">
+                            <div>
+                                <strong id="general-notification-sound-label">{move || t(locale.get(), "settings.notification_sound")}</strong>
+                                <span>{move || t(locale.get(), "settings.notification_sound_hint")}</span>
+                                {move || {
+                                    let sounds = notification_sounds.get();
+                                    (!sounds.is_empty()).then(|| view! {
+                                        <div class="notification-sound-picker">
+                                            // Bind `selected` on the options, not `value` on the select (#431).
+                                            <select data-testid="notification-sound"
+                                                aria-label=move || t(locale.get(), "settings.notification_sound_choice")
+                                                on:change=move |ev| settings.update(|current| current.notification_sound = dom_value(&ev))>
+                                                {sounds.into_iter().map(|sound| {
+                                                    let value = sound.id.clone();
+                                                    let id = sound.id.clone();
+                                                    view! {
+                                                        <option value=value prop:selected=move || settings.get().notification_sound == id>
+                                                            {move || notification_sound_label(locale.get(), &sound)}
+                                                        </option>
+                                                    }
+                                                }).collect_view()}
+                                            </select>
+                                            <button type="button" data-testid="notification-sound-preview"
+                                                on:click=preview_notification_sound>{move || t(locale.get(), "settings.notification_sound_preview")}</button>
+                                        </div>
+                                    })
+                                }}
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="notification-sound-enabled" aria-labelledby="general-notification-sound-label"
+                                    prop:checked=move || settings.get().notification_sound_enabled
+                                    on:change=move |ev| settings.update(|current| current.notification_sound_enabled = event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                         </div>

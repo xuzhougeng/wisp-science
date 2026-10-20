@@ -3397,6 +3397,9 @@ body { font-size: var(--ui-font-size, 14px); }
 .general-settings-pane .appearance-config-row strong { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 500; }
 .general-settings-pane .appearance-config-row > div > span { margin-top: 4px; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; color: var(--text-muted); }
 .general-settings-pane .toggle { flex-shrink: 0; }
+.general-settings-pane .notification-sound-picker { display: flex; align-items: center; gap: 8px; margin-top: 10px; min-width: 0; }
+.general-settings-pane .notification-sound-picker select { flex: 1 1 auto; width: auto; min-width: 0; max-width: 220px; }
+.general-settings-pane .notification-sound-picker button { flex-shrink: 0; padding: 7px 12px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .general-settings-pane .row.general-update-actions { align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--border); }
 .general-settings-pane .row.general-update-actions button { padding: 7px 12px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .general-settings-pane .row.general-preferences-footer { align-items: center; margin-top: 20px; padding-top: 16px; }

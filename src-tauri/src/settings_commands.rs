@@ -164,6 +164,10 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .flatten()
         .unwrap_or_default();
     let notifications_enabled = super::load_notifications_enabled(&state.store).await;
+    let notification_sound_enabled = crate::notification_sound::load_enabled(&state.store).await;
+    let notification_sound = crate::notification_sound::effective_choice(
+        &crate::notification_sound::load_choice(&state.store).await,
+    );
     let auto_compact = super::load_auto_compact_enabled(&state.store).await;
     let auto_compact_percent = super::load_auto_compact_percent(&state.store).await as u64;
     let semantic_compact_on_model_switch =
@@ -236,6 +240,8 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         pet_enabled,
         pet_directory,
         notifications_enabled,
+        notification_sound_enabled,
+        notification_sound,
     })
 }
 
@@ -282,6 +288,7 @@ pub(super) async fn set_settings(
         }
         load_pet_asset(Path::new(pet_directory))?;
     }
+    crate::notification_sound::normalize_choice(&settings.notification_sound)?;
     tracing::info!(
         target: "wisp",
         provider = %provider,
@@ -366,6 +373,12 @@ pub(super) async fn set_settings(
         )
         .await
         .map_err(|e| e.to_string())?;
+    crate::notification_sound::save(
+        &state.store,
+        settings.notification_sound_enabled,
+        &settings.notification_sound,
+    )
+    .await?;
     state
         .store
         .set_setting("max_iter", &settings.max_iter.to_string())

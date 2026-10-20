@@ -121,6 +121,7 @@ mod native_run_review;
 mod native_share;
 mod native_terminals;
 mod network;
+mod notification_sound;
 mod research_dispatch_approval;
 mod runtime_commands;
 mod runtime_config_tool;
@@ -2300,6 +2301,12 @@ struct Settings {
     /// Desktop notifications for task done/failed/awaiting-approval (#327).
     #[serde(default = "default_notifications_enabled")]
     notifications_enabled: bool,
+    /// Sound cue for the same events, switched separately from the banner (#1595).
+    #[serde(default)]
+    notification_sound_enabled: bool,
+    /// Id from the platform sound catalog; empty means the platform default.
+    #[serde(default)]
+    notification_sound: String,
 }
 
 const DEFAULT_MAX_ITER: usize = 100;
@@ -7984,6 +7991,8 @@ pub fn run() {
             settings_commands::get_update_check_enabled,
             settings_commands::set_update_check_enabled,
             app_commands::notify_user,
+            notification_sound::list_notification_sounds,
+            notification_sound::preview_notification_sound,
             memory_commands::read_memory_file,
             memory_commands::write_memory_file,
             memory_commands::delete_memory_file,

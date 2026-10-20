@@ -1202,6 +1202,37 @@ fn project_storage_setting_roundtrips_between_backend_and_ui() {
 }
 
 #[test]
+fn notification_sound_settings_roundtrip_and_default_off_for_older_payloads() {
+    let mut payload = serde_json::to_value(wisp_dto::Settings::default()).unwrap();
+    payload["notifications_enabled"] = json!(false);
+    payload["notification_sound_enabled"] = json!(true);
+    payload["notification_sound"] = json!("Ping");
+    let backend: crate::Settings = serde_json::from_value(payload.clone()).unwrap();
+    let ui: wisp_dto::Settings = roundtrip(&backend);
+    assert!(!ui.notifications_enabled);
+    assert!(ui.notification_sound_enabled);
+    assert_eq!(ui.notification_sound, "Ping");
+
+    let legacy = payload.as_object_mut().unwrap();
+    legacy.remove("notification_sound_enabled");
+    legacy.remove("notification_sound");
+    let backend: crate::Settings = serde_json::from_value(payload).unwrap();
+    let ui: wisp_dto::Settings = roundtrip(&backend);
+    assert!(!ui.notification_sound_enabled);
+    assert_eq!(ui.notification_sound, "");
+}
+
+#[test]
+fn notification_sound_catalog_reaches_the_ui_shape() {
+    let sounds = crate::notification_sound::list_notification_sounds();
+    let ui: Vec<wisp_dto::NotificationSound> = roundtrip(&sounds);
+    assert_eq!(ui, sounds);
+    assert!(ui
+        .iter()
+        .all(|sound| !sound.id.is_empty() && !sound.label.is_empty()));
+}
+
+#[test]
 fn after_turn_hook_events_roundtrip_to_ui() {
     let backend: super::AgentEvent = serde_json::from_value(json!({
         "kind": "MemoryProposal",

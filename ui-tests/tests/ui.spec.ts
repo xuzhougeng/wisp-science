@@ -15834,6 +15834,33 @@ test("general settings resume the last workspace conversation by default", async
   });
 });
 
+test("general settings switch the notification sound separately and preview the chosen sound (#1595)", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "General");
+  const banner = page.getByTestId("notifications-enabled");
+  const sound = page.getByTestId("notification-sound-enabled");
+  await expect(banner).toBeChecked();
+  await expect(sound).not.toBeChecked();
+
+  const picker = page.getByTestId("notification-sound");
+  await expect(picker.locator("option")).toHaveText(["Basso", "Glass", "Hero", "Ping"]);
+  await expect(picker).toHaveValue("Glass");
+  await picker.selectOption("Ping");
+  // Preview plays the unsaved choice, even while the sound switch is off.
+  await page.getByTestId("notification-sound-preview").click();
+  await expect.poll(() => lastInvokeArgs(page, "preview_notification_sound")).toEqual({ sound: "Ping" });
+
+  // Banner off, sound on: each switch saves on its own.
+  await banner.locator("..").click();
+  await sound.locator("..").click();
+  await expect(banner).not.toBeChecked();
+  await expect(sound).toBeChecked();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+    settings: { notifications_enabled: false, notification_sound_enabled: true, notification_sound: "Ping" },
+  });
+});
+
 test("context compaction leaves a visible timeline flag", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("start a context-heavy analysis");
