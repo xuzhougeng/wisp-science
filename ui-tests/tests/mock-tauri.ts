@@ -6291,11 +6291,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 emit("agent", { kind: "User", frame_id: fid, text: msg });
                 emit("agent", { kind: "User", frame_id: background, text: "background stress" });
                 let n = 0;
+                // Tick count for the browser test: progress of this 50 ms
+                // timer is a host-side liveness signal while the stream runs.
+                (window as any).__healthStressTicks = 0;
                 const timer = setInterval(() => {
                   for (const id of [fid, background]) {
                     emit("agent", { kind: "Text", frame_id: id, delta: `**stress ${n}** ${"x".repeat(800)}\n` });
                   }
                   n += 1;
+                  (window as any).__healthStressTicks = n;
                 }, 50);
                 (window as any).__healthStressFinish = () => {
                   clearInterval(timer);
