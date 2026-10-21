@@ -1,17 +1,16 @@
-//! Manual live check of the TypeSafe decision protocol against the real API.
-//! Run with `TYPESAFE_API_KEY=... cargo run -p wisp-llm --example systemone_smoke`
-//! (`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` override the defaults).
+//! Manual live check of the System One decision protocol against a real server.
+//! Run with `TYPESAFE_API_KEY=... cargo run -p wisp-llm --example systemone_smoke`,
+//! or point it at another server with `WISP_DECISION_API_URL` (plus
+//! `WISP_DECISION_API_KEY` / `WISP_DECISION_MODEL` / `WISP_DECISION_THINK_MODE`).
 use std::collections::BTreeMap;
-use wisp_llm::systemone::{evaluate, NoulCriteria, Question, DEFAULT_BASE_URL};
+use wisp_llm::systemone::{evaluate, DecisionModel, NoulCriteria, Question};
 
 #[tokio::main]
 async fn main() {
-    let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
-    let cfg = wisp_llm::ProviderConfig::openai(
-        env("TYPESAFE_BASE_URL", DEFAULT_BASE_URL),
-        env("TYPESAFE_API_KEY", ""),
-        env("TYPESAFE_MODEL", "jev-latest"),
-    );
+    let Some(cfg) = DecisionModel::from_env(|k| std::env::var(k).ok()) else {
+        println!("set TYPESAFE_API_KEY or WISP_DECISION_API_URL");
+        return;
+    };
     let questions = BTreeMap::from([
         (
             "irreversible".to_string(),

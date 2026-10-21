@@ -9,8 +9,9 @@
 //! `reasoning` / `reasoning_details`, Anthropic `thinking_delta`) are
 //! normalized to a single `reasoning` string.
 //!
-//! [`systemone`] is separate and not a [`Provider`]: the TypeSafe decision
-//! protocol (Jev) answers typed questions with probabilities, no text.
+//! [`systemone`] is separate and not a [`Provider`]: the System One decision
+//! protocol (TypeSafe Jev, StartLux-Decision) answers typed questions with
+//! probabilities, no text.
 
 pub mod anthropic;
 pub mod chatgpt_auth;

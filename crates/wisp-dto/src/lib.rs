@@ -34,6 +34,8 @@ pub mod remote_access;
 pub mod research_checklist;
 pub mod specialist_package;
 pub use project_chat_search::*;
+mod decision_model;
+pub use decision_model::*;
 mod session_artifacts;
 pub use session_artifacts::*;
 mod session_excerpt;

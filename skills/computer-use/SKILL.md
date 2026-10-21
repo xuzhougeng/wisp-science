@@ -157,11 +157,13 @@ dialog is a reading task: the observation is the deliverable.
 
 ## System One and System Two
 
-Two paths exist, depending on whether a TypeSafe key is configured in
-Settings.
+Two paths exist, depending on whether a decision model (TypeSafe Jev,
+StartLux-Decision, or another System One server) is configured under
+Settings → Models → Decision model.
 
-**Key configured.** Wisp registers `desktop_autopilot` next to the Cua Driver
-tools; find it with `search_mcp_tools`. TypeSafe's Jev is the fast System One:
+**Decision model configured.** Wisp registers `desktop_autopilot` next to the
+Cua Driver tools; find it with `search_mcp_tools`. The decision model, called
+Jev in the tool's reports, is the fast System One:
 it observes the window, picks each click from the window's labelled controls,
 and clicks by `element_token`. You are System Two. After selecting one exact
 window, hand it navigation: getting that window into a state you can name
@@ -209,7 +211,7 @@ with a `hint` naming the next control by its label. It refuses to run when the
 host requires approval for each Cua Driver `click`; drive the window directly
 then.
 
-**No key, or `desktop_autopilot` absent.** Drive Cua Driver directly with the
+**No decision model, or `desktop_autopilot` absent.** Drive Cua Driver directly with the
 workflow above.
 
 ## First smoke task

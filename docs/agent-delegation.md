@@ -515,8 +515,8 @@ the coordination paths.
 
 When the *same* task repeats over N items (screening 100 papers, extracting one
 table from 50 PDFs) use `map_items` instead of `delegate_tasks`: one approval,
-a frozen item list, bounded concurrency, resumable rows, and an optional Jev
-pass/reject decision. See [map-items.md](map-items.md).
+a frozen item list, bounded concurrency, resumable rows, and an optional
+decision-model pass/reject decision. See [map-items.md](map-items.md).
 
 ## Subagent conversations
 

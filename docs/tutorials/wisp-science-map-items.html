@@ -93,12 +93,12 @@
 </tr>
 </tbody>
 </table></div>
-<p><strong>准备：把条目放进项目，按需配置 TypeSafe 密钥。</strong></p>
+<p><strong>准备：把条目放进项目，按需配置决策模型。</strong></p>
 <ul>
 <li>把文件放在项目目录下，例如 <code>papers/</code>。PDF、Office 文档、EPUB 和纯文本都在本机转成文字，这一步不消耗 token。</li>
 <li>扫描版 PDF 没有可提取的文字，暂不支持 OCR；这样的文件只会让它自己那一行失败。</li>
 <li>一次最多 1000 个条目。超过会直接报错，不会悄悄截断。</li>
-<li>只做信息抽取不需要额外配置。想让每一行自动得到“通过 / 剔除 / 不确定”的判定，需要在“设置 → 凭据”里填写 TypeSafe（Jev）的 API key；命令行则设置环境变量 <code>TYPESAFE_API_KEY</code>。没有密钥时，Agent 的工具里不会出现判定这一步。</li>
+<li>只做信息抽取不需要额外配置。想让每一行自动得到“通过 / 剔除 / 不确定”的判定，需要在“设置 → 模型 → 决策模型”里启用一个决策模型（TypeSafe Jev、StartLux 或其他 System One 服务）；命令行则设置环境变量 <code>TYPESAFE_API_KEY</code>，或用 <code>WISP_DECISION_API_URL</code> 指向其他服务。没有决策模型时，Agent 的工具里不会出现判定这一步。</li>
 </ul>
 <p><strong>第一步：把“对一个条目做什么”说清楚。</strong></p>
 <p>在项目对话里发送：</p>
@@ -169,7 +169,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </table></div>
 <p><code>results.csv</code> 可以直接在项目文件预览中打开。</p>
 <p><strong>第四步：需要筛选时，把判定标准一起交代。</strong></p>
-<p>抽取回答“这篇文献里写了什么”，判定回答“它符不符合要求”。配置了 TypeSafe 密钥后，可以在任务里把标准一并说出来：</p>
+<p>抽取回答“这篇文献里写了什么”，判定回答“它符不符合要求”。配置了决策模型后，可以在任务里把标准一并说出来：</p>
 <blockquote>
 <p>用 map_items 筛选 <code>papers/</code> 下所有 PDF。纳入标准：随机对照试验，且样本量不少于 100。每篇先提取研究设计和样本量，再判定是否纳入。</p>
 </blockquote>
@@ -181,7 +181,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
   }
 }
 </code></pre>
-<p><code>noul</code> 是“是 / 否”问题，问题里用反引号引用上一步抽取出的字段。每个问题都要写成<strong>回答“是”代表符合要求</strong>。Jev 对每个问题返回一个概率，判定规则是固定的：</p>
+<p><code>noul</code> 是“是 / 否”问题，问题里用反引号引用上一步抽取出的字段。每个问题都要写成<strong>回答“是”代表符合要求</strong>。决策模型对每个问题返回一个概率，判定规则是固定的：</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
 <thead>
 <tr>
@@ -206,7 +206,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </table></div>
 <p>判定只是标签，不会删除或移动任何文件。还有两点需要知道：</p>
 <ul>
-<li><strong>数据会离开本机。</strong> 使用判定时，每个条目抽取出的那一行会发送给 TypeSafe；如果没有抽取这一步，发送的是条目开头的一段文字。审批提示会写明这一点。</li>
+<li><strong>数据会离开本机。</strong> 使用判定时，每个条目抽取出的那一行会发送给所配置的决策模型服务；如果没有抽取这一步，发送的是条目开头的一段文字。审批提示会写明这一点。</li>
 <li><strong>推荐“抽取 + 判定”一起用。</strong> 抽取读全文并整理出事实，判定只看这一行紧凑的结果。只用判定适合对标题和摘要做一次便宜的初筛。</li>
 </ul>
 <p><strong>第五步：处理“不确定”和没跑完的条目。</strong></p>
@@ -237,7 +237,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </tr>
 </tbody>
 </table></div>
-<p>续跑会跳过已经完成的条目，并重试失败的条目。如果某一条只是判定这一步失败，已经付费得到的抽取结果会被复用，只重新询问 Jev。改阈值后重新贴标签不需要调用模型，因为每一行都保存了原始概率。</p>
+<p>续跑会跳过已经完成的条目，并重试失败的条目。如果某一条只是判定这一步失败，已经付费得到的抽取结果会被复用，只重新询问决策模型。改阈值后重新贴标签不需要调用模型，因为每一行都保存了原始概率。</p>
 <p>续跑只能调整并发、上限和阈值。要更换条目、抽取指令或判定问题，需要开始一次新的运行；用 <code>items.run</code> 可以把上一次的结果行作为新的输入。</p>
 <p><strong>按需加上汇总，或换一种条目来源。</strong></p>
 <p>想在表格之外得到一段总结，直接说“最后汇总纳入的研究各用了哪些结局指标”。调用里会多出 <code>reduce</code>，它在全部条目完成后只读取结构化的结果行，不读全文；有判定时，默认只汇总通过和不确定的行。</p>
@@ -277,6 +277,9 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 <p><strong>在命令行里使用。</strong></p>
 <p>交互模式下的用法和桌面一致，审批会以 <code>[y/n]</code> 的形式出现在终端里：</p>
 <pre><code class="language-bash">export TYPESAFE_API_KEY=&quot;your-typesafe-key&quot;   # 只在需要判定时设置
+# 或改用其他 System One 服务，例如 Bamboo 托管的 StartLux：
+# export WISP_DECISION_API_URL=&quot;https://api.bamboonode.dev&quot;
+# export WISP_DECISION_API_KEY=&quot;your-bamboo-key&quot;
 wisp-science
 </code></pre>
 <p><code>wisp-science run --output jsonl</code> 无法应答审批，请求会被自动拒绝，因此批量任务不适合在这个输出模式下启动。模型环境变量的配置见 <a href="wisp-science-cli.html">Wisp 命令行</a>。</p>
@@ -295,7 +298,7 @@ wisp-science
 </tr>
 <tr>
 <td>调用里没有判定这一步</td>
-<td>是否配置了 TypeSafe 密钥；命令行是否设置了 <code>TYPESAFE_API_KEY</code></td>
+<td>“设置 → 模型 → 决策模型”是否已启用并可用；命令行是否设置了 <code>TYPESAFE_API_KEY</code> 或 <code>WISP_DECISION_API_URL</code></td>
 </tr>
 <tr>
 <td>提示条目数超过上限</td>
@@ -360,12 +363,12 @@ wisp-science
 </tr>
 </tbody>
 </table></div>
-<p><strong>Prepare: put the items in the project, and add a TypeSafe key if you need one.</strong></p>
+<p><strong>Prepare: put the items in the project, and set up a decision model if you need one.</strong></p>
 <ul>
 <li>Put the files under the project directory, for example in <code>papers/</code>. PDFs, Office documents, EPUB, and plain text are converted to text on your machine, which spends no tokens.</li>
 <li>A scanned PDF has no extractable text, and OCR is not supported yet. Such a file fails only its own row.</li>
 <li>One run takes at most 1000 items. More than that is an error, never a silent cut.</li>
-<li>Extraction alone needs no extra setup. To have each row labelled pass, reject, or uncertain, enter a TypeSafe (Jev) API key under Settings → Credentials, or set the <code>TYPESAFE_API_KEY</code> environment variable for the CLI. Without a key, the decision step is not offered to the agent at all.</li>
+<li>Extraction alone needs no extra setup. To have each row labelled pass, reject, or uncertain, turn on a decision model (TypeSafe Jev, StartLux, or another System One server) under Settings → Models → Decision model. For the CLI, set <code>TYPESAFE_API_KEY</code>, or point <code>WISP_DECISION_API_URL</code> at another server. Without a decision model, the decision step is not offered to the agent at all.</li>
 </ul>
 <p><strong>Step 1: say what to do with one item.</strong></p>
 <p>Send this in a project conversation:</p>
@@ -436,7 +439,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </table></div>
 <p><code>results.csv</code> opens directly in the project file preview.</p>
 <p><strong>Step 4: when you are screening, give the criteria along with the task.</strong></p>
-<p>Extraction answers &quot;what does this paper say&quot;. The decision answers &quot;does it meet the requirement&quot;. With a TypeSafe key configured, state the criteria in the same request:</p>
+<p>Extraction answers &quot;what does this paper say&quot;. The decision answers &quot;does it meet the requirement&quot;. With a decision model configured, state the criteria in the same request:</p>
 <blockquote>
 <p>Use map_items to screen every PDF in <code>papers/</code>. Inclusion criteria: a randomized controlled trial with a sample size of at least 100. For each paper, extract the study design and sample size, then decide whether to include it.</p>
 </blockquote>
@@ -448,7 +451,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
   }
 }
 </code></pre>
-<p><code>noul</code> is a yes/no question, and backticks in the question refer to fields extracted in the previous step. Phrase every question so that <strong>yes means the item meets the requirement</strong>. Jev returns one probability per question, and the rule that turns them into a verdict is fixed:</p>
+<p><code>noul</code> is a yes/no question, and backticks in the question refer to fields extracted in the previous step. Phrase every question so that <strong>yes means the item meets the requirement</strong>. The decision model returns one probability per question, and the rule that turns them into a verdict is fixed:</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
 <thead>
 <tr>
@@ -473,7 +476,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </table></div>
 <p>Verdicts are labels. No file is deleted or moved. Two more things to know:</p>
 <ul>
-<li><strong>Data leaves your machine.</strong> With a decision step, the extracted row for each item is sent to TypeSafe. Without an extraction step, the start of the item's text is sent instead. The approval prompt says so.</li>
+<li><strong>Data leaves your machine.</strong> With a decision step, the extracted row for each item is sent to the configured decision model service. Without an extraction step, the start of the item's text is sent instead. The approval prompt says so.</li>
 <li><strong>Extraction plus decision is the recommended setup.</strong> Extraction reads the full text and collects the facts, and the decision judges that one compact row. A decision step on its own suits a cheap first pass over titles and abstracts.</li>
 </ul>
 <p><strong>Step 5: handle uncertain items and items that did not finish.</strong></p>
@@ -504,7 +507,7 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 </tr>
 </tbody>
 </table></div>
-<p>A resume skips finished items and retries failed ones. If only the decision step failed for an item, the extraction you already paid for is reused and only Jev is asked again. Relabelling after a threshold change needs no model call, because each row stores the raw probabilities.</p>
+<p>A resume skips finished items and retries failed ones. If only the decision step failed for an item, the extraction you already paid for is reused and only the decision model is asked again. Relabelling after a threshold change needs no model call, because each row stores the raw probabilities.</p>
 <p>A resume can change only concurrency, limits, and thresholds. To change the items, the extraction instruction, or the questions, start a new run. <code>items.run</code> feeds the rows of the earlier run in as the new input.</p>
 <p><strong>Add a summary, or use another item source, when you need to.</strong></p>
 <p>For a written summary on top of the table, ask for it directly: &quot;then summarize which outcomes the included studies used.&quot; The call gains a <code>reduce</code> block. It runs after every item is done and reads only the structured rows, never the full texts. When there is a decision step, it summarizes pass and uncertain rows by default.</p>
@@ -544,6 +547,9 @@ continue: map_items {&quot;resume&quot;: &quot;20261006-081530-a1b2c3&quot;} (re
 <p><strong>Using it from the CLI.</strong></p>
 <p>Interactive mode works the same way as the desktop, and the approval appears in the terminal as a <code>[y/n]</code> question:</p>
 <pre><code class="language-bash">export TYPESAFE_API_KEY=&quot;your-typesafe-key&quot;   # only when you need the decision step
+# or another System One server, such as StartLux hosted on Bamboo:
+# export WISP_DECISION_API_URL=&quot;https://api.bamboonode.dev&quot;
+# export WISP_DECISION_API_KEY=&quot;your-bamboo-key&quot;
 wisp-science
 </code></pre>
 <p><code>wisp-science run --output jsonl</code> cannot answer an approval, so the request is refused automatically and a batch run should not be started in that output mode. For the model environment variables, see <a href="wisp-science-cli.html">Wisp CLI</a>.</p>
@@ -562,7 +568,7 @@ wisp-science
 </tr>
 <tr>
 <td>The call has no decision step</td>
-<td>Whether a TypeSafe key is configured; for the CLI, whether <code>TYPESAFE_API_KEY</code> is set</td>
+<td>Whether Settings → Models → Decision model is on and usable; for the CLI, whether <code>TYPESAFE_API_KEY</code> or <code>WISP_DECISION_API_URL</code> is set</td>
 </tr>
 <tr>
 <td>The item count is over the limit</td>

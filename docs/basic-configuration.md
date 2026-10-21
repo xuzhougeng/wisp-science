@@ -81,6 +81,18 @@
 - 输出被 `max_tokens` 截断：可在 **设置 → 对话** 开启“截断后自动继续”并设置每轮上限；达到上限后仍可使用“继续执行”。
 - 图片无法读取：确认至少有一个支持视觉输入并被指定为图片分析模型的 HTTP profile。
 
+### 决策模型
+
+**设置 → 模型 → 决策模型** 配置一个快速决策模型。它不生成文本，只回答类型化的是/否、单选和打分问题，并为每个选项返回校准概率（System One 协议，`POST /v1/systemone`）。启用并可用时，`map_items` 才提供批量判定（`decide`），连接 Cua Driver 时才注册 `desktop_autopilot`。
+
+1. **服务**：TypeSafe Jev、StartLux（Bamboo 托管）、StartLux（自部署，`startlux-decide serve`）或自定义 System One 服务。切换服务会带出对应的 Base URL、模型 ID 和超时。
+2. **模型 ID**：留空使用服务端默认模型。
+3. **思考模式**：只对支持思考的服务生效（如 StartLux AutoThink）。Instant 模型请保持“服务端默认”或选“从不”。
+4. **超时（秒）**：按单次请求计算；会思考的模型可能远慢于 TypeSafe 的 10 秒。
+5. **API key**：每个服务单独保存在系统密钥环中，切换服务不会丢失。托管服务必须填写；自部署服务只有用 `--api-keys-file` 启动时才需要。旧版本在“凭据”中保存的 TypeSafe key 会直接作为 TypeSafe 服务的 key 使用。
+
+点击 **测试连接** 会用表单中的配置问一个固定问题，不保存；确认后点 **保存**，空闲对话的工具会在下一轮使用新配置。判定时，条目内容或窗口控件文字会发送到所选服务；StartLux 权重采用 CC BY-NC 4.0 许可，商用前请确认授权。
+
 字段和模型路由的完整说明见[模型配置](model-configuration.md)。
 
 ## 2. 配置服务器
@@ -427,7 +439,7 @@ Arguments:
 
 ### 内置凭据
 
-OpenAlex、InfiniSynapse、SCIMaster、NCBI 分别作为列表入口，显示用途摘要与已配置字段数量。点击服务进入独立页面，查看详细说明、官方获取入口并填写凭据，然后点击页面底部 **保存**。已经保存的字段显示“已配置”；留空会保持原值，不会把密钥明文回显。通过顶部返回按钮、凭据面包屑、**取消** 或 Escape 返回列表；未保存的该服务输入会被丢弃。自定义凭据仍在列表下方配置。
+OpenAlex、InfiniSynapse、SCIMaster、NCBI 分别作为列表入口，显示用途摘要与已配置字段数量。点击服务进入独立页面，查看详细说明、官方获取入口并填写凭据，然后点击页面底部 **保存**。已经保存的字段显示“已配置”；留空会保持原值，不会把密钥明文回显。通过顶部返回按钮、凭据面包屑、**取消** 或 Escape 返回列表；未保存的该服务输入会被丢弃。自定义凭据仍在列表下方配置。TypeSafe（Jev）等决策模型的 key 在 **设置 → 模型 → 决策模型** 中配置。
 
 ### 自定义凭据
 
@@ -622,6 +634,11 @@ export WISP_VISION_PROVIDER="openai"
 export WISP_VISION_API_URL="https://api.openai.com/v1"
 export WISP_VISION_MODEL="gpt-4o-mini"
 # export WISP_VISION_API_KEY="<vision-key>"  # defaults to WISP_API_KEY
+# Optional: a decision model for map_items' decide step and desktop_autopilot.
+# export TYPESAFE_API_KEY="<typesafe-key>"
+# Or any System One server, e.g. StartLux on Bamboo or a local startlux-decide serve:
+# export WISP_DECISION_API_URL="https://api.bamboonode.dev"
+# export WISP_DECISION_API_KEY="<bamboo-key>"
 ```
 
 Windows PowerShell：

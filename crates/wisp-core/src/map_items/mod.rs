@@ -7,7 +7,8 @@
 //!
 //! Per item: host-side text extraction → optional **worker** (a model call that
 //! returns one schema-checked JSON row; read-only tools are opt-in) → optional
-//! **decide** (TypeSafe Jev answers yes/no questions about that row, and a fixed
+//! **decide** (the decision model — TypeSafe Jev, StartLux-Decision, or any
+//! System One server — answers yes/no questions about that row, and a fixed
 //! rule labels it pass / reject / uncertain) → one appended line in
 //! `rows.jsonl`. An optional **reduce** then folds the structured rows — never
 //! the full texts — into one answer.
@@ -41,7 +42,7 @@ use store::{
     DecideSpec, Item, Manifest, ReduceSpec, Row, RowStatus, RunDir, RunStatus, Spec, WorkerSpec,
 };
 use wisp_dto::{SwarmPhase, SwarmTask, SwarmTaskStatus};
-use wisp_llm::systemone::{self, Answer, Decisions, Question};
+use wisp_llm::systemone::{self, Answer, DecisionModel, Decisions, Question};
 use wisp_llm::{
     is_retriable, LlmError, Message, Provider, ProviderConfig, Role, ToolSchema, Usage,
 };
@@ -191,8 +192,8 @@ impl Output for Meter<'_, '_> {
 pub struct MapItemsTool {
     provider: Arc<dyn Provider>,
     config: Option<ProviderConfig>,
-    /// TypeSafe (Jev) endpoint; `decide` is offered only when this is set.
-    jev: Option<ProviderConfig>,
+    /// The decision model (System One); `decide` is offered only when set.
+    jev: Option<DecisionModel>,
     max_context: usize,
 }
 
@@ -215,19 +216,11 @@ impl MapItemsTool {
         }
     }
 
-    /// Enable `decide`. `None` for an empty key keeps the tool worker-only.
-    pub fn with_decision(mut self, jev: Option<ProviderConfig>) -> Self {
-        self.jev = jev.filter(|cfg| !cfg.api_key.trim().is_empty());
-        self
-    }
-
-    /// Enable `decide` with the user's TypeSafe key; an empty key keeps the
+    /// Enable `decide` with the configured decision model; `None` keeps the
     /// tool worker-only.
-    pub fn with_typesafe_key(self, api_key: &str, proxy: Option<String>) -> Self {
-        let mut jev =
-            ProviderConfig::openai(systemone::DEFAULT_BASE_URL, api_key.trim(), "jev-latest");
-        jev.proxy = proxy;
-        self.with_decision(Some(jev))
+    pub fn with_decision(mut self, jev: Option<DecisionModel>) -> Self {
+        self.jev = jev;
+        self
     }
 
     /// A provider with its own conversation identity for one item.
@@ -446,7 +439,7 @@ fn parse_request(args: &Value, tool: &MapItemsTool) -> Result<Request, String> {
         .transpose()?;
     let decide = match obj.get("decide").filter(|v| !v.is_null()) {
         Some(_) if tool.jev.is_none() => {
-            return Err("'decide' needs a TypeSafe API key (Settings → Credentials, or the TYPESAFE_API_KEY environment variable). Without it, put the pass/reject judgement in the worker's output_schema instead.".into())
+            return Err("'decide' needs a decision model (Settings → Models → Decision model; in the CLI, TYPESAFE_API_KEY or WISP_DECISION_API_URL). Without it, put the pass/reject judgement in the worker's output_schema instead.".into())
         }
         Some(v) => Some(parse_decide(v)?),
         None => None,
@@ -599,12 +592,10 @@ impl MapItemsTool {
         let mut cfg = self
             .jev
             .clone()
-            .ok_or_else(|| Fail::Service("no TypeSafe API key".into()))?;
-        cfg.model = pin
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-            .unwrap_or_else(|| "jev-latest".into());
+            .ok_or_else(|| Fail::Service("no decision model configured".into()))?;
+        if let Some(pinned) = pin.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+            cfg.http.model = pinned;
+        }
         let decisions =
             retrying(env, || systemone::evaluate(&cfg, state, &decide.questions)).await?;
         let mut pinned = pin.lock().unwrap_or_else(|p| p.into_inner());
@@ -878,6 +869,7 @@ fn approval_message(
     pending: usize,
     ceiling: u64,
     model: &str,
+    decision_host: &str,
     resumed: bool,
     root: &Path,
 ) -> String {
@@ -903,7 +895,7 @@ fn approval_message(
     }
     if let Some(decide) = &spec.decide {
         msg.push_str(&format!(
-            "Decide: {} question(s) per item sent to TypeSafe (Jev) — {} leaves this machine.\n",
+            "Decide: {} question(s) per item sent to the decision model at {decision_host} — {} leaves this machine.\n",
             decide.questions.len(),
             if spec.worker.is_some() {
                 "each item's extracted row"
@@ -995,14 +987,14 @@ impl Tool for MapItemsTool {
         );
         if self.jev.is_some() {
             description.push_str(
-                " Add `decide` to have the TypeSafe Jev decision model answer yes/no questions about each item's \
+                " Add `decide` to have the decision model answer yes/no questions about each item's \
                  extracted row and label it pass / reject / uncertain from calibrated probabilities (recommended \
-                 for screening; the worker extracts facts, Jev judges). Hand the `uncertain` ones to the user or \
+                 for screening; the worker extracts facts, the decision model judges). Hand the `uncertain` ones to the user or \
                  run a second pass on them with items.run.",
             );
             properties["decide"] = json!({
                 "type": "object",
-                "description": "Jev judgement. Phrase every noul question so that YES means the item meets the requirement; reference worker fields in backticks (`design`). pass = every noul answer >= pass_at; reject = any <= reject_at; otherwise uncertain. Only reject removes an item from the candidate set; nothing is deleted.",
+                "description": "Decision-model judgement. Phrase every noul question so that YES means the item meets the requirement; reference worker fields in backticks (`design`). pass = every noul answer >= pass_at; reject = any <= reject_at; otherwise uncertain. Only reject removes an item from the candidate set; nothing is deleted.",
                 "properties": {
                     "questions": {
                         "type": "object",
@@ -1011,7 +1003,7 @@ impl Tool for MapItemsTool {
                     },
                     "pass_at": { "type": "number", "description": "Default 0.8." },
                     "reject_at": { "type": "number", "description": "Default 0.2." },
-                    "text_chars": { "type": "integer", "description": "Without a worker, how much of the item's start Jev reads (default 8000)." }
+                    "text_chars": { "type": "integer", "description": "Without a worker, how much of the item's start the decision model reads (default 8000)." }
                 },
                 "required": ["questions"]
             });
@@ -1097,7 +1089,7 @@ impl Tool for MapItemsTool {
                 };
                 if manifest.spec.decide.is_some() && self.jev.is_none() {
                     return ToolResult::fail(
-                        "this run uses `decide`, which needs a TypeSafe API key",
+                        "this run uses `decide`, which needs a decision model",
                     );
                 }
                 let spec = &mut manifest.spec;
@@ -1198,6 +1190,11 @@ impl Tool for MapItemsTool {
                 pending.len(),
                 ceiling,
                 self.provider.model(),
+                &self
+                    .jev
+                    .as_ref()
+                    .map(DecisionModel::host)
+                    .unwrap_or_default(),
                 resumed,
                 &root,
             );
@@ -1503,7 +1500,7 @@ fn render_report(
         let count = |v: &str| verdicts.get(v).copied().unwrap_or(0);
         out.push_str(&format!(
             "\ndecisions ({}; pass = every noul answer >= {}, reject = any <= {}): {} pass, {} reject, {} uncertain",
-            manifest.jev_model.as_deref().unwrap_or("jev"),
+            manifest.jev_model.as_deref().unwrap_or("decision model"),
             decide.thresholds.pass_at,
             decide.thresholds.reject_at,
             count("pass"),

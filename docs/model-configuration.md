@@ -644,6 +644,31 @@ API keys are stored in the OS keyring. They are not stored in SQLite.
 
 The desktop app stores model profile metadata in `.wisp/wisp.sqlite`. Existing single-model installs are migrated into a `default` model profile the first time settings are loaded.
 
+## Decision model
+
+**Settings → Models → Decision model** configures one fast decision model: a
+model that answers typed yes/no, choice, and score questions with a calibrated
+probability per option instead of writing text, over the System One protocol
+(`POST /v1/systemone`). `map_items` offers its `decide` step and
+`desktop_autopilot` is registered only while one is enabled and usable.
+
+| Service | Defaults | Key |
+| --- | --- | --- |
+| TypeSafe Jev | `https://api.typesafe.ai`, `jev-latest`, 10 s | Required |
+| StartLux (hosted on Bamboo) | `https://api.bamboonode.dev`, `startlux-decision-27b-autothink`, 60 s | Required (a Bamboo key) |
+| StartLux (self-hosted) | `http://127.0.0.1:8090`, server's model, 60 s | Only if started with `--api-keys-file` |
+| Custom System One server | your URL (root, `/v1`, or full path) | Optional |
+
+Each service's key is kept separately in the OS keyring; a TypeSafe key saved
+under Credentials by an earlier version is the TypeSafe service's key and turns
+the decision model on until you change it. **Think mode** (`auto`, `never`,
+`always`) is sent only when set, for servers that think when unsure such as
+StartLux AutoThink; Instant models reject anything but the default or `never`.
+The timeout applies per request. **Test connection** asks one fixed question
+with the form's values and saves nothing. Saving rebuilds idle conversations'
+tools so the next turn uses the new endpoint. StartLux weights are licensed
+CC BY-NC 4.0; check the license before commercial use.
+
 ## Headless CLI
 
 The `wisp-science` headless CLI uses environment variables and supports the
@@ -665,6 +690,11 @@ $env:WISP_API_KEY  = "<your provider key>"
 $env:WISP_VISION_PROVIDER = "openai"
 $env:WISP_VISION_API_URL  = "https://api.openai.com/v1"
 $env:WISP_VISION_MODEL    = "gpt-4o-mini"
+# Optional decision model for map_items' decide step and desktop_autopilot:
+$env:TYPESAFE_API_KEY      = "<typesafe key>"
+# or any System One server instead, for example StartLux on Bamboo:
+# $env:WISP_DECISION_API_URL = "https://api.bamboonode.dev"
+# $env:WISP_DECISION_API_KEY = "<bamboo key>"
 cargo run -p wisp-cli
 ```
 

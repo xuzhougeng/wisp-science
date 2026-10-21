@@ -2332,13 +2332,6 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "cred.ncbi.link") => Some("Open NCBI account"),
         (Locale::En, "cred.ncbi_api_key.label") => Some("NCBI API key"),
         (Locale::En, "cred.ncbi_email.label") => Some("NCBI contact email"),
-        (Locale::En, "cred.typesafe.name") => Some("TypeSafe (Jev)"),
-        (Locale::En, "cred.typesafe.about") => Some("TypeSafe's Jev decision model answers typed yes/no, choice, and score questions with calibrated probabilities. It does not generate text."),
-        (Locale::En, "cred.typesafe.configured") => Some("Wisp tools and skills that use Jev decisions can authenticate. The key is also available to local tool processes as TYPESAFE_API_KEY."),
-        (Locale::En, "cred.typesafe.unconfigured") => Some("Jev-based decisions are unavailable. Unrelated Wisp tools continue to work."),
-        (Locale::En, "cred.typesafe.hint") => Some("Sign in to the TypeSafe console and create an API key."),
-        (Locale::En, "cred.typesafe.link") => Some("Open TypeSafe console"),
-        (Locale::En, "cred.typesafe_api_key.label") => Some("TypeSafe API key"),
         (Locale::En, "cred.clear") => Some("Clear"),
         (Locale::En, "cred.saved") => Some("Saved. Applies to new sessions."),
         (Locale::En, "cred.cleared") => Some("Key removed."),
@@ -2631,6 +2624,82 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "network.credentials_hint") => Some("地址中请勿填写用户名、密码或访问令牌。凭据通过「凭据」设置管理，由 Agent 在需要时使用现有凭据工具。"),
         (Locale::En, "network.saved") => Some("Saved"),
         (Locale::Zh, "network.saved") => Some("已保存"),
+        (Locale::En, "models.category.decision") => Some("Decision model"),
+        (Locale::Zh, "models.category.decision") => Some("决策模型"),
+        (Locale::En, "decision.desc") => Some("A decision model answers typed yes/no, choice, and score questions with a calibrated probability for every option instead of writing text, usually within milliseconds to a few seconds. Once configured, it makes the fast calls in map_items' decide step and in desktop_autopilot."),
+        (Locale::Zh, "decision.desc") => Some("决策模型只回答类型化的是/否、单选和打分问题，为每个选项返回校准概率，不生成文本，通常在毫秒到数秒内完成。配置后，map_items 的批量判定（decide）和 desktop_autopilot 会用它做快速决策。"),
+        (Locale::En, "decision.status_off") => Some("Off. map_items offers no decide step and desktop_autopilot is unavailable."),
+        (Locale::Zh, "decision.status_off") => Some("未启用。map_items 不提供判定步骤，desktop_autopilot 不可用。"),
+        (Locale::En, "decision.status_no_key") => Some("{preset} is on but has no saved API key, so it is not in use."),
+        (Locale::Zh, "decision.status_no_key") => Some("已启用 {preset}，但还没有保存 API key，暂不可用。"),
+        (Locale::En, "decision.status_on") => Some("In use: {preset} · {model}"),
+        (Locale::Zh, "decision.status_on") => Some("使用中：{preset} · {model}"),
+        (Locale::En, "decision.enabled") => Some("Use a decision model"),
+        (Locale::Zh, "decision.enabled") => Some("启用决策模型"),
+        (Locale::En, "decision.preset") => Some("Service"),
+        (Locale::Zh, "decision.preset") => Some("服务"),
+        (Locale::En, "decision.preset.typesafe") => Some("TypeSafe Jev"),
+        (Locale::Zh, "decision.preset.typesafe") => Some("TypeSafe Jev"),
+        (Locale::En, "decision.preset.startlux_bamboo") => Some("StartLux (hosted on Bamboo)"),
+        (Locale::Zh, "decision.preset.startlux_bamboo") => Some("StartLux（Bamboo 托管）"),
+        (Locale::En, "decision.preset.startlux_local") => Some("StartLux (self-hosted)"),
+        (Locale::Zh, "decision.preset.startlux_local") => Some("StartLux（自部署）"),
+        (Locale::En, "decision.preset.custom") => Some("Custom System One server"),
+        (Locale::Zh, "decision.preset.custom") => Some("自定义 System One 服务"),
+        (Locale::En, "decision.preset_hint.typesafe") => Some("TypeSafe's hosted Jev models. Needs an API key."),
+        (Locale::Zh, "decision.preset_hint.typesafe") => Some("TypeSafe 托管的 Jev 模型，需要 API key。"),
+        (Locale::En, "decision.preset_hint.startlux_bamboo") => Some("StartLux-Decision 27B AutoThink hosted on Bamboo. Needs a Bamboo API key (free during testing). It thinks when unsure, which can take much longer."),
+        (Locale::Zh, "decision.preset_hint.startlux_bamboo") => Some("Bamboo 托管的 StartLux-Decision 27B AutoThink，需要 Bamboo API key（测试期免费）。不确定时会先思考，耗时可能明显变长。"),
+        (Locale::En, "decision.preset_hint.startlux_local") => Some("A server started with startlux-decide serve on this machine or your network. Needs an API key only if it was started with --api-keys-file. The StartLux weights are licensed CC BY-NC 4.0."),
+        (Locale::Zh, "decision.preset_hint.startlux_local") => Some("用 startlux-decide serve 在本机或局域网启动的服务。只有用 --api-keys-file 启动时才需要 API key。StartLux 权重采用 CC BY-NC 4.0 许可。"),
+        (Locale::En, "decision.preset_hint.custom") => Some("Any server that implements POST /v1/systemone. The base URL may be the root, /v1, or the full path."),
+        (Locale::Zh, "decision.preset_hint.custom") => Some("任何实现 POST /v1/systemone 的服务。Base URL 可以是根地址、/v1 或完整路径。"),
+        (Locale::En, "decision.link.typesafe") => Some("Open TypeSafe console"),
+        (Locale::Zh, "decision.link.typesafe") => Some("打开 TypeSafe 控制台"),
+        (Locale::En, "decision.link.startlux_bamboo") => Some("Get a Bamboo API key"),
+        (Locale::Zh, "decision.link.startlux_bamboo") => Some("获取 Bamboo API key"),
+        (Locale::En, "decision.link.startlux_local") => Some("Setup guide"),
+        (Locale::Zh, "decision.link.startlux_local") => Some("部署说明"),
+        (Locale::En, "decision.base_url") => Some("Base URL"),
+        (Locale::Zh, "decision.base_url") => Some("Base URL"),
+        (Locale::En, "decision.model") => Some("Model ID"),
+        (Locale::Zh, "decision.model") => Some("模型 ID"),
+        (Locale::En, "decision.model_placeholder") => Some("Empty uses the server default"),
+        (Locale::Zh, "decision.model_placeholder") => Some("留空使用服务端默认"),
+        (Locale::En, "decision.think") => Some("Think mode"),
+        (Locale::Zh, "decision.think") => Some("思考模式"),
+        (Locale::En, "decision.think.default") => Some("Server default"),
+        (Locale::Zh, "decision.think.default") => Some("服务端默认"),
+        (Locale::En, "decision.think.auto") => Some("Auto (think when unsure)"),
+        (Locale::Zh, "decision.think.auto") => Some("自动（不确定时思考）"),
+        (Locale::En, "decision.think.never") => Some("Never (fastest)"),
+        (Locale::Zh, "decision.think.never") => Some("从不（最快）"),
+        (Locale::En, "decision.think.always") => Some("Always"),
+        (Locale::Zh, "decision.think.always") => Some("总是"),
+        (Locale::En, "decision.think_hint") => Some("Think mode applies only to servers that can think, such as StartLux AutoThink. Keep the default or choose Never for Instant models, which reject the other modes. The timeout is per request, and thinking can take longer."),
+        (Locale::Zh, "decision.think_hint") => Some("思考模式只对支持思考的服务生效（如 StartLux AutoThink）。Instant 模型请保持默认或选“从不”，否则服务会拒绝请求。超时按单次请求计算，思考时可能需要更久。"),
+        (Locale::En, "decision.timeout") => Some("Timeout (seconds)"),
+        (Locale::Zh, "decision.timeout") => Some("超时（秒）"),
+        (Locale::En, "decision.api_key") => Some("API key"),
+        (Locale::Zh, "decision.api_key") => Some("API key"),
+        (Locale::En, "decision.key_optional") => Some("Optional"),
+        (Locale::Zh, "decision.key_optional") => Some("可选"),
+        (Locale::En, "decision.key_required") => Some("This service needs an API key."),
+        (Locale::Zh, "decision.key_required") => Some("这个服务需要 API key。"),
+        (Locale::En, "decision.key_cleared") => Some("API key cleared"),
+        (Locale::Zh, "decision.key_cleared") => Some("已清除 API key"),
+        (Locale::En, "decision.egress") => Some("When deciding, map_items sends each item's extracted row (or the start of its text) and desktop_autopilot sends the window's control labels to this service."),
+        (Locale::Zh, "decision.egress") => Some("判定时，map_items 会把每个条目抽取出的行（或正文开头）、desktop_autopilot 会把窗口控件文字发送到这个服务。"),
+        (Locale::En, "decision.test") => Some("Test connection"),
+        (Locale::Zh, "decision.test") => Some("测试连接"),
+        (Locale::En, "decision.testing") => Some("Testing…"),
+        (Locale::Zh, "decision.testing") => Some("正在测试…"),
+        (Locale::En, "decision.test_ok") => Some("Connected: {model} answered in {ms} ms."),
+        (Locale::Zh, "decision.test_ok") => Some("连接成功：{model}，用时 {ms} ms。"),
+        (Locale::En, "decision.test_failed") => Some("Test failed: {error}"),
+        (Locale::Zh, "decision.test_failed") => Some("测试失败：{error}"),
+        (Locale::En, "decision.saved") => Some("Saved"),
+        (Locale::Zh, "decision.saved") => Some("已保存"),
         (Locale::En, "network.loading") => Some("Loading network settings…"),
         (Locale::Zh, "network.loading") => Some("正在加载网络设置…"),
         (Locale::En, "settings.proxy_url") => Some("Model API proxy"),
@@ -5631,13 +5700,6 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "cred.ncbi.link") => Some("打开 NCBI 账户页面"),
         (Locale::Zh, "cred.ncbi_api_key.label") => Some("NCBI API 密钥"),
         (Locale::Zh, "cred.ncbi_email.label") => Some("NCBI 联系邮箱"),
-        (Locale::Zh, "cred.typesafe.name") => Some("TypeSafe（Jev）"),
-        (Locale::Zh, "cred.typesafe.about") => Some("TypeSafe 的 Jev 决策模型对类型化的是/否、选择和打分问题返回校准概率，不生成文本。"),
-        (Locale::Zh, "cred.typesafe.configured") => Some("使用 Jev 决策的 Wisp 工具和技能可以通过认证；本地工具进程也能通过 TYPESAFE_API_KEY 读取该密钥。"),
-        (Locale::Zh, "cred.typesafe.unconfigured") => Some("基于 Jev 的决策不可用；Wisp 的其他工具仍可正常使用。"),
-        (Locale::Zh, "cred.typesafe.hint") => Some("登录 TypeSafe 控制台并创建 API 密钥。"),
-        (Locale::Zh, "cred.typesafe.link") => Some("打开 TypeSafe 控制台"),
-        (Locale::Zh, "cred.typesafe_api_key.label") => Some("TypeSafe API 密钥"),
         (Locale::Zh, "cred.clear") => Some("清除"),
         (Locale::Zh, "cred.saved") => Some("已保存。对新会话生效。"),
         (Locale::Zh, "cred.cleared") => Some("密钥已删除。"),
@@ -6955,6 +7017,12 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             if locale == Locale::Zh { "项目 metadata 数据库损坏、不完整或与项目说明不匹配，无法导入。请从原项目重新导出。".into() }
             else { "Project metadata is damaged, incomplete or does not match the manifest. Export the original project again.".into() }
         }
+        "This decision model service needs an API key." => {
+            if locale == Locale::Zh { "这个决策模型服务需要 API key。".into() } else { msg.into() }
+        }
+        "The decision model base URL must start with http:// or https://." => {
+            if locale == Locale::Zh { "决策模型的 Base URL 必须以 http:// 或 https:// 开头。".into() } else { msg.into() }
+        }
         "This project is already present on this device." => {
             if locale == Locale::Zh { "此项目已在当前设备上，请从项目列表打开。".into() } else { msg.into() }
         }
@@ -7568,6 +7636,45 @@ mod api_error_hint_tests {
             }
             assert!(!is_context_limit_error(&error));
             assert!(!is_image_unsupported(&error));
+        }
+    }
+
+    #[test]
+    fn localize_backend_translates_decision_model_errors() {
+        // Must stay equal to KEY_REQUIRED / URL_INVALID in src-tauri/src/decision_model.rs.
+        for (msg, zh) in [
+            ("This decision model service needs an API key.", "API key"),
+            (
+                "The decision model base URL must start with http:// or https://.",
+                "Base URL",
+            ),
+        ] {
+            assert!(localize_backend(Locale::Zh, msg).contains(zh));
+            assert_ne!(localize_backend(Locale::Zh, msg), msg);
+            assert_eq!(localize_backend(Locale::En, msg), msg);
+        }
+        for preset in wisp_dto::DECISION_PRESETS {
+            for key in [
+                format!("decision.preset.{}", preset.id),
+                format!("decision.preset_hint.{}", preset.id),
+            ] {
+                for locale in [Locale::En, Locale::Zh] {
+                    assert!(lookup(locale, &key).is_some(), "{key}");
+                }
+            }
+            if !preset.key_url.is_empty() {
+                assert!(lookup(Locale::Zh, &format!("decision.link.{}", preset.id)).is_some());
+            }
+        }
+        for mode in wisp_dto::DECISION_THINK_MODES {
+            let key = format!(
+                "decision.think.{}",
+                if mode.is_empty() { "default" } else { mode }
+            );
+            assert!(
+                lookup(Locale::En, &key).is_some() && lookup(Locale::Zh, &key).is_some(),
+                "{key}"
+            );
         }
     }
 

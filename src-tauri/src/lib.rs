@@ -37,6 +37,7 @@ mod configure;
 mod connector_commands;
 mod context_probe;
 mod debug_request;
+mod decision_model;
 mod delegation_completion;
 mod delegation_isolation;
 mod delegation_resources;
@@ -5816,6 +5817,7 @@ async fn finish_custom_mcp_wiring(
             .push(error.message.clone());
         result.errors.push(error.message);
     }
+    let decision = decision_model::configured(store).await;
     let mut set = tokio::task::JoinSet::new();
     for (index, spec) in specs.into_iter().enumerate() {
         if connector_allow.is_some_and(|allow| !allow.contains(spec.id())) {
@@ -5855,6 +5857,7 @@ async fn finish_custom_mcp_wiring(
                     &connector_id,
                     &name,
                     require_approval,
+                    decision.clone(),
                 )
                 .await
                 {
@@ -5894,6 +5897,7 @@ async fn register_mcp_with_approval(
     connector_id: &str,
     connector_name: &str,
     require_approval: bool,
+    decision: Option<wisp_llm::systemone::DecisionModel>,
 ) -> Result<Vec<String>, String> {
     if connector_id.trim().is_empty() {
         tracing::warn!(
@@ -5947,14 +5951,13 @@ async fn register_mcp_with_approval(
                 };
                 registry.add(Box::new(tool.renamed(name.as_str())));
             }
-            // With a TypeSafe key, a Cua Driver connection also gets the
-            // Jev-driven autopilot; without one the agent drives Cua Driver.
+            // With a decision model, a Cua Driver connection also gets the
+            // System One autopilot; without one the agent drives Cua Driver.
             if registry.get(wisp_mcp::desktop_autopilot::NAME).is_none() {
                 if let Some(tool) = wisp_mcp::desktop_autopilot::DesktopAutopilot::for_catalog(
                     &catalog,
                     client.clone(),
-                    &models::typesafe_api_key(),
-                    llm_proxy(),
+                    decision,
                     require_approval,
                 ) {
                     names.push(wisp_mcp::desktop_autopilot::NAME.into());
@@ -7880,6 +7883,10 @@ pub fn run() {
             browser_bridge::focus_browser_needs_human,
             network::get_network_settings,
             network::set_network_settings,
+            decision_model::get_decision_model,
+            decision_model::save_decision_model,
+            decision_model::clear_decision_model_key,
+            decision_model::test_decision_model,
             settings_commands::get_settings,
             privacy_mode::get_privacy_mode,
             privacy_mode::set_privacy_mode,

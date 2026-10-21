@@ -1,10 +1,11 @@
-//! `desktop_autopilot`: Cua Driver steered by TypeSafe Jev (System One),
+//! `desktop_autopilot`: Cua Driver steered by the configured decision model
+//! (System One; "Jev" below, after TypeSafe's, whichever server answers),
 //! handing the window back to the calling agent (System Two) whenever Jev
 //! cannot settle a step.
 //!
-//! Hosts register it only when a TypeSafe key is configured and an MCP server
-//! advertises Cua Driver's `get_window_state` plus an `element_token` click;
-//! without a key the agent drives Cua Driver itself (the `computer-use`
+//! Hosts register it only when a decision model is configured and an MCP
+//! server advertises Cua Driver's `get_window_state` plus an `element_token`
+//! click; without one the agent drives Cua Driver itself (the `computer-use`
 //! skill). Each step observes the window's accessibility tree, offers its
 //! labelled native controls as candidates, lets Jev pick one, and clicks it by
 //! `element_token`. Jev only picks an ID from the table built here; it never
@@ -24,8 +25,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
-use wisp_llm::systemone::{self, Answer, NoulCriteria, Question};
-use wisp_llm::{ProviderConfig, ToolSchema};
+use wisp_llm::systemone::{self, Answer, DecisionModel, NoulCriteria, Question};
+use wisp_llm::ToolSchema;
 use wisp_tools::{Approval, Tool, ToolEnv, ToolEvent, ToolResult};
 
 pub const NAME: &str = "desktop_autopilot";
@@ -498,12 +499,13 @@ fn settle(obs: &Observation, answers: &BTreeMap<String, Answer>) -> Result<Move,
     if *done >= DONE_AT {
         return Ok(Move::Done(*done));
     }
-    if choice == HAND_BACK {
+    // `None` is a server's own "none of these" (StartLux `allow_none`).
+    let Some(choice) = choice.as_ref().filter(|choice| *choice != HAND_BACK) else {
         return Ok(Move::HandBack(format!(
             "jev_hand_back: Jev found no control that clearly advances the goal{}",
             top_choices(probabilities)
         )));
-    }
+    };
     let index = obs
         .candidates
         .iter()
@@ -603,29 +605,20 @@ fn is_cua_driver(catalog: &[RemoteTool]) -> bool {
 
 pub struct DesktopAutopilot {
     client: Arc<McpClient>,
-    jev: ProviderConfig,
+    jev: DecisionModel,
     require_approval: bool,
 }
 
 impl DesktopAutopilot {
-    /// `Some` only with a non-empty TypeSafe key and a Cua Driver catalog;
+    /// `Some` only with a configured decision model and a Cua Driver catalog;
     /// otherwise the agent keeps driving Cua Driver directly.
     pub fn for_catalog(
         catalog: &[RemoteTool],
         client: Arc<McpClient>,
-        typesafe_api_key: &str,
-        proxy: Option<String>,
+        decision: Option<DecisionModel>,
         require_approval: bool,
     ) -> Option<Self> {
-        if typesafe_api_key.trim().is_empty() || !is_cua_driver(catalog) {
-            return None;
-        }
-        let mut jev = ProviderConfig::openai(
-            systemone::DEFAULT_BASE_URL,
-            typesafe_api_key.trim(),
-            "jev-latest",
-        );
-        jev.proxy = proxy;
+        let jev = decision.filter(|_| is_cua_driver(catalog))?;
         Some(Self {
             client,
             jev,
@@ -913,7 +906,8 @@ impl Tool for DesktopAutopilot {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             NAME,
-            "Drive one exact Cua Driver window toward a goal with TypeSafe Jev (fast System One). \
+            "Drive one exact Cua Driver window toward a goal with the configured decision model \
+             (fast System One, \"Jev\" in reports). \
              Jev picks each click from the window's labelled controls and hands the window back \
              to you, with the reason, for text entry, risky or irreversible actions, low \
              confidence, clicks with no effect, or errors. Use it to navigate to a visible \
@@ -1207,7 +1201,7 @@ mod tests {
                 (
                     "next_action".to_string(),
                     Answer::Choice {
-                        choice: choice.into(),
+                        choice: Some(choice.into()),
                         probabilities: BTreeMap::from([(choice.to_string(), confidence)]),
                         confidence,
                     },
@@ -1248,6 +1242,17 @@ mod tests {
         );
         assert!(settle(&obs, &answers("button:invented", 0.9, 0.1)).is_err());
         assert!(settle(&obs, &BTreeMap::new()).is_err());
+        // A server's own "none of these" hands back like the hand-back option.
+        let mut none = answers("button:increment", 0.9, 0.1);
+        none.insert(
+            "next_action".into(),
+            Answer::Choice {
+                choice: None,
+                probabilities: BTreeMap::new(),
+                confidence: 0.9,
+            },
+        );
+        assert_eq!(reason(settle(&obs, &none).unwrap()), "jev_hand_back");
     }
 
     #[test]

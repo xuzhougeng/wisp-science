@@ -11128,12 +11128,14 @@ test("credential service subpages navigate, discard drafts, and update list stat
   await enterApp(page);
   await openSettingsSection(page, "Credentials");
   const list = page.getByTestId("credential-service-list");
-  await expect(list.locator("button")).toHaveCount(5);
+  // TypeSafe's key moved to Settings → Models → Decision model.
+  await expect(list.locator("button")).toHaveCount(4);
+  await expect(page.locator('[data-credential-service="typesafe"]')).toHaveCount(0);
   await expect(list.locator("input")).toHaveCount(0);
   await expect.poll(async () => (await list.boundingBox())?.height ?? 0).toBeGreaterThan(250);
   await page.screenshot({ path: test.info().outputPath("credential-services.png"), animations: "disabled" });
 
-  for (const service of ["openalex", "infinisynapse", "scimaster", "ncbi", "typesafe"]) {
+  for (const service of ["openalex", "infinisynapse", "scimaster", "ncbi"]) {
     await page.locator(`[data-credential-service="${service}"]`).click();
     // Escape must work immediately, while focus is still outside the detail form.
     await page.keyboard.press("Escape");

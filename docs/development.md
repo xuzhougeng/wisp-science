@@ -342,6 +342,12 @@ Eval and the long-lived JSONL RPC protocol:
 | `WISP_VISION_PROVIDER` | Vision provider kind; defaults to `WISP_PROVIDER`           |
 | `WISP_VISION_API_URL` | Vision API root; defaults to `WISP_API_URL` or the provider default |
 | `WISP_VISION_API_KEY` | Optional vision key; defaults to `WISP_API_KEY`             |
+| `TYPESAFE_API_KEY`   | Decision model: TypeSafe Jev, for `map_items` `decide` and `desktop_autopilot` |
+| `WISP_DECISION_API_URL` | Decision model: any System One server instead of TypeSafe (e.g. `https://api.bamboonode.dev`, `http://127.0.0.1:8090`) |
+| `WISP_DECISION_API_KEY` | Key for `WISP_DECISION_API_URL`; omit for a keyless self-hosted server |
+| `WISP_DECISION_MODEL` | Decision model id; empty uses the server default            |
+| `WISP_DECISION_THINK_MODE` | `auto`, `never`, or `always` for servers that think when unsure; empty sends nothing |
+| `WISP_DECISION_TIMEOUT_SECS` | Per-request timeout, 1–600 (default 10)               |
 | `WISP_MAX_CONTEXT`   | Context budget (default 1,000,000)                            |
 | `WISP_MAX_ITER`      | Max agent iterations per turn (default 100; 0 = unlimited)    |
 | `WISP_SKILLS_PATH`   | Extra `;`/`:`-separated SKILL.md catalog dirs                 |

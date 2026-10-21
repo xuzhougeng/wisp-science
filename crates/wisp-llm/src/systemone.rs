@@ -1,20 +1,95 @@
-//! TypeSafe "System One" decision protocol (`POST /v1/systemone`, the Jev
-//! model family).
+//! "System One" decision protocol (`POST /v1/systemone`): TypeSafe's Jev
+//! models, StartLux-Decision, or any server that speaks it.
 //!
 //! Not a chat [`Provider`](crate::Provider): no messages, tools, text, or
 //! streaming. The caller sends one `state` plus typed questions and gets one
-//! calibrated probability answer per question back. [`ProviderConfig`] is
-//! reused for the URL, key, model, proxy, and request identity; its `kind`,
-//! `max_tokens`, and reasoning fields are ignored.
+//! calibrated probability answer per question back. A [`DecisionModel`] names
+//! the endpoint; its [`ProviderConfig`] is reused for the URL, key, model,
+//! proxy, and request identity, and its `kind`, `max_tokens`, and reasoning
+//! fields are ignored.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::provider::{http_client, LlmError, ProviderConfig, Result};
 
+/// TypeSafe, the endpoint an empty base URL means.
 pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
+/// TypeSafe's alias for its current Jev model.
+pub const TYPESAFE_MODEL: &str = "jev-latest";
+/// TypeSafe answers in ~100 ms; the official SDK waits 10 s.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One configured System One endpoint.
+#[derive(Debug, Clone)]
+pub struct DecisionModel {
+    /// URL (root, `/v1`, or the full path), key, model, proxy, and request
+    /// identity. An empty key sends no `Authorization` header, for a
+    /// self-hosted server without keys; an empty model lets the server pick.
+    pub http: ProviderConfig,
+    /// `think_mode` for servers that think when unsure (StartLux AutoThink:
+    /// `auto`, `never`, `always`). Empty omits it, so servers that do not
+    /// know the field never see it.
+    pub think_mode: String,
+    /// Per request. A thinking server can take minutes on a hard question.
+    pub timeout: Duration,
+}
+
+impl DecisionModel {
+    pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
+        Self {
+            http: ProviderConfig::openai(base_url.trim(), api_key.trim(), model.trim()),
+            think_mode: String::new(),
+            timeout: DEFAULT_TIMEOUT,
+        }
+    }
+
+    /// TypeSafe Jev with the user's key.
+    pub fn typesafe(api_key: &str) -> Self {
+        Self::new(DEFAULT_BASE_URL, api_key, TYPESAFE_MODEL)
+    }
+
+    pub fn with_proxy(mut self, proxy: Option<String>) -> Self {
+        self.http.proxy = proxy;
+        self
+    }
+
+    /// The headless configuration. `WISP_DECISION_API_URL` selects any System One
+    /// server (`WISP_DECISION_API_KEY`, `WISP_DECISION_MODEL`,
+    /// `WISP_DECISION_THINK_MODE`, `WISP_DECISION_TIMEOUT_SECS` refine it);
+    /// otherwise `TYPESAFE_API_KEY` selects TypeSafe. `None` without either.
+    pub fn from_env(var: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let get = |name: &str| var(name).map(|v| v.trim().to_string()).unwrap_or_default();
+        let url = get("WISP_DECISION_API_URL");
+        if url.is_empty() {
+            let key = get("TYPESAFE_API_KEY");
+            return (!key.is_empty()).then(|| Self::typesafe(&key));
+        }
+        let mut model = Self::new(
+            &url,
+            &get("WISP_DECISION_API_KEY"),
+            &get("WISP_DECISION_MODEL"),
+        );
+        model.think_mode = get("WISP_DECISION_THINK_MODE");
+        if let Ok(secs) = get("WISP_DECISION_TIMEOUT_SECS").parse::<u64>() {
+            model.timeout = Duration::from_secs(secs.clamp(1, 600));
+        }
+        Some(model)
+    }
+
+    /// Where requests go, for approval prompts: the endpoint's host.
+    pub fn host(&self) -> String {
+        let url = endpoint(&self.http.base_url);
+        url.split("://")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or(&url)
+            .to_string()
+    }
+}
 
 /// One typed question. The map key it is stored under is for the caller only
 /// and is never shown to the model, so `instructions` must be self-contained.
@@ -54,9 +129,11 @@ pub enum Answer {
     /// Probability of "yes", 0–1.
     Noul { noul: f64 },
     Choice {
-        /// The most probable label.
-        choice: String,
+        /// The most probable label; `None` when the server may answer "none
+        /// of these" (StartLux `allow_none`, on by default on Bamboo) and did.
+        choice: Option<String>,
         probabilities: BTreeMap<String, f64>,
+        #[serde(default)]
         confidence: f64,
     },
     Score {
@@ -93,6 +170,8 @@ pub struct Decisions {
 struct Request<'a> {
     #[serde(skip_serializing_if = "str::is_empty")]
     model: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    think_mode: &'a str,
     state: &'a Value,
     questions: &'a BTreeMap<String, Question>,
 }
@@ -113,28 +192,26 @@ fn endpoint(base_url: &str) -> String {
 
 /// Ask every question about `state` in one parallel pass. `state` is a
 /// string, an array of strings, or an object of name/value pairs; an empty
-/// `cfg.model` lets the server pick its default (`jev-latest`). HTTP errors
-/// come back as [`LlmError::Api`] (422 names the invalid field), so
-/// [`crate::is_retriable`] applies unchanged. No retries here.
+/// model lets the server pick its default. HTTP errors come back as
+/// [`LlmError::Api`] (422 names the invalid field), so [`crate::is_retriable`]
+/// applies unchanged. No retries here.
 pub async fn evaluate(
-    cfg: &ProviderConfig,
+    model: &DecisionModel,
     state: &Value,
     questions: &BTreeMap<String, Question>,
 ) -> Result<Decisions> {
+    let cfg = &model.http;
     let body = Request {
         model: cfg.model.trim(),
+        think_mode: model.think_mode.trim(),
         state,
         questions,
     };
-    let resp = cfg
-        .request_headers(http_client(cfg).post(endpoint(&cfg.base_url)))
-        .bearer_auth(&cfg.api_key)
-        // ponytail: fixed 10s (the official SDK default; calls take ~100 ms).
-        // Make it a ProviderConfig field if a caller needs a different budget.
-        .timeout(std::time::Duration::from_secs(10))
-        .json(&body)
-        .send()
-        .await?;
+    let mut request = cfg.request_headers(http_client(cfg).post(endpoint(&cfg.base_url)));
+    if !cfg.api_key.trim().is_empty() {
+        request = request.bearer_auth(cfg.api_key.trim());
+    }
+    let resp = request.timeout(model.timeout).json(&body).send().await?;
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if status >= 400 {
@@ -208,7 +285,7 @@ mod tests {
             },"usage":{"input_tokens":120,"output_tokens":25}}"#,
         )
         .await;
-        let cfg = ProviderConfig::openai(&url, "sk-test", "jev-latest");
+        let cfg = DecisionModel::new(&url, "sk-test", "jev-latest");
         let questions = BTreeMap::from([
             (
                 "irreversible".to_string(),
@@ -249,6 +326,7 @@ mod tests {
             .contains("authorization: bearer sk-test"));
         let sent: Value = serde_json::from_str(&raw[raw.find("\r\n\r\n").unwrap() + 4..]).unwrap();
         assert_eq!(sent["model"], "jev-latest");
+        assert!(sent.get("think_mode").is_none(), "{sent}");
         assert_eq!(sent["state"], state);
         assert_eq!(sent["questions"]["irreversible"]["type"], "noul");
         assert_eq!(
@@ -261,7 +339,7 @@ mod tests {
         assert_eq!(got.model, "jev-1.13.0");
         assert_eq!(got.answers["irreversible"], Answer::Noul { noul: 0.93 });
         assert!(
-            matches!(&got.answers["kind"], Answer::Choice { choice, .. } if choice == "submit")
+            matches!(&got.answers["kind"], Answer::Choice { choice, .. } if choice.as_deref() == Some("submit"))
         );
         assert!(
             matches!(&got.answers["risk"], Answer::Score { score, legend, .. } if *score == 1.4 && legend["2"] == "high")
@@ -282,12 +360,92 @@ mod tests {
             r#"{"error":"questions.kind.criteria"}"#,
         )
         .await;
-        let cfg = ProviderConfig::openai(&url, "sk-test", "");
+        let cfg = DecisionModel::new(&url, "sk-test", "");
         let err = evaluate(&cfg, &json!("x"), &BTreeMap::new())
             .await
             .unwrap_err();
         assert!(
             matches!(err, LlmError::Api { status: 422, ref body } if body.contains("questions.kind"))
+        );
+    }
+
+    #[tokio::test]
+    async fn keyless_startlux_server_gets_think_mode_and_may_answer_none() {
+        let (url, server) = serve_once(
+            "200 OK",
+            r#"{"model":"StartLux-Decision-4B","answers":{
+                "team":{"type":"choice","choice":null,"confidence":0.7,"probabilities":{"billing":0.2,"shipping":0.1},"none_probability":0.7}
+            },"usage":{"input_tokens":50,"output_tokens":12},"timing_ms":{"wall":40}}"#,
+        )
+        .await;
+        let mut cfg = DecisionModel::new(&url, " ", "");
+        cfg.think_mode = "never".into();
+        let questions = BTreeMap::from([(
+            "team".to_string(),
+            Question::Choice {
+                instructions: "Which team owns `ticket`?".into(),
+                criteria: BTreeMap::from([
+                    ("billing".to_string(), None),
+                    ("shipping".to_string(), None),
+                ]),
+            },
+        )]);
+
+        let got = evaluate(&cfg, &json!({"ticket": "x"}), &questions)
+            .await
+            .unwrap();
+
+        let raw = server.await.unwrap();
+        assert!(
+            !raw.to_ascii_lowercase().contains("authorization:"),
+            "{raw}"
+        );
+        let sent: Value = serde_json::from_str(&raw[raw.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert_eq!(sent["think_mode"], "never");
+        assert!(sent.get("model").is_none(), "{sent}");
+        assert_eq!(got.model, "StartLux-Decision-4B");
+        assert!(matches!(
+            &got.answers["team"],
+            Answer::Choice { choice: None, confidence, .. } if *confidence == 0.7
+        ));
+    }
+
+    #[test]
+    fn from_env_prefers_a_named_server_over_the_typesafe_key() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert!(DecisionModel::from_env(env(&[])).is_none());
+        assert!(DecisionModel::from_env(env(&[("TYPESAFE_API_KEY", "  ")])).is_none());
+
+        let typesafe = DecisionModel::from_env(env(&[("TYPESAFE_API_KEY", "ts-key")])).unwrap();
+        assert_eq!(typesafe.http.base_url, DEFAULT_BASE_URL);
+        assert_eq!(typesafe.http.model, TYPESAFE_MODEL);
+        assert_eq!(typesafe.http.api_key, "ts-key");
+        assert_eq!(typesafe.timeout, DEFAULT_TIMEOUT);
+
+        let startlux = DecisionModel::from_env(env(&[
+            ("TYPESAFE_API_KEY", "ts-key"),
+            ("WISP_DECISION_API_URL", "https://api.bamboonode.dev"),
+            ("WISP_DECISION_API_KEY", "bk-key"),
+            ("WISP_DECISION_THINK_MODE", "auto"),
+            ("WISP_DECISION_TIMEOUT_SECS", "9000"),
+        ]))
+        .unwrap();
+        assert_eq!(startlux.http.api_key, "bk-key");
+        assert_eq!(startlux.http.model, "");
+        assert_eq!(startlux.think_mode, "auto");
+        assert_eq!(startlux.timeout, Duration::from_secs(600));
+        assert_eq!(startlux.host(), "api.bamboonode.dev");
+        assert_eq!(DecisionModel::new("", "k", "").host(), "api.typesafe.ai");
+        assert_eq!(
+            DecisionModel::new("http://127.0.0.1:8090/v1", "", "").host(),
+            "127.0.0.1:8090"
         );
     }
 }

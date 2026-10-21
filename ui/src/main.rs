@@ -9,6 +9,7 @@ mod channels_view;
 mod chat_find;
 mod chat_render;
 mod context_menu;
+mod decision_model_settings;
 mod dto;
 mod hooks_settings;
 mod i18n;

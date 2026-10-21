@@ -1346,23 +1346,7 @@ pub(crate) const CRED_GROUPS: &[CredGroup] = &[
             },
         ],
     },
-    CredGroup {
-        id: "typesafe",
-        name_key: "cred.typesafe.name",
-        about_key: "cred.typesafe.about",
-        configured_key: "cred.typesafe.configured",
-        unconfigured_key: "cred.typesafe.unconfigured",
-        hint_key: "cred.typesafe.hint",
-        links: &[CredLink {
-            label_key: "cred.typesafe.link",
-            url: "https://console.typesafe.ai",
-        }],
-        fields: &[CredField {
-            id: "typesafe_api_key",
-            label_key: "cred.typesafe_api_key.label",
-            secret: true,
-        }],
-    },
+    // TypeSafe's key lives in Settings → Models → Decision model.
 ];
 
 pub(crate) fn settings_subpage_label(

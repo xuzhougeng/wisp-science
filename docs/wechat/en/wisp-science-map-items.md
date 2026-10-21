@@ -20,12 +20,12 @@ It has a different job from the other ways of handing work off:
 | A few different tasks, at most 8 | `delegate_tasks`, or an [Agent Workflow](wisp-science-agent-workflow.md) |
 | One open-ended investigation | `explore` |
 
-**Prepare: put the items in the project, and add a TypeSafe key if you need one.**
+**Prepare: put the items in the project, and set up a decision model if you need one.**
 
 - Put the files under the project directory, for example in `papers/`. PDFs, Office documents, EPUB, and plain text are converted to text on your machine, which spends no tokens.
 - A scanned PDF has no extractable text, and OCR is not supported yet. Such a file fails only its own row.
 - One run takes at most 1000 items. More than that is an error, never a silent cut.
-- Extraction alone needs no extra setup. To have each row labelled pass, reject, or uncertain, enter a TypeSafe (Jev) API key under Settings → Credentials, or set the `TYPESAFE_API_KEY` environment variable for the CLI. Without a key, the decision step is not offered to the agent at all.
+- Extraction alone needs no extra setup. To have each row labelled pass, reject, or uncertain, turn on a decision model (TypeSafe Jev, StartLux, or another System One server) under Settings → Models → Decision model. For the CLI, set `TYPESAFE_API_KEY`, or point `WISP_DECISION_API_URL` at another server. Without a decision model, the decision step is not offered to the agent at all.
 
 **Step 1: say what to do with one item.**
 
@@ -95,7 +95,7 @@ The full results are saved in the project under `.wisp/map-runs/<run id>/`:
 
 **Step 4: when you are screening, give the criteria along with the task.**
 
-Extraction answers "what does this paper say". The decision answers "does it meet the requirement". With a TypeSafe key configured, state the criteria in the same request:
+Extraction answers "what does this paper say". The decision answers "does it meet the requirement". With a decision model configured, state the criteria in the same request:
 
 > Use map_items to screen every PDF in `papers/`. Inclusion criteria: a randomized controlled trial with a sample size of at least 100. For each paper, extract the study design and sample size, then decide whether to include it.
 
@@ -110,7 +110,7 @@ The call gains a `decide` block:
 }
 ```
 
-`noul` is a yes/no question, and backticks in the question refer to fields extracted in the previous step. Phrase every question so that **yes means the item meets the requirement**. Jev returns one probability per question, and the rule that turns them into a verdict is fixed:
+`noul` is a yes/no question, and backticks in the question refer to fields extracted in the previous step. Phrase every question so that **yes means the item meets the requirement**. The decision model returns one probability per question, and the rule that turns them into a verdict is fixed:
 
 | Verdict | Condition |
 | --- | --- |
@@ -120,7 +120,7 @@ The call gains a `decide` block:
 
 Verdicts are labels. No file is deleted or moved. Two more things to know:
 
-- **Data leaves your machine.** With a decision step, the extracted row for each item is sent to TypeSafe. Without an extraction step, the start of the item's text is sent instead. The approval prompt says so.
+- **Data leaves your machine.** With a decision step, the extracted row for each item is sent to the configured decision model service. Without an extraction step, the start of the item's text is sent instead. The approval prompt says so.
 - **Extraction plus decision is the recommended setup.** Extraction reads the full text and collects the facts, and the decision judges that one compact row. A decision step on its own suits a cheap first pass over titles and abstracts.
 
 **Step 5: handle uncertain items and items that did not finish.**
@@ -133,7 +133,7 @@ Each of these takes one sentence, and the agent adds the matching argument:
 | The thresholds feel too strict or too loose | "Change the pass threshold to 0.7 and relabel" | `resume` plus `decide.pass_at` |
 | Review only the uncertain ones | "Run the uncertain papers again, and this time allow reading the supplementary files in the project" | `"items": {"run": "<run id>", "verdict": ["uncertain"]}` |
 
-A resume skips finished items and retries failed ones. If only the decision step failed for an item, the extraction you already paid for is reused and only Jev is asked again. Relabelling after a threshold change needs no model call, because each row stores the raw probabilities.
+A resume skips finished items and retries failed ones. If only the decision step failed for an item, the extraction you already paid for is reused and only the decision model is asked again. Relabelling after a threshold change needs no model call, because each row stores the raw probabilities.
 
 A resume can change only concurrency, limits, and thresholds. To change the items, the extraction instruction, or the questions, start a new run. `items.run` feeds the rows of the earlier run in as the new input.
 
@@ -158,6 +158,9 @@ Interactive mode works the same way as the desktop, and the approval appears in 
 
 ```bash
 export TYPESAFE_API_KEY="your-typesafe-key"   # only when you need the decision step
+# or another System One server, such as StartLux hosted on Bamboo:
+# export WISP_DECISION_API_URL="https://api.bamboonode.dev"
+# export WISP_DECISION_API_KEY="your-bamboo-key"
 wisp-science
 ```
 
@@ -168,7 +171,7 @@ wisp-science
 | Symptom | Check first |
 | --- | --- |
 | The agent reads the files one by one and never calls the tool | Name it in your message: "use map_items". Confirm the task really is one thing repeated many times |
-| The call has no decision step | Whether a TypeSafe key is configured; for the CLI, whether `TYPESAFE_API_KEY` is set |
+| The call has no decision step | Whether Settings → Models → Decision model is on and usable; for the CLI, whether `TYPESAFE_API_KEY` or `WISP_DECISION_API_URL` is set |
 | The item count is over the limit | One run takes at most 1000. Narrow the pattern or split the work into several runs |
 | Some PDFs fail with no extractable text | Usually scanned copies. Run OCR yourself first, into text or a PDF with a text layer |
 | Many rows fail because the reply does not match the structure | Whether the instruction defines each field and its allowed values; whether the structure is too strict |

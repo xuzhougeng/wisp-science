@@ -708,8 +708,7 @@ async fn register_mcp_tools(
             let autopilot = wisp_mcp::desktop_autopilot::DesktopAutopilot::for_catalog(
                 &tools,
                 client.clone(),
-                &std::env::var("TYPESAFE_API_KEY").unwrap_or_default(),
-                None,
+                wisp_llm::systemone::DecisionModel::from_env(|k| std::env::var(k).ok()),
                 false,
             );
             for t in tools {
@@ -1341,9 +1340,9 @@ async fn main() -> Result<()> {
         vision_cfg.clone(),
     );
     agent.add_tool(Box::new(
-        wisp_core::MapItemsTool::from_config(cfg.clone(), max_context).with_typesafe_key(
-            &std::env::var("TYPESAFE_API_KEY").unwrap_or_default(),
-            cfg.proxy.clone(),
+        wisp_core::MapItemsTool::from_config(cfg.clone(), max_context).with_decision(
+            wisp_llm::systemone::DecisionModel::from_env(|k| std::env::var(k).ok())
+                .map(|model| model.with_proxy(cfg.proxy.clone())),
         ),
     ));
     agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())

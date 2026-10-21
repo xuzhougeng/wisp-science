@@ -1275,6 +1275,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     ncbi_email: false,
     typesafe_api_key: false,
   };
+  // Settings → Models → Decision model. Specs read and seed this directly.
+  const decisionModel = ((window as any).__decisionModel = {
+    settings: { enabled: false, preset: "typesafe", base_url: "https://api.typesafe.ai", model: "jev-latest", think_mode: "", timeout_secs: 10 } as any,
+    keys: [] as string[],
+    saves: [] as any[],
+    tests: [] as any[],
+    cleared: [] as string[],
+    testError: "",
+  });
+  const decisionKeyRequired = (preset: string) => preset === "typesafe" || preset === "startlux_bamboo";
+  const decisionView = () => ({ ...decisionModel.settings, stored_keys: [...decisionModel.keys] });
   let mockCustomCredentials: Array<{
     id: string;
     name: string;
@@ -3980,6 +3991,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "credential_status":
             return Object.entries(mockCredentials);
+          case "get_decision_model":
+            return decisionView();
+          case "save_decision_model": {
+            const settings = plain(arg("settings") ?? {});
+            const apiKey = String(arg("apiKey") ?? "").trim();
+            decisionModel.saves.push({ settings, apiKey });
+            if (settings.enabled && decisionKeyRequired(settings.preset) && !apiKey && !decisionModel.keys.includes(settings.preset)) {
+              throw new Error("This decision model service needs an API key.");
+            }
+            if (apiKey && !decisionModel.keys.includes(settings.preset)) decisionModel.keys.push(settings.preset);
+            const { stored_keys: _ignored, ...rest } = settings;
+            decisionModel.settings = rest;
+            return decisionView();
+          }
+          case "clear_decision_model_key": {
+            const preset = String(arg("preset") ?? "");
+            decisionModel.cleared.push(preset);
+            decisionModel.keys = decisionModel.keys.filter((id) => id !== preset);
+            return decisionView();
+          }
+          case "test_decision_model": {
+            decisionModel.tests.push({ settings: plain(arg("settings") ?? {}), apiKey: String(arg("apiKey") ?? "") });
+            if (decisionModel.testError) throw new Error(decisionModel.testError);
+            return { model: "startlux-decision-27b-autothink", elapsed_ms: 42 };
+          }
           case "list_custom_credentials":
             return mockCustomCredentials.map((credential) => ({ ...credential }));
           case "assistant_weixin_status":

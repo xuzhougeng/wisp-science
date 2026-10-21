@@ -2548,6 +2548,13 @@ pub(super) fn SettingsView(
             .is_some_and(|form| is_subscription_provider(&form.provider))
     });
     let show_subscriptions = create_rw_signal(false);
+    let show_decision = create_rw_signal(false);
+    // Callers outside this view open the ACP tab by setting its signal alone.
+    create_effect(move |_| {
+        if show_acp_agents.get() {
+            show_decision.set(false);
+        }
+    });
     let codex_login = create_rw_signal(None::<CodexLoginForm>);
     // Only mount/unmount the page when it opens/closes, not on every keystroke or poll.
     let codex_login_open = create_memo(move |_| codex_login.get().is_some());
@@ -5237,10 +5244,10 @@ pub(super) fn SettingsView(
                             <div class="settings-toolbar settings-toolbar-end model-category-toolbar">
                                 <div class="settings-category-tabs" role="tablist" aria-label=move || t(locale.get(), "models.categories")>
                                     <button type="button" role="tab" class="settings-category-tab"
-                                        class:active=move || !show_acp_agents.get() && !show_subscriptions.get()
-                                        aria-selected=move || (!show_acp_agents.get() && !show_subscriptions.get()).to_string()
+                                        class:active=move || !show_acp_agents.get() && !show_subscriptions.get() && !show_decision.get()
+                                        aria-selected=move || (!show_acp_agents.get() && !show_subscriptions.get() && !show_decision.get()).to_string()
                                         data-testid="models-category-http"
-                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(false); }>
+                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(false); show_decision.set(false); }>
                                         {move || {
                                             let n = models.get().iter().filter(|m| !is_subscription_provider(&m.provider)).count();
                                             format!("{} ({n})", t(locale.get(), "models.category.http"))
@@ -5250,7 +5257,7 @@ pub(super) fn SettingsView(
                                         class:active=move || show_acp_agents.get()
                                         aria-selected=move || show_acp_agents.get().to_string()
                                         data-testid="open-acp-agents-from-settings"
-                                        on:click=move |_| { show_acp_agents.set(true); show_subscriptions.set(false); }>
+                                        on:click=move |_| { show_acp_agents.set(true); show_subscriptions.set(false); show_decision.set(false); }>
                                         {move || {
                                             let n = acp_agents.get().len();
                                             format!("{} ({n})", t(locale.get(), "models.acp_open"))
@@ -5260,11 +5267,18 @@ pub(super) fn SettingsView(
                                         class:active=move || show_subscriptions.get()
                                         aria-selected=move || show_subscriptions.get().to_string()
                                         data-testid="models-category-subscriptions"
-                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(true); }>
+                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(true); show_decision.set(false); }>
                                         {move || t(locale.get(), "settings.nav.subscriptions")}
                                     </button>
+                                    <button type="button" role="tab" class="settings-category-tab"
+                                        class:active=move || show_decision.get()
+                                        aria-selected=move || show_decision.get().to_string()
+                                        data-testid="models-category-decision"
+                                        on:click=move |_| { show_acp_agents.set(false); show_subscriptions.set(false); show_decision.set(true); }>
+                                        {move || t(locale.get(), "models.category.decision")}
+                                    </button>
                                 </div>
-                                <div class="settings-toolbar-actions" style:display=move || if show_subscriptions.get() { "none" } else { "" }>
+                                <div class="settings-toolbar-actions" style:display=move || if show_subscriptions.get() || show_decision.get() { "none" } else { "" }>
                                     {move || if show_acp_agents.get() {
                                         view! {
                                             <button type="button" class="settings-add-btn" data-testid="add-acp-agent-settings" on:click=move |_| {
@@ -5290,7 +5304,9 @@ pub(super) fn SettingsView(
                                     }}
                                 </div>
                             </div>
-                            {move || if show_subscriptions.get() {
+                            {move || if show_decision.get() {
+                                view! { <crate::decision_model_settings::DecisionModelSettingsView /> }.into_view()
+                            } else if show_subscriptions.get() {
                                 view! {
                                     <div class="subscription-settings" data-testid="subscriptions-page">
                                         <p class="hint">{move || t(locale.get(), "subscriptions.desc")}</p>

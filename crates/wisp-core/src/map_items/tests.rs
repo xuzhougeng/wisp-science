@@ -225,8 +225,8 @@ async fn jev_server(
     (url, log)
 }
 
-fn jev_cfg(url: &str) -> Option<ProviderConfig> {
-    Some(ProviderConfig::openai(url, "sk-test", ""))
+fn jev_cfg(url: &str) -> Option<DecisionModel> {
+    Some(DecisionModel::new(url, "sk-test", ""))
 }
 
 fn run_id(report: &str) -> String {
@@ -392,7 +392,11 @@ async fn jev_labels_rows_pins_its_version_and_thresholds_rejudge_without_rerunni
         Arc::new(AtomicBool::new(false)),
     )
     .await;
-    let tool = MapItemsTool::new(fake.clone(), 128_000).with_decision(jev_cfg(&url));
+    let tool = MapItemsTool::new(fake.clone(), 128_000).with_decision(Some(DecisionModel::new(
+        &url,
+        "sk-test",
+        "jev-latest",
+    )));
     let env = TestEnv::new(&root);
     let result = tool
         .run(
@@ -424,7 +428,7 @@ async fn jev_labels_rows_pins_its_version_and_thresholds_rejudge_without_rerunni
         .iter()
         .map(|r| r["model"].clone())
         .collect();
-    // The first call has no version yet; every later one is pinned to what answered.
+    // The first call sends the configured alias; every later one is pinned to what answered.
     assert_eq!(
         models,
         vec![
@@ -543,6 +547,8 @@ async fn decide_without_a_worker_sends_only_the_start_of_the_text() {
     let text = state["text"].as_str().unwrap();
     assert!(text.starts_with("TITLE") && text.chars().count() == 600);
     assert!(env.confirms()[0].contains("leaves this machine"));
+    // The approval names where the rows go, whichever server is configured.
+    assert!(env.confirms()[0].contains("decision model at 127.0.0.1:"));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -792,7 +798,7 @@ async fn arguments_are_validated_before_anything_runs() {
     .await;
     fails(
         json!({"items": {"paths": ["a.txt"]}, "decide": {"questions": {"q": {"type": "noul", "instructions": "?"}}}}),
-        "TypeSafe API key",
+        "needs a decision model",
     )
     .await;
     fails(
@@ -998,10 +1004,12 @@ fn schema_offers_decide_only_when_jev_is_configured() {
     let props = |tool: &MapItemsTool| tool.schema().function.parameters["properties"].clone();
     assert!(props(&plain).get("decide").is_none());
     assert!(props(&with).get("decide").is_some());
-    // An empty key counts as no key.
-    let empty = MapItemsTool::new(Fake::new(|_, _| reply("{}")), 1000)
-        .with_decision(Some(ProviderConfig::openai("http://x", " ", "")));
-    assert!(props(&empty).get("decide").is_none());
+    // A keyless self-hosted server is still a decision model; only `None` hides it.
+    let keyless = MapItemsTool::new(Fake::new(|_, _| reply("{}")), 1000)
+        .with_decision(Some(DecisionModel::new("http://127.0.0.1:8090", "", "")));
+    assert!(props(&keyless).get("decide").is_some());
+    let none = MapItemsTool::new(Fake::new(|_, _| reply("{}")), 1000).with_decision(None);
+    assert!(props(&none).get("decide").is_none());
 }
 
 #[test]

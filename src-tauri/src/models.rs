@@ -339,7 +339,7 @@ fn secret_cache() -> &'static Mutex<HashMap<String, String>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn secret_get(name: &str) -> String {
+pub(crate) fn secret_get(name: &str) -> String {
     if let Some(v) = secret_cache().lock().unwrap().get(name) {
         return v.clone();
     }
@@ -353,7 +353,7 @@ fn secret_get(name: &str) -> String {
     v
 }
 
-fn secret_set(name: &str, value: &str) -> Result<(), String> {
+pub(crate) fn secret_set(name: &str, value: &str) -> Result<(), String> {
     wisp_store::secrets::Secret::set(name, value).map_err(|e| e.to_string())?;
     secret_cache()
         .lock()
@@ -362,7 +362,7 @@ fn secret_set(name: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn secret_del(name: &str) -> Result<(), String> {
+pub(crate) fn secret_del(name: &str) -> Result<(), String> {
     let r = wisp_store::secrets::Secret::delete(name).map_err(|e| e.to_string());
     // Remember "absent" so existence checks don't re-hit (and re-prompt) the keyring.
     secret_cache()
@@ -434,18 +434,14 @@ const CREDENTIALS: &[Credential] = &[
         secret: "openfda_api_key",
         env: "OPENFDA_API_KEY",
     },
-    // TypeSafe Jev decision model (`wisp_llm::systemone`).
+    // The TypeSafe preset's key for the decision model (`decision_model.rs`),
+    // still exported to local tool processes.
     Credential {
         id: "typesafe_api_key",
         secret: "typesafe_api_key",
         env: "TYPESAFE_API_KEY",
     },
 ];
-
-/// The TypeSafe key for in-process Jev callers; empty when unset.
-pub fn typesafe_api_key() -> String {
-    secret_get("typesafe_api_key")
-}
 
 fn credential(id: &str) -> Option<&'static Credential> {
     CREDENTIALS.iter().find(|c| c.id == id)

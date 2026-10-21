@@ -3917,7 +3917,7 @@ async fn mcp_tool_named_like_a_builtin_is_aliased_not_dropped() {
     );
     let mut registry = wisp_tools::Registry::builtins();
     let names =
-        super::register_mcp_with_approval(&mut registry, client, "bm", "Basic Memory", false)
+        super::register_mcp_with_approval(&mut registry, client, "bm", "Basic Memory", false, None)
             .await
             .unwrap();
     assert_eq!(names, ["Basic_Memory__search", "write_note"]);

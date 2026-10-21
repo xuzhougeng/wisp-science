@@ -87,7 +87,7 @@ for (const locale of ["en", "zh"]) {
   test(`subscription accounts share Models tabs and preserve the expert opt-in (${locale})`, async ({ page }, testInfo) => {
     await setup(page, locale, true);
     await expect(page.getByTestId("settings-nav-subscriptions")).toHaveCount(0);
-    await expect(page.getByRole("tab")).toHaveCount(3);
+    await expect(page.getByRole("tab")).toHaveCount(4);
     await expect(page.getByTestId("models-category-http")).toContainText("(2)");
     await expect(page.getByTestId("add-codex-login")).toHaveCount(0);
     await expect(page.getByText("My ChatGPT", { exact: true })).toHaveCount(0);
