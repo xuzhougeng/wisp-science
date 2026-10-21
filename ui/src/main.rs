@@ -4367,6 +4367,29 @@ fn App() -> impl IntoView {
                 }
                 refresh_session_history();
             }
+            // The notice itself arrives as a BackgroundReply; the Run card
+            // follows the run poll.
+            AgentEvent::RunBackgroundFinished {
+                frame_id,
+                title,
+                status,
+                ..
+            } => {
+                let succeeded = status == "succeeded";
+                let label = tf(
+                    locale_cb.get_untracked(),
+                    if succeeded {
+                        "runs.background_done"
+                    } else {
+                        "runs.background_ended"
+                    },
+                    &[("title", &title)],
+                );
+                notify_desktop(&frame_id, if succeeded { "done" } else { "error" }, &label);
+                if active_cb.get_untracked().as_deref() == Some(&frame_id) {
+                    status_cb.set(label);
+                }
+            }
             AgentEvent::MemoryProposal { proposal, .. } => {
                 if turn_memory_proposal.get_untracked().is_none() {
                     turn_memory_editor.set(proposal.content.clone());

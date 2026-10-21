@@ -1045,6 +1045,8 @@ impl Store {
                 ("logs_path", "TEXT"),
                 ("exploration_id", "TEXT"),
                 ("review_dismissed_at", "INTEGER"),
+                ("background_requested_at", "INTEGER"),
+                ("background_notified_at", "INTEGER"),
             ],
         )
         .await?;

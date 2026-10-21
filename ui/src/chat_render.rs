@@ -105,6 +105,7 @@ mod submitted_run_id_tests {
             harvested_at: None,
             cleaned_at: None,
             cleanup_error: None,
+            background_requested_at: None,
             output_fingerprint: String::new(),
         }
     }
@@ -2417,6 +2418,11 @@ pub(crate) fn RunMonitorCard(
     // directly, for any card.
     let review_modal = use_context::<crate::overlays::RunReviewModal>().map(|modal| modal.0);
     let side_chat_run = use_context::<SideChatRun>().map(|ask| ask.0);
+    // Covers the gap until the next run poll carries `background_requested_at`,
+    // and cards drawn from a tool result whose Run is not in the polled list.
+    let moved_to_background = create_rw_signal(false);
+    let background_pending = create_rw_signal(false);
+    let background_error = create_rw_signal(None::<String>);
     view! {
         {move || {
             if !embedded
@@ -2465,6 +2471,9 @@ pub(crate) fn RunMonitorCard(
                 "succeeded" | "failed" | "cancelled" | "timed_out" | "lost"
             );
             let cancellable = matches!(status.as_str(), "submitted" | "running" | "cancelling");
+            let backgrounded = run.background_requested_at.is_some() || moved_to_background.get();
+            // Ends a turn waiting on the Run; its conversation is told when it ends.
+            let can_background = active && !backgrounded && run.frame_id.is_some();
             let force_cancel = status == "cancelling";
             let cancel_label = if force_cancel {
                 t(locale.get(), "runs.force_cancel")
@@ -2549,6 +2558,34 @@ pub(crate) fn RunMonitorCard(
                                 >{compose_icon("chat")}</button>
                             }
                         })}
+                        {can_background.then(|| {
+                            let run_id = cancel_id.clone();
+                            let tip = t(locale.get(), "runs.background");
+                            view! {
+                                <button type="button" class="icon-btn run-monitor-background"
+                                    data-testid="run-monitor-background"
+                                    title=tip.clone()
+                                    aria-label=tip
+                                    disabled=move || background_pending.get()
+                                    on:click=move |_| {
+                                        let run_id = run_id.clone();
+                                        background_pending.set(true);
+                                        background_error.set(None);
+                                        spawn_local(async move {
+                                            let arg = to_value(&serde_json::json!({ "runId": &run_id })).unwrap();
+                                            match invoke_checked("background_run", arg).await {
+                                                Ok(_) => {
+                                                    moved_to_background.try_set(true);
+                                                }
+                                                Err(error) => {
+                                                    background_error.try_set(Some(js_error_text(error)));
+                                                }
+                                            }
+                                            background_pending.try_set(false);
+                                        });
+                                    }>{compose_icon("bell")}</button>
+                            }
+                        })}
                         {cancellable.then(|| {
                             let run_id = cancel_id.clone();
                             let tip = cancel_label.clone();
@@ -2617,6 +2654,12 @@ pub(crate) fn RunMonitorCard(
                             now,
                         )
                     }}</div>
+                    {(active && backgrounded).then(|| view! {
+                        <div class="run-monitor-background-note" data-testid="run-monitor-backgrounded">
+                            {compose_icon("bell")}
+                            <span>{t(locale.get(), "runs.backgrounded")}</span>
+                        </div>
+                    })}
                     {progress.map(|progress| run_progress_meter(progress, locale.get()))}
                     {command.map(|command| view! { <div class="run-monitor-command">{command}</div> })}
                     {remote_workdir.map(|workdir| view! {
@@ -2658,6 +2701,11 @@ pub(crate) fn RunMonitorCard(
                     {move || detail_error.get().map(|error| view! {
                         <div class="context-error" data-testid="run-monitor-detail-error">
                             {tf(locale.get(), "runs.detail_failed", &[("error", &error)])}
+                        </div>
+                    })}
+                    {move || background_error.get().map(|error| view! {
+                        <div class="context-error" data-testid="run-monitor-background-error">
+                            {tf(locale.get(), "runs.background_failed", &[("error", &error)])}
                         </div>
                     })}
                 </article>

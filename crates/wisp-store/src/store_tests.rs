@@ -5442,6 +5442,68 @@ fn auto_harvest_skip_and_lease_hold_are_pure_helpers() {
 }
 
 #[tokio::test]
+async fn backgrounded_run_gets_one_completion_notice_after_it_ends() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_run_background_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let mut owned = RunRecord::new("r", "p", "ssh:gpu", "Align", "ssh_direct");
+    owned.frame_id = Some("f".into());
+    owned.status = RunStatus::Running;
+    store.create_run(&owned).await.unwrap();
+    let mut orphan = RunRecord::new("orphan", "p", "local", "Orphan", "command");
+    orphan.status = RunStatus::Running;
+    store.create_run(&orphan).await.unwrap();
+    let mut done = RunRecord::new("done", "p", "local", "Done", "command");
+    done.frame_id = Some("f".into());
+    done.status = RunStatus::Succeeded;
+    store.create_run(&done).await.unwrap();
+
+    assert!(!store.run_background_requested("r").await.unwrap());
+    assert!(store.request_run_background("r").await.unwrap());
+    // Idempotent, and only for active Runs a conversation owns.
+    assert!(!store.request_run_background("r").await.unwrap());
+    assert!(!store.request_run_background("orphan").await.unwrap());
+    assert!(!store.request_run_background("done").await.unwrap());
+    assert!(!store.request_run_background("missing").await.unwrap());
+    assert!(store.run_background_requested("r").await.unwrap());
+    assert!(!store.run_background_requested("orphan").await.unwrap());
+    let summaries = store
+        .list_run_summaries_in_scope(&StateScope::mainline("p"))
+        .await
+        .unwrap();
+    let summary = |id: &str| summaries.iter().find(|run| run.id == id).unwrap();
+    assert!(summary("r").background_requested_at.is_some());
+    assert!(summary("done").background_requested_at.is_none());
+    assert_eq!(store.list_pending_background_runs().await.unwrap(), ["r"]);
+
+    // No notice while the Run is still executing.
+    assert!(!store.claim_run_background_notice("r").await.unwrap());
+    sqlx::query("UPDATE runs SET status='succeeded' WHERE id='r'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(store.claim_run_background_notice("r").await.unwrap());
+    assert!(!store.claim_run_background_notice("r").await.unwrap());
+    assert!(!store.claim_run_background_notice("done").await.unwrap());
+    assert!(store
+        .list_pending_background_runs()
+        .await
+        .unwrap()
+        .is_empty());
+    drop(store);
+
+    // Reopening (the schema-repair path) keeps both columns and their values.
+    let reopened = Store::open(&tmp).await.unwrap();
+    assert!(reopened.run_background_requested("r").await.unwrap());
+    assert!(!reopened.claim_run_background_notice("r").await.unwrap());
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn run_harvest_state_is_recorded_once_and_survives_reopen() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_run_harvest_state_{}.sqlite",

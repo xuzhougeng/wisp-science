@@ -396,7 +396,9 @@ CREATE TABLE IF NOT EXISTS runs (
     harvested_at       INTEGER,
     cleaned_at         INTEGER,
     cleanup_error      TEXT,
-    logs_path          TEXT
+    logs_path          TEXT,
+    background_requested_at INTEGER,
+    background_notified_at  INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_runs_project ON runs(project_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_runs_context ON runs(context_id);

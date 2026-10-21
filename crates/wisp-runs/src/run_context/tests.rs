@@ -1589,6 +1589,7 @@ fn remote_compute_skill_uses_the_real_wisp_run_contract() {
         assert!(!skill.contains(stale), "stale API remains: {stale}");
     }
     assert!(skill.contains("wait_interrupted"));
+    assert!(skill.contains("wait_backgrounded"));
     assert!(skill.contains("call `monitor_run` again"));
     assert!(skill.contains("never call it repeatedly"));
     assert!(!skill.contains("ssh <alias>"));

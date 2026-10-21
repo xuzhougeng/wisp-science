@@ -138,6 +138,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       harvested_at: run.harvested_at ?? null,
       cleaned_at: run.cleaned_at ?? null,
       cleanup_error: run.cleanup_error ?? null,
+      background_requested_at: run.background_requested_at ?? null,
       output_fingerprint: `${stdout.length}:${stdout.slice(0, 64)}:${stdout.slice(-128)}|${stderr.length}:${stderr.slice(0, 64)}:${stderr.slice(-128)}`,
     };
   };
@@ -4661,6 +4662,29 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             run.status = "cancelled";
             run.ended_at = Math.floor(Date.now() / 1000);
             return mockMethodSearchDetails();
+          }
+          // Like src-tauri/src/run_background.rs: the request ends the turn's
+          // wait on the Run (monitor_run returns wait_backgrounded) and the
+          // Run keeps executing.
+          case "background_run": {
+            const run = runs.find((r) => r.id === arg("runId"));
+            if (!run) throw new Error("Run not found");
+            if (!["submitted", "running", "cancelling"].includes(run.status)) {
+              throw new Error("The Run has already ended");
+            }
+            run.background_requested_at ??= Math.floor(Date.now() / 1000);
+            if (monitorRunFrameId) {
+              const frameId = monitorRunFrameId;
+              setTimeout(() => {
+                emit("agent", { kind: "ToolResult", frame_id: frameId, name: "monitor_run", ok: true, content: JSON.stringify({ ...run, wait_backgrounded: true }) });
+                emit("agent", { kind: "Text", frame_id: frameId, delta: "The run continues in the background; ask me anything meanwhile." });
+                emit("agent", { kind: "Done", frame_id: frameId, stop_reason: "end_turn" });
+                resolveMonitorRun?.(frameId);
+                resolveMonitorRun = null;
+                monitorRunFrameId = null;
+              }, 0);
+            }
+            return null;
           }
           case "cancel_run": {
             const run = runs.find((r) => r.id === (arg("runId") ?? arg("run_id")));

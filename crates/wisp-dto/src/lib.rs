@@ -419,6 +419,14 @@ pub enum AgentEvent {
         hook: String,
         message: String,
     },
+    /// A Run the user moved to the background ended; its notice follows as
+    /// a `BackgroundReply`. `status` is the Run's snake_case status.
+    RunBackgroundFinished {
+        frame_id: String,
+        run_id: String,
+        title: String,
+        status: String,
+    },
 }
 
 #[derive(Deserialize, Clone, Hash, PartialEq, Eq)]
@@ -5318,6 +5326,10 @@ pub struct RunSummary {
     pub cleaned_at: Option<i64>,
     #[serde(default)]
     pub cleanup_error: Option<String>,
+    /// Set once the user moved the Run to the background; its completion is
+    /// reported to the owning conversation.
+    #[serde(default)]
+    pub background_requested_at: Option<i64>,
     #[serde(default)]
     pub output_fingerprint: String,
 }
@@ -5343,6 +5355,7 @@ impl From<&RunRecord> for RunSummary {
             harvested_at: run.harvested_at,
             cleaned_at: run.cleaned_at,
             cleanup_error: run.cleanup_error.clone(),
+            background_requested_at: None,
             output_fingerprint: String::new(),
         }
     }

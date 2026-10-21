@@ -6,6 +6,9 @@ use super::{
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
+/// `RunStatus::is_terminal` as a SQL list.
+const TERMINAL_RUN_STATUSES: &str = "('succeeded','failed','cancelled','timed_out','lost')";
+
 impl Store {
     pub async fn project_has_active_runs(&self, project_id: &str) -> Result<bool> {
         if let Some(store) = self.route_project(project_id).await? {
@@ -312,7 +315,8 @@ impl Store {
         let columns = "run.id,run.frame_id,run.context_id,run.title,run.kind,run.status,\
             run.created_at,run.started_at,run.ended_at,run.exit_code,run.remote_workdir,\
             run.timeout_secs,run.last_polled_at,substr(run.last_poll_error,1,2048) AS last_poll_error,\
-            run.progress_json,run.harvested_at,run.cleaned_at,run.cleanup_error,printf('%d:%s:%s|%d:%s:%s',\
+            run.progress_json,run.harvested_at,run.cleaned_at,run.cleanup_error,\
+            run.background_requested_at,printf('%d:%s:%s|%d:%s:%s',\
               length(CAST(coalesce(run.stdout_tail,'') AS BLOB)),substr(coalesce(run.stdout_tail,''),1,64),\
               substr(coalesce(run.stdout_tail,''),-128),\
               length(CAST(coalesce(run.stderr_tail,'') AS BLOB)),\
@@ -995,6 +999,77 @@ impl Store {
                 .fetch_optional(&self.pool)
                 .await?;
         Ok(row.is_some_and(|(dismissed,)| dismissed.is_some()))
+    }
+
+    /// Record that the user moved this active Run to the background: waits on
+    /// it return at once, and one completion notice goes to the conversation
+    /// that owns it when it ends. Only Runs owned by a conversation qualify.
+    /// Idempotent: false when already requested or the Run has already ended.
+    pub async fn request_run_background(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.request_run_background(id)).await;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(&format!(
+            "UPDATE runs SET background_requested_at=? WHERE id=? \
+             AND background_requested_at IS NULL AND frame_id IS NOT NULL \
+             AND status NOT IN {TERMINAL_RUN_STATUSES}"
+        ))
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    /// Whether the user moved this Run to the background.
+    pub async fn run_background_requested(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.run_background_requested(id)).await;
+        }
+        let row: Option<(Option<i64>,)> =
+            sqlx::query_as("SELECT background_requested_at FROM runs WHERE id=?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.is_some_and(|(requested,)| requested.is_some()))
+    }
+
+    /// Claim the completion notice of a backgrounded Run that has ended. True
+    /// exactly once per Run, so a notice is posted at most once.
+    pub async fn claim_run_background_notice(&self, id: &str) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.claim_run_background_notice(id)).await;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(&format!(
+            "UPDATE runs SET background_notified_at=? WHERE id=? \
+             AND background_requested_at IS NOT NULL AND background_notified_at IS NULL \
+             AND status IN {TERMINAL_RUN_STATUSES}"
+        ))
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    /// Backgrounded Runs whose completion notice was not posted yet, oldest
+    /// request first. Startup resumes watching these.
+    pub async fn list_pending_background_runs(&self) -> Result<Vec<String>> {
+        if let Some(stores) = self.available_projects().await? {
+            let mut result = Vec::new();
+            for store in stores {
+                result.extend(Box::pin(store.list_pending_background_runs()).await?);
+            }
+            return Ok(result);
+        }
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM runs WHERE background_requested_at IS NOT NULL \
+             AND background_notified_at IS NULL ORDER BY background_requested_at, id",
+        )
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     pub async fn mark_run_cleaned(&self, id: &str) -> Result<bool> {

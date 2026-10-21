@@ -2272,7 +2272,9 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .run-monitor-title code { overflow:hidden; color:var(--text-faint); font:calc(10.5px * var(--ui-font-scale, 1))/1.3 var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
 .run-monitor-done { color:var(--ok); }
 .run-monitor-failed { color:var(--err); }
-.run-monitor-ask, .run-monitor-cancel, .run-monitor-dismiss { flex:0 0 auto; }
+.run-monitor-ask, .run-monitor-background, .run-monitor-cancel, .run-monitor-dismiss { flex:0 0 auto; }
+.run-monitor-background-note { display:flex; min-width:0; align-items:center; gap:6px; margin-top:7px; color:var(--text-muted); font-size:calc(11px * var(--ui-font-scale, 1)); }
+.run-monitor-background-note svg { flex:0 0 auto; width:13px; height:13px; }
 .run-monitor-meta, .run-monitor-empty { margin-top:8px; color:var(--text-muted); font-size:calc(11.5px * var(--ui-font-scale, 1)); }
 .run-monitor-meta, .run-monitor-command { overflow:hidden; font-family:var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
 .run-monitor-command { margin-top:7px; padding:7px 9px; border-radius: var(--radius-xs); background:var(--bg-sunken); color:var(--text-muted); font-size:calc(11px * var(--ui-font-scale, 1)); }

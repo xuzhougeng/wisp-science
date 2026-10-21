@@ -27,7 +27,8 @@ Short standalone local scripts can run through **shell**. Runs start a fresh pro
 After submission, call **monitor_run** with the returned run_id. Wisp waits without extra model calls. \
 Do not use shell `sleep`, `Start-Sleep`, `ps`/`kill -0` polling, `nohup`, background `&`, or repeated **get_run**. \
 The `shell` tool has a 60s timeout and is the wrong tool for waiting on jobs. \
-If `monitor_run` returns `wait_interrupted`, answer the user, then call it again with the same id. Do not resubmit.\n"
+If `monitor_run` returns `wait_interrupted`, answer the user, then call it again with the same id. Do not resubmit. \
+If it returns `wait_backgrounded`, the user moved the Run to the background: do not monitor it again; Wisp posts its completion to the conversation.\n"
         .into()
 }
 

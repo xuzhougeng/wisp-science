@@ -1115,6 +1115,9 @@ pub struct RunSummary {
     pub harvested_at: Option<i64>,
     pub cleaned_at: Option<i64>,
     pub cleanup_error: Option<String>,
+    /// When the user moved this Run to the background. NULL means a turn may
+    /// still wait on it and no completion notice is due.
+    pub background_requested_at: Option<i64>,
     /// Bounded head/tail sample plus byte lengths; changes make visible run
     /// monitors refetch the one full record they display.
     pub output_fingerprint: String,
@@ -1470,6 +1473,7 @@ pub(crate) fn run_summary_from_row(row: SqliteRow) -> Result<RunSummary> {
         harvested_at: row.try_get("harvested_at")?,
         cleaned_at: row.try_get("cleaned_at")?,
         cleanup_error: row.try_get("cleanup_error")?,
+        background_requested_at: row.try_get("background_requested_at")?,
         output_fingerprint: row.try_get("output_fingerprint")?,
     })
 }

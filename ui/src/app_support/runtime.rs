@@ -388,6 +388,7 @@ mod run_refresh_guard_tests {
             harvested_at: None,
             cleaned_at: None,
             cleanup_error: None,
+            background_requested_at: None,
             output_fingerprint: "fp".into(),
         }
     }
@@ -2648,6 +2649,7 @@ mod session_run_group_tests {
             harvested_at: None,
             cleaned_at: None,
             cleanup_error: None,
+            background_requested_at: None,
             output_fingerprint: String::new(),
         }
     }

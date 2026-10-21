@@ -444,6 +444,7 @@ fn run_summary_contract() {
         harvested_at: None,
         cleaned_at: None,
         cleanup_error: None,
+        background_requested_at: Some(5),
         output_fingerprint: "abc".into(),
     };
     let dto: wisp_dto::RunSummary = roundtrip(&backend);
@@ -457,6 +458,7 @@ fn run_summary_contract() {
     assert_eq!(dto.exit_code, Some(124));
     assert_eq!(dto.remote_workdir.as_deref(), Some("/scratch/run-1"));
     assert_eq!(dto.last_poll_error.as_deref(), Some("ssh dropped"));
+    assert_eq!(dto.background_requested_at, Some(5));
     assert_eq!(dto.output_fingerprint, "abc");
 }
 
@@ -1299,6 +1301,30 @@ fn branch_opened_event_roundtrips_to_ui() {
             assert_eq!(brief, "Compare method B against the baseline.");
         }
         _ => panic!("expected BranchOpened"),
+    }
+}
+
+#[test]
+fn run_background_finished_event_roundtrips_to_ui() {
+    let backend = super::AgentEvent::RunBackgroundFinished {
+        frame_id: "f".into(),
+        run_id: "run-1".into(),
+        title: "Align reads".into(),
+        status: wisp_store::RunStatus::TimedOut.as_str().into(),
+    };
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::RunBackgroundFinished {
+            frame_id,
+            run_id,
+            title,
+            status,
+        } => {
+            assert_eq!(frame_id, "f");
+            assert_eq!(run_id, "run-1");
+            assert_eq!(title, "Align reads");
+            assert_eq!(status, "timed_out");
+        }
+        _ => panic!("expected RunBackgroundFinished"),
     }
 }
 

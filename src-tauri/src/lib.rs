@@ -125,6 +125,7 @@ mod native_terminals;
 mod network;
 mod notification_sound;
 mod research_dispatch_approval;
+mod run_background;
 mod runtime_commands;
 mod runtime_config_tool;
 mod runtime_launcher;
@@ -371,6 +372,15 @@ enum AgentEvent {
         hook: String,
         message: String,
     },
+    /// A Run the user moved to the background ended (`run_background`).
+    /// Windows raise a desktop notification; not persisted, the notice
+    /// appended to the conversation is.
+    RunBackgroundFinished {
+        frame_id: String,
+        run_id: String,
+        title: String,
+        status: String,
+    },
 }
 
 impl AgentEvent {
@@ -404,7 +414,8 @@ impl AgentEvent {
             | Self::MemoryProposal { frame_id, .. }
             | Self::FollowUps { frame_id, .. }
             | Self::BranchOpened { frame_id, .. }
-            | Self::HookFailed { frame_id, .. } => frame_id,
+            | Self::HookFailed { frame_id, .. }
+            | Self::RunBackgroundFinished { frame_id, .. } => frame_id,
         }
     }
 }
@@ -7521,6 +7532,7 @@ pub fn run() {
             app.manage(terminal_sessions::TerminalManager::new());
             app.manage(channels::ChannelManager::new());
             delegation_completion::start_dispatcher(app.handle());
+            run_background::resume_pending(app.handle());
             scheduler::start_scheduler(app.handle());
             project_sync::start_folder_publisher(app.handle());
             {
@@ -7756,6 +7768,7 @@ pub fn run() {
             runtime_commands::list_runs,
             runtime_commands::get_run_detail,
             runtime_commands::cancel_run,
+            run_background::background_run,
             runtime_commands::harvest_run,
             runtime_commands::cleanup_run_workspace,
             runtime_commands::list_run_workspace_files,

@@ -409,7 +409,7 @@ impl Tool for MonitorRunTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "monitor_run",
-            "Monitor one existing long-running Run until it finishes or mid-turn user guidance arrives. Call this instead of repeatedly calling get_run. Wisp shows a live Run card and suspends without model calls or token use, so call monitor_run without a user-facing preamble and do not say that you are waiting or monitoring. If the result has wait_interrupted=true, the Run is still running: answer the user from this snapshot, then call monitor_run again with the same run_id. Do not resubmit the Run. Use cancel_run only when the user asked to stop.",
+            "Monitor one existing long-running Run until it finishes or mid-turn user guidance arrives. Call this instead of repeatedly calling get_run. Wisp shows a live Run card and suspends without model calls or token use, so call monitor_run without a user-facing preamble and do not say that you are waiting or monitoring. If the result has wait_interrupted=true, the Run is still running: answer the user from this snapshot, then call monitor_run again with the same run_id. If it has wait_backgrounded=true, the user moved the Run to the background: do not monitor it again; Wisp reports its completion in this conversation. Do not resubmit the Run. Use cancel_run only when the user asked to stop.",
             serde_json::json!({
                 "type": "object",
                 "properties": { "run_id": { "type": "string" } },
@@ -446,12 +446,19 @@ enum WaitOutcome {
     Terminal,
     Detached,
     GuidanceInterrupt,
+    /// The user moved the Run to the background from its card.
+    Backgrounded,
 }
 
 const WAIT_INTERRUPTED_NEXT_ACTION: &str = "The Run is still executing and was not cancelled or \
      resubmitted. Respond to the user's mid-turn message using this snapshot (status, heartbeat, \
      log tails). Then call monitor_run again with the same run_id to resume waiting. Call \
      cancel_run only if the user asked to stop the Run.";
+
+const WAIT_BACKGROUNDED_NEXT_ACTION: &str = "The user moved this Run to the background. It is \
+     still executing and was not cancelled or resubmitted. Do not call monitor_run or get_run for \
+     it again; continue the conversation without waiting. When the Run ends, Wisp posts a \
+     completion message to this conversation.";
 
 /// Consecutive failed status reads a wait rides out. Each one can already block
 /// for the store pool's acquire timeout, so this spans a few minutes.
@@ -462,10 +469,23 @@ async fn wait_for_terminal(
     run_id: &str,
     env: &dyn ToolEnv,
 ) -> Result<(wisp_store::RunRecord, WaitOutcome), String> {
-    wait_for_terminal_with(|| store.get_run(run_id), run_id, env).await
+    wait_for_terminal_with(
+        || async {
+            let Some(run) = store.get_run(run_id).await? else {
+                return Ok(None);
+            };
+            let backgrounded =
+                !run.status.is_terminal() && store.run_background_requested(run_id).await?;
+            anyhow::Ok(Some((run, backgrounded)))
+        },
+        run_id,
+        env,
+    )
+    .await
 }
 
-/// `read` is the status read, injected so a failing store can be tested.
+/// `read` is the status read (the Run plus whether the user moved it to the
+/// background), injected so a failing store can be tested.
 async fn wait_for_terminal_with<F, Fut, E>(
     mut read: F,
     run_id: &str,
@@ -473,7 +493,7 @@ async fn wait_for_terminal_with<F, Fut, E>(
 ) -> Result<(wisp_store::RunRecord, WaitOutcome), String>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<Option<wisp_store::RunRecord>, E>>,
+    Fut: std::future::Future<Output = Result<Option<(wisp_store::RunRecord, bool)>, E>>,
     E: std::fmt::Display,
 {
     let mut read_failures = 0;
@@ -481,12 +501,15 @@ where
         match read().await {
             Ok(run) => {
                 read_failures = 0;
-                let run = run.ok_or_else(|| format!("Run not found: {run_id}"))?;
+                let (run, backgrounded) = run.ok_or_else(|| format!("Run not found: {run_id}"))?;
                 if run.status.is_terminal() {
                     return Ok((run, WaitOutcome::Terminal));
                 }
                 if env.is_cancelled() {
                     return Ok((run, WaitOutcome::Detached));
+                }
+                if backgrounded {
+                    return Ok((run, WaitOutcome::Backgrounded));
                 }
                 if env.guidance_pending() {
                     return Ok((run, WaitOutcome::GuidanceInterrupt));
@@ -534,6 +557,10 @@ fn run_wait_result(run: wisp_store::RunRecord, outcome: WaitOutcome) -> ToolResu
             value["wait_interrupted"] = serde_json::Value::Bool(true);
             value["next_action"] = serde_json::Value::String(WAIT_INTERRUPTED_NEXT_ACTION.into());
         }
+        WaitOutcome::Backgrounded => {
+            value["wait_backgrounded"] = serde_json::Value::Bool(true);
+            value["next_action"] = serde_json::Value::String(WAIT_BACKGROUNDED_NEXT_ACTION.into());
+        }
         WaitOutcome::Terminal if cleanable => {
             value["next_action"] = serde_json::Value::String(
                 "When the server workspace is no longer needed, call cleanup_run_workspace to \
@@ -545,7 +572,9 @@ fn run_wait_result(run: wisp_store::RunRecord, outcome: WaitOutcome) -> ToolResu
     }
     let content = value.to_string();
     match outcome {
-        WaitOutcome::Detached | WaitOutcome::GuidanceInterrupt => ToolResult::ok(content),
+        WaitOutcome::Detached | WaitOutcome::GuidanceInterrupt | WaitOutcome::Backgrounded => {
+            ToolResult::ok(content)
+        }
         WaitOutcome::Terminal if succeeded => ToolResult::ok(content),
         WaitOutcome::Terminal => ToolResult::fail(content),
     }
@@ -972,7 +1001,7 @@ mod tests {
                 let read = if reads < MAX_WAIT_READ_FAILURES {
                     Err("pool timed out")
                 } else {
-                    Ok(Some(run.clone()))
+                    Ok(Some((run.clone(), false)))
                 };
                 async move { read }
             },
@@ -984,7 +1013,7 @@ mod tests {
         assert_eq!(finished.status, wisp_store::RunStatus::Succeeded);
 
         let error = wait_for_terminal_with(
-            || async { Err::<Option<wisp_store::RunRecord>, _>("pool timed out") },
+            || async { Err::<Option<(wisp_store::RunRecord, bool)>, _>("pool timed out") },
             "r",
             &Env,
         )
@@ -992,5 +1021,35 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("pool timed out"), "{error}");
         assert!(error.contains("do not resubmit"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn wait_returns_once_the_user_backgrounds_the_run() {
+        let mut run = wisp_store::RunRecord::new("r", "p", "ssh:a", "Align", "ssh_direct");
+        run.status = wisp_store::RunStatus::Running;
+        let mut reads = 0;
+        let (still_running, outcome) = wait_for_terminal_with(
+            || {
+                reads += 1;
+                let read = Ok::<_, &str>(Some((run.clone(), reads >= 3)));
+                async move { read }
+            },
+            "r",
+            &Env,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, WaitOutcome::Backgrounded);
+        assert_eq!(reads, 3);
+        let result = run_wait_result(still_running, outcome);
+        assert!(result.success);
+        let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(value["wait_backgrounded"], true);
+        assert_eq!(value["status"], "running");
+        assert!(value.get("wait_interrupted").is_none());
+        assert!(value["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("Do not call monitor_run"));
     }
 }

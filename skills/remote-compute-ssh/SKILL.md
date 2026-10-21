@@ -30,9 +30,12 @@ node.
    the tool without additional model calls, and resumes the same agent turn
    with the terminal result. If the result has `wait_interrupted: true`, the
    remote process is still running: answer the user from the snapshot, then
-   call `monitor_run` again with the same id. Do not resubmit. Use `cancel_run`
-   only when the user asked to stop. For fire-and-forget work, report the Run id
-   and end the turn instead.
+   call `monitor_run` again with the same id. If it has
+   `wait_backgrounded: true`, the user moved the Run to the background from its
+   card: do not call `monitor_run` or `get_run` for it again, and carry on with
+   the conversation; Wisp posts a message here when the Run ends. Do not
+   resubmit. Use `cancel_run` only when the user asked to stop. For
+   fire-and-forget work, report the Run id and end the turn instead.
 4. Use `get_run` only for one explicit status snapshot; never call it repeatedly
    to wait. Use `cancel_run` when the user asks to stop.
 

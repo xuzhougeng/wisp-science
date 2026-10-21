@@ -19,6 +19,32 @@ standalone monitor behavior, including dismissal for completed cards. Historical
 full Run results can restore their cards even when absent from the recent Runs
 list; submission-only results still need their Run in that list.
 
+## Move a Run to the background
+
+While a turn waits on a Run (`monitor_run`, or `run_in_context` with
+`wait_for_completion`), the conversation is busy until the Run ends. The bell
+button on an active Run card, **Move to background / 转到后台**, ends that wait
+without touching the Run: the agent gets `wait_backgrounded` and is told not to
+monitor the Run again, finishes its reply, and the conversation takes new
+messages while the Run keeps executing. The card stays live and notes that it
+is running in the background. The button also works on a card no turn is
+waiting on; it then only asks for the completion message.
+
+When the Run succeeds, fails, is cancelled, times out, or is lost, Wisp appends
+one message to the conversation that started it, with the Run title, outcome,
+exit code, elapsed time, Run ID, and execution context, and raises a desktop
+notification when the window is not in front. A turn running in that
+conversation at that moment finishes first. The message is part of the
+conversation history, so a later question about the result reaches an agent
+that knows the Run ended. The agent is not resumed on its own.
+
+The request is stored with the Run, so a Run that ends while Wisp is closed is
+reported after the next launch. Cluster jobs submitted through
+`scheduler_job.sh --follow` (Slurm `sbatch`, PBS, LSF, Grid Engine) are Runs
+that last as long as the job, so they report the same way. Only Runs started
+from a conversation can move to the background, and there is no way to bring a
+backgrounded Run back into a waiting turn; ask the agent about it instead.
+
 ## Runs tab in the right pane
 
 Long sessions bury Run cards in the transcript. The right pane's **Runs / 运行**
