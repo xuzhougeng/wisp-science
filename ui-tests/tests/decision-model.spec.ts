@@ -77,6 +77,13 @@ test("decision model tab configures a StartLux endpoint with its own key", async
 test("an existing TypeSafe key shows as in use and can be cleared", async ({ page }) => {
   await openDecisionTab(page, "zh", { settings: { enabled: true }, keys: ["typesafe"] });
   await expect(page.getByTestId("decision-status")).toHaveText("使用中：TypeSafe Jev · jev-latest");
+  // The TypeSafe console link moved here from the Credentials page.
+  await page.getByTestId("decision-preset-link").click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "open_external_url");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? args.get("url") : args?.url;
+  })).toBe("https://console.typesafe.ai");
   await expect(page.getByTestId("decision-enabled")).toBeChecked();
   await expect(page.locator("label[for=decision-api-key]")).toContainText("已配置");
   await page.getByTestId("decision-clear-key").click();
@@ -89,6 +96,7 @@ test("an existing TypeSafe key shows as in use and can be cleared", async ({ pag
   await page.evaluate(() => { (window as any).__decisionModel.testError = "api: 401 invalid key"; });
   await page.getByTestId("decision-api-key").fill("wrong-key");
   await page.getByTestId("decision-test").click();
-  await expect(page.getByTestId("decision-message")).toHaveText("测试失败：api: 401 invalid key");
+  // The shared API-error hint may follow the server's reason.
+  await expect(page.getByTestId("decision-message")).toContainText("测试失败：api: 401 invalid key");
   expect((await decisionState(page)).saves).toHaveLength(0);
 });

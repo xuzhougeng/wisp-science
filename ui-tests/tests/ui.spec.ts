@@ -11049,7 +11049,8 @@ test("credential services explain their behavior and open official setup links",
   await enterApp(page);
   await openSettingsSection(page, "Credentials");
 
-  await expect(page.locator("[data-credential-service]")).toHaveCount(5);
+  // TypeSafe is configured under Settings → Models → Decision model now.
+  await expect(page.locator("[data-credential-service]")).toHaveCount(4);
   await page.locator('[data-credential-service="openalex"]').click();
   await expect(page.locator(".cred-help-trigger")).toHaveCount(1);
   const openAlexHelp = page.getByRole("button", { name: "OpenAlex: About this credential" });
