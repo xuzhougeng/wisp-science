@@ -479,6 +479,10 @@ impl Store {
             Self::apply_agent_workflow_lineage(pool).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, "agent_workflow_execution_rounds_v1").await? {
+            Self::apply_agent_workflow_execution_rounds(pool).await?;
+            Self::record_migration(pool, "agent_workflow_execution_rounds_v1").await?;
+        }
         if !Self::migration_applied(pool, PLUGIN_INSTALLATIONS_MIGRATION).await? {
             Self::execute_sql_script(pool, PLUGIN_INSTALLATIONS_MIGRATION_SQL).await?;
             Self::record_migration(pool, PLUGIN_INSTALLATIONS_MIGRATION).await?;
@@ -1678,6 +1682,42 @@ impl Store {
             }
             sqlx::query(statement).execute(pool).await?;
         }
+        Ok(())
+    }
+
+    async fn apply_agent_workflow_execution_rounds(pool: &SqlitePool) -> Result<()> {
+        Self::add_columns_if_missing(
+            pool,
+            "agent_workflows",
+            &[
+                ("execution_generation", "INTEGER NOT NULL DEFAULT 0"),
+                ("execution_started_at", "INTEGER"),
+                ("stop_reason", "TEXT"),
+            ],
+        )
+        .await?;
+        Self::add_columns_if_missing(
+            pool,
+            "agent_workflow_attempts",
+            &[("execution_generation", "INTEGER NOT NULL DEFAULT 0")],
+        )
+        .await?;
+        // Existing attempts belong to round zero. Retain a running batch's
+        // elapsed execution time on upgrade, excluding its draft/approval wait.
+        sqlx::query(
+            "UPDATE agent_workflows SET execution_started_at=COALESCE(\
+               (SELECT MIN(a.started_at) FROM agent_workflow_attempts a \
+                WHERE a.workflow_id=agent_workflows.id),approved_at,updated_at) \
+             WHERE execution_started_at IS NULL AND status='running'",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_agent_attempts_execution \
+             ON agent_workflow_attempts(root_workflow_id,execution_generation,status)",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

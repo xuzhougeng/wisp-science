@@ -272,12 +272,23 @@ fails, because review gates must not be satisfiable by unparseable output.
 Failed and cancelled workflows are resumable. **Retry** keeps the persisted
 workflow and every successful task result, reruns only failed/cancelled tasks
 and descendants that were blocked, then supplies the retained dependency
-results to those descendants. A failed task exposes its current token limit in
+results to those descendants. A failed or cancelled task exposes its current token limit in
 the activity card; changing **Retry max tokens** before retrying revises only
 that task's authorized budget on the same workflow (0 makes the task
 unlimited). A finite value is still checked against capability and host
 ceilings; a rejected budget names the triggered limit, the requested value,
 and the ceiling.
+
+Each root retry opens a fresh execution round after the previous attempts have
+stopped. The round's wall clock starts when execution actually begins, so draft
+review and approval wait do not consume it. Root time and budget allowances are
+scoped to that round across its descendants; old nested tasks, usage and
+cancellation flags cannot stop the retry. Previous attempts and their costs
+remain in history, and already successful task results are reused. The Agents
+card shows the current round's token/tool allowances alongside cumulative
+usage, and reports the actual stop cause (timeout, user cancellation or
+budget exhaustion). A failed Run harvest is recovered from the Run's outputs;
+retrying a workflow node may execute its code again.
 
 Omitting `specialist_id` creates a generic temporary Agent. Selecting a
 Specialist reuses its persona, model preference, and connector

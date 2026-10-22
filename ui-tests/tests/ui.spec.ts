@@ -16885,6 +16885,23 @@ test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({
   await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
 });
 
+test("timed-out workflows explain fresh retry allowances and retain cumulative usage", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=timed-out");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
+  await expect(card.getByTestId("agent-execution-error")).toContainText("timed out after 600 seconds");
+  await expect(card.getByTestId("agent-execution-usage")).toContainText("265036/256000 tokens");
+  await expect(card.getByTestId("agent-retry-hint")).toContainText("fresh time and budget allowances");
+  await expect(card.locator('[data-step-id$=":research_a"]').getByTestId("agent-retry-max-tokens")).toBeVisible();
+  await card.getByTestId("agent-retry").click();
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Approved");
+  await expect(card.getByTestId("agent-execution-error")).toHaveCount(0);
+  await expect(card.getByTestId("agent-execution-usage")).toContainText("Execution 2: 0/256000 tokens");
+  await expect(card.getByTestId("agent-execution-usage")).toContainText("All executions: 265036 tokens");
+  await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
+});
+
 test("task results are readable without exposing the child Agent conversation", async ({ page }) => {
   await enterApp(page, "/?mockAgentWorkflow=succeeded");
   await page.getByRole("button", { name: "Toggle panel" }).click();

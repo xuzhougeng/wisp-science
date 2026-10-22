@@ -4685,6 +4685,27 @@ pub struct AgentWorkflowSnapshot {
     #[serde(default)]
     pub approval_policy: AgentApprovalPolicy,
     pub dynamic: DynamicAgentWorkflowSummary,
+    #[serde(default)]
+    pub execution: Option<AgentWorkflowExecutionSummary>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentWorkflowUsage {
+    pub tokens: u64,
+    pub tool_calls: u64,
+    pub cost_microunits: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AgentWorkflowExecutionSummary {
+    /// Zero-based execution round, independent of background delivery numbers.
+    pub generation: i64,
+    pub started_at: Option<i64>,
+    pub stop_reason: Option<String>,
+    pub wall_time_secs: Option<u64>,
+    pub limits: AgentWorkflowUsage,
+    pub usage: AgentWorkflowUsage,
+    pub cumulative_usage: AgentWorkflowUsage,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

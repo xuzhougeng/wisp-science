@@ -3832,6 +3832,27 @@ fn dynamic_workflow_card(
     let root_workflow_id = workflow.root_workflow_id.clone();
     let parent_attempt_id = workflow.parent_attempt_id.clone().unwrap_or_default();
     let depth = workflow.depth;
+    let execution_details = snapshot.execution.as_ref().filter(|_| !nested).map(|execution| {
+        let round = (execution.generation + 1).to_string();
+        let summary = tf(locale.get(), "agents.execution.usage", &[
+            ("round", &round),
+            ("tokens", &execution.usage.tokens.to_string()),
+            ("token_limit", &execution.limits.tokens.to_string()),
+            ("tools", &execution.usage.tool_calls.to_string()),
+            ("tool_limit", &execution.limits.tool_calls.to_string()),
+        ]);
+        let history = tf(locale.get(), "agents.execution.history", &[
+            ("tokens", &execution.cumulative_usage.tokens.to_string()),
+            ("tools", &execution.cumulative_usage.tool_calls.to_string()),
+        ]);
+        let reason = execution.stop_reason.clone();
+        let retryable = matches!(workflow.status.as_str(), "failed" | "cancelled");
+        view! {
+            <div class="agent-usage" data-testid="agent-execution-usage">{summary}<br/>{history}</div>
+            {reason.map(|reason| view! { <div class="agents-error" data-testid="agent-execution-error">{reason}</div> })}
+            {retryable.then(|| view! { <p class="agent-confirm-hint" data-testid="agent-retry-hint">{t(locale.get(), "agents.execution.retry_hint")}</p> })}
+        }.into_view()
+    });
     view! {
         <article class=card_class data-workflow-id=workflow_id.clone()
             data-root-workflow-id=root_workflow_id data-parent-attempt-id=parent_attempt_id
@@ -3851,7 +3872,8 @@ fn dynamic_workflow_card(
                 <span class=status_class>{status_label(locale.get(), &status)}</span>
             </div>
             <p class="agent-workflow-goal">{workflow.goal.clone()}</p>
-            {workflow.requires_confirmation.then(|| view! {
+            {execution_details}
+            {(workflow.requires_confirmation && workflow.status == "draft").then(|| view! {
                 <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
             })}
             {(!dynamic.approval_reasons.is_empty()).then(|| view! {
@@ -3909,7 +3931,7 @@ fn dynamic_workflow_card(
                     let retry_budget_value = task_budget.max_tokens
                         .map(|value| value.to_string())
                         .unwrap_or_default();
-                    let show_retry_budget = !is_run_activity && task_status == "failed";
+                    let show_retry_budget = !is_run_activity && matches!(task_status.as_str(), "failed" | "cancelled");
                     let result_workflow_id = workflow_id.clone();
                     let result_step_id = task.stored_step_id.clone();
                     view! {

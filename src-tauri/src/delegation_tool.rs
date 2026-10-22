@@ -927,7 +927,7 @@ pub(crate) fn compact_execution_result(
         .collect::<Vec<_>>();
     let resumable = execution.status != wisp_core::DelegationExecutionStatus::Succeeded;
     let message = if resumable {
-        "This persisted workflow is resumable. Do not create a replacement delegate_tasks plan automatically: report the failure and workflow_id. Retry from the Agents activity card reruns only unsuccessful tasks, and its failed-task token budget can be adjusted there."
+        "Report the failure reason and workflow_id. After the previous execution has stopped, Retry from the Agents activity card starts a new execution with fresh time and budget allowances and reuses successful task results. Historical attempts and usage are retained. Failed or cancelled task budgets can be adjusted there. Inspect the cause before retrying; do not create a replacement delegate_tasks plan automatically."
     } else {
         "Synthesize these ordered delegated results into the final answer. Independent failures are partial evidence; do not hide them."
     };

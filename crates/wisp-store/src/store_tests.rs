@@ -1603,7 +1603,7 @@ async fn workflow_run_activity_recovery_preserves_valid_link_and_fails_missing_l
 }
 
 #[tokio::test]
-async fn workflow_cancellation_is_persisted_and_cleared_for_retry() {
+async fn workflow_cancellation_is_retained_but_does_not_cancel_retry() {
     let tmp =
         std::env::temp_dir().join(format!("wisp_agent_cancel_{}.sqlite", uuid::Uuid::new_v4()));
     let store = Store::open(&tmp).await.unwrap();
@@ -1675,9 +1675,326 @@ async fn workflow_cancellation_is_persisted_and_cleared_for_retry() {
         .await
         .unwrap());
     assert!(!store.agent_workflow_cancel_requested("wf").await.unwrap());
+    assert!(
+        store
+            .get_agent_workflow_attempt("attempt")
+            .await
+            .unwrap()
+            .unwrap()
+            .cancel_requested
+    );
+    assert_eq!(
+        store
+            .get_agent_workflow("wf")
+            .await
+            .unwrap()
+            .unwrap()
+            .execution_generation,
+        1
+    );
 
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn workflow_deadline_starts_at_execution_not_draft_or_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+    store.create_project("p", "Project", "").await.unwrap();
+    let mut workflow = AgentWorkflow::new("wf", "p", "workspace", "Delayed approval").unwrap();
+    workflow.created_at = chrono::Utc::now().timestamp() - 10_000;
+    workflow.root_limits_json = serde_json::to_string(&AgentDelegationRootLimits {
+        wall_time_secs: Some(600),
+        ..Default::default()
+    })
+    .unwrap();
+    let step = nested_test_step("step", "wf", false, 100);
+    store
+        .create_agent_workflow_plan(&workflow, &[step])
+        .await
+        .unwrap();
+    assert!(store.approve_agent_workflow_plan("wf", 1).await.unwrap());
+    sqlx::query("UPDATE agent_workflows SET approved_at=1 WHERE id='wf'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(store
+        .agent_workflow_stop_reason("wf")
+        .await
+        .unwrap()
+        .is_none());
+    let before_start = chrono::Utc::now().timestamp();
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running
+        )
+        .await
+        .unwrap());
+    let running = store.get_agent_workflow("wf").await.unwrap().unwrap();
+    assert!(running.execution_started_at.unwrap() >= before_start);
+    assert_eq!(running.created_at, workflow.created_at);
+    let attempt =
+        AgentWorkflowAttempt::queued("a", "wf", "step", 1, "request", "local", "{}").unwrap();
+    assert!(matches!(
+        store
+            .try_create_started_agent_workflow_attempt(attempt)
+            .await
+            .unwrap(),
+        AgentWorkflowAttemptStart::Started(_)
+    ));
+    assert!(!store.agent_workflow_cancel_requested("wf").await.unwrap());
+}
+
+#[tokio::test]
+async fn workflow_retry_refreshes_expired_time_and_spent_budget_without_erasing_history() {
+    for revise_budget in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        let mut first = create_running_nested_test_root(
+            &store,
+            AgentDelegationRootLimits {
+                max_tokens: 100,
+                wall_time_secs: Some(600),
+                ..Default::default()
+            },
+            false,
+            50,
+        )
+        .await;
+        // Simulate time passing without a sleep or external provider.
+        sqlx::query("UPDATE agent_workflows SET execution_started_at=1 WHERE id='root'")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let reason = store
+            .agent_workflow_stop_reason("root")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(reason.contains("timed out after 600 seconds"));
+        // A later cancel must not replace the actual timeout cause.
+        store.request_agent_workflow_cancel("root").await.unwrap();
+        assert_eq!(
+            store.agent_workflow_stop_reason("root").await.unwrap(),
+            Some(reason)
+        );
+        first.status = AgentWorkflowAttemptStatus::Cancelled;
+        first.cancel_requested = true;
+        first.input_tokens = 110;
+        first.tool_calls = 18;
+        first.finished_at = Some(chrono::Utc::now().timestamp());
+        assert!(store
+            .update_agent_workflow_attempt(&first, AgentWorkflowAttemptStatus::Running)
+            .await
+            .unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                "root",
+                AgentWorkflowStatus::Running,
+                AgentWorkflowStatus::Cancelled
+            )
+            .await
+            .unwrap());
+        let old = store.get_agent_workflow("root").await.unwrap().unwrap();
+        if revise_budget {
+            let mut steps = store.list_agent_workflow_steps("root").await.unwrap();
+            steps[0].budget_json = serde_json::json!({"max_tokens": 60}).to_string();
+            assert!(store
+                .replace_agent_workflow_plan_for_retry(&old, &steps, old.status, old.version)
+                .await
+                .unwrap());
+        } else {
+            assert!(store
+                .transition_agent_workflow_status("root", old.status, AgentWorkflowStatus::Approved)
+                .await
+                .unwrap());
+        }
+        let retry = store.get_agent_workflow("root").await.unwrap().unwrap();
+        assert_eq!(retry.execution_generation, 1);
+        assert_eq!(retry.created_at, old.created_at);
+        assert!(retry.execution_started_at.is_none());
+        assert!(retry.stop_reason.is_none());
+        assert!(!store.agent_workflow_cancel_requested("root").await.unwrap());
+        let summary = store
+            .agent_workflow_execution_summary("root")
+            .await
+            .unwrap();
+        assert_eq!(summary.usage.tokens, 0);
+        assert_eq!(summary.cumulative_usage.tokens, 110);
+        assert_eq!(summary.limits.tokens, 100);
+        let historical = store
+            .get_agent_workflow_attempt(&first.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(historical.cancel_requested);
+        assert_eq!(historical.status, AgentWorkflowAttemptStatus::Cancelled);
+        assert_eq!(historical.input_tokens, first.input_tokens);
+        assert_eq!(historical.execution_generation, 0);
+        assert!(store
+            .transition_agent_workflow_status(
+                "root",
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running
+            )
+            .await
+            .unwrap());
+        let second = AgentWorkflowAttempt::queued(
+            "second",
+            "root",
+            "root-step",
+            2,
+            "request-2",
+            "local",
+            "{}",
+        )
+        .unwrap();
+        let AgentWorkflowAttemptStart::Started(second) = store
+            .try_create_started_agent_workflow_attempt(second)
+            .await
+            .unwrap()
+        else {
+            panic!("the old timeout and old token usage must not prevent a retry");
+        };
+        assert_eq!(second.execution_generation, 1);
+        assert!(second.started_at.unwrap() > 1);
+    }
+}
+
+#[tokio::test]
+async fn workflow_stop_before_first_attempt_is_durable_and_budget_failure_has_a_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+    let mut first = create_running_nested_test_root(
+        &store,
+        AgentDelegationRootLimits {
+            max_tokens: 100,
+            ..Default::default()
+        },
+        false,
+        50,
+    )
+    .await;
+    first.status = AgentWorkflowAttemptStatus::Failed;
+    first.error = Some("provider failed after producing output".into());
+    first.input_tokens = 90;
+    assert!(store
+        .update_agent_workflow_attempt(&first, AgentWorkflowAttemptStatus::Running)
+        .await
+        .unwrap());
+    let next = AgentWorkflowAttempt::queued(
+        "next",
+        "root",
+        "root-step",
+        2,
+        "next-request",
+        "local",
+        "{}",
+    )
+    .unwrap();
+    let AgentWorkflowAttemptStart::Stopped(reason) = store
+        .try_create_started_agent_workflow_attempt(next)
+        .await
+        .unwrap()
+    else {
+        panic!("same-round usage still enforces the root budget");
+    };
+    assert!(reason.contains("budget is exhausted"));
+    assert_eq!(
+        store.agent_workflow_stop_reason("root").await.unwrap(),
+        Some(reason)
+    );
+    assert!(store
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Running,
+            AgentWorkflowStatus::Failed
+        )
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Failed,
+            AgentWorkflowStatus::Approved
+        )
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running
+        )
+        .await
+        .unwrap());
+    // No attempts exist yet in the new round, but Cancel must still work.
+    assert_eq!(
+        store.request_agent_workflow_cancel("root").await.unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .agent_workflow_stop_reason("root")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Agent workflow was cancelled by the user.")
+    );
+    let next = AgentWorkflowAttempt::queued(
+        "cancelled-next",
+        "root",
+        "root-step",
+        2,
+        "cancelled-request",
+        "local",
+        "{}",
+    )
+    .unwrap();
+    assert!(matches!(
+        store
+            .try_create_started_agent_workflow_attempt(next)
+            .await
+            .unwrap(),
+        AgentWorkflowAttemptStart::Stopped(_)
+    ));
+}
+
+#[tokio::test]
+async fn workflow_execution_migration_is_idempotent_for_running_and_retried_workflows() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+    create_running_nested_test_root(&store, Default::default(), false, 10).await;
+    sqlx::query("UPDATE agent_workflows SET execution_started_at=NULL WHERE id='root'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_workflow_attempts SET started_at=123 WHERE id='root-attempt'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    Store::apply_agent_workflow_execution_rounds(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_agent_workflow("root")
+            .await
+            .unwrap()
+            .unwrap()
+            .execution_started_at,
+        Some(123)
+    );
+    sqlx::query("UPDATE agent_workflows SET execution_generation=2,execution_started_at=456 WHERE id='root'").execute(&store.pool).await.unwrap();
+    Store::apply_agent_workflow_execution_rounds(&store.pool)
+        .await
+        .unwrap();
+    let workflow = store.get_agent_workflow("root").await.unwrap().unwrap();
+    assert_eq!(workflow.execution_generation, 2);
+    assert_eq!(workflow.execution_started_at, Some(456));
 }
 
 #[tokio::test]
@@ -1804,6 +2121,125 @@ async fn nested_agent_fanout_lineage_survives_restart_and_root_cancel() {
     assert_eq!(attempt.root_workflow_id, "root");
     assert_eq!(attempt.parent_attempt_id.as_deref(), Some("root-attempt"));
     assert_eq!(attempt.depth, 2);
+    assert!(reopened
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Running,
+            AgentWorkflowStatus::Cancelled
+        )
+        .await
+        .unwrap());
+    assert!(reopened
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Cancelled,
+            AgentWorkflowStatus::Approved
+        )
+        .await
+        .is_err());
+    for id in ["root-attempt", "nested-attempt-a", "nested-attempt-b"] {
+        let mut attempt = reopened
+            .get_agent_workflow_attempt(id)
+            .await
+            .unwrap()
+            .unwrap();
+        attempt.status = AgentWorkflowAttemptStatus::Cancelled;
+        attempt.delegation_slot_yielded = false;
+        attempt.input_tokens = 10_000;
+        assert!(reopened
+            .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Running)
+            .await
+            .unwrap());
+    }
+    assert!(reopened
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Cancelled,
+            AgentWorkflowStatus::Approved
+        )
+        .await
+        .unwrap());
+    assert!(reopened
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        reopened
+            .request_agent_workflow_cancel("nested")
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(!reopened
+        .agent_workflow_cancel_requested("root")
+        .await
+        .unwrap());
+    assert!(reopened
+        .agent_workflow_cancel_requested("nested")
+        .await
+        .unwrap());
+    assert!(!reopened
+        .agent_workflow_attempt_has_delegation_capacity("root-attempt")
+        .await
+        .unwrap());
+    let mut next = AgentWorkflowAttempt::queued(
+        "root-retry",
+        "root",
+        "root-step",
+        2,
+        "root-retry-request",
+        "local",
+        "{}",
+    )
+    .unwrap();
+    next.allow_delegation = true;
+    let AgentWorkflowAttemptStart::Started(next) = reopened
+        .try_create_started_agent_workflow_attempt(next)
+        .await
+        .unwrap()
+    else {
+        panic!("old nested attempts must not consume the retry budget");
+    };
+    assert!(reopened
+        .agent_workflow_attempt_has_delegation_capacity(&next.id)
+        .await
+        .unwrap());
+    reopened
+        .set_running_agent_workflow_attempt_provenance(&next.request_id, None, "root-child-frame")
+        .await
+        .unwrap();
+    let mut new_child =
+        AgentWorkflow::new("nested-retry", "p", "workspace", "New nested batch").unwrap();
+    new_child.frame_id = Some("root-child-frame".into());
+    new_child.root_workflow_id = "root".into();
+    new_child.parent_attempt_id = Some(next.id);
+    new_child.depth = 1;
+    new_child.root_limits_json = serde_json::to_string(&limits).unwrap();
+    reopened
+        .create_agent_workflow_plan(
+            &new_child,
+            &[nested_test_step(
+                "nested-retry-step",
+                "nested-retry",
+                false,
+                50,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened
+            .get_agent_workflow("nested-retry")
+            .await
+            .unwrap()
+            .unwrap()
+            .execution_generation,
+        1
+    );
     reopened.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }

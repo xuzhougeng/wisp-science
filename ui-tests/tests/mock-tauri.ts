@@ -1153,6 +1153,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       steps: [],
       attempts: [],
       delegation_enabled: true,
+      execution: null as any,
       approval_policy: proposal.approval_policy,
       dynamic: {
         schema_version: 2,
@@ -1246,6 +1247,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     } else if (kind === "succeeded") {
       snapshot.workflow.status = "succeeded";
       for (const task of snapshot.dynamic.tasks) task.result = dynamicResult(task, "succeeded");
+    } else if (kind === "timed-out") {
+      snapshot.workflow.status = "cancelled";
+      snapshot.execution = {
+        generation: 0, started_at: 100,
+        stop_reason: "Agent workflow execution timed out after 600 seconds.",
+        wall_time_secs: 600,
+        limits: { tokens: 256000, tool_calls: 512, cost_microunits: 8000000 },
+        usage: { tokens: 265036, tool_calls: 18, cost_microunits: 0 },
+        cumulative_usage: { tokens: 265036, tool_calls: 18, cost_microunits: 0 },
+      };
+      snapshot.dynamic.tasks[0].result = dynamicResult(snapshot.dynamic.tasks[0], "cancelled", {
+        error: snapshot.execution.stop_reason,
+      });
+      snapshot.dynamic.tasks[1].result = dynamicResult(snapshot.dynamic.tasks[1], "succeeded");
     }
     if (kind === "legacy") {
       snapshot.dynamic.tasks[0].skill_bindings = [{ id: "analysis-workflow", name: "analysis-workflow", scope: "bundled", path: "/old/skills/analysis-workflow", skill_md_sha256: "old-hash", declared_version: null, package_id: null, package_version: null, package_source: null }];
@@ -3853,6 +3868,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             if (!snapshot) throw new Error("Agent workflow does not exist");
             snapshot.workflow.status = "approved";
             snapshot.workflow.version += 1;
+            if (snapshot.execution) {
+              snapshot.execution.generation += 1;
+              snapshot.execution.started_at = null;
+              snapshot.execution.stop_reason = null;
+              snapshot.execution.usage = { tokens: 0, tool_calls: 0, cost_microunits: 0 };
+            }
             const overrides = arg("budgetOverrides") ?? {};
             for (const task of snapshot.dynamic.tasks) {
               if (overrides[task.id]?.max_tokens) {

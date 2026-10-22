@@ -49,6 +49,7 @@ pub(crate) struct AgentWorkflowSnapshot {
     delegation_enabled: bool,
     pub(crate) approval_policy: dynamic_workflow::AgentApprovalPolicy,
     pub(crate) dynamic: dynamic_workflow::DynamicAgentWorkflowSummary,
+    pub(crate) execution: Option<wisp_dto::AgentWorkflowExecutionSummary>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -536,7 +537,27 @@ async fn load_workflow_snapshot(
         .map_err(|error| error.to_string())?;
     let plan = stored_dynamic_plan(&workflow)?;
     let approval_policy = dynamic_workflow::AgentApprovalPolicy::from_mode(plan.mode);
-    let dynamic = dynamic_workflow::summarize(&plan, &attempts)?;
+    let visible_attempts = attempts
+        .iter()
+        .filter(|attempt| {
+            !matches!(
+                workflow.status,
+                AgentWorkflowStatus::Approved | AgentWorkflowStatus::Running
+            ) || attempt.execution_generation == workflow.execution_generation
+                || (attempt.status == AgentWorkflowAttemptStatus::Succeeded
+                    && !attempts.iter().any(|newer| {
+                        newer.step_id == attempt.step_id && newer.attempt > attempt.attempt
+                    }))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let dynamic = dynamic_workflow::summarize(&plan, &visible_attempts)?;
+    let execution = Some(
+        store
+            .agent_workflow_execution_summary(&workflow.id)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
     Ok(AgentWorkflowSnapshot {
         workflow,
         steps,
@@ -544,6 +565,7 @@ async fn load_workflow_snapshot(
         delegation_enabled: true,
         approval_policy,
         dynamic,
+        execution,
     })
 }
 
@@ -1688,14 +1710,10 @@ async fn execute_agent_workflow_with_delegator_inner(
                 .await
         }
     };
-    if result.is_err() {
-        let _ = fail_owned_agent_workflow_execution(
-            store,
-            &observer,
-            workflow_id,
-            "Agent workflow execution stopped after a runtime or persistence error.",
-        )
-        .await;
+    if let Err(error) = &result {
+        let _ =
+            fail_owned_agent_workflow_execution(store, &observer, workflow_id, &error.to_string())
+                .await;
     }
     result.map_err(|error| error.to_string())
 }
@@ -4218,6 +4236,13 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         self.store.agent_workflow_cancel_requested(&plan.id).await
     }
 
+    async fn workflow_cancellation_reason(
+        &self,
+        plan: &DelegationPlan,
+    ) -> anyhow::Result<Option<String>> {
+        self.store.agent_workflow_stop_reason(&plan.id).await
+    }
+
     async fn workflow_finished(
         &self,
         plan: &DelegationPlan,
@@ -6010,6 +6035,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retried.workflow.status, AgentWorkflowStatus::Approved);
+        let wire: wisp_dto::AgentWorkflowSnapshot =
+            serde_json::from_value(serde_json::to_value(&retried).unwrap()).unwrap();
+        let round = wire.execution.unwrap();
+        assert_eq!(round.generation, 1);
+        assert!(round.started_at.is_none());
+        assert!(round.stop_reason.is_none());
+        assert!(wire.dynamic.tasks.iter().all(|task| task.result.is_none()));
         let second = execute_agent_workflow_with_delegator(
             &store,
             "p",

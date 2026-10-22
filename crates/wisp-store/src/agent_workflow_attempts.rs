@@ -103,6 +103,8 @@ pub struct AgentWorkflowAttempt {
     #[serde(default)]
     pub root_workflow_id: String,
     #[serde(default)]
+    pub execution_generation: i64,
+    #[serde(default)]
     pub parent_attempt_id: Option<String>,
     #[serde(default = "default_attempt_depth")]
     pub depth: i64,
@@ -152,6 +154,7 @@ impl AgentWorkflowAttempt {
         let value = Self {
             id: id.into(),
             root_workflow_id: workflow_id.clone(),
+            execution_generation: 0,
             workflow_id,
             step_id: step_id.into(),
             parent_attempt_id: None,
@@ -253,6 +256,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<AgentWorkflowAttempt> {
         workflow_id: row.try_get("workflow_id")?,
         step_id: row.try_get("step_id")?,
         root_workflow_id: row.try_get("root_workflow_id")?,
+        execution_generation: row.try_get("execution_generation")?,
         parent_attempt_id: row.try_get("parent_attempt_id")?,
         depth: row.try_get("depth")?,
         allow_delegation: row.try_get::<i64, _>("allow_delegation")? != 0,
@@ -281,7 +285,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<AgentWorkflowAttempt> {
     })
 }
 
-const SELECT_ATTEMPT: &str = "SELECT id,workflow_id,step_id,root_workflow_id,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at FROM agent_workflow_attempts";
+const SELECT_ATTEMPT: &str = "SELECT id,workflow_id,step_id,root_workflow_id,execution_generation,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at FROM agent_workflow_attempts";
 
 async fn lock_root_workflow(
     tx: &mut Transaction<'_, Sqlite>,
@@ -304,7 +308,7 @@ async fn active_budget_reservations(
     let rows = sqlx::query(
         "SELECT s.budget_json FROM agent_workflow_attempts a \
          JOIN agent_workflow_steps s ON s.id=a.step_id \
-         WHERE a.root_workflow_id=? AND a.status IN ('queued','running')",
+         WHERE a.root_workflow_id=? AND a.execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=a.root_workflow_id) AND a.status IN ('queued','running')",
     )
     .bind(root_workflow_id)
     .fetch_all(&mut **tx)
@@ -322,7 +326,7 @@ async fn registered_budget(
 ) -> Result<BudgetReservation> {
     let rows = sqlx::query(
         "SELECT s.budget_json FROM agent_workflow_steps s JOIN agent_workflows w \
-         ON w.id=s.workflow_id WHERE w.root_workflow_id=?",
+         ON w.id=s.workflow_id WHERE w.root_workflow_id=? AND w.execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=w.root_workflow_id)",
     )
     .bind(root_workflow_id)
     .fetch_all(&mut **tx)
@@ -341,7 +345,7 @@ async fn terminal_usage(
     let row = sqlx::query(
         "SELECT COALESCE(SUM(input_tokens+output_tokens),0) AS tokens,\
          COALESCE(SUM(tool_calls),0) AS tools,COALESCE(SUM(cost_microunits),0) AS cost \
-         FROM agent_workflow_attempts WHERE root_workflow_id=? \
+         FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) \
          AND status IN ('succeeded','failed','cancelled','blocked')",
     )
     .bind(root_workflow_id)
@@ -371,21 +375,142 @@ async fn step_budget(
     raw.as_deref().map(BudgetReservation::from_json).transpose()
 }
 
-fn root_deadline_exceeded(created_at: i64, wall_time_secs: Option<u64>, now: i64) -> bool {
-    wall_time_secs.is_some_and(|seconds| {
-        now >= created_at.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX))
-    })
+pub(super) fn root_deadline_exceeded(
+    started_at: Option<i64>,
+    wall_time_secs: Option<u64>,
+    now: i64,
+) -> bool {
+    started_at
+        .zip(wall_time_secs)
+        .is_some_and(|(started_at, seconds)| {
+            now >= started_at.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX))
+        })
+}
+
+/// Persist the first stop cause for this round, even before any attempt starts.
+/// A delayed caller from an earlier round cannot cancel a retried workflow.
+async fn stop_root_execution(
+    tx: &mut Transaction<'_, Sqlite>,
+    root_workflow_id: &str,
+    generation: i64,
+    reason: &str,
+) -> Result<u64> {
+    let now = chrono::Utc::now().timestamp();
+    let root = sqlx::query(
+        "UPDATE agent_workflows SET stop_reason=COALESCE(stop_reason,?),updated_at=? \
+         WHERE id=? AND execution_generation=? AND status='running'",
+    )
+    .bind(reason)
+    .bind(now)
+    .bind(root_workflow_id)
+    .bind(generation)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    if root == 0 {
+        return Ok(0);
+    }
+    let attempts = sqlx::query(
+        "UPDATE agent_workflow_attempts SET cancel_requested=1,updated_at=? \
+         WHERE root_workflow_id=? AND execution_generation=? \
+         AND status IN ('queued','running','waiting_run')",
+    )
+    .bind(now)
+    .bind(root_workflow_id)
+    .bind(generation)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query(
+        "UPDATE runs SET \
+           status=CASE WHEN status='draft' THEN 'cancelled' ELSE 'cancelling' END,\
+           ended_at=CASE WHEN status='draft' THEN COALESCE(ended_at,?) ELSE ended_at END \
+         WHERE id IN (\
+           SELECT link.run_id FROM agent_workflow_run_activities link \
+           JOIN agent_workflow_attempts a ON a.id=link.attempt_id \
+           WHERE a.root_workflow_id=? AND a.execution_generation=?\
+         ) AND status IN ('draft','submitted','running')",
+    )
+    .bind(now)
+    .bind(root_workflow_id)
+    .bind(generation)
+    .execute(&mut **tx)
+    .await?;
+    Ok(attempts.max(root))
 }
 
 #[cfg(test)]
 #[test]
 fn root_deadline_can_be_unlimited() {
-    assert!(!root_deadline_exceeded(100, None, i64::MAX));
-    assert!(!root_deadline_exceeded(100, Some(10), 109));
-    assert!(root_deadline_exceeded(100, Some(10), 110));
+    assert!(!root_deadline_exceeded(Some(100), None, i64::MAX));
+    assert!(!root_deadline_exceeded(None, Some(10), i64::MAX));
+    assert!(!root_deadline_exceeded(Some(100), Some(10), 109));
+    assert!(root_deadline_exceeded(Some(100), Some(10), 110));
 }
 
 impl Store {
+    pub async fn agent_workflow_execution_summary(
+        &self,
+        workflow_id: &str,
+    ) -> Result<wisp_dto::AgentWorkflowExecutionSummary> {
+        if let Some(store) = self
+            .route_entity("agent_workflows", "id", workflow_id)
+            .await?
+        {
+            return Box::pin(store.agent_workflow_execution_summary(workflow_id)).await;
+        }
+        let workflow = self
+            .get_agent_workflow(workflow_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Agent workflow does not exist"))?;
+        let root = self
+            .get_agent_workflow(&workflow.root_workflow_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Root Agent workflow does not exist"))?;
+        let limits: super::AgentDelegationRootLimits =
+            serde_json::from_str(&root.root_limits_json)?;
+        let rows = sqlx::query(
+            "SELECT execution_generation,input_tokens,output_tokens,tool_calls,cost_microunits \
+             FROM agent_workflow_attempts WHERE root_workflow_id=?",
+        )
+        .bind(&root.id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut usage = wisp_dto::AgentWorkflowUsage::default();
+        let mut cumulative_usage = wisp_dto::AgentWorkflowUsage::default();
+        for row in rows {
+            let tokens = u64::try_from(row.try_get::<i64, _>("input_tokens")?)
+                .unwrap_or_default()
+                .saturating_add(
+                    u64::try_from(row.try_get::<i64, _>("output_tokens")?).unwrap_or_default(),
+                );
+            let tools = u64::try_from(row.try_get::<i64, _>("tool_calls")?).unwrap_or_default();
+            let cost = u64::try_from(row.try_get::<i64, _>("cost_microunits")?).unwrap_or_default();
+            let add = |value: &mut wisp_dto::AgentWorkflowUsage| {
+                value.tokens = value.tokens.saturating_add(tokens);
+                value.tool_calls = value.tool_calls.saturating_add(tools);
+                value.cost_microunits = value.cost_microunits.saturating_add(cost);
+            };
+            add(&mut cumulative_usage);
+            if row.try_get::<i64, _>("execution_generation")? == root.execution_generation {
+                add(&mut usage);
+            }
+        }
+        Ok(wisp_dto::AgentWorkflowExecutionSummary {
+            generation: root.execution_generation,
+            started_at: root.execution_started_at,
+            stop_reason: root.stop_reason,
+            wall_time_secs: limits.wall_time_secs,
+            limits: wisp_dto::AgentWorkflowUsage {
+                tokens: limits.max_tokens,
+                tool_calls: limits.max_tool_calls,
+                cost_microunits: limits.max_cost_microunits,
+            },
+            usage,
+            cumulative_usage,
+        })
+    }
+
     pub async fn create_agent_workflow_attempt(
         &self,
         attempt: &AgentWorkflowAttempt,
@@ -400,24 +525,29 @@ impl Store {
         if attempt.status != AgentWorkflowAttemptStatus::Queued {
             anyhow::bail!("new agent workflow attempts must start queued");
         }
+        let mut attempt = attempt.clone();
         let mut tx = self.begin_write().await?;
-        let runnable: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_steps s JOIN agent_workflows w ON w.id=s.workflow_id WHERE s.id=? AND s.workflow_id=? AND w.status='running'",
+        let generation: Option<i64> = sqlx::query_scalar(
+            "SELECT w.execution_generation FROM agent_workflow_steps s JOIN agent_workflows w ON w.id=s.workflow_id \
+             JOIN agent_workflows r ON r.id=w.root_workflow_id \
+             WHERE s.id=? AND s.workflow_id=? AND w.status='running' \
+             AND w.execution_generation=r.execution_generation",
         )
         .bind(&attempt.step_id)
         .bind(&attempt.workflow_id)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        if runnable != 1 {
-            anyhow::bail!("agent workflow attempt step is missing, mismatched, or not running");
-        }
+        attempt.execution_generation = generation.ok_or_else(|| {
+            anyhow::anyhow!("agent workflow attempt step is missing, mismatched, or not running")
+        })?;
         sqlx::query(
-            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,root_workflow_id,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,root_workflow_id,execution_generation,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&attempt.id)
         .bind(&attempt.workflow_id)
         .bind(&attempt.step_id)
         .bind(&attempt.root_workflow_id)
+        .bind(attempt.execution_generation)
         .bind(attempt.parent_attempt_id.as_deref())
         .bind(attempt.depth)
         .bind(attempt.allow_delegation as i64)
@@ -470,8 +600,9 @@ impl Store {
         let mut tx = self.begin_write().await?;
         lock_root_workflow(&mut tx, &attempt.root_workflow_id).await?;
         let workflow = sqlx::query(
-            "SELECT w.root_workflow_id,w.parent_attempt_id,w.depth,w.status,\
-             r.status AS root_status,r.created_at AS root_created_at,r.root_limits_json,\
+            "SELECT w.root_workflow_id,w.parent_attempt_id,w.depth,w.status,w.execution_generation,\
+             r.status AS root_status,r.execution_started_at,r.execution_generation AS root_generation,\
+             r.stop_reason,r.root_limits_json,\
              s.spec_json FROM agent_workflows w \
              JOIN agent_workflows r ON r.id=w.root_workflow_id \
              JOIN agent_workflow_steps s ON s.workflow_id=w.id AND s.id=? WHERE w.id=?",
@@ -491,7 +622,9 @@ impl Store {
         let workflow_depth: i64 = workflow.try_get("depth")?;
         let workflow_status: String = workflow.try_get("status")?;
         let root_status: String = workflow.try_get("root_status")?;
-        let root_created_at: i64 = workflow.try_get("root_created_at")?;
+        let root_started_at: Option<i64> = workflow.try_get("execution_started_at")?;
+        let generation: i64 = workflow.try_get("root_generation")?;
+        attempt.execution_generation = generation;
         let root_limits: super::AgentDelegationRootLimits =
             serde_json::from_str(&workflow.try_get::<String, _>("root_limits_json")?)?;
         let stored_spec: serde_json::Value =
@@ -512,7 +645,10 @@ impl Store {
                     .into(),
             ));
         }
-        if workflow_status != "running" || root_status != "running" {
+        if workflow_status != "running"
+            || root_status != "running"
+            || workflow.try_get::<i64, _>("execution_generation")? != generation
+        {
             tx.rollback().await?;
             return Ok(AgentWorkflowAttemptStart::Stopped(
                 "Root Agent workflow is no longer running".into(),
@@ -541,30 +677,36 @@ impl Store {
             }
         }
         let cancel_requested: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? \
+            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) \
              AND cancel_requested=1",
         )
         .bind(&attempt.root_workflow_id)
         .fetch_one(&mut *tx)
         .await?;
         if cancel_requested > 0
-            || root_deadline_exceeded(root_created_at, root_limits.wall_time_secs, now)
+            || workflow
+                .try_get::<Option<String>, _>("stop_reason")?
+                .is_some()
+            || root_deadline_exceeded(root_started_at, root_limits.wall_time_secs, now)
         {
-            sqlx::query(
-                "UPDATE agent_workflow_attempts SET cancel_requested=1,updated_at=? \
-                 WHERE root_workflow_id=? AND status IN ('queued','running')",
-            )
-            .bind(now)
-            .bind(&attempt.root_workflow_id)
-            .execute(&mut *tx)
-            .await?;
+            let reason = workflow
+                .try_get::<Option<String>, _>("stop_reason")?
+                .unwrap_or_else(|| {
+                    if cancel_requested > 0 {
+                        "Agent workflow was cancelled by the user.".into()
+                    } else {
+                        format!(
+                            "Agent workflow execution timed out after {} seconds.",
+                            root_limits.wall_time_secs.unwrap_or_default()
+                        )
+                    }
+                });
+            stop_root_execution(&mut tx, &attempt.root_workflow_id, generation, &reason).await?;
             tx.commit().await?;
-            return Ok(AgentWorkflowAttemptStart::Stopped(
-                "Root Agent workflow was cancelled or exceeded its wall-clock limit".into(),
-            ));
+            return Ok(AgentWorkflowAttemptStart::Stopped(reason));
         }
         let active_slots: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? \
+            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) \
              AND status IN ('queued','running') AND delegation_slot_yielded=0",
         )
         .bind(&attempt.root_workflow_id)
@@ -586,18 +728,10 @@ impl Store {
             .add(active_budget_reservations(&mut tx, &attempt.root_workflow_id).await?)
             .add(proposed);
         if reserved.exceeds(&root_limits) {
-            sqlx::query(
-                "UPDATE agent_workflow_attempts SET cancel_requested=1,updated_at=? \
-                 WHERE root_workflow_id=? AND status IN ('queued','running')",
-            )
-            .bind(now)
-            .bind(&attempt.root_workflow_id)
-            .execute(&mut *tx)
-            .await?;
+            let reason = "Agent workflow execution budget is exhausted.";
+            stop_root_execution(&mut tx, &attempt.root_workflow_id, generation, reason).await?;
             tx.commit().await?;
-            return Ok(AgentWorkflowAttemptStart::Stopped(
-                "Root Agent workflow budget is exhausted".into(),
-            ));
+            return Ok(AgentWorkflowAttemptStart::Stopped(reason.into()));
         }
 
         attempt.status = AgentWorkflowAttemptStatus::Running;
@@ -605,12 +739,13 @@ impl Store {
         attempt.updated_at = now;
         attempt.validate()?;
         sqlx::query(
-            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,root_workflow_id,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,root_workflow_id,execution_generation,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&attempt.id)
         .bind(&attempt.workflow_id)
         .bind(&attempt.step_id)
         .bind(&attempt.root_workflow_id)
+        .bind(attempt.execution_generation)
         .bind(attempt.parent_attempt_id.as_deref())
         .bind(attempt.depth)
         .bind(attempt.allow_delegation as i64)
@@ -731,8 +866,9 @@ impl Store {
         }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
-            "SELECT a.root_workflow_id,a.depth,a.status,a.allow_delegation,a.cancel_requested,\
-             r.status AS root_status,r.created_at,r.root_limits_json FROM agent_workflow_attempts a \
+            "SELECT a.root_workflow_id,a.depth,a.status,a.allow_delegation,a.cancel_requested,a.execution_generation,\
+             r.execution_generation AS root_generation,r.stop_reason,\
+             r.status AS root_status,r.execution_started_at,r.root_limits_json FROM agent_workflow_attempts a \
              JOIN agent_workflows r ON r.id=a.root_workflow_id WHERE a.id=?",
         )
         .bind(attempt_id)
@@ -749,9 +885,12 @@ impl Store {
             || row.try_get::<i64, _>("allow_delegation")? == 0
             || row.try_get::<i64, _>("cancel_requested")? != 0
             || row.try_get::<String, _>("root_status")? != "running"
+            || row.try_get::<i64, _>("execution_generation")?
+                != row.try_get::<i64, _>("root_generation")?
+            || row.try_get::<Option<String>, _>("stop_reason")?.is_some()
             || depth >= i64::from(limits.max_depth)
             || root_deadline_exceeded(
-                row.try_get("created_at")?,
+                row.try_get("execution_started_at")?,
                 limits.wall_time_secs,
                 chrono::Utc::now().timestamp(),
             )
@@ -759,7 +898,7 @@ impl Store {
             return Ok(false);
         }
         let cancelled: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? \
+            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) \
              AND cancel_requested=1",
         )
         .bind(&root_workflow_id)
@@ -767,13 +906,13 @@ impl Store {
         .await?;
         let tasks: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM agent_workflow_steps s JOIN agent_workflows w \
-             ON w.id=s.workflow_id WHERE w.root_workflow_id=?",
+             ON w.id=s.workflow_id WHERE w.root_workflow_id=? AND w.execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=w.root_workflow_id)",
         )
         .bind(&root_workflow_id)
         .fetch_one(&mut *tx)
         .await?;
         let other_slots: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND id<>? \
+            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) AND id<>? \
              AND status IN ('queued','running') AND delegation_slot_yielded=0",
         )
         .bind(&root_workflow_id)
@@ -891,85 +1030,96 @@ impl Store {
             return Box::pin(store.request_agent_workflow_cancel(workflow_id)).await;
         }
         let mut tx = self.begin_write().await?;
-        let root_workflow_id = sqlx::query_scalar::<_, String>(
-            "SELECT root_workflow_id FROM agent_workflows WHERE id=?",
+        let root: Option<(String, i64)> = sqlx::query_as(
+            "SELECT w.root_workflow_id,w.execution_generation FROM agent_workflows w \
+             JOIN agent_workflows r ON r.id=w.root_workflow_id \
+             WHERE w.id=? AND w.execution_generation=r.execution_generation",
         )
         .bind(workflow_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .unwrap_or_else(|| workflow_id.to_string());
-        let now = chrono::Utc::now().timestamp();
-        let updated = sqlx::query(
-            "UPDATE agent_workflow_attempts SET cancel_requested=1,updated_at=? \
-             WHERE root_workflow_id=? AND status IN ('queued','running','waiting_run')",
-        )
-        .bind(now)
-        .bind(&root_workflow_id)
-        .execute(&mut *tx)
         .await?;
-        sqlx::query(
-            "UPDATE runs SET \
-               status=CASE WHEN status='draft' THEN 'cancelled' ELSE 'cancelling' END,\
-               ended_at=CASE WHEN status='draft' THEN COALESCE(ended_at,?) ELSE ended_at END \
-             WHERE id IN (\
-               SELECT link.run_id FROM agent_workflow_run_activities link \
-               JOIN agent_workflow_attempts attempt ON attempt.id=link.attempt_id \
-               WHERE attempt.root_workflow_id=?\
-             ) AND status IN ('draft','submitted','running')",
+        let Some((root_id, generation)) = root else {
+            return Ok(0);
+        };
+        let count = stop_root_execution(
+            &mut tx,
+            &root_id,
+            generation,
+            "Agent workflow was cancelled by the user.",
         )
-        .bind(now)
-        .bind(&root_workflow_id)
-        .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(updated.rows_affected())
+        Ok(count)
     }
 
     pub async fn agent_workflow_cancel_requested(&self, workflow_id: &str) -> Result<bool> {
+        Ok(self
+            .agent_workflow_stop_reason(workflow_id)
+            .await?
+            .is_some())
+    }
+
+    /// Check the current execution's deadline and preserve its actual stop cause.
+    pub async fn agent_workflow_stop_reason(&self, workflow_id: &str) -> Result<Option<String>> {
         if let Some(store) = self
             .route_entity("agent_workflows", "id", workflow_id)
             .await?
         {
-            return Box::pin(store.agent_workflow_cancel_requested(workflow_id)).await;
+            return Box::pin(store.agent_workflow_stop_reason(workflow_id)).await;
         }
         let root = sqlx::query(
-            "SELECT root_workflow_id,created_at,root_limits_json,status FROM agent_workflows \
-             WHERE id=?",
-        )
-        .bind(workflow_id)
-        .fetch_optional(&self.pool)
-        .await?;
+            "SELECT w.root_workflow_id,w.execution_generation AS workflow_generation,\
+             r.execution_generation,r.execution_started_at,r.root_limits_json,r.status,r.stop_reason \
+             FROM agent_workflows w LEFT JOIN agent_workflows r ON r.id=w.root_workflow_id WHERE w.id=?",
+        ).bind(workflow_id).fetch_optional(&self.pool).await?;
         let Some(root) = root else {
-            return Ok(false);
+            return Ok(None);
         };
-        let root_workflow_id: String = root.try_get("root_workflow_id")?;
-        let root = sqlx::query(
-            "SELECT created_at,root_limits_json,status FROM agent_workflows WHERE id=?",
-        )
-        .bind(&root_workflow_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(root) = root else {
-            return Ok(true);
+        let Some(generation) = root.try_get::<Option<i64>, _>("execution_generation")? else {
+            return Ok(Some("Root Agent workflow no longer exists.".into()));
         };
+        if root.try_get::<i64, _>("workflow_generation")? != generation {
+            return Ok(Some(
+                "Agent workflow belongs to a previous execution.".into(),
+            ));
+        }
+        if let Some(reason) = root.try_get::<Option<String>, _>("stop_reason")? {
+            return Ok(Some(reason));
+        }
+        let status: String = root.try_get("status")?;
+        if status == "approved" || status == "draft" {
+            return Ok(None);
+        }
+        let root_id: String = root.try_get("root_workflow_id")?;
         let limits: super::AgentDelegationRootLimits =
             serde_json::from_str(&root.try_get::<String, _>("root_limits_json")?)?;
-        let now = chrono::Utc::now().timestamp();
-        let expired =
-            root_deadline_exceeded(root.try_get("created_at")?, limits.wall_time_secs, now);
-        if expired {
-            let _ = self
-                .request_agent_workflow_cancel(&root_workflow_id)
-                .await?;
+        if status == "running"
+            && root_deadline_exceeded(
+                root.try_get("execution_started_at")?,
+                limits.wall_time_secs,
+                chrono::Utc::now().timestamp(),
+            )
+        {
+            let reason = format!(
+                "Agent workflow execution timed out after {} seconds.",
+                limits.wall_time_secs.unwrap_or_default()
+            );
+            let mut tx = self.begin_write().await?;
+            stop_root_execution(&mut tx, &root_id, generation, &reason).await?;
+            tx.commit().await?;
+            return Ok(Some(reason));
         }
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? \
-             AND cancel_requested=1",
+        // Compatibility with cancellation flags persisted by older versions.
+        let cancelled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM agent_workflow_attempts \
+             WHERE root_workflow_id=? AND execution_generation=? AND cancel_requested=1)",
         )
-        .bind(&root_workflow_id)
+        .bind(root_id)
+        .bind(generation)
         .fetch_one(&self.pool)
         .await?;
-        Ok(expired || count > 0)
+        Ok((cancelled || status == "cancelled")
+            .then(|| "Agent workflow cancellation was requested.".into()))
     }
 
     /// Yielding lets a synchronously waiting parent stop consuming one global
@@ -991,7 +1141,8 @@ impl Store {
         }
         let mut tx = self.begin_write().await?;
         let row = sqlx::query(
-            "SELECT a.root_workflow_id,a.status,a.allow_delegation,a.cancel_requested,\
+            "SELECT a.root_workflow_id,a.status,a.allow_delegation,a.cancel_requested,a.execution_generation,\
+             r.execution_generation AS root_generation,r.stop_reason,\
              r.root_limits_json,r.status AS root_status FROM agent_workflow_attempts a \
              JOIN agent_workflows r ON r.id=a.root_workflow_id WHERE a.id=?",
         )
@@ -1007,7 +1158,13 @@ impl Store {
         let running = row.try_get::<String, _>("status")? == "running";
         let allowed = row.try_get::<i64, _>("allow_delegation")? != 0;
         let cancelled = row.try_get::<i64, _>("cancel_requested")? != 0
-            || row.try_get::<String, _>("root_status")? != "running";
+            || row.try_get::<String, _>("root_status")? != "running"
+            || row.try_get::<Option<String>, _>("stop_reason")?.is_some();
+        if row.try_get::<i64, _>("execution_generation")?
+            != row.try_get::<i64, _>("root_generation")?
+        {
+            return Ok(false);
+        }
         if !running || !allowed {
             tx.rollback().await?;
             return Ok(false);
@@ -1016,7 +1173,7 @@ impl Store {
             let limits: super::AgentDelegationRootLimits =
                 serde_json::from_str(&row.try_get::<String, _>("root_limits_json")?)?;
             let occupied: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? \
+                "SELECT COUNT(*) FROM agent_workflow_attempts WHERE root_workflow_id=? AND execution_generation=(SELECT execution_generation FROM agent_workflows WHERE id=agent_workflow_attempts.root_workflow_id) \
                  AND id<>? AND status IN ('queued','running') AND delegation_slot_yielded=0",
             )
             .bind(&root_workflow_id)
