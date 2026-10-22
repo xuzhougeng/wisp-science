@@ -74,6 +74,13 @@ restarted mid-copy, is marked failed with a note to submit it again instead of
 staying `running`; rsync with `resume=true` then continues from the bytes
 already copied.
 
+Background recovery respects a transfer's valid lease even when the same app
+process owns it. This protects output downloads that are still running during
+automatic harvest or a manual harvest retry. If computation succeeded but its
+output download was interrupted, use **Retry harvest** on that Run (or
+`harvest_run` with its ID) to retrieve the existing results. The compute Run
+keeps its succeeded status; a retry does not submit the computation again.
+
 ## Upload from the local machine
 
 From the Files panel, select an SSH context, open the destination folder, and

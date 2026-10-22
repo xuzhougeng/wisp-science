@@ -1220,8 +1220,10 @@ impl RunManager {
                     }
                 })
                 .unwrap_or(ACTIVE_LEASE_SECS);
+            // A live inline harvest may not appear in `active`. Recovery must
+            // respect its lease even when it belongs to this same manager.
             let claimed = store
-                .claim_run_lifecycle(&run.id, &self.owner_id, lease_secs)
+                .claim_expired_run_lifecycle(&run.id, &self.owner_id, lease_secs)
                 .await
                 .map_err(|e| e.to_string())?;
             if !claimed {

@@ -3032,6 +3032,196 @@ impl RunCommandRunner for HarvestFakeRunner {
     }
 }
 
+struct PausedHarvestRunner {
+    inner: HarvestFakeRunner,
+    pull_started: tokio::sync::Semaphore,
+    pull_release: tokio::sync::Semaphore,
+}
+
+#[async_trait::async_trait]
+impl RunCommandRunner for PausedHarvestRunner {
+    async fn run(
+        &self,
+        command: RunCommand,
+        timeout: Duration,
+    ) -> Result<RunCommandOutput, String> {
+        if command.program == "scp" {
+            self.pull_started.add_permits(1);
+            self.pull_release.acquire().await.unwrap().forget();
+        }
+        self.inner.run(command, timeout).await
+    }
+}
+
+#[tokio::test]
+async fn reconciliation_during_automatic_and_manual_harvest_preserves_the_live_download() {
+    for automatic in [true, false] {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_harvest_reconcile_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let store = wisp_store::Store::open(&tmp.join("store.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project("p", "Project", &tmp.to_string_lossy())
+            .await
+            .unwrap();
+        store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+        store
+            .upsert_execution_context(&harvest_test_context())
+            .await
+            .unwrap();
+        let bytes = b"gene\tvalue\nMYB36\t1\n".to_vec();
+        let runner = Arc::new(PausedHarvestRunner {
+            inner: HarvestFakeRunner {
+                manifest: format!(
+                    "__WISP_HARVEST__:file:0:{}:{}:results/out.tsv\n__WISP_HARVEST_DONE__\n",
+                    bytes.len(),
+                    sha256_hex_of(&bytes)
+                ),
+                files: vec![("files/results/out.tsv".into(), bytes.clone())],
+                commands: StdMutex::new(vec![]),
+                collect_hold: None,
+            },
+            pull_started: tokio::sync::Semaphore::new(0),
+            pull_release: tokio::sync::Semaphore::new(0),
+        });
+        let manager = RunManager::with_runner(runner.clone());
+        let remote = harvest_test_remote("compute", &tmp, vec![harvest_specs().remove(0)]);
+        let mut run = wisp_store::RunRecord::new(
+            "compute",
+            "p",
+            "ssh:gpu",
+            "Completed computation",
+            "ssh_direct",
+        );
+        run.frame_id = Some("f".into());
+        run.command = Some(remote.command.clone());
+        run.output_specs_json = serde_json::to_string(&remote.output_specs).unwrap();
+        run.remote_handle_json = Some(serde_json::to_string(&remote.handle).unwrap());
+        run.remote_workdir = Some("~/.wisp-science/runs/compute".into());
+        if !automatic {
+            run.status = wisp_store::RunStatus::Succeeded;
+            run.exit_code = Some(0);
+            run.last_poll_error = Some("earlier output download was interrupted".into());
+        }
+        store.create_run(&run).await.unwrap();
+        if automatic {
+            assert!(store
+                .activate_run_lifecycle(
+                    "compute",
+                    wisp_store::RunStatus::Running,
+                    &manager.owner_id,
+                    ACTIVE_LEASE_SECS
+                )
+                .await
+                .unwrap());
+        }
+        let task = tokio::spawn({
+            let store = store.clone();
+            let manager = manager.clone();
+            async move {
+                if automatic {
+                    finish_remote_run(
+                        &store,
+                        manager.runner.as_ref(),
+                        &manager.owner_id,
+                        &remote,
+                        wisp_store::RunStatus::Succeeded,
+                        Some(0),
+                    )
+                    .await
+                } else {
+                    manager.harvest_run(&store, "compute").await.map(|_| ())
+                }
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(10), runner.pull_started.acquire())
+            .await
+            .expect("fake download did not start")
+            .unwrap()
+            .forget();
+        let transfer = store
+            .list_active_runs()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|run| run.kind == "file_transfer")
+            .unwrap();
+        assert!(!manager.active.lock().await.contains_key(&transfer.id));
+        // Force the exact race: recovery scans while this owner's SCP is pending.
+        assert_eq!(manager.reconcile_once(&store).await.unwrap(), 0);
+        let still_running = store.get_run(&transfer.id).await.unwrap().unwrap();
+        assert_eq!(still_running.status, wisp_store::RunStatus::Running);
+        assert!(still_running.last_poll_error.is_none());
+        runner.pull_release.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let finished = store.get_run("compute").await.unwrap().unwrap();
+        assert_eq!(finished.status, wisp_store::RunStatus::Succeeded);
+        assert_eq!(finished.exit_code, Some(0));
+        assert!(finished.harvested_at.is_some());
+        assert!(finished.last_poll_error.is_none());
+        assert_eq!(
+            store.get_run(&transfer.id).await.unwrap().unwrap().status,
+            wisp_store::RunStatus::Succeeded
+        );
+        assert_eq!(store.list_run_outputs("compute").await.unwrap().len(), 1);
+        assert_eq!(
+            std::fs::read(tmp.join("remote/gpu/compute/results/out.tsv")).unwrap(),
+            bytes
+        );
+        assert_eq!(store.list_runs_by_project("p").await.unwrap().len(), 2);
+        assert!(runner
+            .inner
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|command| !command.script.contains("launch")));
+        drop(manager);
+        drop(store);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+}
+
+#[tokio::test]
+async fn recovery_still_fails_abandoned_harvest_and_preserves_the_compute_result() {
+    let tmp = std::env::temp_dir().join(format!("wisp_abandoned_harvest_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = seed_harvest_run(&tmp, "compute").await;
+    let mut transfer =
+        wisp_store::RunRecord::new("orphan", "p", "ssh:gpu", "Harvest", "file_transfer");
+    transfer.status = wisp_store::RunStatus::Running;
+    transfer.remote_handle_json = Some(
+        serde_json::to_string(&TransferHandle::Harvest {
+            parent_run_id: "compute".into(),
+        })
+        .unwrap(),
+    );
+    store.create_run(&transfer).await.unwrap();
+    let runner = Arc::new(ScriptedRunRunner::new(vec![]));
+    let manager = RunManager::with_runner(runner.clone());
+    manager.reconcile_once(&store).await.unwrap();
+    let orphan = store.get_run("orphan").await.unwrap().unwrap();
+    assert_eq!(orphan.status, wisp_store::RunStatus::Failed);
+    assert!(orphan
+        .last_poll_error
+        .unwrap()
+        .contains("retry harvest_run on compute"));
+    assert_eq!(
+        store.get_run("compute").await.unwrap().unwrap().status,
+        wisp_store::RunStatus::Succeeded
+    );
+    assert!(runner.commands.lock().unwrap().is_empty());
+    drop(manager);
+    drop(store);
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
 fn harvest_specs() -> Vec<crate::harvest::OutputSpec> {
     vec![
         crate::harvest::OutputSpec {

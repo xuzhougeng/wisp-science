@@ -519,6 +519,36 @@ impl Store {
         Ok(updated.rows_affected() == 1)
     }
 
+    /// Recovery may claim only an abandoned lifecycle. Inline harvest
+    /// transfers hold a live lease without a RunManager task-map entry;
+    /// sharing their owner ID is not permission to recover them.
+    pub async fn claim_expired_run_lifecycle(
+        &self,
+        id: &str,
+        owner: &str,
+        lease_secs: i64,
+    ) -> Result<bool> {
+        if let Some(store) = self.route_entity("runs", "id", id).await? {
+            return Box::pin(store.claim_expired_run_lifecycle(id, owner, lease_secs)).await;
+        }
+        if owner.is_empty() || lease_secs <= 0 {
+            anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
+        }
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET lifecycle_owner=?,lifecycle_lease_until=? \
+             WHERE id=? AND status IN ('submitted','running','cancelling') \
+             AND (lifecycle_owner IS NULL OR lifecycle_lease_until IS NULL OR lifecycle_lease_until<=?)",
+        )
+        .bind(owner)
+        .bind(now.saturating_add(lease_secs))
+        .bind(id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
     pub async fn renew_run_lifecycle(
         &self,
         id: &str,

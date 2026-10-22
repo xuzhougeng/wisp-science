@@ -2378,6 +2378,57 @@ async fn raw_tools_prompt_and_depth_cannot_grant_nested_delegation() {
 }
 
 #[tokio::test]
+async fn recovery_claim_respects_live_leases_even_for_the_same_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+    store.create_project("p", "Project", "").await.unwrap();
+    let run = RunRecord::new("transfer", "p", "local", "Harvest", "file_transfer");
+    store.create_run(&run).await.unwrap();
+    assert!(!store
+        .claim_expired_run_lifecycle("transfer", "owner", 60)
+        .await
+        .unwrap());
+    assert!(store
+        .activate_run_lifecycle("transfer", RunStatus::Running, "owner", 60)
+        .await
+        .unwrap());
+    for owner in ["owner", "another-owner"] {
+        assert!(!store
+            .claim_expired_run_lifecycle("transfer", owner, 60)
+            .await
+            .unwrap());
+    }
+    assert!(store
+        .renew_run_lifecycle("transfer", "owner", 60)
+        .await
+        .unwrap());
+    sqlx::query("UPDATE runs SET lifecycle_lease_until=1 WHERE id='transfer'")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(store
+        .claim_expired_run_lifecycle("transfer", "recovery", 60)
+        .await
+        .unwrap());
+    assert!(!store
+        .claim_expired_run_lifecycle("transfer", "recovery", 60)
+        .await
+        .unwrap());
+    assert!(!store
+        .renew_run_lifecycle("transfer", "owner", 60)
+        .await
+        .unwrap());
+    assert!(store
+        .finish_active_run_owned("transfer", "recovery", RunStatus::Succeeded, Some(0))
+        .await
+        .unwrap());
+    assert!(!store
+        .claim_expired_run_lifecycle("transfer", "recovery", 60)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
 async fn last_user_message_session_ignores_later_assistant_activity() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_last_user_session_{}.sqlite",
