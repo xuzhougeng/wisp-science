@@ -73,7 +73,9 @@ internal sealed partial class NativeSettingsSectionPage : NativeActionPage
     private async Task Reload()
     {
         if (model.Draft != null) return;
-        await model.LoadAsync(Reads);
+        var loaded = await model.LoadAsync(Reads);
+        if (loaded && section == "general" && model.Values["get_settings"] is JsonObject prefs
+            && prefs.ContainsKey("notification_sound_enabled")) await model.LoadNotificationSoundsAsync();
         if (!model.Closed) Render();
     }
     private void Confirm(string text, Action action)

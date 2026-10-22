@@ -256,3 +256,26 @@ and remaining platform/external-service acceptance, and
 for build prerequisites, host/database boundaries and manual smoke steps.
 
 成功刷新项目列表后，已关闭导入表单的旧错误会清除；只有项目列表读取失败才显示缓存数据说明。打开中的导入表单仍保留错误，刷新不会重试导入。
+
+### Windows notification sound preferences (2026-10-22)
+
+General → Edit Workspace and Notifications now exposes the shared independent
+task-sound switch, the host's platform sound catalog and an explicit Preview
+button. Preview plays the draft choice without saving it or enabling the switch.
+Save uses the existing `set_settings` payload and retains unrelated fields,
+including the separate desktop-banner switch. Playback failures keep the draft
+and are never retried automatically.
+
+The catalog and preview commands are advertised through the native settings
+allowlist. Older hosts keep General usable: missing sound fields show an upgrade
+hint, and missing commands hide the sound picker. A catalog read failure is
+visible without discarding other successfully loaded preferences. Saved IDs from
+another platform remain visible until explicitly changed and cannot be previewed
+unless the connected host advertises that exact ID. Empty catalogs offer no
+invented sounds. The picker uses the existing window Escape stack.
+
+This slice adds settings and explicit playback only. WinUI background task
+notification delivery, foreground suppression and notification-click navigation
+still need their own event/lifecycle integration; shared preferences do not
+establish that integration. See the dated audit in
+[Windows user testing](native-windows-user-testing.md#source-audit-and-sound-settings-2026-10-22).

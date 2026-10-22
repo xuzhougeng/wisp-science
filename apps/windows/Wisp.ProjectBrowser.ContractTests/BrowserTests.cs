@@ -144,6 +144,48 @@ internal static class BrowserTests
         fake.Fail = true;
         await model.RefreshAsync();
         Check(model.Error != null && model.Projects.Count == 2 && model.LastLoaded != null, "failed refresh retains labelled previous snapshot");
+        var reads = fake.ProjectReads;
+        await model.RefreshAfterHostReadyAsync("new");
+        Check(fake.ProjectReads == reads && model.Error != null && model.Projects.Count == 2,
+            "host connection preserves previously loaded data and its refresh error");
+
+        var firstLaunch = new FakeClient { Fail = true };
+        using var fresh = new ProjectBrowserModel(firstLaunch, "first-run");
+        await fresh.RefreshAsync();
+        Check(fresh.Error != null && fresh.LastLoaded == null && fresh.Projects.Count == 0,
+            "missing first-run database leaves a recoverable initial read error");
+        firstLaunch.Fail = false;
+        await fresh.RefreshAfterHostReadyAsync("other-database");
+        Check(firstLaunch.ProjectReads == 1 && fresh.Error != null,
+            "a different database's host cannot retry the initial read");
+        firstLaunch.PendingProjects = new();
+        var recovering = fresh.RefreshAfterHostReadyAsync("first-run");
+        await fresh.RefreshAfterHostReadyAsync("first-run");
+        Check(firstLaunch.ProjectReads == 2 && fresh.Loading,
+            "duplicate host-ready callbacks do not overlap the recovery read");
+        firstLaunch.PendingProjects.SetResult(new([Project("p")], "persisted_only"));
+        await recovering;
+        Check(fresh.Error == null && fresh.LastLoaded != null && fresh.Projects.Single().Id == "p"
+            && fresh.RecentSessions.Count == 2 && !fresh.Loading,
+            "host-ready recovery populates projects and recent sessions without manual refresh");
+        await fresh.OpenProjectAsync("p", "s1");
+        var restoredMessages = fresh.Messages;
+        await fresh.RefreshAfterHostReadyAsync("first-run");
+        Check(firstLaunch.ProjectReads == 2 && fresh.ActiveSessionId == "s1"
+            && ReferenceEquals(fresh.Messages, restoredMessages),
+            "later host connections preserve the selected session and transcript");
+
+        var unavailable = new FakeClient { Fail = true };
+        using var failedRecovery = new ProjectBrowserModel(unavailable, "unavailable");
+        await failedRecovery.RefreshAsync();
+        await failedRecovery.RefreshAfterHostReadyAsync("unavailable");
+        Check(unavailable.ProjectReads == 2 && failedRecovery.Error != null && !failedRecovery.Loading,
+            "an unsuccessful recovery stays visible without an automatic retry loop");
+        var disposed = new ProjectBrowserModel(unavailable, "closed");
+        await disposed.RefreshAsync();
+        disposed.Dispose();
+        await disposed.RefreshAfterHostReadyAsync("closed");
+        Check(unavailable.ProjectReads == 3, "host completion after window close cannot start another query");
         Console.WriteLine($"{passed} Windows client / navigation checks passed.");
     }
 
@@ -185,9 +227,13 @@ internal static class BrowserTests
         public TaskCompletionSource<TranscriptPage>? PendingTranscript;
         public TaskCompletionSource<ProjectListSnapshot>? PendingProjects;
         public bool Fail;
-        public Task<ProjectListSnapshot> ListProjectsAsync(string path, CancellationToken cancellationToken = default) => Fail
-            ? Task.FromException<ProjectListSnapshot>(new IOException("unavailable"))
-            : PendingProjects?.Task ?? Task.FromResult(new ProjectListSnapshot([Project("p"), Project("p2")], "persisted_only"));
+        public int ProjectReads;
+        public Task<ProjectListSnapshot> ListProjectsAsync(string path, CancellationToken cancellationToken = default)
+        {
+            ProjectReads++;
+            return Fail ? Task.FromException<ProjectListSnapshot>(new IOException("unavailable"))
+                : PendingProjects?.Task ?? Task.FromResult(new ProjectListSnapshot([Project("p"), Project("p2")], "persisted_only"));
+        }
         public Task<IReadOnlyList<BrowserSession>> ListSessionsAsync(string path, string? projectId = null, CancellationToken cancellationToken = default) =>
             PendingSessions?.Task ?? Task.FromResult<IReadOnlyList<BrowserSession>>([new("s1", projectId ?? "p", "Session one", 0, "done"), new("s2", projectId ?? "p2", "Session two", 0, "needs_you")]);
         public Task<TranscriptPage> GetTranscriptAsync(string path, string projectId, string sessionId, long? beforeSeq = null, CancellationToken cancellationToken = default) =>

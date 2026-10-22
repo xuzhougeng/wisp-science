@@ -24,6 +24,24 @@ public sealed class NativeSettingsEditorModel(INativeSettingsClient client, stri
         return loaded;
     }, loaded => Values = loaded);
 
+    // Optional reads stay separate: an old host or a failed catalog request must
+    // not prevent editing the already loaded general preferences.
+    public Task<bool> LoadNotificationSoundsAsync() => RunAsync(async () =>
+    {
+        var capabilities = await client.InvokeAsync("native_settings_capabilities", new(), projectId);
+        if (Closed || !NativeNotificationSounds.Supported(capabilities)) return null;
+        return await client.InvokeAsync("list_notification_sounds", new(), projectId);
+    }, catalog => Values["list_notification_sounds"] = catalog?.DeepClone());
+
+    public Task<bool> PreviewNotificationSoundAsync()
+    {
+        if (Draft == null || command != "set_settings" || Busy || Closed
+            || !Draft.ContainsKey("notification_sound_enabled")) return Task.FromResult(false);
+        var sound = Draft["notification_sound"]?.GetValue<string>() ?? "";
+        if (!NativeNotificationSounds.CanPreview(Values["list_notification_sounds"], sound)) return Task.FromResult(false);
+        return InvokeAsync("preview_notification_sound", new() { ["sound"] = sound });
+    }
+
     public void Edit(JsonObject draft, string write, string? argument = null, JsonObject? arguments = null)
     {
         if (Busy || Closed) return;

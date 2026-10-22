@@ -71,6 +71,16 @@ public sealed class ProjectBrowserModel(IProjectBrowserClient client, string dat
         finally { if (generation == refreshGeneration) { Loading = false; Notify(); } }
     }
 
+    // A first launch can query the read-only service before the desktop host
+    // creates its database. Recover that failed read once the same host is ready,
+    // without reloading a populated browser or following a stale connection.
+    public Task RefreshAfterHostReadyAsync(string database)
+    {
+        if (lifetime.IsCancellationRequested || database != DatabasePath || Loading
+            || LastLoaded != null || Error == null) return Task.CompletedTask;
+        return RefreshAsync();
+    }
+
     public async Task SetStarredAsync(string projectId, bool starred)
     {
         if (Loading || !Projects.Any(p => p.Id == projectId)) return;

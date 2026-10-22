@@ -105,6 +105,7 @@ pub const COMMANDS: &[&str] = &[
     "list_execution_contexts",
     "list_mcp_connections",
     "list_models",
+    "list_notification_sounds",
     "list_plugins",
     "list_projects",
     "list_quick_actions",
@@ -117,6 +118,7 @@ pub const COMMANDS: &[&str] = &[
     "model_catalog_lookup",
     "open_browser_extension_page",
     "preview_github_skills",
+    "preview_notification_sound",
     "probe_execution_context",
     "project_sync_code",
     "read_memory_file",
@@ -247,5 +249,7 @@ mod tests {
         assert!(!allowed.contains("open_terminal"));
         assert!(allowed.contains("import_wsl_contexts"));
         assert!(allowed.contains("authorize_http_connection"));
+        assert!(allowed.contains("list_notification_sounds"));
+        assert!(allowed.contains("preview_notification_sound"));
     }
 }

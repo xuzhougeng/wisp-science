@@ -95,5 +95,6 @@ await NativeRunReviewTests.RunAsync(args[0]);
 await WorkspaceConversationTests.RunAsync(args[0]);
 await NativeParityTests.RunAsync();
 await NativeSettingsEditorTests.RunAsync();
+await NativeNotificationSoundTests.RunAsync();
 await NativeModelSettingsTests.RunAsync();
 await NativeChannelSettingsTests.RunAsync();

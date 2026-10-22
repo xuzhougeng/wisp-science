@@ -97,9 +97,14 @@ internal sealed partial class MainWindow : Window
         {
             var revision = model.NavigationRevision;
             await model.RefreshAsync();
+            if (windowClosed) return;
+            var hostConnection = ConnectHostAsync();
+            // First-run links must wait for the host to create the database and
+            // recover the initial read. Existing databases remain navigable now.
+            if (model.LastLoaded == null) await hostConnection;
             if (!windowClosed && revision == model.NavigationRevision && initialProject != null)
                 await model.OpenProjectAsync(initialProject, initialSession);
-            await ConnectHostAsync();
+            await hostConnection;
         };
         Render();
     }
@@ -899,6 +904,8 @@ internal sealed partial class MainWindow : Window
             if (windowClosed || database != model.DatabasePath) { connected.Dispose(); return null; }
             workspaceHost = connected;
             localError = null;
+            await model.RefreshAfterHostReadyAsync(database);
+            if (windowClosed || database != model.DatabasePath || workspaceHost != connected) return null;
             await ReadAppearanceAsync(connected);
             return connected;
         }

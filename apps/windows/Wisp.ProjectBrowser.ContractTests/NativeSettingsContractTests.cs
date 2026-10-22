@@ -35,6 +35,10 @@ internal static class NativeSettingsContractTests
         catch (HttpRequestException) { Require(handler.Calls == 2, "Mutation was retried"); }
         var catalog = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtures, "commands.json")))!["commands"]!.AsArray();
         Require(catalog.Any(c => c?["command"]?.GetValue<string>() == "import_wsl_contexts"), "Missing Windows environment seam");
+        Require(catalog.Any(c => c?["command"]?.GetValue<string>() == "list_notification_sounds"), "Missing native notification sound catalog");
+        var preview = catalog.Single(c => c?["command"]?.GetValue<string>() == "preview_notification_sound")!;
+        Require(preview["arguments"]!.AsArray().Count == 1 && preview["arguments"]![0]?["name"]?.GetValue<string>() == "sound",
+            "Notification preview must accept only the selected sound ID");
         Require(!catalog.Any(c => c?["command"]?.GetValue<string>() == "send_message"), "Non-settings capability leaked");
         Console.WriteLine("Native settings shared fixtures, scoped transport, error handling and no-retry tests passed.");
     }

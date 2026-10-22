@@ -618,6 +618,12 @@
       "source": "src-tauri/src/models.rs"
     },
     {
+      "command": "list_notification_sounds",
+      "arguments": [],
+      "result": "Vec<NotificationSound>",
+      "source": "src-tauri/src/notification_sound.rs"
+    },
+    {
       "command": "list_plugins",
       "arguments": [],
       "result": "Result<Vec<PluginView>, String>",
@@ -767,6 +773,18 @@
       ],
       "result": "Result<Vec<SkillStoreCandidate>, String>",
       "source": "src-tauri/src/skill_store.rs"
+    },
+    {
+      "command": "preview_notification_sound",
+      "arguments": [
+        {
+          "name": "sound",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/notification_sound.rs"
     },
     {
       "command": "probe_execution_context",

@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Wisp.ProjectBrowser;
 
 namespace Wisp.Science.Preview;
 
@@ -69,6 +70,7 @@ internal sealed partial class NativeSettingsSectionPage
             Form.Children.Add(Mute("开启后，新项目的数据保存在各自文件夹；关闭后，新项目共用应用数据库。已有项目位置不变。默认关闭，从 v1.15.0 升级时保留开启。"));
             Form.Children.Add(Design.Text("启动与通知", 16));
             Boolean(d, "resume_last_session", "恢复最近会话"); Boolean(d, "notifications_enabled", "桌面通知");
+            NotificationSoundFields(d);
         });
         Preference("输入与选择", "get_appearance_prefs", "set_appearance_prefs", "prefs", d =>
         { Boolean(d, "send_with_modifier", "使用 Ctrl+Enter 发送"); Boolean(d, "selection_popup_enabled", "选中文本快捷菜单"); });
@@ -93,6 +95,31 @@ internal sealed partial class NativeSettingsSectionPage
             JsonNode? update = null;
             if (await model.InvokeAsync("check_for_updates", new(), v => update = v)) ShowUpdate(updates, update);
         }));
+    }
+    private void NotificationSoundFields(JsonObject draft)
+    {
+        if (!draft.ContainsKey("notification_sound_enabled"))
+        {
+            Form.Children.Add(Mute("当前桌面宿主不支持独立提示音，请更新完整原生版本。"));
+            return;
+        }
+        Boolean(draft, "notification_sound_enabled", "任务提示音（独立于桌面通知）");
+        Form.Children.Add(Mute("与桌面客户端共享提示音设置，和桌面通知分别控制。试听不会保存设置，也不会改变提示音开关。"));
+        var catalog = model.Values["list_notification_sounds"];
+        var options = NativeNotificationSounds.Choices(catalog, S(draft, "notification_sound"));
+        if (options.Length == 0)
+        {
+            Form.Children.Add(Mute("此宿主暂未提供可用音色。可保存提示音开关；更新宿主后刷新此页以选择音色。"));
+            return;
+        }
+        var preview = Button("试听", async () => { await model.PreviewNotificationSoundAsync(); });
+        Choice(Form, "提示音色", S(draft, "notification_sound"), options, value =>
+        {
+            draft["notification_sound"] = value;
+            preview.IsEnabled = NativeNotificationSounds.CanPreview(catalog, value);
+        });
+        preview.IsEnabled = NativeNotificationSounds.CanPreview(catalog, S(draft, "notification_sound"));
+        Form.Children.Add(preview);
     }
     private void ShowUpdate(StackPanel target, JsonNode? update)
     {
