@@ -224,9 +224,14 @@ and that one Escape closes only the overlaid exploration view.
    composer Agent menu has no delegation settings. The main Agent decides per
    call whether a batch returns in the same turn or in the background (see
    [Background completion](#background-completion)).
-2. Ask the main Agent for an outcome that materially benefits from independent
-   or parallel work. The main Agent decides whether delegation is useful and,
-   when it is, calls `delegate_tasks` itself.
+2. Use `delegate_tasks` for a bounded graph with known dependencies and
+   deliverables. For sustained exploration that inspects inputs, revises
+   scripts, waits for compute Runs, reviews results, and needs follow-up
+   instructions, the Agent prefers `dispatch_subagent` when available. An
+   explicitly selected Workflow template still runs through `delegate_tasks`,
+   including a single-node template; task count alone does not select a tool.
+   Background delivery changes when a workflow returns, not its time or budget
+   limits. Small tasks stay in the current conversation.
 3. The call describes an overall goal, bounded shared context, and up to eight
    tasks. Each task has its own instruction, dependency IDs, capability IDs,
    optional Specialist, optional JSON output schema, optional isolation
@@ -519,6 +524,14 @@ a frozen item list, bounded concurrency, resumable rows, and an optional
 decision-model pass/reject decision. See [map-items.md](map-items.md).
 
 ## Subagent conversations
+
+Use a subagent conversation for evolving research work, such as checking
+candidate sequences, developing an analysis script on a selected server,
+reviewing its results, and revising it. The parent can answer questions and
+send further instructions to the same child. Computation still uses managed
+Runs, and a completed Run's outputs can be recovered without repeating the
+computation. A workflow remains appropriate when its task graph and expected
+deliverables are already defined or the user explicitly selected a template.
 
 For a bounded second opinion during a difficult turn, configure an
 [on-demand expert model](model-configuration.md#on-demand-senior-experts--按需求助高级模型).
