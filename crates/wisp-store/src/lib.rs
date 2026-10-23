@@ -149,6 +149,7 @@ const AGENT_WORKFLOW_DELIVERIES_MIGRATION: &str = "0019_agent_workflow_deliverie
 const AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL: &str =
     include_str!("../migrations/0019_agent_workflow_deliveries.sql");
 const AGENT_WORKFLOW_LINEAGE_MIGRATION: &str = "0020_agent_workflow_lineage";
+const AGENT_WORKFLOW_EXECUTION_ROUNDS_MIGRATION: &str = "agent_workflow_execution_rounds_v1";
 const PLUGIN_INSTALLATIONS_MIGRATION: &str = "0021_plugin_installations";
 const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
     include_str!("../migrations/0021_plugin_installations.sql");
@@ -479,9 +480,9 @@ impl Store {
             Self::apply_agent_workflow_lineage(pool).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await?;
         }
-        if !Self::migration_applied(pool, "agent_workflow_execution_rounds_v1").await? {
+        if !Self::migration_applied(pool, AGENT_WORKFLOW_EXECUTION_ROUNDS_MIGRATION).await? {
             Self::apply_agent_workflow_execution_rounds(pool).await?;
-            Self::record_migration(pool, "agent_workflow_execution_rounds_v1").await?;
+            Self::record_migration(pool, AGENT_WORKFLOW_EXECUTION_ROUNDS_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, PLUGIN_INSTALLATIONS_MIGRATION).await? {
             Self::execute_sql_script(pool, PLUGIN_INSTALLATIONS_MIGRATION_SQL).await?;

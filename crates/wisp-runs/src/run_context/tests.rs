@@ -3100,10 +3100,10 @@ async fn reconciliation_during_automatic_and_manual_harvest_preserves_the_live_d
         run.output_specs_json = serde_json::to_string(&remote.output_specs).unwrap();
         run.remote_handle_json = Some(serde_json::to_string(&remote.handle).unwrap());
         run.remote_workdir = Some("~/.wisp-science/runs/compute".into());
+        run.last_poll_error = Some("earlier poll or output download was interrupted".into());
         if !automatic {
             run.status = wisp_store::RunStatus::Succeeded;
             run.exit_code = Some(0);
-            run.last_poll_error = Some("earlier output download was interrupted".into());
         }
         store.create_run(&run).await.unwrap();
         if automatic {
@@ -3154,6 +3154,12 @@ async fn reconciliation_during_automatic_and_manual_harvest_preserves_the_live_d
         let still_running = store.get_run(&transfer.id).await.unwrap().unwrap();
         assert_eq!(still_running.status, wisp_store::RunStatus::Running);
         assert!(still_running.last_poll_error.is_none());
+        let pending = store.get_run("compute").await.unwrap().unwrap();
+        assert!(pending.harvested_at.is_none());
+        assert_eq!(
+            pending.last_poll_error.as_deref(),
+            Some("earlier poll or output download was interrupted")
+        );
         runner.pull_release.add_permits(1);
         tokio::time::timeout(Duration::from_secs(10), task)
             .await
@@ -3414,6 +3420,10 @@ async fn ssh_harvest_checksum_mismatch_registers_nothing() {
     let tmp = std::env::temp_dir().join(format!("wisp_ssh_harvest_bad_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();
     let store = seed_harvest_run(&tmp, "run-bad").await;
+    store
+        .record_run_harvest_error("run-bad", "earlier output download was interrupted")
+        .await
+        .unwrap();
     let table = b"a\tb\n1\t2\n".to_vec();
     let manifest = format!(
         "__WISP_HARVEST__:file:0:{}:{}:results/out.tsv\n__WISP_HARVEST_DONE__\n",
@@ -3447,6 +3457,10 @@ async fn ssh_harvest_checksum_mismatch_registers_nothing() {
     assert!(error.contains("checksum mismatch"), "{error}");
     let run = store.get_run("run-bad").await.unwrap().unwrap();
     assert!(run.harvested_at.is_none());
+    assert_eq!(
+        run.last_poll_error.as_deref(),
+        Some("earlier output download was interrupted")
+    );
     assert!(store.list_run_outputs("run-bad").await.unwrap().is_empty());
     assert!(!tmp.join("remote/gpu/run-bad/results/out.tsv").exists());
     let transfers: Vec<_> = store

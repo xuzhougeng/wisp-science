@@ -80,6 +80,9 @@ automatic harvest or a manual harvest retry. If computation succeeded but its
 output download was interrupted, use **Retry harvest** on that Run (or
 `harvest_run` with its ID) to retrieve the existing results. The compute Run
 keeps its succeeded status; a retry does not submit the computation again.
+Once the outputs are registered and downloaded files pass checksum verification,
+the Run clears the earlier poll or harvest error. An unfinished or failed retry
+does not clear that error.
 
 ## Upload from the local machine
 

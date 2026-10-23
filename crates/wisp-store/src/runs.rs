@@ -836,18 +836,21 @@ impl Store {
     }
 
     /// Record that this Run's declared outputs were registered (and, for
-    /// remote Runs, downloaded and checksum-verified). Idempotent.
+    /// remote Runs, downloaded and checksum-verified), clearing any earlier
+    /// poll/harvest error. Idempotent.
     pub async fn mark_run_harvested(&self, id: &str) -> Result<bool> {
         if let Some(store) = self.route_entity("runs", "id", id).await? {
             return Box::pin(store.mark_run_harvested(id)).await;
         }
         let now = chrono::Utc::now().timestamp();
-        let updated =
-            sqlx::query("UPDATE runs SET harvested_at=? WHERE id=? AND harvested_at IS NULL")
-                .bind(now)
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
+        let updated = sqlx::query(
+            "UPDATE runs SET harvested_at=?, last_poll_error=NULL \
+             WHERE id=? AND harvested_at IS NULL",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(updated.rows_affected() == 1)
     }
 
