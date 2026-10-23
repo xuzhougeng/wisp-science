@@ -1887,6 +1887,7 @@ async fn unlimited_workflow_budgets_admit_work_after_large_usage_and_allow_deleg
         .await
         .unwrap());
     first.status = AgentWorkflowAttemptStatus::Succeeded;
+    first.response_json = Some(r#"{"status":"succeeded"}"#.into());
     first.input_tokens = 489_967;
     first.output_tokens = 7_709;
     first.tool_calls = 600;
@@ -1946,6 +1947,7 @@ async fn unlimited_root_dimensions_do_not_disable_explicit_finite_dimensions() {
         )
         .await;
         first.status = AgentWorkflowAttemptStatus::Succeeded;
+        first.response_json = Some(r#"{"status":"succeeded"}"#.into());
         first.input_tokens = 100;
         first.tool_calls = 2;
         first.cost_microunits = 2;
