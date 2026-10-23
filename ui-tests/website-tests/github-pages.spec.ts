@@ -224,6 +224,7 @@ for (const id of tutorialIds) {
     const title = tutorialTitle(id, "zh");
     await expect(page.locator(".tutorial-article")).toHaveCount(1);
     await expect(page.locator("h1")).toHaveText(title);
+    await expect(page.locator("html")).toHaveClass(/i18n-ready/);
     const chineseBody = page.locator('.tutorial-body[lang="zh-CN"]');
     const englishBody = page.locator('.tutorial-body[lang="en"]');
     // Navigation can expose both bodies before the language stylesheet loads.
