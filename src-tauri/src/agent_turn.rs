@@ -3191,6 +3191,12 @@ mod context_epoch_tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].content.as_text().starts_with("question 1"));
         assert!(rows[1].content.as_text().starts_with("answer 1"));
+        assert!(
+            crate::session_commands::visual_turn_range_messages(&store, "f", 1, 7)
+                .await
+                .is_err(),
+            "a valid start must not silently accept an unavailable end"
+        );
         assert_eq!(
             crate::session_commands::visual_turn_range_messages(&store, "f", 7, 8)
                 .await

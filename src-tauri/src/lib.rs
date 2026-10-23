@@ -133,6 +133,7 @@ mod scheduler;
 mod seed;
 mod session_commands;
 mod session_context_tool;
+mod session_experience;
 mod session_export;
 mod session_import;
 mod settings_commands;
@@ -7745,6 +7746,7 @@ pub fn run() {
             session_commands::summarize_session_branch_merge,
             session_commands::generate_session_handoff,
             session_commands::render_session_excerpt,
+            session_commands::generate_session_experience,
             session_commands::merge_session_branch_summary,
             exploration_commands::start_exploration,
             exploration_commands::list_project_explorations,

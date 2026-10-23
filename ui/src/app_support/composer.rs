@@ -100,8 +100,9 @@ pub(crate) struct ComposerQuote {
 /// keeps such a quote out of the workspace-file edit path, whatever the
 /// conversation was titled.
 pub(crate) const EXCERPT_SOURCE_PREFIX: &str = "conversation:";
+pub(crate) const EXPERIENCE_SOURCE_PREFIX: &str = "experience:";
 
-/// Range selection for quoting turns into a new conversation: the first
+/// Range selection for reusing conversation turns: the first
 /// clicked user turn, remembered until a second click or Escape.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExcerptSelection {
@@ -124,7 +125,11 @@ pub(crate) fn excerpt_quote(excerpt: &SessionExcerpt, locale: Locale) -> Compose
     let start = (excerpt.start_user_index + 1).to_string();
     let end = (excerpt.end_user_index + 1).to_string();
     let label = if excerpt.start_user_index == excerpt.end_user_index {
-        tf(locale, "excerpt.source_single", &[("title", &title), ("n", &start)])
+        tf(
+            locale,
+            "excerpt.source_single",
+            &[("title", &title), ("n", &start)],
+        )
     } else {
         tf(
             locale,
@@ -140,7 +145,23 @@ pub(crate) fn excerpt_quote(excerpt: &SessionExcerpt, locale: Locale) -> Compose
 
 /// Chip caption for a quote source: an excerpt source drops its prefix.
 pub(crate) fn quote_source_label(source: &str) -> &str {
-    source.strip_prefix(EXCERPT_SOURCE_PREFIX).unwrap_or(source)
+    source
+        .strip_prefix(EXCERPT_SOURCE_PREFIX)
+        .or_else(|| source.strip_prefix(EXPERIENCE_SOURCE_PREFIX))
+        .unwrap_or(source)
+}
+
+pub(crate) fn experience_quote(
+    excerpt: &SessionExcerpt,
+    content: &str,
+    locale: Locale,
+) -> ComposerQuote {
+    let mut quote = excerpt_quote(excerpt, locale);
+    quote.text = content.trim().to_string();
+    quote.source = quote
+        .source
+        .map(|source| format!("{EXPERIENCE_SOURCE_PREFIX}{}", quote_source_label(&source)));
+    quote
 }
 
 impl ComposerQuote {
@@ -163,6 +184,7 @@ impl ComposerQuote {
             !source.starts_with("artifact:")
                 && !source.starts_with("artifact-version:")
                 && !source.starts_with(EXCERPT_SOURCE_PREFIX)
+                && !source.starts_with(EXPERIENCE_SOURCE_PREFIX)
                 && remote_file_path(source).is_none()
                 && matches!(
                     file_kind(source),
@@ -557,6 +579,9 @@ fn message_with_quotes_inner(
         if let Some(source) = quote.source.as_deref() {
             if let Some(label) = source.strip_prefix(EXCERPT_SOURCE_PREFIX) {
                 out.push_str("Quoted turns from an earlier conversation `");
+                out.push_str(&prompt_safe_source(label));
+            } else if let Some(label) = source.strip_prefix(EXPERIENCE_SOURCE_PREFIX) {
+                out.push_str("Reusable experience distilled from conversation `");
                 out.push_str(&prompt_safe_source(label));
             } else {
                 let source = prompt_safe_source(source);

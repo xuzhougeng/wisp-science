@@ -451,7 +451,7 @@ pub(super) async fn generate_session_handoff(
 }
 
 /// Render completed visual turns `start_user_index..=end_user_index` of a
-/// conversation as a quotable excerpt for a new conversation's composer. The
+/// conversation as a quotable excerpt for another conversation's composer. The
 /// source conversation is only read. Unlike a handoff this needs no model
 /// call, so it also works while a later turn of the source is running: only
 /// finished turns are offered by the UI.
@@ -463,28 +463,8 @@ pub(super) async fn render_session_excerpt(
     end_user_index: usize,
 ) -> Result<wisp_dto::SessionExcerpt, String> {
     let frame_id = id.trim().to_string();
-    if frame_id.is_empty() {
-        return Err("No session to quote from.".into());
-    }
-    if start_user_index > end_user_index {
-        return Err("Invalid excerpt range.".into());
-    }
-    if state
-        .store
-        .get_acp_session(&frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some()
-    {
-        return Err("ACP conversations cannot be quoted into a new conversation.".into());
-    }
-    let runtime = state.sessions.lock().await.get(&frame_id).cloned();
-    if let Some(runtime) = runtime.as_deref() {
-        flush_session_events(&runtime.ui_event_writer).await?;
-    }
     let messages =
-        visual_turn_range_messages(&state.store, &frame_id, start_user_index, end_user_index)
-            .await?;
+        load_excerpt_messages(&state, &frame_id, start_user_index, end_user_index).await?;
     let excerpt = wisp_core::ContextManager::render_excerpt(
         &messages,
         wisp_core::context::EXCERPT_MAX_BYTES,
@@ -502,6 +482,102 @@ pub(super) async fn render_session_excerpt(
         end_user_index,
         text: excerpt.text,
         truncated: excerpt.truncated,
+    })
+}
+
+async fn load_excerpt_messages(
+    state: &AppState,
+    frame_id: &str,
+    start_user_index: usize,
+    end_user_index: usize,
+) -> Result<Vec<Message>, String> {
+    if frame_id.is_empty() {
+        return Err("No session to quote from.".into());
+    }
+    if start_user_index > end_user_index || end_user_index == usize::MAX {
+        return Err("Invalid excerpt range.".into());
+    }
+    if state
+        .store
+        .get_acp_session(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("ACP conversations cannot be used as a quote source.".into());
+    }
+    let runtime = state.sessions.lock().await.get(frame_id).cloned();
+    if let Some(runtime) = runtime.as_deref() {
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    let running = state.running_turns.lock().await.contains(frame_id);
+    if running
+        && state
+            .store
+            .visual_turn_anchor(frame_id, end_user_index + 1)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none()
+    {
+        return Err("Wait for the selected turns to finish.".into());
+    }
+    visual_turn_range_messages(&state.store, frame_id, start_user_index, end_user_index).await
+}
+
+/// Generate an unsaved procedure using only the selected durable turns, including
+/// tool operations/results. This never runs tools or continues the source session.
+#[tauri::command]
+pub(super) async fn generate_session_experience(
+    state: State<'_, AppState>,
+    id: String,
+    start_user_index: usize,
+    end_user_index: usize,
+    instruction: Option<String>,
+) -> Result<wisp_dto::SessionExperience, String> {
+    let frame_id = id.trim();
+    let project_id = state
+        .store
+        .frame_project_id(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Session project was not found.".to_string())?;
+    let _activity = state.begin_project_activity(&project_id)?;
+    let messages =
+        load_excerpt_messages(&state, frame_id, start_user_index, end_user_index).await?;
+    let (evidence, truncated) = crate::session_experience::evidence(&messages)?;
+    let focus = instruction.as_deref().unwrap_or("").trim();
+    if focus.chars().count() > 1000 {
+        return Err("Experience focus cannot exceed 1000 characters.".into());
+    }
+    let prompt = serde_json::json!({
+        "focus": focus,
+        "first_turn": start_user_index + 1,
+        "last_turn": end_user_index + 1,
+        "evidence_shortened": truncated,
+        "transcript": evidence,
+    })
+    .to_string();
+    let completion = tokio::time::timeout(
+        BRANCH_SUMMARY_TIMEOUT,
+        turn_hooks::side_complete(
+            &state,
+            frame_id,
+            "session_experience",
+            turn_hooks::SideModel::Session { max_tokens: 4096 },
+            crate::session_experience::SYSTEM_PROMPT,
+            &prompt,
+            None,
+        ),
+    )
+    .await
+    .map_err(|_| "Experience generation timed out. Please try again.".to_string())??;
+    let content = completion.text.trim();
+    if content.is_empty() {
+        return Err("The model returned an empty experience draft.".into());
+    }
+    Ok(wisp_dto::SessionExperience {
+        content: content.to_string(),
+        truncated,
     })
 }
 
@@ -537,7 +613,7 @@ pub(super) async fn visual_turn_range_messages(
             .collect::<Vec<_>>();
         let from = user_message_start(&msgs, start);
         let to = user_message_start(&msgs, end.saturating_add(1));
-        if from >= msgs.len() {
+        if from >= msgs.len() || user_message_start(&msgs, end) >= msgs.len() {
             return Err(UNAVAILABLE.into());
         }
         return Ok(msgs[from..to].to_vec());

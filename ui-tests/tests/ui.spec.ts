@@ -5015,7 +5015,7 @@ test("quote a range of turns into a new conversation as composer context", async
   const banner = page.getByTestId("excerpt-selection-banner");
 
   // Escape pressed right after starting the range cancels only the selection.
-  await firstUser.getByRole("button", { name: "Quote to new chat" }).click();
+  await firstUser.getByRole("button", { name: "Quote / reuse" }).click();
   await expect(banner).toBeVisible();
   await expect(firstUser.locator(".user-bubble")).toHaveClass(/excerpt-start/);
   await expect(secondUser.getByRole("button", { name: "End quote here" })).toBeVisible();
@@ -5027,13 +5027,23 @@ test("quote a range of turns into a new conversation as composer context", async
 
   // Start, then end on a later turn: the excerpt is rendered from the source
   // and a fresh conversation opens with it staged as a composer quote.
-  await firstUser.getByRole("button", { name: "Quote to new chat" }).click();
+  await firstUser.getByRole("button", { name: "Quote / reuse" }).click();
   await secondUser.getByRole("button", { name: "End quote here" }).click();
   await expect.poll(() => lastInvokeArgs(page, "render_session_excerpt")).toMatchObject({
     id: sourceId,
     startUserIndex: 0,
     endUserIndex: 1,
   });
+  const reuse = page.getByTestId("session-reuse-overlay");
+  await expect(reuse).toBeVisible();
+  // The review dialog closes before the range banner, without moving focus.
+  await page.keyboard.press("Escape");
+  await expect(reuse).toHaveCount(0);
+  await expect(banner).toBeVisible();
+  await secondUser.getByRole("button", { name: "End quote here" }).click();
+  await expect(reuse).toBeVisible();
+  await page.getByTestId("excerpt-attach").click();
+  await expect(reuse).toHaveCount(0);
   await expect(banner).toHaveCount(0);
   await expect(page.locator(".msg.user", { hasText: "second idea" })).toHaveCount(0);
   const quote = page.locator(".composer-reference-card.quote");

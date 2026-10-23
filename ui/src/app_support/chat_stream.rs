@@ -260,6 +260,9 @@ pub(crate) fn start_user_turn(
 
 #[cfg(test)]
 mod start_user_turn_tests {
+    use super::super::{
+        excerpt_quote, experience_quote, quote_source_label, EXCERPT_SOURCE_PREFIX,
+    };
     use super::{
         append_assistant_delta, append_reasoning_delta, completed_activity_end,
         completed_activity_groups, composer_text_from_user_message, dismiss_follow_up_questions,
@@ -269,7 +272,6 @@ mod start_user_turn_tests {
         selection_targets_center_file, start_user_turn, trailing_queue_start, ComposerQuote,
         ComposerReferenceChip,
     };
-    use super::super::{excerpt_quote, quote_source_label, EXCERPT_SOURCE_PREFIX};
     use crate::dto::{
         AppContextNotice, ChatItem, ContextUsage, PlanCard, ReviewTransitionPhase, SessionExcerpt,
     };
@@ -320,6 +322,34 @@ mod start_user_turn_tests {
             single.source.as_deref(),
             Some(&*format!("{EXCERPT_SOURCE_PREFIX}未命名会话 · 第 1 轮"))
         );
+    }
+
+    #[test]
+    fn experience_quotes_keep_edited_procedure_and_source_without_requesting_a_file_edit() {
+        let excerpt = SessionExcerpt {
+            title: "analysis.py".into(),
+            start_user_index: 3,
+            end_user_index: 6,
+            text: "original transcript".into(),
+            ..SessionExcerpt::default()
+        };
+        let quote = experience_quote(
+            &excerpt,
+            "  Validate counts before normalization.  ",
+            Locale::En,
+        );
+        assert_eq!(quote.workspace_source(), None);
+        assert_eq!(
+            quote_source_label(quote.source.as_deref().unwrap()),
+            "analysis.py · turns 4–7"
+        );
+        let message = message_with_quotes("Apply this to the new dataset", &[quote]);
+        assert!(message
+            .contains("Reusable experience distilled from conversation `analysis.py · turns 4–7`"));
+        assert!(message.contains("> Validate counts before normalization."));
+        assert!(message.contains("Apply this to the new dataset"));
+        assert!(!message.contains("original transcript"));
+        assert!(!message.contains("AI source-edit instruction"));
     }
 
     #[test]

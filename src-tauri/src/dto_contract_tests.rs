@@ -219,6 +219,16 @@ fn session_excerpt_keeps_turn_range_and_defaults_truncated() {
     assert!(!legacy.truncated);
 }
 
+#[test]
+fn session_experience_keeps_editable_content_and_evidence_omissions() {
+    let draft = wisp_dto::SessionExperience {
+        content: "## Steps\nValidate counts before normalization.".into(),
+        truncated: true,
+    };
+    let decoded: wisp_dto::SessionExperience = roundtrip(&draft);
+    assert_eq!(decoded, draft);
+}
+
 fn roundtrip<T: serde::Serialize, D: serde::de::DeserializeOwned>(value: &T) -> D {
     let json = serde_json::to_value(value).expect("backend value must serialize");
     serde_json::from_value(json).expect("UI DTO must accept the backend payload")

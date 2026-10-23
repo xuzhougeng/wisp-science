@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 /// A span of completed turns from one conversation, rendered as quotable text
-/// for the composer of a new conversation. The source conversation is not
-/// changed: the excerpt travels as a quote attached to the new first message.
+/// for another conversation's composer. The source conversation is not
+/// changed: the excerpt travels as a quote attached to the next message.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SessionExcerpt {
     pub session_id: String,
@@ -15,6 +15,14 @@ pub struct SessionExcerpt {
     pub text: String,
     /// True when part of the excerpt was cut to fit the quote size limit.
     #[serde(default)]
+    pub truncated: bool,
+}
+
+/// An editable, unsaved lesson derived from a selected conversation range.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionExperience {
+    pub content: String,
+    /// Evidence was shortened before generation; the draft cannot cover omissions.
     pub truncated: bool,
 }
 
