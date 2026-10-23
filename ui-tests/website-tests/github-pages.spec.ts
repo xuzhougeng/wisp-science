@@ -224,10 +224,16 @@ for (const id of tutorialIds) {
     const title = tutorialTitle(id, "zh");
     await expect(page.locator(".tutorial-article")).toHaveCount(1);
     await expect(page.locator("h1")).toHaveText(title);
+    const chineseBody = page.locator('.tutorial-body[lang="zh-CN"]');
+    const englishBody = page.locator('.tutorial-body[lang="en"]');
+    // Navigation can expose both bodies before the language stylesheet loads.
+    // Wait for it, then enumerate a fixed body so image indices cannot shrink.
+    await expect(chineseBody).toBeVisible();
+    await expect(englishBody).toBeHidden();
     if (id === "wisp-science-rnaseq-downstream" || id === "wisp-science-transcriptome-upstream") {
       await page.screenshot({ path: test.info().outputPath("rnaseq-desktop-zh.png") });
     }
-    for (const img of await page.locator(".tutorial-body:visible img").all()) {
+    for (const img of await chineseBody.locator("img").all()) {
       await img.scrollIntoViewIfNeeded();
       await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
     }
@@ -236,18 +242,18 @@ for (const id of tutorialIds) {
     await page.locator('.lang-switch [data-lang="en"]').click();
     const englishTitle = tutorialTitle(id, "en");
     await expect(page.locator("h1")).toHaveText(englishTitle);
-    await expect(page.locator('.tutorial-body[lang="en"]')).toBeVisible();
-    await expect(page.locator('.tutorial-body[lang="zh-CN"]')).toBeHidden();
+    await expect(englishBody).toBeVisible();
+    await expect(chineseBody).toBeHidden();
     if (id === "wisp-science-rnaseq-downstream" || id === "wisp-science-transcriptome-upstream") {
       await page.locator("h1").scrollIntoViewIfNeeded();
       await page.screenshot({ path: test.info().outputPath("rnaseq-mobile-en.png") });
     }
-    for (const img of await page.locator(".tutorial-body:visible img").all()) {
+    for (const img of await englishBody.locator("img").all()) {
       await expect(img).toHaveAttribute("src", /^\.\.\/assets\/tutorials\/en\//);
       await img.scrollIntoViewIfNeeded();
       await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
     }
-    expect(await page.locator(".tutorial-body:visible").innerText()).not.toMatch(/[\p{Script=Han}]/u);
+    expect(await englishBody.innerText()).not.toMatch(/[\p{Script=Han}]/u);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.locator('[data-href-en]')).toHaveAttribute("href", new RegExp(`/wechat/en/${id}\\.md$`));
     await expect(page.locator(".tutorial-breadcrumb a")).toHaveText("Back to tutorials");
