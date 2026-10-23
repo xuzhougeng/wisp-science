@@ -451,6 +451,23 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 .handoff-field { display: grid; gap: 6px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .handoff-instruction { min-height: 56px; }
 .handoff-draft { min-height: 240px; max-height: 50vh; font-family: var(--font-mono); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+.session-reuse-overlay { z-index: 141; animation: none; }
+.session-reuse-modal { width: min(720px, calc(100vw - 32px)); max-width: 100%; gap: 12px; }
+.session-reuse-modal .hint { color: var(--text-muted); margin: 0; line-height: 1.5; }
+.session-reuse-modal .ps-head { align-items: flex-start; }
+.session-reuse-modal .ps-head .hint { overflow-wrap: anywhere; }
+.session-reuse-modal button svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.session-reuse-modal button:not(.ps-close):not(.primary) { padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
+.session-reuse-modal button:disabled { opacity: .55; cursor: default; }
+.session-reuse-modes, .session-reuse-save { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.session-reuse-modes button { display: inline-flex; gap: 7px; align-items: center; }
+.session-reuse-modes button[aria-pressed="true"] { color: var(--clay-strong); border-color: var(--clay); }
+.session-reuse-preview { max-height: 30vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; margin: 0; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.session-reuse-field { display: grid; gap: 6px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.session-reuse-field input, .session-reuse-field textarea, .session-reuse-field select { width: 100%; min-width: 0; box-sizing: border-box; color: var(--text); background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; }
+.session-reuse-field textarea { resize: vertical; min-height: 150px; max-height: 35vh; line-height: 1.5; }
+.session-reuse-save .session-reuse-field { flex: 1; }
+.session-reuse-modal > .row { justify-content: flex-end; flex-wrap: wrap; }
 .context-compaction-flag {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--text-muted); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.35;

@@ -237,7 +237,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     mcp_proxy_url: "", command_proxy_url: "", conda_mirror_url: "", pip_index_url: "", ca_bundle_path: "",
   };
 
-  const mockSessions: any[] = query.get("mockInPlaceFolder") === "1" ? [] : mockExplorationFlow
+  const mockSessions: any[] = query.get("mockReuse") === "1" ? [
+    { id: "reuse-source", title: "Successful normalization", ts: 2100, running: false },
+    { id: "reuse-target", title: "Another dataset", ts: 2090, running: false },
+    { id: "reuse-merged", title: "Merged branch", ts: 2080, running: false, branch_state: "merged" },
+    { id: "reuse-subagent", title: "Delegated task", ts: 2070, running: false, dispatched_from: "reuse-source" },
+  ] : query.get("mockInPlaceFolder") === "1" ? [] : mockExplorationFlow
     ? [
         { id: "exploration-mainline", title: "Mainline analysis", ts: 2100, running: false },
         ...(mockOtherExplorationSession
@@ -485,6 +490,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   const nextProjectTransferDelayMs: Record<string, number> = {};
   let failNextProjectOpenId: string | null = null;
   let failNextNewSession: string | null = null;
+  const reuseWaits = new Map<string, Promise<void>>();
+  const reuseResolvers = new Map<string, () => void>();
+  (window as any).__holdReuseCommand = (command: string) => {
+    reuseWaits.set(command, new Promise<void>((resolve) => reuseResolvers.set(command, resolve)));
+  };
+  (window as any).__releaseReuseCommand = (command: string) => {
+    reuseResolvers.get(command)?.();
+    reuseResolvers.delete(command);
+    reuseWaits.delete(command);
+  };
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
     nextProjectOpenDelayMs[String(projectId)] = Math.max(0, Number(milliseconds) || 0);
   };
@@ -2612,6 +2627,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "load_session":
             activeMockFrame = String(arg("id") ?? "");
+            if (query.get("mockReuse") === "1" && activeMockFrame.startsWith("reuse-")) {
+              const texts = activeMockFrame === "reuse-source"
+                ? ["first idea", "Inspect the input counts.", "normalize counts", "Normalization succeeded.", "verify output", "Verified 42 rows."]
+                : ["Target question", "Target result"];
+              return {
+                items: texts.map((text, index) => ({ role: index % 2 ? "assistant" : "user", text, tool_name: null, ok: null })),
+                next_before_seq: null, user_offset: 0,
+              };
+            }
             if (query.get("mockNeedsYou") === "1") {
               const session = mockSessions.find((row) => row.id === activeMockFrame);
               if (session && !session.awaiting) session.needs_you = false;
@@ -5903,7 +5927,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return "research-assistant";
           case "close_research_assistant":
             return null;
+          case "generate_session_experience": {
+            await reuseWaits.get("generate_session_experience");
+            if ((window as any).__failExperience) throw new Error("Experience model unavailable");
+            return {
+              content: "## When to use\nNormalize a count table.\n\n## Steps\nValidate counts, then normalize.\n\n## Verification\nCheck the output row count.",
+              truncated: Boolean((window as any).__shortenedExperience),
+            };
+          }
           case "render_session_excerpt": {
+            await reuseWaits.get("render_session_excerpt");
             const start = Number(arg("startUserIndex") ?? 0);
             const end = Number(arg("endUserIndex") ?? start);
             if (start > end) throw new Error("Invalid excerpt range.");

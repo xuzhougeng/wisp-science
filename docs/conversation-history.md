@@ -190,26 +190,69 @@ being generated) and leaves the usage panel open; a second Escape closes the
 panel. The button is unavailable while a turn is running and in ACP
 conversations.
 
-### Quote turns into a new conversation
+### Quote or reuse a range of turns
 
-A stretch of one conversation can seed another without copying or
-summarizing it. **Quote to new chat** on a user turn starts a range and shows
-a banner naming that turn; **End quote here** on the same or a later user turn
-ends it (clicking an earlier turn swaps the two ends). Wisp renders the
-completed turns in between as plain `User:` / `Assistant:` text, without tool
-calls, tool output, images, reasoning, or compaction checkpoints, and opens a
-new conversation with that text staged as a composer quote labelled with the
-source conversation's title and turn range. You write the first message on
-top of it; the quote is sent as part of that message. Nothing changes in the
-original conversation, which stays in the sidebar and keeps its own history.
+**Quote / reuse** on a user turn starts a range. **End quote here** on the same
+or another completed user turn opens a review dialog; clicking an earlier turn
+swaps the endpoints. The source label keeps the conversation title and inclusive
+turn range, including turns before a compaction.
 
-Escape or **Cancel** on the banner abandons the selection; switching to
-another conversation drops it too. Very long spans are shortened in the
-middle and the status line says so. The action is available on completed
-turns of ordinary conversations, branches, and explorations, including while
-a later turn is running; ACP conversations do not offer it.
+**Original turns** previews plain `User:` / `Assistant:` text without tool calls,
+tool output, images, reasoning or compaction checkpoints. Choose **New conversation**
+or an existing conversation in the current project, then **Add to conversation**.
+Search by title or load more conversations to reach older destinations. Merged or
+orphaned branches, delegated sessions and exploration sessions are excluded as
+destinations. Completed turns in branches and explorations can still be sources;
+ACP conversations cannot be sources.
+
+The quote is staged in the destination's composer. Its unsent text and existing
+quotes are preserved, and nothing is sent until you add your request and send.
+Both conversations keep their history. Unsent text and quotes remain attached
+to their own sessions when you switch; these drafts are held in memory and do
+not survive an app restart. Very long excerpts are shortened with a visible notice.
+
+### Distill a reusable experience
+
+In the same review dialog, choose **Distill experience**, optionally describe the
+operation that worked well, and click **Generate experience**. Wisp uses the
+source conversation's configured model to draft a reusable procedure from exactly
+the selected turns. Unlike a plain quote, its evidence includes tool inputs and
+results so that concrete operations and verification can be learned. System
+prompts, reasoning and compaction checkpoints are excluded. Long evidence is
+bounded and the dialog reports when it was shortened.
+
+The draft covers applicability, prerequisites, steps, verification, and limits or
+adaptations for another task. It must distinguish observed success from unverified
+suggestions. You can edit or regenerate it, then choose a destination and attach
+it as an experience quote. Nothing continues the original task or executes its
+tools during generation.
+
+**Save as memory** also stores the edited draft, source conversation ID and turn
+range through the existing memory system. Choose project memory to reuse within
+the project, or global memory for other projects; memory must be enabled for
+saving and injection. Existing memory size limits and exploration write guards
+still apply. Saving leaves the draft available for quoting into a conversation.
+Generated drafts are not saved automatically.
+
+Escape closes the review dialog first and leaves the range selected; another
+Escape cancels the range. Closing while a read or generation is pending discards
+its late result. Switching conversations also clears the selection. A failed
+model request or new-conversation creation leaves the selection and draft available
+for retry. Historical completed turns remain usable while a later turn is running.
 
 ## Manual smoke checks
+
+- Select turns in either direction, press Escape immediately after the review
+  dialog opens, and verify only the dialog closes; press Escape again to clear
+  the range. Repeat while experience generation is pending.
+- Prepare unsent text and a quote in another conversation, attach a selected
+  range to it, and verify both remain. Switch back and check the source draft.
+  Nothing should be sent until you press Send.
+- Generate an experience from a successful operation spanning several turns,
+  edit it, save it as project/global memory, and attach it to an existing chat.
+  Check the saved text and source range, then ask the destination to adapt it.
+- Repeat with a compacted range, a long range, and an earlier completed range
+  during a running turn. Check omission notices and reject the live final turn.
 
 - In a project with unread replies and a running conversation, verify that the
   home card shows separate labeled counts. Open the project and use **Needs you**

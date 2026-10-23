@@ -32,6 +32,7 @@ mod research_calendar;
 mod research_journey;
 mod runtime_views;
 mod session_modals;
+mod session_reuse;
 mod session_timer;
 mod settings_view;
 mod sidebar;
@@ -2589,10 +2590,53 @@ fn App() -> impl IntoView {
     // carries ordinary text, but the agent now knows which workspace file a
     // "change this" request must edit.
     let composer_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
-    // Quote-range selection (first clicked user turn) for "Quote to new chat".
+    // Quotes, like typed text, belong to their session. Attach a transferred
+    // quote to the target's stash before switching so neither draft is lost.
+    let composer_quotes_by_session =
+        create_rw_signal::<HashMap<String, Vec<ComposerQuote>>>(HashMap::new());
+    let previous_quote_session = Rc::new(RefCell::new(None::<String>));
+    create_effect(move |_| {
+        let current = active_session.get();
+        let mut previous = previous_quote_session.borrow_mut();
+        if *previous == current {
+            return;
+        }
+        if let Some(id) = previous.as_ref() {
+            let quotes = composer_quotes.get_untracked();
+            composer_quotes_by_session.update(|all| {
+                if quotes.is_empty() {
+                    all.remove(id);
+                } else {
+                    all.insert(id.clone(), quotes);
+                }
+            });
+        }
+        let restored = current
+            .as_ref()
+            .and_then(|id| composer_quotes_by_session.with_untracked(|all| all.get(id).cloned()));
+        if previous.is_some() || restored.is_some() {
+            composer_quotes.set(restored.unwrap_or_default());
+        }
+        *previous = current;
+    });
+    // Quote-range selection (first clicked user turn) for conversation reuse.
     // Root-owned so the window-level Escape stack can cancel it, and dropped
     // when the conversation it belongs to is no longer the active one.
     let excerpt_selection = create_rw_signal::<Option<ExcerptSelection>>(None);
+    let excerpt_dialog = create_rw_signal::<Option<SessionExcerpt>>(None);
+    let excerpt_loading = create_rw_signal(false);
+    let excerpt_busy = create_rw_signal(false);
+    let excerpt_error = create_rw_signal::<Option<String>>(None);
+    let excerpt_request_seq = create_rw_signal(0u64);
+    let close_excerpt_dialog = Callback::new(move |_: ()| {
+        if excerpt_busy.get_untracked() {
+            return;
+        }
+        excerpt_request_seq.update(|seq| *seq = seq.wrapping_add(1));
+        excerpt_dialog.set(None);
+        excerpt_error.set(None);
+        excerpt_loading.set(false);
+    });
     create_effect(move |_| {
         let active = active_session.get();
         let stale = excerpt_selection.with_untracked(|selection| {
@@ -2602,6 +2646,7 @@ fn App() -> impl IntoView {
         });
         if stale {
             excerpt_selection.set(None);
+            close_excerpt_dialog.call(());
         }
     });
     let close_assistant = Callback::new(move |_: ()| {
@@ -5718,19 +5763,13 @@ fn App() -> impl IntoView {
             turn_undo_busy.set(false);
         });
     });
-    // Quote a span of completed turns into a new conversation: one click on a
-    // user turn starts the range, a second click on the same or another user
-    // turn ends it. The source conversation is left untouched; the rendered
-    // excerpt becomes a composer quote of the new session, so the user writes
-    // their own first message on top of it.
+    // The first click starts the range; the second reviews it before choosing
+    // a destination or generating an experience draft.
     let excerpt_message = Callback::new(move |ui_index: usize| {
-        if demo_mode.get_untracked() {
+        if demo_mode.get_untracked() || excerpt_loading.get_untracked() {
             return;
         }
-        let Some(sid) = active_session
-            .get_untracked()
-            .filter(|id| !id.is_empty())
-        else {
+        let Some(sid) = active_session.get_untracked().filter(|id| !id.is_empty()) else {
             excerpt_selection.set(None);
             return;
         };
@@ -5738,9 +5777,10 @@ fn App() -> impl IntoView {
             return;
         };
         let user_idx = user_idx
-            + transcript_pages.with_untracked(|pages| {
-                pages.get(&sid).map_or(0, |page| page.user_offset)
-            });
+            + transcript_pages
+                .with_untracked(|pages| pages.get(&sid).map_or(0, |page| page.user_offset));
+        let seq = excerpt_request_seq.get_untracked().wrapping_add(1);
+        excerpt_request_seq.set(seq);
         let start = match excerpt_selection.get_untracked() {
             Some(selection) if selection.session_id == sid => selection,
             _ => {
@@ -5752,68 +5792,41 @@ fn App() -> impl IntoView {
                 return;
             }
         };
-        excerpt_selection.set(None);
-        let (start_idx, end_idx) = if start.user_index <= user_idx {
-            (start.user_index, user_idx)
-        } else {
-            (user_idx, start.user_index)
-        };
+        let (start_idx, end_idx) = (
+            start.user_index.min(user_idx),
+            start.user_index.max(user_idx),
+        );
+        excerpt_loading.set(true);
         spawn_local(async move {
-            let args =
-                to_value(&tauri_args::render_session_excerpt(&sid, start_idx, end_idx)).unwrap();
-            let excerpt = match invoke_checked("render_session_excerpt", args).await {
-                Ok(value) => match serde_wasm_bindgen::from_value::<SessionExcerpt>(value) {
-                    Ok(excerpt) => excerpt,
-                    Err(_) => {
-                        let loc = locale.get_untracked();
-                        status.set(tf(loc, "excerpt.failed", &[("error", &t(loc, "err.unknown"))]));
-                        return;
-                    }
-                },
-                Err(error) => {
-                    let loc = locale.get_untracked();
-                    status.set(tf(
-                        loc,
-                        "excerpt.failed",
-                        &[("error", &localize_backend(loc, &js_error_text(error)))],
-                    ));
-                    return;
+            let args = to_value(&tauri_args::render_session_excerpt(
+                &sid, start_idx, end_idx,
+            ))
+            .unwrap();
+            let result = invoke_checked("render_session_excerpt", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<SessionExcerpt>(value)
+                        .map_err(|error| error.to_string())
+                });
+            if excerpt_request_seq.get_untracked() != seq
+                || active_session.get_untracked().as_deref() != Some(sid.as_str())
+                || excerpt_selection.get_untracked().is_none()
+            {
+                return;
+            }
+            excerpt_loading.set(false);
+            match result {
+                Ok(excerpt) => {
+                    excerpt_error.set(None);
+                    excerpt_dialog.set(Some(excerpt));
                 }
-            };
-            // The quote only has a home once the new frame exists; a failed
-            // session create leaves the source conversation on screen.
-            let id = match invoke_new_session().await {
-                Ok(id) => id,
-                Err(error) => {
-                    status.set(send_failed(locale.get_untracked(), &error));
-                    return;
-                }
-            };
-            restore_chat_session_scroll(&id);
-            replace_visible_transcript(
-                active_session.get_untracked(),
-                None,
-                Vec::new(),
-                items,
-                transcripts,
-                running,
-            );
-            active_session.set(Some(id));
-            attachments.set(vec![]);
-            composer_references.set(vec![]);
-            mcp_app_context.set(None);
-            feedback_context.set(None);
-            sel_artifact.set(0);
-            right_tab.set(RightTab::Artifacts);
-            let loc = locale.get_untracked();
-            composer_quotes.set(vec![excerpt_quote(&excerpt, loc)]);
-            status.set(if excerpt.truncated {
-                t(loc, "excerpt.truncated")
-            } else {
-                String::new()
-            });
-            refresh_session_history();
-            focus_composer();
+                Err(error) => status.set(tf(
+                    locale.get_untracked(),
+                    "excerpt.failed",
+                    &[("error", &localize_backend(locale.get_untracked(), &error))],
+                )),
+            }
         });
     });
     let branch_message = {
@@ -7383,6 +7396,46 @@ fn App() -> impl IntoView {
             }
         });
     });
+    let attach_excerpt = Callback::new(
+        move |(quote, destination): (ComposerQuote, Option<String>)| {
+            if excerpt_busy.get_untracked() || excerpt_dialog.get_untracked().is_none() {
+                return;
+            }
+            let source_session = active_session.get_untracked();
+            excerpt_busy.set(true);
+            excerpt_error.set(None);
+            spawn_local(async move {
+                let target = match destination {
+                    Some(id) => id,
+                    None => match invoke_new_session().await {
+                        Ok(id) => id,
+                        Err(error) => {
+                            excerpt_error.set(Some(send_failed(locale.get_untracked(), &error)));
+                            excerpt_busy.set(false);
+                            return;
+                        }
+                    },
+                };
+                if active_session.get_untracked() != source_session {
+                    excerpt_busy.set(false);
+                    close_excerpt_dialog.call(());
+                    return;
+                }
+                composer_quotes_by_session
+                    .update(|all| all.entry(target.clone()).or_default().push(quote));
+                excerpt_busy.set(false);
+                close_excerpt_dialog.call(());
+                excerpt_selection.set(None);
+                composer_references.set(vec![]);
+                mcp_app_context.set(None);
+                feedback_context.set(None);
+                load_session.call(target);
+                status.set(String::new());
+                refresh_session_history();
+                focus_composer();
+            });
+        },
+    );
     // The research assistant is one persistent conversation: opening it binds
     // this window to it and loads its history like any other session.
     let open_assistant = Callback::new(move |_: ()| {
@@ -10370,6 +10423,11 @@ fn App() -> impl IntoView {
             external_link_confirm.set(None);
             return;
         }
+        if excerpt_dialog.get().is_some() {
+            ev.prevent_default();
+            close_excerpt_dialog.call(());
+            return;
+        }
         if browser_needs_human.get().is_some() {
             ev.prevent_default();
             if !browser_needs_human_busy.get() {
@@ -10873,6 +10931,7 @@ fn App() -> impl IntoView {
         // it closes before the panes underneath it.
         if excerpt_selection.get().is_some() {
             ev.prevent_default();
+            close_excerpt_dialog.call(());
             excerpt_selection.set(None);
             return;
         }
@@ -14271,7 +14330,7 @@ fn App() -> impl IntoView {
                                     // Quoting only reads the transcript, so branches and
                                     // explorations qualify; ACP transcripts have no rows to read.
                                     let can_excerpt = Signal::derive(move || {
-                                        show_actions.get() && active_acp_agent_id.get().is_none()
+                                        show_actions.get() && active_acp_agent_id.get().is_none() && !excerpt_loading.get()
                                     });
                                     let excerpt_start = Signal::derive(move || {
                                         excerpt_selection
@@ -14964,15 +15023,15 @@ fn App() -> impl IntoView {
                     (active_session.get().as_deref() == Some(selection.session_id.as_str())).then(|| {
                         let turn = (selection.user_index + 1).to_string();
                         view! {
-                            <section class="exploration-banner excerpt-selection" data-testid="excerpt-selection-banner" role="status">
+                            <section class="exploration-banner excerpt-selection" data-testid="excerpt-selection-banner" role="status" aria-busy=move || excerpt_loading.get().to_string()>
                                 <div class="exploration-banner-copy">
                                     <span class="exploration-banner-eyebrow">{t(locale.get(), "excerpt.banner_eyebrow")}</span>
                                     <strong>{t(locale.get(), "excerpt.banner_title")}</strong>
-                                    <span>{tf(locale.get(), "excerpt.banner_body", &[("n", &turn)])}</span>
+                                    <span>{move || if excerpt_loading.get() { t(locale.get(), "excerpt.preparing") } else { tf(locale.get(), "excerpt.banner_body", &[("n", &turn)]) }}</span>
                                 </div>
                                 <div class="exploration-banner-actions">
                                     <button type="button"
-                                        on:click=move |_| excerpt_selection.set(None)
+                                        on:click=move |_| { close_excerpt_dialog.call(()); excerpt_selection.set(None); }
                                     >{t(locale.get(), "excerpt.cancel")}</button>
                                 </div>
                             </section>
@@ -19116,6 +19175,12 @@ fn App() -> impl IntoView {
             on_start=start_compact_dialog
             on_close=close_compact_dialog
         />
+        {move || excerpt_dialog.get().map(|excerpt| view! {
+            <session_reuse::SessionReuseOverlay
+                excerpt=excerpt locale=locale excluded=exploration_frames.get_untracked()
+                busy=excerpt_busy error=excerpt_error on_quote=attach_excerpt on_close=close_excerpt_dialog
+            />
+        })}
         <HandoffOverlay
             state=HandoffOverlayState {
                 locale,
