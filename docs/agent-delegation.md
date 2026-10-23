@@ -237,7 +237,12 @@ and that one Escape closes only the overlaid exploration view.
    optional Specialist, optional JSON output schema, optional isolation
    request, and optional per-task token/tool/cost budget. Budgets are an
    advanced tuning knob: tasks run unlimited by default, and an omitted or
-   zero dimension stays unlimited.
+   zero dimension stays unlimited. The local desktop host also leaves aggregate
+   token/tool/cost budgets and wall deadlines unlimited by default; it does not
+   add an implicit 256,000-token batch cap or a 600-second task deadline.
+   Explicit task limits and managed/nested host ceilings still apply. The
+   activity card renders a zero aggregate limit as **unlimited**, while continuing
+   to count usage normally.
 4. Wisp resolves every capability through host policy into an exact model,
    executor, tool set, project scope, workspace policy, budget, and timeout.
    The model cannot grant raw tools or permissions to a child.
@@ -289,6 +294,29 @@ card shows the current round's token/tool allowances alongside cumulative
 usage, and reports the actual stop cause (timeout, user cancellation or
 budget exhaustion). A failed Run harvest is recovered from the Run's outputs;
 retrying a workflow node may execute its code again.
+
+When retrying a workflow created with the old desktop defaults, Wisp refreshes
+the inherited 600-second task deadlines and the matching generated root limits
+in the same transaction that starts the new execution round. An explicitly
+requested timeout (including an explicit 600 seconds), task budget, or custom
+root limit is retained. Successful results and previous attempts are retained.
+Already approved snapshots keep their saved limits until retried. A retry still
+starts a new context for a failed Native task; it does not automatically resume
+that task's interrupted conversation or reclaim usage missing from old records.
+
+For newly executed Native tasks, usage from completed model requests survives a
+hard timeout and is saved with the failed attempt, together with its child
+conversation reference. An interrupted request that has not returned usage
+cannot be counted yet. HTTP 200 stream error envelopes containing recognized
+upstream EOF/connection-reset/timeout failures use the existing bounded model
+retry policy; authentication, billing, and invalid-request errors remain failures.
+
+Manual verification after building: retry a legacy failed desktop workflow with
+one successful task and one task using the old implicit deadline; confirm the
+successful result is reused, the new round shows unlimited default allowances,
+and an explicitly configured timeout/budget remains finite. With a mock model,
+interrupt a task after a completed tool round and confirm its nonzero usage and
+child conversation remain visible. Verify the Agents card in both languages.
 
 Omitting `specialist_id` creates a generic temporary Agent. Selecting a
 Specialist reuses its persona, model preference, and connector

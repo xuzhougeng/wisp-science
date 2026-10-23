@@ -10,6 +10,7 @@ pub struct AgentDelegationRootLimits {
     pub max_depth: u8,
     pub max_tasks: u32,
     pub max_parallel: u32,
+    /// Zero means unlimited for each resource dimension, matching task budgets.
     pub max_tokens: u64,
     pub max_tool_calls: u64,
     pub max_cost_microunits: u64,
@@ -43,12 +44,8 @@ impl AgentDelegationRootLimits {
         if self.max_parallel == 0 || self.max_parallel > 2 {
             anyhow::bail!("root Agent max_parallel must be between 1 and 2");
         }
-        if self.max_tokens == 0
-            || self.max_tool_calls == 0
-            || self.max_cost_microunits == 0
-            || self.wall_time_secs == Some(0)
-        {
-            anyhow::bail!("root Agent budgets must be positive");
+        if self.wall_time_secs == Some(0) {
+            anyhow::bail!("root Agent wall timeout must be positive or unset");
         }
         Ok(())
     }
@@ -87,9 +84,11 @@ impl BudgetReservation {
     }
 
     fn exceeds(self, limits: &AgentDelegationRootLimits) -> bool {
-        self.max_tokens.unwrap_or_default() > limits.max_tokens
-            || self.max_tool_calls.unwrap_or_default() > limits.max_tool_calls
-            || self.max_cost_microunits.unwrap_or_default() > limits.max_cost_microunits
+        (limits.max_tokens > 0 && self.max_tokens.unwrap_or_default() > limits.max_tokens)
+            || (limits.max_tool_calls > 0
+                && self.max_tool_calls.unwrap_or_default() > limits.max_tool_calls)
+            || (limits.max_cost_microunits > 0
+                && self.max_cost_microunits.unwrap_or_default() > limits.max_cost_microunits)
     }
 }
 
@@ -831,13 +830,14 @@ impl super::Store {
             }
         }
         let approved = sqlx::query(
-            "UPDATE agent_workflows SET goal=?,mode=?,status='approved',max_parallel=?,requires_confirmation=?,plan_json=?,version=version+1,approved_at=?,updated_at=?,execution_generation=execution_generation+1,execution_started_at=NULL,stop_reason=NULL WHERE id=? AND version=? AND status='draft'",
+            "UPDATE agent_workflows SET goal=?,mode=?,status='approved',max_parallel=?,requires_confirmation=?,plan_json=?,root_limits_json=?,version=version+1,approved_at=?,updated_at=?,execution_generation=execution_generation+1,execution_started_at=NULL,stop_reason=NULL WHERE id=? AND version=? AND status='draft'",
         )
         .bind(&workflow.goal)
         .bind(&workflow.mode)
         .bind(workflow.max_parallel)
         .bind(workflow.requires_confirmation as i64)
         .bind(&workflow.plan_json)
+        .bind(&workflow.root_limits_json)
         .bind(now)
         .bind(now)
         .bind(&workflow.id)

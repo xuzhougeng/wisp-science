@@ -18,7 +18,7 @@ pub(crate) struct NativeAgentRun {
 }
 
 #[derive(Default)]
-struct UsageTracker(Mutex<AgentUsage>);
+pub(crate) struct UsageTracker(Mutex<AgentUsage>);
 
 impl UsageTracker {
     fn record(&self, completion: &Completion, budget: &AgentBudget) -> Result<(), LlmError> {
@@ -38,7 +38,7 @@ impl UsageTracker {
         Ok(())
     }
 
-    fn snapshot(&self) -> AgentUsage {
+    pub(crate) fn snapshot(&self) -> AgentUsage {
         self.0.lock().unwrap().clone()
     }
 }
@@ -191,6 +191,7 @@ pub(crate) async fn run_native_agent(
     system: String,
     prompt: String,
     cancel: &AtomicBool,
+    usage: Arc<UsageTracker>,
 ) -> anyhow::Result<NativeAgentRun> {
     let confirmer =
         crate::workflow_approval::for_node(store, project_id, child_frame_id, &request.spec.name)
@@ -208,6 +209,7 @@ pub(crate) async fn run_native_agent(
         prompt,
         cancel,
         confirmer,
+        usage,
     )
     .await
 }
@@ -226,6 +228,7 @@ pub(crate) async fn run_native_agent_with_approval(
     prompt: String,
     cancel: &AtomicBool,
     confirmer: Option<Arc<dyn crate::workflow_approval::WorkflowConfirmer>>,
+    usage: Arc<UsageTracker>,
 ) -> anyhow::Result<NativeAgentRun> {
     let provenance_scope = conversation_scope(store, child_frame_id).await;
     let (message_tx, mut message_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
@@ -300,7 +303,6 @@ pub(crate) async fn run_native_agent_with_approval(
         cancel,
         tool_errors: Mutex::new(vec![]),
     };
-    let usage = Arc::new(UsageTracker::default());
     let vision_provider = vision_provider.map(|inner| BudgetedProvider {
         inner,
         budget: &request.spec.budget,
@@ -611,6 +613,7 @@ mod tests {
             "Test system prompt".into(),
             "Test user prompt".into(),
             &AtomicBool::new(false),
+            Arc::new(UsageTracker::default()),
         )
         .await
         .unwrap()
@@ -955,6 +958,7 @@ mod tests {
             "Test system prompt".into(),
             "Test user prompt".into(),
             cancel.as_ref(),
+            Arc::new(UsageTracker::default()),
         );
         let stop = async {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -971,6 +975,95 @@ mod tests {
         drop(store);
         std::fs::remove_dir_all(base).ok();
     }
+    struct PausingAfterReadProvider {
+        read_requested: AtomicBool,
+        waiting: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl Provider for PausingAfterReadProvider {
+        fn name(&self) -> &str {
+            "pausing"
+        }
+        fn model(&self) -> &str {
+            "pausing-model"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Err(LlmError::Config(
+                "unexpected compaction in short fixture".into(),
+            ))
+        }
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            if !self.read_requested.swap(true, Ordering::SeqCst) {
+                return Ok(completion(
+                    "",
+                    vec![tool_call(
+                        "read",
+                        "read",
+                        serde_json::json!({"path": "evidence.txt"}),
+                    )],
+                    100,
+                    12,
+                ));
+            }
+            self.waiting.notify_one();
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_native_execution_retains_usage_from_completed_requests() {
+        let (store, base, workspace) = fixture().await;
+        std::fs::write(workspace.join("evidence.txt"), "evidence").unwrap();
+        let provider = PausingAfterReadProvider {
+            read_requested: AtomicBool::new(false),
+            waiting: tokio::sync::Notify::new(),
+        };
+        let tools = Registry::builtins().filtered(&["read".into()]);
+        let request = request(1_000, 10);
+        let cancel = AtomicBool::new(false);
+        let usage = Arc::new(UsageTracker::default());
+        {
+            let running = run_native_agent(
+                &provider,
+                None,
+                &store,
+                "project",
+                "child",
+                &workspace,
+                &tools,
+                &request,
+                "Test system prompt".into(),
+                "Read the evidence".into(),
+                &cancel,
+                usage.clone(),
+            );
+            tokio::pin!(running);
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                tokio::select! {
+                    result = &mut running => panic!("execution ended before interruption: {:?}", result.err()),
+                    _ = provider.waiting.notified() => {}
+                }
+            }).await.expect("the fake provider should reach its second request");
+            // Dropping the future here is how the scheduler enforces a deadline.
+        }
+        let recorded = usage.snapshot();
+        assert_eq!(recorded.input_tokens, 100);
+        assert_eq!(recorded.output_tokens, 12);
+        assert_eq!(recorded.tool_calls, 1);
+        drop(store);
+        std::fs::remove_dir_all(base).ok();
+    }
+
     struct GuardedTool(Arc<AtomicBool>);
     #[async_trait]
     impl Tool for GuardedTool {
@@ -1043,6 +1136,7 @@ mod tests {
                 "test".into(),
                 &AtomicBool::new(false),
                 Some(confirmer.clone()),
+                Arc::new(UsageTracker::default()),
             )
             .await
             .unwrap();

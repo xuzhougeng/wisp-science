@@ -16885,6 +16885,16 @@ test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({
   await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
 });
 
+test("unlimited workflow budgets show usage without presenting zero as a ceiling", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=unlimited");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
+  await expect(card.getByTestId("agent-execution-usage")).toContainText("Execution 2: 497676/unlimited tokens · 28/unlimited tools");
+  await expect(card.getByTestId("agent-execution-usage")).toContainText("All executions: 497676 tokens");
+  await expect(card.getByTestId("agent-execution-error")).toHaveCount(0);
+});
+
 test("timed-out workflows explain fresh retry allowances and retain cumulative usage", async ({ page }) => {
   await enterApp(page, "/?mockAgentWorkflow=timed-out");
   await page.getByRole("button", { name: "Toggle panel" }).click();

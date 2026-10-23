@@ -3807,6 +3807,14 @@ fn workflow_actions(
     .into_view()
 }
 
+fn execution_limit_label(locale: Locale, limit: u64) -> String {
+    if limit == 0 {
+        t(locale, "agents.execution.unlimited").into()
+    } else {
+        limit.to_string()
+    }
+}
+
 fn dynamic_workflow_card(
     snapshot: AgentWorkflowSnapshot,
     state: AgentPanelState,
@@ -3837,9 +3845,9 @@ fn dynamic_workflow_card(
         let summary = tf(locale.get(), "agents.execution.usage", &[
             ("round", &round),
             ("tokens", &execution.usage.tokens.to_string()),
-            ("token_limit", &execution.limits.tokens.to_string()),
+            ("token_limit", &execution_limit_label(locale.get(), execution.limits.tokens)),
             ("tools", &execution.usage.tool_calls.to_string()),
-            ("tool_limit", &execution.limits.tool_calls.to_string()),
+            ("tool_limit", &execution_limit_label(locale.get(), execution.limits.tool_calls)),
         ]);
         let history = tf(locale.get(), "agents.execution.history", &[
             ("tokens", &execution.cumulative_usage.tokens.to_string()),

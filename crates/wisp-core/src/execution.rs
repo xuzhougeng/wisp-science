@@ -761,7 +761,12 @@ mod tests {
                 artifact_ids: vec![],
                 artifacts: vec![],
                 evidence: vec![],
-                usage: Default::default(),
+                usage: crate::AgentUsage {
+                    input_tokens: 123,
+                    output_tokens: 45,
+                    tool_calls: 3,
+                    cost_microunits: 7,
+                },
                 agent_session_id: Some("session".into()),
                 child_frame_id: Some("frame".into()),
                 error: None,
@@ -1266,7 +1271,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_preserves_backend_session_provenance() {
+    async fn timeout_preserves_backend_usage_and_session_provenance() {
         let (registry, mut host) = dynamic_policy();
         host.default_timeout_secs = Some(1);
         host.timeout_ceiling_secs = Some(1);
@@ -1281,6 +1286,10 @@ mod tests {
         assert!(response.error.as_deref().unwrap().contains("timed out"));
         assert_eq!(response.agent_session_id.as_deref(), Some("session"));
         assert_eq!(response.child_frame_id.as_deref(), Some("frame"));
+        assert_eq!(response.usage.input_tokens, 123);
+        assert_eq!(response.usage.output_tokens, 45);
+        assert_eq!(response.usage.tool_calls, 3);
+        assert_eq!(response.usage.cost_microunits, 7);
     }
 
     #[tokio::test]

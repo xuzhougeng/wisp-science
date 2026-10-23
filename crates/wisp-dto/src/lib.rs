@@ -4703,6 +4703,7 @@ pub struct AgentWorkflowExecutionSummary {
     pub started_at: Option<i64>,
     pub stop_reason: Option<String>,
     pub wall_time_secs: Option<u64>,
+    /// A zero limit denotes an unlimited resource dimension; usage still counts normally.
     pub limits: AgentWorkflowUsage,
     pub usage: AgentWorkflowUsage,
     pub cumulative_usage: AgentWorkflowUsage,

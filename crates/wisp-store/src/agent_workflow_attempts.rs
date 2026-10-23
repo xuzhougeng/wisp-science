@@ -43,9 +43,11 @@ impl BudgetReservation {
     }
 
     fn exceeds(self, limits: &super::AgentDelegationRootLimits) -> bool {
-        self.max_tokens.unwrap_or_default() > limits.max_tokens
-            || self.max_tool_calls.unwrap_or_default() > limits.max_tool_calls
-            || self.max_cost_microunits.unwrap_or_default() > limits.max_cost_microunits
+        (limits.max_tokens > 0 && self.max_tokens.unwrap_or_default() > limits.max_tokens)
+            || (limits.max_tool_calls > 0
+                && self.max_tool_calls.unwrap_or_default() > limits.max_tool_calls)
+            || (limits.max_cost_microunits > 0
+                && self.max_cost_microunits.unwrap_or_default() > limits.max_cost_microunits)
     }
 }
 
@@ -924,9 +926,12 @@ impl Store {
             && tasks < i64::from(limits.max_tasks)
             && other_slots < i64::from(limits.max_parallel)
             && !budget.exceeds(&limits)
-            && budget.max_tokens.unwrap_or_default() < limits.max_tokens
-            && budget.max_tool_calls.unwrap_or_default() < limits.max_tool_calls
-            && budget.max_cost_microunits.unwrap_or_default() < limits.max_cost_microunits)
+            && (limits.max_tokens == 0
+                || budget.max_tokens.unwrap_or_default() < limits.max_tokens)
+            && (limits.max_tool_calls == 0
+                || budget.max_tool_calls.unwrap_or_default() < limits.max_tool_calls)
+            && (limits.max_cost_microunits == 0
+                || budget.max_cost_microunits.unwrap_or_default() < limits.max_cost_microunits))
     }
 
     pub async fn list_agent_workflow_attempts(

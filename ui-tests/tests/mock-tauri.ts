@@ -1247,6 +1247,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     } else if (kind === "succeeded") {
       snapshot.workflow.status = "succeeded";
       for (const task of snapshot.dynamic.tasks) task.result = dynamicResult(task, "succeeded");
+    } else if (kind === "unlimited") {
+      snapshot.workflow.status = "running";
+      snapshot.execution = {
+        generation: 1, started_at: 100, stop_reason: null, wall_time_secs: null,
+        limits: { tokens: 0, tool_calls: 0, cost_microunits: 0 },
+        usage: { tokens: 497676, tool_calls: 28, cost_microunits: 0 },
+        cumulative_usage: { tokens: 497676, tool_calls: 28, cost_microunits: 0 },
+      };
+      snapshot.dynamic.tasks[0].result = dynamicResult(snapshot.dynamic.tasks[0], "succeeded");
+      snapshot.dynamic.tasks[1].result = dynamicResult(snapshot.dynamic.tasks[1], "running");
     } else if (kind === "timed-out") {
       snapshot.workflow.status = "cancelled";
       snapshot.execution = {

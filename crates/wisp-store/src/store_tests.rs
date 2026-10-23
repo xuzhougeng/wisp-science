@@ -1865,6 +1865,118 @@ async fn workflow_retry_refreshes_expired_time_and_spent_budget_without_erasing_
 }
 
 #[tokio::test]
+async fn unlimited_workflow_budgets_admit_work_after_large_usage_and_allow_delegation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+    let mut first = create_running_nested_test_root(
+        &store,
+        AgentDelegationRootLimits {
+            max_depth: 2,
+            max_tokens: 0,
+            max_tool_calls: 0,
+            max_cost_microunits: 0,
+            wall_time_secs: None,
+            ..Default::default()
+        },
+        true,
+        500_000,
+    )
+    .await;
+    assert!(store
+        .agent_workflow_attempt_has_delegation_capacity(&first.id)
+        .await
+        .unwrap());
+    first.status = AgentWorkflowAttemptStatus::Succeeded;
+    first.input_tokens = 489_967;
+    first.output_tokens = 7_709;
+    first.tool_calls = 600;
+    first.cost_microunits = 9_000_000;
+    assert!(store
+        .update_agent_workflow_attempt(&first, AgentWorkflowAttemptStatus::Running)
+        .await
+        .unwrap());
+    let mut next = AgentWorkflowAttempt::queued(
+        "next",
+        "root",
+        "root-step",
+        2,
+        "next-request",
+        "local",
+        "{}",
+    )
+    .unwrap();
+    next.allow_delegation = true;
+    assert!(matches!(
+        store
+            .try_create_started_agent_workflow_attempt(next)
+            .await
+            .unwrap(),
+        AgentWorkflowAttemptStart::Started(_)
+    ));
+    let summary = store
+        .agent_workflow_execution_summary("root")
+        .await
+        .unwrap();
+    assert_eq!(summary.limits, wisp_dto::AgentWorkflowUsage::default());
+    assert_eq!(summary.usage.tokens, 497_676);
+    assert_eq!(summary.usage.tool_calls, 600);
+    assert_eq!(summary.usage.cost_microunits, 9_000_000);
+    assert!(store
+        .agent_workflow_stop_reason("root")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn unlimited_root_dimensions_do_not_disable_explicit_finite_dimensions() {
+    for dimension in ["tokens", "tools", "cost"] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();
+        let mut first = create_running_nested_test_root(
+            &store,
+            AgentDelegationRootLimits {
+                max_tokens: if dimension == "tokens" { 100 } else { 0 },
+                max_tool_calls: if dimension == "tools" { 2 } else { 0 },
+                max_cost_microunits: if dimension == "cost" { 2 } else { 0 },
+                ..Default::default()
+            },
+            false,
+            50,
+        )
+        .await;
+        first.status = AgentWorkflowAttemptStatus::Succeeded;
+        first.input_tokens = 100;
+        first.tool_calls = 2;
+        first.cost_microunits = 2;
+        assert!(store
+            .update_agent_workflow_attempt(&first, AgentWorkflowAttemptStatus::Running)
+            .await
+            .unwrap());
+        let next = AgentWorkflowAttempt::queued(
+            "next",
+            "root",
+            "root-step",
+            2,
+            "next-request",
+            "local",
+            "{}",
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                store
+                    .try_create_started_agent_workflow_attempt(next)
+                    .await
+                    .unwrap(),
+                AgentWorkflowAttemptStart::Stopped(_)
+            ),
+            "{dimension} must still be enforced"
+        );
+    }
+}
+
+#[tokio::test]
 async fn workflow_stop_before_first_attempt_is_durable_and_budget_failure_has_a_reason() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("store.sqlite")).await.unwrap();

@@ -250,8 +250,19 @@ pub fn is_retriable(err: &LlmError) -> bool {
     match err {
         LlmError::Api { status, body } => {
             let lower = body.to_ascii_lowercase();
+            // Compatible gateways can report an upstream transport failure in
+            // an HTTP 200 SSE error envelope. Keep this narrow: authentication,
+            // billing and invalid-request errors must not become retry loops.
+            let in_band_transport = (200..=299).contains(status)
+                && (lower.contains("upstream connection reset")
+                    || lower.contains("connection reset by peer")
+                    || lower.contains("upstream timeout")
+                    || lower.contains("upstream timed out")
+                    || lower.contains("unexpected eof")
+                    || (lower.contains("eof") && lower.contains("codex: post")));
             matches!(*status, 408 | 429)
                 || (500..=599).contains(status)
+                || in_band_transport
                 || lower.contains("overloaded")
                 || lower.contains("rate_limit")
                 || lower.contains("1305")
@@ -1213,6 +1224,37 @@ mod tests {
             status: 400,
             body: "invalid request".into(),
         }));
+    }
+
+    #[test]
+    fn in_band_gateway_transport_failures_are_retried_without_retrying_permanent_errors() {
+        for body in [
+            "Codex: Post \"https://example.invalid/responses\": EOF (502: you can retry your request)",
+            "upstream connection reset",
+            "connection reset by peer",
+            "upstream timeout",
+            "upstream timed out",
+            "unexpected EOF",
+        ] {
+            assert!(is_retriable(&LlmError::Api { status: 200, body: body.into() }), "{body}");
+            for status in [400, 401, 403, 404, 422] {
+                assert!(!is_retriable(&LlmError::Api { status, body: body.into() }), "{status}: {body}");
+            }
+        }
+        for body in [
+            "insufficient balance",
+            "invalid API key",
+            "invalid request",
+            "JSON parse error: EOF",
+        ] {
+            assert!(
+                !is_retriable(&LlmError::Api {
+                    status: 200,
+                    body: body.into()
+                }),
+                "{body}"
+            );
+        }
     }
 
     #[test]
