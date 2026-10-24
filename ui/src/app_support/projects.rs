@@ -314,8 +314,12 @@ pub(crate) fn ProjectsScreen(
             }))
             .unwrap();
             match invoke_checked("create_project", arg).await {
-                Ok(value) => {
-                    if let Ok(project) = serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
+                // The project row is already written when this resolves, so a
+                // response the UI cannot read must still close the form and
+                // say why — leaving it open invites a retry that can only
+                // fail with "already registered".
+                Ok(value) => match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
+                    Ok(project) => {
                         new_name.set(String::new());
                         new_dir.set(String::new());
                         new_desc.set(String::new());
@@ -324,7 +328,11 @@ pub(crate) fn ProjectsScreen(
                         creating.set(false);
                         on_open.call(project.id);
                     }
-                }
+                    Err(error) => {
+                        creating.set(false);
+                        open_error.set(Some(error.to_string()));
+                    }
+                },
                 Err(error) => {
                     creating.set(false);
                     open_error.set(Some(localize_backend(

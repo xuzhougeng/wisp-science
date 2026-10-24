@@ -3355,6 +3355,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "create_project":
             activeProjectId = "default";
+            // A response the UI cannot deserialize (id is not a string).
+            if (query.get("mockCreateProjectMalformed") === "1") return { id: 42 };
             if (query.get("mockInPlaceFolder") === "1") {
               project.name = String(arg("name"));
               project.root = String(arg("workspaceDir"));

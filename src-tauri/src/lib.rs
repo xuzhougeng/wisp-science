@@ -7082,14 +7082,15 @@ impl StartupTimeline {
     }
 }
 
-/// Windows release builds have no console, so tracing output went to a sink and
-/// a launch problem on a user machine left nothing to read. Keep the latest
-/// launch in a log file next to the database instead.
-#[cfg(all(not(debug_assertions), target_os = "windows"))]
+/// Windows release builds have no console, and a macOS app launched from the
+/// Finder has no terminal either, so tracing output left nothing to read when a
+/// user machine misbehaved. Keep the latest launch in a log file next to the
+/// database instead (`wisp.previous.log` holds the launch before it).
+#[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
 #[derive(Clone)]
 struct SharedLogFile(Arc<StdMutex<std::fs::File>>);
 
-#[cfg(all(not(debug_assertions), target_os = "windows"))]
+#[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
 impl SharedLogFile {
     fn create() -> Option<Self> {
         let dir = dirs::data_dir()?
@@ -7107,7 +7108,7 @@ impl SharedLogFile {
     }
 }
 
-#[cfg(all(not(debug_assertions), target_os = "windows"))]
+#[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
 impl std::io::Write for SharedLogFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut file = self
@@ -7246,7 +7247,7 @@ pub fn run() {
     let filter = tracing_subscriber::EnvFilter::from_default_env()
         .add_directive("wisp=info".parse().unwrap());
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter);
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    #[cfg(all(not(debug_assertions), any(target_os = "windows", target_os = "macos")))]
     match SharedLogFile::create() {
         Some(log) => subscriber
             .with_ansi(false)
@@ -7254,7 +7255,7 @@ pub fn run() {
             .init(),
         None => subscriber.with_writer(std::io::sink).init(),
     }
-    #[cfg(not(all(not(debug_assertions), target_os = "windows")))]
+    #[cfg(not(all(not(debug_assertions), any(target_os = "windows", target_os = "macos"))))]
     subscriber.init();
 
     #[cfg(target_os = "macos")]

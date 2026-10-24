@@ -63,7 +63,7 @@ slow plugin cannot block those local requests.
 
 Host tracing records `mcp.connection.*` and `mcp.request.*` events, with logical
 identity, connection generation, request ID, method, tool, elapsed time and
-outcome. In Windows release builds these use the existing `wisp.log` sink.
+outcome. In Windows and macOS release builds these use the existing `wisp.log` sink.
 Arguments, result bodies, credentials, launch environments and configuration
 descriptors are not audit fields. The bridge must not rotate/open the main log
 using the desktop startup log initializer.

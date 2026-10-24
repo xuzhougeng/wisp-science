@@ -300,9 +300,11 @@ If the window never appears after install, **Quit** from the tray icon and
 repair the [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)
 (Evergreen Standalone Installer, run as administrator), then reopen Wisp.
 
-Packaged Windows builds have no console. Each launch writes
-`%APPDATA%\science.wisp-science\wisp-science\logs\wisp.log` (overwritten on the
-next launch). The `startup finished` line breaks pre-first-paint work by phase
+Packaged Windows and macOS builds have no console. Each launch writes
+`wisp.log` next to the database (Windows:
+`%APPDATA%\science.wisp-science\wisp-science\logs\wisp.log`; macOS:
+`~/Library/Application Support/science.wisp-science/wisp-science/logs/wisp.log`),
+keeping the previous launch as `wisp.previous.log`. The `startup finished` line breaks pre-first-paint work by phase
 (`total=…ms store=…ms skills=…ms …`). Recovery sweeps, removing the retired
 scratch chat's sandbox folder, and restoring project windows run after the
 window is interactive and are logged as `deferred startup finished`.

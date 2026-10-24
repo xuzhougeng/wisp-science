@@ -15119,6 +15119,18 @@ test("new project form enables Create after name and folder are set", async ({ p
   await expect(create).toBeEnabled();
 });
 
+test("new project form reports an unreadable create_project response instead of staying open", async ({ page }) => {
+  await page.goto("/?mockCreateProjectMalformed=1");
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.getByPlaceholder("Project name").pressSequentially("My Project");
+  await page.locator(".pn-dir .btn-ghost").click();
+  await page.getByRole("button", { name: "Create" }).click();
+  // The backend already registered the folder, so the form must close and the
+  // failure must be visible rather than inviting a retry.
+  await expect(page.locator(".project-open-error")).toBeVisible();
+  await expect(page.locator("#new-project-name")).toHaveCount(0);
+});
+
 test("project folder import restores records and opens its workspace in place", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
