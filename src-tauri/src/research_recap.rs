@@ -37,7 +37,7 @@ const CATCH_UP_DAYS: i64 = 3;
 const MAX_RUN_ERRORS: usize = 3;
 static DAILY_RUNNING: AtomicBool = AtomicBool::new(false);
 
-fn clip(text: &str, chars: usize) -> String {
+pub(crate) fn clip(text: &str, chars: usize) -> String {
     let text = text.trim();
     match text.char_indices().nth(chars) {
         Some((index, _)) => format!("{}…", &text[..index]),
@@ -470,7 +470,8 @@ fn daily_due(daily: &DailyRecapAutomation, now: chrono::DateTime<Local>) -> bool
 }
 
 /// Draft missing recaps for the last `CATCH_UP_DAYS` complete days of every
-/// project. Existing and dismissed recaps are kept as they are.
+/// project, then bring each project's progress memory up to yesterday.
+/// Existing and dismissed recaps are kept as they are.
 async fn run_daily(store: Store) {
     if DAILY_RUNNING.swap(true, Ordering::SeqCst) {
         return;
@@ -486,6 +487,11 @@ async fn run_daily(store: Store) {
         }
     };
     'projects: for project in projects {
+        let mut failed = |error: String| {
+            tracing::warn!(target: "wisp", %error, project_id = %project.0, "daily recap failed");
+            errors.push(format!("{}: {error}", project.1));
+            errors.len() >= MAX_RUN_ERRORS
+        };
         for back in 1..=CATCH_UP_DAYS {
             let Some((start, end)) = local_day(today - chrono::Days::new(back as u64)) else {
                 continue;
@@ -494,12 +500,17 @@ async fn run_daily(store: Store) {
                 Ok(Some(_)) => drafted += 1,
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(target: "wisp", %error, project_id = %project.0, "daily recap failed");
-                    errors.push(format!("{}: {error}", project.1));
-                    if errors.len() >= MAX_RUN_ERRORS {
+                    if failed(error) {
                         break 'projects;
                     }
                 }
+            }
+        }
+        // The same complete days, folded into the project's progress memory.
+        if let Err(error) = crate::project_status::fold(&store, &project.0, project.3, today).await
+        {
+            if failed(error) {
+                break 'projects;
             }
         }
     }

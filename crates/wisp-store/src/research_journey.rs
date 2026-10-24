@@ -372,6 +372,36 @@ impl Store {
         Ok(recap)
     }
 
+    /// The project's progress memory as stored JSON. It is derived from the
+    /// records, so it never touches the state generation.
+    pub async fn project_status(&self, project_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.project_status(project_id)).await;
+        }
+        Ok(
+            sqlx::query_scalar("SELECT status_json FROM project_status WHERE project_id=?")
+                .bind(project_id)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
+    pub async fn save_project_status(&self, project_id: &str, status_json: &str) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.save_project_status(project_id, status_json)).await;
+        }
+        sqlx::query(
+            "INSERT INTO project_status(project_id,status_json,updated_at) VALUES(?,?,?) \
+             ON CONFLICT(project_id) DO UPDATE SET status_json=excluded.status_json, updated_at=excluded.updated_at",
+        )
+        .bind(project_id)
+        .bind(status_json)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn add_research_journal_entry(
         &self,
         scope: &StateScope,
@@ -517,6 +547,30 @@ mod tests {
             .unwrap();
         assert!(empty[0].history.entries.is_empty());
         assert!(empty[0].error.is_none());
+        store.pool.close().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn project_status_is_one_row_per_project_and_leaves_with_it() {
+        let path = std::env::temp_dir().join(format!("project-status-{}.db", uuid::Uuid::new_v4()));
+        let store = Store::open(&path).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        assert_eq!(store.project_status("p").await.unwrap(), None);
+        store
+            .save_project_status("p", r#"{"through_at":1}"#)
+            .await
+            .unwrap();
+        store
+            .save_project_status("p", r#"{"through_at":2}"#)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.project_status("p").await.unwrap().as_deref(),
+            Some(r#"{"through_at":2}"#)
+        );
+        store.delete_project("p").await.unwrap();
+        assert_eq!(store.project_status("p").await.unwrap(), None);
         store.pool.close().await;
         let _ = std::fs::remove_file(path);
     }

@@ -6,7 +6,7 @@
 
 ## 内置：每日研究回顾
 
-默认开启。每天到设定时间（默认 09:00，可在卡片上修改）后运行一次：为每个项目最近 3 个完整日中有记录、尚无回顾的日子起草 [每日研究回顾](research-journey.md#每日研究回顾--daily-recap)。错过的时间（例如电脑休眠）会在之后打开 Wisp 时补跑；已有或已忽略的回顾不会被覆盖，没有记录的日子不调用模型。一次运行累计 3 个错误后停止，卡片显示首个错误，第二天重试。
+默认开启。每天到设定时间（默认 09:00，可在卡片上修改）后运行一次：为每个项目最近 3 个完整日中有记录、尚无回顾的日子起草 [每日研究回顾](research-journey.md#每日研究回顾--daily-recap)。错过的时间（例如电脑休眠）会在之后打开 Wisp 时补跑；已有或已忽略的回顾不会被覆盖，没有记录的日子不调用模型。同一次运行随后把这些完整日合并进各项目的进度记忆，供[科研助理](research-assistant.md)回答项目进度；首次建立时每个项目每次最多合并 7 天。一次运行累计 3 个错误后停止，卡片显示首个错误，第二天重试。
 
 - 开关和时间立即保存。「立即运行」不受时间限制，不改变第二天的计划。
 - 模型在 **设置 → 专家 → Recap** 中更换；卡片上的链接直接打开该页。
@@ -62,7 +62,10 @@ Automation spans every project, so it opens from the research assistant: the
   (09:00 by default), drafts a recap for each project's last three complete days
   that have recorded activity and no recap yet. Missed mornings catch up on the
   next launch; existing or dismissed recaps are never overwritten; quiet days make
-  no model call. Change the model in Settings → Specialists → Recap.
+  no model call. The same run then folds those complete days into each project's
+  progress memory for the [research assistant](research-assistant.md), at most
+  seven days per project per run while a first page is built. Change the model in
+  Settings → Specialists → Recap.
 - **Memory tidy** (built-in, on by default): once a week the Recap specialist's
   model looks over the global habits and proposes merging entries that say the
   same thing or retiring one a newer entry replaces. It only proposes: **Apply**

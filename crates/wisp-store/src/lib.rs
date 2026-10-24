@@ -925,6 +925,10 @@ impl Store {
         sqlx::raw_sql(include_str!("../migrations/0067_project_memos.sql"))
             .execute(pool)
             .await?;
+        // Derived per-project progress memory for the research assistant.
+        sqlx::raw_sql(include_str!("../migrations/0068_project_status.sql"))
+            .execute(pool)
+            .await?;
         // The research assistant's dated plan items.
         sqlx::raw_sql(include_str!("../migrations/0063_assistant_tasks.sql"))
             .execute(pool)

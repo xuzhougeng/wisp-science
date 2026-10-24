@@ -972,6 +972,7 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM research_journal_entries WHERE project_id=?",
         "DELETE FROM research_recaps WHERE project_id=?",
         "DELETE FROM project_memos WHERE project_id=?",
+        "DELETE FROM project_status WHERE project_id=?",
         "DELETE FROM artifacts WHERE project_id=?",
         "DELETE FROM external_resources WHERE project_id=?",
         "DELETE FROM runs WHERE project_id=?",

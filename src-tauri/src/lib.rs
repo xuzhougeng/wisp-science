@@ -101,6 +101,7 @@ mod plan_mode;
 mod plugins;
 mod project_commands;
 mod project_reader;
+mod project_status;
 mod project_sync;
 mod project_transfer;
 mod publication_capsule;
