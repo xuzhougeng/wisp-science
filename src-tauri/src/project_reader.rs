@@ -569,19 +569,12 @@ async fn resolve_reference_sessions(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "The current session no longer exists.".to_string())?;
 
-    let assistant_projects = if wisp_store::is_assistant_project_id(&target_project) {
-        Some(crate::research_assistant::visible_projects(store).await?)
-    } else {
-        None
-    };
     let mut sessions = Vec::new();
     let mut seen = HashSet::new();
     for project_id in project_ids {
-        if let Some(visible) = &assistant_projects {
-            if !visible.iter().any(|project| &project.0 == project_id) {
-                return Err(format!("No visible project has id '{project_id}'."));
-            }
-        } else if project_id != &target_project {
+        // The assistant's project selection never reaches here: it becomes a
+        // scope note (`research_assistant::take_project_scope`).
+        if project_id != &target_project {
             return Err("#project can only read sessions from the current project.".into());
         }
         let project = store
@@ -1456,7 +1449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assistant_project_references_respect_visibility_at_send_time() {
+    async fn project_references_never_read_another_project_even_from_the_assistant() {
         let database = std::env::temp_dir().join(format!(
             "wisp_reader_assistant_{}.sqlite",
             uuid::Uuid::new_v4()
@@ -1479,31 +1472,19 @@ mod tests {
             .append_message("saved", 1, &Message::user("Recent project work"))
             .await
             .unwrap();
+        // The assistant's selection is a scope note before the Reader runs
+        // (#1589); should one slip through, it reads nothing.
         let selected = vec!["visible".into()];
-        let sessions = resolve_reference_sessions(&store, &selected, &[], "assistant")
-            .await
-            .unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].id, "saved");
-        assert!(
-            resolve_reference_sessions(&store, &selected, &[], "ordinary")
-                .await
-                .is_err()
-        );
-        crate::privacy_mode::save(&store, true, &selected)
-            .await
-            .unwrap();
-        assert!(
-            resolve_reference_sessions(&store, &selected, &[], "assistant")
+        for target in ["assistant", "ordinary"] {
+            assert!(resolve_reference_sessions(&store, &selected, &[], target)
                 .await
                 .unwrap_err()
-                .contains("No visible project")
-        );
-        assert!(
-            resolve_reference_sessions(&store, &["missing".into()], &[], "assistant")
-                .await
-                .is_err()
-        );
+                .contains("current project"));
+        }
+        let sessions = resolve_reference_sessions(&store, &selected, &[], "saved")
+            .await
+            .unwrap();
+        assert!(sessions.is_empty(), "the target itself is never re-read");
     }
 
     #[tokio::test]

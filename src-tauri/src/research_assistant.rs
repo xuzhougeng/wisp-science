@@ -242,6 +242,41 @@ pub(crate) async fn visible_projects(
         .collect())
 }
 
+const SCOPE_NOTE: &str = "The researcher selected this project in the sidebar: it is the project this message is about. Pass its project_id to research_activity, project_conversations, research_plan and dispatch_to_project. None of its conversations were read for this message; when the records are not enough, find one with project_conversations and read it with project_session_result.";
+
+/// In the assistant's conversation a project reference is the sidebar
+/// selection: it names the project a message is about, not a request to read
+/// every conversation in it (#1589). Moves those ids out of `project_ids`
+/// into a scope note; other conversations keep `#project` for the Reader.
+pub(crate) async fn take_project_scope(
+    store: &Store,
+    frame: &str,
+    project_ids: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    if project_ids.is_empty()
+        || !store
+            .frame_project_id(frame)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some_and(|project| wisp_store::is_assistant_project_id(&project))
+    {
+        return Ok(None);
+    }
+    let visible = visible_projects(store).await?;
+    let mut lines = Vec::new();
+    for id in project_ids.drain(..) {
+        let (_, name, ..) = visible
+            .iter()
+            .find(|project| project.0 == id)
+            .ok_or_else(|| format!("No visible project has id '{id}'."))?;
+        lines.push(format!("- {name} (project_id: {id})"));
+    }
+    Ok(Some(format!(
+        "## Selected project\n{}\n{SCOPE_NOTE}",
+        lines.join("\n")
+    )))
+}
+
 /// The assistant's sidebars must resolve the authoritative privacy setting
 /// before they expose project names or request any calendar history.
 #[tauri::command]
@@ -1281,6 +1316,47 @@ mod tests {
         assert!(create_session_frame(&f.store, ASSISTANT_PROJECT_ID)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn a_selected_project_scopes_the_assistant_without_reading_it() {
+        let f = Fixture::open().await;
+        ensure(&f.store, &f.dir).await.unwrap();
+        f.store.create_project("p1", "NK2R", "").await.unwrap();
+        f.store
+            .create_frame("ordinary", "p1", "OPERON", "m")
+            .await
+            .unwrap();
+        let mut ids = vec!["p1".to_string()];
+        let note = take_project_scope(&f.store, ASSISTANT_FRAME_ID, &mut ids)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(ids.is_empty(), "nothing is left for the Reader");
+        assert!(note.contains("- NK2R (project_id: p1)"));
+        // A hand-written #project elsewhere stays an explicit Reader request.
+        let mut ids = vec!["p1".to_string()];
+        assert!(take_project_scope(&f.store, "ordinary", &mut ids)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(ids, ["p1"]);
+        let mut none = Vec::new();
+        assert!(take_project_scope(&f.store, ASSISTANT_FRAME_ID, &mut none)
+            .await
+            .unwrap()
+            .is_none());
+        // Visibility is checked again at send time.
+        crate::privacy_mode::save(&f.store, true, &["p1".into()])
+            .await
+            .unwrap();
+        for id in ["p1", "missing"] {
+            let mut ids = vec![id.to_string()];
+            assert!(take_project_scope(&f.store, ASSISTANT_FRAME_ID, &mut ids)
+                .await
+                .unwrap_err()
+                .contains("No visible project"));
+        }
     }
 
     #[tokio::test]

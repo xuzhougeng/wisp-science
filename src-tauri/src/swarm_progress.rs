@@ -60,24 +60,6 @@ pub(crate) async fn read_references(
     question: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Option<String>, String> {
-    // Evidence recovered by a manual retry rides along with the next turn,
-    // whether or not that turn references the project again.
-    let pending = take_pending_retry(store, frame).await;
-    if !refs.iter().any(|r| {
-        matches!(
-            r,
-            wisp_dto::ComposerReferenceArg::Project { .. }
-                | wisp_dto::ComposerReferenceArg::Session { .. }
-        )
-    }) {
-        return Ok(pending);
-    }
-    let progress = wisp_core::swarm::SwarmReporter::new("reader", question, "", |update| {
-        app.state::<AppState>()
-            .swarm_progress
-            .update(frame, update.clone());
-        crate::emit_agent_event_in(app, progress_event(frame, &update), None);
-    });
     let (mut projects, mut sessions) = (Vec::new(), Vec::new());
     for reference in refs {
         match reference {
@@ -90,6 +72,25 @@ pub(crate) async fn read_references(
             _ => {}
         }
     }
+    // Resolved before the retry evidence is taken: a failed lookup aborts
+    // this turn, and the evidence must still reach the next one.
+    let scope = crate::research_assistant::take_project_scope(store, frame, &mut projects).await?;
+    // Evidence recovered by a manual retry rides along with the next turn,
+    // whether or not that turn references the project again.
+    let pending = take_pending_retry(store, frame).await;
+    let join = |parts: [Option<String>; 3]| {
+        let parts = parts.into_iter().flatten().collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
+    };
+    if projects.is_empty() && sessions.is_empty() {
+        return Ok(join([scope, None, pending]));
+    }
+    let progress = wisp_core::swarm::SwarmReporter::new("reader", question, "", |update| {
+        app.state::<AppState>()
+            .swarm_progress
+            .update(frame, update.clone());
+        crate::emit_agent_event_in(app, progress_event(frame, &update), None);
+    });
     let result = crate::project_reader::read_references_with_progress(
         store,
         &projects,
@@ -116,10 +117,7 @@ pub(crate) async fn read_references(
         }
     }
     persist_snapshot(app, store, frame).await;
-    result.map(|injection| match (pending, injection) {
-        (Some(pending), Some(injection)) => Some(format!("{injection}\n\n{pending}")),
-        (pending, injection) => injection.or(pending),
-    })
+    result.map(|injection| join([scope, injection, pending]))
 }
 
 async fn persist_snapshot(app: &tauri::AppHandle, store: &wisp_store::Store, frame: &str) {
