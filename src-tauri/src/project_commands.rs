@@ -1200,6 +1200,9 @@ mod tests {
         assert!(!database.exists());
     }
 
+    /// A damaged database is never treated as a missing one. Opening it sets
+    /// the damaged file aside and rebuilds the database (#1610), and that is
+    /// what the user is told; only the rebuilt database passes the checks.
     #[tokio::test]
     async fn project_deletion_does_not_ignore_corrupt_registered_databases() {
         let root = tempfile::tempdir().unwrap();
@@ -1217,12 +1220,25 @@ mod tests {
             .unwrap();
         let database = workspace.join(wisp_store::PROJECT_DATABASE);
         std::fs::write(&database, b"not a SQLite database").unwrap();
+        let error = validate_project_deletion(&store, "p", true)
+            .await
+            .unwrap_err();
+        assert!(error.contains("project_database_rebuilt:"), "{error}");
+        let damaged: Vec<std::path::PathBuf> = std::fs::read_dir(database.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(damaged.len(), 1, "{damaged:?}");
+        assert_eq!(
+            std::fs::read(&damaged[0]).unwrap(),
+            b"not a SQLite database"
+        );
         for delete_data in [false, true] {
-            assert!(validate_project_deletion(&store, "p", delete_data)
+            validate_project_deletion(&store, "p", delete_data)
                 .await
-                .is_err());
+                .unwrap();
         }
-        assert_eq!(std::fs::read(&database).unwrap(), b"not a SQLite database");
     }
 
     #[tokio::test]
