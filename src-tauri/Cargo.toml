@@ -100,10 +100,10 @@ windows = { version = "0.62", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSUserNotification"] }
+objc2 = "0.6"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2 = "0.6"
 tao = "0.37.0"
 
 [dev-dependencies]

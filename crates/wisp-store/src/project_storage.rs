@@ -157,6 +157,54 @@ pub(super) async fn insert_rows(
     Ok(())
 }
 
+/// SQLITE_CORRUPT (11) or SQLITE_NOTADB (26) anywhere in the chain, in any
+/// extended form: the database file itself is unusable, not one statement.
+fn is_corrupt(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<sqlx::Error>()
+            .and_then(|error| error.as_database_error())
+            .and_then(|error| error.code())
+            .and_then(|code| code.parse::<i64>().ok())
+            .is_some_and(|code| matches!(code & 0xff, 11 | 26))
+    })
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut full = path.as_os_str().to_owned();
+    full.push(suffix);
+    full.into()
+}
+
+/// Rename a database and its journal files; the WAL may still hold data worth
+/// salvaging by hand, and left beside a replacement it would corrupt that too.
+fn move_aside(database: &Path, aside: &Path) -> std::io::Result<()> {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        match std::fs::rename(with_suffix(database, suffix), with_suffix(aside, suffix)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn remove_database(database: &Path) {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let _ = std::fs::remove_file(with_suffix(database, suffix));
+    }
+}
+
+fn restore_copy(copy: &Path, database: &Path) -> std::io::Result<()> {
+    let pending = with_suffix(database, ".restoring");
+    std::fs::copy(copy, &pending)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&pending)?
+        .sync_all()?;
+    std::fs::rename(&pending, database)
+}
+
 impl Store {
     /// Register an existing, self-contained workspace without requiring its
     /// original application database. Metadata and database identity must agree.
@@ -393,15 +441,40 @@ impl Store {
         );
         let mut pools = registry.pools.lock().await;
         if !pools.contains_key(id) {
-            let options = sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(&path)
-                .create_if_missing(false)
-                .read_only(registry.read_only)
-                .busy_timeout(std::time::Duration::from_secs(5));
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(4)
-                .connect_with(options)
-                .await?;
+            let database = Path::new(&path);
+            let pool = match Self::open_project_pool(registry, id, database).await {
+                Ok(pool) => pool,
+                Err(error) if registry.migrate_on_open && is_corrupt(&error) => {
+                    return Err(
+                        Self::recover_project_database(registry, id, database, error).await,
+                    );
+                }
+                Err(error) => return Err(error),
+            };
+            pools.insert(id.to_owned(), pool);
+        }
+        Ok(Some(Self {
+            pool: pools[id].clone(),
+            registry: self.registry.clone(),
+            project_scope: Some(id.to_owned()),
+        }))
+    }
+
+    async fn open_project_pool(
+        registry: &ProjectRegistry,
+        id: &str,
+        database: &Path,
+    ) -> Result<SqlitePool> {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(database)
+            .create_if_missing(false)
+            .read_only(registry.read_only)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await?;
+        let opened: Result<()> = async {
             if registry.migrate_on_open {
                 super::upgrade_backup::before_migration(&pool, &registry.global, Some(id)).await;
                 Self::migrate(&pool).await?;
@@ -410,13 +483,101 @@ impl Store {
                 .fetch_all(&pool)
                 .await?;
             anyhow::ensure!(ids == [id], "Project database identity mismatch: {id}");
-            pools.insert(id.to_owned(), pool);
+            Ok(())
         }
-        Ok(Some(Self {
-            pool: pools[id].clone(),
-            registry: self.registry.clone(),
-            project_scope: Some(id.to_owned()),
-        }))
+        .await;
+        if let Err(error) = opened {
+            // Release the file before recovery moves it aside.
+            Self::close_pool(&pool).await;
+            return Err(error);
+        }
+        Ok(pool)
+    }
+
+    /// A database SQLite reports as damaged is moved aside, keeping its WAL,
+    /// and the newest backup copy that opens takes its place; with no copy, an
+    /// empty database carrying the project row does. The error returned names
+    /// which happened and where the damaged file is (#1610); the project opens
+    /// normally on the next attempt. Workspace files are never touched.
+    async fn recover_project_database(
+        registry: &ProjectRegistry,
+        id: &str,
+        database: &Path,
+        cause: anyhow::Error,
+    ) -> anyhow::Error {
+        let name = database
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        let aside = database.with_file_name(format!(
+            "{name}.corrupt-{}",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        ));
+        if let Err(error) = move_aside(database, &aside) {
+            return cause.context(format!(
+                "Project database is damaged and could not be moved aside: {error}"
+            ));
+        }
+        tracing::error!(project_id = %id, damaged = %aside.display(), %cause, "Project database is damaged");
+        let owner = match super::upgrade_backup::database_file(&registry.global).await {
+            Ok(Some(owner)) => owner,
+            _ => std::path::PathBuf::new(),
+        };
+        for copy in super::upgrade_backup::copies_of(&owner, database, Some(id)) {
+            let copy_name = copy
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            if let Err(error) = restore_copy(&copy, database) {
+                tracing::warn!(copy = %copy.display(), %error, "Backup copy could not be restored");
+                continue;
+            }
+            match Self::open_project_pool(registry, id, database).await {
+                Ok(pool) => {
+                    Self::close_pool(&pool).await;
+                    tracing::warn!(project_id = %id, copy = %copy_name, "Project database restored from its backup copy");
+                    return anyhow::anyhow!(
+                        "project_database_restored:{copy_name}:{}",
+                        aside.display()
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(copy = %copy.display(), %error, "Backup copy does not open either");
+                    remove_database(database);
+                }
+            }
+        }
+        match Self::rebuild_project_database(registry, id, database).await {
+            Ok(()) => anyhow::anyhow!("project_database_rebuilt:{}", aside.display()),
+            Err(error) => error.context(format!(
+                "Project database is damaged; it was moved to {} and no replacement could be made",
+                aside.display()
+            )),
+        }
+    }
+
+    async fn rebuild_project_database(
+        registry: &ProjectRegistry,
+        id: &str,
+        database: &Path,
+    ) -> Result<()> {
+        let project = sqlx::query(
+            "SELECT COALESCE(name,'') AS name,COALESCE(description,'') AS description,\
+             COALESCE(workspace_dir,'') AS workspace_dir,created_at,updated_at FROM projects WHERE id=?",
+        )
+        .bind(id)
+        .fetch_one(&registry.global)
+        .await?;
+        let store = Store::open_with_journal(database, true).await?;
+        sqlx::query("INSERT INTO projects(id,name,description,workspace_dir,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+            .bind(id)
+            .bind(project.try_get::<String, _>("name")?)
+            .bind(project.try_get::<String, _>("description")?)
+            .bind(project.try_get::<String, _>("workspace_dir")?)
+            .bind(project.try_get::<i64, _>("created_at")?)
+            .bind(project.try_get::<i64, _>("updated_at")?)
+            .execute(&store.pool)
+            .await?;
+        Self::close_pool(&store.pool).await;
+        Ok(())
     }
 
     pub(super) async fn routed_projects(&self) -> Result<Option<Vec<Self>>> {
@@ -2044,6 +2205,18 @@ mod tests {
         assert_eq!(direct.message_count("f").await.unwrap(), 2);
     }
 
+    fn backup_names(backups: &Path, tag: &str) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(backups) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(tag) && name.ends_with(".sqlite"))
+            .collect();
+        names.sort();
+        names
+    }
+
     #[tokio::test]
     async fn another_versions_project_database_is_backed_up_outside_the_workspace() {
         let root = tempfile::tempdir().unwrap();
@@ -2064,8 +2237,10 @@ mod tests {
             .append_message("frame", 1, &wisp_llm::Message::user("kept"))
             .await
             .unwrap();
-        // A project this version created has nothing older to keep.
-        assert!(!backups.exists());
+        // A project this version created has nothing older to keep; the day's
+        // copy of the project (#1610) is the only one.
+        assert!(backup_names(&backups, ".pre-").is_empty());
+        assert_eq!(backup_names(&backups, ".daily.").len(), 1);
 
         let stamp = |version: Option<i64>| {
             let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&database);
@@ -2091,13 +2266,10 @@ mod tests {
 
         // Each project is copied when this version first opens it.
         let reopened = Store::open_application(&path).await.unwrap();
-        assert!(!backups.exists());
+        assert!(backup_names(&backups, ".pre-").is_empty());
         assert_eq!(reopened.message_count("frame").await.unwrap(), 1);
         assert_eq!(stamp(None).await, current);
-        let names: Vec<String> = std::fs::read_dir(&backups)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
+        let names = backup_names(&backups, ".pre-");
         assert_eq!(names.len(), 1, "{names:?}");
         assert!(names[0].starts_with("project-study."), "{names:?}");
         assert!(!workspace.join(".wisp").join("backups").exists());
@@ -2105,5 +2277,120 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(copy.message_count("frame").await.unwrap(), 1);
+    }
+
+    /// A portable project with one message, every pool closed, and its daily
+    /// copy either holding that message or deleted.
+    async fn closed_project_with_message(
+        root: &Path,
+        keep_copy: bool,
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let path = root.join("app").join("wisp.sqlite");
+        let backups = root.join("app").join("backups");
+        let workspace = root.join("study");
+        let database = workspace.join(PROJECT_DATABASE);
+        let store = open_portable_application(&path).await.unwrap();
+        store
+            .create_project("study", "Study", workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        store
+            .create_frame("frame", "study", "agent", "model")
+            .await
+            .unwrap();
+        store
+            .append_message("frame", 1, &wisp_llm::Message::user("kept"))
+            .await
+            .unwrap();
+        // The copy taken at creation is empty; make it a day old (by name too,
+        // since names carry whole seconds) so reopening takes another, which
+        // holds the message.
+        for name in backup_names(&backups, "project-study.") {
+            let tail = name.splitn(3, '.').nth(2).unwrap().to_owned();
+            let old = backups.join(format!("project-study.20200101-000001.{tail}"));
+            std::fs::rename(backups.join(name), &old).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&old)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - 2 * crate::upgrade_backup::DAY)
+                .unwrap();
+        }
+        close_everything(store).await;
+        let reopened = Store::open_application(&path).await.unwrap();
+        assert_eq!(reopened.message_count("frame").await.unwrap(), 1);
+        close_everything(reopened).await;
+        if !keep_copy {
+            std::fs::remove_dir_all(&backups).unwrap();
+        }
+        (path, database, backups)
+    }
+
+    async fn close_everything(store: Store) {
+        for pool in store.registry.as_ref().unwrap().pools.lock().await.values() {
+            Store::close_pool(pool).await;
+        }
+        Store::close_pool(&store.pool).await;
+    }
+
+    fn damaged_files(database: &Path) -> Vec<String> {
+        std::fs::read_dir(database.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".corrupt-"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_damaged_project_database_is_restored_from_its_newest_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, database, backups) = closed_project_with_message(root.path(), true).await;
+        let copies = backup_names(&backups, "project-study.");
+        assert_eq!(copies.len(), 2, "{copies:?}");
+        // Page 1 keeps its header, so the file is still "a database" whose
+        // schema tree is gone: code 11, "database disk image is malformed".
+        let mut bytes = std::fs::read(&database).unwrap();
+        bytes[100..].fill(0);
+        std::fs::write(&database, bytes).unwrap();
+
+        let store = Store::open_application(&path).await.unwrap();
+        let error = store.get_project("study").await.unwrap_err().to_string();
+        let expected = format!("project_database_restored:{}:", copies[1]);
+        assert!(error.starts_with(&expected), "{error}");
+        let damaged = damaged_files(&database);
+        assert_eq!(damaged.len(), 1, "{damaged:?}");
+        assert!(error.ends_with(&damaged[0]), "{error}");
+        // The next attempt opens the restored database.
+        assert_eq!(
+            store.get_project("study").await.unwrap().unwrap().0,
+            "Study"
+        );
+        assert_eq!(store.message_count("frame").await.unwrap(), 1);
+        // The copies were not touched.
+        assert_eq!(backup_names(&backups, "project-study."), copies);
+    }
+
+    #[tokio::test]
+    async fn a_damaged_project_database_without_copies_is_rebuilt_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, database, _) = closed_project_with_message(root.path(), false).await;
+        // Not a SQLite file at all: code 26, "file is not a database".
+        std::fs::write(&database, b"not a database".repeat(400)).unwrap();
+
+        let store = Store::open_application(&path).await.unwrap();
+        let error = store.get_project("study").await.unwrap_err().to_string();
+        let damaged = damaged_files(&database);
+        assert_eq!(damaged.len(), 1, "{damaged:?}");
+        assert_eq!(
+            error,
+            format!(
+                "project_database_rebuilt:{}",
+                database.with_file_name(&damaged[0]).display()
+            )
+        );
+        let (name, workspace) = store.get_project("study").await.unwrap().unwrap();
+        assert_eq!(name, "Study");
+        assert!(workspace.ends_with("study"), "{workspace}");
+        assert_eq!(store.message_count("frame").await.unwrap(), 0);
     }
 }

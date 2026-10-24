@@ -50,6 +50,8 @@ mod device_hub;
 mod dispatch;
 mod dynamic_workflow;
 mod exploration_commands;
+#[cfg(target_os = "macos")]
+mod mac_notifications;
 mod native_assistant;
 mod native_calendar;
 mod native_composer;

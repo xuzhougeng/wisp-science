@@ -1,5 +1,8 @@
-//! A copy of each database, taken before another app version migrates it.
-//! Migrations here only go forward; this copy is the way back (#1175).
+//! A copy of each database, taken before another app version migrates it,
+//! and otherwise once a day when it is opened.
+//! Migrations here only go forward; the pre-upgrade copy is the way back
+//! (#1175). The daily copy is what a damaged database is restored from
+//! (#1610); `Store::route_project` does that.
 //!
 //! `PRAGMA user_version` records the app version that last migrated the
 //! database. It is negated between taking the copy and finishing the
@@ -12,6 +15,8 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DIRECTORY: &str = "backups";
 const KEPT: usize = 3;
+const DAILY: &str = "daily";
+pub(crate) const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 /// 1.17.0 -> 1_017_000. Pre-release suffixes are ignored.
 fn stamp_of(version: &str) -> i64 {
@@ -31,7 +36,7 @@ async fn stamp(pool: &SqlitePool) -> Result<i64> {
         .await?)
 }
 
-async fn database_file(pool: &SqlitePool) -> Result<Option<PathBuf>> {
+pub(crate) async fn database_file(pool: &SqlitePool) -> Result<Option<PathBuf>> {
     let file: String =
         sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
             .fetch_one(pool)
@@ -44,9 +49,59 @@ async fn database_file(pool: &SqlitePool) -> Result<Option<PathBuf>> {
 /// scanned, so nothing is added to them. Failing to copy never blocks the
 /// open; an upgrade must not become less reliable than it was without this.
 pub(crate) async fn before_migration(pool: &SqlitePool, owner: &SqlitePool, project: Option<&str>) {
-    if let Err(error) = copy_if_version_changed(pool, owner, project).await {
-        tracing::warn!(%error, "Database was not backed up before migration");
+    if let Err(error) = copy_before_opening(pool, owner, project).await {
+        tracing::warn!(%error, "Database was not backed up before opening");
     }
+}
+
+/// The copies kept of one database, newest first. `owner` is the application
+/// database file; `project` as for [`before_migration`].
+pub(crate) fn copies_of(owner: &Path, database: &Path, project: Option<&str>) -> Vec<PathBuf> {
+    let Some(directory) = owner.parent().map(|parent| parent.join(DIRECTORY)) else {
+        return Vec::new();
+    };
+    let Ok(label) = label_of(database, project) else {
+        return Vec::new();
+    };
+    copies_in(&directory, &label, "")
+}
+
+fn label_of(database: &Path, project: Option<&str>) -> Result<String> {
+    Ok(match project {
+        Some(id) => format!("project-{}", super::project_snapshots::file_label(id)),
+        None => database
+            .file_stem()
+            .context("database has no name")?
+            .to_string_lossy()
+            .into_owned(),
+    })
+}
+
+/// `<label>.<YYYYMMDD-HHMMSS>.<tag>.sqlite`, where `tag` is `pre-<version>` or
+/// `daily`; the timestamp makes names sort by age. Returns the tail after the
+/// timestamp for a name of ours, `None` for a bystander.
+fn tail_of<'a>(name: &'a str, label: &str) -> Option<&'a str> {
+    name.strip_prefix(label)?
+        .strip_prefix('.')?
+        .get(15..)
+        .filter(|tail| tail.starts_with('.'))
+}
+
+/// Copies whose tag starts with `tag_prefix` (`""` for every tag), newest first.
+fn copies_in(directory: &Path, label: &str, tag_prefix: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            name.ends_with(".sqlite")
+                && tail_of(name, label).is_some_and(|tail| tail[1..].starts_with(tag_prefix))
+        })
+        .collect();
+    names.sort_unstable_by(|a, b| b.cmp(a));
+    names.into_iter().map(|name| directory.join(name)).collect()
 }
 
 /// Record that this version finished migrating the database.
@@ -60,16 +115,13 @@ pub(crate) async fn migrated(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn copy_if_version_changed(
+async fn copy_before_opening(
     pool: &SqlitePool,
     owner: &SqlitePool,
     project: Option<&str>,
 ) -> Result<()> {
     let current = stamp_of(VERSION);
     let last = stamp(pool).await?;
-    if last.abs() == current {
-        return Ok(());
-    }
     // A database this process is creating has nothing to lose.
     let populated: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%')",
@@ -83,6 +135,33 @@ async fn copy_if_version_changed(
     ) else {
         return Ok(());
     };
+    let directory = owner
+        .parent()
+        .context("database has no directory")?
+        .join(DIRECTORY);
+    let label = label_of(&database, project)?;
+    if last.abs() == current {
+        // Same version: one copy a day, of whatever kind (#1610).
+        let fresh = |path: &PathBuf| {
+            std::fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .map(|modified| modified.elapsed().is_ok_and(|age| age < DAY))
+                .unwrap_or(false)
+        };
+        if copies_in(&directory, &label, "").first().is_some_and(fresh) {
+            return Ok(());
+        }
+        // A damaged database must not rotate the copies it will be restored
+        // from. ponytail: a full scan once a day; sample pages if it shows.
+        let check: String = sqlx::query_scalar("PRAGMA quick_check(1)")
+            .fetch_one(pool)
+            .await?;
+        anyhow::ensure!(check == "ok", "Database failed quick_check: {check}");
+        let name = publish(pool, &database, &directory, &label, DAILY).await?;
+        prune(&directory, &label, DAILY);
+        tracing::info!(database = %database.display(), backup = %name, "Took the daily database copy");
+        return Ok(());
+    }
     if last.abs() > current {
         // Older versions are expected to keep working on additive schema
         // changes, so this is not refused. The copy keeps the newer state.
@@ -97,27 +176,37 @@ async fn copy_if_version_changed(
             "Opening a database last migrated by a newer version"
         );
     }
-    let directory = owner
-        .parent()
-        .context("database has no directory")?
-        .join(DIRECTORY);
-    std::fs::create_dir_all(&directory)?;
-    let label = match project {
-        Some(id) => format!("project-{}", super::project_snapshots::file_label(id)),
-        None => database
-            .file_stem()
-            .context("database has no name")?
-            .to_string_lossy()
-            .into_owned(),
-    };
-    // `<label>.<YYYYMMDD-HHMMSS>.pre-<version>.sqlite`: names sort by age.
+    let name = publish(
+        pool,
+        &database,
+        &directory,
+        &label,
+        &format!("pre-{VERSION}"),
+    )
+    .await?;
+    prune(&directory, &label, "pre-");
+    sqlx::query(&format!("PRAGMA user_version={}", -current))
+        .execute(pool)
+        .await?;
+    tracing::info!(database = %database.display(), backup = %name, "Backed up database before migration");
+    Ok(())
+}
+
+async fn publish(
+    pool: &SqlitePool,
+    database: &Path,
+    directory: &Path,
+    label: &str,
+    tag: &str,
+) -> Result<String> {
+    std::fs::create_dir_all(directory)?;
     let name = format!(
-        "{label}.{}.pre-{VERSION}.sqlite",
+        "{label}.{}.{tag}.sqlite",
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
     let pending = directory.join(format!("{name}.tmp"));
     let published = async {
-        copy_database(pool, &database, &pending).await?;
+        copy_database(pool, database, &pending).await?;
         std::fs::OpenOptions::new()
             .write(true)
             .open(&pending)?
@@ -129,12 +218,7 @@ async fn copy_if_version_changed(
         let _ = std::fs::remove_file(&pending);
     }
     published?;
-    prune(&directory, &label);
-    sqlx::query(&format!("PRAGMA user_version={}", -current))
-        .execute(pool)
-        .await?;
-    tracing::info!(database = %database.display(), backup = %name, "Backed up database before migration");
-    Ok(())
+    Ok(name)
 }
 
 /// A plain file copy is about 30x faster than `VACUUM INTO` (0.3s against 8s
@@ -175,30 +259,26 @@ async fn copy_file_while_quiet(pool: &SqlitePool, database: &Path, target: &Path
     Ok(copied.transpose()?.is_some())
 }
 
-fn prune(directory: &Path, label: &str) {
-    let prefix = format!("{label}.");
+fn prune(directory: &Path, label: &str, tag_prefix: &str) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
-    let mut copies = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let ours = name
-            .strip_prefix(&prefix)
-            .and_then(|rest| rest.get(15..))
-            .is_some_and(|tail| tail.starts_with(".pre-"));
-        if ours && name.ends_with(".sqlite") {
-            copies.push(name);
-        } else if ours && name.ends_with(".tmp") {
-            // Left by a crash mid-copy; this run's own file is already renamed.
+        // Left by a crash mid-copy; this run's own file is already renamed.
+        if name.ends_with(".tmp") && tail_of(&name, label).is_some() {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    copies.sort_unstable_by(|a, b| b.cmp(a));
-    for name in copies.into_iter().skip(KEPT) {
+    for path in copies_in(directory, label, tag_prefix)
+        .into_iter()
+        .skip(KEPT)
+    {
         // Inspecting a copy leaves WAL files beside it.
         for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(directory.join(format!("{name}{suffix}")));
+            let mut sidecar = path.clone().into_os_string();
+            sidecar.push(suffix);
+            let _ = std::fs::remove_file(sidecar);
         }
     }
 }
@@ -208,16 +288,46 @@ mod tests {
     use super::*;
     use crate::Store;
 
+    /// Copies other than the day's (#1610), which `daily_copies` lists.
     fn copies(directory: &Path) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(directory.join(DIRECTORY)) else {
             return Vec::new();
         };
         let mut names: Vec<String> = entries
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| !name.ends_with("-wal") && !name.ends_with("-shm"))
+            .filter(|name| {
+                !name.ends_with("-wal") && !name.ends_with("-shm") && !name.contains(".daily.")
+            })
             .collect();
         names.sort();
         names
+    }
+
+    fn daily_copies(directory: &Path) -> Vec<String> {
+        copies_in(&directory.join(DIRECTORY), "wisp", DAILY)
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn age(path: &Path) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * DAY)
+            .unwrap();
+    }
+
+    /// Make a copy look a day old: names carry whole seconds, so a copy taken
+    /// in the same second as the aged one would otherwise replace it.
+    fn aged(directory: &Path, name: &str) -> String {
+        let (label, rest) = name.split_once('.').unwrap();
+        let (_, tail) = rest.split_once('.').unwrap();
+        let renamed = format!("{label}.20200101-000001.{tail}");
+        std::fs::rename(directory.join(name), directory.join(&renamed)).unwrap();
+        age(&directory.join(&renamed));
+        renamed
     }
 
     async fn raw(path: &Path) -> SqlitePool {
@@ -248,6 +358,104 @@ mod tests {
         assert_eq!(stamp_of("1.17.0"), 1_017_000);
         assert_eq!(stamp_of("2.0.3-beta.1"), 2_000_003);
         assert!(stamp_of("1.9.0") < stamp_of("1.10.0"));
+    }
+
+    #[test]
+    fn copy_names_are_recognized_by_label_and_timestamp() {
+        assert_eq!(
+            tail_of("wisp.20261006-120301.pre-1.18.0.sqlite", "wisp"),
+            Some(".pre-1.18.0.sqlite")
+        );
+        assert_eq!(
+            tail_of("wisp.20261006-120301.daily.sqlite", "wisp"),
+            Some(".daily.sqlite")
+        );
+        assert_eq!(tail_of("wisp.notes.sqlite", "wisp"), None);
+        assert_eq!(tail_of("wisp-2.20261006-120301.daily.sqlite", "wisp"), None);
+        assert_eq!(
+            tail_of("library.20261006-120301.daily.sqlite", "wisp"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_database_is_copied_once_a_day() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wisp.sqlite");
+        written_by(&path, stamp_of(VERSION)).await;
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let first = daily_copies(root.path());
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0].starts_with("wisp.") && first[0].ends_with(".daily.sqlite"));
+        assert!(copies(root.path()).is_empty());
+        // The same day: none.
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        assert_eq!(daily_copies(root.path()), first);
+        // A day later: another, and the older one is what it was.
+        let old = aged(&root.path().join(DIRECTORY), &first[0]);
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let later = daily_copies(root.path());
+        assert_eq!(later.len(), 2, "{later:?}");
+        assert_eq!(later[1], old);
+        let copy = Store::open_read_only(&root.path().join(DIRECTORY).join(&later[1]))
+            .await
+            .unwrap();
+        assert_eq!(
+            copy.get_setting("probe").await.unwrap().as_deref(),
+            Some("kept")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fresh_pre_upgrade_copy_counts_as_the_days_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wisp.sqlite");
+        written_by(&path, 0).await;
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        assert_eq!(copies(root.path()).len(), 1);
+        // Reopened by the same version within the day: still only that copy.
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        assert_eq!(copies(root.path()).len(), 1);
+        assert!(daily_copies(root.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_damaged_database_is_not_copied_over_its_good_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wisp.sqlite");
+        written_by(&path, stamp_of(VERSION)).await;
+        // Page 1 stays readable; every table's pages are gone.
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[4096..].fill(0);
+        std::fs::write(&path, bytes).unwrap();
+        let _ = Store::open(&path).await;
+        assert!(daily_copies(root.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn only_the_newest_daily_copies_are_kept_apart_from_upgrade_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wisp.sqlite");
+        written_by(&path, stamp_of(VERSION)).await;
+        let directory = root.path().join(DIRECTORY);
+        std::fs::create_dir_all(&directory).unwrap();
+        for name in [
+            "wisp.20200101-000001.daily.sqlite",
+            "wisp.20200101-000002.daily.sqlite",
+            "wisp.20200101-000003.daily.sqlite",
+            "wisp.20200101-000001.pre-1.0.0.sqlite",
+        ] {
+            std::fs::write(directory.join(name), b"old").unwrap();
+            age(&directory.join(name));
+        }
+        Store::close_pool(&Store::open(&path).await.unwrap().pool).await;
+        let daily = daily_copies(root.path());
+        assert_eq!(daily.len(), KEPT, "{daily:?}");
+        assert!(!daily.contains(&"wisp.20200101-000001.daily.sqlite".to_string()));
+        assert_eq!(
+            copies(root.path()),
+            ["wisp.20200101-000001.pre-1.0.0.sqlite"]
+        );
     }
 
     #[tokio::test]

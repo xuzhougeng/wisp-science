@@ -57,35 +57,22 @@ fn show_clickable_notification(
     // The banner never sets a sound here, so the sound cue already plays alone.
     _silent: bool,
 ) -> Result<(), String> {
-    let application = if tauri::is_dev() {
-        "com.apple.Terminal".to_string()
-    } else {
-        app.config().identifier.clone()
-    };
-    // This is process-global and intentionally first-wins. A prior notification
-    // may already have configured the same application identifier.
-    let _ = mac_notification_sys::set_application(&application);
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut notification = mac_notification_sys::Notification::new();
-        notification
-            .title(&title)
-            .message(&body)
-            .wait_for_click(true);
-        match notification.send() {
-            Ok(mac_notification_sys::NotificationResponse::Click) => {
-                if !focus_fallback_armed || claim_notify_activation(&window_label, target.is_some())
-                {
-                    desktop_lifecycle::activate_workspace_window(&app, &window_label, target);
-                }
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(target: "wisp", %error, "desktop notification failed");
-            }
-        }
-    });
-    Ok(())
+    // Unbundled development binaries have no bundle identifier, which the
+    // notification center requires; borrow Terminal's. Process-global and
+    // intentionally first-wins.
+    if tauri::is_dev() {
+        let _ = mac_notification_sys::set_application("com.apple.Terminal");
+    }
+    crate::mac_notifications::show(
+        title,
+        body,
+        crate::mac_notifications::Click {
+            app,
+            window_label,
+            target,
+            focus_fallback_armed,
+        },
+    )
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]

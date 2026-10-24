@@ -7097,6 +7097,17 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             if locale == Locale::Zh { "网盘还没有同步完最新版本。请等待网盘客户端完成下载后再试，本机数据未被改动。".into() }
             else { "The cloud drive has not finished syncing the latest version. Wait for the drive client, then try again. Nothing on this device was changed.".into() }
         }
+        m if m.starts_with("project_database_restored:") => {
+            let rest = &m["project_database_restored:".len()..];
+            let (copy, damaged) = rest.split_once(':').unwrap_or((rest, ""));
+            if locale == Locale::Zh { format!("项目数据库已损坏，已用备份副本 {copy} 恢复；该副本之后的会话记录不在数据库里。损坏的文件保留在 {damaged}，工作区文件和产物未受影响。请再打开一次项目。") }
+            else { format!("The project database was damaged and has been restored from the backup copy {copy}; conversations recorded after that copy are not in it. The damaged file was kept at {damaged}; workspace files and artifacts are untouched. Open the project again.") }
+        }
+        m if m.starts_with("project_database_rebuilt:") => {
+            let damaged = &m["project_database_rebuilt:".len()..];
+            if locale == Locale::Zh { format!("项目数据库已损坏，且没有可用的备份副本，已重建为空数据库；会话记录无法恢复。损坏的文件保留在 {damaged}，工作区文件和产物未受影响。请再打开一次项目。") }
+            else { format!("The project database was damaged and no backup copy exists, so an empty database was created; conversations could not be recovered. The damaged file was kept at {damaged}; workspace files and artifacts are untouched. Open the project again.") }
+        }
         m if m.starts_with("project_folder_metadata_invalid:") => {
             if locale == Locale::Zh { "项目 metadata 数据库损坏、不完整或与项目说明不匹配，无法导入。请从原项目重新导出。".into() }
             else { "Project metadata is damaged, incomplete or does not match the manifest. Export the original project again.".into() }
@@ -7760,6 +7771,19 @@ mod api_error_hint_tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn localize_backend_explains_project_database_recovery() {
+        let restored = "project_database_restored:project-p.20261024-010203.daily.sqlite:C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203";
+        let zh = localize_backend(Locale::Zh, restored);
+        assert!(zh.contains("project-p.20261024-010203.daily.sqlite"), "{zh}");
+        assert!(zh.contains("project.sqlite.corrupt-20261024-010203"), "{zh}");
+        let en = localize_backend(Locale::En, restored);
+        assert!(en.starts_with("The project database was damaged and has been restored"), "{en}");
+        assert!(en.contains("C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203"), "{en}");
+        let rebuilt = localize_backend(Locale::Zh, "project_database_rebuilt:/w/.wisp/project.sqlite.corrupt-1");
+        assert!(rebuilt.contains("没有可用的备份副本") && rebuilt.ends_with("project.sqlite.corrupt-1，工作区文件和产物未受影响。请再打开一次项目。"), "{rebuilt}");
     }
 
     #[test]
