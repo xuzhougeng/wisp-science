@@ -60,7 +60,9 @@ pub enum WorkspacePathKind {
     Unavailable,
 }
 
-/// Bounded numeric renderer diagnostics. Never includes user or plugin content.
+/// Bounded renderer diagnostics: counters plus the first fault line. Never
+/// includes user or plugin content; `first_fault` quotes a Rust panic location
+/// or a WebAssembly trap, not a script error message.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiHealthSnapshot {
@@ -76,6 +78,10 @@ pub struct UiHealthSnapshot {
     pub media_blob_urls: u32,
     pub media_blob_bytes: u64,
     pub media_owners: u32,
+    /// First line of the first Rust panic or wasm trap since the document
+    /// loaded (`panicked at ui/src/x.rs:1:2: msg` or `RuntimeError: ...`),
+    /// empty while the renderer is healthy. Bounded by sender and receiver.
+    pub first_fault: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

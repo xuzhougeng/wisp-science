@@ -9975,6 +9975,22 @@ test("OpenCode preset defaults to Go and saves only user-configured models", asy
   expect(profiles).toEqual([["custom-model", "anthropic"]]);
 });
 
+test("add provider reports an unreadable save_model reply and frees the panel", async ({ page }) => {
+  await enterApp(page, "/?mockSaveModelMalformed=1");
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
+  await page.getByTestId("provider-model-row").first().getByTestId("provider-model-id").fill("custom-model");
+  await page.getByTestId("provider-api-key").fill("fake-go-key");
+  await page.getByTestId("save-provider").click();
+  // The backend stored the profile, so the form closes (a retry would add a
+  // duplicate) and the notice names the unreadable reply instead of leaving
+  // the panel busy with "Saving settings..." forever.
+  await expect(page.getByTestId("provider-add-form")).toBeHidden();
+  await expect(page.locator(".copy-toast")).toContainText("could not read the reply");
+  await page.getByTestId("add-provider").click();
+  await expect(page.getByTestId("save-provider")).toBeEnabled();
+});
+
 test("OpenCode Go and Zen URLs never populate models or overwrite user entries", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");

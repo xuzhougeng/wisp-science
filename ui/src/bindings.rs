@@ -30,6 +30,9 @@ extern "C" {
     pub(crate) async fn invoke(cmd: &str, args: JsValue) -> JsValue;
     pub(crate) fn start_ui_health();
     pub(crate) fn report_ui_health();
+    /// Remember the first renderer fault for the heartbeat (first line, bounded).
+    #[wasm_bindgen(js_name = record_ui_fault)]
+    pub(crate) fn record_ui_fault(text: &str);
     #[wasm_bindgen(catch, js_name = invoke_strict)]
     pub(crate) async fn invoke_checked(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = invoke_timeout)]

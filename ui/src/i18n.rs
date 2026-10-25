@@ -2939,6 +2939,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "status.validated") => Some("Validated {provider} with {model}"),
         (Locale::En, "status.vision_ok") => Some(" — the test image was accepted."),
         (Locale::En, "status.save_failed") => Some("Save failed: {msg}"),
+        (Locale::En, "status.save_response_unreadable") => {
+            Some("Saved, but the app could not read the reply: {msg}")
+        }
         (Locale::En, "status.validation_failed") => Some("Validation failed: {msg}"),
         (Locale::En, "status.send_failed") => Some("Send failed: {msg}"),
         (Locale::En, "status.open_settings") => Some("Open Settings →"),
@@ -6176,6 +6179,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "status.validated") => Some("已验证 {provider} / {model}"),
         (Locale::Zh, "status.vision_ok") => Some(" —— 测试图片已被接受。"),
         (Locale::Zh, "status.save_failed") => Some("保存失败：{msg}"),
+        (Locale::Zh, "status.save_response_unreadable") => {
+            Some("已保存，但应用无法读取返回结果：{msg}")
+        }
         (Locale::Zh, "status.validation_failed") => Some("验证失败：{msg}"),
         (Locale::Zh, "status.send_failed") => Some("发送失败：{msg}"),
         (Locale::Zh, "status.open_settings") => Some("去设置 →"),

@@ -4826,6 +4826,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               const fallback = mockModels.find((model: any) => isChatModel(model) && !model.use_for_expert)?.id;
               mockModels = mockModels.map((model) => ({ ...model, active: model.id === fallback }));
             }
+            // The profile is stored, but the reply is not a profile list.
+            if (query.get("mockSaveModelMalformed") === "1") return { id: 42 };
             return mockModels;
           }
           case "codex_subscription_status":

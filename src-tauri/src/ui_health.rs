@@ -10,6 +10,19 @@ use wisp_dto::UiHealthSnapshot;
 const STALE: Duration = Duration::from_secs(60);
 const COOLDOWN: Duration = Duration::from_secs(120);
 
+/// Upper bound on the fault text kept from a heartbeat (the sender already
+/// sends one line of at most 160 characters).
+const FAULT_MAX_CHARS: usize = 200;
+
+fn bounded_fault(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(FAULT_MAX_CHARS)
+        .collect()
+}
+
 #[derive(Debug)]
 struct WindowHealth {
     last_beat: Instant,
@@ -103,7 +116,15 @@ pub(crate) fn ui_heartbeat(window: WorkspaceSurface, snapshot: Option<UiHealthSn
         .entry(window.label().to_string())
         .or_insert_with(|| WindowHealth::new(now));
     health.last_beat = now;
-    health.snapshot = snapshot.unwrap_or_default();
+    let mut snapshot = snapshot.unwrap_or_default();
+    snapshot.first_fault = bounded_fault(&snapshot.first_fault);
+    // Once per document: the minute summary repeats the counters, the fault
+    // text only needs one line to find.
+    if health.snapshot.first_fault.is_empty() && !snapshot.first_fault.is_empty() {
+        tracing::warn!(target: "wisp", window = window.label(), fault = %snapshot.first_fault,
+            "webview fault");
+    }
+    health.snapshot = snapshot;
     if health
         .last_log
         .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(60))
@@ -194,6 +215,17 @@ pub(crate) fn last_workspace_window(app: &AppHandle) -> Option<WorkspaceSurface>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fault_text_is_one_bounded_line() {
+        assert_eq!(bounded_fault(""), "");
+        assert_eq!(
+            bounded_fault("panicked at ui/src/a.rs:1:2: boom\nStack:\n  x"),
+            "panicked at ui/src/a.rs:1:2: boom"
+        );
+        let long = "字".repeat(FAULT_MAX_CHARS + 5);
+        assert_eq!(bounded_fault(&long).chars().count(), FAULT_MAX_CHARS);
+    }
 
     #[test]
     fn healthy_window_cannot_mask_another_window_and_cooldowns_are_independent() {

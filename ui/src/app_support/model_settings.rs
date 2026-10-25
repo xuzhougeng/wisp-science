@@ -7,6 +7,22 @@
 use super::*;
 use crate::bindings::invoke_timeout;
 
+/// Wait this long for `save_model`. A reply lost on the way back from the
+/// backend (macOS 12 stall) must not leave the Models panel busy forever.
+const SAVE_MODEL_TIMEOUT_MS: u32 = 60_000;
+
+/// The backend committed the profile, but the reply did not deserialize. The
+/// form closes (a retry would add a duplicate), so the notice is also toasted.
+fn report_unreadable_reply(loc: Locale, err: &serde_wasm_bindgen::Error) -> String {
+    let text = tf(
+        loc,
+        "status.save_response_unreadable",
+        &[("msg", &err.to_string())],
+    );
+    show_actionable_warning_toast(&text);
+    text
+}
+
 /// Resolve selectable efforts from the exact catalog entry. A keyed result
 /// prevents a slow lookup for the previous model or endpoint leaking into the
 /// current picker. Unknown entries never imply support for every effort.
@@ -321,18 +337,28 @@ impl ModelSettingsState {
                 "restoreChatModel": form.restore_chat_model,
             }))
             .unwrap();
-            match invoke_checked("save_model", arg).await {
+            match invoke_timeout("save_model", arg, SAVE_MODEL_TIMEOUT_MS).await {
                 Ok(v) => {
-                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                        models.set(list);
-                    }
+                    let outcome: (bool, String) =
+                        match serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                            Ok(list) => {
+                                models.set(list);
+                                (true, t(loc, "status.settings_saved").into())
+                            }
+                            Err(err) => {
+                                // The profile is already stored: say so and
+                                // reload the list instead of showing a stale one.
+                                self.refresh_models();
+                                (false, report_unreadable_reply(loc, &err))
+                            }
+                        };
                     let v = invoke("get_settings", JsValue::UNDEFINED).await;
                     if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
                         settings.set(normalized_settings(cfg));
                     }
                     model_form.set(None);
                     model_form_key.set(String::new());
-                    model_form_msg.set(Some((true, t(loc, "status.settings_saved").into())));
+                    model_form_msg.set(Some(outcome));
                 }
                 Err(err) => {
                     model_form_msg.set(Some((false, localize_backend(loc, &js_error_text(err)))));
@@ -474,7 +500,7 @@ impl ModelSettingsState {
                     "useForVideoGeneration": video,
                 }))
                 .unwrap();
-                match invoke_checked("save_model", arg).await {
+                match invoke_timeout("save_model", arg, SAVE_MODEL_TIMEOUT_MS).await {
                     Ok(v) => last_ok = Some(v),
                     Err(err) => {
                         last_err = Some(js_error_text(err));
@@ -487,9 +513,16 @@ impl ModelSettingsState {
                 settings_busy.set(false);
                 return;
             }
+            let mut outcome: (bool, String) = (true, t(loc, "status.settings_saved").into());
             if let Some(v) = last_ok {
-                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                    models.set(list);
+                match serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                    Ok(list) => models.set(list),
+                    Err(err) => {
+                        // Every profile is already stored: say so and reload
+                        // the list instead of showing a stale one.
+                        self.refresh_models();
+                        outcome = (false, report_unreadable_reply(loc, &err));
+                    }
                 }
             }
             let v = invoke("get_settings", JsValue::UNDEFINED).await;
@@ -498,7 +531,7 @@ impl ModelSettingsState {
             }
             model_form.set(None);
             model_form_key.set(String::new());
-            model_form_msg.set(Some((true, t(loc, "status.settings_saved").into())));
+            model_form_msg.set(Some(outcome));
             settings_busy.set(false);
         });
     }

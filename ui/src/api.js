@@ -15,18 +15,35 @@ function tauriEvent() {
 
 let uiHealthStarted = false;
 let reportUiHealth = () => {};
-const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0 };
+const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0, firstFault: "" };
 const boundedHealthCount = (value) => Math.min(1_000_000, Math.max(0, Math.round(value) || 0));
+const FAULT_MAX_CHARS = 160;
+
+/** Keep the first renderer fault's first line for the backend log. Only a Rust
+ * panic (location and message, from the panic hook) or a WebAssembly trap
+ * qualifies: an ordinary script error may quote user content and stays a count.
+ * The packaged app has no console, so this is where a panic location survives. */
+export function record_ui_fault(text) {
+  if (uiHealth.firstFault) return;
+  uiHealth.firstFault = String(text ?? "").split("\n")[0].slice(0, FAULT_MAX_CHARS);
+}
+
+function recordTrap(error) {
+  if (typeof WebAssembly !== "undefined" && error instanceof WebAssembly.RuntimeError) {
+    record_ui_fault(`${error.name}: ${error.message}`);
+  }
+}
 
 export function report_ui_health() { void reportUiHealth(); }
 
-/** Numeric diagnostics only. The heartbeat is driven by the WASM app timer,
- * so a broken WASM callback cannot be masked by an independent healthy JS timer. */
+/** Bounded diagnostics: counters plus the first fault line. The heartbeat is
+ * driven by the WASM app timer, so a broken WASM callback cannot be masked by
+ * an independent healthy JS timer. */
 export function start_ui_health() {
   if (uiHealthStarted) return;
   uiHealthStarted = true;
-  window.addEventListener("error", () => { uiHealth.scriptErrors = boundedHealthCount(uiHealth.scriptErrors + 1); });
-  window.addEventListener("unhandledrejection", () => { uiHealth.unhandledRejections = boundedHealthCount(uiHealth.unhandledRejections + 1); });
+  window.addEventListener("error", (event) => { uiHealth.scriptErrors = boundedHealthCount(uiHealth.scriptErrors + 1); recordTrap(event.error); });
+  window.addEventListener("unhandledrejection", (event) => { uiHealth.unhandledRejections = boundedHealthCount(uiHealth.unhandledRejections + 1); recordTrap(event.reason); });
   if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("longtask")) {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {

@@ -156,8 +156,19 @@ test("heartbeat diagnoses script failures and input blockers without exporting c
     document.body.appendChild(overlay);
   });
   await expect.poll(async () => (await lastArgs(page, "ui_heartbeat"))?.snapshot, { timeout: 10_000 })
-    .toMatchObject({ scriptErrors: 1, dragOverlays: 1 });
+    .toMatchObject({ scriptErrors: 1, dragOverlays: 1, firstFault: "" });
   const snapshot = (await lastArgs(page, "ui_heartbeat")).snapshot;
-  expect(Object.values(snapshot).every((value) => typeof value === "number")).toBe(true);
+  expect(Object.entries(snapshot).every(([key, value]) =>
+    key === "firstFault" ? typeof value === "string" : typeof value === "number")).toBe(true);
   expect(JSON.stringify(snapshot)).not.toContain("private prompt");
+  // Only a wasm trap (or a Rust panic, through the panic hook) is quoted: the
+  // first one wins and only its first line, so a stack or a later trap cannot
+  // grow the log.
+  await page.evaluate(() => {
+    window.dispatchEvent(new ErrorEvent("error", { message: "trap", error: new WebAssembly.RuntimeError("unreachable\nStack: private frames") }));
+    window.dispatchEvent(new ErrorEvent("error", { message: "trap", error: new WebAssembly.RuntimeError("second trap") }));
+  });
+  await expect.poll(async () => (await lastArgs(page, "ui_heartbeat"))?.snapshot.firstFault, { timeout: 10_000 })
+    .toBe("RuntimeError: unreachable");
+  expect(JSON.stringify((await lastArgs(page, "ui_heartbeat")).snapshot)).not.toContain("private");
 });

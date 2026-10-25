@@ -19250,8 +19250,21 @@ fn App() -> impl IntoView {
 
 pub fn main() {
     // A panic cannot be recovered on wasm32: it traps without running
-    // destructors or restoring the shadow stack, so log every one loudly.
-    console_error_panic_hook::set_once();
+    // destructors or restoring the shadow stack, so log every one loudly and
+    // hand the first one's location to the desktop heartbeat. The packaged app
+    // has no console; wisp.log is where that line becomes visible.
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|at| format!("{}:{}:{}", at.file(), at.line(), at.column()))
+            .unwrap_or_default();
+        let message = info
+            .payload_as_str()
+            .and_then(|message| message.lines().next())
+            .unwrap_or("");
+        crate::bindings::record_ui_fault(&format!("panicked at {location}: {message}"));
+        console_error_panic_hook::hook(info);
+    }));
     setup_scrollbar_reveal();
     let is_pet_window = window().location().search().ok().is_some_and(|query| {
         query

@@ -30,9 +30,11 @@ initializing is also covered. Attempts have a per-window two-minute cooldown,
 including failed reload requests; failure to boot after a reload remains
 eligible for another attempt. Closing a window removes its health state.
 
-The log contains `webview health` once per minute per reporting window, plus
-`native stop requested` and `webview recovery requested` records with a window
-label and reload success/error. The heartbeat carries numeric diagnostics:
+The log contains `webview health` once per minute per reporting window, a
+`webview fault` warning the first time a document reports a renderer fault,
+plus `native stop requested` and `webview recovery requested` records with a
+window label and reload success/error. The heartbeat carries bounded
+diagnostics:
 
 - maximum visible-page timer delay and longest observed long task;
 - cumulative long-task, script-error and unhandled-rejection counts;
@@ -40,11 +42,19 @@ label and reload success/error. The heartbeat carries numeric diagnostics:
 - current drag-overlay count;
 - live host media Blob URL count, encoded Blob bytes and mounted media-owner
   count (`mediaBlobUrls`, `mediaBlobBytes`, `mediaOwners`). These exclude MCP
-  iframe images, decoded bitmaps, JS/WASM heaps and GPU allocations.
+  iframe images, decoded bitmaps, JS/WASM heaps and GPU allocations;
+- the first renderer fault since the document loaded (`firstFault`): the first
+  line of a Rust panic (`panicked at ui/src/…:line:col: message`, recorded by
+  the WASM panic hook) or of a WebAssembly trap (`RuntimeError: …`), at most
+  160 characters from the renderer and 200 in the log. Later faults are not
+  recorded. A packaged app has no console, so this is where a trap that left a
+  panel busy forever becomes visible.
 
 Cumulative counters and maxima are bounded and reset with the document. No
-conversation text, plugin arguments, image data, URLs or error messages from
-JavaScript are included. Long-task metrics depend on browser support. A living
+conversation text, plugin arguments, image data, URLs or ordinary JavaScript
+error messages are included; only a Rust panic or a WebAssembly trap is quoted,
+because those name code, not content. Long-task metrics depend on browser
+support. A living
 timer does **not** prove that clicks work: healthy heartbeats with a stuck UI
 call for checking overlays, pointer targeting and script failures. A native
 reload request being accepted also does not prove that navigation completed.
