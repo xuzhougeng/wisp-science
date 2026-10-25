@@ -9991,6 +9991,28 @@ test("add provider reports an unreadable save_model reply and frees the panel", 
   await expect(page.getByTestId("save-provider")).toBeEnabled();
 });
 
+test("add provider sends save_model arguments as plain JSON, not Map/undefined", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
+  await page.getByTestId("provider-model-row").first().getByTestId("provider-model-id").fill("custom-model");
+  await page.getByTestId("provider-api-key").fill("fake-go-key");
+  await page.getByTestId("save-provider").click();
+  await expect(page.getByTestId("provider-add-form")).toBeHidden();
+  // Raw argument shape, before the mock normalises Map to object: a macOS 12
+  // WKWebView stalled the save inside the default Map/undefined path.
+  const shape = await page.evaluate(() => {
+    const args = (window as any).__skillInvokeLog.filter((c: any) => c.cmd === "save_model").at(-1).args;
+    return {
+      isMap: args instanceof Map,
+      profileIsMap: args.profile instanceof Map,
+      videoDuration: args.profile.video_duration_secs,
+      key: args.key,
+    };
+  });
+  expect(shape).toEqual({ isMap: false, profileIsMap: false, videoDuration: null, key: "fake-go-key" });
+});
+
 test("OpenCode Go and Zen URLs never populate models or overwrite user entries", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");

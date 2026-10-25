@@ -11,6 +11,17 @@ use crate::bindings::invoke_timeout;
 /// backend (macOS 12 stall) must not leave the Models panel busy forever.
 const SAVE_MODEL_TIMEOUT_MS: u32 = 60_000;
 
+/// Invoke arguments as plain objects and `null`, never an ES `Map` and
+/// `undefined`. `serde_wasm_bindgen::to_value` builds a `Map`; on a macOS 12
+/// WKWebView the Models panel's save and validate flows stopped inside that
+/// path before the IPC request left the renderer, and resumed with this shape.
+/// Every command deserializes JSON, so plain objects are the exact contract.
+/// A serialization error is returned, not unwrapped: a wasm panic is a trap
+/// that leaves `settings_busy` set for good.
+fn json_args(value: &serde_json::Value) -> Result<JsValue, serde_wasm_bindgen::Error> {
+    serde::Serialize::serialize(value, &serde_wasm_bindgen::Serializer::json_compatible())
+}
+
 /// The backend committed the profile, but the reply did not deserialize. The
 /// form closes (a retry would add a duplicate), so the notice is also toasted.
 fn report_unreadable_reply(loc: Locale, err: &serde_wasm_bindgen::Error) -> String {
@@ -38,15 +49,16 @@ pub(crate) fn use_model_efforts(
         };
         result.set(None);
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({
+            let args = json_args(&serde_json::json!({
                 "provider": request_key.0,
                 "apiUrl": request_key.1,
                 "model": request_key.2,
-            }))
-            .unwrap();
-            let efforts = invoke_checked("model_catalog_lookup", args)
-                .await
-                .ok()
+            }));
+            let reply = match args {
+                Ok(args) => invoke_checked("model_catalog_lookup", args).await.ok(),
+                Err(_) => None,
+            };
+            let efforts = reply
                 .and_then(|value| {
                     serde_wasm_bindgen::from_value::<Option<CatalogEntryDto>>(value).ok()
                 })
@@ -66,12 +78,13 @@ pub(crate) fn use_model_efforts(
 }
 
 async fn catalog_limits_or_default(provider: &str, api_url: &str, model: &str) -> (u64, u64) {
-    let args = to_value(&serde_json::json!({
+    let Ok(args) = json_args(&serde_json::json!({
         "provider": provider,
         "apiUrl": api_url,
         "model": model,
-    }))
-    .unwrap();
+    })) else {
+        return (8192, 128_000);
+    };
     match invoke_checked("model_catalog_lookup", args).await {
         Ok(value) => serde_wasm_bindgen::from_value::<Option<CatalogEntryDto>>(value)
             .ok()
@@ -180,7 +193,7 @@ impl ModelSettingsState {
             return;
         };
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({
+            let arg = json_args(&serde_json::json!({
                 "profile": {
                     "id": profile.id,
                     "label": profile.label,
@@ -214,8 +227,11 @@ impl ModelSettingsState {
                 "useForVision": profile.use_for_vision,
                 "useForImageGeneration": profile.use_for_image_generation,
                 "useForVideoGeneration": profile.use_for_video_generation,
-            }))
-            .unwrap();
+            }));
+            let arg = match arg {
+                Ok(arg) => arg,
+                Err(err) => return show_warning_toast(&err.to_string()),
+            };
             match invoke_checked("save_model", arg).await {
                 Ok(v) => {
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
@@ -328,15 +344,22 @@ impl ModelSettingsState {
         });
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({
+            let arg = match json_args(&serde_json::json!({
                 "profile": profile,
                 "key": key_arg,
                 "useForVision": form.use_for_vision,
                 "useForImageGeneration": form.use_for_image_generation,
                 "useForVideoGeneration": form.use_for_video_generation,
                 "restoreChatModel": form.restore_chat_model,
-            }))
-            .unwrap();
+            })) {
+                Ok(arg) => arg,
+                Err(err) => {
+                    let text = tf(loc, "status.save_failed", &[("msg", &err.to_string())]);
+                    model_form_msg.set(Some((false, text)));
+                    settings_busy.set(false);
+                    return;
+                }
+            };
             match invoke_timeout("save_model", arg, SAVE_MODEL_TIMEOUT_MS).await {
                 Ok(v) => {
                     let outcome: (bool, String) =
@@ -492,14 +515,19 @@ impl ModelSettingsState {
                     "video_aspect_ratio": Option::<String>::None,
                     "video_resolution": Option::<String>::None,
                 });
-                let arg = to_value(&serde_json::json!({
+                let arg = match json_args(&serde_json::json!({
                     "profile": profile,
                     "key": key_arg,
                     "useForVision": entry.use_for_vision && !media,
                     "useForImageGeneration": image,
                     "useForVideoGeneration": video,
-                }))
-                .unwrap();
+                })) {
+                    Ok(arg) => arg,
+                    Err(err) => {
+                        last_err = Some(err.to_string());
+                        break;
+                    }
+                };
                 match invoke_timeout("save_model", arg, SAVE_MODEL_TIMEOUT_MS).await {
                     Ok(v) => last_ok = Some(v),
                     Err(err) => {
@@ -606,18 +634,25 @@ impl ModelSettingsState {
         let image = form.is_image_model();
         let vision = cfg.supports_vision && !image;
         spawn_local(async move {
-            let res = invoke_timeout(
-                "validate_settings",
-                to_value(&serde_json::json!({
-                    "settings": cfg,
-                    "key": key,
-                    "profileId": profile_id,
-                    "useForImageGeneration": image,
-                }))
-                .unwrap(),
-                35_000,
-            )
-            .await;
+            let args = match json_args(&serde_json::json!({
+                "settings": cfg,
+                "key": key,
+                "profileId": profile_id,
+                "useForImageGeneration": image,
+            })) {
+                Ok(args) => args,
+                Err(err) => {
+                    let text = tf(
+                        loc,
+                        "status.validation_failed",
+                        &[("msg", &err.to_string())],
+                    );
+                    model_form_msg.set(Some((false, text)));
+                    settings_busy.set(false);
+                    return;
+                }
+            };
+            let res = invoke_timeout("validate_settings", args, 35_000).await;
             match res {
                 Ok(v) => {
                     let raw = v
