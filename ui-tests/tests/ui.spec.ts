@@ -10632,7 +10632,9 @@ test("misclassified chat model can recover its role without changing identity or
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
     restoreChatModel: true,
-    key: undefined,
+    // No key pasted: the Models panel serializes arguments JSON-compatibly,
+    // so an absent key is `null`, which the backend reads as "keep the stored one".
+    key: null,
     useForVision: true,
     useForImageGeneration: false,
     profile: { id: "default", model: "deepseek-v4-pro", supports_vision: true },
