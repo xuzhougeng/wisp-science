@@ -156,10 +156,10 @@ test("heartbeat diagnoses script failures and input blockers without exporting c
     document.body.appendChild(overlay);
   });
   await expect.poll(async () => (await lastArgs(page, "ui_heartbeat"))?.snapshot, { timeout: 10_000 })
-    .toMatchObject({ scriptErrors: 1, dragOverlays: 1, firstFault: "" });
+    .toMatchObject({ scriptErrors: 1, dragOverlays: 1, firstFault: "", firstInvalidArgs: "" });
   const snapshot = (await lastArgs(page, "ui_heartbeat")).snapshot;
   expect(Object.entries(snapshot).every(([key, value]) =>
-    key === "firstFault" ? typeof value === "string" : typeof value === "number")).toBe(true);
+    key === "firstFault" || key === "firstInvalidArgs" ? typeof value === "string" : typeof value === "number")).toBe(true);
   expect(JSON.stringify(snapshot)).not.toContain("private prompt");
   // Only a wasm trap (or a Rust panic, through the panic hook) is quoted: the
   // first one wins and only its first line, so a stack or a later trap cannot
@@ -170,5 +170,36 @@ test("heartbeat diagnoses script failures and input blockers without exporting c
   });
   await expect.poll(async () => (await lastArgs(page, "ui_heartbeat"))?.snapshot.firstFault, { timeout: 10_000 })
     .toBe("RuntimeError: unreachable");
+  expect(JSON.stringify((await lastArgs(page, "ui_heartbeat")).snapshot)).not.toContain("private");
+});
+
+test("heartbeat names the first command whose arguments the backend refused, without the values", async ({ page }) => {
+  await page.goto("/");
+  // The first heartbeat is sent in the same task that adds its focus listener.
+  await expect.poll(() => lastArgs(page, "ui_heartbeat")).toBeTruthy();
+  // The heartbeat is itself an invoke, so its next two calls are refused: an
+  // ordinary command error (not recorded), then Tauri's InvalidArgs text, whose
+  // serde detail after ": " quotes a value.
+  await page.evaluate(() => {
+    const w = window as any;
+    const original = w.__TAURI__.core.invoke;
+    const refusals = [
+      "private failure text",
+      "invalid args `snapshot` for command `ui_heartbeat`: invalid type: string \"private value\", expected u32",
+    ];
+    w.__TAURI__.core.invoke = async (cmd: string, args: any) => {
+      if (cmd === "ui_heartbeat" && refusals.length) throw refusals.shift();
+      return original(cmd, args);
+    };
+  });
+  // Window focus drives a heartbeat (ui/src/main.rs): two refused, one recorded.
+  for (let beat = 0; beat < 3; beat++) {
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("focus"));
+      return new Promise((resolve) => setTimeout(resolve, 100));
+    });
+  }
+  await expect.poll(async () => (await lastArgs(page, "ui_heartbeat"))?.snapshot.firstInvalidArgs, { timeout: 15_000 })
+    .toBe("invalid args `snapshot` for command `ui_heartbeat`");
   expect(JSON.stringify((await lastArgs(page, "ui_heartbeat")).snapshot)).not.toContain("private");
 });

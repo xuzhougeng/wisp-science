@@ -32,8 +32,9 @@ eligible for another attempt. Closing a window removes its health state.
 
 The log contains `webview health` once per minute per reporting window, a
 `webview fault` warning the first time a document reports a renderer fault,
-plus `native stop requested` and `webview recovery requested` records with a
-window label and reload success/error. The heartbeat carries bounded
+a `webview invalid args` warning the first time the backend refuses a
+command's arguments, plus `native stop requested` and `webview recovery
+requested` records with a window label and reload success/error. The heartbeat carries bounded
 diagnostics:
 
 - maximum visible-page timer delay and longest observed long task;
@@ -48,12 +49,18 @@ diagnostics:
   the WASM panic hook) or of a WebAssembly trap (`RuntimeError: …`), at most
   160 characters from the renderer and 200 in the log. Later faults are not
   recorded. A packaged app has no console, so this is where a trap that left a
-  panel busy forever becomes visible.
+  panel busy forever becomes visible;
+- the first command whose arguments the backend could not deserialize
+  (`firstInvalidArgs`): only Tauri's ``invalid args `arg` for command `cmd` ``
+  prefix, never the serde detail after it, which can quote a value. It is
+  recorded for every invoke, including calls whose caller ignores the error,
+  so a renderer/backend argument-shape mismatch shows up in the log.
 
 Cumulative counters and maxima are bounded and reset with the document. No
 conversation text, plugin arguments, image data, URLs or ordinary JavaScript
-error messages are included; only a Rust panic or a WebAssembly trap is quoted,
-because those name code, not content. Long-task metrics depend on browser
+error messages are included; only a Rust panic, a WebAssembly trap or a
+refused command and argument name is quoted, because those name code, not
+content. Long-task metrics depend on browser
 support. A living
 timer does **not** prove that clicks work: healthy heartbeats with a stuck UI
 call for checking overlays, pointer targeting and script failures. A native

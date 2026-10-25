@@ -15,7 +15,7 @@ function tauriEvent() {
 
 let uiHealthStarted = false;
 let reportUiHealth = () => {};
-const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0, firstFault: "" };
+const uiHealth = { timerLagMs: 0, longTasks: 0, longestTaskMs: 0, scriptErrors: 0, unhandledRejections: 0, appMessages: 0, firstFault: "", firstInvalidArgs: "" };
 const boundedHealthCount = (value) => Math.min(1_000_000, Math.max(0, Math.round(value) || 0));
 const FAULT_MAX_CHARS = 160;
 
@@ -32,6 +32,17 @@ function recordTrap(error) {
   if (typeof WebAssembly !== "undefined" && error instanceof WebAssembly.RuntimeError) {
     record_ui_fault(`${error.name}: ${error.message}`);
   }
+}
+
+/** Tauri rejects a payload its command cannot deserialize with
+ * "invalid args `arg` for command `cmd`: <serde detail>". Keep the first such
+ * pair of names, never the detail (it can quote a value), so a renderer/backend
+ * argument-shape drift reaches the log even where the caller swallows errors. */
+const INVALID_ARGS = /^invalid args `[^`]*` for command `[^`]*`/;
+function recordInvalidArgs(error) {
+  if (uiHealth.firstInvalidArgs) return;
+  const match = INVALID_ARGS.exec(typeof error === "string" ? error : String(error?.message ?? ""));
+  if (match) uiHealth.firstInvalidArgs = match[0].slice(0, FAULT_MAX_CHARS);
 }
 
 export function report_ui_health() { void reportUiHealth(); }
@@ -184,7 +195,17 @@ export async function invoke(cmd, args) {
 // unrelated sessions/items and ordinary invokes must remain independent.
 const pendingEnqueues = new Map();
 
+// Every wasm invoke (`invoke`, `invoke_checked`, `invoke_timeout`) routes here.
 export async function invoke_strict(cmd, args) {
+  try {
+    return await invokeTauri(cmd, args);
+  } catch (error) {
+    recordInvalidArgs(error);
+    throw error;
+  }
+}
+
+async function invokeTauri(cmd, args) {
   const core = tauriCore();
   if (!core) {
     throw missingBridgeError(cmd);

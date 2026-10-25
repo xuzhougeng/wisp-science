@@ -118,11 +118,16 @@ pub(crate) fn ui_heartbeat(window: WorkspaceSurface, snapshot: Option<UiHealthSn
     health.last_beat = now;
     let mut snapshot = snapshot.unwrap_or_default();
     snapshot.first_fault = bounded_fault(&snapshot.first_fault);
+    snapshot.first_invalid_args = bounded_fault(&snapshot.first_invalid_args);
     // Once per document: the minute summary repeats the counters, the fault
     // text only needs one line to find.
     if health.snapshot.first_fault.is_empty() && !snapshot.first_fault.is_empty() {
         tracing::warn!(target: "wisp", window = window.label(), fault = %snapshot.first_fault,
             "webview fault");
+    }
+    if health.snapshot.first_invalid_args.is_empty() && !snapshot.first_invalid_args.is_empty() {
+        tracing::warn!(target: "wisp", window = window.label(),
+            invoke = %snapshot.first_invalid_args, "webview invalid args");
     }
     health.snapshot = snapshot;
     if health

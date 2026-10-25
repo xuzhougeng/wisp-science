@@ -914,6 +914,7 @@ fn renderer_health_accepts_partial_numeric_snapshots() {
     assert_eq!(snapshot.media_blob_bytes, 5_000_000_000);
     assert_eq!(snapshot.media_owners, 12);
     assert_eq!(snapshot.first_fault, "");
+    assert_eq!(snapshot.first_invalid_args, "");
     assert_eq!(
         serde_json::from_value::<wisp_dto::UiHealthSnapshot>(serde_json::json!({}))
             .unwrap()
@@ -923,13 +924,19 @@ fn renderer_health_accepts_partial_numeric_snapshots() {
     let encoded = serde_json::to_value(snapshot).unwrap();
     assert_eq!(encoded["timerLagMs"], 850);
     assert_eq!(encoded["firstFault"], "");
+    assert_eq!(encoded["firstInvalidArgs"], "");
     let faulted = serde_json::from_value::<wisp_dto::UiHealthSnapshot>(serde_json::json!({
-        "firstFault": "panicked at ui/src/app_support/model_settings.rs:1:2: boom"
+        "firstFault": "panicked at ui/src/app_support/model_settings.rs:1:2: boom",
+        "firstInvalidArgs": "invalid args `spec` for command `save_reviewer`"
     }))
     .unwrap();
     assert_eq!(
         faulted.first_fault,
         "panicked at ui/src/app_support/model_settings.rs:1:2: boom"
+    );
+    assert_eq!(
+        faulted.first_invalid_args,
+        "invalid args `spec` for command `save_reviewer`"
     );
     assert!(
         serde_json::from_value::<wisp_dto::UiHealthSnapshot>(serde_json::json!({

@@ -62,7 +62,8 @@ pub enum WorkspacePathKind {
 
 /// Bounded renderer diagnostics: counters plus the first fault line. Never
 /// includes user or plugin content; `first_fault` quotes a Rust panic location
-/// or a WebAssembly trap, not a script error message.
+/// or a WebAssembly trap, not a script error message, and `first_invalid_args`
+/// only names a command and argument.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiHealthSnapshot {
@@ -82,6 +83,10 @@ pub struct UiHealthSnapshot {
     /// loaded (`panicked at ui/src/x.rs:1:2: msg` or `RuntimeError: ...`),
     /// empty while the renderer is healthy. Bounded by sender and receiver.
     pub first_fault: String,
+    /// First command the backend refused to deserialize since the document
+    /// loaded (Tauri's `invalid args … for command …` prefix), without serde's
+    /// detail, which can quote a value. Empty while every payload matched.
+    pub first_invalid_args: String,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
