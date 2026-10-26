@@ -18,7 +18,7 @@ function Assert-Throws($Script, $Expected) {
 }
 
 $saved = @{}
-foreach ($name in @('ESIGNER_CREDENTIAL_ID', 'ESIGNER_USERNAME', 'ESIGNER_PASSWORD', 'ESIGNER_TOTP_SECRET', 'ESIGNER_PIN', 'ESIGNER_SIGN_LOG', 'ESIGNER_PROGRAM_NAME', 'ESIGNER_CODESIGNTOOL_HOME', 'ESIGNER_JAVA', 'WISP_SIGN_SLOT', 'FAKE_TOOL_ARGV', 'FAKE_TOOL_MODE')) {
+foreach ($name in @('ESIGNER_CREDENTIAL_ID', 'ESIGNER_USERNAME', 'ESIGNER_PASSWORD', 'ESIGNER_TOTP_SECRET', 'ESIGNER_PIN', 'ESIGNER_SIGN_LOG', 'ESIGNER_PROGRAM_NAME', 'ESIGNER_CODESIGNTOOL_HOME', 'ESIGNER_JAVA', 'WISP_SIGN_SLOT', 'FAKE_TOOL_ARGV', 'FAKE_TOOL_MODE', 'GITHUB_ENV')) {
     $saved[$name] = [Environment]::GetEnvironmentVariable($name)
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue
 }
@@ -136,6 +136,16 @@ try {
     $resolved = Resolve-EsignerCodeSignTool $tool
     Assert-True ([IO.Path]::GetFullPath($resolved.Home) -eq [IO.Path]::GetFullPath($tool)) 'tool home ignores __MACOSX'
     Assert-True ($resolved.Java.EndsWith('java.exe')) 'bundled java is selected'
+
+    $githubEnv = Join-Path $root 'github_env'
+    $env:GITHUB_ENV = $githubEnv
+    Publish-EsignerToolEnv $resolved.Home $resolved.Java
+    Assert-True ($env:ESIGNER_CODESIGNTOOL_HOME -eq $resolved.Home) 'tool home is exported to this process'
+    Assert-True ($env:ESIGNER_JAVA -eq $resolved.Java) 'java is exported to this process'
+    $exported = [IO.File]::ReadAllText($githubEnv)
+    Assert-True ($exported.Contains("ESIGNER_CODESIGNTOOL_HOME=$($resolved.Home)")) 'tool home is written to GITHUB_ENV'
+    Assert-True ($exported.Contains("ESIGNER_JAVA=$($resolved.Java)")) 'java is written to GITHUB_ENV'
+    Remove-Item Env:GITHUB_ENV
 
     $config = Join-Path $root 'tauri.json'
     Write-EsignerTauriConfig -SignScriptPath $PSCommandPath -ConfigPath $config

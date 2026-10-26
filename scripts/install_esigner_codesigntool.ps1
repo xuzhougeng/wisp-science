@@ -40,12 +40,13 @@ function Resolve-EsignerCodeSignTool([string]$Root) {
     return [pscustomobject]@{ Home = $toolHome; Java = $java; Properties = $properties[0].FullName }
 }
 
-function Publish-EsignerToolEnv([string]$Home, [string]$Java) {
-    $env:ESIGNER_CODESIGNTOOL_HOME = $Home
+# $Home is PowerShell's read-only automatic variable, so the parameter is $ToolHome.
+function Publish-EsignerToolEnv([string]$ToolHome, [string]$Java) {
+    $env:ESIGNER_CODESIGNTOOL_HOME = $ToolHome
     $env:ESIGNER_JAVA = $Java
     if ([string]::IsNullOrWhiteSpace($env:GITHUB_ENV)) { return }
     $utf8 = New-Object System.Text.UTF8Encoding $false
-    [IO.File]::AppendAllText($env:GITHUB_ENV, ("`nESIGNER_CODESIGNTOOL_HOME=$Home`nESIGNER_JAVA=$Java`n"), $utf8)
+    [IO.File]::AppendAllText($env:GITHUB_ENV, ("`nESIGNER_CODESIGNTOOL_HOME=$ToolHome`nESIGNER_JAVA=$Java`n"), $utf8)
 }
 
 function Install-EsignerCodeSignTool {
