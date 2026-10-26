@@ -169,6 +169,6 @@ document.querySelectorAll('.faq-q').forEach((btn) => {
   });
   wordmark?.addEventListener('click', () => spin(wisps, 2));
 
-  const navLogo = document.querySelector('.brand img');
+  const navLogo = document.querySelector('.site-nav .brand img');
   navLogo?.addEventListener('click', () => spin([navLogo], 2));
 })();

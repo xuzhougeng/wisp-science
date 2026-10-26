@@ -47,7 +47,7 @@ test("clicking a swirl spins it", async ({ page }) => {
   await wordmark.dispatchEvent("click");
   expect(await scriptedSpins(wisps)).toEqual([1, 1, 1]);
 
-  const navLogo = page.locator(".brand img");
+  const navLogo = page.locator(".site-nav .brand img");
   await navLogo.dispatchEvent("click");
   expect(await scriptedSpins(navLogo)).toEqual([1]);
 });
@@ -60,10 +60,10 @@ test("reduced motion keeps the hero still", async ({ page }) => {
   expect(await hero.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0);
 
   await page.getByRole("img", { name: "Wisp Science", exact: true }).dispatchEvent("click");
-  await page.locator(".brand img").dispatchEvent("click");
+  await page.locator(".site-nav .brand img").dispatchEvent("click");
   await page.locator(".hero-char").first().hover();
   expect(await hero.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0);
-  expect(await scriptedSpins(page.locator(".brand img"))).toEqual([0]);
+  expect(await scriptedSpins(page.locator(".site-nav .brand img"))).toEqual([0]);
 });
 
 test.describe("without JavaScript", () => {
