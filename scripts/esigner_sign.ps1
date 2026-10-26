@@ -349,6 +349,8 @@ function Invoke-EsignerSign([string]$FilePath) {
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
         throw "eSigner target does not exist: $FilePath"
     }
+    # CodeSignTool runs from its own home, so a relative path would not resolve there.
+    $FilePath = (Resolve-Path -LiteralPath $FilePath).ProviderPath
     $kind = Get-EsignerTargetKind $FilePath
     if ($kind -eq 'skip') {
         Write-Host ("eSigner skip " + $FilePath)

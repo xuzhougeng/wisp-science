@@ -185,6 +185,24 @@ try {
     Assert-True (-not (($tracker.Args | Where-Object { $_.StartsWith('-pin') }))) 'pin is not sent to CodeSignTool'
     Assert-True (@($tracker.Args) -contains '-malware_block=false') 'malware scan override is still passed'
 
+    $pathTracker = @{ Args = @(); WorkingDirectory = '' }
+    $script:EsignerProcessOverride = {
+        param($FileName, $ArgumentList, $WorkingDirectory, $TimeoutSeconds)
+        $pathTracker.Args = @($ArgumentList)
+        $pathTracker.WorkingDirectory = $WorkingDirectory
+        return @{ ExitCode = 0; StdOut = 'Error: authorization grant is invalid'; StdErr = ''; TimedOut = $false }
+    }.GetNewClosure()
+    if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Force }
+    Push-Location $root
+    try {
+        $message = Assert-Throws { Invoke-EsignerSign -FilePath 'payload.exe' } 'Error: authorization grant is invalid'
+    } finally {
+        Pop-Location
+    }
+    $fullPayload = (Resolve-Path -LiteralPath $payload).ProviderPath
+    Assert-True ($pathTracker.WorkingDirectory -eq $toolHome) 'CodeSignTool runs from its home'
+    Assert-True (@($pathTracker.Args) -contains ('-input_file_path=' + $fullPayload)) 'relative targets reach CodeSignTool as absolute paths'
+
     $otpTracker = @{ Attempts = 0 }
     $script:EsignerProcessOverride = {
         param($FileName, $ArgumentList, $WorkingDirectory, $TimeoutSeconds)
