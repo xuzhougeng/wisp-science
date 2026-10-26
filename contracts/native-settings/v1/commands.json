@@ -1882,6 +1882,11 @@
           "name": "useForImageGeneration",
           "rust_type": "Option<bool>",
           "optional": true
+        },
+        {
+          "name": "proxyUrl",
+          "rust_type": "Option<String>",
+          "optional": true
         }
       ],
       "result": "Result<String, String>",
