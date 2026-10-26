@@ -2637,6 +2637,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "load_session":
             activeMockFrame = String(arg("id") ?? "");
+            if (query.get("mockSubagentBrief") === "1" && activeMockFrame === "subagent-child") {
+              return {
+                items: [
+                  { role: "user", text: "[From the parent conversation's agent]\nYou are its subagent, working in a conversation of your own. The researcher can watch here but cannot reply.\n\nAlign the reads to GRCh38.\n\nKeep the BAMs on the remote host.", tool_name: null, ok: null },
+                  { role: "assistant", text: "Aligned 12 samples.", tool_name: null, ok: null },
+                ],
+                next_before_seq: null, user_offset: 0,
+              };
+            }
             if (query.get("mockReuse") === "1" && activeMockFrame.startsWith("reuse-")) {
               const texts = activeMockFrame === "reuse-source"
                 ? ["first idea", "Inspect the input counts.", "normalize counts", "Normalization succeeded.", "verify output", "Verified 42 rows."]

@@ -257,3 +257,18 @@ for (const withFiles of [true, false]) {
       : { id: 'subagent-parent', includeChildren: true, includeArtifacts: false })]);
   });
 }
+
+test('a subagent shows its parent brief as a sender card without the framing', async ({ page }) => {
+  await page.addInitScript(tauriMock);
+  await page.goto('/?mockSubagent=1&mockSubagentBrief=1');
+  await page.locator('.proj-card-main').first().click();
+  await page.locator('[data-session-id="subagent-child"]').click();
+
+  const brief = page.locator('.msg.user .user-brief');
+  await expect(brief).toHaveAttribute('data-brief-sender', 'parent-agent');
+  await expect(brief.locator('.user-brief-label')).toHaveText("From the parent conversation's agent");
+  await expect(brief.locator('.user-brief-meta')).toHaveText('Subagent task · watch only');
+  await expect(brief.locator('.body')).toHaveText('Align the reads to GRCh38.\n\nKeep the BAMs on the remote host.');
+  await expect(page.locator('.msg.user')).not.toContainText('[From the parent');
+  await expect(page.locator('.msg.user')).not.toContainText('You are its subagent');
+});

@@ -2433,13 +2433,45 @@ pub(crate) struct UserMessagePresentation {
     pub(crate) workflows: Vec<String>,
     pub(crate) contexts: Vec<String>,
     pub(crate) runtimes: Vec<String>,
+    /// Set when another agent, not the researcher, wrote this turn.
+    pub(crate) brief_sender: Option<BriefSender>,
 }
+
+/// Who dispatched a turn into a watch-only conversation. The headers match
+/// the dispatcher briefs in `src-tauri/src/subagent_tool.rs` and
+/// `src-tauri/src/research_assistant.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BriefSender {
+    ParentAgent,
+    ResearchAssistant,
+}
+
+const BRIEF_HEADERS: [(&str, BriefSender); 2] = [
+    (
+        "[From the parent conversation's agent]",
+        BriefSender::ParentAgent,
+    ),
+    (
+        "[From the research assistant]",
+        BriefSender::ResearchAssistant,
+    ),
+];
 
 /// Split the stable transcript suffixes from the text the user actually
 /// typed. Keeping this parser pure makes old sessions and optimistic messages
 /// render identically without changing the persisted chat schema.
 pub(crate) fn user_message_presentation(text: &str) -> UserMessagePresentation {
     let mut presentation = UserMessagePresentation::default();
+    let mut text = text;
+    if let Some((rest, sender)) = BRIEF_HEADERS
+        .iter()
+        .find_map(|(header, sender)| text.strip_prefix(header).map(|rest| (rest, *sender)))
+    {
+        // The paragraph after the header frames the task for the dispatched
+        // agent; the researcher reads the task itself under a sender card.
+        presentation.brief_sender = Some(sender);
+        text = rest.split_once("\n\n").map(|(_, task)| task).unwrap_or("");
+    }
     let mut body = Vec::new();
     for block in text.split("\n\n") {
         let target = if let Some(value) = block.strip_prefix("Uploaded files: ") {
@@ -2499,7 +2531,7 @@ mod md_catalog_tests {
         is_runtime_code_selection, md_document_to_html, md_inline_to_html, md_to_html, parent_path,
         parse_notebook, pretty_json, preview_code_lang, push_nb_output, runtime_language,
         source_execution, source_selection, strip_ansi, tool_card_label, user_message_presentation,
-        NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
+        BriefSender, NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -3060,6 +3092,29 @@ mod md_catalog_tests {
         assert_eq!(parsed.contexts, ["CPU", "GPU"]);
         assert_eq!(parsed.runtimes, ["Python · GPU"]);
         assert!(parsed.sessions.is_empty());
+        assert_eq!(parsed.brief_sender, None);
+    }
+
+    #[test]
+    fn presents_dispatched_briefs_by_sender_without_their_framing() {
+        let parsed = user_message_presentation(
+            "[From the parent conversation's agent]\nYou are its subagent, working in a conversation of your own.\n\nAlign the reads to GRCh38.\n\nKeep the BAMs remote.",
+        );
+        assert_eq!(parsed.brief_sender, Some(BriefSender::ParentAgent));
+        assert_eq!(
+            parsed.body,
+            "Align the reads to GRCh38.\n\nKeep the BAMs remote."
+        );
+
+        let parsed =
+            user_message_presentation("[From the research assistant]\n\nSummarize progress");
+        assert_eq!(parsed.brief_sender, Some(BriefSender::ResearchAssistant));
+        assert_eq!(parsed.body, "Summarize progress");
+
+        // A header the researcher typed mid-message is ordinary text.
+        let parsed = user_message_presentation("Quote: [From the research assistant]");
+        assert_eq!(parsed.brief_sender, None);
+        assert_eq!(parsed.body, "Quote: [From the research assistant]");
     }
 
     #[test]

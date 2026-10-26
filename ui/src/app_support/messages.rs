@@ -846,6 +846,7 @@ pub(crate) fn UserMessage(
 ) -> impl IntoView {
     let locale = use_locale();
     let presentation = user_message_presentation(&text);
+    let brief_sender = presentation.brief_sender;
     let body = presentation.body;
     let (images, files): (Vec<_>, Vec<_>) = presentation
         .attachments
@@ -940,6 +941,56 @@ pub(crate) fn UserMessage(
         })
     })
     .collect_view();
+    let body_view = has_body.then(|| {
+        view! {
+            <div class="body">{move || match (&body_short, expanded.get()) {
+                (Some(short), false) => short.clone(),
+                _ => body.clone(),
+            }}</div>
+        }
+    });
+    let body_toggle = (has_body && is_long).then(|| view! {
+        <button
+            type="button"
+            class="msg-btn body-toggle"
+            on:click=move |_| set_expanded.update(|v| *v = !*v)
+        >{move || t(locale.get(), if expanded.get() { "msg.show_less" } else { "msg.show_all" })}</button>
+    });
+    // A turn another agent dispatched reads as a task card under its sender,
+    // not as something the researcher typed.
+    let text_view = match brief_sender {
+        Some(sender) => {
+            let (kind, icon, label_key, meta_key) = match sender {
+                BriefSender::ParentAgent => (
+                    "parent-agent",
+                    "bot",
+                    "msg.brief_parent_agent",
+                    "msg.brief_parent_agent_meta",
+                ),
+                BriefSender::ResearchAssistant => (
+                    "research-assistant",
+                    "sparkles",
+                    "msg.brief_research_assistant",
+                    "msg.brief_research_assistant_meta",
+                ),
+            };
+            view! {
+                <section class="user-brief" data-brief-sender=kind>
+                    <header class="user-brief-head">
+                        <span class="user-brief-icon">{compose_icon(icon)}</span>
+                        <span class="user-brief-copy">
+                            <span class="user-brief-label">{move || t(locale.get(), label_key)}</span>
+                            <span class="user-brief-meta">{move || t(locale.get(), meta_key)}</span>
+                        </span>
+                    </header>
+                    {body_view}
+                    {body_toggle}
+                </section>
+            }
+            .into_view()
+        }
+        None => view! { <>{body_view}{body_toggle}</> }.into_view(),
+    };
     view! {
         <div class="user-bubble"
             class:excerpt-start=move || excerpt_start.get() == Some(ui_index)
@@ -947,19 +998,7 @@ pub(crate) fn UserMessage(
             {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
             {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
             {has_context.then(|| view! { <div class="user-context-cards">{context_cards}</div> })}
-            {has_body.then(|| view! {
-                <div class="body">{move || match (&body_short, expanded.get()) {
-                    (Some(short), false) => short.clone(),
-                    _ => body.clone(),
-                }}</div>
-            })}
-            {(has_body && is_long).then(|| view! {
-                <button
-                    type="button"
-                    class="msg-btn body-toggle"
-                    on:click=move |_| set_expanded.update(|v| *v = !*v)
-                >{move || t(locale.get(), if expanded.get() { "msg.show_less" } else { "msg.show_all" })}</button>
-            })}
+            {text_view}
             {timestamp.map(|timestamp| {
                 let compact = format_message_time(timestamp);
                 view! {

@@ -584,6 +584,9 @@ in the sidebar under the conversation that started it (marked with a robot icon)
 watch-only for the researcher: opening it shows the live transcript, but the
 composer is locked and the backend refuses any message, queued follow-up,
 cut-in, timer, rewind or undo that does not come from the parent conversation.
+Each instruction from the parent appears in the transcript as a task card headed
+**From the parent conversation's agent**; the fixed subagent framing the model
+receives is hidden there, though **Copy** still copies the full text.
 Subagents inherit their parent's folder, and moving the parent moves its
 persisted subagent/branch subtree, including conversations outside the loaded
 sidebar page. Older subagents with mismatched folder metadata still nest under
