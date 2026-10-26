@@ -190,7 +190,18 @@ as `ESIGNER_TOTP_SECRET`. Signing fails until that enrollment is finished.
 CodeSignTool 1.3.2 then signs from GitHub-hosted Windows runners and timestamps
 with SSL.com's RFC 3161 server, `http://ts.ssl.com`. Each signature consumes one
 eSigner signing. The signer waits for a fresh TOTP between calls because eSigner
-rejects a reused one-time password.
+rejects a reused one-time password. CodeSignTool's `main` discards picocli's
+exit code, so `java -jar` exits 0 on auth errors, invalid OTPs, and bad
+arguments. A sign counts as success only when the process exits 0, the
+captured output contains `Code signed successfully:`, and the signed file is
+present. An `Error:` line, an exception, a non-zero exit, or a missing file
+fails the job and prints sanitized stdout, stderr, and
+`logs/code_signing_tool.log`. An
+invalid OTP is retried up to four times into later TOTP windows even when the
+process exits 0. Windows Release (`WISP_SIGN_SLOT=windows`) and Windows WinUI
+Preview Release (`WISP_SIGN_SLOT=winui`) sign in parallel with the same
+credential, so the preview job waits one extra TOTP window before its first
+sign and on each OTP retry.
 
 Tauri's `signCommand` runs on the main `wisp-science.exe` after the bundler
 patches it and before that copy is packed, then on the MSI and the NSIS setup

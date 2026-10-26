@@ -34,6 +34,8 @@ jobs:
       ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
       ESIGNER_PROGRAM_NAME: Wisp Science WinUI Preview
       ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
+      # One TOTP window behind Windows Release. Both jobs share one eSigner credential.
+      WISP_SIGN_SLOT: winui
       # Match Cargo.toml explicitly: runner environment must not inflate helpers.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: s
       CARGO_PROFILE_RELEASE_LTO: 'true'

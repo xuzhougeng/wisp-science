@@ -30,6 +30,8 @@ jobs:
       ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
       ESIGNER_PROGRAM_NAME: wisp-science
       ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
+      # Slot 0. WinUI Preview uses slot 1 so the two release jobs do not share a TOTP window.
+      WISP_SIGN_SLOT: windows
     steps:
       - uses: actions/checkout@v4
         with:
