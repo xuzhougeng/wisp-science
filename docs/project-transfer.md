@@ -164,7 +164,9 @@ The delete action on a project card offers two distinct choices:
 - **Delete project and local data** also permanently deletes the registered
   project directory. This choice opens a second warning that shows the exact
   directory; its final delete button stays disabled for five seconds. The data
-  deletion cannot be undone.
+  deletion cannot be undone. When the directory holds project Skills under
+  `.wisp/skills`, the warning lists their count and names and suggests
+  promoting them to global first (see [Skills](skills.md#installed-skills)).
 
 Pressing Escape from the permanent-delete warning returns to the first choice
 dialog. Pressing Escape again closes project removal without making changes.

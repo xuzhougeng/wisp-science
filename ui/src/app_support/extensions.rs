@@ -82,15 +82,20 @@ impl ExtensionsState {
         });
     }
 
-    pub(crate) fn install_skill_from(self, path: String) {
+    pub(crate) fn install_skill_from(self, path: String, scope: String) {
         let Self {
             skills_msg, locale, ..
         } = self;
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
+            let arg = to_value(&serde_json::json!({ "srcPath": path, "scope": scope })).unwrap();
             match invoke_checked("install_skill", arg).await {
-                Ok(_) => {
-                    skills_msg.set(Some((true, t(locale.get(), "skills.installed").into())));
+                Ok(value) => {
+                    let text = serde_wasm_bindgen::from_value::<SkillInstallReceipt>(value)
+                        .map(|receipt| {
+                            crate::skill_detail::skill_install_receipt_text(locale.get(), &receipt)
+                        })
+                        .unwrap_or_else(|_| t(locale.get(), "skills.installed"));
+                    skills_msg.set(Some((true, text)));
                     self.refresh_skills();
                 }
                 Err(err) => {

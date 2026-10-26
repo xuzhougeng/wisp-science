@@ -123,13 +123,51 @@ Skills that the user explicitly disabled remain disabled. Idle conversation
 Agents are rebuilt on their next turn, so the new index is used without losing
 conversation history or restarting the persistent Python/R runtime.
 
-The **Add skill** action installs or updates a global Skill from a `SKILL.md`
-file, a Skill folder, or a ZIP archive. A ZIP may contain `SKILL.md` directly or
-wrap one Skill in a single top-level folder. A project Skill can be managed with
-the project files under `.wisp/skills` and then loaded with **Reload skills**.
-Only global Skills can be deleted from the Skills settings page; project and
-extra-path files remain owned by their project or source directory. Plugin
-Skills are managed from their plugin card.
+The **Add skill** action installs or updates a Skill from a `SKILL.md` file, a
+Skill folder, or a ZIP archive. A ZIP may contain `SKILL.md` directly or wrap
+one Skill in a single top-level folder. The menu asks where to install it and
+shows the resolved absolute path of each choice:
+
+- **All projects (global)** — the default; writes to `~/.wisp/skills`, where
+  every project can discover it.
+- **This project only** — writes to `<project>/.wisp/skills`. The menu warns
+  that these files live in the project folder: moving or deleting the folder
+  moves or removes them, and Wisp cannot restore them.
+
+After installation the status line names the scope, the absolute path, and
+who can discover it. When another copy with the same name takes precedence
+(for example a project copy over a new global install), the receipt names
+that copy and its path. Files placed under `<project>/.wisp/skills` by hand
+are still picked up with **Reload skills**. The community store and GitHub
+installation keep installing globally.
+
+Every row shows the scope of the copy that is currently active; hovering a
+Project badge explains that it lives with the project. When the same name is
+discovered more than once, the row shows a copy count, and the detail page
+lists every copy with its scope, path, and whether it is **Active** or
+**Shadowed**. Shadowed copies whose `SKILL.md` matches the active copy are
+marked as identical, so duplicate installations are visible instead of
+silently coexisting.
+
+A project Skill's detail page offers **Promote to global**, which copies the
+package to `~/.wisp/skills/<name>`. Promotion never overwrites: if a global
+copy or folder with that name already exists, it stops and shows that path.
+Enabled state and edited tags are keyed by the Skill name, so they carry over.
+Because project copies take precedence over global ones, the project copy
+stays active in its project after promotion; the detail page then offers
+**Remove project copy**, which deletes only the project folder after a
+confirmation. Removal is also offered when the project copy is identical to
+another copy. A project copy that is the only copy, or that differs from every
+other copy and has no global counterpart, cannot be removed from Settings.
+
+Deleting a project together with its local data from the projects list
+removes `<project>/.wisp/skills` as well. When that folder holds Skill packages,
+the final confirmation lists how many there are and their names, and suggests
+opening the project to promote them to global first. **Remove from Wisp only**
+keeps the folder and its Skills.
+
+**Delete skill** removes global Skills only; extra-path files remain owned by
+their source directory. Plugin Skills are managed from their plugin card.
 
 Tags declared in `SKILL.md` appear automatically. Tags edited in Settings are a
 user override and are also applied to Agent `search_skills` queries after the
@@ -138,8 +176,9 @@ next idle-Agent rebuild.
 The Skills page has two levels. The catalog lists each Skill's name, scope,
 tags, and enable switch; search, tag filters, bulk enable/disable, reload, and
 import stay in the catalog. Select a row to open **Skills → Skill name**.
-The detail page shows the description and source directory, lets you edit tags,
-and offers deletion for user-installed global Skills. Plugin enablement and
+The detail page shows the description, source directory, scope and installed
+copies, lets you edit tags, and offers promotion for project Skills and
+deletion for user-installed global Skills. Plugin enablement and
 removal remain managed by the parent plugin; personal tags can be edited in
 the Skill detail page.
 
@@ -152,7 +191,8 @@ limited to 1 MiB per text file; binary/non-UTF-8 files show an explanation.
 The browser supports up to 2,000 files and 32 directory levels, and reads are
 restricted to the selected package. Disabled Skills remain browsable.
 Use the breadcrumb/back button or Escape to return to the filtered catalog.
-If a delete confirmation is open, the first Escape closes only that dialog.
+If a delete or project-copy removal confirmation is open, the first Escape
+closes only that dialog.
 
 Catalog and detail views (screenshots use test data):
 

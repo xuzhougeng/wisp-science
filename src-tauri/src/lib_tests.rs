@@ -2819,6 +2819,7 @@ fn capability_skill_counts_use_enabled_bundled_vs_project_added_inventory() {
         managed: false,
         managed_by: None,
         dir: format!("/{scope}/{name}"),
+        copies: vec![],
     };
     let skills = vec![
         skill("bundled-on", "bundled", true),

@@ -11441,8 +11441,11 @@ test("skill manager updates and deletes user-added skills", async ({ page }) => 
   await addFile.click();
   await expect.poll(() => lastInvokeArgs(page, "install_skill")).toMatchObject({
     srcPath: "/downloads/paper-narrative.zip",
+    scope: "global",
   });
-  await expect(page.getByText("Skill added or updated.")).toBeVisible();
+  await expect(page.getByText(
+    "Installed paper-narrative as a Global skill at /home/me/.wisp/skills/paper-narrative. Every project can discover it.",
+  )).toBeVisible();
 
   const skill = page.locator('[data-skill-name="paper-narrative"]');
   await skill.locator(".skill-row-open").click();
@@ -11463,6 +11466,86 @@ test("skill manager updates and deletes user-added skills", async ({ page }) => 
   });
   await expect(page.locator('[data-skill-name="paper-narrative"]')).toHaveCount(0);
   await expect(page.getByText("Skill deleted.")).toBeVisible();
+});
+
+test("Add skill shows both install locations and reports the chosen scope", async ({ page }) => {
+  await enterApp(page, "/?mockSkillImport=1");
+  await openSettingsSection(page, "Skills");
+
+  const summary = page.getByText("Add skill", { exact: true });
+  await summary.click();
+  const scope = page.getByTestId("skill-install-scope");
+  await expect(scope.locator('[data-scope="global"]')).toContainText("All projects (global)");
+  await expect(scope.locator('[data-scope="global"]')).toContainText("/home/me/.wisp/skills");
+  await expect(scope.locator('[data-scope="project"]')).toContainText("This project only");
+  await expect(scope.locator('[data-scope="project"]')).toContainText("/mock/root/project/.wisp/skills");
+  await expect(scope.getByRole("radio", { name: /All projects/ })).toBeChecked();
+  await expect(scope.getByRole("note")).toHaveCount(0);
+
+  await scope.getByRole("radio", { name: /This project only/ }).check();
+  await expect(scope.getByRole("note")).toContainText("Moving or deleting the folder moves or removes them.");
+  await page.getByRole("button", { name: "Add SKILL.md or ZIP" }).click();
+  await expect(scope).toBeHidden();
+  await expect.poll(() => lastInvokeArgs(page, "install_skill")).toEqual({
+    srcPath: "/downloads/paper-narrative.zip",
+    scope: "project",
+  });
+  await expect(page.getByText(
+    "Installed paper-narrative as a Project skill at /mock/root/project/.wisp/skills/paper-narrative. Only this project can discover it.",
+  )).toBeVisible();
+
+  // The choice persists while Settings stays open.
+  await summary.click();
+  await expect(scope.getByRole("radio", { name: /This project only/ })).toBeChecked();
+});
+
+test("skill detail shows copies and promotes a project skill before removing its project copy", async ({ page }) => {
+  await enterApp(page, "/?mockSkillScopes=1");
+  await openSettingsSection(page, "Skills");
+
+  const duplicateRow = page.locator('[data-skill-name="nature-academic-search"]');
+  await expect(duplicateRow).toContainText("Bundled");
+  await expect(duplicateRow).toContainText("2 copies");
+  await duplicateRow.locator(".skill-row-open").click();
+  const detail = page.getByTestId("skill-detail");
+  const copies = detail.getByTestId("skill-copies");
+  await expect(copies.locator('[data-scope="bundled"]')).toContainText("Active");
+  await expect(copies.locator('[data-scope="project"]')).toContainText("Shadowed");
+  await expect(copies.locator('[data-scope="project"]')).toContainText("Same SKILL.md as the active copy");
+  await expect(copies.locator('[data-scope="project"]')).toContainText("Lives with this project.");
+  await expect(detail.getByText("You can remove the project copy or keep both.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(detail).toBeHidden();
+
+  const projectRow = page.locator('[data-skill-name="session-stats"]');
+  await expect(projectRow).toContainText("Project");
+  await expect(projectRow).not.toContainText("copies");
+  await projectRow.locator(".skill-row-open").click();
+  await expect(detail.getByTestId("skill-scope")).toContainText("Lives with this project.");
+  await expect(detail.getByTestId("skill-copies")).toHaveCount(0);
+  await expect(detail.getByRole("button", { name: "Remove project copy" })).toHaveCount(0);
+  await expect(detail.getByTestId("skill-scope")).toContainText("Copies this skill to /home/me/.wisp/skills.");
+
+  await detail.getByRole("button", { name: "Promote to global" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "promote_skill_to_global")).toEqual({ name: "session-stats" });
+  await expect(detail.getByTestId("skill-scope")).toContainText(
+    "Installed session-stats as a Global skill at /home/me/.wisp/skills/session-stats. Every project can discover it. In this project the Project copy at /mock/root/project/.wisp/skills/session-stats still takes precedence.",
+  );
+  await expect(detail.getByRole("button", { name: "Promote to global" })).toHaveCount(0);
+  await expect(detail.getByTestId("skill-copies").locator('[data-scope="global"]')).toContainText("Shadowed");
+
+  await detail.getByRole("button", { name: "Remove project copy" }).click();
+  const confirm = page.getByTestId("skill-project-copy-remove-confirm");
+  await expect(confirm).toContainText("Remove the project copy of session-stats?");
+  await page.keyboard.press("Escape");
+  await expect(confirm).toBeHidden();
+  await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: "Remove project copy" }).click();
+  await confirm.getByRole("button", { name: "Remove project copy" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "remove_project_skill_copy")).toEqual({ name: "session-stats" });
+  await expect(page.getByText("Project copy removed.")).toBeVisible();
+  await expect(detail.getByTestId("skill-scope")).toContainText("Available to every project on this computer.");
+  await expect(detail.getByRole("button", { name: "Remove project copy" })).toHaveCount(0);
 });
 
 test("plugin settings diagnose, launch, install, and remove a feature plugin", async ({ page }) => {
@@ -16631,6 +16714,39 @@ test("deleting project data requires a second confirmation and five-second count
       .filter((c: any) => c.cmd === "delete_project")
       .map((c: any) => c.args instanceof Map ? c.args.get("deleteData") : c.args?.deleteData),
   )).toContain(true);
+});
+
+test("deleting project data lists project Skills that would be removed", async ({ page }) => {
+  await page.goto("/?mockProjectSkills=1");
+  await page.locator(".proj-card:not(.proj-example) .pc-del").first().click();
+  await expect(page.locator(".project-delete-choice-modal")).not.toContainText("project Skill");
+  await page.getByRole("button", { name: "Delete project and local data", exact: true }).click();
+
+  const skills = page.locator(".project-delete-data-modal").getByTestId("project-delete-skills");
+  await expect(skills).toContainText("This project contains 2 project Skill(s) in .wisp/skills.");
+  await expect(skills).toContainText("use Promote to global on each Skill");
+  await expect(skills.getByRole("listitem")).toHaveText(["nature-academic-search", "session-stats"]);
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? [])
+      .filter((c: any) => c.cmd === "list_project_skill_packages")
+      .map((c: any) => c.args instanceof Map ? c.args.get("id") : c.args?.id),
+  )).toHaveLength(1);
+
+  // One Escape closes only the destructive layer; the choice dialog remains.
+  await page.keyboard.press("Escape");
+  await expect(skills).toHaveCount(0);
+  await expect(page.locator(".project-delete-choice-modal")).toBeVisible();
+});
+
+test("deleting project data without project Skills shows no Skill warning", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".proj-card:not(.proj-example) .pc-del").first().click();
+  await page.getByRole("button", { name: "Delete project and local data", exact: true }).click();
+  await expect(page.locator(".project-delete-data-modal")).toBeVisible();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "list_project_skill_packages"),
+  )).toBe(true);
+  await expect(page.getByTestId("project-delete-skills")).toHaveCount(0);
 });
 
 test("external links open in the system browser, not the app webview (#97)", async ({ page }) => {

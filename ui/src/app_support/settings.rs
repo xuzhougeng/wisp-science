@@ -533,6 +533,7 @@ mod skill_filter_tests {
             managed: false,
             managed_by: None,
             dir: String::new(),
+            copies: vec![],
         }
     }
 

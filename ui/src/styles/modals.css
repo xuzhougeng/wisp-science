@@ -559,6 +559,12 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 }
 .project-delete-data-modal { max-width: 520px; }
 .project-delete-data-modal .project-delete-warning { color: var(--err); font-weight: 600; }
+.project-delete-skills {
+  padding: 9px 11px; border-radius: var(--radius-xs); background: var(--warn-soft);
+  color: var(--text-muted); line-height: 1.5;
+}
+.project-delete-skills p { margin: 0 0 6px; }
+.project-delete-skills ul { margin: 0; padding-left: 18px; max-height: 120px; overflow-y: auto; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .project-delete-path {
   display: block; padding: 9px 11px; border: 1px solid var(--border);
   border-radius: var(--radius-xs); background: var(--bg-input); color: var(--text-muted);

@@ -2402,6 +2402,31 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "skills.remove") => Some("Delete skill"),
         (Locale::En, "skills.remove_confirm") => Some("Delete {skill}? Its installed files will be removed. This cannot be undone."),
         (Locale::En, "skills.removed") => Some("Skill deleted."),
+        (Locale::En, "skills.install_location") => Some("Install location"),
+        (Locale::En, "skills.install_scope.global") => Some("All projects (global)"),
+        (Locale::En, "skills.install_scope.project") => Some("This project only"),
+        (Locale::En, "skills.install_scope.project_warning") => Some("Project skills are stored in this project's folder. Moving or deleting the folder moves or removes them."),
+        (Locale::En, "skills.receipt") => Some("Installed {skill} as a {scope} skill at {path}. {reach}"),
+        (Locale::En, "skills.receipt.all_projects") => Some("Every project can discover it."),
+        (Locale::En, "skills.receipt.project_only") => Some("Only this project can discover it."),
+        (Locale::En, "skills.receipt.shadowed") => Some("In this project the {scope} copy at {path} still takes precedence."),
+        (Locale::En, "skills.copies_badge") => Some("{count} copies"),
+        (Locale::En, "skills.copies") => Some("Installed copies"),
+        (Locale::En, "skills.copies_hint") => Some("When copies share a name, Wisp uses Bundled, then Project, then Global, then Extra path, then Plugin. The other copies are shadowed."),
+        (Locale::En, "skills.copy.active") => Some("Active"),
+        (Locale::En, "skills.copy.shadowed") => Some("Shadowed"),
+        (Locale::En, "skills.copy.identical") => Some("Same SKILL.md as the active copy"),
+        (Locale::En, "skills.lifetime.project") => Some("Lives with this project. Moving or deleting the project folder removes this copy, and it cannot be restored from Wisp."),
+        (Locale::En, "skills.lifetime.global") => Some("Available to every project on this computer."),
+        (Locale::En, "skills.lifetime.bundled") => Some("Ships with Wisp and is read-only."),
+        (Locale::En, "skills.promote") => Some("Promote to global"),
+        (Locale::En, "skills.promoting") => Some("Promoting…"),
+        (Locale::En, "skills.promote_hint") => Some("Copies this skill to {path}. Enabled state and tags are kept."),
+        (Locale::En, "skills.promoted_remove_hint") => Some("A global copy exists. You can remove the project copy so this project uses the global one."),
+        (Locale::En, "skills.duplicate_hint") => Some("Another copy has the same SKILL.md. You can remove the project copy or keep both."),
+        (Locale::En, "skills.remove_project_copy") => Some("Remove project copy"),
+        (Locale::En, "skills.remove_project_copy_confirm") => Some("Remove the project copy of {skill}? Its folder inside this project is deleted; the other copy stays available. This cannot be undone."),
+        (Locale::En, "skills.project_copy_removed") => Some("Project copy removed."),
         (Locale::En, "memory.off_banner") => Some("Memory is off. The agent won't save new notes or search existing ones, but notes below are kept and stay editable. Turn memory on to resume."),
         (Locale::En, "memory.scope_hint") => Some("Project memory"),
         (Locale::En, "memory.enabled_label") => Some("Memory"),
@@ -3819,6 +3844,7 @@ Do not leave generated files in the project root.",
         (Locale::En, "projects.delete_data_title") => Some("Permanently delete the project and local data?"),
         (Locale::En, "projects.delete_data_warning") => Some("Every file in the project directory will be permanently deleted. This cannot be undone."),
         (Locale::En, "projects.delete_data_path") => Some("Project directory: {path}"),
+        (Locale::En, "projects.delete_data_skills") => Some("This project contains {count} project Skill(s) in .wisp/skills. They are deleted with the folder and cannot be restored from Wisp. To keep them, cancel, open the project, and use Promote to global on each Skill in Settings → Skills."),
         (Locale::En, "projects.delete_data_confirm") => Some("Permanently delete"),
         (Locale::En, "projects.delete_data_countdown") => Some("Permanently delete ({n}s)"),
         (Locale::En, "err.project_delete_workspace_empty") => Some("The project directory is empty, so Wisp refused to delete local data."),
@@ -5823,6 +5849,31 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "skills.remove") => Some("删除技能"),
         (Locale::Zh, "skills.remove_confirm") => Some("确定删除“{skill}”吗？已安装文件将被移除，且无法撤销。"),
         (Locale::Zh, "skills.removed") => Some("技能已删除。"),
+        (Locale::Zh, "skills.install_location") => Some("安装位置"),
+        (Locale::Zh, "skills.install_scope.global") => Some("所有项目（全局）"),
+        (Locale::Zh, "skills.install_scope.project") => Some("仅当前项目"),
+        (Locale::Zh, "skills.install_scope.project_warning") => Some("项目级技能保存在本项目目录中，移动或删除项目目录时会随之移动或消失。"),
+        (Locale::Zh, "skills.receipt") => Some("已将 {skill} 安装为{scope}技能，路径 {path}。{reach}"),
+        (Locale::Zh, "skills.receipt.all_projects") => Some("所有项目均可发现。"),
+        (Locale::Zh, "skills.receipt.project_only") => Some("仅当前项目可发现。"),
+        (Locale::Zh, "skills.receipt.shadowed") => Some("在当前项目中，位于 {path} 的{scope}副本仍优先生效。"),
+        (Locale::Zh, "skills.copies_badge") => Some("{count} 份副本"),
+        (Locale::Zh, "skills.copies") => Some("已安装副本"),
+        (Locale::Zh, "skills.copies_hint") => Some("同名副本按 内置 > 当前项目 > 全局 > 额外路径 > 插件 的顺序生效，其余副本处于遮蔽状态。"),
+        (Locale::Zh, "skills.copy.active") => Some("当前生效"),
+        (Locale::Zh, "skills.copy.shadowed") => Some("已遮蔽"),
+        (Locale::Zh, "skills.copy.identical") => Some("SKILL.md 与生效副本一致"),
+        (Locale::Zh, "skills.lifetime.project") => Some("随本项目存在。移动或删除项目目录会移除此副本，且无法在应用内恢复。"),
+        (Locale::Zh, "skills.lifetime.global") => Some("本机所有项目均可使用。"),
+        (Locale::Zh, "skills.lifetime.bundled") => Some("随 Wisp 提供，只读。"),
+        (Locale::Zh, "skills.promote") => Some("提升为全局"),
+        (Locale::Zh, "skills.promoting") => Some("正在提升…"),
+        (Locale::Zh, "skills.promote_hint") => Some("将此技能复制到 {path}，保留启用状态和标签。"),
+        (Locale::Zh, "skills.promoted_remove_hint") => Some("已存在全局副本。可删除项目副本，让本项目改用全局副本。"),
+        (Locale::Zh, "skills.duplicate_hint") => Some("另一份副本的 SKILL.md 与此相同。可删除项目副本，或保留两份。"),
+        (Locale::Zh, "skills.remove_project_copy") => Some("删除项目副本"),
+        (Locale::Zh, "skills.remove_project_copy_confirm") => Some("确定删除 {skill} 的项目副本吗？项目内的该技能文件夹将被删除，另一份副本仍可用。此操作无法撤销。"),
+        (Locale::Zh, "skills.project_copy_removed") => Some("项目副本已删除。"),
         (Locale::Zh, "memory.off_banner") => Some("记忆已关闭。Agent 不会保存或检索新笔记，但下方已有笔记仍会保留且可编辑。开启记忆以恢复。"),
         (Locale::Zh, "memory.scope_hint") => Some("项目记忆"),
         (Locale::Zh, "memory.enabled_label") => Some("启用记忆"),
@@ -7037,6 +7088,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "projects.delete_data_title") => Some("永久删除项目及本地数据？"),
         (Locale::Zh, "projects.delete_data_warning") => Some("项目目录中的所有文件都将被永久删除，删除后不可恢复。"),
         (Locale::Zh, "projects.delete_data_path") => Some("项目目录：{path}"),
+        (Locale::Zh, "projects.delete_data_skills") => Some("此项目的 .wisp/skills 中有 {count} 个项目级技能，会随目录一起删除，且无法在应用内恢复。如需保留，请先取消，打开该项目，在 设置 → 技能 中逐个“提升为全局”。"),
         (Locale::Zh, "projects.delete_data_confirm") => Some("确认永久删除"),
         (Locale::Zh, "projects.delete_data_countdown") => Some("确认永久删除（{n} 秒）"),
         (Locale::Zh, "err.project_delete_workspace_empty") => Some("项目目录为空，Wisp 已拒绝删除本地数据。"),
@@ -7127,6 +7179,19 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             let damaged = &m["project_database_rebuilt:".len()..];
             if locale == Locale::Zh { format!("项目数据库已损坏，且没有可用的备份副本，已重建为空数据库；会话记录无法恢复。损坏的文件保留在 {damaged}，工作区文件和产物未受影响。请再打开一次项目。") }
             else { format!("The project database was damaged and no backup copy exists, so an empty database was created; conversations could not be recovered. The damaged file was kept at {damaged}; workspace files and artifacts are untouched. Open the project again.") }
+        }
+        m if m.starts_with("skill_global_exists:") => {
+            let path = m.trim_start_matches("skill_global_exists:");
+            if locale == Locale::Zh { format!("全局目录中已有同名技能：{path}。未复制任何文件，请先处理该副本。") }
+            else { format!("A global skill with this name already exists at {path}. Nothing was copied; resolve that copy first.") }
+        }
+        "skill_not_in_project" => {
+            if locale == Locale::Zh { "当前项目中没有这个技能的项目副本。".into() }
+            else { "This project has no project copy of this skill.".into() }
+        }
+        "skill_project_copy_is_only_copy" => {
+            if locale == Locale::Zh { "项目副本是唯一的一份，请先提升为全局再删除。".into() }
+            else { "The project copy is the only copy. Promote it to global before removing it.".into() }
         }
         m if m.starts_with("project_folder_metadata_invalid:") => {
             if locale == Locale::Zh { "项目 metadata 数据库损坏、不完整或与项目说明不匹配，无法导入。请从原项目重新导出。".into() }
@@ -7751,6 +7816,48 @@ mod api_error_hint_tests {
             }
             assert!(!is_context_limit_error(&error));
             assert!(!is_image_unsupported(&error));
+        }
+    }
+
+    #[test]
+    fn skill_scope_strings_and_errors_are_localized() {
+        for key in [
+            "skills.install_location",
+            "skills.install_scope.global",
+            "skills.install_scope.project",
+            "skills.install_scope.project_warning",
+            "skills.receipt",
+            "skills.receipt.all_projects",
+            "skills.receipt.project_only",
+            "skills.receipt.shadowed",
+            "skills.copies_badge",
+            "skills.copies",
+            "skills.copies_hint",
+            "skills.copy.active",
+            "skills.copy.shadowed",
+            "skills.copy.identical",
+            "skills.lifetime.project",
+            "skills.lifetime.global",
+            "skills.lifetime.bundled",
+            "skills.promote",
+            "skills.promoting",
+            "skills.promote_hint",
+            "skills.promoted_remove_hint",
+            "skills.duplicate_hint",
+            "skills.remove_project_copy",
+            "skills.remove_project_copy_confirm",
+            "skills.project_copy_removed",
+            "projects.delete_data_skills",
+        ] {
+            assert_ne!(t(Locale::En, key), key);
+            assert_ne!(t(Locale::Zh, key), key);
+        }
+        let conflict = localize_backend(Locale::Zh, "skill_global_exists:/home/me/.wisp/skills/x");
+        assert!(conflict.contains("/home/me/.wisp/skills/x"));
+        assert!(conflict.contains("全局"));
+        for code in ["skill_not_in_project", "skill_project_copy_is_only_copy"] {
+            assert_ne!(localize_backend(Locale::En, code), code);
+            assert_ne!(localize_backend(Locale::Zh, code), code);
         }
     }
 

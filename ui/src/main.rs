@@ -6597,7 +6597,8 @@ fn App() -> impl IntoView {
 
     let reload_skills = Callback::new(move |_: ()| extensions.reload_skills());
 
-    let install_skill_from = move |path: String| extensions.install_skill_from(path);
+    let install_skill_from =
+        move |(path, scope): (String, String)| extensions.install_skill_from(path, scope);
 
     let refresh_plugins = move || extensions.refresh_plugins();
 

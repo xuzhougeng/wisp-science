@@ -62,6 +62,9 @@ pub(crate) fn ProjectsScreen(
     // did nothing — use an in-app modal instead.
     let pending_delete = create_rw_signal(None::<String>);
     let confirm_delete_data = create_rw_signal(false);
+    // Project Skills under `.wisp/skills` that deleting the folder would take
+    // with it; listed so the user can promote them to global first.
+    let delete_data_skills = create_rw_signal(Vec::<String>::new());
     let settings_project_id = create_rw_signal(None::<String>);
     let settings_form = create_rw_signal(ProjectSettings::default());
     let settings_baseline = create_rw_signal(ProjectSettings::default());
@@ -1548,6 +1551,18 @@ pub(crate) fn ProjectsScreen(
                                     "projects.delete_data_path",
                                     &[("path", &workspace_dir)],
                                 )}</code>
+                                {move || {
+                                    let names = delete_data_skills.get();
+                                    (!names.is_empty()).then(|| {
+                                        let count = names.len().to_string();
+                                        view! {
+                                            <div class="hint project-delete-skills" role="note" data-testid="project-delete-skills">
+                                                <p>{move || tf(locale.get(), "projects.delete_data_skills", &[("count", &count)])}</p>
+                                                <ul>{names.into_iter().map(|name| view! { <li>{name}</li> }).collect_view()}</ul>
+                                            </div>
+                                        }
+                                    })
+                                }}
                                 <div class="row">
                                     <button type="button" on:click=move |_| {
                                         confirm_delete_data.set(false);
@@ -1582,6 +1597,7 @@ pub(crate) fn ProjectsScreen(
                 } else {
                     let confirm_del = delete_confirmed;
                     let remove_id = id.clone();
+                    let skills_id = id.clone();
                     view! {
                         <div class="overlay">
                             <div class="modal confirm-modal project-delete-choice-modal"
@@ -1599,7 +1615,18 @@ pub(crate) fn ProjectsScreen(
                                     <button type="button" class="delete-with-data" on:click=move |_| {
                                         delete_data_unlock_at.set(js_sys::Date::now() + 5_000.0);
                                         delete_data_countdown.set(5);
+                                        delete_data_skills.set(Vec::new());
                                         confirm_delete_data.set(true);
+                                        let id = skills_id.clone();
+                                        spawn_local(async move {
+                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                            let Ok(value) = invoke_checked("list_project_skill_packages", arg).await else { return };
+                                            let Ok(names) = serde_wasm_bindgen::from_value::<Vec<String>>(value) else { return };
+                                            // Ignore a late answer for a dialog the user has since left.
+                                            if confirm_delete_data.get_untracked() && pending_delete.get_untracked().as_deref() == Some(id.as_str()) {
+                                                delete_data_skills.set(names);
+                                            }
+                                        });
                                     }>{move || t(locale.get(), "projects.remove_with_data")}</button>
                                 </div>
                             </div>

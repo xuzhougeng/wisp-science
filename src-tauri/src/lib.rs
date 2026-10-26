@@ -715,6 +715,7 @@ struct SkillInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     managed_by: Option<String>,
     dir: String,
+    copies: Vec<wisp_dto::SkillCopy>,
 }
 
 #[derive(Serialize, Clone)]
@@ -4711,6 +4712,7 @@ fn skill_infos(
                 managed: false,
                 managed_by: None,
                 dir: s.dir.to_string_lossy().to_string(),
+                copies: skill_commands::skill_copies(skills.catalog_records(), &s.name),
             }
         })
         .collect()
@@ -5592,7 +5594,10 @@ fn skill_sources(root: &std::path::Path) -> Vec<(PathBuf, SkillSource)> {
     if let Some(b) = wisp_skills::bundled_dir() {
         paths.push((b, SkillSource::Bundled));
     }
-    paths.push((root.join(".wisp").join("skills"), SkillSource::Project));
+    paths.push((
+        skill_commands::project_skills_dir(root),
+        SkillSource::Project,
+    ));
     if let Some(home) = dirs::home_dir() {
         paths.push((home.join(".wisp").join("skills"), SkillSource::Global));
     }
@@ -7892,7 +7897,11 @@ pub fn run() {
             skill_commands::set_skills_enabled,
             skill_commands::set_skill_enabled,
             skill_commands::pick_skill_source,
+            skill_commands::skill_install_locations,
             skill_commands::install_skill,
+            skill_commands::promote_skill_to_global,
+            skill_commands::remove_project_skill_copy,
+            skill_commands::list_project_skill_packages,
             skill_commands::remove_skill,
             plugins::list_plugins,
             plugins::pick_plugin_source,

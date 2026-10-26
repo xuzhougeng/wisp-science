@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
+use wisp_skills::{SkillCatalogRecord, SkillSource};
 
 async fn list_skill_infos_for_project(
     state: &AppState,
@@ -229,6 +230,100 @@ pub(super) fn user_skills_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "no home directory".to_string())
 }
 
+/// Project-scoped Skills live inside the project folder and move or disappear
+/// with it.
+pub(super) fn project_skills_dir(root: &Path) -> PathBuf {
+    root.join(".wisp").join("skills")
+}
+
+/// Discovery precedence, lowest first; mirrors the order in `skill_sources`.
+fn scope_rank(scope: SkillSource) -> u8 {
+    match scope {
+        SkillSource::Bundled => 0,
+        SkillSource::Project => 1,
+        SkillSource::Global => 2,
+        SkillSource::Extra => 3,
+        SkillSource::Plugin => 4,
+        SkillSource::Custom => 5,
+    }
+}
+
+fn record_dir(record: &SkillCatalogRecord) -> PathBuf {
+    record.path.parent().map(PathBuf::from).unwrap_or_default()
+}
+
+fn named_records<'a>(
+    records: &'a [SkillCatalogRecord],
+    name: &'a str,
+) -> impl Iterator<Item = &'a SkillCatalogRecord> {
+    records
+        .iter()
+        .filter(move |record| record.parse_error.is_none() && record.name == name)
+}
+
+fn skill_copy(record: &SkillCatalogRecord, effective_hash: Option<&str>) -> wisp_dto::SkillCopy {
+    wisp_dto::SkillCopy {
+        scope: record.scope.as_str().to_string(),
+        dir: record_dir(record).to_string_lossy().to_string(),
+        effective: record.effective,
+        same_as_effective: record.effective
+            || (effective_hash.is_some() && record.skill_md_sha256.as_deref() == effective_hash),
+    }
+}
+
+/// Every discovered copy of `name`, active copy first and the rest in
+/// discovery precedence, so the UI can show which one wins.
+pub(super) fn skill_copies(records: &[SkillCatalogRecord], name: &str) -> Vec<wisp_dto::SkillCopy> {
+    let mut named = named_records(records, name).collect::<Vec<_>>();
+    named.sort_by_key(|record| (!record.effective, scope_rank(record.scope)));
+    let effective_hash = named
+        .iter()
+        .find(|record| record.effective)
+        .and_then(|record| record.skill_md_sha256.as_deref());
+    named
+        .into_iter()
+        .map(|record| skill_copy(record, effective_hash))
+        .collect()
+}
+
+/// Build the receipt for a package installed at `dir`, naming the copy that
+/// still wins discovery when the new one is shadowed.
+fn install_receipt(
+    records: &[SkillCatalogRecord],
+    name: &str,
+    scope: SkillSource,
+    dir: &Path,
+) -> wisp_dto::SkillInstallReceipt {
+    let installed_effective = named_records(records, name)
+        .find(|record| record_dir(record) == dir)
+        .is_none_or(|record| record.effective);
+    let shadowed_by = (!installed_effective)
+        .then(|| {
+            skill_copies(records, name)
+                .into_iter()
+                .find(|copy| copy.effective)
+        })
+        .flatten();
+    wisp_dto::SkillInstallReceipt {
+        name: name.to_string(),
+        scope: scope.as_str().to_string(),
+        dir: dir.to_string_lossy().to_string(),
+        shadowed_by,
+    }
+}
+
+#[tauri::command]
+pub(super) async fn skill_install_locations(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+) -> Result<wisp_dto::SkillInstallLocations, String> {
+    let ap = state.require_active(window.label())?;
+    Ok(wisp_dto::SkillInstallLocations {
+        global_dir: user_skills_dir()?.to_string_lossy().to_string(),
+        project_dir: project_skills_dir(&ap.root).to_string_lossy().to_string(),
+    })
+}
+
 /// Reject skill names that could escape the skills directory. A valid name is a
 /// single path component: no separators, no `..`, non-empty.
 pub(super) fn validate_skill_name(name: &str) -> Result<(), String> {
@@ -250,14 +345,28 @@ pub(super) fn validate_skill_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn install_scope(scope: Option<&str>) -> Result<SkillSource, String> {
+    match scope.unwrap_or("global") {
+        "global" => Ok(SkillSource::Global),
+        "project" => Ok(SkillSource::Project),
+        other => Err(format!("unsupported skill install scope '{other}'")),
+    }
+}
+
 #[tauri::command]
 pub(super) async fn install_skill(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,
     src_path: String,
-) -> Result<String, String> {
+    scope: Option<String>,
+) -> Result<wisp_dto::SkillInstallReceipt, String> {
+    let scope = install_scope(scope.as_deref())?;
     let src = PathBuf::from(&src_path);
-    let skills_dir = user_skills_dir()?;
+    let skills_dir = match scope {
+        SkillSource::Project => project_skills_dir(&state.require_active(window.label())?.root),
+        _ => user_skills_dir()?,
+    };
+    let target_dir = skills_dir.clone();
     // ZIP extraction, recursive copy, and the atomic directory swap run off
     // the async runtime. Existing user-added skills are replaced so importing
     // an updated package is a normal upgrade path.
@@ -271,7 +380,148 @@ pub(super) async fn install_skill(
         save_enabled_skill_names(&state.store, &ap.id, &enabled).await?;
     }
     clear_idle_agents(&state).await;
-    Ok(skill_name)
+    Ok(install_receipt(
+        ap.skills.catalog_records(),
+        &skill_name,
+        scope,
+        &target_dir.join(&skill_name),
+    ))
+}
+
+/// Copy a project Skill into the global directory. The project copy, the
+/// enabled set, and tag overrides are untouched: both copies share the public
+/// name those settings are keyed by.
+#[tauri::command]
+pub(super) async fn promote_skill_to_global(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    name: String,
+) -> Result<wisp_dto::SkillInstallReceipt, String> {
+    validate_skill_name(&name)?;
+    let ap = state.require_active(window.label())?;
+    let records = ap.skills.catalog_records();
+    let source = named_records(records, &name)
+        .find(|record| record.scope == SkillSource::Project)
+        .map(record_dir)
+        .ok_or("skill_not_in_project")?;
+    if let Some(existing) =
+        named_records(records, &name).find(|record| record.scope == SkillSource::Global)
+    {
+        return Err(format!(
+            "skill_global_exists:{}",
+            record_dir(existing).display()
+        ));
+    }
+    let dest = user_skills_dir()?.join(&name);
+    let target = dest.clone();
+    tokio::task::spawn_blocking(move || promote_skill_dir(&source, &target))
+        .await
+        .map_err(|e| format!("{e}"))??;
+    reload_host_skill_index(&state, window.label())?;
+    clear_idle_agents(&state).await;
+    let ap = state.require_active(window.label())?;
+    Ok(install_receipt(
+        ap.skills.catalog_records(),
+        &name,
+        SkillSource::Global,
+        &dest,
+    ))
+}
+
+/// Never overwrite: an occupied global folder is a conflict the user resolves.
+fn promote_skill_dir(from: &Path, to: &Path) -> Result<(), String> {
+    if to.exists() {
+        return Err(format!("skill_global_exists:{}", to.display()));
+    }
+    install_skill_dir(from, to)
+        .map(|_| ())
+        .map_err(|error| format!("promote skill: {error}"))
+}
+
+/// Delete the project copy of a Skill only when another copy keeps the name
+/// available: a global copy, or any other copy with identical SKILL.md.
+#[tauri::command]
+pub(super) async fn remove_project_skill_copy(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    name: String,
+) -> Result<(), String> {
+    let ap = state.require_active(window.label())?;
+    let dir = removable_project_copy(
+        ap.skills.catalog_records(),
+        &name,
+        &project_skills_dir(&ap.root),
+    )?;
+    tokio::fs::remove_dir_all(&dir)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    reload_host_skill_index(&state, window.label())?;
+    clear_idle_agents_for_project(&state, &ap.id).await;
+    Ok(())
+}
+
+/// Names of the Skill packages under a project's `.wisp/skills`, including
+/// ones that fail to parse: deleting the project folder deletes them all.
+fn project_skill_package_names(root: &Path) -> Vec<String> {
+    let index =
+        wisp_skills::SkillIndex::load_scoped(&[(project_skills_dir(root), SkillSource::Project)]);
+    let mut names = index
+        .catalog_records()
+        .iter()
+        .map(|record| record.name.clone())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Project Skills that "Delete project and local data" would remove. Looked up
+/// by id because deletion starts from the projects list, where the project is
+/// usually not the active one. An unknown project has nothing to warn about.
+#[tauri::command]
+pub(super) async fn list_project_skill_packages(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    let Some((_, workspace_dir)) = state
+        .store
+        .get_project(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
+    else {
+        return Ok(vec![]);
+    };
+    if workspace_dir.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    tokio::task::spawn_blocking(move || project_skill_package_names(Path::new(&workspace_dir)))
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+fn removable_project_copy(
+    records: &[SkillCatalogRecord],
+    name: &str,
+    project_dir: &Path,
+) -> Result<PathBuf, String> {
+    let project = named_records(records, name)
+        .find(|record| record.scope == SkillSource::Project)
+        .ok_or("skill_not_in_project")?;
+    let dir = record_dir(project);
+    if !dir.starts_with(project_dir) || dir == project_dir {
+        return Err("skill_not_in_project".into());
+    }
+    let kept = named_records(records, name).any(|record| {
+        record.scope != SkillSource::Project
+            && (record.scope == SkillSource::Global
+                || (project.skill_md_sha256.is_some()
+                    && record.skill_md_sha256 == project.skill_md_sha256))
+    });
+    if !kept {
+        return Err("skill_project_copy_is_only_copy".into());
+    }
+    Ok(dir)
 }
 
 struct SkillImportTempDir(PathBuf);
@@ -604,6 +854,173 @@ mod tests {
 
         let error = install_skill_source(&archive_path, &temp.0.join("installed")).unwrap_err();
         assert_eq!(error, "skill ZIP contains more than one skill folder");
+    }
+
+    fn write_skill(base: &Path, dir: &str, name: &str, body: &str) -> PathBuf {
+        let dir = base.join(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test skill\n---\n{body}"),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn scoped_index(temp: &TestDir) -> (wisp_skills::SkillIndex, PathBuf, PathBuf, PathBuf) {
+        let bundled = temp.0.join("bundled");
+        let project = temp.0.join("project").join(".wisp").join("skills");
+        let global = temp.0.join("home").join(".wisp").join("skills");
+        let index = wisp_skills::SkillIndex::load_scoped(&[
+            (bundled.clone(), SkillSource::Bundled),
+            (project.clone(), SkillSource::Project),
+            (global.clone(), SkillSource::Global),
+        ]);
+        (index, bundled, project, global)
+    }
+
+    #[test]
+    fn skill_copies_list_the_active_copy_first_and_flag_identical_duplicates() {
+        let temp = TestDir::new();
+        let (_, bundled, project, global) = scoped_index(&temp);
+        write_skill(&bundled, "search", "search", "same");
+        write_skill(&project, "search", "search", "same");
+        write_skill(&global, "search", "search", "edited");
+        let (index, ..) = scoped_index(&temp);
+
+        let copies = skill_copies(index.catalog_records(), "search");
+        let scopes = copies.iter().map(|c| c.scope.as_str()).collect::<Vec<_>>();
+        assert_eq!(scopes, ["bundled", "project", "global"]);
+        assert!(copies[0].effective && copies[0].same_as_effective);
+        assert!(!copies[1].effective && copies[1].same_as_effective);
+        assert!(!copies[2].effective && !copies[2].same_as_effective);
+        assert!(copies[1].dir.ends_with("search"));
+    }
+
+    #[test]
+    fn install_receipt_names_the_copy_that_shadows_a_global_install() {
+        let temp = TestDir::new();
+        let (_, _, project, global) = scoped_index(&temp);
+        let project_dir = write_skill(&project, "notes", "notes", "project");
+        let global_dir = write_skill(&global, "notes", "notes", "global");
+        let only_global = write_skill(&global, "solo", "solo", "global");
+        let (index, ..) = scoped_index(&temp);
+
+        let shadowed = install_receipt(
+            index.catalog_records(),
+            "notes",
+            SkillSource::Global,
+            &global_dir,
+        );
+        assert_eq!(shadowed.scope, "global");
+        let winner = shadowed.shadowed_by.expect("project copy wins");
+        assert_eq!(winner.scope, "project");
+        assert_eq!(PathBuf::from(winner.dir), project_dir);
+
+        let active = install_receipt(
+            index.catalog_records(),
+            "solo",
+            SkillSource::Global,
+            &only_global,
+        );
+        assert_eq!(active.shadowed_by, None);
+    }
+
+    #[test]
+    fn install_scope_defaults_to_global_and_rejects_unknown_scopes() {
+        assert_eq!(install_scope(None), Ok(SkillSource::Global));
+        assert_eq!(install_scope(Some("project")), Ok(SkillSource::Project));
+        assert!(install_scope(Some("bundled")).is_err());
+    }
+
+    #[test]
+    fn project_install_writes_under_the_project_skills_directory() {
+        let temp = TestDir::new();
+        let source = write_skill(&temp.0, "source", "local-only", "body");
+        let project_root = temp.0.join("project");
+        let target = project_skills_dir(&project_root);
+
+        assert_eq!(
+            install_skill_source(&source, &target),
+            Ok("local-only".into())
+        );
+        assert!(project_root
+            .join(".wisp/skills/local-only/SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn promoting_never_overwrites_an_existing_global_folder() {
+        let temp = TestDir::new();
+        let source = write_skill(&temp.0, "project/notes", "notes", "project");
+        std::fs::write(source.join("helper.py"), "print(1)").unwrap();
+        let global = temp.0.join("global");
+        let existing = write_skill(&global, "notes", "notes", "keep me");
+
+        let error = promote_skill_dir(&source, &existing).unwrap_err();
+        assert!(error.starts_with("skill_global_exists:"));
+        assert!(std::fs::read_to_string(existing.join("SKILL.md"))
+            .unwrap()
+            .contains("keep me"));
+
+        let dest = global.join("fresh");
+        promote_skill_dir(&source, &dest).unwrap();
+        assert!(dest.join("helper.py").is_file());
+        assert!(source.join("SKILL.md").is_file(), "project copy is kept");
+    }
+
+    #[test]
+    fn project_copy_is_removable_only_when_another_copy_keeps_the_name() {
+        let temp = TestDir::new();
+        let (_, bundled, project, global) = scoped_index(&temp);
+        let promoted = write_skill(&project, "promoted", "promoted", "v1");
+        write_skill(&global, "promoted", "promoted", "v2");
+        let identical = write_skill(&project, "dup", "dup", "same");
+        write_skill(&bundled, "dup", "dup", "same");
+        write_skill(&project, "edited", "edited", "mine");
+        write_skill(&bundled, "edited", "edited", "upstream");
+        write_skill(&project, "unique", "unique", "only");
+        let (index, ..) = scoped_index(&temp);
+        let records = index.catalog_records();
+
+        assert_eq!(
+            removable_project_copy(records, "promoted", &project),
+            Ok(promoted)
+        );
+        assert_eq!(
+            removable_project_copy(records, "dup", &project),
+            Ok(identical)
+        );
+        assert_eq!(
+            removable_project_copy(records, "edited", &project),
+            Err("skill_project_copy_is_only_copy".into())
+        );
+        assert_eq!(
+            removable_project_copy(records, "unique", &project),
+            Err("skill_project_copy_is_only_copy".into())
+        );
+        assert_eq!(
+            removable_project_copy(records, "missing", &project),
+            Err("skill_not_in_project".into())
+        );
+    }
+
+    #[test]
+    fn project_skill_packages_lists_every_package_that_project_deletion_removes() {
+        let temp = TestDir::new();
+        assert!(project_skill_package_names(&temp.0).is_empty());
+
+        let skills = project_skills_dir(&temp.0);
+        write_skill(&skills, "stats", "session-stats", "body");
+        write_skill(&skills, "search", "nature-academic-search", "body");
+        std::fs::create_dir_all(skills.join("broken")).unwrap();
+        std::fs::write(skills.join("broken/SKILL.md"), "no frontmatter").unwrap();
+        std::fs::create_dir_all(skills.join("empty-folder")).unwrap();
+
+        assert_eq!(
+            project_skill_package_names(&temp.0),
+            ["broken", "nature-academic-search", "session-stats"]
+        );
     }
 
     #[test]

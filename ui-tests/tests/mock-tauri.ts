@@ -558,7 +558,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     { name: "literature-review", description: "Find and synthesize literature", tags: ["literature"], scope: "bundled", enabled: true, builtin: true, dir: "/skills/literature-review" },
     { name: "paper-narrative", description: "Shape a paper story", tags: [], scope: "global", enabled: true, builtin: false, dir: "/home/me/.wisp/skills/paper-narrative" },
     { name: "social-note", description: "Write paste-ready social copy for Xiaohongshu, WeChat, or Twitter after the user chooses a platform", tags: ["share"], scope: "bundled", enabled: true, builtin: true, dir: "/skills/social-note" },
-  ];
+  ] as any[];
+  const mockGlobalSkillsDir = "/home/me/.wisp/skills";
+  const mockProjectSkillsDir = "/mock/root/project/.wisp/skills";
+  if (query.get("mockSkillScopes") === "1") {
+    // A project-only Skill and a project copy identical to its bundled winner.
+    skills.push(
+      { name: "session-stats", description: "Summarize session statistics", tags: [], scope: "project", enabled: false, builtin: false, dir: `${mockProjectSkillsDir}/session-stats`,
+        copies: [{ scope: "project", dir: `${mockProjectSkillsDir}/session-stats`, effective: true, same_as_effective: true }] },
+      { name: "nature-academic-search", description: "Search Nature journals", tags: ["literature"], scope: "bundled", enabled: true, builtin: true, dir: "/skills/nature-academic-search",
+        copies: [
+          { scope: "bundled", dir: "/skills/nature-academic-search", effective: true, same_as_effective: true },
+          { scope: "project", dir: `${mockProjectSkillsDir}/nature-academic-search`, effective: false, same_as_effective: true },
+        ] },
+    );
+  }
   let plugins = [
     {
       id: "motif-for-claude-science",
@@ -3420,6 +3434,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return "wisp-sync:mock-secret-code";
           case "delete_project":
             return null;
+          case "list_project_skill_packages":
+            return query.get("mockProjectSkills") === "1" ? ["nature-academic-search", "session-stats"] : [];
           case "open_project_window":
             return `proj-${arg("id")}`;
           case "open_new_window":
@@ -5094,8 +5110,31 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return query.get("mockSkillImport") === "1"
               ? "/downloads/paper-narrative.zip"
               : null;
-          case "install_skill":
-            return "paper-narrative";
+          case "skill_install_locations":
+            return { global_dir: mockGlobalSkillsDir, project_dir: mockProjectSkillsDir };
+          case "install_skill": {
+            const scope = String(arg("scope") ?? "global");
+            const dir = `${scope === "project" ? mockProjectSkillsDir : mockGlobalSkillsDir}/paper-narrative`;
+            return { name: "paper-narrative", scope, dir, shadowed_by: null };
+          }
+          case "promote_skill_to_global": {
+            const skill = skills.find((s) => s.name === String(arg("name")));
+            if (!skill) throw new Error("skill_not_in_project");
+            const project = skill.copies.find((c: any) => c.scope === "project");
+            const dir = `${mockGlobalSkillsDir}/${skill.name}`;
+            skill.copies = [...skill.copies, { scope: "global", dir, effective: false, same_as_effective: true }];
+            return { name: skill.name, scope: "global", dir, shadowed_by: project.effective ? project : null };
+          }
+          case "remove_project_skill_copy": {
+            const skill = skills.find((s) => s.name === String(arg("name")));
+            skill.copies = skill.copies.filter((c: any) => c.scope !== "project");
+            if (skill.scope === "project") {
+              skill.copies[0].effective = true;
+              skill.scope = skill.copies[0].scope;
+              skill.dir = skill.copies[0].dir;
+            }
+            return null;
+          }
           case "remove_skill": {
             const name = String(arg("name") ?? "");
             skills = skills.filter((skill) => skill.name !== name || skill.builtin);

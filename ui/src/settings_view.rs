@@ -292,6 +292,11 @@ pub(super) enum DeleteConfirm {
         name: String,
         label: String,
     },
+    /// Deleting a project copy that another copy keeps available.
+    ProjectSkillCopy {
+        name: String,
+        label: String,
+    },
     /// Dropping a server: `detail` reports what would be abandoned there.
     Host {
         alias: String,
@@ -311,6 +316,7 @@ impl DeleteConfirm {
             | DeleteConfirm::Acp { label, .. }
             | DeleteConfirm::Plugin { label, .. }
             | DeleteConfirm::Skill { label, .. }
+            | DeleteConfirm::ProjectSkillCopy { label, .. }
             | DeleteConfirm::Host { label, .. }
             | DeleteConfirm::CodexAccount { label, .. } => label,
         }
@@ -2231,7 +2237,7 @@ pub(super) fn SettingsView(
     load_custom_conn_tools: Callback<ConnRow>,
     save_skill_tags: Callback<(String, String)>,
     set_visible_skills_enabled: Callback<bool>,
-    install_skill_from: Callback<String>,
+    install_skill_from: Callback<(String, String)>,
     install_plugin_from: Callback<(String, Option<String>)>,
     install_plugin_url: Callback<(String, String)>,
     set_plugin_enabled: Callback<(String, String, bool)>,
@@ -2590,6 +2596,23 @@ pub(super) fn SettingsView(
     let selected_skill = create_rw_signal(None::<String>);
     let skill_store_open = create_rw_signal(false);
     let skill_store_github = create_rw_signal(false);
+    // Add skill installs globally unless the user picks this project.
+    let skill_install_scope = create_rw_signal(String::from("global"));
+    let skill_install_locations = create_rw_signal(None::<SkillInstallLocations>);
+    create_effect(move |_| {
+        if !show_settings.get() || settings_section.get() != "skills" {
+            return;
+        }
+        spawn_local(async move {
+            if let Ok(value) = invoke_checked("skill_install_locations", JsValue::UNDEFINED).await {
+                if let Ok(locations) =
+                    serde_wasm_bindgen::from_value::<SkillInstallLocations>(value)
+                {
+                    skill_install_locations.set(Some(locations));
+                }
+            }
+        });
+    });
     create_effect(move |_| {
         if !show_settings.get() || settings_section.get() != "skills" {
             skill_store_open.set(false);
@@ -7406,24 +7429,49 @@ pub(super) fn SettingsView(
                             <div class="skills-primary-actions">
                                 <button type="button" on:click=move |_| { skill_store_github.set(false); skill_store_open.set(true); }>{move || t(locale.get(), "store.browse")}</button>
                                 <button type="button" on:click=move |_| { skill_store_github.set(true); skill_store_open.set(true); }>{move || t(locale.get(), "store.github")}</button>
-                                <details class="settings-add-menu">
+                                <details class="settings-add-menu skill-add-menu">
                                     <summary>{compose_icon("plus")}{move || t(locale.get(), "skills.add")}{compose_icon("chevron-down")}</summary>
-                                    <button type="button" on:click=move |_| {
-                                        spawn_local(async move {
-                                            let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
-                                            if let Some(path) = picked.as_string() {
-                                                install_skill_from.call(path);
-                                            }
-                                        });
-                                    }>{move || t(locale.get(), "skills.add_file")}</button>
-                                    <button type="button" on:click=move |_| {
-                                        spawn_local(async move {
-                                            let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
-                                            if let Some(path) = picked.as_string() {
-                                                install_skill_from.call(path);
-                                            }
-                                        });
-                                    }>{move || t(locale.get(), "skills.add_folder")}</button>
+                                    <div class="skill-add-panel">
+                                        <fieldset class="skill-install-scope" data-testid="skill-install-scope">
+                                            <legend>{move || t(locale.get(), "skills.install_location")}</legend>
+                                            {["global", "project"].into_iter().map(|scope| view! {
+                                                <label class="skill-install-scope-option" data-scope=scope>
+                                                    <input type="radio" name="skill-install-scope" value=scope
+                                                        prop:checked=move || skill_install_scope.get() == scope
+                                                        on:change=move |_| skill_install_scope.set(scope.into()) />
+                                                    <span>
+                                                        <strong>{move || t(locale.get(), &format!("skills.install_scope.{scope}"))}</strong>
+                                                        <small class="skill-install-path">{move || skill_install_locations.get().map(|locations| {
+                                                            if scope == "project" { locations.project_dir } else { locations.global_dir }
+                                                        })}</small>
+                                                    </span>
+                                                </label>
+                                            }).collect_view()}
+                                            {move || (skill_install_scope.get() == "project").then(|| view! {
+                                                <p class="skill-install-scope-warning" role="note">{move || t(locale.get(), "skills.install_scope.project_warning")}</p>
+                                            })}
+                                        </fieldset>
+                                        <button type="button" on:click=move |ev| {
+                                            close_details_ancestor(&ev);
+                                            let scope = skill_install_scope.get_untracked();
+                                            spawn_local(async move {
+                                                let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
+                                                if let Some(path) = picked.as_string() {
+                                                    install_skill_from.call((path, scope));
+                                                }
+                                            });
+                                        }>{move || t(locale.get(), "skills.add_file")}</button>
+                                        <button type="button" on:click=move |ev| {
+                                            close_details_ancestor(&ev);
+                                            let scope = skill_install_scope.get_untracked();
+                                            spawn_local(async move {
+                                                let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
+                                                if let Some(path) = picked.as_string() {
+                                                    install_skill_from.call((path, scope));
+                                                }
+                                            });
+                                        }>{move || t(locale.get(), "skills.add_folder")}</button>
+                                    </div>
                                 </details>
                             </div>
                         </div>
@@ -7511,18 +7559,27 @@ pub(super) fn SettingsView(
                                 skills_list.get().into_iter().filter(|s| {
                                     skill_matches_filter(s, &tag, &q)
                                 }).collect::<Vec<_>>()
-                            } key=|s| format!("{}:{}:{}", s.name, s.enabled, join_tags(&s.tags)) let:s>
+                            } key=|s| format!("{}:{}:{}:{}:{}", s.name, s.enabled, join_tags(&s.tags), s.scope, s.copies.len()) let:s>
                                 {
                                     let name_toggle = s.name.clone();
                                     let name_open = s.name.clone();
                                     let enabled = s.enabled;
                                     let managed = s.managed;
                                     let scope_label = t(locale.get(), &format!("skills.scope.{}", s.scope));
+                                    let scope_title = if s.scope == "project" {
+                                        format!("{}\n{}", s.dir, t(locale.get(), "skills.lifetime.project"))
+                                    } else {
+                                        s.dir.clone()
+                                    };
+                                    let copies = s.copies.len();
                                     view! {
                                         <div class="settings-list-row skill-catalog-row" data-skill-name=s.name.clone()>
                                             <button type="button" class="skill-row-open" on:click=move |_| selected_skill.set(Some(name_open.clone()))>
                                                 <span class="skill-row-name">{s.name.clone()}</span>
-                                                <span class="skill-scope-badge" title=s.dir>{scope_label}</span>
+                                                <span class="skill-scope-badge" title=scope_title>{scope_label}</span>
+                                                {(copies > 1).then(|| view! {
+                                                    <span class="skill-scope-badge skill-copies-badge">{tf(locale.get(), "skills.copies_badge", &[("count", &copies.to_string())])}</span>
+                                                })}
                                                 <span class="skill-row-tags">{s.tags.into_iter().map(|tag| view! { <span class="skill-tag">{tag}</span> }).collect_view()}</span>
                                                 {compose_icon("chevron-right")}
                                             </button>
@@ -7562,7 +7619,8 @@ pub(super) fn SettingsView(
                 })}
                 {move || (settings_section.get() == "skills").then(|| selected_skill.get().map(|name| view! {
                     <crate::skill_detail::SkillDetail name=name skills=skills_list locale=locale
-                        refresh=refresh_skills save_tags=save_skill_tags delete_confirm=delete_confirm />
+                        refresh=refresh_skills save_tags=save_skill_tags delete_confirm=delete_confirm
+                        install_locations=skill_install_locations />
                     {move || skills_msg.get().map(|(ok, text)| view! {
                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                     })}
@@ -8587,6 +8645,7 @@ pub(super) fn SettingsView(
                 let label = target.label().to_string();
                 let is_plugin = matches!(target, DeleteConfirm::Plugin { .. });
                 let is_skill = matches!(target, DeleteConfirm::Skill { .. });
+                let is_project_skill_copy = matches!(target, DeleteConfirm::ProjectSkillCopy { .. });
                 let is_host = matches!(target, DeleteConfirm::Host { .. });
                 let is_codex_account = matches!(target, DeleteConfirm::CodexAccount { .. });
                 let host_detail = match &target {
@@ -8597,6 +8656,8 @@ pub(super) fn SettingsView(
                     ("plugins.remove_confirm", "plugin", "plugins.remove", "plugin-remove-confirm")
                 } else if is_skill {
                     ("skills.remove_confirm", "skill", "skills.remove", "skill-remove-confirm")
+                } else if is_project_skill_copy {
+                    ("skills.remove_project_copy_confirm", "skill", "skills.remove_project_copy", "skill-project-copy-remove-confirm")
                 } else if is_host {
                     ("hosts.remove_confirm", "host", "environments.remove", "host-remove-confirm")
                 } else if is_codex_account {
@@ -8677,6 +8738,21 @@ pub(super) fn SettingsView(
                                                 match invoke_checked("remove_skill", arg).await {
                                                     Ok(_) => {
                                                         skills_msg.set(Some((true, t(locale.get(), "skills.removed").into())));
+                                                        refresh_skills.call(());
+                                                    }
+                                                    Err(error) => {
+                                                        skills_msg.set(Some((
+                                                            false,
+                                                            localize_backend(locale.get(), &js_error_text(error)),
+                                                        )));
+                                                    }
+                                                }
+                                            }
+                                            DeleteConfirm::ProjectSkillCopy { name, .. } => {
+                                                let arg = to_value(&serde_json::json!({ "name": name })).unwrap();
+                                                match invoke_checked("remove_project_skill_copy", arg).await {
+                                                    Ok(_) => {
+                                                        skills_msg.set(Some((true, t(locale.get(), "skills.project_copy_removed"))));
                                                         refresh_skills.call(());
                                                     }
                                                     Err(error) => {

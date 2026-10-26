@@ -3578,6 +3578,39 @@ pub struct SkillRow {
     #[serde(default)]
     pub managed_by: Option<String>,
     pub dir: String,
+    /// Every discovered copy of this name, active copy first. More than one
+    /// entry means the other copies are shadowed by discovery precedence.
+    #[serde(default)]
+    pub copies: Vec<SkillCopy>,
+}
+
+/// One discovered package directory for a Skill name.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillCopy {
+    pub scope: String,
+    pub dir: String,
+    pub effective: bool,
+    /// Its SKILL.md is byte-identical to the active copy's.
+    #[serde(default)]
+    pub same_as_effective: bool,
+}
+
+/// Resolved install directories offered by **Add skill**.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillInstallLocations {
+    pub global_dir: String,
+    pub project_dir: String,
+}
+
+/// Where an install or promotion put a Skill, and which copy still wins
+/// discovery when the new one is shadowed.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillInstallReceipt {
+    pub name: String,
+    pub scope: String,
+    pub dir: String,
+    #[serde(default)]
+    pub shadowed_by: Option<SkillCopy>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]

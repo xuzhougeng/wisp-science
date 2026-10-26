@@ -1,7 +1,9 @@
 use crate::app_support::{compose_icon, join_tags, js_error_text};
 use crate::bindings::invoke_checked;
-use crate::dto::{SkillFileContent, SkillRow};
-use crate::i18n::{t, Locale};
+use crate::dto::{
+    SkillCopy, SkillFileContent, SkillInstallLocations, SkillInstallReceipt, SkillRow,
+};
+use crate::i18n::{localize_backend, t, tf, Locale};
 use crate::settings_view::DeleteConfirm;
 use crate::text::{event_target_checked, event_target_value};
 use leptos::*;
@@ -44,6 +46,72 @@ fn markdown_preview(source: &str) -> String {
     html
 }
 
+/// Install/promotion receipt: scope, absolute path, who can discover it, and
+/// the copy that still wins when the new one is shadowed.
+pub(crate) fn skill_install_receipt_text(locale: Locale, receipt: &SkillInstallReceipt) -> String {
+    let reach = if receipt.scope == "project" {
+        "skills.receipt.project_only"
+    } else {
+        "skills.receipt.all_projects"
+    };
+    let mut text = tf(
+        locale,
+        "skills.receipt",
+        &[
+            ("skill", &receipt.name),
+            (
+                "scope",
+                &t(locale, &format!("skills.scope.{}", receipt.scope)),
+            ),
+            ("path", &receipt.dir),
+            ("reach", &t(locale, reach)),
+        ],
+    );
+    if let Some(winner) = &receipt.shadowed_by {
+        text.push(' ');
+        text.push_str(&tf(
+            locale,
+            "skills.receipt.shadowed",
+            &[
+                (
+                    "scope",
+                    &t(locale, &format!("skills.scope.{}", winner.scope)),
+                ),
+                ("path", &winner.dir),
+            ],
+        ));
+    }
+    text
+}
+
+/// What the scope section may offer for one Skill's discovered copies.
+#[derive(Debug, PartialEq)]
+struct ScopeActions {
+    can_promote: bool,
+    can_remove_project_copy: bool,
+    /// The removable project copy duplicates another copy rather than having
+    /// been promoted.
+    duplicate: bool,
+}
+
+fn scope_actions(copies: &[SkillCopy]) -> ScopeActions {
+    let project = copies.iter().find(|copy| copy.scope == "project");
+    let has_global = copies.iter().any(|copy| copy.scope == "global");
+    // Mirrors `removable_project_copy` in the backend: another copy must keep
+    // the name available (a global copy, or identical content).
+    let duplicate = project.is_some_and(|project| {
+        project.same_as_effective
+            && copies
+                .iter()
+                .any(|copy| copy.scope != "project" && copy.same_as_effective)
+    });
+    ScopeActions {
+        can_promote: project.is_some() && !has_global,
+        can_remove_project_copy: project.is_some() && (has_global || duplicate),
+        duplicate: duplicate && !has_global,
+    }
+}
+
 #[component]
 pub(crate) fn SkillDetail(
     name: String,
@@ -52,6 +120,7 @@ pub(crate) fn SkillDetail(
     refresh: Callback<()>,
     save_tags: Callback<(String, String)>,
     delete_confirm: RwSignal<Option<DeleteConfirm>>,
+    install_locations: RwSignal<Option<SkillInstallLocations>>,
 ) -> impl IntoView {
     let name = store_value(name);
     let skill = create_memo(move |_| {
@@ -68,6 +137,38 @@ pub(crate) fn SkillDetail(
     let source_mode = create_rw_signal(false);
     let retry = create_rw_signal(0u32);
     let generation = create_rw_signal(0u32);
+    let promoting = create_rw_signal(false);
+    let scope_msg = create_rw_signal(None::<(bool, String)>);
+    let promote = move |_| {
+        if promoting.get_untracked() {
+            return;
+        }
+        promoting.set(true);
+        scope_msg.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "name": name.get_value() })).unwrap();
+            let result = invoke_checked("promote_skill_to_global", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|v| {
+                    serde_wasm_bindgen::from_value::<SkillInstallReceipt>(v)
+                        .map_err(|e| e.to_string())
+                });
+            promoting.set(false);
+            match result {
+                Ok(receipt) => {
+                    scope_msg.set(Some((
+                        true,
+                        skill_install_receipt_text(locale.get_untracked(), &receipt),
+                    )));
+                    refresh.call(());
+                }
+                Err(e) => {
+                    scope_msg.set(Some((false, localize_backend(locale.get_untracked(), &e))))
+                }
+            }
+        });
+    };
     let disposed = std::rc::Rc::new(std::cell::Cell::new(false));
     let disposed_cleanup = disposed.clone();
     on_cleanup(move || disposed_cleanup.set(true));
@@ -145,6 +246,15 @@ pub(crate) fn SkillDetail(
                 let toggle_name = s.name.clone();
                 let tags_name = s.name.clone();
                 let remove_name = s.name.clone();
+                let copy_name = s.name.clone();
+                let actions = scope_actions(&s.copies);
+                let lifetime_key = match s.scope.as_str() {
+                    "project" => Some("skills.lifetime.project"),
+                    "global" => Some("skills.lifetime.global"),
+                    "bundled" => Some("skills.lifetime.bundled"),
+                    _ => None,
+                };
+                let copies = s.copies.clone();
                 view! {
                     <div class="skill-detail-heading">
                         <h3>{s.name.clone()}</h3>
@@ -177,6 +287,51 @@ pub(crate) fn SkillDetail(
                     {s.managed_by.map(|provider| view! { <p class="skill-managed-badge">{crate::i18n::tf(locale.get(), "skills.managed_by", &[("plugin", &provider)])}</p> })}
                     <p class="skill-detail-description">{s.description}</p>
                     <p class="skill-detail-path">{s.dir}</p>
+                    <section class="skill-scope-section" data-testid="skill-scope">
+                        {lifetime_key.map(|key| view! {
+                            <p class="skill-lifetime" class:project=key == "skills.lifetime.project">{move || t(locale.get(), key)}</p>
+                        })}
+                        {(copies.len() > 1).then(|| view! {
+                            <h4>{move || t(locale.get(), "skills.copies")}</h4>
+                            <p class="skill-copies-hint">{move || t(locale.get(), "skills.copies_hint")}</p>
+                            <ul class="skill-copies" data-testid="skill-copies">
+                                {copies.iter().cloned().map(|copy| {
+                                    let status = if copy.effective { "skills.copy.active" } else { "skills.copy.shadowed" };
+                                    let identical = !copy.effective && copy.same_as_effective;
+                                    let project = copy.scope == "project";
+                                    view! {
+                                        <li class="skill-copy" class:active=copy.effective data-scope=copy.scope.clone()>
+                                            <span class="skill-scope-badge">{t(locale.get(), &format!("skills.scope.{}", copy.scope))}</span>
+                                            <span class="skill-copy-status">{move || t(locale.get(), status)}</span>
+                                            {identical.then(|| view! { <span class="skill-copy-identical">{move || t(locale.get(), "skills.copy.identical")}</span> })}
+                                            <span class="skill-copy-path">{copy.dir}</span>
+                                            {project.then(|| view! { <small class="skill-copy-lifetime">{move || t(locale.get(), "skills.lifetime.project")}</small> })}
+                                        </li>
+                                    }
+                                }).collect_view()}
+                            </ul>
+                        })}
+                        {actions.can_promote.then(|| view! {
+                            <div class="skill-scope-action">
+                                <button type="button" class="skill-promote" disabled=move || promoting.get() on:click=promote>
+                                    {compose_icon("upload")}
+                                    {move || t(locale.get(), if promoting.get() { "skills.promoting" } else { "skills.promote" })}
+                                </button>
+                                <small>{move || install_locations.get().map(|locations| tf(locale.get(), "skills.promote_hint", &[("path", &locations.global_dir)]))}</small>
+                            </div>
+                        })}
+                        {actions.can_remove_project_copy.then(|| view! {
+                            <div class="skill-scope-action">
+                                <button type="button" class="skill-remove-project-copy" on:click=move |_| delete_confirm.set(Some(DeleteConfirm::ProjectSkillCopy {
+                                    name: copy_name.clone(), label: copy_name.clone(),
+                                }))>{compose_icon("trash")}{move || t(locale.get(), "skills.remove_project_copy")}</button>
+                                <small>{move || t(locale.get(), if actions.duplicate { "skills.duplicate_hint" } else { "skills.promoted_remove_hint" })}</small>
+                            </div>
+                        })}
+                        {move || scope_msg.get().map(|(ok, text)| view! {
+                            <div class="settings-status" class:ok=ok class:fail=move || !ok role="status">{text}</div>
+                        })}
+                    </section>
                     <crate::skill_store::SkillOrigin name=s.name.clone() locale=locale />
                     <label class="skill-detail-tags">
                         <span>{move || t(locale.get(), "skills.edit_tags")}</span>
@@ -231,6 +386,87 @@ pub(crate) fn SkillDetail(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn copy(scope: &str, effective: bool, same: bool) -> SkillCopy {
+        SkillCopy {
+            scope: scope.into(),
+            dir: format!("/{scope}/skill"),
+            effective,
+            same_as_effective: same,
+        }
+    }
+
+    #[test]
+    fn scope_actions_offer_promotion_then_removal_of_the_project_copy() {
+        let only_project = [copy("project", true, true)];
+        assert_eq!(
+            scope_actions(&only_project),
+            ScopeActions {
+                can_promote: true,
+                can_remove_project_copy: false,
+                duplicate: false
+            }
+        );
+        let promoted = [copy("project", true, true), copy("global", false, true)];
+        assert_eq!(
+            scope_actions(&promoted),
+            ScopeActions {
+                can_promote: false,
+                can_remove_project_copy: true,
+                duplicate: false
+            }
+        );
+        let identical_to_bundled = [copy("bundled", true, true), copy("project", false, true)];
+        assert_eq!(
+            scope_actions(&identical_to_bundled),
+            ScopeActions {
+                can_promote: true,
+                can_remove_project_copy: true,
+                duplicate: true
+            }
+        );
+        let edited_project = [copy("bundled", true, true), copy("project", false, false)];
+        assert_eq!(
+            scope_actions(&edited_project),
+            ScopeActions {
+                can_promote: true,
+                can_remove_project_copy: false,
+                duplicate: false
+            }
+        );
+        assert_eq!(
+            scope_actions(&[copy("global", true, true)]),
+            ScopeActions {
+                can_promote: false,
+                can_remove_project_copy: false,
+                duplicate: false
+            }
+        );
+    }
+
+    #[test]
+    fn install_receipt_states_scope_path_reach_and_shadowing_copy() {
+        let receipt = SkillInstallReceipt {
+            name: "notes".into(),
+            scope: "global".into(),
+            dir: "/home/me/.wisp/skills/notes".into(),
+            shadowed_by: Some(copy("project", true, true)),
+        };
+        let text = skill_install_receipt_text(Locale::En, &receipt);
+        assert!(text.contains("notes as a Global skill at /home/me/.wisp/skills/notes"));
+        assert!(text.contains("Every project can discover it."));
+        assert!(text.contains("the Project copy at /project/skill still takes precedence"));
+
+        let project = SkillInstallReceipt {
+            scope: "project".into(),
+            dir: "/work/.wisp/skills/notes".into(),
+            shadowed_by: None,
+            ..receipt
+        };
+        let text = skill_install_receipt_text(Locale::En, &project);
+        assert!(text.contains("Only this project can discover it."));
+        assert!(!text.contains("precedence"));
+    }
     #[test]
     fn package_markdown_escapes_active_content_and_hides_frontmatter() {
         let html = markdown_preview("---\nname: hidden\n---\n# Demo\n<script>alert(1)</script>\n\n[bad](javascript:alert) ![plot](https://example.com/track.png)");

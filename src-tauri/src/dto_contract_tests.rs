@@ -1444,3 +1444,42 @@ fn assistant_weixin_status_contract_is_separate_from_legacy_channels() {
     );
     assert!(serde_json::from_str::<wisp_dto::WeixinDestination>("\"invalid\"").is_err());
 }
+
+#[test]
+fn skill_rows_carry_scope_copies_and_install_receipts() {
+    let copy = |scope: &str, effective: bool| wisp_dto::SkillCopy {
+        scope: scope.into(),
+        dir: format!("/{scope}/notes"),
+        effective,
+        same_as_effective: true,
+    };
+    let backend = crate::SkillInfo {
+        name: "notes".into(),
+        description: "Notes".into(),
+        tags: vec![],
+        scope: "project".into(),
+        enabled: true,
+        builtin: false,
+        managed: false,
+        managed_by: None,
+        dir: "/project/notes".into(),
+        copies: vec![copy("project", true), copy("global", false)],
+    };
+    let row: wisp_dto::SkillRow =
+        serde_json::from_value(serde_json::to_value(&backend).unwrap()).unwrap();
+    assert_eq!(row.copies, backend.copies);
+    let legacy: wisp_dto::SkillRow = serde_json::from_value(json!({
+        "name": "old", "description": "", "enabled": true, "builtin": true, "dir": "/old"
+    }))
+    .unwrap();
+    assert!(legacy.copies.is_empty());
+
+    let receipt = wisp_dto::SkillInstallReceipt {
+        name: "notes".into(),
+        scope: "global".into(),
+        dir: "/global/notes".into(),
+        shadowed_by: Some(copy("project", true)),
+    };
+    let decoded: wisp_dto::SkillInstallReceipt = roundtrip(&receipt);
+    assert_eq!(decoded, receipt);
+}
