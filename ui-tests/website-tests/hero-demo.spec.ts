@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.route(/^https:\/\//, route => route.abort());
@@ -8,15 +8,20 @@ test.beforeEach(async ({ page }) => {
 // drive Playwright's fake timers until the given condition holds. The site
 // scrolls smoothly; jump instead, so the mock is fully in view before the
 // clock moves and stays there.
-const openDemo = async (page: Page, lang: "zh" | "en" = "zh") => {
-  await page.clock.install();
-  await page.goto(`/index.html?lang=${lang}`);
-  const demo = page.locator("[data-hero-demo]");
+// A click may scroll its target to the viewport edge, so re-center after
+// clicks that are followed by running the clock.
+const centerDemo = async (demo: Locator) => {
   await demo.evaluate((el) => {
     document.documentElement.style.scrollBehavior = "auto";
     el.scrollIntoView({ block: "center" });
   });
   await expect(demo).toBeInViewport({ ratio: 0.9 });
+};
+const openDemo = async (page: Page, lang: "zh" | "en" = "zh") => {
+  await page.clock.install();
+  await page.goto(`/index.html?lang=${lang}`);
+  const demo = page.locator("[data-hero-demo]");
+  await centerDemo(demo);
   return demo;
 };
 const runUntil = async (page: Page, check: () => Promise<boolean>) => {
@@ -58,6 +63,7 @@ test("choosing a conversation takes over and artifacts open a preview that Escap
   const demo = await openDemo(page);
   await demo.getByRole("button", { name: "PBMC 3k 质控" }).click();
   await expect(demo.getByRole("button", { name: "PBMC 3k 质控" })).toHaveAttribute("aria-pressed", "true");
+  await centerDemo(demo);
   const status = demo.locator(".mock-status");
   await runUntil(page, async () => (await status.textContent())!.startsWith("已完成"));
 
@@ -81,6 +87,7 @@ test("choosing a conversation takes over and artifacts open a preview that Escap
   await expect(preview).toBeHidden();
 
   // Rotation stopped once the visitor took over.
+  await centerDemo(demo);
   await page.clock.runFor(20_000);
   await expect(demo.getByRole("button", { name: "PBMC 3k 质控" })).toHaveAttribute("aria-pressed", "true");
 });
@@ -92,6 +99,7 @@ test("pausing the demo freezes the stream until it resumes", async ({ page }) =>
   const toggle = demo.locator(".mock-toggle");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await centerDemo(demo);
   const steps = await demo.locator(".mock-step").count();
   const status = await demo.locator(".mock-status").textContent();
   await page.clock.runFor(5_000);
@@ -100,6 +108,7 @@ test("pausing the demo freezes the stream until it resumes", async ({ page }) =>
 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await centerDemo(demo);
   await runUntil(page, async () => (await demo.locator(".mock-step").count()) > steps);
 });
 
