@@ -540,9 +540,14 @@
           "name": "srcPath",
           "rust_type": "String",
           "optional": false
+        },
+        {
+          "name": "scope",
+          "rust_type": "Option<String>",
+          "optional": true
         }
       ],
-      "result": "Result<String, String>",
+      "result": "Result<wisp_dto::SkillInstallReceipt, String>",
       "source": "src-tauri/src/skill_commands.rs"
     },
     {
