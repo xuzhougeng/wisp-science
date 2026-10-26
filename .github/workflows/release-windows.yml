@@ -9,12 +9,8 @@ on:
         description: Tag to build and publish (e.g. v0.1.0)
         required: true
         default: v0.1.0
-      signing_policy:
-        description: SignPath signing policy slug (tag pushes always use release-signing)
-        required: true
-        default: test-signing
       publish:
-        description: Publish GitHub release (uncheck for a signing dry-run)
+        description: Publish GitHub release (uncheck for a signing dry-run; signing still runs)
         type: boolean
         required: true
         default: true
@@ -27,18 +23,26 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      SIGNING_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.signing_policy || 'release-signing' }}
+      ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+      ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+      ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+      ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+      ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
+      ESIGNER_PROGRAM_NAME: wisp-science
+      ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      # Load the waiter from this workflow revision, not the tagged app tree.
-      # workflow_dispatch can rebuild an older tag that does not contain the action.
+      # Load the waiter and signer from this workflow revision, not the tagged app tree.
+      # workflow_dispatch can rebuild an older tag that does not contain them.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          sparse-checkout: .github/actions/wait-for-release
+          sparse-checkout: |
+            .github/actions/wait-for-release
+            scripts
           path: _release_ci
 
       - name: Wait for GitHub release
@@ -75,62 +79,40 @@ jobs:
             cargo install tauri-cli --version "^2" --locked
           }
 
-      # Safety net: never publish installers signed with the test certificate.
-      - name: Guard against publishing test-signed installers
-        if: github.event_name == 'workflow_dispatch' && inputs.publish && env.SIGNING_POLICY != 'release-signing'
-        shell: pwsh
-        run: Write-Error "publish=true requires signing_policy=release-signing"
+      - name: Cache CodeSignTool
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/CodeSignTool
+          key: codesigntool-1.3.2-windows
 
-      # Build only; signing (SignPath) must happen before the release is published.
-      - name: Build Tauri bundles
+      - name: Install CodeSignTool
         shell: pwsh
-        run: cargo tauri build --bundles msi,nsis
+        run: pwsh -NoProfile -File _release_ci/scripts/install_esigner_codesigntool.ps1
 
-      # SignPath: the API token belongs to a CI user that is a submitter for the
-      # release-signing policy. OrganizationId is not a secret.
-      # Set repo variable SKIP_WINDOWS_SIGNING=true to publish unsigned
-      # installers (e.g. while the release certificate is still being issued).
-      - name: Sign installers with SignPath
-        if: vars.SKIP_WINDOWS_SIGNING != 'true'
+      # signCommand signs the main exe after Tauri patches it and before the
+      # installer is packed, then signs the MSI and NSIS installer. A signing
+      # failure fails this step, so a tag or publish=true run cannot upload
+      # unsigned installers.
+      - name: Build signed Tauri bundles
         shell: pwsh
-        env:
-          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name SignPath -Scope CurrentUser -Force
-          $artifacts = @(
-            # MSI and NSIS use different root file types, so select each configuration explicitly.
-            @{ Files = Get-ChildItem "target/release/bundle/msi/*.msi"; ConfigSlug = "msi-installer" }
-            @{ Files = Get-ChildItem "target/release/bundle/nsis/*.exe"; ConfigSlug = "nsis-installer" }
-          )
-          $found = $artifacts | ForEach-Object { $_.Files }
-          if (-not $found) {
-            Write-Error "No installer artifacts found to sign"
-          }
-          foreach ($group in $artifacts) {
-            foreach ($artifact in $group.Files) {
-              Write-Host "Signing $($artifact.Name)"
-              $signed = Join-Path $env:RUNNER_TEMP $artifact.Name
-              $params = @{
-                InputArtifactPath   = $artifact.FullName
-                ApiToken            = $env:SIGNPATH_API_TOKEN
-                OrganizationId      = "5664b725-0848-42aa-a098-65be8f18d107"
-                ProjectSlug         = "wisp-science"
-                SigningPolicySlug   = $env:SIGNING_POLICY
-                OutputArtifactPath  = $signed
-                Description         = "wisp-science $env:RELEASE_TAG"
-                WaitForCompletion   = $true
-              }
-              if ($group.ConfigSlug) {
-                $params.ArtifactConfigurationSlug = $group.ConfigSlug
-              }
-              Submit-SigningRequest @params
-              Move-Item -Force $signed $artifact.FullName
-            }
-          }
+          $sign = (Resolve-Path '_release_ci/scripts/esigner_sign.ps1').Path
+          $config = Join-Path $env:RUNNER_TEMP 'esigner-tauri.json'
+          & $sign -SignScript $sign -OutFile $config
+          cargo tauri build --bundles msi,nsis --config $config
+          if ($LASTEXITCODE -ne 0) { throw "cargo tauri build exited $LASTEXITCODE" }
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $files = @()
+          $files += @(Get-ChildItem "target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue).FullName
+          $files += @(Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue).FullName
+          if ($files.Count -lt 2) { throw "Expected an MSI and an NSIS installer, found $($files.Count)" }
+          & "_release_ci/scripts/assert_esigner_signatures.ps1" -Path $files -RequireSignedName wisp-science.exe
 
       # Dry-run (publish=false): keep the signed installers as workflow artifacts
-      # so the signatures can be inspected without cutting a release.
+      # so the signatures can be inspected without updating the GitHub release.
       - name: Upload signed installers as workflow artifacts
         if: github.event_name == 'workflow_dispatch' && !inputs.publish
         uses: actions/upload-artifact@v4

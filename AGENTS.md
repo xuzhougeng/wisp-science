@@ -110,14 +110,14 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh run list --branch vX.Y.Z
    ```
 
-   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
+   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Windows Release and Windows WinUI Preview Release sign with eSigner and fail when any `ESIGNER_*` secret is missing; `publish=false` is the signing dry-run. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
 
 Do not `git push origin vX.Y.Z` after `gh release create` — the tag already exists on GitHub. To fix notes on an existing release, edit the notes file and run the Create Release workflow with `overwrite_notes`, or `gh release edit`. Never use `tauri-action` / `action-gh-release` with a body on a published release.
 
 To rebuild one platform for an existing tag, dispatch that workflow **from `main`** (so the upload-only YAML is used) with the tag input. Do not `gh run rerun` a tag-push job whose workflow still rewrites the release body:
 
 ```bash
-gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f signing_policy=release-signing -f publish=true
+gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f publish=true
 ```
 
 Details: [docs/app-updates.md](docs/app-updates.md).

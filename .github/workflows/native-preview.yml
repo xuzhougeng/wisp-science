@@ -116,6 +116,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: powershell -NoProfile -File scripts/test_build_native_windows.ps1
+      - run: powershell -NoProfile -File scripts/test_esigner_sign.ps1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

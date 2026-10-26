@@ -165,6 +165,79 @@ Actual Developer ID notarization and downloaded-app Gatekeeper
 behavior require this release CI/manual validation; local ad-hoc builds and
 mocked packaging tests do not establish them.
 
+## Windows code signing
+
+Windows Release and Windows WinUI Preview Release Authenticode-sign with an
+SSL.com Personal ID (IV) code signing certificate enrolled in eSigner. The
+credential id is `44eb788c-2a80-4f18-ae58-912d3298c053`. That id is not a secret;
+the values below exist only as GitHub Actions secrets:
+
+| Secret | Role |
+| --- | --- |
+| `ESIGNER_CREDENTIAL_ID` | eSigner credential id for the Personal ID (IV) certificate |
+| `ESIGNER_USERNAME` | SSL.com account username |
+| `ESIGNER_PASSWORD` | SSL.com account password |
+| `ESIGNER_TOTP_SECRET` | OAuth TOTP secret from eSigner enrollment |
+| `ESIGNER_PIN` | 4-digit PIN created during eSigner enrollment |
+
+CodeSignTool does not send `ESIGNER_PIN`. CI still requires the secret so the
+enrollment PIN is stored with the other signing credentials. SSL.com asks for
+that PIN before it shows the authenticator QR or TOTP secret again.
+
+Before the first signed build, enroll the certificate in eSigner, choose an
+authenticator app, create the PIN, and scan the QR code. Save the TOTP secret
+as `ESIGNER_TOTP_SECRET`. Signing fails until that enrollment is finished.
+CodeSignTool 1.3.2 then signs from GitHub-hosted Windows runners and timestamps
+with SSL.com's RFC 3161 server, `http://ts.ssl.com`. Each signature consumes one
+eSigner signing. The signer waits for a fresh TOTP between calls because eSigner
+rejects a reused one-time password.
+
+Tauri's `signCommand` runs on the main `wisp-science.exe` after the bundler
+patches it and before that copy is packed, then on the MSI and the NSIS setup
+executable. The loose `target/release/wisp-science.exe` is unsigned again after
+packaging because Tauri restores the unpatched binary. NSIS plugin DLLs and WiX
+extension DLLs are left unsigned; the signed installer covers those build-tool
+binaries. The WinUI preview signs `Wisp.Science.Preview.exe`, `wisp-service.exe`,
+and `settings-host/wisp-tauri.exe` before NSIS packages them, then signs each
+setup executable. Microsoft runtime DLLs are not re-signed. The NSIS-generated
+preview uninstaller is unsigned.
+
+A tag push or a dispatch with `publish=true` fails the job when signing fails,
+and does not upload unsigned installers. `SKIP_WINDOWS_SIGNING` is no longer
+read. The manual **Windows Build** workflow stays unsigned; it does not publish
+a release. **Windows Test Signing** is a manual Authenticode check against the
+same production credential and does not publish.
+
+Signing dry-run (artifacts only, no release upload):
+
+```bash
+gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f publish=false
+gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f publish=false
+```
+
+Publish after the GitHub Release exists:
+
+```bash
+gh workflow run "Windows Release" --ref main -f tag=vX.Y.Z -f publish=true
+gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f publish=true
+```
+
+SmartScreen reputation is built from download volume. An IV certificate does not
+skip that warning, and Microsoft no longer gives EV certificates an instant
+SmartScreen bypass either. Keep signing later releases with this same
+certificate so reputation can carry forward. A newly signed installer can still
+show SmartScreen until enough people have installed it.
+
+After a run, the job summary lists the Authenticode status and signer subject.
+On a downloaded installer:
+
+```powershell
+Get-AuthenticodeSignature .\wisp-science_1.21.0_x64_en-US.msi | Format-List Status, SignerCertificate, TimeStamperCertificate
+```
+
+`Status` is `Valid` and `TimeStamperCertificate` is present when the RFC 3161
+timestamp verified.
+
 ## WinUI 3 Preview alongside the Windows release
 
 **Windows WinUI Preview Release** (`release-winui-preview.yml`) builds a separate
@@ -199,11 +272,10 @@ data. Uninstall removes packaged files and its shortcut/registration, preserving
 user data. Exit the preview and its helpers before installing an update.
 
 Updates are manual. The workflow only uploads assets, without creating releases,
-rewriting their title/notes or changing `latest.json`. It uses the existing
-SignPath `nsis-installer` configuration, `SIGNPATH_API_TOKEN`, and
-`SKIP_WINDOWS_SIGNING` opt-out. SignPath must accept the WinUI payload in that
-artifact configuration before signing can succeed. A signing failure blocks
-publication; with the explicit unsigned opt-out, SmartScreen may warn.
+rewriting their title/notes or changing `latest.json`. It uses the same eSigner
+signing as [Windows code signing](#windows-code-signing). A signing failure
+blocks publication. SmartScreen can still warn until the certificate has
+download reputation.
 
 The build explicitly selects Release for both Rust helpers and .NET, x64,
 separate .NET/Windows App SDK deployment modes, and fresh publish directories.
@@ -224,14 +296,9 @@ sizes. These are regression ceilings, not expected download sizes.
 Review the size report before changing the budgets. Both PR CI and release CI
 exercise the actual installer build and size gates.
 
-To rebuild an existing supported tag, dispatch the new workflow **from main**:
-
-```powershell
-# Signing dry-run: artifacts only; does not modify the GitHub release.
-gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f signing_policy=test-signing -f publish=false
-# Attach to an existing release after validation.
-gh workflow run release-winui-preview.yml --ref main -f tag=vX.Y.Z -f signing_policy=release-signing -f publish=true
-```
+To rebuild an existing supported tag, dispatch the workflow **from main** as
+shown in [Windows code signing](#windows-code-signing). `publish=false` keeps
+the signed installers as Actions artifacts.
 
 The build locates the x64 MSVC CRT redistributable folder using Visual Studio's
 `vswhere`; a custom toolchain can pass `-VCRedistDirectory` to the build script.
@@ -262,7 +329,7 @@ variant also test already-installed runtimes, missing/old/x86-only runtimes,
 offline download failure and UAC cancellation; for the self-contained variant,
 test without .NET/Windows App Runtime installed. Confirm the stable app and user data
 remain available. Mocked packaging tests and successful NSIS compilation do not
-prove clean-machine launch or SignPath service acceptance.
+prove clean-machine launch or that eSigner accepted the installer.
 
 ## Manual smoke test
 

@@ -1,5 +1,8 @@
 name: Windows Test Signing
 
+# Manual Authenticode check. Uses the production eSigner credential (there is
+# no separate test certificate) and does not publish a GitHub Release.
+# Each .exe/.msi signature consumes an eSigner signing and waits for a fresh TOTP.
 on:
   workflow_dispatch:
 
@@ -10,7 +13,15 @@ permissions:
 jobs:
   test-signing:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+      ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+      ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+      ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+      ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
+      ESIGNER_PROGRAM_NAME: wisp-science
+      ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
     steps:
       - uses: actions/checkout@v4
 
@@ -41,102 +52,40 @@ jobs:
             cargo install tauri-cli --version "^2" --locked
           }
 
-      - name: Build unsigned Windows installers
-        shell: pwsh
-        run: cargo tauri build --bundles msi,nsis
+      - name: Cache CodeSignTool
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/CodeSignTool
+          key: codesigntool-1.3.2-windows
 
-      - name: Locate unsigned installers
-        id: installers
+      - name: Install CodeSignTool
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/install_esigner_codesigntool.ps1
+
+      - name: Build signed Windows installers
         shell: pwsh
         run: |
-          $msi = @(Get-ChildItem "target/release/bundle/msi/*.msi")
-          $nsis = @(Get-ChildItem "target/release/bundle/nsis/*.exe")
-          if ($msi.Count -ne 1) {
-            throw "Expected one MSI installer, found $($msi.Count)"
-          }
-          if ($nsis.Count -ne 1) {
-            throw "Expected one NSIS installer, found $($nsis.Count)"
-          }
-          "msi=$($msi[0].FullName)" >> $env:GITHUB_OUTPUT
-          "nsis=$($nsis[0].FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Upload unsigned MSI
-        id: unsigned-msi
-        uses: actions/upload-artifact@v7
-        with:
-          path: ${{ steps.installers.outputs.msi }}
-          archive: false
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload unsigned NSIS installer
-        id: unsigned-nsis
-        uses: actions/upload-artifact@v7
-        with:
-          path: ${{ steps.installers.outputs.nsis }}
-          archive: false
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Test-sign MSI with SignPath
-        id: sign-msi
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: 5664b725-0848-42aa-a098-65be8f18d107
-          project-slug: wisp-science
-          signing-policy-slug: test-signing
-          artifact-configuration-slug: msi-installer
-          github-artifact-id: ${{ steps.unsigned-msi.outputs.artifact-id }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 1200
-          output-artifact-directory: ${{ runner.temp }}/signed/msi
-          skip-decompress: true
-
-      - name: Test-sign NSIS installer with SignPath
-        id: sign-nsis
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: 5664b725-0848-42aa-a098-65be8f18d107
-          project-slug: wisp-science
-          signing-policy-slug: test-signing
-          artifact-configuration-slug: nsis-installer
-          github-artifact-id: ${{ steps.unsigned-nsis.outputs.artifact-id }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 1200
-          output-artifact-directory: ${{ runner.temp }}/signed/nsis
-          skip-decompress: true
+          $sign = (Resolve-Path 'scripts/esigner_sign.ps1').Path
+          $config = Join-Path $env:RUNNER_TEMP 'esigner-tauri.json'
+          & $sign -SignScript $sign -OutFile $config
+          cargo tauri build --bundles msi,nsis --config $config
+          if ($LASTEXITCODE -ne 0) { throw "cargo tauri build exited $LASTEXITCODE" }
 
       - name: Verify Authenticode signatures
         shell: pwsh
         run: |
           $files = @()
-          $files += Get-ChildItem "${{ runner.temp }}/signed/msi/*.msi"
-          $files += Get-ChildItem "${{ runner.temp }}/signed/nsis/*.exe"
-          if ($files.Count -ne 2) {
-            throw "Expected two signed installers, found $($files.Count)"
-          }
-          foreach ($file in $files) {
-            $signature = Get-AuthenticodeSignature $file.FullName
-            if ($null -eq $signature.SignerCertificate) {
-              throw "$($file.Name) does not contain an Authenticode signature"
-            }
-            Write-Host "$($file.Name): $($signature.Status) - $($signature.SignerCertificate.Subject)"
-          }
+          $files += @(Get-ChildItem "target/release/bundle/msi/*.msi").FullName
+          $files += @(Get-ChildItem "target/release/bundle/nsis/*.exe").FullName
+          if ($files.Count -ne 2) { throw "Expected one MSI and one NSIS installer, found $($files.Count)" }
+          & "scripts/assert_esigner_signatures.ps1" -Path $files -RequireSignedName wisp-science.exe
 
-      - name: Upload test-signed installers
-        uses: actions/upload-artifact@v7
+      - name: Upload signed installers
+        uses: actions/upload-artifact@v4
         with:
-          name: test-signed-installers-${{ github.sha }}
+          name: signed-installers-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/signed/msi/*.msi
-            ${{ runner.temp }}/signed/nsis/*.exe
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
-
-      - name: Add signing requests to summary
-        shell: pwsh
-        run: |
-          "MSI signing request: ${{ steps.sign-msi.outputs.signing-request-web-url }}" >> $env:GITHUB_STEP_SUMMARY
-          "NSIS signing request: ${{ steps.sign-nsis.outputs.signing-request-web-url }}" >> $env:GITHUB_STEP_SUMMARY

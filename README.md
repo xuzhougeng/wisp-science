@@ -199,8 +199,9 @@ for the molecular wordmark and three-wisp desktop icon designs.
   <a href="https://github.com/zuolan1999-jpg"><img src="https://avatars.githubusercontent.com/u/293331524?v=4&amp;s=96" width="64" height="64" alt="@zuolan1999-jpg" title="@zuolan1999-jpg"></a>
 </p>
 
-Windows code signing by [SignPath.io](https://signpath.io), certificate by the
-[SignPath Foundation](https://signpath.org). Third-party notices live in
+Windows installers are Authenticode-signed with an [SSL.com](https://www.ssl.com/)
+Personal ID (IV) code signing certificate through eSigner. SmartScreen reputation
+builds from download volume. Third-party notices live in
 [development](docs/development.md).
 
 ## License

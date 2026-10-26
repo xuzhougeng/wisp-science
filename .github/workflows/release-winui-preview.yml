@@ -8,12 +8,8 @@ on:
       tag:
         description: Existing release tag to build (vX.Y.Z)
         required: true
-      signing_policy:
-        description: SignPath policy (publishing requires release-signing)
-        required: true
-        default: test-signing
       publish:
-        description: Attach preview to the existing GitHub release
+        description: Attach preview to the existing GitHub release (uncheck for a signing dry-run)
         type: boolean
         required: true
         default: false
@@ -30,8 +26,14 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      SIGNING_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.signing_policy || 'release-signing' }}
       WISP_CATALOG_OFFLINE: '1'
+      ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+      ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+      ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+      ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+      ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
+      ESIGNER_PROGRAM_NAME: Wisp Science WinUI Preview
+      ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
       # Match Cargo.toml explicitly: runner environment must not inflate helpers.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: s
       CARGO_PROFILE_RELEASE_LTO: 'true'
@@ -52,16 +54,13 @@ jobs:
           "enabled=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           if (-not $enabled) { 'This tag predates WinUI preview packaging; skipping.' >> $env:GITHUB_STEP_SUMMARY }
 
-      - name: Guard against publishing test-signed installers
-        if: steps.preview.outputs.enabled == 'true' && (github.event_name != 'workflow_dispatch' || inputs.publish) && env.SIGNING_POLICY != 'release-signing'
-        shell: pwsh
-        run: throw 'Publishing requires signing_policy=release-signing.'
-
       - uses: actions/checkout@v4
         if: steps.preview.outputs.enabled == 'true'
         with:
           ref: ${{ github.sha }}
-          sparse-checkout: .github/actions/wait-for-release
+          sparse-checkout: |
+            .github/actions/wait-for-release
+            scripts
           path: _release_ci
 
       - name: Wait for existing GitHub release
@@ -95,9 +94,40 @@ jobs:
           powershell -NoProfile -File scripts/test_ensure_native_windows_runtimes.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Runtime bootstrap tests failed.' }
 
+      - name: Cache CodeSignTool
+        if: steps.preview.outputs.enabled == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/CodeSignTool
+          key: codesigntool-1.3.2-windows
+
+      - name: Install CodeSignTool
+        if: steps.preview.outputs.enabled == 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -File _release_ci/scripts/install_esigner_codesigntool.ps1
+
       - name: Build both optimized x64 preview variants
         if: steps.preview.outputs.enabled == 'true'
         run: pwsh -File scripts/build_native_windows.ps1 -Configuration Release -RuntimeMode Both
+
+      # Sign product executables before NSIS copies them into the installer.
+      # Microsoft runtime DLLs stay as shipped; they are already signed.
+      - name: Sign preview executables with eSigner
+        if: steps.preview.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $sign = (Resolve-Path '_release_ci/scripts/esigner_sign.ps1').Path
+          $names = @(
+            'Wisp.Science.Preview.exe',
+            'wisp-service.exe',
+            (Join-Path 'settings-host' 'wisp-tauri.exe')
+          )
+          foreach ($app in @('target/native-windows-release', 'target/native-windows-release-framework-dependent')) {
+            foreach ($name in $names) {
+              & $sign (Join-Path $app $name)
+              if ($LASTEXITCODE -ne 0) { throw "eSigner failed for $app $name" }
+            }
+          }
 
       - name: Install NSIS
         if: steps.preview.outputs.enabled == 'true'
@@ -114,30 +144,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Preview packaging failed: $variant" }
           }
 
-      # Same explicit unsigned opt-out as Windows Release. SignPath's NSIS
-      # artifact configuration must accept the native preview payload as well.
-      - name: Sign preview installer with SignPath
-        if: steps.preview.outputs.enabled == 'true' && vars.SKIP_WINDOWS_SIGNING != 'true'
-        env:
-          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      - name: Sign preview installers with eSigner
+        if: steps.preview.outputs.enabled == 'true'
+        shell: pwsh
         run: |
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name SignPath -Scope CurrentUser -Force
-          foreach ($installer in Get-ChildItem "$env:RUNNER_TEMP/winui-release/*_x64-*-setup.exe") {
-            $signed = Join-Path $env:RUNNER_TEMP $installer.Name
-            $params = @{
-              InputArtifactPath = $installer.FullName
-              ApiToken = $env:SIGNPATH_API_TOKEN
-              OrganizationId = '5664b725-0848-42aa-a098-65be8f18d107'
-              ProjectSlug = 'wisp-science'
-              ArtifactConfigurationSlug = 'nsis-installer'
-              SigningPolicySlug = $env:SIGNING_POLICY
-              OutputArtifactPath = $signed
-              Description = "wisp-science WinUI Preview $env:RELEASE_TAG"
-              WaitForCompletion = $true
-            }
-            Submit-SigningRequest @params
-            Move-Item -LiteralPath $signed -Destination $installer.FullName -Force
+          $sign = (Resolve-Path '_release_ci/scripts/esigner_sign.ps1').Path
+          $installers = @(Get-ChildItem "$env:RUNNER_TEMP/winui-release/*_x64-*-setup.exe")
+          if ($installers.Count -ne 2) { throw 'Expected both preview installers before signing.' }
+          foreach ($installer in $installers) {
+            & $sign $installer.FullName
+            if ($LASTEXITCODE -ne 0) { throw "eSigner failed for $($installer.Name)" }
           }
 
       - name: Final checksum and size report after signing
@@ -151,7 +167,14 @@ jobs:
             $report = Get-Content ($installer.FullName -replace '\.exe$', '.size.json') -Raw | ConvertFrom-Json
             "$($report.variant): $([math]::Round($report.installer_bytes / 1MB, 1)) MiB installer / $($report.installer_limit_mib) MiB budget; $([math]::Round($report.payload_bytes / 1MB, 1)) MiB installed / $($report.payload_limit_mib) MiB budget." >> $env:GITHUB_STEP_SUMMARY
           }
-          "Unsigned opt-out (SKIP_WINDOWS_SIGNING): ${{ vars.SKIP_WINDOWS_SIGNING == 'true' }}" >> $env:GITHUB_STEP_SUMMARY
+          $files = @($installers.FullName)
+          foreach ($app in @('target/native-windows-release', 'target/native-windows-release-framework-dependent')) {
+            $files += Join-Path $app 'Wisp.Science.Preview.exe'
+            $files += Join-Path $app 'wisp-service.exe'
+            $files += (Join-Path (Join-Path $app 'settings-host') 'wisp-tauri.exe')
+          }
+          & "_release_ci/scripts/assert_esigner_signatures.ps1" -Path $files
+          if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed.' }
 
       - uses: actions/upload-artifact@v4
         if: steps.preview.outputs.enabled == 'true'

@@ -149,7 +149,8 @@ Use the script's `-Python C:/path/to/python.exe` if Python is not on PATH. The d
 `cargo run build-win --release` builds the UI and both Rust helpers in release
 mode under `target/native-windows-release`. Calling the PowerShell script
 without `-Configuration` retains its Release default; CI explicitly selects
-Release and packages that separate directory as an unsigned NSIS CI artifact.
+Release and packages that directory as an NSIS installer. Release CI
+Authenticode-signs the preview executables and that installer.
 CI uses `-RuntimeMode Both` to also publish a framework-dependent variant under
 `target/native-windows-release-framework-dependent`; its installer detects and
 downloads missing .NET 8 and Windows App Runtime dependencies. The default local
@@ -650,7 +651,7 @@ XAML. `WISP_SETTINGS_HOST_PATH` can override the bundled host executable. The
 host uses the standard desktop database: selecting another database in the
 browser does not reconfigure the host. Alternate databases require an already
 running matching host descriptor; settings never fall back to another database.
-The unsigned preview does not install WebView2 or deliver an automatic update.
+The preview does not install WebView2 or deliver an automatic update.
 
 Additional smoke checklist:
 

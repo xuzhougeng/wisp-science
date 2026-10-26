@@ -191,8 +191,8 @@ Agent 读写项目文件、执行 shell，并按需加载 Skills（`SKILL.md`）
   <a href="https://github.com/zuolan1999-jpg"><img src="https://avatars.githubusercontent.com/u/293331524?v=4&amp;s=96" width="64" height="64" alt="@zuolan1999-jpg" title="@zuolan1999-jpg"></a>
 </p>
 
-Windows 代码签名由 [SignPath.io](https://signpath.io) 提供，证书由
-[SignPath Foundation](https://signpath.org) 签发。第三方声明见
+Windows 安装包使用 [SSL.com](https://www.ssl.com/) Personal ID（IV）代码签名证书，
+经 eSigner 做 Authenticode 签名。SmartScreen 信誉随下载量积累。第三方声明见
 [开发指南](docs/development.md)。
 
 ## 许可证
