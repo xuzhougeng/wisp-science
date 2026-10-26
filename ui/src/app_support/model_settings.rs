@@ -320,7 +320,7 @@ impl ModelSettingsState {
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.saving_settings").into())));
         let provider = provider_value(&form.provider);
-        let profile = serde_json::json!({
+        let mut profile = serde_json::json!({
             "id": form.id.clone().unwrap_or_default(),
             "label": form.label.trim(),
             "provider": provider,
@@ -347,9 +347,11 @@ impl ModelSettingsState {
             "video_duration_secs": form.video_duration_secs,
             "video_aspect_ratio": form.video_aspect_ratio,
             "video_resolution": form.video_resolution,
-            // null keeps the endpoint's saved route.
-            "proxy_url": form.proxy_url.as_deref().map(str::trim),
         });
+        // Omitted keeps the endpoint's saved route.
+        if let Some(proxy_url) = form.proxy_url.as_deref() {
+            profile["proxy_url"] = proxy_url.trim().into();
+        }
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
             let arg = match json_args(&serde_json::json!({
@@ -507,7 +509,7 @@ impl ModelSettingsState {
                 let image = entry.is_image_model();
                 let video = entry.is_video_model();
                 let media = image || video;
-                let profile = serde_json::json!({
+                let mut profile = serde_json::json!({
                     "id": "",
                     "label": entry.label.trim(),
                     "provider": provider,
@@ -534,8 +536,10 @@ impl ModelSettingsState {
                     "video_duration_secs": Option::<u32>::None,
                     "video_aspect_ratio": Option::<String>::None,
                     "video_resolution": Option::<String>::None,
-                    "proxy_url": proxy_url,
                 });
+                if let Some(proxy_url) = &proxy_url {
+                    profile["proxy_url"] = proxy_url.as_str().into();
+                }
                 let arg = match json_args(&serde_json::json!({
                     "profile": profile,
                     "key": key_arg,

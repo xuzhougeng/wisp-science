@@ -70,6 +70,15 @@ test("a model API endpoint keeps its own route and new models on it start from i
   await expect(page.getByTestId("model-proxy-mode")).toHaveValue("inherit");
 });
 
+test("saving a model without touching its route leaves the saved route alone", async ({ page }) => {
+  await openSettings(page, "models");
+  await page.locator(".settings-list-row").first().click();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({ profile: { id: "default" } });
+  // Omitted, not null: the backend keeps the address's route.
+  expect(Object.keys((await lastInvokeArgs(page, "save_model")).profile)).not.toContain("proxy_url");
+});
+
 test("each subscription saves its own route", async ({ page }) => {
   await openSettings(page, "models");
   await page.getByTestId("models-category-subscriptions").click();
