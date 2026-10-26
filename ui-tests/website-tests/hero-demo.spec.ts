@@ -5,12 +5,18 @@ test.beforeEach(async ({ page }) => {
 });
 
 // The demo's clock only runs while the mock is on screen, so scroll to it and
-// drive Playwright's fake timers until the given condition holds.
+// drive Playwright's fake timers until the given condition holds. The site
+// scrolls smoothly; jump instead, so the mock is fully in view before the
+// clock moves and stays there.
 const openDemo = async (page: Page, lang: "zh" | "en" = "zh") => {
   await page.clock.install();
   await page.goto(`/index.html?lang=${lang}`);
   const demo = page.locator("[data-hero-demo]");
-  await demo.scrollIntoViewIfNeeded();
+  await demo.evaluate((el) => {
+    document.documentElement.style.scrollBehavior = "auto";
+    el.scrollIntoView({ block: "center" });
+  });
+  await expect(demo).toBeInViewport({ ratio: 0.9 });
   return demo;
 };
 const runUntil = async (page: Page, check: () => Promise<boolean>) => {
@@ -94,20 +100,7 @@ test("pausing the demo freezes the stream until it resumes", async ({ page }) =>
 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  try {
-    await runUntil(page, async () => (await demo.locator(".mock-step").count()) > steps);
-  } catch (error) {
-    // Say why the stream stayed still: off screen, or already at its last step.
-    const state = await demo.evaluate((el) => {
-      const box = el.getBoundingClientRect();
-      return {
-        top: box.top, bottom: box.bottom, viewport: innerHeight, scrollY, hidden: document.hidden,
-        status: el.querySelector(".mock-status")?.textContent,
-        steps: [...el.querySelectorAll<HTMLElement>(".mock-step")].map(row => row.dataset.state ?? "new"),
-      };
-    });
-    throw new Error(`stream did not resume after ${steps} steps (${status}): ${JSON.stringify(state)}`, { cause: error });
-  }
+  await runUntil(page, async () => (await demo.locator(".mock-step").count()) > steps);
 });
 
 test("reduced motion shows each conversation finished and still switches", async ({ page }) => {
