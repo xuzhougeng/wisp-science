@@ -100,6 +100,11 @@ pub struct ModelProfile {
     /// Video resolution (`480p`, `720p`, `1080p`).
     #[serde(default)]
     pub video_resolution: Option<String>,
+    /// Route for this API endpoint, shared by every profile on it: `None` or
+    /// empty inherits Settings → Network, `none` is direct, else a proxy URL.
+    /// Omitted on save, it keeps the endpoint's current route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -692,7 +697,43 @@ async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Resul
     store
         .set_setting(PROFILES_KEY, &json)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    remember_routes(profiles);
+    Ok(())
+}
+
+fn remember_routes(profiles: &[ModelProfile]) {
+    crate::network::remember_model_routes(
+        profiles
+            .iter()
+            .map(|profile| crate::network::ModelRoute {
+                provider: profile.provider.clone(),
+                endpoint: normalize_endpoint(&profile.api_url),
+                url: effective_api_url(profile),
+                proxy: profile.proxy_url.clone().unwrap_or_default(),
+            })
+            .collect(),
+    );
+}
+
+/// Publish saved profiles' routes for `network::model_proxy`.
+pub(crate) async fn refresh_routes(store: &wisp_store::Store) {
+    remember_routes(&load_raw(store).await);
+}
+
+/// The saved route of `profile`'s API endpoint: its own when it stays on the
+/// same endpoint, else that of another model already on the endpoint.
+fn endpoint_proxy(profiles: &[ModelProfile], profile: &ModelProfile) -> Option<String> {
+    profiles
+        .iter()
+        .find(|old| old.id == profile.id && same_endpoint(&old.api_url, &profile.api_url))
+        .or_else(|| {
+            profiles.iter().find(|other| {
+                !is_subscription_provider(&other.provider)
+                    && same_endpoint(&other.api_url, &profile.api_url)
+            })
+        })
+        .and_then(|other| other.proxy_url.clone())
 }
 
 /// Ensure at least one profile exists. On the first read of a legacy install,
@@ -701,6 +742,7 @@ async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Resul
 async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = load_raw(store).await;
     if !profiles.is_empty() {
+        remember_routes(&profiles);
         return profiles.into_iter().map(with_subscription_window).collect();
     }
     let provider = store
@@ -768,6 +810,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         video_duration_secs: None,
         video_aspect_ratio: None,
         video_resolution: None,
+        proxy_url: None,
     };
     let profiles = vec![default];
     let _ = save_raw(store, &profiles).await;
@@ -1072,7 +1115,7 @@ async fn fresh_chatgpt_access_token(id: &str, access: String) -> String {
     let Some(creds) = load_global_chatgpt() else {
         return access;
     };
-    let client = crate::network::subscription_http_client();
+    let client = crate::network::subscription_http_client("chatgpt");
     match wisp_llm::chatgpt_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms())
         .await
     {
@@ -1125,7 +1168,7 @@ async fn fresh_xai_access_token(id: &str, access: String) -> String {
     if !access.is_empty() {
         creds.access_token = access.clone();
     }
-    let client = crate::network::subscription_http_client();
+    let client = crate::network::subscription_http_client("xai");
     match wisp_llm::xai_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await {
         Ok(next) => {
             if next.access_token != access {
@@ -1167,7 +1210,7 @@ async fn fresh_access_token(provider: &str, id: &str) -> String {
     // Another model may have refreshed this account since this copy was written.
     let account = load_codex_account(&creds.account_id);
     let creds = fresher_codex(creds, account);
-    let client = crate::network::subscription_http_client();
+    let client = crate::network::subscription_http_client("codex");
     match wisp_llm::codex_auth::refresh_if_due(&client, creds, wisp_llm::codex_auth::now_ms()).await
     {
         Ok(next) => {
@@ -1968,6 +2011,11 @@ async fn save_model_profile(
     profile.user_agent = wisp_llm::provider::normalize_user_agent(&profile.user_agent)?;
     profile.session_header_name =
         wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
+    let proxy_url = match profile.proxy_url.take() {
+        Some(value) => crate::network::normalize_proxy("Model API proxy", &value)?,
+        None => endpoint_proxy(&profiles, &profile).unwrap_or_default(),
+    };
+    profile.proxy_url = (!proxy_url.is_empty()).then_some(proxy_url);
     let existing = profiles.iter().find(|old| old.id == profile.id);
     let newly_reserved = profile.use_for_expert && !existing.is_some_and(|old| old.use_for_expert);
     normalize_image_role(&mut profile, existing, restore_chat_model)?;
@@ -1994,6 +2042,8 @@ async fn save_model_profile(
     }
     let id = profile.id.clone();
     let api_url = profile.api_url.clone();
+    let shared_proxy =
+        (!is_subscription_provider(&profile.provider)).then(|| profile.proxy_url.clone());
     let is_new = !profiles.iter().any(|p| p.id == id);
     if !is_chat_model(&profile) && !profiles.iter().any(|p| p.id != id && is_chat_model(p)) {
         return Err("At least one chat model is required.".into());
@@ -2011,6 +2061,14 @@ async fn save_model_profile(
         *existing = profile;
     } else {
         profiles.push(profile);
+    }
+    // One route per endpoint: every model on it follows the saved choice.
+    if let Some(proxy_url) = shared_proxy {
+        for sibling in profiles.iter_mut().filter(|p| {
+            !is_subscription_provider(&p.provider) && same_endpoint(&p.api_url, &api_url)
+        }) {
+            sibling.proxy_url = proxy_url.clone();
+        }
     }
     let mut assignments = Vec::new();
     for (setting, assign) in [
@@ -2319,6 +2377,7 @@ mod tests {
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+            proxy_url: None,
         }
     }
 
@@ -2356,6 +2415,86 @@ mod tests {
             profile.model = model.into();
             assert!(!supports_fast_service_tier(&profile));
         }
+    }
+
+    #[tokio::test]
+    async fn endpoint_route_is_shared_by_every_model_on_the_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("routes.sqlite"))
+            .await
+            .unwrap();
+        let mut other = test_profile("other", "Other", "other-model");
+        other.api_url = "https://other.test/v1".into();
+        save_raw(
+            &store,
+            &[
+                test_profile("daily", "Daily", "daily-model"),
+                test_profile("pro", "Pro", "pro-model"),
+                other,
+            ],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "daily").await.unwrap();
+        let route = |profiles: &[ModelProfile], id: &str| {
+            profiles
+                .iter()
+                .find(|p| p.id == id || p.model == id)
+                .unwrap()
+                .proxy_url
+                .clone()
+        };
+
+        // A chosen route applies to the whole endpoint, not to other endpoints.
+        let mut daily = test_profile("daily", "Daily", "daily-model");
+        daily.proxy_url = Some(" none ".into());
+        let saved = save_model_profile(&store, daily, None, false)
+            .await
+            .unwrap();
+        assert_eq!(route(&saved, "daily").as_deref(), Some("none"));
+        assert_eq!(route(&saved, "pro").as_deref(), Some("none"));
+        assert_eq!(route(&saved, "other"), None);
+
+        // An omitted route keeps the endpoint's; a new model on it adopts it.
+        let saved = save_model_profile(
+            &store,
+            test_profile("pro", "Pro 2", "pro-model"),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(route(&saved, "pro").as_deref(), Some("none"));
+        let saved = save_model_profile(&store, test_profile("", "Mini", "mini-model"), None, false)
+            .await
+            .unwrap();
+        assert_eq!(route(&saved, "mini-model").as_deref(), Some("none"));
+
+        // An invalid route changes nothing.
+        let before = store.get_setting(PROFILES_KEY).await.unwrap();
+        for value in ["https://user:secret@proxy.test", "localhost:7890"] {
+            let mut bad = test_profile("daily", "Daily", "daily-model");
+            bad.proxy_url = Some(value.into());
+            assert!(save_model_profile(&store, bad, None, false).await.is_err());
+        }
+        assert_eq!(store.get_setting(PROFILES_KEY).await.unwrap(), before);
+
+        // Choosing inherit clears the endpoint's route; a proxy URL replaces it.
+        let mut pro = test_profile("pro", "Pro", "pro-model");
+        pro.proxy_url = Some(String::new());
+        let saved = save_model_profile(&store, pro, None, false).await.unwrap();
+        assert!(saved.iter().all(|p| p.proxy_url.is_none()));
+        let mut other = test_profile("other", "Other", "other-model");
+        other.api_url = "https://other.test/v1".into();
+        other.proxy_url = Some("socks5://localhost:1080".into());
+        let saved = save_model_profile(&store, other, None, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            route(&saved, "other").as_deref(),
+            Some("socks5://localhost:1080")
+        );
+        assert_eq!(route(&saved, "daily"), None);
     }
 
     #[tokio::test]

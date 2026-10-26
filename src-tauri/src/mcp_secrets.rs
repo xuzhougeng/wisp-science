@@ -218,6 +218,7 @@ mod tests {
                 headers,
                 auth: McpHttpAuth::None,
             },
+            proxy_url: String::new(),
         }
     }
 
@@ -232,6 +233,7 @@ mod tests {
                 env,
                 cwd: None,
             },
+            proxy_url: String::new(),
         }
     }
 

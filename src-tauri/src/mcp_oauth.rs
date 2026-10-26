@@ -32,6 +32,8 @@ pub struct PendingAuthorization {
     client_id: String,
     client_secret: Option<String>,
     token_endpoint: String,
+    /// The connection's network route, reused for the code exchange.
+    proxy: String,
 }
 
 impl PendingAuthorization {
@@ -87,9 +89,10 @@ fn secret_name(connection_id: &str) -> String {
     format!("mcp_oauth:{connection_id}")
 }
 
-fn http_client() -> Result<reqwest::Client> {
+/// `proxy` is the connection's resolved route (`network::mcp_proxy_for`).
+fn http_client(proxy: &str) -> Result<reqwest::Client> {
     let builder = reqwest::Client::builder();
-    let builder = match crate::network::mcp_proxy().as_str() {
+    let builder = match proxy.trim() {
         "" => builder,
         "none" => builder.no_proxy(),
         proxy => builder.proxy(reqwest::Proxy::all(proxy)?),
@@ -211,12 +214,13 @@ async fn discover_authorization_server(
 /// the exact redirect URI is known before the user opens a browser.
 pub async fn begin_authorization(
     resource_url: &str,
+    proxy: &str,
 ) -> Result<(TcpListener, PendingAuthorization)> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .context("bind local MCP OAuth callback")?;
     let redirect_uri = callback_url(&listener)?;
-    let client = http_client()?;
+    let client = http_client(proxy)?;
 
     let protected_url = protected_resource_metadata_url(resource_url)?;
     let protected: ProtectedResourceMetadata = json_response(
@@ -285,6 +289,7 @@ pub async fn begin_authorization(
             client_id: registration.client_id,
             client_secret: registration.client_secret,
             token_endpoint: metadata.token_endpoint,
+            proxy: proxy.to_owned(),
         },
     ))
 }
@@ -392,7 +397,7 @@ async fn exchange_code(pending: &PendingAuthorization, code: &str) -> Result<Cre
         form.push(("client_secret", secret.clone()));
     }
     let tokens: TokenResponse = json_response(
-        http_client()?
+        http_client(&pending.proxy)?
             .post(&pending.token_endpoint)
             .header("accept", "application/json")
             .form(&form)
@@ -473,7 +478,7 @@ pub async fn finish_authorization(
     }
 }
 
-async fn refresh(connection_id: &str, credential: &mut Credential) -> Result<()> {
+async fn refresh(connection_id: &str, credential: &mut Credential, proxy: &str) -> Result<()> {
     let refresh_token = credential
         .refresh_token
         .clone()
@@ -487,7 +492,7 @@ async fn refresh(connection_id: &str, credential: &mut Credential) -> Result<()>
         form.push(("client_secret", secret.clone()));
     }
     let tokens: TokenResponse = json_response(
-        http_client()?
+        http_client(proxy)?
             .post(&credential.token_endpoint)
             .header("accept", "application/json")
             .form(&form)
@@ -517,6 +522,7 @@ pub async fn connect(
     connection_id: &str,
     resource_url: &str,
     headers: &[(String, String)],
+    proxy: &str,
 ) -> Result<wisp_mcp::McpClient> {
     let raw = wisp_store::secrets::Secret::get(&secret_name(connection_id))
         .map_err(|_| anyhow!("OAuth authorization is not complete; reconnect the MCP service"))?;
@@ -526,7 +532,7 @@ pub async fn connect(
         .expires_at
         .is_some_and(|expires_at| expires_at <= Utc::now().timestamp() + 60)
     {
-        refresh(connection_id, &mut credential).await?;
+        refresh(connection_id, &mut credential, proxy).await?;
     }
     let mut authorized_headers = headers
         .iter()
@@ -537,12 +543,7 @@ pub async fn connect(
         "Authorization".to_string(),
         format!("Bearer {}", credential.access_token),
     ));
-    wisp_mcp::McpClient::connect_http_with_proxy(
-        resource_url,
-        &authorized_headers,
-        &crate::network::mcp_proxy(),
-    )
-    .await
+    wisp_mcp::McpClient::connect_http_with_proxy(resource_url, &authorized_headers, proxy).await
 }
 
 pub fn has_credential(connection_id: &str) -> bool {

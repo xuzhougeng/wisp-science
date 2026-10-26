@@ -825,6 +825,10 @@ struct McpConnection {
     name: String,
     enabled: bool,
     transport: McpTransport,
+    /// This connection's route: empty inherits Settings → Network → MCP,
+    /// `none` connects directly, anything else is a proxy URL.
+    #[serde(default)]
+    proxy_url: String,
 }
 
 // ── Connectors (multi-level) + per-tool approval ────────────────────────────
@@ -5314,6 +5318,7 @@ fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::Pat
 /// carry their own command/env/cwd (unrelated to the bundled Python venv).
 /// Header/env values are hydrated from the keyring here and never written back.
 async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient> {
+    let proxy = network::mcp_proxy_for(&conn.proxy_url);
     match &conn.transport {
         McpTransport::Stdio {
             command, args, cwd, ..
@@ -5329,7 +5334,7 @@ async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient
                     cmd.current_dir(dir);
                 }
             }
-            cmd.envs(wisp_tools::network::proxy_env(&network::mcp_proxy()));
+            cmd.envs(wisp_tools::network::proxy_env(&proxy));
             wisp_tools::process::hide_console_async(&mut cmd);
             wisp_mcp::McpClient::launch_with_command(cmd).await
         }
@@ -5337,14 +5342,9 @@ async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient
             let headers = mcp_secrets::hydrate_headers(conn);
             match auth {
                 McpHttpAuth::None => {
-                    wisp_mcp::McpClient::connect_http_with_proxy(
-                        url,
-                        &headers,
-                        &network::mcp_proxy(),
-                    )
-                    .await
+                    wisp_mcp::McpClient::connect_http_with_proxy(url, &headers, &proxy).await
                 }
-                McpHttpAuth::OAuth => mcp_oauth::connect(&conn.id, url, &headers).await,
+                McpHttpAuth::OAuth => mcp_oauth::connect(&conn.id, url, &headers, &proxy).await,
             }
         }
     }
@@ -5375,14 +5375,15 @@ fn default_model(provider: &str) -> &'static str {
 /// Process-wide LLM proxy override, mirroring NetworkSettings.model_proxy_url. A
 /// global (like the env vars it replaces) so every provider construction site
 /// picks it up without threading store access through each caller. Loaded at
-/// startup, updated on settings save.
+/// startup, updated on settings save. Endpoint and subscription routes layer
+/// over it in `network::model_proxy`.
 static LLM_PROXY: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
 
 pub(crate) fn set_llm_proxy(value: &str) {
     *LLM_PROXY.write().unwrap() = value.trim().to_string();
 }
 
-fn llm_proxy() -> Option<String> {
+pub(crate) fn llm_proxy() -> Option<String> {
     let v = LLM_PROXY.read().unwrap();
     (!v.is_empty()).then(|| v.clone())
 }
@@ -5449,7 +5450,7 @@ fn build_provider_config(
     cfg.send_session_id = send_session_id;
     cfg.session_header_name =
         wisp_llm::provider::normalize_session_header_name(session_header_name)?;
-    cfg.proxy = llm_proxy();
+    cfg.proxy = network::model_proxy(&provider, api_url);
     if let Some(session_id) = session_id {
         cfg.session_id = session_id.to_string();
     }
@@ -7439,8 +7440,9 @@ pub fn run() {
             );
             let root = ensure_writable(root, &app_data);
 
-            network::apply(&tauri::async_runtime::block_on(network::load(&store))
-                .unwrap_or_default());
+            if let Err(error) = tauri::async_runtime::block_on(network::restore(&store)) {
+                tracing::warn!(target: "wisp", %error, "network settings could not be restored");
+            }
 
             let skills = Arc::new(startup.record("skills", || load_skill_index(&root)));
             let memory = Arc::new(MemoryManager::new(&root));
@@ -7921,6 +7923,8 @@ pub fn run() {
             browser_bridge::focus_browser_needs_human,
             network::get_network_settings,
             network::set_network_settings,
+            network::get_subscription_proxies,
+            network::set_subscription_proxy,
             decision_model::get_decision_model,
             decision_model::save_decision_model,
             decision_model::clear_decision_model_key,

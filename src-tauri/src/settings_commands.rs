@@ -718,6 +718,7 @@ pub(super) async fn validate_settings(
     key: Option<String>,
     profile_id: Option<String>,
     use_for_image_generation: Option<bool>,
+    proxy_url: Option<String>,
 ) -> Result<String, String> {
     let provider_name = normalized_provider(&settings.provider);
     let stored_key = match profile_id
@@ -734,7 +735,7 @@ pub(super) async fn validate_settings(
         }
     };
     let api_key = effective_api_key(key, stored_key);
-    let cfg = build_provider_config(
+    let mut cfg = build_provider_config(
         &settings.provider,
         &settings.api_url,
         &api_key,
@@ -749,7 +750,16 @@ pub(super) async fn validate_settings(
         None,
     )?;
     // Validate through the current Network policy, not a stale model form's
-    // compatibility proxy_url field.
+    // compatibility proxy_url field. A form's unsaved endpoint route
+    // (`proxy_url`) is tried as it would apply after saving.
+    if let Some(proxy_url) = proxy_url {
+        let proxy_url = crate::network::normalize_proxy("Model API proxy", &proxy_url)?;
+        if crate::network::subscription_kind(&provider_name).is_none() {
+            let route =
+                crate::network::resolve_route(&proxy_url, &crate::llm_proxy().unwrap_or_default());
+            cfg.proxy = (!route.is_empty()).then_some(route);
+        }
+    }
 
     tracing::info!(
         target: "wisp",

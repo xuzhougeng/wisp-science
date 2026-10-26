@@ -3,8 +3,8 @@ use crate::app_support::{
     allow_drop, apply_base_url_suggestions, blank_conn_secret_field, build_conn_json,
     close_details_ancestor, compose_icon, conn_form_from_row, context_capability_summary,
     drag_session_id, endpoint_has_stored_key, focus_element_soon, format_relative_time,
-    import_custom_css_from_input, join_tags, js_error_text, model_form_entry, new_acp_form,
-    new_conn_form, new_model_form, profile_to_form, provider_entries_are_pristine,
+    import_custom_css_from_input, join_tags, js_error_text, model_form_entry, model_form_proxy,
+    new_acp_form, new_conn_form, new_model_form, profile_to_form, provider_entries_are_pristine,
     quick_action_label, reviewer_backend_key, reviewer_backend_label,
     reviewer_missing_acp_profile_id, set_reviewer_backend, settings_nav_entry_matches,
     settings_section_label, settings_subpage_label, show_toast, skill_matches_filter,
@@ -14,6 +14,7 @@ use crate::app_support::{
 use crate::bindings::{invoke, invoke_checked, is_mac, is_windows, open_external_url};
 use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, t, tf, use_locale, Locale};
+use crate::network_settings::{route_error, ProxyRouteField, SubscriptionRouteField};
 use crate::text::{
     dom_value, endpoint_host, event_target_checked, event_target_input, event_target_value,
     format_bytes, join_api_url,
@@ -89,6 +90,25 @@ fn SettingsNavigation(
                 }
             }}
         </nav>
+    }
+}
+
+/// The edited API endpoint's own network route.
+fn model_proxy_route(
+    model_form: RwSignal<Option<ModelForm>>,
+    models: RwSignal<Vec<ModelProfile>>,
+) -> impl IntoView {
+    view! {
+        <ProxyRouteField
+            value=Signal::derive(move || model_form.with(|form| form.as_ref().map(|form| model_form_proxy(&models.get(), form)).unwrap_or_default()))
+            custom=Signal::derive(move || model_form.with(|form| form.as_ref().is_some_and(|form| form.proxy_custom)))
+            on_change=Callback::new(move |(value, custom): (String, bool)| model_form.update(|form| if let Some(form) = form {
+                form.proxy_url = Some(value);
+                form.proxy_custom = custom;
+            }))
+            category="network.model"
+            hint="models.proxy_hint"
+            test_id="model-proxy" />
     }
 }
 
@@ -4962,7 +4982,7 @@ pub(super) fn SettingsView(
                                             }
                                         }}
                                     </div>
-                                    <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>{model_advanced_options(locale, model_form)}</Show>
+                                    <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>{model_proxy_route(model_form, models)}{model_advanced_options(locale, model_form)}</Show>
                                     <Show when=move || model_form.get().is_some_and(|f| f.restore_chat_model)>
                                         <p class="hint" data-testid="restore-chat-hint">{move || t(locale.get(), "settings.restore_chat_hint")}</p>
                                     </Show>
@@ -5303,6 +5323,7 @@ pub(super) fn SettingsView(
                                             {move || t(locale.get(), "models.add_entry")}
                                         </button>
                                     </div>
+                                    {model_proxy_route(model_form, models)}
                                     {model_advanced_options(locale, model_form)}
                                     {move || model_form_msg.get().map(|(ok, text)| view! {
                                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
@@ -5416,6 +5437,7 @@ pub(super) fn SettingsView(
                                                             open_codex_login.call((provider.into(), String::new(), String::new(), String::new(), false));
                                                         }>{move || t(locale.get(), "subscriptions.add_model")}</button>
                                                     </div>
+                                                    <SubscriptionRouteField provider=provider />
                                                     {(provider == "codex").then(|| codex_accounts_panel(locale, codex_accounts, codex_usage, codex_account_msg, settings_busy, delete_confirm, load_codex_usage))}
                                                     <div class="subscription-models">
                                                         <Show when=move || !models.get().iter().any(|m| settings_provider_value(&m.provider) == profile_provider)>
@@ -8083,6 +8105,17 @@ pub(super) fn SettingsView(
                                         && conn_form.get().is_some_and(|form| form.auth == "oauth")).then(|| view!{
                                         <p class="settings-note">{move || t(locale.get(), "conn.oauth.desc")}</p>
                                     })}
+                                    <ProxyRouteField
+                                        value=Signal::derive(move || conn_form.with(|form| form.as_ref().map(|form| form.proxy_url.clone()).unwrap_or_default()))
+                                        custom=Signal::derive(move || conn_form.with(|form| form.as_ref().is_some_and(|form| form.proxy_custom)))
+                                        on_change=Callback::new(move |(value, custom): (String, bool)| conn_form.update(|form| if let Some(form) = form {
+                                            form.proxy_url = value;
+                                            form.proxy_custom = custom;
+                                        }))
+                                        category="network.mcp"
+                                        hint="conn.proxy_hint"
+                                        test_id="conn-proxy"
+                                        disabled=oauth_authorizing />
                                     {move || if conn_testing.get() {
                                         view! {
                                             <div class="settings-status pending" data-testid="conn-test-status"
@@ -8113,6 +8146,10 @@ pub(super) fn SettingsView(
                                                     return;
                                                 }
                                                 let f = conn_form.get().unwrap_or_default();
+                                                if let Some(key) = route_error(&f.proxy_url, f.proxy_custom) {
+                                                    conn_test_msg.set(Some((false, t(locale.get(), key).into())));
+                                                    return;
+                                                }
                                                 conn_testing.set(true);
                                                 conn_test_msg.set(None);
                                                 conn_test_seq.update(|n| *n += 1);
@@ -8177,6 +8214,10 @@ pub(super) fn SettingsView(
                                                 return;
                                             }
                                             let f = conn_form.get().unwrap_or_default();
+                                            if let Some(key) = route_error(&f.proxy_url, f.proxy_custom) {
+                                                conn_test_msg.set(Some((false, t(locale.get(), key).into())));
+                                                return;
+                                            }
                                             spawn_local(async move {
                                                 if f.kind == "http" && f.auth == "oauth" {
                                                     oauth_authorizing.set(true);
@@ -8199,8 +8240,9 @@ pub(super) fn SettingsView(
                                                 let editing = f.id.is_some();
                                                 let conn = build_conn_json(&f, true);
                                                 let cmd = if editing { "update_mcp_connection" } else { "add_mcp_connection" };
-                                                if invoke_checked(cmd, to_value(&serde_json::json!({"conn": conn})).unwrap()).await.is_ok() {
-                                                    conn_form.set(None); conn_test_msg.set(None); refresh_conns.call(());
+                                                match invoke_checked(cmd, to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
+                                                    Ok(_) => { conn_form.set(None); conn_test_msg.set(None); refresh_conns.call(()); }
+                                                    Err(error) => conn_test_msg.set(Some((false, js_error_text(error)))),
                                                 }
                                             });
                                         } disabled=move || conn_testing.get() || oauth_authorizing.get()>

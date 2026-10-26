@@ -1,22 +1,137 @@
 //! Independently persisted network preferences and installation guidance.
+//!
+//! The Network page sets one route per traffic category. A model API
+//! endpoint, a subscription, or an MCP connection can override its category
+//! with its own route: empty inherits the category, `none` connects directly,
+//! anything else is a proxy URL.
 
+use std::collections::BTreeMap;
 use std::sync::RwLock;
 use tauri::State;
 use wisp_dto::NetworkSettings;
 use wisp_store::Store;
 
 const SETTINGS_KEY: &str = "network_settings";
+const SUBSCRIPTION_OVERRIDES_KEY: &str = "subscription_proxy_overrides";
 const PROMPT_START: &str = "\n<wisp-package-mirrors>\n";
 const PROMPT_END: &str = "</wisp-package-mirrors>\n";
 static MCP_PROXY: RwLock<String> = RwLock::new(String::new());
 static SUBSCRIPTION_PROXY: RwLock<String> = RwLock::new(String::new());
+static SUBSCRIPTION_OVERRIDES: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
+static MODEL_ROUTES: RwLock<Vec<ModelRoute>> = RwLock::new(Vec::new());
 
-pub(crate) fn subscription_http_client() -> reqwest::Client {
-    wisp_llm::codex_auth::http_client(Some(&SUBSCRIPTION_PROXY.read().unwrap()))
+/// A saved model profile's route, refreshed whenever profiles are read or
+/// written. Profiles on one API endpoint share `proxy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModelRoute {
+    pub provider: String,
+    /// `models::normalize_endpoint` of the profile's API root.
+    pub endpoint: String,
+    /// The profile's request URL (API root plus endpoint suffix).
+    pub url: String,
+    pub proxy: String,
 }
 
+/// An item's own route, or its category's route when the item inherits.
+pub(crate) fn resolve_route(item: &str, inherited: &str) -> String {
+    match item.trim() {
+        "" => inherited.trim().to_owned(),
+        item => item.to_owned(),
+    }
+}
+
+/// Subscription id (`chatgpt`, `codex`, `xai`) for a subscription provider.
+pub(crate) fn subscription_kind(provider: &str) -> Option<&'static str> {
+    match provider.trim() {
+        "chatgpt" | "openai_chatgpt" => Some("chatgpt"),
+        "codex" | "openai_codex" => Some("codex"),
+        "xai" | "xai_oauth" => Some("xai"),
+        _ => None,
+    }
+}
+
+fn subscription_override(kind: &str) -> String {
+    SUBSCRIPTION_OVERRIDES
+        .read()
+        .unwrap()
+        .get(kind)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Sign-in and token refresh for one subscription (`chatgpt`, `codex`, `xai`).
+pub(crate) fn subscription_http_client(kind: &str) -> reqwest::Client {
+    let route = resolve_route(
+        &subscription_override(kind),
+        &SUBSCRIPTION_PROXY.read().unwrap(),
+    );
+    wisp_llm::codex_auth::http_client(Some(&route))
+}
+
+/// The Network page's MCP route, used by bundled and plugin MCP services.
 pub(crate) fn mcp_proxy() -> String {
     MCP_PROXY.read().unwrap().clone()
+}
+
+/// A user-configured MCP connection's route.
+pub(crate) fn mcp_proxy_for(connection_proxy: &str) -> String {
+    resolve_route(connection_proxy, &MCP_PROXY.read().unwrap())
+}
+
+pub(crate) fn remember_model_routes(routes: Vec<ModelRoute>) {
+    *MODEL_ROUTES.write().unwrap() = routes;
+}
+
+/// Route for a model request to `api_url`. A subscription's own route covers
+/// its model requests too; otherwise the endpoint's route applies, then the
+/// Network page's model route. `provider` may be empty when only the URL is
+/// known (image and video generation).
+pub(crate) fn model_proxy(provider: &str, api_url: &str) -> Option<String> {
+    let item = {
+        let routes = MODEL_ROUTES.read().unwrap();
+        model_route_item(
+            &routes,
+            &SUBSCRIPTION_OVERRIDES.read().unwrap(),
+            provider,
+            api_url,
+        )
+    };
+    let route = resolve_route(&item, &crate::llm_proxy().unwrap_or_default());
+    (!route.is_empty()).then_some(route)
+}
+
+fn model_route_item(
+    routes: &[ModelRoute],
+    subscriptions: &BTreeMap<String, String>,
+    provider: &str,
+    api_url: &str,
+) -> String {
+    let subscription = |kind: &str| subscriptions.get(kind).cloned().unwrap_or_default();
+    if let Some(kind) = subscription_kind(provider) {
+        return subscription(kind);
+    }
+    let url = api_url.trim().trim_end_matches('/');
+    let endpoint = crate::models::normalize_endpoint(url);
+    // A known API-key provider never takes a subscription's route.
+    let unknown = provider.trim().is_empty();
+    let eligible = |route: &&ModelRoute| unknown || subscription_kind(&route.provider).is_none();
+    let route = routes
+        .iter()
+        .filter(eligible)
+        .find(|route| route.url == url)
+        .or_else(|| {
+            routes
+                .iter()
+                .filter(eligible)
+                .find(|route| !endpoint.is_empty() && route.endpoint == endpoint)
+        });
+    match route {
+        Some(route) => match subscription_kind(&route.provider) {
+            Some(kind) => subscription(kind),
+            None => route.proxy.clone(),
+        },
+        None => String::new(),
+    }
 }
 
 pub(crate) fn apply(settings: &NetworkSettings) {
@@ -24,6 +139,56 @@ pub(crate) fn apply(settings: &NetworkSettings) {
     *SUBSCRIPTION_PROXY.write().unwrap() = settings.subscription_proxy_url.clone();
     *MCP_PROXY.write().unwrap() = settings.mcp_proxy_url.clone();
     wisp_tools::network::set_command_proxy(&settings.command_proxy_url);
+}
+
+/// Load and apply every saved route at startup.
+pub(crate) async fn restore(store: &Store) -> Result<(), String> {
+    apply(&load(store).await?);
+    *SUBSCRIPTION_OVERRIDES.write().unwrap() = load_subscription_overrides(store).await?;
+    crate::models::refresh_routes(store).await;
+    Ok(())
+}
+
+async fn load_subscription_overrides(store: &Store) -> Result<BTreeMap<String, String>, String> {
+    match store
+        .get_setting(SUBSCRIPTION_OVERRIDES_KEY)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
+        None => Ok(BTreeMap::new()),
+    }
+}
+
+async fn save_subscription_override(
+    store: &Store,
+    provider: &str,
+    proxy_url: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let kind = subscription_kind(provider)
+        .ok_or_else(|| format!("Unknown subscription provider: {provider}"))?;
+    let proxy_url = normalize_proxy("Subscription proxy", proxy_url)?;
+    let mut overrides = load_subscription_overrides(store).await?;
+    if proxy_url.is_empty() {
+        overrides.remove(kind);
+    } else {
+        overrides.insert(kind.to_owned(), proxy_url);
+    }
+    store
+        .set_setting(
+            SUBSCRIPTION_OVERRIDES_KEY,
+            &serde_json::to_string(&overrides).map_err(|e| e.to_string())?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(overrides)
+}
+
+/// Validate one route value: empty, `none`, or an HTTP/HTTPS/SOCKS5 proxy URL.
+pub(crate) fn normalize_proxy(label: &str, value: &str) -> Result<String, String> {
+    let mut value = value.to_owned();
+    normalize_url(label, &mut value, true)?;
+    Ok(value)
 }
 
 pub(crate) async fn load(store: &Store) -> Result<NetworkSettings, String> {
@@ -44,6 +209,37 @@ pub(crate) async fn load(store: &Store) -> Result<NetworkSettings, String> {
     })
 }
 
+fn normalize_url(label: &str, value: &mut String, proxy: bool) -> Result<(), String> {
+    *value = value.trim().to_owned();
+    if value.is_empty() || (proxy && value == "none") {
+        return Ok(());
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label}: control characters are not allowed."));
+    }
+    let url = url::Url::parse(value).map_err(|_| format!("{label}: enter a complete URL."))?;
+    let allowed = matches!(url.scheme(), "http" | "https")
+        || (proxy && matches!(url.scheme(), "socks5" | "socks5h"));
+    if !allowed || url.host_str().is_none() {
+        return Err(format!(
+            "{label}: use HTTP/HTTPS{}.",
+            if proxy { " or SOCKS5" } else { "" }
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!("{label}: use a URL without credentials, query parameters, or fragments. Store credentials in Credentials."));
+    }
+    if proxy {
+        reqwest::Proxy::all(value.as_str())
+            .map_err(|_| format!("{label}: invalid proxy address."))?;
+    }
+    Ok(())
+}
+
 fn normalize(mut settings: NetworkSettings) -> Result<NetworkSettings, String> {
     for (label, value, proxy) in [
         ("Model API proxy", &mut settings.model_proxy_url, true),
@@ -57,33 +253,7 @@ fn normalize(mut settings: NetworkSettings) -> Result<NetworkSettings, String> {
         ("Conda mirror", &mut settings.conda_mirror_url, false),
         ("Python package index", &mut settings.pip_index_url, false),
     ] {
-        *value = value.trim().to_owned();
-        if value.is_empty() || (proxy && value == "none") {
-            continue;
-        }
-        if value.chars().any(char::is_control) {
-            return Err(format!("{label}: control characters are not allowed."));
-        }
-        let url = url::Url::parse(value).map_err(|_| format!("{label}: enter a complete URL."))?;
-        let allowed = matches!(url.scheme(), "http" | "https")
-            || (proxy && matches!(url.scheme(), "socks5" | "socks5h"));
-        if !allowed || url.host_str().is_none() {
-            return Err(format!(
-                "{label}: use HTTP/HTTPS{}.",
-                if proxy { " or SOCKS5" } else { "" }
-            ));
-        }
-        if !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err(format!("{label}: use a URL without credentials, query parameters, or fragments. Store credentials in Credentials."));
-        }
-        if proxy {
-            reqwest::Proxy::all(value.as_str())
-                .map_err(|_| format!("{label}: invalid proxy address."))?;
-        }
+        normalize_url(label, value, proxy)?;
     }
     settings.ca_bundle_path = settings.ca_bundle_path.trim().to_owned();
     if settings.ca_bundle_path.chars().any(char::is_control) {
@@ -118,6 +288,27 @@ pub(crate) async fn set_network_settings(
 ) -> Result<NetworkSettings, String> {
     let saved = save(&state.store, settings).await?;
     apply(&saved);
+    crate::clear_idle_agents(&state).await;
+    Ok(saved)
+}
+
+/// Each subscription's own route, keyed by `chatgpt`/`codex`/`xai`. A missing
+/// key inherits the Network page.
+#[tauri::command]
+pub(crate) async fn get_subscription_proxies(
+    state: State<'_, crate::AppState>,
+) -> Result<BTreeMap<String, String>, String> {
+    load_subscription_overrides(&state.store).await
+}
+
+#[tauri::command]
+pub(crate) async fn set_subscription_proxy(
+    state: State<'_, crate::AppState>,
+    provider: String,
+    proxy_url: String,
+) -> Result<BTreeMap<String, String>, String> {
+    let saved = save_subscription_override(&state.store, &provider, &proxy_url).await?;
+    *SUBSCRIPTION_OVERRIDES.write().unwrap() = saved.clone();
     crate::clear_idle_agents(&state).await;
     Ok(saved)
 }
@@ -158,6 +349,118 @@ pub(crate) fn sync_package_guidance(prompt: &mut String, settings: &NetworkSetti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route(provider: &str, endpoint: &str, url: &str, proxy: &str) -> ModelRoute {
+        ModelRoute {
+            provider: provider.into(),
+            endpoint: endpoint.into(),
+            url: url.into(),
+            proxy: proxy.into(),
+        }
+    }
+
+    #[test]
+    fn model_requests_follow_their_endpoint_or_subscription_route() {
+        let routes = [
+            route(
+                "openai",
+                "https://gateway.test",
+                "https://gateway.test/v1",
+                "none",
+            ),
+            route(
+                "anthropic",
+                "https://claude.test",
+                "https://claude.test",
+                "",
+            ),
+            route(
+                "xai_oauth",
+                "https://api.x.ai",
+                "https://api.x.ai/v1",
+                "http://ignored.test:1",
+            ),
+            route(
+                "openai",
+                "https://api.x.ai",
+                "https://api.x.ai/v1",
+                "http://localhost:7890",
+            ),
+        ];
+        let subscriptions =
+            BTreeMap::from([("xai".to_string(), "socks5://localhost:1080".to_string())]);
+        let item =
+            |provider: &str, url: &str| model_route_item(&routes, &subscriptions, provider, url);
+        // The exact request URL, then the same origin under another API path.
+        assert_eq!(item("openai", "https://gateway.test/v1/"), "none");
+        assert_eq!(item("", "https://GATEWAY.test/v1/chat/completions"), "none");
+        // Inheriting and unknown endpoints fall through to the Network page.
+        assert_eq!(item("anthropic", "https://claude.test"), "");
+        assert_eq!(item("openai", "https://unknown.test/v1"), "");
+        // A subscription's own route covers its model requests, by provider
+        // or by URL, while an API key on the same host keeps its endpoint's.
+        assert_eq!(
+            item("xai_oauth", "https://api.x.ai/v1"),
+            "socks5://localhost:1080"
+        );
+        assert_eq!(item("", "https://api.x.ai/v1"), "socks5://localhost:1080");
+        assert_eq!(
+            item("openai", "https://api.x.ai/v1"),
+            "http://localhost:7890"
+        );
+        assert_eq!(item("openai_codex", "https://chatgpt.com/backend-api"), "");
+        assert_eq!(
+            resolve_route("", " http://localhost:7890 "),
+            "http://localhost:7890"
+        );
+        assert_eq!(resolve_route(" none ", "http://localhost:7890"), "none");
+        assert_eq!(
+            resolve_route("socks5://localhost:1080", ""),
+            "socks5://localhost:1080"
+        );
+        assert_eq!(subscription_kind("openai_chatgpt"), Some("chatgpt"));
+        assert_eq!(subscription_kind("openai"), None);
+    }
+
+    #[tokio::test]
+    async fn subscription_routes_persist_per_subscription() {
+        let store = Store::open(std::path::Path::new(":memory:")).await.unwrap();
+        assert!(load_subscription_overrides(&store)
+            .await
+            .unwrap()
+            .is_empty());
+        let saved = save_subscription_override(&store, "openai_codex", " none ")
+            .await
+            .unwrap();
+        assert_eq!(saved.get("codex").map(String::as_str), Some("none"));
+        let saved = save_subscription_override(&store, "xai", "socks5h://localhost:1080")
+            .await
+            .unwrap();
+        assert_eq!(saved.len(), 2);
+        for (provider, value) in [
+            ("xai", "https://user:secret@proxy.test"),
+            ("xai", "localhost:7890"),
+            ("openai", "none"),
+        ] {
+            assert!(
+                save_subscription_override(&store, provider, value)
+                    .await
+                    .is_err(),
+                "{provider} {value}"
+            );
+        }
+        assert_eq!(load_subscription_overrides(&store).await.unwrap(), saved);
+        // Inherit removes the subscription's own route.
+        let saved = save_subscription_override(&store, "codex", "")
+            .await
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved.get("xai").map(String::as_str),
+            Some("socks5h://localhost:1080")
+        );
+        assert_eq!(load_subscription_overrides(&store).await.unwrap(), saved);
+    }
 
     #[tokio::test]
     async fn subscription_proxy_defaults_to_system_and_persists_independently() {

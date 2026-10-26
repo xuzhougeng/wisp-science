@@ -2599,6 +2599,7 @@ fn mcp_connection_serde_roundtrip() {
             env: vec![wisp_dto::McpSecretEntry::plaintext("K", "secret-value")],
             cwd: None,
         },
+        proxy_url: String::new(),
     };
     let http = McpConnection {
         id: "2".into(),
@@ -2612,6 +2613,7 @@ fn mcp_connection_serde_roundtrip() {
             )],
             auth: McpHttpAuth::OAuth,
         },
+        proxy_url: String::new(),
     };
     for c in [stdio, http] {
         let json = serde_json::to_string(&c).unwrap();
@@ -2631,6 +2633,13 @@ fn mcp_connection_serde_roundtrip() {
         }
         _ => panic!("expected stdio"),
     }
+    // Saved connections without a route inherit Settings → Network.
+    assert!(migrated.proxy_url.is_empty());
+    let routed: McpConnection = serde_json::from_str(
+        r#"{"id":"4","name":"r","enabled":true,"proxy_url":"none","transport":{"kind":"http","url":"u"}}"#,
+    )
+    .unwrap();
+    assert_eq!(routed.proxy_url, "none");
     // tag shape
     let j = serde_json::to_value(&McpConnection {
         id: "3".into(),
@@ -2641,6 +2650,7 @@ fn mcp_connection_serde_roundtrip() {
             headers: vec![],
             auth: McpHttpAuth::None,
         },
+        proxy_url: String::new(),
     })
     .unwrap();
     assert_eq!(j["transport"]["kind"], "http");

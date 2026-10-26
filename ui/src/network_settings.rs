@@ -1,10 +1,175 @@
 use crate::app_support::{compose_icon, js_error_text};
 use crate::bindings::invoke_checked;
 use crate::dto::{NetworkSettings, Settings};
-use crate::i18n::{t, use_locale};
+use crate::i18n::{t, tf, use_locale};
 use crate::text::{event_target_input, event_target_value};
 use leptos::*;
+use std::collections::BTreeMap;
 use wasm_bindgen::JsValue;
+
+/// `inherit`, `direct`, or `custom` for one item's own route.
+pub(crate) fn route_mode(value: &str, custom: bool) -> &'static str {
+    match value.trim() {
+        "none" => "direct",
+        "" if !custom => "inherit",
+        _ => "custom",
+    }
+}
+
+/// Error key when a custom proxy is chosen without an address.
+pub(crate) fn route_error(value: &str, custom: bool) -> Option<&'static str> {
+    (route_mode(value, custom) == "custom" && value.trim().is_empty())
+        .then_some("network.route_address_required")
+}
+
+/// One model endpoint's, subscription's, or MCP connection's own route:
+/// inherit its Settings → Network category, connect directly (`none`), or
+/// use a proxy URL.
+#[component]
+pub(crate) fn ProxyRouteField(
+    /// Empty inherits, `none` is direct, anything else is a proxy URL.
+    #[prop(into)]
+    value: Signal<String>,
+    /// Custom proxy chosen while the address is still empty.
+    #[prop(into)]
+    custom: Signal<bool>,
+    /// Receives the new `(value, custom)`.
+    on_change: Callback<(String, bool)>,
+    /// Network page label of the inherited category, such as `network.model`.
+    /// Empty when `hint` already says what inheriting means.
+    category: &'static str,
+    /// What this route covers.
+    hint: &'static str,
+    #[prop(into)] test_id: String,
+    #[prop(into, optional)] disabled: MaybeSignal<bool>,
+) -> impl IntoView {
+    let locale = use_locale();
+    let mode = move || route_mode(&value.get(), custom.get());
+    let mode_id = format!("{test_id}-mode");
+    let address_id = format!("{test_id}-address");
+    view! {
+        <div class="proxy-route" data-testid=test_id>
+            <label class="proxy-route-label" attr:for=mode_id.clone()>{move || t(locale.get(), "network.route")}</label>
+            <div class="proxy-route-controls">
+                <select id=mode_id.clone() data-testid=mode_id prop:value=mode disabled=move || disabled.get()
+                    on:change=move |ev| {
+                        let mode = event_target_value(&ev);
+                        on_change.call((if mode == "direct" { "none" } else { "" }.into(), mode == "custom"));
+                    }>
+                    <option value="inherit" prop:selected=move || mode() == "inherit">{move || t(locale.get(), "network.inherit")}</option>
+                    <option value="direct" prop:selected=move || mode() == "direct">{move || t(locale.get(), "network.direct")}</option>
+                    <option value="custom" prop:selected=move || mode() == "custom">{move || t(locale.get(), "network.custom")}</option>
+                </select>
+                <Show when=move || mode() == "custom">
+                    <input data-testid=address_id.clone() placeholder="http://127.0.0.1:7890"
+                        aria-label=move || format!("{} — {}", t(locale.get(), "network.route"), t(locale.get(), "network.address"))
+                        disabled=move || disabled.get()
+                        prop:value=move || { let value = value.get(); if value == "none" { String::new() } else { value } }
+                        on:input=move |ev| on_change.call((event_target_input(&ev).value(), true)) />
+                </Show>
+            </div>
+            <p class="settings-field-hint">
+                {move || t(locale.get(), hint)}
+                {(!category.is_empty()).then(|| view! {
+                    " "{move || { let loc = locale.get(); let category = t(loc, category); tf(loc, "network.inherit_hint", &[("category", &category)]) }}
+                })}
+            </p>
+        </div>
+    }
+}
+
+/// A subscription's own route (`chatgpt`, `codex`, `xai`), saved on its own
+/// from its card.
+#[component]
+pub(crate) fn SubscriptionRouteField(provider: &'static str) -> impl IntoView {
+    let locale = use_locale();
+    // None until loaded.
+    let saved = create_rw_signal(None::<String>);
+    let draft = create_rw_signal((String::new(), false));
+    let busy = create_rw_signal(false);
+    let status = create_rw_signal(None::<(bool, String)>);
+    spawn_local(async move {
+        let result = invoke_checked("get_subscription_proxies", JsValue::UNDEFINED)
+            .await
+            .map_err(js_error_text)
+            .and_then(|value| {
+                serde_wasm_bindgen::from_value::<BTreeMap<String, String>>(value)
+                    .map_err(|e| e.to_string())
+            });
+        if saved.try_get_untracked().is_none() {
+            return;
+        }
+        match result {
+            Ok(routes) => {
+                let value = routes.get(provider).cloned().unwrap_or_default();
+                draft.set((value.clone(), false));
+                saved.set(Some(value));
+            }
+            Err(e) => status.set(Some((false, e))),
+        }
+    });
+    let save = move |_| {
+        if busy.get_untracked() || saved.get_untracked().is_none() {
+            return;
+        }
+        let (value, custom) = draft.get_untracked();
+        if let Some(key) = route_error(&value, custom) {
+            status.set(Some((false, t(locale.get_untracked(), key).into())));
+            return;
+        }
+        busy.set(true);
+        status.set(None);
+        spawn_local(async move {
+            let args = serde_wasm_bindgen::to_value(
+                &serde_json::json!({ "provider": provider, "proxyUrl": value.trim() }),
+            )
+            .unwrap();
+            let result = invoke_checked("set_subscription_proxy", args)
+                .await
+                .map_err(js_error_text)
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<BTreeMap<String, String>>(value)
+                        .map_err(|e| e.to_string())
+                });
+            if busy.try_get_untracked().is_none() {
+                return;
+            }
+            match result {
+                Ok(routes) => {
+                    let value = routes.get(provider).cloned().unwrap_or_default();
+                    draft.set((value.clone(), false));
+                    saved.set(Some(value));
+                    status.set(Some((
+                        true,
+                        t(locale.get_untracked(), "network.saved").into(),
+                    )));
+                }
+                Err(e) => status.set(Some((false, e))),
+            }
+            busy.set(false);
+        });
+    };
+    view! {
+        <div class="subscription-route">
+            <ProxyRouteField
+                value=Signal::derive(move || draft.get().0)
+                custom=Signal::derive(move || draft.get().1)
+                on_change=Callback::new(move |next: (String, bool)| { status.set(None); draft.set(next); })
+                category=""
+                hint="subscriptions.proxy_hint"
+                test_id=format!("subscription-proxy-{provider}")
+                disabled=Signal::derive(move || busy.get() || saved.get().is_none()) />
+            <div class="row subscription-route-actions">
+                {move || status.get().map(|(ok, text)| view! {
+                    <span class="settings-status" class:ok=ok class:fail=move || !ok role="status">{text}</span>
+                })}
+                <button type="button" data-testid=format!("save-subscription-proxy-{provider}")
+                    disabled=move || busy.get() || saved.get().is_none() || saved.get().is_some_and(|value| value == draft.get().0 && !draft.get().1)
+                    on:click=save>{move || t(locale.get(), "settings.save")}</button>
+            </div>
+        </div>
+    }
+}
 
 fn proxy_value(settings: &NetworkSettings, scope: &str) -> String {
     match scope {
@@ -237,5 +402,29 @@ pub(crate) fn NetworkSettingsView(settings: RwSignal<Settings>) -> impl IntoView
                 </Show>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{route_error, route_mode};
+
+    #[test]
+    fn route_modes_keep_an_empty_custom_choice() {
+        assert_eq!(route_mode("", false), "inherit");
+        assert_eq!(route_mode(" none ", false), "direct");
+        assert_eq!(route_mode("http://localhost:7890", false), "custom");
+        assert_eq!(route_mode("", true), "custom");
+        assert_eq!(
+            route_error("", true),
+            Some("network.route_address_required")
+        );
+        assert_eq!(
+            route_error("  ", true),
+            Some("network.route_address_required")
+        );
+        assert_eq!(route_error("", false), None);
+        assert_eq!(route_error("none", true), None);
+        assert_eq!(route_error("socks5://localhost:1080", true), None);
     }
 }

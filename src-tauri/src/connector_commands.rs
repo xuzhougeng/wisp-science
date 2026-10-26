@@ -25,6 +25,12 @@ pub(super) async fn list_mcp_connections(
     })
 }
 
+/// A connection's own route must be empty, `none`, or a valid proxy URL.
+fn normalize_route(conn: &mut McpConnection) -> Result<(), String> {
+    conn.proxy_url = crate::network::normalize_proxy("MCP proxy", &conn.proxy_url)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub(super) async fn add_mcp_connection(
     state: State<'_, AppState>,
@@ -34,6 +40,7 @@ pub(super) async fn add_mcp_connection(
         return Err("OAuth connections must be authorized before saving".into());
     }
     let mut conn = conn;
+    normalize_route(&mut conn)?;
     crate::mcp_secrets::persist_connection_secrets(&mut conn, None)?;
     let mut conns = load_mcp_connections(&state.store).await;
     conns.push(conn);
@@ -53,6 +60,7 @@ pub(super) async fn update_mcp_connection(
     }
     let connection_id = conn.id.clone();
     let mut conn = conn;
+    normalize_route(&mut conn)?;
     let previous = conns.iter().find(|c| c.id == conn.id).cloned();
     crate::mcp_secrets::persist_connection_secrets(&mut conn, previous.as_ref())?;
     let removed_oauth = match conns.iter_mut().find(|c| c.id == conn.id) {
@@ -299,7 +307,8 @@ pub(super) async fn test_mcp_connection(
     conn: McpConnection,
 ) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
     let local = crate::app_commands::local_environment_config(&state.store).await;
-    let conn = crate::mcp_connections::with_local_tool_path(conn, &local);
+    let mut conn = crate::mcp_connections::with_local_tool_path(conn, &local);
+    normalize_route(&mut conn)?;
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
     Ok(tools)
@@ -351,8 +360,9 @@ async fn authorize_in_browser(
     app: &tauri::AppHandle,
     resource_url: &str,
     credential_id: &str,
+    proxy: &str,
 ) -> Result<(), String> {
-    let (listener, pending) = crate::mcp_oauth::begin_authorization(resource_url)
+    let (listener, pending) = crate::mcp_oauth::begin_authorization(resource_url, proxy)
         .await
         .map_err(|error| error.to_string())?;
     let authorization_url = pending.authorization_url().to_string();
@@ -376,18 +386,21 @@ pub(super) async fn test_oauth_mcp_connection(
     state: State<'_, AppState>,
     conn: McpConnection,
 ) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
+    let mut conn = conn;
+    normalize_route(&mut conn)?;
     let (resource_url, headers) = oauth_http_config(&conn)?;
+    let proxy = crate::network::mcp_proxy_for(&conn.proxy_url);
     let connections = load_mcp_connections(&state.store).await;
     if can_reuse_credential(&connections, &conn, &resource_url) {
-        let client = crate::mcp_oauth::connect(&conn.id, &resource_url, &headers)
+        let client = crate::mcp_oauth::connect(&conn.id, &resource_url, &headers, &proxy)
             .await
             .map_err(|error| error.to_string())?;
         return client.tools_list().await.map_err(|error| error.to_string());
     }
     let credential_id = format!("oauth-test-{}", uuid::Uuid::new_v4());
     let result = async {
-        authorize_in_browser(&app, &resource_url, &credential_id).await?;
-        let client = crate::mcp_oauth::connect(&credential_id, &resource_url, &headers)
+        authorize_in_browser(&app, &resource_url, &credential_id, &proxy).await?;
+        let client = crate::mcp_oauth::connect(&credential_id, &resource_url, &headers, &proxy)
             .await
             .map_err(|error| error.to_string())?;
         client.tools_list().await.map_err(|error| error.to_string())
@@ -404,17 +417,19 @@ pub(super) async fn authorize_http_connection(
     state: State<'_, AppState>,
     conn: McpConnection,
 ) -> Result<(), String> {
+    let mut conn = conn;
+    normalize_route(&mut conn)?;
     let (resource_url, _) = oauth_http_config(&conn)?;
     let connection_id = conn.id.clone();
     let had_credential = crate::mcp_oauth::has_credential(&conn.id);
 
     let mut connections = load_mcp_connections(&state.store).await;
     if !can_reuse_credential(&connections, &conn, &resource_url) {
-        authorize_in_browser(&app, &resource_url, &conn.id).await?;
+        let proxy = crate::network::mcp_proxy_for(&conn.proxy_url);
+        authorize_in_browser(&app, &resource_url, &conn.id, &proxy).await?;
         // Authorization can take minutes; reload so concurrent edits survive.
         connections = load_mcp_connections(&state.store).await;
     }
-    let mut conn = conn;
     let previous = connections.iter().find(|item| item.id == conn.id).cloned();
     crate::mcp_secrets::persist_connection_secrets(&mut conn, previous.as_ref())?;
     if let Some(existing) = connections.iter().position(|item| item.id == conn.id) {
@@ -501,6 +516,7 @@ mod tests {
                     headers: vec![],
                     auth: McpHttpAuth::OAuth,
                 },
+                proxy_url: String::new(),
             },
             McpConnection {
                 id: "plain".into(),
@@ -511,6 +527,7 @@ mod tests {
                     headers: vec![],
                     auth: McpHttpAuth::None,
                 },
+                proxy_url: String::new(),
             },
         ];
         assert_eq!(
@@ -532,6 +549,7 @@ mod tests {
                 headers: vec![],
                 auth: McpHttpAuth::OAuth,
             },
+            proxy_url: String::new(),
         };
         assert!(is_oauth_http(&oauth));
         let (url, headers) = oauth_http_config(&oauth).unwrap();

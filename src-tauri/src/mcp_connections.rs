@@ -667,6 +667,7 @@ mod tests {
                 headers: vec![],
                 auth: McpHttpAuth::None,
             },
+            proxy_url: String::new(),
         };
         save_mcp_connections(&store, &[conn.clone()]).await.unwrap();
         let server = tokio::spawn(async move {
@@ -691,6 +692,7 @@ mod tests {
                 env: vec![],
                 cwd: None,
             },
+            proxy_url: String::new(),
         };
         let command = |conn: McpConnection, local: &serde_json::Value| {
             let McpTransport::Stdio { command, args, .. } =
@@ -837,6 +839,7 @@ mod tests {
                 headers: vec![],
                 auth: McpHttpAuth::None,
             },
+            proxy_url: String::new(),
         });
         let Spec::Custom(conn) = &spec else {
             unreachable!()

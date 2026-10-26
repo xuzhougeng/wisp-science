@@ -318,9 +318,11 @@ fn model_profile_contract() {
         video_duration_secs: Some(8),
         video_aspect_ratio: Some("9:16".into()),
         video_resolution: Some("720p".into()),
+        proxy_url: Some("none".into()),
     };
     let dto: wisp_dto::ModelProfile = roundtrip(&backend);
     assert_eq!(dto.id, "p1");
+    assert_eq!(dto.proxy_url, "none");
     assert_eq!(dto.label, "Fast");
     assert_eq!(dto.provider, "openai");
     assert_eq!(dto.api_url, "https://api.example.com");
@@ -703,6 +705,7 @@ fn mcp_connection_list_contract_redacts_secrets() {
             )],
             auth: crate::McpHttpAuth::None,
         },
+        proxy_url: "socks5://localhost:1080".into(),
     };
     let json = serde_json::to_value(&backend).expect("backend value must serialize");
     assert!(json["transport"]["headers"][0].get("value").is_none());
@@ -711,6 +714,7 @@ fn mcp_connection_list_contract_redacts_secrets() {
     assert_eq!(json["transport"]["headers"][0]["has_value"], true);
 
     let dto: wisp_dto::ConnRow = serde_json::from_value(json).unwrap();
+    assert_eq!(dto.proxy_url, "socks5://localhost:1080");
     match dto.transport {
         wisp_dto::ConnTransport::Http { headers, .. } => {
             assert_eq!(headers[0].name, "Authorization");

@@ -82,11 +82,9 @@ impl BridgeServer {
         let store = Store::open(&cfg.app_data.join("wisp.sqlite"))
             .await
             .context("open Wisp store for MCP bridge")?;
-        crate::network::apply(
-            &crate::network::load(&store)
-                .await
-                .map_err(anyhow::Error::msg)?,
-        );
+        crate::network::restore(&store)
+            .await
+            .map_err(anyhow::Error::msg)?;
         let run_manager = run_context::RunManager::new();
         run_manager
             .recover(&store)

@@ -889,6 +889,7 @@ async fn send_message_inner_with_continuation(
         &session_header_name,
         Some(&frame_id),
     )?;
+    let model_route = cfg.proxy.clone();
     let primary_supports_vision = models::supports_vision(
         &state.store,
         specialist
@@ -1001,18 +1002,16 @@ async fn send_message_inner_with_continuation(
             std::fs::create_dir_all(ap.root.join("figures"))
                 .map_err(|error| format!("Failed to prepare figures directory: {error}"))?;
         }
-        add_configured_image_generation_tool(
-            &mut agent,
-            models::image_generation_config(&state.store).await,
-            llm_proxy(),
-            &frame_id,
-        );
-        add_configured_video_generation_tool(
-            &mut agent,
-            models::video_generation_config(&state.store).await,
-            llm_proxy(),
-            &frame_id,
-        );
+        let image_generation = models::image_generation_config(&state.store).await;
+        let image_route = image_generation
+            .as_ref()
+            .and_then(|(api_url, ..)| network::model_proxy("", api_url));
+        add_configured_image_generation_tool(&mut agent, image_generation, image_route, &frame_id);
+        let video_generation = models::video_generation_config(&state.store).await;
+        let video_route = video_generation
+            .as_ref()
+            .and_then(|(api_url, ..)| network::model_proxy("", api_url));
+        add_configured_video_generation_tool(&mut agent, video_generation, video_route, &frame_id);
         agent.add_tool(Box::new(browser_bridge::BrowserSetupTool::new(
             state.browser_bridge.clone(),
             state.store.clone(),
@@ -1982,7 +1981,7 @@ async fn send_message_inner_with_continuation(
         Err(e) => {
             let message = wisp_llm::annotate_transport_error(
                 &format!("{e}"),
-                llm_proxy().as_deref(),
+                model_route.as_deref(),
                 &wisp_llm::ambient_proxy_env(),
             );
             persist_and_emit_terminal_event(

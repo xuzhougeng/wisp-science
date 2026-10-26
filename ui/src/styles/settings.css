@@ -56,10 +56,20 @@ body:has(.settings-page) .projects-screen { display: none; }
 .network-mirror-fields label { font-size: calc(14px * var(--ui-font-scale, 1)); color: var(--text); gap: 10px; }
 .network-crumb-separator { display: inline-flex; color: var(--text-muted); }
 .network-crumb-separator svg { width: 16px; height: 16px; }
+/* One item's own route (model endpoint, subscription, MCP connection). */
+.proxy-route { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.proxy-route-label { color: var(--text); font-size: calc(13.5px * var(--ui-font-scale, 1)); }
+.proxy-route-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.proxy-route-controls select { flex: 0 0 auto; max-width: 220px; }
+.proxy-route-controls input { flex: 1 1 220px; min-width: 0; }
+.proxy-route .settings-field-hint { margin: 0; line-height: 1.6; }
+.subscription-route { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 2px; }
+.subscription-route-actions { justify-content: flex-end; align-items: center; gap: 10px; }
 @media (max-width: 850px) {
   .network-proxy-controls { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr) auto auto; gap: 8px; }
   .network-proxy-controls select { width: 100%; }
   .network-mirror-summary { flex-wrap: wrap; }
+  .proxy-route-controls select { flex: 1 1 100%; max-width: none; }
 }
 .settings-nav {
   display: flex; flex-direction: column; gap: 14px;

@@ -489,6 +489,7 @@ mod tests {
                 headers: vec![],
                 auth: McpHttpAuth::None,
             },
+            proxy_url: String::new(),
         };
         save_mcp_connections(&store, &[connection]).await.unwrap();
         let grant = Arc::new(Grant {

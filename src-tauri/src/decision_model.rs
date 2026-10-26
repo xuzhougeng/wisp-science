@@ -120,12 +120,12 @@ pub(crate) async fn load(store: &Store) -> DecisionModelSettings {
     settings_from(raw.as_deref(), &|name: &str| secret_get(name))
 }
 
-/// The configured decision model on the model-traffic proxy, or `None` when
+/// The configured decision model on its model API route, or `None` when
 /// it is off or lacks a required key.
 pub(crate) async fn configured(store: &Store) -> Option<DecisionModel> {
     let settings = load(store).await;
     model_from(&settings, &secret_get(&key_secret(&settings.preset)))
-        .map(|model| model.with_proxy(crate::llm_proxy()))
+        .map(|model| model.with_proxy(crate::network::model_proxy("", &settings.base_url)))
 }
 
 #[tauri::command]
@@ -202,7 +202,8 @@ pub(crate) async fn test_decision_model(
     if preset.key_required && key.trim().is_empty() {
         return Err(KEY_REQUIRED.into());
     }
-    let model = build(&settings, &key).with_proxy(crate::llm_proxy());
+    let model =
+        build(&settings, &key).with_proxy(crate::network::model_proxy("", &settings.base_url));
     let started = Instant::now();
     let decisions = systemone::evaluate(
         &model,

@@ -54,6 +54,17 @@ enum Kind {
     Xai,
 }
 
+impl Kind {
+    /// Subscription id for its own network route.
+    fn route(self) -> &'static str {
+        match self {
+            Self::ChatGpt => "chatgpt",
+            Self::Codex => "codex",
+            Self::Xai => "xai",
+        }
+    }
+}
+
 fn kind(provider: &Option<String>) -> Result<Kind, String> {
     match provider.as_deref().map(str::trim) {
         Some("chatgpt") | Some("openai_chatgpt") => Ok(Kind::ChatGpt),
@@ -188,7 +199,7 @@ pub async fn start_codex_login(
     let cancel = Arc::new(AtomicBool::new(false));
     let session = Arc::new(LoginSession {
         kind,
-        client: crate::network::subscription_http_client(),
+        client: crate::network::subscription_http_client(kind.route()),
         cancel: cancel.clone(),
         done: AtomicBool::new(false),
         status: Mutex::new("pending".into()),
@@ -404,7 +415,7 @@ pub async fn save_codex_login(
     let kind = kind(&provider)?;
     let xai = kind == Kind::Xai;
     let creds = if use_saved.unwrap_or(false) {
-        let client = crate::network::subscription_http_client();
+        let client = crate::network::subscription_http_client(kind.route());
         let now = codex_auth::now_ms();
         match kind {
             Kind::ChatGpt => {
@@ -539,6 +550,7 @@ pub async fn save_codex_login(
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+            proxy_url: None,
         }
     } else {
         let Some(mut existing) = models::profile_owned(&state.store, &profile_id).await else {

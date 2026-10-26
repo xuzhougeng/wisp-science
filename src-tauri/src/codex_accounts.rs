@@ -85,7 +85,7 @@ pub async fn codex_account_usage(
 ) -> Result<CodexAccountUsage, String> {
     let saved = models::load_codex_account(&account_id)
         .ok_or_else(|| "That ChatGPT account is no longer saved. Sign in again.".to_string())?;
-    let client = crate::network::subscription_http_client();
+    let client = crate::network::subscription_http_client("codex");
     let creds = codex_auth::refresh_if_due(&client, saved.clone(), codex_auth::now_ms()).await?;
     if creds != saved {
         persist(&state.store, &creds).await?;

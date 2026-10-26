@@ -39,6 +39,27 @@ Save, then start a new sign-in. Chat/model API traffic still uses Model API.
 Saving one row does not save edits in other rows or in Package mirror. Network
 settings can be saved before a model/API key has been configured.
 
+## Per-item routes
+
+A model API address, a subscription, or a custom MCP connection can override
+its row on this page. Each has a **Network proxy** choice: **Inherit Network
+settings** (the default), **Direct**, or **Custom proxy** with an HTTP, HTTPS or
+SOCKS5 address. Inherit uses this page's row for that kind of request.
+
+| Where | Applies to | Inherits |
+| --- | --- | --- |
+| **Models → edit a model** (or Add API access) | Every model on that API address, including image and video generation and the decision model when it uses the same address | Model API |
+| **Models → Subscriptions**, on each card (ChatGPT, ChatGPT Codex, SuperGrok) | That subscription's sign-in, token refresh and model requests | Sign-in and refresh: Subscription sign-in; model requests: Model API |
+| **Connections → a custom MCP connection** | That connection's HTTP and OAuth requests, or the proxy variables of its local process | MCP services |
+
+The model route belongs to the API address, not one model: saving it in one
+model's form changes it for every model on that address, and models added on
+that address later start from it. Model routes apply from the next turn; a new
+subscription route applies to new sign-ins and token refreshes, and to model
+requests from the next turn. An MCP connection reconnects with its route on the
+next turn. Bundled scientific connectors and plugin MCP servers keep the MCP
+services row.
+
 Code proxy settings supply both uppercase and lowercase HTTP(S)/ALL_PROXY and
 NO_PROXY variables without changing Wisp's host environment. Libraries must
 honor these variables (and may need their own SOCKS support). Code can explicitly
@@ -96,3 +117,11 @@ record; the old `proxy_url` value is read only when that record is absent.
    inputs and save actions should stay within the pane. Confirm the preference Save
    action and per-scope network saves still apply independently. Repeat with English
    and Chinese labels.
+7. Set Model API to a local proxy, then set one model's Network proxy to Direct.
+   Confirm requests to that API address bypass the proxy from the next turn, a
+   second model on the same address shows Direct, and a model on another
+   address still goes through the proxy.
+8. On a subscription card choose Custom proxy and save, then refresh its token
+   or start a new sign-in and confirm the proxy log shows the request. Set one
+   custom MCP connection to Direct while MCP services uses a proxy and confirm
+   only that connection bypasses it after reconnecting.

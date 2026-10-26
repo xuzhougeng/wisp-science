@@ -1446,6 +1446,7 @@ mod session_context_window_tests {
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+            proxy_url: String::new(),
         }
     }
 
@@ -3418,6 +3419,9 @@ pub struct ModelProfile {
     pub video_aspect_ratio: Option<String>,
     #[serde(default)]
     pub video_resolution: Option<String>,
+    /// Route of this profile's API endpoint; empty inherits Settings → Network.
+    #[serde(default)]
+    pub proxy_url: String,
 }
 
 /// Known image IDs used for automatic hints, never as an acceptance allowlist.
@@ -3752,6 +3756,9 @@ pub struct ConnRow {
     pub name: String,
     pub enabled: bool,
     pub transport: ConnTransport,
+    /// This connection's own route; empty inherits Settings → Network.
+    #[serde(default)]
+    pub proxy_url: String,
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -3879,6 +3886,10 @@ pub struct ConnForm {
     pub env: Vec<ConnSecretField>,
     pub auth: String,
     pub enabled: bool,
+    /// Empty inherits the Network page, `none` is direct, else a proxy URL.
+    pub proxy_url: String,
+    /// Custom proxy chosen while its address is still empty.
+    pub proxy_custom: bool,
 }
 
 impl ConnForm {
@@ -3952,6 +3963,7 @@ mod image_generation_model_tests {
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+            proxy_url: String::new(),
         }
     }
 
@@ -4028,6 +4040,7 @@ mod video_generation_model_tests {
             video_duration_secs: None,
             video_aspect_ratio: None,
             video_resolution: None,
+            proxy_url: String::new(),
         }
     }
 
@@ -4103,6 +4116,11 @@ pub struct ModelForm {
     pub video_duration_secs: Option<u32>,
     pub video_aspect_ratio: Option<String>,
     pub video_resolution: Option<String>,
+    /// Endpoint route chosen in this form. `None` until edited: the form shows
+    /// and keeps the endpoint's saved route.
+    pub proxy_url: Option<String>,
+    /// Custom proxy chosen while its address is still empty.
+    pub proxy_custom: bool,
     /// Used only when adding a provider (`id` is `None`): one row per model
     /// that should be created with the shared API URL and key.
     pub entries: Vec<ModelFormEntry>,

@@ -231,6 +231,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
   // Tips are random text on the empty screen; keep them out of specs that did not ask for them.
   const mockShowTips = query.get("mockShowTips") === "1";
   let mockLocale = query.get("mockLocale") === "zh" ? "zh" : "en";
+  // Each subscription's own route, keyed chatgpt/codex/xai; missing inherits.
+  let mockSubscriptionProxies: Record<string, string> = {};
   let mockNetworkSettings = {
     model_proxy_url: query.get("mockLegacyProxy") ?? "",
     subscription_proxy_url: "",
@@ -3482,6 +3484,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return (window as any).__mockAppearancePrefs;
           }
           case "get_network_settings": return { ...mockNetworkSettings };
+          case "get_subscription_proxies": return { ...mockSubscriptionProxies };
+          case "set_subscription_proxy": {
+            const provider = String(arg("provider") ?? "");
+            const kind = ({ openai_chatgpt: "chatgpt", openai_codex: "codex", xai_oauth: "xai" } as Record<string, string>)[provider] ?? provider;
+            if (!["chatgpt", "codex", "xai"].includes(kind)) throw `Unknown subscription provider: ${provider}`;
+            const value = String(arg("proxyUrl") ?? "").trim();
+            if (value && value !== "none" && !/^https?:\/\/|^socks5h?:\/\//.test(value)) throw "Subscription proxy: enter a complete URL.";
+            if (value) mockSubscriptionProxies[kind] = value;
+            else delete mockSubscriptionProxies[kind];
+            return { ...mockSubscriptionProxies };
+          }
           case "set_network_settings": {
             const next = plain(arg("settings") ?? {});
             for (const key of ["model_proxy_url", "subscription_proxy_url", "mcp_proxy_url", "command_proxy_url", "conda_mirror_url", "pip_index_url"]) {
@@ -4764,6 +4777,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           case "save_model": {
             if ((window as any).__failSaveModel) throw new Error("Could not save model");
             const profile = plain(arg("profile") ?? {});
+            // Mirror the backend: one route per API endpoint; a null route
+            // keeps the endpoint's saved one.
+            const endpointOf = (url: unknown) => String(url ?? "").trim().replace(/\/+$/, "").replace(/\/v1$/, "").toLowerCase();
+            const subscriptionProfile = (m: any) => ["openai_codex", "openai_chatgpt", "xai_oauth"].includes(String(m.provider));
+            const sameEndpoint = (m: any) => endpointOf(m.api_url) === endpointOf(profile.api_url);
+            if (profile.proxy_url == null) {
+              const own = mockModels.find((m: any) => m.id === profile.id && sameEndpoint(m));
+              const sibling = mockModels.find((m: any) => !subscriptionProfile(m) && sameEndpoint(m));
+              profile.proxy_url = String((own ?? sibling as any)?.proxy_url ?? "");
+            }
+            profile.proxy_url = String(profile.proxy_url).trim();
+            if (profile.proxy_url && profile.proxy_url !== "none" && !/^https?:\/\/|^socks5h?:\/\//.test(profile.proxy_url)) {
+              throw new Error("Model API proxy: enter a complete URL.");
+            }
             profile.use_for_expert = Boolean(profile.use_for_expert);
             const newlyReserved = profile.use_for_expert && !mockModels.some((m: any) => m.id === profile.id && m.use_for_expert);
             if (profile.use_for_expert && !mockModels.some((m: any) => m.id !== profile.id
@@ -4819,6 +4846,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 ? false
                 : m.use_for_video_generation,
             });
+            if (!subscriptionProfile(profile)) {
+              mockModels = mockModels.map((m: any) => !subscriptionProfile(m) && sameEndpoint(m)
+                ? { ...m, proxy_url: profile.proxy_url }
+                : m);
+            }
             const isChatModel = (model: any) => !model.image_generation_capable
               && !model.use_for_video_generation
               && !["grok-imagine-video", "grok-imagine-video-1.5", "grok-imagine-video-1.5-preview"].includes(String(model.model).split("/").pop()!.toLowerCase());

@@ -477,6 +477,8 @@ window.__WISP_MCP_APP_BACKEND__ = "legacy-iframe";
             for (const model of mockModels) {
               if (model.id === p?.id) {
                 Object.assign(model, p, {
+                  // Like the backend: an omitted (null) route keeps the saved one.
+                  proxy_url: p.proxy_url ?? model.proxy_url ?? "",
                   use_for_image_generation: useForImageGeneration,
                   use_for_video_generation: useForVideoGeneration,
                 });
