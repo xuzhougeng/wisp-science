@@ -1,7 +1,7 @@
 // Wisp Real Browser Bridge protocol constants (Protocol v2).
 var WISP_PROTOCOL = {
   version: 2,
-  extensionVersion: "0.4.2",
+  extensionVersion: "0.5.0",
   capabilities: [
     "article_scan",
     "asset_download",
@@ -14,7 +14,8 @@ var WISP_PROTOCOL = {
     "runtime_reload",
     "chatgpt_turn",
     "chat_turn",
-    "side_panel"
+    "side_panel",
+    "tab_scope"
   ]
 };
 
@@ -30,9 +31,11 @@ function readBridgeConfig() {
   return { session: session, endpoint: endpoint };
 }
 
-function handshakePayload(tabs, paused) {
+// browserInstance identifies one browser process: tab and window ids are only
+// meaningful inside it, so Wisp drops remembered ids when it changes.
+function handshakePayload(tabs, paused, browserInstance) {
   var cfg = readBridgeConfig();
-  return {
+  var payload = {
     type: "ext_ready",
     protocol_version: WISP_PROTOCOL.version,
     extension_version: WISP_PROTOCOL.extensionVersion,
@@ -42,6 +45,8 @@ function handshakePayload(tabs, paused) {
     paused: !!paused,
     tabs: tabs || []
   };
+  if (browserInstance) payload.browser_instance = String(browserInstance);
+  return payload;
 }
 
 function parseIncomingRequest(request) {

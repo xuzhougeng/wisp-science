@@ -56,9 +56,34 @@ async function browserTabs() {
         title: tab.title || "",
         active: !!tab.active,
         windowId: tab.windowId,
+        groupId: Number.isInteger(tab.groupId) && tab.groupId >= 0 ? tab.groupId : undefined,
         managed: tabOps.isManaged(tab.id)
       };
     });
+}
+
+// One id per browser process. chrome.storage.session survives service-worker
+// restarts but not a browser restart, which is exactly when tab, window and
+// group ids stop meaning what Wisp remembers.
+var browserInstancePromise = null;
+function browserInstance() {
+  if (browserInstancePromise) return browserInstancePromise;
+  browserInstancePromise = (async function () {
+    try {
+      var area = chrome.storage.session;
+      if (!area) return "";
+      var stored = await area.get(["wisp_browser_instance"]);
+      if (stored && stored.wisp_browser_instance) return String(stored.wisp_browser_instance);
+      var fresh = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+      await area.set({ wisp_browser_instance: fresh });
+      return fresh;
+    } catch (_) {
+      return "";
+    }
+  })();
+  return browserInstancePromise;
 }
 
 function send(message) {
@@ -68,7 +93,7 @@ function send(message) {
 }
 
 async function sendHandshake() {
-  send(handshakePayload(await browserTabs(), paused));
+  send(handshakePayload(await browserTabs(), paused, await browserInstance()));
 }
 
 // Drop a socket that still says OPEN but has not heard from Wisp in
@@ -325,7 +350,10 @@ async function runCommand(tabId, command) {
       return await runWithCdp(command.tabId || tabId, command.method, command.params || {});
     case "tabs": {
       if (command.method === "create") {
-        return await tabOps.create(command.url, command.active);
+        return await tabOps.create(command.url, command.active, {
+          windowId: command.windowId,
+          group: command.group
+        });
       }
       if (command.method === "close") {
         var ids = (command.tabIds || [command.tabId || tabId]).filter(function (id) { return Number.isInteger(id); });
@@ -456,7 +484,17 @@ async function handleRequest(request) {
     var newTabs = [];
     for (var createdId of created) {
       var createdTab = await tabSnapshot(createdId);
-      if (createdTab) newTabs.push({ id: createdTab.id, url: createdTab.url, title: createdTab.title });
+      if (createdTab) {
+        newTabs.push({
+          id: createdTab.id,
+          url: createdTab.url,
+          title: createdTab.title,
+          windowId: createdTab.windowId,
+          // Lets Wisp tell a popup the page opened from a tab the user opened.
+          openerTabId: createdTab.openerTabId,
+          groupId: Number.isInteger(createdTab.groupId) && createdTab.groupId >= 0 ? createdTab.groupId : undefined
+        });
+      }
     }
     send({
       type: "result",

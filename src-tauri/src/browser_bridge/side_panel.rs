@@ -160,6 +160,16 @@ async fn ask(
         }
     };
     SIDE_SESSIONS.lock().unwrap().insert(session_id.clone());
+    // The user asked about this page from the panel, so the conversation's
+    // project may read and act in that tab without a second prompt.
+    if let Some(tab_id) = page.get("tab_id").and_then(Value::as_i64) {
+        if let Ok(Some(project_id)) = state.store.frame_project_id(&session_id).await {
+            state
+                .browser_bridge
+                .grant_tab("shared", &project_id, &session_id, tab_id)
+                .await;
+        }
+    }
     send(
         reply,
         json!({ "type": "side_started", "id": id, "session_id": session_id }),

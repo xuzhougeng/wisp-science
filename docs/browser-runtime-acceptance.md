@@ -1,6 +1,6 @@
 # Browser Runtime acceptance
 
-Use a Wisp build that bundles extension **0.4.2**. Load the unpacked extension from `browser_setup.extension_path` before testing.
+Use a Wisp build that bundles extension **0.5.0**. Load the unpacked extension from `browser_setup.extension_path` before testing.
 
 For #1107, test on Windows, macOS, and Linux with automatic launch enabled:
 close daily Chrome, call `browser_setup` with no action, and verify its normal
@@ -13,7 +13,7 @@ action must behave like an omitted action. Existing blank/new-tab pages are neve
 cleaned up by startup; ordinary per-turn cleanup still applies only to recorded
 tool-created tabs.
 
-1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.4.2, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.4.2. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.4.2, and `required_protocol` 2.
+1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.5.0, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.5.0. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.5.0, and `required_protocol` 2.
    With the extension connected, quit Wisp without closing Chrome, wait two
    minutes, and restart Wisp: the extension must reconnect on its own within
    about two minutes (keepalive staleness plus the one-minute alarm) without a
@@ -44,6 +44,40 @@ Popup **Pause control** must fail later automations with `USER_CONTROLLING`.
    answer without it. **Stop** cancels a running turn. The context menu and
    `Alt+Shift+W` open the same panel. Quit Wisp and ask: the panel reports that
    Wisp is not running.
+
+## Project tab scope (#1617)
+
+Shared Chrome with extension 0.5.0 and two projects A and B open in Wisp.
+
+1. In A, `web_open_tab` twice. Both tabs appear in one native group titled
+   `Wisp · <A's name>` in the same window. Focus a different Chrome window and
+   open a third tab from A: it still lands in A's window and group.
+   `web_scan tabs_only` in A lists the three tabs under `tabs` and reports
+   `scope.window_id`, `scope.group_id` and `window_pinning: pinned`.
+2. In B (after A's turn ends), `web_open_tab` once. B's tab gets its own group
+   and colour. `web_scan tabs_only` in B lists only B's tab under `tabs`; A's
+   tabs are absent from both `tabs` and `unscoped_tabs`. Passing one of A's
+   tab ids as `switch_tab_id` to `web_scan`, `web_execute_js` or
+   `web_screenshot`, or inside `{"cmd":"tabs","method":"close","tabIds":[…]}`
+   or a `cdp` command, fails with `TAB_OUT_OF_SCOPE` and no prompt.
+3. Open a page yourself. It appears under `unscoped_tabs`. A `web_scan` with
+   that id shows the **Share browser tab …** approval. Deny: the tool fails
+   and the tab stays unscoped. Allow: the scan runs, the tab is listed under
+   `tabs` with `granted: true`, and the window binding is unchanged.
+4. With A's tab focused in Chrome, run `web_scan` from B without
+   `switch_tab_id`: B reads its own tab, not A's. With no tab in scope, B is
+   told to open one or ask for one instead of being handed the active tab.
+5. Drag one of A's tabs into another window. A's next listing drops it and
+   reports it once under `detached`; it reappears under `unscoped_tabs`.
+6. Close A's window and open a tab from A: the extension opens a new window for
+   A (not B's or yours) and `scope.window_id` changes to it. Quit and restart
+   Chrome, reconnect, and list again: every scope is empty and
+   `window_pinning` is `unbound`; nothing is reused from the old process.
+7. Load extension 0.4.2 instead: the same refusals apply, but
+   `window_pinning` reads `unsupported_extension` and no groups are created.
+8. Click a link that opens a popup from one of A's tabs: the popup is listed in
+   A's scope and in A's turn-end cleanup prompt. The shared cross-project
+   occupancy error from step 5 of the general list still appears unchanged.
 
 ## Project workspace isolation (#1325)
 

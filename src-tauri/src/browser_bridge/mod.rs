@@ -67,6 +67,14 @@ const MAX_RESULT_CHARS: usize = 200_000;
 /// 5 MB decoded limit (base64 inflates by 4/3).
 const MAX_SCREENSHOT_B64: usize = 7 * 1024 * 1024;
 const PENDING_CLEANUP_KEY: &str = "browser_tab_cleanup_pending";
+/// Extension capability: honours `windowId` and `group` on tab-create commands
+/// and reports `browser_instance` in its handshake.
+const TAB_SCOPE_CAPABILITY: &str = "tab_scope";
+/// Chrome tab-group colours a project may be labelled with (grey is left for
+/// the user's own groups).
+const TAB_GROUP_COLORS: [&str; 8] = [
+    "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange",
+];
 const PENDING_NEEDS_HUMAN_KEY: &str = "browser_needs_human_pending";
 
 #[derive(Clone, Debug, Serialize)]
@@ -77,6 +85,52 @@ pub struct BrowserTab {
     active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     window_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group_id: Option<i64>,
+    /// Tab a popup was opened from; used only to attribute popups.
+    #[serde(skip)]
+    opener_tab_id: Option<i64>,
+}
+
+/// Who a browser tool call acts for: the trusted project (and the agent frame
+/// inside it) taken from the host's `ToolEnv`. Never read from tool arguments,
+/// so the model cannot name another project to reach its tabs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TabOwner {
+    project_id: String,
+    frame_id: String,
+}
+
+fn tab_owner(env: &dyn ToolEnv) -> Option<TabOwner> {
+    let project_id = env.project_id().filter(|id| !id.is_empty())?;
+    Some(TabOwner {
+        project_id: project_id.to_string(),
+        frame_id: env.frame_id().unwrap_or("").to_string(),
+    })
+}
+
+#[derive(Clone, Debug)]
+struct OwnedTab {
+    /// Agent frame that opened the tab or asked the user for it.
+    frame_id: String,
+    /// Window the tab was last seen in; moving it elsewhere ends ownership.
+    window_id: Option<i64>,
+    /// Shared by the user from their own tabs rather than opened by Wisp.
+    granted: bool,
+}
+
+/// One project's view of the shared browser lane: the tabs it may see and
+/// drive, the window its new tabs are pinned to, and the native tab group that
+/// labels them. Tab, window and group ids only mean something inside the
+/// browser process that issued them, so a new `browser_instance` resets it.
+#[derive(Clone, Debug, Default)]
+struct TabScope {
+    window_id: Option<i64>,
+    group_id: Option<i64>,
+    tabs: BTreeMap<i64, OwnedTab>,
+    selected: Option<i64>,
+    /// Owned tabs the user moved to another window since the last report.
+    detached: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +200,221 @@ struct SessionState {
     selected_tab: Option<i64>,
     pending: HashMap<String, oneshot::Sender<Result<BridgeReply, String>>>,
     meta: SessionMeta,
+    /// Per-project tab scopes keyed by trusted project id. Kept across
+    /// extension reconnects (tab ids survive a service-worker restart) and
+    /// dropped when the browser process changes.
+    scopes: HashMap<String, TabScope>,
+    browser_instance: Option<String>,
+}
+
+/// Only the shared daily browser mixes projects with the user's own tabs. A
+/// workspace lane already belongs to exactly one project, so every tab in it
+/// is that project's and no narrower scope applies.
+fn scope_enforced(session: &str) -> bool {
+    session == "shared"
+}
+
+fn effective_owner<'a>(session: &str, owner: Option<&'a TabOwner>) -> Option<&'a TabOwner> {
+    owner.filter(|_| scope_enforced(session))
+}
+
+impl SessionState {
+    fn supports_tab_scope(&self) -> bool {
+        self.meta
+            .capabilities
+            .iter()
+            .any(|capability| capability == TAB_SCOPE_CAPABILITY)
+    }
+
+    /// Live tabs the project owns, in tab-id order.
+    fn scoped_tabs(&self, project_id: &str) -> Vec<BrowserTab> {
+        let Some(scope) = self.scopes.get(project_id) else {
+            return Vec::new();
+        };
+        scope
+            .tabs
+            .keys()
+            .filter_map(|id| self.tabs.get(id).cloned())
+            .collect()
+    }
+
+    fn owned_by(&self, tab_id: i64) -> Option<&str> {
+        self.scopes
+            .iter()
+            .find(|(_, scope)| scope.tabs.contains_key(&tab_id))
+            .map(|(project_id, _)| project_id.as_str())
+    }
+
+    /// Live tabs no project owns: the user's own pages. A project may use one
+    /// only after the user shares it.
+    fn unscoped_tabs(&self) -> Vec<BrowserTab> {
+        self.tabs
+            .values()
+            .filter(|tab| self.owned_by(tab.id).is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// Give `owner` the tab. `bind_window` is for tabs Wisp created on the
+    /// owner's behalf: the first one fixes the project's window, and a tab that
+    /// lands elsewhere means the extension rebuilt a closed window, so the old
+    /// group died with it. Popups and user-shared tabs never move the binding.
+    fn claim_tab(&mut self, owner: &TabOwner, tab: &BrowserTab, bind_window: bool, granted: bool) {
+        let pin = bind_window && self.supports_tab_scope();
+        let scope = self.scopes.entry(owner.project_id.clone()).or_default();
+        if pin {
+            if let Some(window_id) = tab.window_id {
+                if scope.window_id != Some(window_id) {
+                    scope.window_id = Some(window_id);
+                    scope.group_id = None;
+                }
+            }
+            if tab.group_id.is_some() {
+                scope.group_id = tab.group_id;
+            }
+        }
+        scope.tabs.insert(
+            tab.id,
+            OwnedTab {
+                frame_id: owner.frame_id.clone(),
+                window_id: tab.window_id,
+                granted,
+            },
+        );
+        // A tab opened for the owner becomes its default; a popup or a shared
+        // tab does not steal the selection.
+        if bind_window {
+            scope.selected = Some(tab.id);
+        }
+    }
+
+    fn release_tabs(&mut self, ids: &[i64]) {
+        for scope in self.scopes.values_mut() {
+            for id in ids {
+                scope.tabs.remove(id);
+            }
+            if scope
+                .selected
+                .is_some_and(|selected| ids.contains(&selected))
+            {
+                scope.selected = None;
+            }
+        }
+    }
+
+    /// Drop ownership of tabs that closed or that the user moved to another
+    /// window, and forget every scope when the browser process changed: its
+    /// ids may now name somebody else's tabs.
+    fn revalidate_scopes(&mut self, browser_instance: Option<&str>) {
+        if let Some(instance) = browser_instance.filter(|instance| !instance.is_empty()) {
+            if self.browser_instance.as_deref() != Some(instance) {
+                if self.browser_instance.is_some() {
+                    self.scopes.clear();
+                }
+                self.browser_instance = Some(instance.to_string());
+            }
+        }
+        let tabs = &self.tabs;
+        for scope in self.scopes.values_mut() {
+            let detached = &mut scope.detached;
+            scope.tabs.retain(|id, owned| {
+                let Some(live) = tabs.get(id) else {
+                    return false;
+                };
+                match (owned.window_id, live.window_id) {
+                    (Some(before), Some(now)) if before != now => {
+                        detached.push(*id);
+                        false
+                    }
+                    (_, now) => {
+                        if now.is_some() {
+                            owned.window_id = now;
+                        }
+                        true
+                    }
+                }
+            });
+            if scope
+                .selected
+                .is_some_and(|selected| !scope.tabs.contains_key(&selected))
+            {
+                scope.selected = None;
+            }
+        }
+    }
+
+    /// What the owner may currently touch, for tool results and status. Drains
+    /// `detached` so a move is reported once.
+    fn scope_report(&mut self, session: &str, owner: &TabOwner) -> Value {
+        let supports = self.supports_tab_scope();
+        let detached = self
+            .scopes
+            .get_mut(&owner.project_id)
+            .map(|scope| std::mem::take(&mut scope.detached))
+            .unwrap_or_default();
+        let scope = self.scopes.get(&owner.project_id);
+        let tabs: Vec<Value> = scope
+            .map(|scope| {
+                scope
+                    .tabs
+                    .iter()
+                    .filter_map(|(id, owned)| {
+                        let live = self.tabs.get(id)?;
+                        Some(json!({
+                            "id": live.id,
+                            "url": live.url,
+                            "title": live.title,
+                            "active": live.active,
+                            "window_id": live.window_id,
+                            "group_id": live.group_id,
+                            "opened_by": owned.frame_id,
+                            "granted": owned.granted,
+                        }))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let window_id = scope.and_then(|scope| scope.window_id);
+        json!({
+            "session": session,
+            "project_id": owner.project_id,
+            "agent_frame_id": owner.frame_id,
+            "window_id": window_id,
+            "group_id": scope.and_then(|scope| scope.group_id),
+            "window_pinning": if !supports {
+                "unsupported_extension"
+            } else if window_id.is_some() {
+                "pinned"
+            } else {
+                "unbound"
+            },
+            "tabs": tabs,
+            "detached": detached,
+            "boundary": "Only the tabs listed here can be read or driven by this project. Cookies, logins and site storage are still shared with the rest of this browser profile.",
+        })
+    }
+}
+
+/// Tabs as one project sees them. Without an owner (CLI, tests, workspace
+/// lanes) every tab in the lane is listed and no scope is reported.
+struct TabListing {
+    tabs: Vec<BrowserTab>,
+    unscoped: Option<Vec<BrowserTab>>,
+    scope: Option<Value>,
+}
+
+impl TabListing {
+    fn render(self) -> Value {
+        let mut value = json!({ "tabs": self.tabs });
+        if let Some(unscoped) = self.unscoped {
+            value["unscoped_tabs"] = json!(unscoped);
+            value["unscoped_note"] = json!("Tabs the user has open that no project owns. They cannot be read or driven until the user shares one: pass its id as switch_tab_id and the user will be asked.");
+        }
+        if let Some(scope) = self.scope {
+            value["scope"] = scope;
+        }
+        value
+    }
 }
 
 /// A client that reached a bridge port but was never claimed as the Wisp
@@ -208,14 +477,20 @@ struct BridgeReply {
     value: Value,
     ready: Option<bool>,
     wait: Option<Value>,
+    /// Tabs the browser created while the command ran (popups, target=_blank).
+    new_tabs: Vec<BrowserTab>,
 }
 
+#[derive(Debug)]
 struct BrowserExecution {
     session: String,
     tab_id: i64,
     value: Value,
     ready: Option<bool>,
     wait: Option<Value>,
+    /// Popups opened from one of the owner's tabs during this command, now
+    /// owned by the same project.
+    new_tabs: Vec<BrowserTab>,
 }
 
 fn session_slot<'a>(state: &'a mut BridgeState, name: &str) -> &'a mut SessionState {
@@ -832,15 +1107,37 @@ impl BrowserBridge {
         code: &str,
         timeout: Duration,
     ) -> Result<BrowserExecution, String> {
+        self.execute_scoped(session, None, requested_tab, code, timeout)
+            .await
+    }
+
+    /// Run `code` in a tab the owner may use. With an owner on the shared lane
+    /// the tab (requested or default) must be in that project's scope, embedded
+    /// tab/CDP commands may only name scoped tabs, tab-create commands are
+    /// pinned to the project's window and group, and tab listings are
+    /// narrowed to the scope before they reach the model.
+    async fn execute_scoped(
+        &self,
+        session: Option<&str>,
+        owner: Option<&TabOwner>,
+        requested_tab: Option<i64>,
+        code: &str,
+        timeout: Duration,
+    ) -> Result<BrowserExecution, String> {
         let id = Uuid::new_v4().to_string();
         let (response_tx, response_rx) = oneshot::channel();
         self.ensure_extension(session).await;
-        let (session_name, tab_id) = {
+        let session_name = resolve_session_name(session)?;
+        let owner = effective_owner(&session_name, owner);
+        let group_title = match owner {
+            Some(owner) if is_tabs_create(code) => Some(self.group_title(&owner.project_id).await),
+            _ => None,
+        };
+        let tab_id = {
             let mut state = self.state.lock().await;
             if let Some(error) = &state.startup_error {
                 return Err(self.unavailable_message(error));
             }
-            let session_name = resolve_session_name(session)?;
             let slot = session_slot(&mut state, &session_name);
             if slot.meta.paused {
                 return Err(errors::structured(
@@ -852,27 +1149,63 @@ impl BrowserBridge {
             let Some(client) = slot.client.clone() else {
                 return Err(self.unavailable_message("browser extension is not connected"));
             };
-            let tab_id = select_tab(slot, requested_tab)?;
+            let tab_id = match owner {
+                Some(owner) => {
+                    scope_check_command(code, slot, owner)?;
+                    let tab_id = select_scoped_tab(slot, owner, requested_tab)?;
+                    if let Some(scope) = slot.scopes.get_mut(&owner.project_id) {
+                        scope.selected = Some(tab_id);
+                    }
+                    tab_id
+                }
+                None => select_tab(slot, requested_tab)?,
+            };
             slot.selected_tab = Some(tab_id);
+            let outbound = match (owner, group_title.as_deref()) {
+                (Some(owner), Some(title)) => match json_command(code) {
+                    Some(mut command) => {
+                        scope_create_command(&mut command, slot, owner, title);
+                        command.to_string()
+                    }
+                    None => code.to_string(),
+                },
+                _ => code.to_string(),
+            };
             slot.pending.insert(id.clone(), response_tx);
-            let payload = request_payload(&id, Some(tab_id), code, timeout);
+            let payload = request_payload(&id, Some(tab_id), &outbound, timeout);
             if client.tx.send(Message::Text(payload.into())).is_err() {
                 if let Some(slot) = state.sessions.get_mut(client.session.as_str()) {
                     slot.pending.remove(&id);
                 }
                 return Err("browser extension disconnected before the request was sent".into());
             }
-            (session_name, tab_id)
+            tab_id
         };
 
         match tokio::time::timeout(timeout, response_rx).await {
-            Ok(Ok(Ok(reply))) => Ok(BrowserExecution {
-                session: session_name,
-                tab_id,
-                value: reply.value,
-                ready: reply.ready,
-                wait: reply.wait,
-            }),
+            Ok(Ok(Ok(reply))) => {
+                let BridgeReply {
+                    value,
+                    ready,
+                    wait,
+                    new_tabs,
+                } = reply;
+                let (value, new_tabs) = match owner {
+                    Some(owner) => {
+                        self.absorb_scoped_reply(&session_name, owner, code, value, new_tabs)
+                            .await
+                    }
+                    None => (value, Vec::new()),
+                };
+                Ok(BrowserExecution {
+                    session: session_name,
+                    tab_id,
+                    value,
+                    ready,
+                    wait,
+                    new_tabs,
+                })
+            }
             Ok(Ok(Err(error))) => Err(error),
             Ok(Err(_)) => Err("browser extension disconnected before returning a result".into()),
             Err(_) => {
@@ -890,6 +1223,162 @@ impl BrowserBridge {
                 ))
             }
         }
+    }
+
+    /// Apply a scoped command's outcome to the owner's scope: a created tab
+    /// joins it (binding the window), popups from its tabs join it, closed tabs
+    /// leave it, and any tab listing in the reply is narrowed to it.
+    async fn absorb_scoped_reply(
+        &self,
+        session: &str,
+        owner: &TabOwner,
+        code: &str,
+        value: Value,
+        new_tabs: Vec<BrowserTab>,
+    ) -> (Value, Vec<BrowserTab>) {
+        let mut state = self.state.lock().await;
+        let slot = session_slot(&mut state, session);
+        if is_tabs_create(code) {
+            if let Some(tab) = parse_created_tab(&value) {
+                slot.tabs.insert(tab.id, tab.clone());
+                slot.claim_tab(owner, &tab, true, false);
+            }
+        }
+        let mut claimed = Vec::new();
+        for tab in new_tabs {
+            let from_owned = tab
+                .opener_tab_id
+                .is_some_and(|opener| slot.owned_by(opener) == Some(owner.project_id.as_str()));
+            if !from_owned || slot.owned_by(tab.id).is_some() {
+                continue;
+            }
+            slot.tabs.entry(tab.id).or_insert_with(|| tab.clone());
+            slot.claim_tab(owner, &tab, false, false);
+            claimed.push(tab);
+        }
+        if let Some(ids) = close_ids_from_script(code) {
+            let closed: Vec<i64> = value
+                .get("closed")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or(ids);
+            for id in &closed {
+                slot.tabs.remove(id);
+            }
+            slot.release_tabs(&closed);
+        }
+        (scope_filter_result(code, value, slot, owner), claimed)
+    }
+
+    /// Native tab-group label for a project's tabs: `Wisp · <project name>`.
+    async fn group_title(&self, project_id: &str) -> String {
+        let name = match &self.store {
+            Some(store) => store
+                .get_project(project_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|(name, _)| name)
+                .filter(|name| !name.trim().is_empty()),
+            None => None,
+        };
+        match name {
+            Some(name) => format!(
+                "Wisp · {}",
+                name.trim().chars().take(40).collect::<String>()
+            ),
+            None => "Wisp".to_string(),
+        }
+    }
+
+    /// Current scope of `owner` on `session`, or `None` where no scope applies.
+    async fn scope_status(&self, session: &str, owner: Option<&TabOwner>) -> Option<Value> {
+        let owner = effective_owner(session, owner)?;
+        let mut state = self.state.lock().await;
+        let slot = state.sessions.get_mut(session)?;
+        Some(slot.scope_report(session, owner))
+    }
+
+    /// Share a live tab with a project because the user themself started from
+    /// that tab (the extension's side panel question). Tabs another project
+    /// already owns are left alone; workspace lanes have no scope to join.
+    pub(crate) async fn grant_tab(
+        &self,
+        session: &str,
+        project_id: &str,
+        frame_id: &str,
+        tab_id: i64,
+    ) {
+        if !scope_enforced(session) || project_id.is_empty() {
+            return;
+        }
+        let owner = TabOwner {
+            project_id: project_id.to_string(),
+            frame_id: frame_id.to_string(),
+        };
+        let mut state = self.state.lock().await;
+        let Some(slot) = state.sessions.get_mut(session) else {
+            return;
+        };
+        let Some(tab) = slot.tabs.get(&tab_id).cloned() else {
+            return;
+        };
+        if slot.owned_by(tab_id).is_none() {
+            slot.claim_tab(&owner, &tab, false, true);
+        }
+    }
+
+    /// Let a project use a tab it does not own. Tabs another project owns are
+    /// refused outright; the user's own tabs need the user's explicit yes,
+    /// asked through the host's approval prompt, never assumed from the model.
+    async fn authorize_tab(
+        &self,
+        session: Option<&str>,
+        owner: Option<&TabOwner>,
+        requested: Option<i64>,
+        env: &dyn ToolEnv,
+    ) -> Result<(), String> {
+        let Some(tab_id) = requested else {
+            return Ok(());
+        };
+        let session_name = resolve_session_name(session)?;
+        let Some(owner) = effective_owner(&session_name, owner) else {
+            return Ok(());
+        };
+        let tab = {
+            let state = self.state.lock().await;
+            let Some(slot) = state.sessions.get(&session_name) else {
+                return Ok(());
+            };
+            let Some(tab) = slot.tabs.get(&tab_id) else {
+                return Ok(());
+            };
+            match slot.owned_by(tab_id) {
+                Some(project) if project == owner.project_id => return Ok(()),
+                Some(_) => return Err(out_of_scope(tab_id, true)),
+                None => tab.clone(),
+            }
+        };
+        let message = format!(
+            "Share browser tab {tab_id} “{}” ({}) with this project's agent? Wisp did not open this tab for this project; sharing lets the agent read it and act in it.",
+            tab.title, tab.url
+        );
+        if !env.confirm(&message).await {
+            return Err(errors::structured(
+                errors::TAB_OUT_OF_SCOPE,
+                &format!("the user did not share browser tab {tab_id} with this project"),
+                false,
+            ));
+        }
+        let mut state = self.state.lock().await;
+        if let Some(slot) = state.sessions.get_mut(&session_name) {
+            if let Some(live) = slot.tabs.get(&tab_id).cloned() {
+                if slot.owned_by(tab_id).is_none() {
+                    slot.claim_tab(owner, &live, false, true);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Send a control command that does not target an existing tab (e.g. open a
@@ -969,23 +1458,41 @@ impl BrowserBridge {
     }
 
     async fn open_tab(&self, url: &str, active: bool) -> Result<BridgeReply, String> {
-        self.open_tab_on(None, url, active)
+        self.open_tab_on(None, None, url, active)
             .await
             .map(|(_, reply)| reply)
     }
 
+    /// Open a tab for `owner`. On the shared lane the create command carries
+    /// the project's pinned window and tab group when the extension supports
+    /// them, and the new tab joins the project's scope.
     async fn open_tab_on(
         &self,
         session: Option<&str>,
+        owner: Option<&TabOwner>,
         url: &str,
         active: bool,
     ) -> Result<(String, BridgeReply), String> {
-        let code =
-            json!({ "cmd": "tabs", "method": "create", "url": url, "active": active }).to_string();
+        let session_name = resolve_session_name(session)?;
+        let owner = effective_owner(&session_name, owner);
+        let mut command =
+            json!({ "cmd": "tabs", "method": "create", "url": url, "active": active });
+        if let Some(owner) = owner {
+            let title = self.group_title(&owner.project_id).await;
+            let state = self.state.lock().await;
+            if let Some(slot) = state.sessions.get(&session_name) {
+                scope_create_command(&mut command, slot, owner, &title);
+            }
+        }
         let (session_name, reply) = self
-            .send_command_on_named(session, code, Duration::from_millis(DEFAULT_TIMEOUT_MS))
+            .send_command_on_named(
+                session,
+                command.to_string(),
+                Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            )
             .await?;
-        self.remember_tab_value(&session_name, &reply.value).await;
+        self.remember_tab_value(&session_name, owner, &reply.value)
+            .await;
         Ok((session_name, reply))
     }
 
@@ -1092,6 +1599,39 @@ impl BrowserBridge {
         Ok(slot.tabs.values().cloned().collect())
     }
 
+    /// Tabs as `owner` may see them: its own, plus the user's unowned tabs it
+    /// can ask to share. Other projects' tabs are not listed at all.
+    async fn scoped_tabs_on(
+        &self,
+        session: Option<&str>,
+        owner: Option<&TabOwner>,
+    ) -> Result<TabListing, String> {
+        self.ensure_extension(session).await;
+        let mut state = self.state.lock().await;
+        if let Some(error) = &state.startup_error {
+            return Err(self.unavailable_message(error));
+        }
+        let session_name = resolve_session_name(session)?;
+        let Some(slot) = state.sessions.get_mut(&session_name) else {
+            return Err(self.unavailable_message("browser extension is not connected"));
+        };
+        if slot.client.is_none() {
+            return Err(self.unavailable_message("browser extension is not connected"));
+        }
+        Ok(match effective_owner(&session_name, owner) {
+            Some(owner) => TabListing {
+                tabs: slot.scoped_tabs(&owner.project_id),
+                unscoped: Some(slot.unscoped_tabs()),
+                scope: Some(slot.scope_report(&session_name, owner)),
+            },
+            None => TabListing {
+                tabs: slot.tabs.values().cloned().collect(),
+                unscoped: None,
+                scope: None,
+            },
+        })
+    }
+
     async fn client_connected(&self) -> bool {
         self.state
             .lock()
@@ -1171,19 +1711,23 @@ impl BrowserBridge {
         Some(dir.display().to_string())
     }
 
-    async fn remember_tab_value(&self, session: &str, value: &Value) {
+    async fn remember_tab_value(&self, session: &str, owner: Option<&TabOwner>, value: &Value) {
         let Some(tab) = parse_created_tab(value) else {
             return;
         };
         let mut state = self.state.lock().await;
-        session_slot(&mut state, session).tabs.insert(tab.id, tab);
+        let slot = session_slot(&mut state, session);
+        slot.tabs.insert(tab.id, tab.clone());
+        if let Some(owner) = effective_owner(session, owner) {
+            slot.claim_tab(owner, &tab, true, false);
+        }
     }
 
     async fn record_opened_tab(&self, turn_id: &str, frame_id: &str, session: &str, value: &Value) {
         let Some(tab) = parse_created_tab(value) else {
             return;
         };
-        self.remember_tab_value(session, value).await;
+        self.remember_tab_value(session, None, value).await;
         let mut ledgers = self.turn_ledgers.lock().await;
         let ledger = ledgers
             .entry(turn_id.to_string())
@@ -1219,6 +1763,15 @@ impl BrowserBridge {
     async fn unrecord_tabs(&self, session: &str, ids: &[i64]) {
         if ids.is_empty() {
             return;
+        }
+        {
+            let mut state = self.state.lock().await;
+            if let Some(slot) = state.sessions.get_mut(session) {
+                slot.release_tabs(ids);
+                for id in ids {
+                    slot.tabs.remove(id);
+                }
+            }
         }
         let id_set: HashSet<i64> = ids.iter().copied().collect();
         let mut ledgers = self.turn_ledgers.lock().await;
@@ -1664,6 +2217,7 @@ impl BrowserBridge {
     async fn refuse_if_needs_human(
         &self,
         session: Option<&str>,
+        owner: Option<&TabOwner>,
         requested_tab: Option<i64>,
         script: &str,
     ) -> Result<(), String> {
@@ -1691,7 +2245,11 @@ impl BrowserBridge {
         let Some(slot) = state.sessions.get(&session_name) else {
             return Ok(());
         };
-        let Ok(tab_id) = select_tab(slot, requested_tab) else {
+        let selected = match effective_owner(&session_name, owner) {
+            Some(owner) => select_scoped_tab(slot, owner, requested_tab),
+            None => select_tab(slot, requested_tab),
+        };
+        let Ok(tab_id) = selected else {
             return Ok(());
         };
         if pending.contains(&(session_name, tab_id)) {
@@ -2183,6 +2741,7 @@ fn replace_tabs(state: &mut SessionState, message: &Value) {
             .or_else(|| state.tabs.values().next())
             .map(|tab| tab.id);
     }
+    state.revalidate_scopes(message.get("browser_instance").and_then(Value::as_str));
 }
 
 fn parse_tab(value: &Value) -> Option<BrowserTab> {
@@ -2207,6 +2766,11 @@ fn parse_tab(value: &Value) -> Option<BrowserTab> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         window_id: value.get("windowId").and_then(Value::as_i64),
+        group_id: value
+            .get("groupId")
+            .and_then(Value::as_i64)
+            .filter(|id| *id >= 0),
+        opener_tab_id: value.get("openerTabId").and_then(Value::as_i64),
     })
 }
 
@@ -2267,6 +2831,150 @@ fn select_tab(state: &SessionState, requested: Option<i64>) -> Result<i64, Strin
         .ok_or_else(|| "no browser tab is selected".into())
 }
 
+fn out_of_scope(tab_id: i64, exists: bool) -> String {
+    let message = if exists {
+        format!("browser tab {tab_id} is outside this project's scope: another project owns it or the user has not shared it. Only tabs this project opened or the user shared can be used; call web_scan with tabs_only=true to list them.")
+    } else {
+        format!("browser tab {tab_id} is not available; call web_scan with tabs_only=true")
+    };
+    errors::structured(errors::TAB_OUT_OF_SCOPE, &message, false)
+}
+
+/// Pick the tab a scoped call acts on. A requested id must be in the owner's
+/// scope; with none requested the choice never leaves the scope, so another
+/// project's or the user's active tab is never driven by accident.
+fn select_scoped_tab(
+    slot: &SessionState,
+    owner: &TabOwner,
+    requested: Option<i64>,
+) -> Result<i64, String> {
+    let owned = slot.scoped_tabs(&owner.project_id);
+    if let Some(tab_id) = requested {
+        if owned.iter().any(|tab| tab.id == tab_id) {
+            return Ok(tab_id);
+        }
+        return Err(out_of_scope(tab_id, slot.tabs.contains_key(&tab_id)));
+    }
+    slot.scopes
+        .get(&owner.project_id)
+        .and_then(|scope| scope.selected)
+        .filter(|selected| owned.iter().any(|tab| tab.id == *selected))
+        .or_else(|| owned.iter().find(|tab| tab.active).map(|tab| tab.id))
+        .or_else(|| owned.first().map(|tab| tab.id))
+        .ok_or_else(|| {
+            errors::structured(
+                errors::TAB_OUT_OF_SCOPE,
+                "this project has no browser tab in scope. Open one with web_open_tab, or call web_scan with tabs_only=true and pass one of unscoped_tabs as switch_tab_id so the user is asked to share it.",
+                false,
+            )
+        })
+}
+
+/// Embedded tab ids in JSON commands get the same check as the outer tab id,
+/// and CDP methods that can reach other targets or the whole browser are
+/// refused in a scoped session.
+fn scope_check_command(code: &str, slot: &SessionState, owner: &TabOwner) -> Result<(), String> {
+    let Some(command) = json_command(code) else {
+        return Ok(());
+    };
+    let owned: HashSet<i64> = slot
+        .scopes
+        .get(&owner.project_id)
+        .map(|scope| scope.tabs.keys().copied().collect())
+        .unwrap_or_default();
+    let check = |id: i64| {
+        if owned.contains(&id) {
+            Ok(())
+        } else {
+            Err(out_of_scope(id, slot.tabs.contains_key(&id)))
+        }
+    };
+    match command.get("cmd").and_then(Value::as_str) {
+        Some("tabs") => {
+            if let Some(ids) = close_ids_from_script(code) {
+                for id in ids {
+                    check(id)?;
+                }
+            }
+            if let Some(id) = command.get("tabId").and_then(Value::as_i64) {
+                check(id)?;
+            }
+            Ok(())
+        }
+        Some("cdp") => {
+            if let Some(id) = command.get("tabId").and_then(Value::as_i64) {
+                check(id)?;
+            }
+            let method = command.get("method").and_then(Value::as_str).unwrap_or("");
+            if method.starts_with("Target.") || method.starts_with("Browser.") {
+                return Err(errors::structured(
+                    errors::TAB_OUT_OF_SCOPE,
+                    &format!("CDP method {method} can reach targets outside this project's tabs and is not allowed in a scoped browser session; open tabs with web_open_tab or {{\"cmd\":\"tabs\",\"method\":\"create\"}} instead"),
+                    false,
+                ));
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn tab_group_color(project_id: &str) -> &'static str {
+    let digest = Sha256::digest(project_id.as_bytes());
+    TAB_GROUP_COLORS[digest[0] as usize % TAB_GROUP_COLORS.len()]
+}
+
+/// Pin a tab-create command to the owner's window and label it with the
+/// project's tab group. Any window or group the model named is dropped first:
+/// placement is the bridge's decision. Without the `tab_scope` capability the
+/// command is only sanitised; the extension would ignore the hints anyway.
+fn scope_create_command(command: &mut Value, slot: &SessionState, owner: &TabOwner, title: &str) {
+    let Some(fields) = command.as_object_mut() else {
+        return;
+    };
+    fields.remove("windowId");
+    fields.remove("group");
+    if !slot.supports_tab_scope() {
+        return;
+    }
+    let scope = slot.scopes.get(&owner.project_id);
+    if let Some(window_id) = scope.and_then(|scope| scope.window_id) {
+        fields.insert("windowId".into(), json!(window_id));
+    }
+    let mut group = json!({ "title": title, "color": tab_group_color(&owner.project_id) });
+    if let Some(group_id) = scope.and_then(|scope| scope.group_id) {
+        group["id"] = json!(group_id);
+    }
+    fields.insert("group".into(), group);
+}
+
+/// Tab listings the extension returns cover the whole profile; narrow them to
+/// the owner's scope before the model sees them.
+fn scope_filter_result(
+    code: &str,
+    mut value: Value,
+    slot: &SessionState,
+    owner: &TabOwner,
+) -> Value {
+    let Some(command) = json_command(code) else {
+        return value;
+    };
+    if command.get("cmd").and_then(Value::as_str) != Some("tabs") {
+        return value;
+    }
+    let scoped = json!(slot.scoped_tabs(&owner.project_id));
+    match command.get("method").and_then(Value::as_str) {
+        Some("close") => {
+            if value.is_object() {
+                value["remaining"] = scoped;
+            }
+            value
+        }
+        None | Some("list") | Some("query") => scoped,
+        _ => value,
+    }
+}
+
 fn request_payload(id: &str, tab_id: Option<i64>, code: &str, timeout: Duration) -> String {
     let mut payload = json!({
         "id": id,
@@ -2291,6 +2999,11 @@ fn parse_bridge_reply(message: &Value) -> BridgeReply {
             .get("wait")
             .cloned()
             .filter(|value| !value.is_null()),
+        new_tabs: message
+            .get("newTabs")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(parse_tab).collect())
+            .unwrap_or_default(),
     }
 }
 
@@ -2373,9 +3086,21 @@ fn render_json(value: &Value) -> String {
 
 fn chat_tab(
     tabs: &[BrowserTab],
+    unscoped: Option<&[BrowserTab]>,
     requested: Option<i64>,
 ) -> Result<(i64, chat_site::ChatSite), String> {
     if tabs.is_empty() {
+        // A signed-in chat tab the user has open is theirs until shared.
+        if let Some(candidate) = unscoped
+            .into_iter()
+            .flatten()
+            .find(|tab| chat_site::detect(&tab.url).is_some())
+        {
+            return Err(format!(
+                "web_agent_* found a signed-in chat tab the user has open ({} at tab {}) that this project does not own. Pass switch_tab_id={} so the user is asked to share it, or open your own tab.",
+                candidate.url, candidate.id, candidate.id
+            ));
+        }
         return Err(format!(
             "no HTTP(S) tabs are available for web_agent_*. Open {} and sign in first.",
             chat_site::supported_sites_help()
@@ -2410,6 +3135,7 @@ fn chat_tab(
 
 struct ChatTurn {
     session: Option<String>,
+    owner: Option<TabOwner>,
     tab_id: i64,
     site: chat_site::ChatSite,
 }
@@ -2418,13 +3144,21 @@ async fn begin_chat_turn(
     bridge: &BrowserBridge,
     args: &Value,
     session: Option<String>,
+    env: &dyn ToolEnv,
 ) -> Result<ChatTurn, String> {
     bridge.require_chat_capability(session.as_deref()).await?;
     let requested = tab_id_arg(args)?;
-    let tabs = bridge.tabs_on(session.as_deref()).await?;
-    let (tab_id, site) = chat_tab(&tabs, requested)?;
+    let owner = tab_owner(env);
+    bridge
+        .authorize_tab(session.as_deref(), owner.as_ref(), requested, env)
+        .await?;
+    let listing = bridge
+        .scoped_tabs_on(session.as_deref(), owner.as_ref())
+        .await?;
+    let (tab_id, site) = chat_tab(&listing.tabs, listing.unscoped.as_deref(), requested)?;
     Ok(ChatTurn {
         session,
+        owner,
         tab_id,
         site,
     })
@@ -2653,6 +3387,11 @@ impl Tool for BrowserSetupTool {
             .await;
         let mut info = self.bridge.setup_info().await;
         info["workspace"] = self.bridge.workspace_status(env.project_id()).await;
+        info["tab_scope"] = self
+            .bridge
+            .scope_status("shared", tab_owner(env).as_ref())
+            .await
+            .unwrap_or(Value::Null);
         info["url_filters"] = json!({
             "block": filters.block,
             "prefer": filters.prefer,
@@ -2721,13 +3460,18 @@ impl Tool for WebScanTool {
         if let Err(fail) = occupy_or_fail(&self.bridge, env, session.as_deref()) {
             return fail;
         }
+        let owner = tab_owner(env);
         if args
             .get("tabs_only")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            return match self.bridge.tabs_on(session.as_deref()).await {
-                Ok(tabs) => ToolResult::ok(render_json(&json!({ "tabs": tabs }))),
+            return match self
+                .bridge
+                .scoped_tabs_on(session.as_deref(), owner.as_ref())
+                .await
+            {
+                Ok(listing) => ToolResult::ok(render_json(&listing.render())),
                 Err(error) => ToolResult::fail(error),
             };
         }
@@ -2735,6 +3479,13 @@ impl Tool for WebScanTool {
             Ok(tab_id) => tab_id,
             Err(error) => return ToolResult::fail(error),
         };
+        if let Err(error) = self
+            .bridge
+            .authorize_tab(session.as_deref(), owner.as_ref(), tab_id, env)
+            .await
+        {
+            return ToolResult::fail(error);
+        }
         let text_only = args
             .get("text_only")
             .and_then(Value::as_bool)
@@ -2761,8 +3512,9 @@ impl Tool for WebScanTool {
         };
         match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 session.as_deref(),
+                owner.as_ref(),
                 tab_id,
                 &script,
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -2882,17 +3634,26 @@ impl Tool for WebExecuteJsTool {
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .clamp(1, MAX_TIMEOUT_MS);
+        let owner = tab_owner(env);
         if let Err(error) = self
             .bridge
-            .refuse_if_needs_human(session.as_deref(), tab_id, script)
+            .refuse_if_needs_human(session.as_deref(), owner.as_ref(), tab_id, script)
+            .await
+        {
+            return ToolResult::fail(error);
+        }
+        if let Err(error) = self
+            .bridge
+            .authorize_tab(session.as_deref(), owner.as_ref(), tab_id, env)
             .await
         {
             return ToolResult::fail(error);
         }
         match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 session.as_deref(),
+                owner.as_ref(),
                 tab_id,
                 script,
                 Duration::from_millis(timeout_ms),
@@ -2900,14 +3661,26 @@ impl Tool for WebExecuteJsTool {
             .await
         {
             Ok(execution) => {
-                if is_tabs_create(script) {
-                    if let Some(turn_id) = env.turn_id() {
+                if let Some(turn_id) = env.turn_id() {
+                    if is_tabs_create(script) {
                         self.bridge
                             .record_opened_tab(
                                 turn_id,
                                 env.frame_id().unwrap_or(""),
                                 &execution.session,
                                 &execution.value,
+                            )
+                            .await;
+                    }
+                    // Popups the page opened from this project's tab are this
+                    // turn's tabs too: owned now, cleaned up with the rest.
+                    for popup in &execution.new_tabs {
+                        self.bridge
+                            .record_opened_tab(
+                                turn_id,
+                                env.frame_id().unwrap_or(""),
+                                &execution.session,
+                                &json!({ "id": popup.id, "url": popup.url, "title": popup.title }),
                             )
                             .await;
                     }
@@ -2995,9 +3768,10 @@ impl Tool for WebOpenTabTool {
             return ToolResult::fail(browser_url_filters::block_message(url, rule));
         }
         let active = args.get("active").and_then(Value::as_bool).unwrap_or(false);
+        let owner = tab_owner(env);
         match self
             .bridge
-            .open_tab_on(session.as_deref(), url, active)
+            .open_tab_on(session.as_deref(), owner.as_ref(), url, active)
             .await
         {
             Ok((session_name, reply)) => {
@@ -3011,7 +3785,15 @@ impl Tool for WebOpenTabTool {
                         )
                         .await;
                 }
-                ToolResult::ok(render_json(&open_tab_result(reply, url, &filters)))
+                let mut result = open_tab_result(reply, url, &filters);
+                if let Some(scope) = self
+                    .bridge
+                    .scope_status(&session_name, owner.as_ref())
+                    .await
+                {
+                    result["scope"] = scope;
+                }
+                ToolResult::ok(render_json(&result))
             }
             Err(error) => ToolResult::fail(error),
         }
@@ -3107,10 +3889,19 @@ impl Tool for WebScreenshotTool {
             })
             .to_string()
         };
+        let owner = tab_owner(env);
+        if let Err(error) = self
+            .bridge
+            .authorize_tab(session.as_deref(), owner.as_ref(), tab_id, env)
+            .await
+        {
+            return ToolResult::fail(error);
+        }
         let execution = match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 session.as_deref(),
+                owner.as_ref(),
                 tab_id,
                 &code,
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -3269,6 +4060,14 @@ impl Tool for WebSaveAssetsTool {
             Ok(tab_id) => tab_id,
             Err(error) => return ToolResult::fail(error),
         };
+        let owner = tab_owner(env);
+        if let Err(error) = self
+            .bridge
+            .authorize_tab(session.as_deref(), owner.as_ref(), tab_id, env)
+            .await
+        {
+            return ToolResult::fail(error);
+        }
         let mut saved = Vec::new();
         for url_value in urls {
             let Some(url) = url_value.as_str() else {
@@ -3285,8 +4084,9 @@ impl Tool for WebSaveAssetsTool {
                 json!({ "cmd": "download", "url": url, "referrer": referrer }).to_string();
             match self
                 .bridge
-                .execute_on(
+                .execute_scoped(
                     session.as_deref(),
+                    owner.as_ref(),
                     tab_id,
                     &command,
                     Duration::from_millis(MAX_TIMEOUT_MS),
@@ -3405,7 +4205,7 @@ impl Tool for WebAgentSendTool {
         if let Err(fail) = occupy_or_fail(&self.bridge, env, session.as_deref()) {
             return fail;
         }
-        let turn = match begin_chat_turn(&self.bridge, args, session).await {
+        let turn = match begin_chat_turn(&self.bridge, args, session, env).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3418,8 +4218,9 @@ impl Tool for WebAgentSendTool {
         };
         let ready = match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 turn.session.as_deref(),
+                turn.owner.as_ref(),
                 Some(turn.tab_id),
                 &chat_site::ready_script(),
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -3437,8 +4238,9 @@ impl Tool for WebAgentSendTool {
         }
         let fill = match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 turn.session.as_deref(),
+                turn.owner.as_ref(),
                 Some(turn.tab_id),
                 &chat_site::send_script(prompt),
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -3450,8 +4252,9 @@ impl Tool for WebAgentSendTool {
         };
         let sent = match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 turn.session.as_deref(),
+                turn.owner.as_ref(),
                 Some(turn.tab_id),
                 &chat_site::click_send_script(),
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -3510,7 +4313,7 @@ impl Tool for WebAgentWaitTool {
         if let Err(fail) = occupy_or_fail(&self.bridge, env, session.as_deref()) {
             return fail;
         }
-        let turn = match begin_chat_turn(&self.bridge, args, session).await {
+        let turn = match begin_chat_turn(&self.bridge, args, session, env).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
         };
@@ -3528,8 +4331,9 @@ impl Tool for WebAgentWaitTool {
         .to_string();
         match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 turn.session.as_deref(),
+                turn.owner.as_ref(),
                 Some(turn.tab_id),
                 &command,
                 Duration::from_millis(timeout_ms),
@@ -3594,14 +4398,15 @@ impl Tool for WebAgentReadTool {
         if let Err(fail) = occupy_or_fail(&self.bridge, env, session.as_deref()) {
             return fail;
         }
-        let turn = match begin_chat_turn(&self.bridge, args, session).await {
+        let turn = match begin_chat_turn(&self.bridge, args, session, env).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
         };
         match self
             .bridge
-            .execute_on(
+            .execute_scoped(
                 turn.session.as_deref(),
+                turn.owner.as_ref(),
                 Some(turn.tab_id),
                 &chat_site::read_script(),
                 Duration::from_millis(DEFAULT_TIMEOUT_MS),
@@ -4177,8 +4982,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.4.2");
-        assert_eq!(info["extension_version"], "0.4.2");
+        assert_eq!(info["bundled_extension_version"], "0.5.0");
+        assert_eq!(info["extension_version"], "0.5.0");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -4554,6 +5359,7 @@ mod tests {
                 value: json!({ "id": 1 }),
                 ready: None,
                 wait: None,
+                new_tabs: Vec::new(),
             },
             "https://scholar.google.com",
             &filters,
@@ -4565,6 +5371,7 @@ mod tests {
                 value: json!({ "id": 1 }),
                 ready: Some(true),
                 wait: Some(json!({ "until": "complete", "waited_ms": 12 })),
+                new_tabs: Vec::new(),
             },
             "https://pubmed.ncbi.nlm.nih.gov/1",
             &filters,
@@ -4900,6 +5707,8 @@ mod tests {
             title: url.into(),
             active,
             window_id: None,
+            group_id: None,
+            opener_tab_id: None,
         }
     }
 
@@ -4909,23 +5718,23 @@ mod tests {
         let gemini = tab(2, "https://gemini.google.com/app", true);
         let google_ai = tab(3, "https://www.google.com/search?udm=50&q=rna", false);
         let other = tab(4, "https://example.com", true);
-        let (id, site) = chat_tab(&[chatgpt.clone(), gemini.clone()], None).unwrap();
+        let (id, site) = chat_tab(&[chatgpt.clone(), gemini.clone()], None, None).unwrap();
         assert_eq!(id, 2);
         assert_eq!(site, chat_site::ChatSite::Gemini);
-        let (id, site) = chat_tab(&[chatgpt.clone(), other.clone()], None).unwrap();
+        let (id, site) = chat_tab(&[chatgpt.clone(), other.clone()], None, None).unwrap();
         assert_eq!(id, 1);
         assert_eq!(site, chat_site::ChatSite::ChatGpt);
-        let (id, site) = chat_tab(&[google_ai.clone(), other.clone()], Some(3)).unwrap();
+        let (id, site) = chat_tab(&[google_ai.clone(), other.clone()], None, Some(3)).unwrap();
         assert_eq!(id, 3);
         assert_eq!(site, chat_site::ChatSite::GoogleAi);
-        assert!(chat_tab(&[other.clone()], None)
+        assert!(chat_tab(&[other.clone()], None, None)
             .unwrap_err()
             .contains("chatgpt.com"));
-        assert!(chat_tab(&[other.clone()], Some(4))
+        assert!(chat_tab(&[other.clone()], None, Some(4))
             .unwrap_err()
             .contains("not one of those chat sites"));
         assert!(
-            chat_tab(&[tab(9, "https://chatgpt.com.evil.com/", true)], None)
+            chat_tab(&[tab(9, "https://chatgpt.com.evil.com/", true)], None, None)
                 .unwrap_err()
                 .contains("chatgpt.com")
         );
@@ -5040,7 +5849,7 @@ mod tests {
         let status = bridge.extension_status().await;
         assert!(status.connected);
         assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.4.2"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.5.0"));
         assert!(status.update_required);
         assert!(!status.automatic_reload_available);
         assert!(status.integrity_verified);
@@ -5101,7 +5910,7 @@ mod tests {
                 &json!({
                     "type": "ext_ready",
                     "protocol_version": 2,
-                    "extension_version": "0.4.2",
+                    "extension_version": "0.5.0",
                     "capabilities": ["runtime_reload", "article_scan"],
                     "tabs": []
                 })
@@ -5113,7 +5922,7 @@ mod tests {
         assert_eq!(update.outcome, "updated");
         assert!(update.status.connected);
         assert!(!update.status.update_required);
-        assert_eq!(update.status.current_version.as_deref(), Some("0.4.2"));
+        assert_eq!(update.status.current_version.as_deref(), Some("0.5.0"));
     }
 
     #[test]
@@ -5851,5 +6660,692 @@ mod tests {
         .unwrap();
         assert_eq!(wrapped.id, 8);
         assert!(parse_created_tab(&json!({ "url": "https://none.example" })).is_none());
+    }
+
+    // ---- project tab scope (#1617) ----
+
+    /// A tool env for one project's agent whose answer to "share this tab?"
+    /// is fixed, recording every question it was asked.
+    struct ScopeEnv {
+        root: PathBuf,
+        project_id: String,
+        frame_id: String,
+        allow: bool,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl ScopeEnv {
+        fn new(project_id: &str, frame_id: &str, allow: bool) -> Self {
+            Self {
+                root: PathBuf::from("."),
+                project_id: project_id.into(),
+                frame_id: frame_id.into(),
+                allow,
+                asked: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn owner(&self) -> TabOwner {
+            TabOwner {
+                project_id: self.project_id.clone(),
+                frame_id: self.frame_id.clone(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ToolEnv for ScopeEnv {
+        fn project_root(&self) -> &std::path::Path {
+            &self.root
+        }
+        async fn confirm(&self, message: &str) -> bool {
+            self.asked.lock().unwrap().push(message.to_string());
+            self.allow
+        }
+        async fn emit(&self, _event: wisp_tools::ToolEvent) {}
+        fn turn_id(&self) -> Option<&str> {
+            Some("scope-turn")
+        }
+        fn frame_id(&self) -> Option<&str> {
+            Some(&self.frame_id)
+        }
+        fn project_id(&self) -> Option<&str> {
+            Some(&self.project_id)
+        }
+    }
+
+    fn scoped_handshake(instance: &str, tabs: Value) -> String {
+        json!({
+            "type": "ext_ready",
+            "protocol_version": 2,
+            "extension_version": "0.5.0",
+            "capabilities": ["tab_scope", "managed_tabs"],
+            "browser_instance": instance,
+            "tabs": tabs
+        })
+        .to_string()
+    }
+
+    fn user_tab(id: i64, url: &str, window_id: i64) -> Value {
+        json!({ "id": id, "url": url, "title": url, "active": true, "windowId": window_id })
+    }
+
+    /// Answer the next outbound request with `result` and return the request
+    /// (its `code` parsed as JSON when it is a command).
+    async fn answer_next(
+        bridge: &BrowserBridge,
+        rx: &mut mpsc::UnboundedReceiver<Message>,
+        result: Value,
+    ) -> (Value, Value) {
+        let outbound = rx.recv().await.unwrap().into_text().unwrap();
+        let outbound: Value = serde_json::from_str(&outbound).unwrap();
+        let command = outbound["code"]
+            .as_str()
+            .and_then(|code| serde_json::from_str::<Value>(code).ok())
+            .unwrap_or(Value::Null);
+        let reply = json!({ "type": "result", "id": outbound["id"], "result": result });
+        bridge.handle_text(1, &reply.to_string()).await;
+        (outbound, command)
+    }
+
+    async fn open_for(
+        bridge: &Arc<BrowserBridge>,
+        rx: &mut mpsc::UnboundedReceiver<Message>,
+        owner: &TabOwner,
+        url: &str,
+        created: Value,
+    ) -> Value {
+        let opening = {
+            let bridge = bridge.clone();
+            let owner = owner.clone();
+            let url = url.to_string();
+            tokio::spawn(async move { bridge.open_tab_on(None, Some(&owner), &url, false).await })
+        };
+        let (_, command) = answer_next(bridge, rx, created).await;
+        opening.await.unwrap().unwrap();
+        command
+    }
+
+    async fn scoped_bridge() -> (
+        Arc<BrowserBridge>,
+        mpsc::UnboundedReceiver<Message>,
+        TabOwner,
+        TabOwner,
+    ) {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        bridge
+            .handle_text(
+                1,
+                &scoped_handshake("browser-1", json!([user_tab(1, "https://mine.example", 5)])),
+            )
+            .await;
+        let a = ScopeEnv::new("project-a", "frame-a", true).owner();
+        let b = ScopeEnv::new("project-b", "frame-b", true).owner();
+        let first = open_for(
+            &bridge,
+            &mut rx,
+            &a,
+            "https://a.example",
+            json!({ "id": 2, "url": "https://a.example", "title": "A", "windowId": 5, "groupId": 9 }),
+        )
+        .await;
+        assert!(
+            first.get("windowId").is_none(),
+            "first tab binds the window: {first}"
+        );
+        assert_eq!(first["group"]["title"], "Wisp");
+        assert!(first["group"].get("id").is_none());
+        assert!(TAB_GROUP_COLORS.contains(&first["group"]["color"].as_str().unwrap()));
+        open_for(
+            &bridge,
+            &mut rx,
+            &b,
+            "https://b.example",
+            json!({ "id": 3, "url": "https://b.example", "title": "B", "windowId": 6, "groupId": 10 }),
+        )
+        .await;
+        // The extension's next snapshot lists every tab in the profile.
+        bridge
+            .handle_text(
+                1,
+                &scoped_handshake(
+                    "browser-1",
+                    json!([
+                        user_tab(1, "https://mine.example", 5),
+                        { "id": 2, "url": "https://a.example", "title": "A", "windowId": 5, "groupId": 9 },
+                        { "id": 3, "url": "https://b.example", "title": "B", "windowId": 6, "groupId": 10 }
+                    ]),
+                ),
+            )
+            .await;
+        (bridge, rx, a, b)
+    }
+
+    #[tokio::test]
+    async fn scoped_listing_shows_own_tabs_hides_other_projects_and_offers_the_users_own() {
+        let (bridge, mut rx, a, b) = scoped_bridge().await;
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        let ids = |rows: &Value| -> Vec<i64> {
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .map(|tab| tab["id"].as_i64().unwrap())
+                .collect()
+        };
+        assert_eq!(ids(&listing["tabs"]), vec![2]);
+        assert_eq!(
+            ids(&listing["unscoped_tabs"]),
+            vec![1],
+            "B's tab is invisible to A"
+        );
+        assert_eq!(listing["scope"]["project_id"], "project-a");
+        assert_eq!(listing["scope"]["window_id"], 5);
+        assert_eq!(listing["scope"]["group_id"], 9);
+        assert_eq!(listing["scope"]["window_pinning"], "pinned");
+        assert_eq!(listing["scope"]["tabs"][0]["opened_by"], "frame-a");
+        assert_eq!(listing["scope"]["tabs"][0]["granted"], false);
+        assert_eq!(ids(&listing["tabs"]).len(), 1);
+
+        let for_b = bridge
+            .scoped_tabs_on(None, Some(&b))
+            .await
+            .unwrap()
+            .render();
+        assert_eq!(ids(&for_b["tabs"]), vec![3]);
+        assert_eq!(for_b["scope"]["window_id"], 6);
+
+        // Without a project (CLI, tests) the lane is listed as before.
+        let legacy = bridge.scoped_tabs_on(None, None).await.unwrap().render();
+        assert_eq!(ids(&legacy["tabs"]), vec![1, 2, 3]);
+        assert!(legacy.get("scope").is_none());
+
+        // A's later tabs go to A's window and group whatever has focus.
+        let second = open_for(
+            &bridge,
+            &mut rx,
+            &a,
+            "https://a2.example",
+            json!({ "id": 4, "url": "https://a2.example", "title": "A2", "windowId": 5, "groupId": 9 }),
+        )
+        .await;
+        assert_eq!(second["windowId"], 5);
+        assert_eq!(second["group"]["id"], 9);
+
+        // When the extension had to rebuild a closed window, the binding follows.
+        let rebuilt = open_for(
+            &bridge,
+            &mut rx,
+            &a,
+            "https://a3.example",
+            json!({ "id": 7, "url": "https://a3.example", "title": "A3", "windowId": 11, "groupId": 12 }),
+        )
+        .await;
+        assert_eq!(rebuilt["windowId"], 5);
+        let status = bridge.scope_status("shared", Some(&a)).await.unwrap();
+        assert_eq!(status["window_id"], 11);
+        assert_eq!(status["group_id"], 12);
+    }
+
+    #[tokio::test]
+    async fn scoped_execution_refuses_foreign_tabs_embedded_ids_and_cross_target_cdp() {
+        let (bridge, mut rx, a, _b) = scoped_bridge().await;
+        let run = |code: &str, tab: Option<i64>| {
+            let bridge = bridge.clone();
+            let a = a.clone();
+            let code = code.to_string();
+            async move {
+                bridge
+                    .execute_scoped(None, Some(&a), tab, &code, Duration::from_secs(1))
+                    .await
+            }
+        };
+        for (code, tab) in [
+            ("document.title", Some(3)),
+            ("document.title", Some(1)),
+            (r#"{"cmd":"tabs","method":"close","tabIds":[2,3]}"#, None),
+            (r#"{"cmd":"tabs","method":"switch","tabId":1}"#, None),
+            (
+                r#"{"cmd":"cdp","method":"Page.captureScreenshot","tabId":3}"#,
+                None,
+            ),
+            (
+                r#"{"cmd":"cdp","method":"Target.createTarget","params":{"url":"https://x"}}"#,
+                None,
+            ),
+            (
+                r#"{"cmd":"cdp","method":"Browser.getWindowForTarget"}"#,
+                None,
+            ),
+        ] {
+            let error = run(code, tab).await.err().expect(code);
+            assert!(
+                error.contains(errors::TAB_OUT_OF_SCOPE),
+                "{code} with {tab:?}: {error}"
+            );
+        }
+        assert!(rx.try_recv().is_err(), "nothing reached the extension");
+
+        // Omitting the tab never falls back to the profile's active tab (1):
+        // the project's own tab is used even though the lane selected tab 1.
+        bridge
+            .state
+            .lock()
+            .await
+            .sessions
+            .get_mut("shared")
+            .unwrap()
+            .selected_tab = Some(1);
+        let running = run("document.title", None);
+        let (outbound, _) = tokio::join!(running, answer_next(&bridge, &mut rx, json!("A")),);
+        let execution = outbound.unwrap();
+        assert_eq!(execution.tab_id, 2);
+        assert_eq!(execution.value, "A");
+
+        // A project with nothing in scope is told how to get a tab, not handed one.
+        let c = ScopeEnv::new("project-c", "frame-c", true).owner();
+        let error = bridge
+            .execute_scoped(
+                None,
+                Some(&c),
+                None,
+                "document.title",
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("no browser tab in scope"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn scoped_tab_listings_and_close_results_never_leak_other_tabs() {
+        let (bridge, mut rx, a, _b) = scoped_bridge().await;
+        let listing = {
+            let bridge = bridge.clone();
+            let a = a.clone();
+            tokio::spawn(async move {
+                bridge
+                    .execute_scoped(
+                        None,
+                        Some(&a),
+                        None,
+                        r#"{"cmd":"tabs"}"#,
+                        Duration::from_secs(1),
+                    )
+                    .await
+            })
+        };
+        answer_next(
+            &bridge,
+            &mut rx,
+            json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
+        )
+        .await;
+        let listing = listing.await.unwrap().unwrap();
+        assert_eq!(listing.value.as_array().unwrap().len(), 1);
+        assert_eq!(listing.value[0]["id"], 2);
+
+        let closing = {
+            let bridge = bridge.clone();
+            let a = a.clone();
+            tokio::spawn(async move {
+                bridge
+                    .execute_scoped(
+                        None,
+                        Some(&a),
+                        None,
+                        r#"{"cmd":"tabs","method":"close","tabIds":[2]}"#,
+                        Duration::from_secs(1),
+                    )
+                    .await
+            })
+        };
+        answer_next(
+            &bridge,
+            &mut rx,
+            json!({ "closed": [2], "remaining": [{ "id": 1 }, { "id": 3 }] }),
+        )
+        .await;
+        let closed = closing.await.unwrap().unwrap();
+        assert_eq!(closed.value["remaining"], json!([]));
+        assert!(bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .tabs
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_users_own_tab_is_shared_only_when_the_user_says_yes() {
+        let (bridge, mut rx, _a, _b) = scoped_bridge().await;
+        let refusing = ScopeEnv::new("project-a", "frame-a", false);
+        let result = WebScanTool::new(bridge.clone())
+            .run(&json!({ "switch_tab_id": 1 }), &refusing)
+            .await;
+        assert!(!result.success);
+        assert!(
+            result.content.contains("did not share"),
+            "{}",
+            result.content
+        );
+        assert_eq!(refusing.asked.lock().unwrap().len(), 1);
+        assert!(refusing.asked.lock().unwrap()[0].contains("Share browser tab 1"));
+        assert!(rx.try_recv().is_err());
+
+        // Another project's tab is refused without even asking.
+        let other = ScopeEnv::new("project-a", "frame-a", true);
+        let result = WebScanTool::new(bridge.clone())
+            .run(&json!({ "switch_tab_id": 3 }), &other)
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains(errors::TAB_OUT_OF_SCOPE));
+        assert!(other.asked.lock().unwrap().is_empty());
+
+        let allowing = Arc::new(ScopeEnv::new("project-a", "frame-a", true));
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = allowing.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 1 }), &*env)
+                    .await
+            })
+        };
+        let (outbound, _) = answer_next(
+            &bridge,
+            &mut rx,
+            json!({ "url": "https://mine.example", "title": "Mine", "text": "hi", "ready_state": "complete" }),
+        )
+        .await;
+        assert_eq!(outbound["tabId"], 1);
+        assert!(scanning.await.unwrap().success);
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&allowing.owner()))
+            .await
+            .unwrap()
+            .render();
+        let granted: Vec<(i64, bool)> = listing["scope"]["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tab| {
+                (
+                    tab["id"].as_i64().unwrap(),
+                    tab["granted"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(granted, vec![(1, true), (2, false)]);
+        assert!(listing["unscoped_tabs"].as_array().unwrap().is_empty());
+        // Sharing never moves the project's window binding.
+        assert_eq!(listing["scope"]["window_id"], 5);
+    }
+
+    #[tokio::test]
+    async fn moving_a_tab_elsewhere_or_restarting_the_browser_ends_ownership() {
+        let (bridge, _rx, a, b) = scoped_bridge().await;
+        // The user drags A's tab into another window.
+        bridge
+            .handle_text(
+                1,
+                &scoped_handshake(
+                    "browser-1",
+                    json!([
+                        user_tab(1, "https://mine.example", 5),
+                        { "id": 2, "url": "https://a.example", "title": "A", "windowId": 6 },
+                        { "id": 3, "url": "https://b.example", "title": "B", "windowId": 6, "groupId": 10 }
+                    ]),
+                ),
+            )
+            .await;
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        assert!(listing["tabs"].as_array().unwrap().is_empty());
+        assert_eq!(listing["scope"]["detached"], json!([2]));
+        assert_eq!(
+            listing["unscoped_tabs"].as_array().unwrap().len(),
+            2,
+            "a detached tab is the user's again"
+        );
+        let again = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        assert_eq!(again["scope"]["detached"], json!([]), "reported once");
+        assert_eq!(
+            bridge
+                .scoped_tabs_on(None, Some(&b))
+                .await
+                .unwrap()
+                .tabs
+                .len(),
+            1
+        );
+
+        // A new browser process reuses small ids; nothing remembered may apply.
+        bridge
+            .handle_text(
+                1,
+                &scoped_handshake(
+                    "browser-2",
+                    json!([{ "id": 3, "url": "https://fresh.example", "title": "Fresh", "windowId": 1 }]),
+                ),
+            )
+            .await;
+        let for_b = bridge
+            .scoped_tabs_on(None, Some(&b))
+            .await
+            .unwrap()
+            .render();
+        assert!(for_b["tabs"].as_array().unwrap().is_empty());
+        assert_eq!(for_b["scope"]["window_id"], Value::Null);
+        assert_eq!(for_b["scope"]["window_pinning"], "unbound");
+    }
+
+    #[tokio::test]
+    async fn a_side_panel_question_shares_that_tab_without_taking_anyone_elses() {
+        let (bridge, _rx, a, b) = scoped_bridge().await;
+        bridge
+            .grant_tab("shared", "project-a", "panel-frame", 1)
+            .await;
+        bridge
+            .grant_tab("shared", "project-a", "panel-frame", 3)
+            .await;
+        bridge
+            .grant_tab("shared", "project-a", "panel-frame", 404)
+            .await;
+        bridge
+            .grant_tab("workspace:x", "project-a", "panel-frame", 1)
+            .await;
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        let owned: Vec<(i64, bool, String)> = listing["scope"]["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tab| {
+                (
+                    tab["id"].as_i64().unwrap(),
+                    tab["granted"].as_bool().unwrap(),
+                    tab["opened_by"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            owned,
+            vec![
+                (1, true, "panel-frame".into()),
+                (2, false, "frame-a".into())
+            ]
+        );
+        assert_eq!(
+            bridge.scoped_tabs_on(None, Some(&b)).await.unwrap().tabs[0].id,
+            3
+        );
+        // Sharing does not change which tab the project acts on by default.
+        assert_eq!(
+            bridge.state.lock().await.sessions["shared"].scopes["project-a"].selected,
+            Some(2)
+        );
+        assert!(!bridge
+            .state
+            .lock()
+            .await
+            .sessions
+            .contains_key("workspace:x"));
+    }
+
+    #[tokio::test]
+    async fn old_extensions_keep_the_access_boundary_but_report_no_window_pinning() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        bridge
+            .handle_text(
+                1,
+                &json!({
+                    "type": "ext_ready", "protocol_version": 2, "extension_version": "0.4.2",
+                    "capabilities": ["managed_tabs"],
+                    "tabs": [user_tab(1, "https://mine.example", 5)]
+                })
+                .to_string(),
+            )
+            .await;
+        let a = ScopeEnv::new("project-a", "frame-a", true).owner();
+        let command = open_for(
+            &bridge,
+            &mut rx,
+            &a,
+            "https://a.example",
+            json!({ "id": 2, "url": "https://a.example", "title": "A", "windowId": 5 }),
+        )
+        .await;
+        assert!(command.get("windowId").is_none());
+        assert!(command.get("group").is_none());
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        assert_eq!(listing["scope"]["window_pinning"], "unsupported_extension");
+        assert_eq!(listing["scope"]["window_id"], Value::Null);
+        assert_eq!(listing["tabs"][0]["id"], 2);
+        let error = bridge
+            .execute_scoped(
+                None,
+                Some(&a),
+                Some(1),
+                "document.title",
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains(errors::TAB_OUT_OF_SCOPE));
+    }
+
+    #[tokio::test]
+    async fn execute_js_tab_create_is_pinned_and_popups_from_own_tabs_join_the_turn() {
+        let (store, tmp) = empty_store().await;
+        store
+            .create_project("project-a", "Project A", "/ws/a")
+            .await
+            .unwrap();
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        bridge
+            .handle_text(
+                1,
+                &scoped_handshake("browser-1", json!([user_tab(1, "https://mine.example", 5)])),
+            )
+            .await;
+        let env = Arc::new(ScopeEnv::new("project-a", "frame-a", true));
+        let a = env.owner();
+        let first = open_for(
+            &bridge,
+            &mut rx,
+            &a,
+            "https://a.example",
+            json!({ "id": 2, "url": "https://a.example", "title": "A", "windowId": 5, "groupId": 9 }),
+        )
+        .await;
+        assert_eq!(first["group"]["title"], "Wisp · Project A");
+
+        // The model names a window; the bridge replaces it with the project's.
+        let creating = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebExecuteJsTool::new(bridge, store)
+                    .run(
+                        &json!({ "script": r#"{"cmd":"tabs","method":"create","url":"https://c.example","windowId":99,"group":{"title":"mine"}}"# }),
+                        &*env,
+                    )
+                    .await
+            })
+        };
+        let outbound = rx.recv().await.unwrap().into_text().unwrap();
+        let outbound: Value = serde_json::from_str(&outbound).unwrap();
+        let command: Value = serde_json::from_str(outbound["code"].as_str().unwrap()).unwrap();
+        assert_eq!(command["windowId"], 5);
+        assert_eq!(command["group"]["id"], 9);
+        assert_eq!(command["group"]["title"], "Wisp · Project A");
+        bridge
+            .handle_text(
+                1,
+                &json!({
+                    "type": "result",
+                    "id": outbound["id"],
+                    "result": { "id": 4, "url": "https://c.example", "title": "C", "windowId": 5, "groupId": 9 },
+                    "newTabs": [
+                        { "id": 8, "url": "https://popup.example", "title": "Popup", "windowId": 5, "openerTabId": 4 },
+                        { "id": 9, "url": "https://user-popup.example", "title": "Theirs", "windowId": 5, "openerTabId": 1 }
+                    ]
+                })
+                .to_string(),
+            )
+            .await;
+        assert!(creating.await.unwrap().success);
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        let owned: Vec<i64> = listing["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tab| tab["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(
+            owned,
+            vec![2, 4, 8],
+            "the popup from the user's tab stays theirs"
+        );
+
+        let TabCleanupAction::Prompt(prompt) = bridge.complete_turn("scope-turn").await else {
+            panic!("expected a cleanup prompt");
+        };
+        // Tab 2 was opened on the bridge directly, outside any tool call, so
+        // only the tool-created tab and its popup are this turn's to clean up.
+        let mut ledger: Vec<i64> = prompt.tabs.iter().map(|tab| tab.tab_id).collect();
+        ledger.sort();
+        assert_eq!(ledger, vec![4, 8]);
+        let _ = std::fs::remove_file(tmp);
     }
 }

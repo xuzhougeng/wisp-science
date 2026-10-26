@@ -139,6 +139,36 @@ Pass `question` to say what to read out of it, e.g.
 It goes through the configured vision model, so `web_scan` stays the cheaper
 default — screenshot when you need eyes, not for every step.
 
+## Your tabs, in your window — the project tab scope
+
+In the shared browser every project has its own **tab scope**. You can read
+and drive only the tabs your project opened (plus popups they spawned) and
+tabs the user explicitly shared with it. Wisp decides this from the project
+you run in; nothing you pass can widen it.
+
+- `web_scan tabs_only` returns `tabs` (yours), `unscoped_tabs` (the user's
+  own pages that no project owns) and `scope` (`window_id`, `group_id`,
+  `window_pinning`, who opened each tab). Other projects' tabs are not shown
+  at all.
+- Omitting `switch_tab_id` always picks one of **your** tabs, never the tab
+  the user happens to have focused. With nothing in scope, open a tab with
+  `web_open_tab` first.
+- To use a page the user already has open, pass its id from `unscoped_tabs`
+  as `switch_tab_id`. The user is asked to share it; if they decline, the
+  tool fails with `TAB_OUT_OF_SCOPE` — do not retry or work around it. Never
+  ask for a tab the user did not mention.
+- Ids that are not yours fail with `TAB_OUT_OF_SCOPE`, including ids inside
+  `{"cmd":"tabs"}` or `{"cmd":"cdp"}` commands. CDP `Target.*` / `Browser.*`
+  methods are refused; open tabs with `web_open_tab`.
+- Your tabs open in your project's own window and in a tab group named
+  `Wisp · <project>`, whatever window the user is looking at. If
+  `scope.detached` lists a tab, the user moved it out of your window and it
+  is theirs again. If `window_pinning` is `unsupported_extension`, the
+  access rules still hold but the extension is too old to pin windows or
+  create groups; suggest `browser_setup {"action":"update_extension"}`.
+- The scope is not cookie or login isolation; the whole profile still shares
+  those. Use `session: "workspace"` when the user wants that.
+
 ## Tab hygiene — the app tracks what you open
 
 Browsing tasks (searching papers, opening a dozen results) used to leave the
@@ -158,7 +188,8 @@ already open.
   need it, or if the user explicitly asks now.
 
 Close **only ids you opened yourself**. Tabs the user had open, or ones
-they opened during the task, are theirs.
+they opened during the task, are theirs — closing them fails with
+`TAB_OUT_OF_SCOPE` unless the user shared the tab.
 
 ## Stop conditions (do not automate through these)
 

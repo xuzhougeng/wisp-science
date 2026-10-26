@@ -12,6 +12,12 @@ function isNoWindowError(error) {
   return /No current window/i.test(message);
 }
 
+// The window a project's tabs were pinned to has been closed since.
+function isMissingWindowError(error) {
+  var message = (error && error.message) || String(error || "");
+  return /No window with id/i.test(message);
+}
+
 async function withTabRetry(operation, attempts) {
   var max = attempts || 4;
   var lastError = null;
@@ -59,7 +65,7 @@ function createTabOps(chromeLike, managedIds) {
 
   var publicTab = function (tab) {
     if (!tab) return null;
-    return {
+    var result = {
       id: tab.id,
       url: tab.url || "",
       title: tab.title || "",
@@ -68,6 +74,39 @@ function createTabOps(chromeLike, managedIds) {
       windowId: tab.windowId,
       managed: managed.has(tab.id)
     };
+    if (Number.isInteger(tab.groupId) && tab.groupId >= 0) result.groupId = tab.groupId;
+    return result;
+  };
+
+  // Put a tab into its owner's native tab group. Grouping is a visual label,
+  // never an access boundary (Wisp enforces that), so failures here must not
+  // fail the open. A remembered group id is reused only while that group still
+  // exists in the tab's own window; otherwise a fresh group is created there.
+  var groupTab = async function (tab, group) {
+    if (!group || !chromeLike.tabs.group || !chromeLike.tabGroups) return tab;
+    var groupId = null;
+    if (Number.isInteger(group.id) && group.id >= 0) {
+      try {
+        var existing = await chromeLike.tabGroups.get(group.id);
+        if (existing && existing.windowId === tab.windowId) groupId = group.id;
+      } catch (_) {}
+    }
+    try {
+      var joined = await withTabRetry(function () {
+        var props = { tabIds: [tab.id] };
+        if (groupId !== null) props.groupId = groupId;
+        else props.createProperties = { windowId: tab.windowId };
+        return chromeLike.tabs.group(props);
+      });
+      if (groupId === null) {
+        await chromeLike.tabGroups.update(joined, {
+          title: String(group.title || "Wisp").slice(0, 60),
+          color: group.color || "blue"
+        });
+      }
+      tab.groupId = joined;
+    } catch (_) {}
+    return tab;
   };
 
   return {
@@ -84,17 +123,26 @@ function createTabOps(chromeLike, managedIds) {
       managed.clear();
       return true;
     },
-    create: async function (url, active) {
+    // options.windowId pins the tab to its owner's window; when that window is
+    // gone a new one is created for the same owner instead of borrowing
+    // whichever window currently has focus. options.group labels the tab.
+    create: async function (url, active, options) {
+      var opts = options || {};
+      var pinned = Number.isInteger(opts.windowId) ? opts.windowId : null;
       var tab;
       try {
         tab = await withTabRetry(function () {
-          return chromeLike.tabs.create({ url: url, active: active ?? false });
+          var props = { url: url, active: active ?? false };
+          if (pinned !== null) props.windowId = pinned;
+          return chromeLike.tabs.create(props);
         });
       } catch (error) {
-        if (!isNoWindowError(error)) throw error;
+        var recoverable = isNoWindowError(error) || (pinned !== null && isMissingWindowError(error));
+        if (!recoverable) throw error;
         tab = await openInNewWindow(url, active);
       }
       managed.add(tab.id);
+      tab = await groupTab(tab, opts.group);
       return publicTab(tab);
     },
     close: async function (ids) {
@@ -133,5 +181,6 @@ if (typeof self !== "undefined") {
   self.createTabOps = createTabOps;
   self.isTransientTabError = isTransientTabError;
   self.isNoWindowError = isNoWindowError;
+  self.isMissingWindowError = isMissingWindowError;
   self.withTabRetry = withTabRetry;
 }

@@ -1,6 +1,6 @@
 # Browser Runtime architecture
 
-Wisp extension 0.4.2 treats the Chrome extension as a **controlled access adapter**.
+Wisp extension 0.5.0 treats the Chrome extension as a **controlled access adapter**.
 The desktop process owns sessions, waits, staging, and approval.
 
 ```
@@ -133,6 +133,44 @@ The extension never writes project directories and never returns large base64 fi
 
 Playwright is not used. The user's daily Chrome User Data directory is never passed as `--user-data-dir`.
 
+## Project tab scope (#1617)
+
+The shared daily browser mixes several projects' agents with the user's own
+tabs, so the runtime keeps a **tab scope per project** on that lane. The scope
+is derived from the trusted `ToolEnv` project id; nothing in a tool argument
+can name another project, window or group to reach its tabs.
+
+| Rule | Behaviour |
+|---|---|
+| Ownership | A project owns the tabs it opened (`web_open_tab`, tab-create commands), popups a page opened from one of those tabs, and tabs the user explicitly shared with it. Owned tabs keep that owner across turns, so a project that takes the shared lane later does not inherit tabs another project left behind. |
+| Listing | `web_scan tabs_only` returns `tabs` (the scope), `unscoped_tabs` (the user's tabs no project owns) and a `scope` report with `project_id`, `agent_frame_id`, `window_id`, `group_id`, `window_pinning`, per-tab `opened_by` / `granted`, and `detached`. Tabs owned by **another** project are not listed at all. `{"cmd":"tabs"}` and the `remaining` list of a close command are narrowed the same way before the model sees them. |
+| Selection | A requested `switch_tab_id` must be in scope. Omitting it selects the project's own last-used tab, then its active tab, then its first tab — never the profile's active or lane-selected tab. A project with nothing in scope is told to open a tab or ask for one. |
+| Sharing | Passing the id of one of `unscoped_tabs` asks the user through the normal approval prompt (“Share browser tab …?”). Only a yes adds the tab to the scope, marked `granted`; the model cannot grant itself access. Another project's tab is refused without asking. A question asked from the extension's side panel shares that page's tab with the conversation's project without a second prompt, since the user started from it. |
+| Embedded commands | Tab ids inside `{"cmd":"tabs"}` (`close`, `switch`) and `{"cmd":"cdp"}` get the same check as the outer tab id. CDP `Target.*` and `Browser.*` methods are refused in a scoped session because they can reach other targets. |
+| Window pinning | The first tab a project opens fixes its window (`window_id`). Later tab-create commands carry that `windowId`, so switching the browser's foreground window does not move where the agent's tabs appear. When that window was closed, the extension opens a **new** window for the same owner (never another open window) and the binding follows the new window. |
+| Tab groups | New tabs are placed in a native tab group titled `Wisp · <project name>` with a colour derived from the project id. The group is a label, not a boundary: the backend scope is what refuses out-of-scope access. |
+| Revalidation | Every extension snapshot re-checks the scope: a closed tab leaves it; a tab the user moved to another window leaves it and is reported once under `detached`; a new `browser_instance` (the browser process restarted, so tab/window/group ids may now belong to someone else) clears every scope on that lane. Nothing is persisted across an app restart, so stale ids are never reused. |
+| Cleanup | The per-turn ledger (and therefore auto-close and the cleanup prompt) now also covers popups the page opened from the project's tabs. Cleanup still closes only ledger tabs, never another project's or the user's. |
+
+Capability negotiation: extension 0.5.0 advertises `tab_scope`, honours
+`windowId` / `group` on tab-create commands and reports `browser_instance`.
+With an older extension the access boundary above is still enforced by the
+backend, but `scope.window_pinning` reads `unsupported_extension` and no
+groups are created; the app does not claim pinning it cannot deliver.
+
+What the scope is **not**: it does not isolate cookies, logins or site
+storage — every tab in the shared profile still shares those. Use the project
+workspace (`session=workspace`) for that. Workspace lanes belong to one project
+already, so no narrower scope applies there. The shared cross-project lease
+(`occupy_turn`) is unchanged: the shared lane still serves one project's turn
+at a time; scoped parallelism is a separate, later decision.
+
+Current limitations and follow-ups: same-project agents are told apart by
+`opened_by` (the frame id) in the scope report, not by separate groups; the
+Wisp UI does not yet show the scope or offer sharing outside the approval
+prompt; a project's first tab still opens in whichever window Chrome treats as
+current, and the binding is only fixed from then on.
+
 ## Safety checks
 
 - `side_*` messages are honoured only from the live, origin-checked extension
@@ -155,3 +193,7 @@ Playwright is not used. The user's daily Chrome User Data directory is never pas
 - The extension's pause gate parses each incoming command and lets only
   `cmd:"control"` through while paused; it never sniffs the raw request
   string.
+- Tab ownership is decided from the host's project id, never from tool
+  arguments. Out-of-scope tab ids, including ones nested in `tabs` / `cdp`
+  commands, fail with `TAB_OUT_OF_SCOPE`; the user's own tabs join a scope only
+  through an approval prompt the user answers.
