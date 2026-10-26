@@ -378,10 +378,10 @@ test("website hero wordmark and bilingual title fit desktop and mobile", async (
   });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("https://wordmark.test/");
-  const logo = page.locator(".hero-wordmark");
-  await expect(logo).toHaveAttribute("src", "assets/wordmark-light.svg");
-  await expect(logo).toHaveAccessibleName("Wisp Science");
-  await expect.poll(() => logo.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+  // Inlined so the hero can animate its parts; it must keep the light palette.
+  const logo = page.getByRole("img", { name: "Wisp Science", exact: true });
+  await expect(logo).toHaveClass(/hero-wordmark/);
+  await expect(logo.locator(".wm-wisp")).toHaveAttribute("fill", "#141413");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(logo).toBeVisible();
