@@ -5232,36 +5232,58 @@ fn record_window_focus(label: &str, focused: bool) {
     }
 }
 
-fn app_has_focus() -> bool {
-    !focused_windows().lock().unwrap().is_empty()
+fn focused_window_labels() -> HashSet<String> {
+    focused_windows().lock().unwrap().clone()
 }
 
-/// Whether the user is looking at one of this app's windows.
+/// Labels of this app's windows the user is looking at right now.
 ///
 /// On Windows the WebView2 child HWND owns keyboard focus, so the top-level
 /// window reports `Focused(false)` right after every `Focused(true)` and the
 /// recorded set is empty while the user is actively using the app. The
 /// foreground window is the reliable signal there: it names exactly one
 /// top-level window no matter which child holds focus.
-fn app_is_foreground(app: &AppHandle) -> bool {
-    if app_has_focus() {
-        return true;
-    }
+fn foreground_window_labels(app: &AppHandle) -> HashSet<String> {
+    let mut labels = focused_window_labels();
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         let foreground = unsafe { GetForegroundWindow() }.0 as usize;
         if foreground != 0 {
-            return app.workspace_surfaces().values().any(|window| {
-                window
-                    .hwnd()
-                    .is_ok_and(|hwnd| hwnd.0 as usize == foreground)
-            });
+            labels.extend(
+                app.workspace_surfaces()
+                    .into_iter()
+                    .filter(|(_, window)| {
+                        window
+                            .hwnd()
+                            .is_ok_and(|hwnd| hwnd.0 as usize == foreground)
+                    })
+                    .map(|(label, _)| label),
+            );
         }
     }
     #[cfg(not(target_os = "windows"))]
     let _ = app;
-    false
+    labels
+}
+
+/// Whether the user is looking at this conversation: one of the foreground
+/// windows is currently viewing it (#1619).
+///
+/// Desktop notifications are suppressed on this, not on "any app window is in
+/// front". A conversation finishing in a background window, or behind another
+/// conversation of the same project, is not being watched, so it still gets its
+/// banner and sound cue; only the exact session on screen is silent.
+fn session_in_foreground(
+    foreground_labels: &HashSet<String>,
+    frame_id: &str,
+    active_frames: &HashMap<String, String>,
+) -> bool {
+    foreground_labels.iter().any(|label| {
+        active_frames
+            .get(label)
+            .is_some_and(|viewed| viewed == frame_id)
+    })
 }
 
 /// The `open-session` payload a window's most recent desktop notification was

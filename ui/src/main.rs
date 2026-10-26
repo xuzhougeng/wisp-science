@@ -3359,9 +3359,9 @@ fn App() -> impl IntoView {
     let trajectory_open_cb = trajectory_open;
     let fetch_trajectory_cb = fetch_trajectory.clone();
     // Desktop notification and sound cue for task status (#327, #1595). The
-    // backend drops them while any app window is focused or when both are
-    // disabled in settings, so callers just fire on every done/error/approval
-    // event.
+    // backend drops them while a foreground window is showing that session
+    // (#1619) or when both are disabled in settings, so callers just fire on
+    // every done/error/approval event.
     let notify_desktop = move |frame_id: &str, kind: &str, detail: &str| {
         let loc = locale.get_untracked();
         let title = t(loc, &format!("notify.{kind}"));

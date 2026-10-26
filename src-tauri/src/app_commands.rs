@@ -95,11 +95,14 @@ fn show_clickable_notification(
         .map_err(|error| error.to_string())
 }
 
-/// Desktop notification for task status (#327). No-op while any app window is
-/// focused (the in-app UI already shows the state). The banner and the sound
-/// cue (#1595) are switched separately in settings; this is a no-op only when
-/// both are off. Clicking the notification navigates to the session it was
-/// about (#434) — native callbacks also restore a hidden/minimized window (#499).
+/// Desktop notification for task status (#327). No-op while a foreground
+/// window is showing that very session (the in-app UI already shows the
+/// state); a session finishing behind another project window, or behind
+/// another conversation of the same project, still notifies (#1619). The banner
+/// and the sound cue (#1595) are switched separately in settings; this is a
+/// no-op only when both are off. Clicking the notification navigates to the
+/// session it was about (#434) — native callbacks also restore a
+/// hidden/minimized window (#499).
 #[tauri::command]
 pub(super) async fn notify_user(
     window: tauri::Window,
@@ -108,7 +111,11 @@ pub(super) async fn notify_user(
     body: String,
     session_id: String,
 ) -> Result<(), String> {
-    if app_is_foreground(window.app_handle()) {
+    if session_in_foreground(
+        &foreground_window_labels(window.app_handle()),
+        &session_id,
+        &state.viewed_frames(),
+    ) {
         return Ok(());
     }
     let Some(announcement) = crate::notification_sound::Announcement::new(

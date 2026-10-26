@@ -33,10 +33,10 @@ waiting on; it then only asks for the completion message.
 When the Run succeeds, fails, is cancelled, times out, or is lost, Wisp appends
 one message to the conversation that started it, with the Run title, outcome,
 exit code, elapsed time, Run ID, and execution context, and raises a desktop
-notification when the window is not in front. A turn running in that
-conversation at that moment finishes first. The message is part of the
-conversation history, so a later question about the result reaches an agent
-that knows the Run ended. The agent is not resumed on its own.
+notification unless that conversation is showing in a foreground window. A
+turn running in that conversation at that moment finishes first. The message
+is part of the conversation history, so a later question about the result
+reaches an agent that knows the Run ended. The agent is not resumed on its own.
 
 The request is stored with the Run, so a Run that ends while Wisp is closed is
 reported after the next launch. Cluster jobs submitted through

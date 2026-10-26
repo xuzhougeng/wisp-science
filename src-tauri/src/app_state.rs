@@ -700,6 +700,10 @@ impl AppState {
     pub(crate) fn active_frame(&self, label: &str) -> Option<String> {
         self.active_frame.read().unwrap().get(label).cloned()
     }
+    /// Snapshot of every window's viewed frame (`label -> frame id`).
+    pub(crate) fn viewed_frames(&self) -> HashMap<String, String> {
+        self.active_frame.read().unwrap().clone()
+    }
     pub(crate) fn set_active_frame(&self, label: &str, frame: Option<String>) {
         let changed = self.active_frame(label) != frame;
         match frame {
