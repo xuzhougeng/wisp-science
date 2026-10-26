@@ -94,7 +94,20 @@ test("pausing the demo freezes the stream until it resumes", async ({ page }) =>
 
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await runUntil(page, async () => (await demo.locator(".mock-step").count()) > steps);
+  try {
+    await runUntil(page, async () => (await demo.locator(".mock-step").count()) > steps);
+  } catch (error) {
+    // Say why the stream stayed still: off screen, or already at its last step.
+    const state = await demo.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return {
+        top: box.top, bottom: box.bottom, viewport: innerHeight, scrollY, hidden: document.hidden,
+        status: el.querySelector(".mock-status")?.textContent,
+        steps: [...el.querySelectorAll<HTMLElement>(".mock-step")].map(row => row.dataset.state ?? "new"),
+      };
+    });
+    throw new Error(`stream did not resume after ${steps} steps (${status}): ${JSON.stringify(state)}`, { cause: error });
+  }
 });
 
 test("reduced motion shows each conversation finished and still switches", async ({ page }) => {
