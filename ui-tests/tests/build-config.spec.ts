@@ -65,6 +65,22 @@ test("GitHub Pages finishes its artifact job before deployment", () => {
   expect(workflow).toContain("          include-hidden-files: true");
 });
 
+test("Windows signing workflows only use contexts job-level env allows", () => {
+  for (const path of [
+    ".github/workflows/release-windows.yml",
+    ".github/workflows/release-winui-preview.yml",
+    ".github/workflows/test-windows-signing.yml",
+  ]) {
+    const workflow = readRepositoryFile(path);
+    const jobEnv = workflow.match(/^ {4}env:\n((?: {6}.*\n)*)/m);
+    expect(jobEnv, path).not.toBeNull();
+    // GitHub rejects the whole file when job-level env reads runner.*.
+    expect(jobEnv![1], path).not.toContain("runner.");
+    expect(workflow, path).toContain("Set eSigner sign log path");
+    expect(workflow, path).toContain("ESIGNER_SIGN_LOG=$env:RUNNER_TEMP");
+  }
+});
+
 test("Windows test signing has a dedicated non-release workflow", () => {
   const workflow = readRepositoryFile(
     ".github/workflows/test-windows-signing.yml",

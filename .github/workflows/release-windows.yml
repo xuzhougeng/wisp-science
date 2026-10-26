@@ -29,10 +29,14 @@ jobs:
       ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
       ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
       ESIGNER_PROGRAM_NAME: wisp-science
-      ESIGNER_SIGN_LOG: ${{ runner.temp }}/esigner-signed.log
       # Slot 0. WinUI Preview uses slot 1 so the two release jobs do not share a TOTP window.
       WISP_SIGN_SLOT: windows
     steps:
+      # The runner context is not available in job-level env, so set the log path here.
+      - name: Set eSigner sign log path
+        shell: pwsh
+        run: '"ESIGNER_SIGN_LOG=$env:RUNNER_TEMP\esigner-signed.log" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
