@@ -71,17 +71,36 @@ test("Windows test signing has a dedicated non-release workflow", () => {
   );
 
   expect(workflow).toContain("on:\n  workflow_dispatch:");
-  expect(workflow).toContain("signing-policy-slug: test-signing");
-  expect(
-    workflow.match(
-      /uses: signpath\/github-action-submit-signing-request@v2/g,
-    ),
-  ).toHaveLength(2);
-  expect(workflow).toContain("archive: false");
+  expect(workflow).not.toMatch(/^ {2}(push|pull_request|release):/m);
+  expect(workflow).toContain("  test-signing:");
+  expect(workflow).toContain("contents: read");
+  for (const secret of [
+    "ESIGNER_CREDENTIAL_ID",
+    "ESIGNER_USERNAME",
+    "ESIGNER_PASSWORD",
+    "ESIGNER_TOTP_SECRET",
+    "ESIGNER_PIN",
+  ]) {
+    expect(workflow).toContain(`secrets.${secret}`);
+  }
+  expect(workflow).toContain("scripts/install_esigner_codesigntool.ps1");
+  expect(workflow).toContain("scripts/esigner_sign.ps1");
+  expect(workflow).toContain("scripts/assert_esigner_signatures.ps1");
+  expect(workflow).toContain("RequireSignedName wisp-science.exe");
   expect(workflow).toContain("Verify Authenticode signatures");
+  expect(workflow).toContain("Upload signed installers");
+  expect(workflow).not.toMatch(/signpath/i);
+  expect(workflow).not.toContain("signing-policy-slug");
   expect(workflow).not.toContain("SKIP_WINDOWS_SIGNING");
   expect(workflow).not.toContain("softprops/action-gh-release");
-  expect(workflow.indexOf("Upload unsigned NSIS installer")).toBeLessThan(
-    workflow.indexOf("Test-sign MSI with SignPath"),
+  expect(workflow).not.toContain("gh release");
+  expect(workflow.indexOf("Install CodeSignTool")).toBeLessThan(
+    workflow.indexOf("Build signed Windows installers"),
+  );
+  expect(workflow.indexOf("Build signed Windows installers")).toBeLessThan(
+    workflow.indexOf("Verify Authenticode signatures"),
+  );
+  expect(workflow.indexOf("Verify Authenticode signatures")).toBeLessThan(
+    workflow.indexOf("Upload signed installers"),
   );
 });
