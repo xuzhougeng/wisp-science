@@ -115,7 +115,7 @@ jobs:
           $files += @(Get-ChildItem "target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue).FullName
           $files += @(Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue).FullName
           if ($files.Count -lt 2) { throw "Expected an MSI and an NSIS installer, found $($files.Count)" }
-          & "_release_ci/scripts/assert_esigner_signatures.ps1" -Path $files -RequireSignedName wisp-science.exe
+          & "_release_ci/scripts/assert_esigner_signatures.ps1" -Path $files -RequireSignedName wisp-tauri.exe
 
       # Dry-run (publish=false): keep the signed installers as workflow artifacts
       # so the signatures can be inspected without updating the GitHub release.

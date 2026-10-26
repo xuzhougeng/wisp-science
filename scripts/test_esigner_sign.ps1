@@ -155,6 +155,11 @@ try {
     Assert-True ($signArgs -contains '%1') 'tauri placeholder is preserved'
     Assert-True ($signArgs -contains (Resolve-Path -LiteralPath $PSCommandPath).Path) 'sign script path is absolute'
 
+    # Workflows run `& $sign FILE` and then check $LASTEXITCODE, so success must set it to 0.
+    $global:LASTEXITCODE = $null
+    & (Join-Path $PSScriptRoot 'esigner_sign.ps1') -SignScript $PSCommandPath -OutFile (Join-Path $root 'tauri-entry.json')
+    Assert-True ($LASTEXITCODE -eq 0) 'a successful esigner_sign.ps1 run sets LASTEXITCODE to 0'
+
     $toolHome = Join-Path $root 'codesigntool'
     New-Item -ItemType Directory -Force -Path (Join-Path $toolHome 'jar') | Out-Null
     Set-Content -LiteralPath (Join-Path (Join-Path $toolHome 'jar') 'code_sign_tool-1.3.2.jar') -Value 'jar' -Encoding ascii

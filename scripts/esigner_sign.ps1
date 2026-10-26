@@ -455,4 +455,6 @@ if ($MyInvocation.InvocationName -ne '.') {
         Write-Host (Hide-EsignerSecrets $message)
         exit 1
     }
+    # Callers check $LASTEXITCODE, which stays $null without an explicit exit.
+    exit 0
 }

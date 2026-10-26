@@ -102,7 +102,7 @@ test("Windows test signing has a dedicated non-release workflow", () => {
   expect(workflow).toContain("scripts/install_esigner_codesigntool.ps1");
   expect(workflow).toContain("scripts/esigner_sign.ps1");
   expect(workflow).toContain("scripts/assert_esigner_signatures.ps1");
-  expect(workflow).toContain("RequireSignedName wisp-science.exe");
+  expect(workflow).toContain("RequireSignedName wisp-tauri.exe");
   expect(workflow).toContain("Verify Authenticode signatures");
   expect(workflow).toContain("Upload signed installers");
   expect(workflow).not.toMatch(/signpath/i);
