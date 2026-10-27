@@ -10738,8 +10738,32 @@ fn App() -> impl IntoView {
             }
         }
         // Cross-project completion cards float above pages but below dialogs
-        // and menus; one press closes only the newest card (#1619).
-        if session_notices.with(|cards| !cards.is_empty()) {
+        // and menus; one press closes only the newest card (#1619). The chat
+        // surface's dialogs and menus are handled further down, after the
+        // pages, so let Escape reach them while one is open above the cards.
+        if session_notices.with(|cards| !cards.is_empty())
+            && !(turn_undo_dialog.get().is_some()
+                || edit_confirm.get().is_some()
+                || ui_confirm.get().is_some()
+                || rename_session_target.get().is_some()
+                || session_transfer.get().is_some()
+                || folder_modal.get().is_some()
+                || file_entry_modal.get().is_some()
+                || show_proj_settings.get()
+                || show_capabilities.get()
+                || artifact_menu.get().is_some()
+                || show_proj_menu.get()
+                || compose_menu_open.get()
+                || reviewer_model_menu_open.get()
+                || compute_menu_open.get()
+                || specialist_menu_open.get()
+                || agent_menu_open.get()
+                || composer_effort_open.get()
+                || model_menu_open.get()
+                || right_tab_add_menu_open.get()
+                || side_chat_model_menu_open.get()
+                || terminal_add_menu_open.get())
+        {
             ev.prevent_default();
             session_notices.update(|cards| {
                 cards.remove(0);

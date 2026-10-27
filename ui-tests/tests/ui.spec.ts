@@ -3140,6 +3140,35 @@ test("Escape closes only the topmost session notice layer (#1619)", async ({ pag
   await expect(newSessionButton(page)).toBeVisible();
 });
 
+test("Escape closes chat dialogs and menus before session notices (#1619)", async ({ page }) => {
+  await enterApp(page);
+  await newSessionButton(page).click();
+  const draft = page.locator(".side-item.ses", { hasText: "Untitled session" }).first();
+  await expect(draft).toBeVisible();
+  await emitSessionNotice(page, otherProjectNotice);
+  const card = page.getByTestId("session-notice");
+  await expect(card).toHaveCount(1);
+
+  // The rename dialog sits above the card: the first Escape closes only it.
+  await draft.dblclick();
+  const renameInput = page.locator("#rename-session-input");
+  await expect(renameInput).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(renameInput).toHaveCount(0);
+  await expect(card).toHaveCount(1);
+
+  // So does the composer menu.
+  await page.locator(".composer-plus").click();
+  const menu = page.locator(".compose-menu");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(card).toHaveCount(1);
+
+  await page.keyboard.press("Escape");
+  await expect(card).toHaveCount(0);
+});
+
 test("dismissing a session notice keeps the others (#1619)", async ({ page }) => {
   await enterApp(page);
   await emitSessionNotice(page, { ...otherProjectNotice, session_id: "s-first", session_title: "First" });
