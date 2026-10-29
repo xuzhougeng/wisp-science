@@ -36,6 +36,18 @@
       "source": "src-tauri/src/connector_commands.rs"
     },
     {
+      "command": "add_project_memo",
+      "arguments": [
+        {
+          "name": "input",
+          "rust_type": "wisp_dto::ProjectMemoInput",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::ProjectMemo, String>",
+      "source": "src-tauri/src/project_commands.rs"
+    },
+    {
       "command": "add_ssh_host",
       "arguments": [
         {
@@ -236,6 +248,18 @@
       ],
       "result": "Result<Vec<MemoryFile>, String>",
       "source": "src-tauri/src/memory_commands.rs"
+    },
+    {
+      "command": "delete_project_memo",
+      "arguments": [
+        {
+          "name": "memoId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/project_commands.rs"
     },
     {
       "command": "detect_local_environment",
@@ -633,6 +657,12 @@
       "arguments": [],
       "result": "Result<Vec<PluginView>, String>",
       "source": "src-tauri/src/plugins.rs"
+    },
+    {
+      "command": "list_project_memos",
+      "arguments": [],
+      "result": "Result<Vec<wisp_dto::ProjectMemo>, String>",
+      "source": "src-tauri/src/project_commands.rs"
     },
     {
       "command": "list_projects",
@@ -1863,6 +1893,18 @@
         }
       ],
       "result": "Result<ProjectSummary, String>",
+      "source": "src-tauri/src/project_commands.rs"
+    },
+    {
+      "command": "update_project_memo",
+      "arguments": [
+        {
+          "name": "patch",
+          "rust_type": "wisp_dto::ProjectMemoPatch",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::ProjectMemo, String>",
       "source": "src-tauri/src/project_commands.rs"
     },
     {

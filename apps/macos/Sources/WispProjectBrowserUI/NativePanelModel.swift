@@ -57,8 +57,8 @@ final class NativePanelModel: ObservableObject {
         let requestedPath = directory ?? path
         defer { if generation == current { loading = false } }
         do {
-            if tab == "provenance" || tab == "sidechat" {
-                // Uses the displayed transcript; never dispatch a file read for this tab.
+            if ["provenance", "sidechat", "runs", "memos"].contains(tab) {
+                // Transcript-backed or self-loading tabs; never dispatch a file read for them.
                 return
             } else if tab == "notebook" {
                 let rows = try decode(await call("notebook_stars"), as: [NativeNotebookStar].self)

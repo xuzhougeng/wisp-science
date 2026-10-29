@@ -12,6 +12,8 @@ struct NativePanelScopeIdentity: Hashable {
 
 struct NativePanelView: View {
     @StateObject private var model: NativePanelModel
+    @StateObject private var runs: NativeContextActivityModel
+    @StateObject private var memos: NativeProjectMemosModel
     @AppStorage("native.workspace.panel.tab") private var tab = "artifacts"
     @AppStorage("native.workspace.panel.tabs") private var savedTabs = ""
     @AppStorage("native.workspace.panel.grid") private var grid = false
@@ -24,7 +26,7 @@ struct NativePanelView: View {
     private var transcriptArtifacts: [NativeTranscriptArtifact] { NativeTranscriptArtifact.collect(transcript) }
     @State private var activity: NativeContextActivitySelection?
     @State private var fileAction: NativeFileActionSelection?
-    private var availableTabs: [String] { NativePanelTabs.defaults + ["notebook", "highlights", "provenance"] + (sideChat == nil ? [] : ["sidechat"]) }
+    private var availableTabs: [String] { NativePanelTabs.defaults + ["notebook", "highlights", "provenance", "runs", "memos"] + (sideChat == nil ? [] : ["sidechat"]) }
     let highlightRevision: Int
     let highlightRemoved: (String) -> Void
     let sideChat: NativeSideChatModel?
@@ -37,20 +39,25 @@ struct NativePanelView: View {
     var fileBrowserSupported = false
     var fileTransfersSupported = false
     var environments: () -> Void = {}
+    var insertMemo: (String) -> Void = { _ in }
     let close: () -> Void
-    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
+    /// Tabs that draw their own search, refresh and errors.
+    private var ownsChrome: Bool { ["sidechat", "runs", "memos"].contains(tab) || (tab == "files" && fileBrowserSupported) }
+    init(client: any NativeConversationQuerying, projectID: String, sessionID: String, projectRoot: String = "", highlightRevision: Int = 0, highlightRemoved: @escaping (String) -> Void = { _ in }, sideChat: NativeSideChatModel? = nil, transcript: [ConversationItem] = [], transcriptPage: String = "latest", revealExcerpt: @escaping (String) -> Void = { _ in }, readOnly: Bool = false, fileBrowserSupported: Bool = false, fileTransfersSupported: Bool = false, environments: @escaping () -> Void = {}, manageWorkflows: @escaping () -> Void = {}, openTerminal: @escaping (String) -> Void = { _ in }, insertMemo: @escaping (String) -> Void = { _ in }, close: @escaping () -> Void) {
         self.projectRoot = projectRoot
         _model = StateObject(wrappedValue: NativePanelModel(client: client, projectID: projectID, sessionID: sessionID)); self.highlightRevision = highlightRevision; self.highlightRemoved = highlightRemoved; self.sideChat = sideChat; self.revealExcerpt = revealExcerpt; self.transcript = transcript; self.transcriptPage = transcriptPage; self.manageWorkflows = manageWorkflows; self.openTerminal = openTerminal; self.readOnly = readOnly; self.fileBrowserSupported = fileBrowserSupported; self.environments = environments; self.close = close
-        self.fileTransfersSupported = fileTransfersSupported
+        self.fileTransfersSupported = fileTransfersSupported; self.insertMemo = insertMemo
+        _runs = StateObject(wrappedValue: NativeContextActivityModel(client: client, projectID: projectID, sessionID: sessionID, contextID: ""))
+        _memos = StateObject(wrappedValue: NativeProjectMemosModel(client: client, projectID: projectID))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 tabStrip
-                if !["provenance", "sidechat"].contains(tab) && !(tab == "files" && fileBrowserSupported) { Button { Task { await model.refresh(tab) } } label: { WispIcon(name: "refresh") }.buttonStyle(.plain).help("刷新") }
+                if tab != "provenance" && !ownsChrome { Button { Task { await model.refresh(tab) } } label: { WispIcon(name: "refresh") }.buttonStyle(.plain).help("刷新") }
                 Button(action: close) { WispIcon(name: "close", size: 16) }.buttonStyle(.plain).help("关闭面板").accessibilityLabel("关闭面板")
             }
-            if tab != "sidechat" && !(tab == "files" && fileBrowserSupported) {
+            if !ownsChrome {
             HStack(spacing: 6) {
                 TextField(tab == "files" ? "搜索当前项目全部目录" : tab == "artifacts" ? "搜索本会话产物名称或路径" : tab == "provenance" ? "搜索工具、输入或输出" : tab == "notebook" ? "搜索代码或输出" : "筛选名称", text: $query)
                     .accessibilityLabel(tab == "files" ? "搜索项目文件" : "搜索面板")
@@ -80,6 +87,10 @@ struct NativePanelView: View {
                 }, environments: environments, runs: { context in activity = .init(context: context, runtimes: false) }, transfersSupported: fileTransfersSupported)
             } else if tab == "sidechat", let sideChat {
                 NativeSideChatView(model: sideChat)
+            } else if tab == "runs" {
+                NativeSessionRunsView(model: runs)
+            } else if tab == "memos" {
+                NativeProjectMemosView(model: memos, insert: insertMemo)
             } else {
             ScrollView {
                 LazyVGrid(columns: grid && tab == "files" ? [GridItem(.adaptive(minimum: 130), alignment: .top)] : [GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 8) {
@@ -176,7 +187,7 @@ struct NativePanelView: View {
                 NativeFileActionView(selection: selection, model: model) { fileAction = nil }
             }
             .onChange(of: highlightRevision) { _ in if tab == "highlights" { Task { await model.refresh("highlights") } } }
-            .onDisappear { model.close() }
+            .onDisappear { model.close(); runs.close() }
     }
     private func navigate(_ path: String) {
         query = ""; model.clearFileSearch()
@@ -225,7 +236,8 @@ struct NativePanelView: View {
         if id == "notebook" { return "笔记本 (\(NativeNotebookCell.collect(transcript).count))" }
         if id == "highlights" { return "划线 (\(model.highlights.count))" }
         if id == "provenance" { return "溯源 (\(NativeProvenanceRow.collect(transcript).count))" }
-        return ["artifacts": "产物", "agents": "Agents", "files": "文件", "hosts": "环境", "sidechat": "侧聊"][id] ?? id
+        if id == "runs" { return NativeSessionRuns.tabTitle(runs.runs) }
+        return ["artifacts": "产物", "agents": "Agents", "files": "文件", "hosts": "环境", "memos": localized("备忘录"), "sidechat": "侧聊"][id] ?? id
     }
     private func removeTab(_ id: String) {
         var value = layout; value.remove(id); store(value)
