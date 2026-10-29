@@ -94,20 +94,42 @@ struct NativeToolsSettings: View {
                 Button(localized("本地安装…")) { model.editor = SettingsEditor(title: "安装插件", draft: .object([:]), fields: [.init(key: "src_path", label: "插件目录或归档", kind: .file), .init(key: "expected_sha256", label: "SHA-256（可选）")], command: "install_plugin", parameter: nil) }
                 Button(localized("从 URL 安装…")) { model.editor = SettingsEditor(title: "从 URL 安装插件", draft: .object([:]), fields: [.init(key: "source_url", label: "下载地址"), .init(key: "expected_sha256", label: "SHA-256")], command: "install_plugin_url", parameter: nil) }
             }
+            if !rows("list_plugins").isEmpty {
+                Text(Self.pluginSummary(rows("list_plugins"))).font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(Array(rows("list_plugins").enumerated()), id: \.offset) { _, plugin in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Text(plugin["display_name"].string).fontWeight(.semibold); Text(plugin["version"].string).foregroundStyle(.secondary); Spacer()
+                        // Same per-project switch as the WebView row; 管理 keeps removal.
+                        Toggle("", isOn: Binding(get: { plugin["enabled"].bool }, set: { enabled in
+                            Task { _ = await model.run("set_plugin_enabled", ["pluginId": plugin["id"], "version": plugin["version"], "enabled": .bool(enabled)]) }
+                        }))
+                        .toggleStyle(.switch).labelsHidden().disabled(model.busy)
+                        .help(localized(plugin["enabled"].bool ? "为当前项目停用" : "为当前项目启用"))
+                        .accessibilityLabel(localized(plugin["enabled"].bool ? "为当前项目停用" : "为当前项目启用") + " " + plugin["display_name"].string)
                         Button(localized("管理")) { model.editor = SettingsEditor(title: plugin["display_name"].string, draft: .object(["enabled": plugin["enabled"]]), fields: [.init(key: "enabled", label: "在此项目启用", kind: .toggle, hint: "插件工具遵循现有审批策略；停用会停止该项目中的插件运行时。")], command: "set_plugin_enabled", parameter: nil, extra: ["pluginId": plugin["id"], "version": plugin["version"]], destructiveCommand: "remove_plugin", destructiveArgs: ["pluginId": plugin["id"], "version": plugin["version"]]) }
                     }
                     Text(plugin["description"].string)
-                    Text("\(plugin["enabled"].bool ? "已启用" : "已停用") · \(plugin["runtime_status"].string) · \(plugin["skill_count"].string) 技能 · \(plugin["mcp_server_count"].string) MCP").font(.caption).foregroundStyle(.secondary)
+                    Text(Self.pluginState(plugin)).font(.caption).foregroundStyle(.secondary)
                     Text(plugin["source_uri"].string).font(.caption).textSelection(.enabled)
                     ForEach(plugin["runtime_errors"].array.map(\.string), id: \.self) { Text($0).foregroundStyle(.red) }
                 }.padding(.vertical, 10)
                 Divider()
             }
         }
+    }
+    /// `plugins.summary` in ui/src/i18n.rs.
+    static func pluginSummary(_ plugins: [SettingsValue]) -> String {
+        localized("当前项目已启用 {enabled}/{total}")
+            .replacingOccurrences(of: "{enabled}", with: String(plugins.filter { $0["enabled"].bool }.count))
+            .replacingOccurrences(of: "{total}", with: String(plugins.count))
+    }
+    /// The WebView's state line: project enablement, runtime readiness, contents.
+    static func pluginState(_ plugin: SettingsValue) -> String {
+        let runtime = ["ready": "运行环境就绪", "unavailable": "运行环境不可用"][plugin["runtime_status"].string] ?? "无需运行环境"
+        return [localized(plugin["enabled"].bool ? "已为当前项目启用" : "未为当前项目启用"), localized(runtime),
+                "\(plugin["skill_count"].integer) " + localized("技能"), "\(plugin["mcp_server_count"].integer) MCP"].joined(separator: " · ")
     }
     private var browser: some View {
         VStack(spacing: 20) {
