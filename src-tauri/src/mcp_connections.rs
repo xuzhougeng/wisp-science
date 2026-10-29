@@ -3,6 +3,7 @@ use crate::*;
 use serde_json::json;
 use wisp_mcp::{
     connection::{ClientFactory, ManagedConnection},
+    user_config::{UserMcpConfig, UserServer},
     McpClient,
 };
 
@@ -10,6 +11,8 @@ use wisp_mcp::{
 pub(crate) enum Spec {
     Custom(McpConnection),
     Plugin(plugins::PluginMcpLaunch),
+    /// `~/.wisp/mcp.json`, used as written: never stored in SQLite or the keyring.
+    User(UserServer),
     Development(Vec<String>),
 }
 impl Spec {
@@ -17,6 +20,7 @@ impl Spec {
         match self {
             Self::Custom(c) => &c.id,
             Self::Plugin(p) => &p.connector_id,
+            Self::User(u) => &u.id,
             Self::Development(_) => BUNDLED_DEV_MCP_CONNECTOR_ID,
         }
     }
@@ -24,6 +28,7 @@ impl Spec {
         match self {
             Self::Custom(c) => &c.name,
             Self::Plugin(p) => &p.display_name,
+            Self::User(u) => &u.name,
             Self::Development(_) => "Development MCP",
         }
     }
@@ -38,6 +43,7 @@ impl Spec {
         let value = match self {
             Self::Custom(c) => serde_json::to_value(c),
             Self::Plugin(p) => serde_json::to_value(p),
+            Self::User(u) => serde_json::to_value(u),
             Self::Development(parts) => serde_json::to_value(parts),
         }
         .unwrap();
@@ -51,6 +57,7 @@ impl Spec {
                 match spec {
                     Self::Custom(c) => connect_mcp(&c).await,
                     Self::Plugin(p) => connect_plugin_mcp(&p).await,
+                    Self::User(u) => u.connect(&network::mcp_proxy()).await,
                     Self::Development(parts) => McpClient::launch(&parts[0], &parts[1..]).await,
                 }
             })
@@ -111,11 +118,46 @@ pub(crate) fn with_local_tool_path(
     conn
 }
 
-pub(crate) async fn configured(
-    store: &Store,
-    project: &str,
-) -> (Vec<Spec>, Vec<plugins::PluginRuntimeError>) {
-    let (plugins, errors) = plugins::enabled_plugin_mcp_launches(store, project).await;
+/// A configured MCP source that produced no launch. Plugin errors also mark
+/// that plugin in Settings; user-file errors go to the wiring report only.
+pub(crate) struct ConfigError {
+    pub plugin_id: Option<String>,
+    pub message: String,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_USER_CONFIG: std::cell::RefCell<UserMcpConfig> = std::cell::RefCell::default();
+}
+
+/// Unit tests never read the user's HOME; they install a parsed file instead.
+#[cfg(test)]
+pub(crate) fn set_test_user_config(config: UserMcpConfig) {
+    TEST_USER_CONFIG.with(|slot| *slot.borrow_mut() = config);
+}
+
+/// `~/.wisp/mcp.json`, read on every call so an edit applies on the next
+/// agent build. Values stay in memory only.
+pub(crate) fn user_config() -> UserMcpConfig {
+    #[cfg(test)]
+    return TEST_USER_CONFIG.with(|slot| slot.borrow().clone());
+    #[cfg(not(test))]
+    {
+        dirs::home_dir()
+            .map(|home| UserMcpConfig::load(&wisp_mcp::user_config::path(&home)))
+            .unwrap_or_default()
+    }
+}
+
+pub(crate) async fn configured(store: &Store, project: &str) -> (Vec<Spec>, Vec<ConfigError>) {
+    let (plugins, plugin_errors) = plugins::enabled_plugin_mcp_launches(store, project).await;
+    let mut errors: Vec<_> = plugin_errors
+        .into_iter()
+        .map(|error| ConfigError {
+            plugin_id: Some(error.plugin_id),
+            message: error.message,
+        })
+        .collect();
     let mut specs: Vec<_> = plugins.into_iter().map(Spec::Plugin).collect();
     // Resolved on the spec, so editing the path changes the descriptor and
     // the next acquire reconnects.
@@ -127,6 +169,12 @@ pub(crate) async fn configured(
             .filter(|c| c.enabled)
             .map(|c| Spec::Custom(with_local_tool_path(c, &local))),
     );
+    let user = user_config();
+    specs.extend(user.servers.into_iter().map(Spec::User));
+    errors.extend(user.errors.into_iter().map(|message| ConfigError {
+        plugin_id: None,
+        message,
+    }));
     if let Ok(command) = std::env::var("WISP_MCP_COMMAND") {
         let parts: Vec<String> = command
             .split_whitespace()
@@ -812,6 +860,50 @@ mod tests {
         owner.shutdown_all().await;
         server.abort();
         drop((a, b, owner, store));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn user_file_servers_join_configured_specs_and_close_when_removed() {
+        let (root, store, custom, fixture, server) = lifecycle_fixture().await;
+        let Spec::Custom(McpConnection {
+            transport: McpTransport::Http { url, .. },
+            ..
+        }) = &custom
+        else {
+            unreachable!()
+        };
+        let file = json!({"mcpServers": {
+            "remote": {"type": "http", "url": url},
+            "legacy": {"type": "sse", "url": url},
+        }});
+        set_test_user_config(UserMcpConfig::parse(&file.to_string(), |_| None));
+        let (specs, errors) = configured(&store, "p").await;
+        let ids: Vec<_> = specs.iter().map(Spec::id).collect();
+        assert!(ids.starts_with(&["fixture", "user:remote"]), "{ids:?}");
+        assert_eq!(specs[1].name(), "remote");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].plugin_id, None);
+        assert!(
+            errors[0].message.contains("'legacy'"),
+            "{}",
+            errors[0].message
+        );
+
+        let owner = Connections::default();
+        let client = owner
+            .acquire(&store, "p", "a", "main", &specs[1])
+            .await
+            .unwrap();
+        client.tools_list().await.unwrap();
+        assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+        // Removing it from the file closes it on the next reconcile.
+        set_test_user_config(UserMcpConfig::default());
+        owner.reconcile(&store, None).await;
+        assert!(owner.entries.lock().await.is_empty());
+        assert_eq!(fixture.stops.load(Ordering::SeqCst), 1);
+        server.abort();
+        drop((client, owner, store));
         let _ = std::fs::remove_dir_all(root);
     }
 
