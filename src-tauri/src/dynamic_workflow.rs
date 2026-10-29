@@ -251,7 +251,9 @@ pub(crate) struct DynamicAgentTaskProposal {
     pub(crate) model_id: Option<String>,
     /// Parent-requested model class (`fast` worker model or `inherit` the
     /// conversation's model); ignored when `model_id` or a Specialist binds one.
-    #[serde(default)]
+    /// Omitted on the wire when unset so stored templates and the native
+    /// workflow-canvas contract keep their existing shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model_tier: Option<wisp_core::ModelTier>,
     #[serde(default)]
     pub(crate) executor: Option<AgentExecutorSelection>,
