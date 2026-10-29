@@ -167,7 +167,10 @@ The SwiftUI shell follows the WebView settings information architecture:
 1040 pt (920 pt for the model list), 16 pt rounded cards and shared color tokens.
 Model management separates API models from ACP agents; editors replace the
 content pane with breadcrumb navigation. Advanced generation and request-header
-fields start collapsed. Appearance has theme tiles, palette/font controls and a
+fields start collapsed. On/off settings use `NativeSettingsSwitch` (title and
+hint on the left, switch on the right, like the WebView) rather than checkboxes,
+and integer settings use `NativeSettingsNumberField`, a text field with step
+arrows that never goes below its minimum. Appearance has theme tiles, palette/font controls and a
 live draft preview. Memory, browser rules and remote access use two columns when
 space permits and stack in narrower windows. Escape dismisses the topmost native
 menu, editor or settings page, in that order.

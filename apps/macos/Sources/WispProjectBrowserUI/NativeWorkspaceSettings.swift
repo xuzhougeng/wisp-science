@@ -31,7 +31,7 @@ struct NativeWorkspaceSettings: View {
             NativeSettingsColumns {
             NativeSettingsGroup(title: "项目记忆") {
                 let view = model.values["get_memory_view"] ?? .null
-                Toggle(localized("启用记忆"), isOn: Binding(get: { view["enabled"].bool }, set: { enabled in Task { _ = await model.run("set_memory_enabled", ["enabled": .bool(enabled)]) } }))
+                NativeSettingsSwitch(title: "启用记忆", isOn: Binding(get: { view["enabled"].bool }, set: { enabled in Task { _ = await model.run("set_memory_enabled", ["enabled": .bool(enabled)]) } }))
                 HStack {
                     Button(localized("添加记忆文件")) { memoryEditor(name: "", content: "", new: true) }
                     Button(localized("清空项目记忆…")) { confirmation = .init(title: "清空项目记忆", command: "clear_memory") }

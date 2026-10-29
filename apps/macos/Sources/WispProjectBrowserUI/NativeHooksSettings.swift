@@ -89,7 +89,7 @@ struct NativeHooksSettings: View {
             if let error = model.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
             if model.uncertain { Button(localized("已核对结果，允许继续")) { model.acknowledge() }.disabled(!model.refreshed || model.busy) }
             NativeSettingsGroup(title: "默认钩子") {
-                Toggle(localized("自动审查（新会话默认值）"), isOn: Binding(get: { model.values["get_auto_review_enabled"]?.bool ?? false }, set: { on in Task { await model.write("set_auto_review_enabled", args: ["enabled": .bool(on)]) } }))
+                NativeSettingsSwitch(title: "自动审查（新会话默认值）", hint: "回合结束时由审查模型检查分析结论，发现问题时请求一次修正。此处为新会话的默认值；仍可在输入框菜单中按会话单独开关。", isOn: Binding(get: { model.values["get_auto_review_enabled"]?.bool ?? false }, set: { on in Task { await model.write("set_auto_review_enabled", args: ["enabled": .bool(on)]) } }))
                 if let openReviewer { Button(localized("审查模型与专家设置"), action: openReviewer) }
                 NativeFailureHookEditor(model: model)
             }.disabled(!model.canWrite)
@@ -100,7 +100,7 @@ struct NativeHooksSettings: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text(hook["event"].string).fontWeight(.semibold); Spacer()
-                            Toggle(localized("启用"), isOn: Binding(get: { hook["enabled"].bool }, set: { on in var value = hook; value["enabled"] = .bool(on); Task { await model.saveHook(value, at: index) } }))
+                            Toggle(localized("启用"), isOn: Binding(get: { hook["enabled"].bool }, set: { on in var value = hook; value["enabled"] = .bool(on); Task { await model.saveHook(value, at: index) } })).toggleStyle(.switch).labelsHidden().accessibilityLabel(localized("启用") + " " + hook["event"].string)
                             Button(localized("编辑")) { editor = NativeHookDraft(index: index, value: hook) }
                             Button(localized("删除"), role: .destructive) { removal = index }
                         }.disabled(!model.canWrite)
@@ -147,7 +147,7 @@ private struct NativeFailureHookEditor: View {
     @State private var value: SettingsValue = .null
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(localized("自动分析工具失败"), isOn: Binding(get: { value["enabled"].bool }, set: { value["enabled"] = .bool($0) }))
+            NativeSettingsSwitch(title: "自动分析工具失败", hint: "回合结束时若工具调用失败较多，自动分析失败原因并起草一条记忆。", isOn: Binding(get: { value["enabled"].bool }, set: { value["enabled"] = .bool($0) }))
             NativeSettingsField(field: .init(key: "failure_rate_threshold", label: "失败率阈值（%）", kind: .integer), value: binding("failure_rate_threshold"))
             NativeSettingsField(field: .init(key: "minimum_failures", label: "最少失败次数", kind: .integer), value: binding("minimum_failures"))
             Button(localized("保存失败分析设置")) { Task { await model.write("set_auto_failure_analysis_settings", args: ["settings": value]) } }.disabled(value == .null)
