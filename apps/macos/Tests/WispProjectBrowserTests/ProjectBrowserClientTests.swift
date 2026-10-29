@@ -115,6 +115,24 @@ final class ProjectBrowserClientTests: XCTestCase {
         XCTAssertThrowsError(try ProjectBrowserClient.decodeSessions(transcript, requestID: "projects-1"))
     }
 
+    func testStuckServiceExplainsTheFolderPermissionPrompt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Stands in for a service blocked in open() while macOS waits on a consent prompt.
+        let executable = directory.appendingPathComponent("stuck-service")
+        try "#!/bin/sh\nexec sleep 30\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        var client = ProjectBrowserClient(executableURL: executable)
+        client.deadlineSeconds = 0.3
+        do {
+            _ = try await client.listProjects(databaseURL: directory.appendingPathComponent("wisp.sqlite"))
+            XCTFail("Expected the deadline to stop the service")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, ProjectBrowserClient.timeoutMessage)
+        }
+    }
+
     func testMissingServiceReturnsAnActionableError() async throws {
         let client = ProjectBrowserClient(executableURL: URL(fileURLWithPath: "/missing/wisp-service"))
         do {

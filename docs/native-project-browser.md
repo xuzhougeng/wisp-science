@@ -270,7 +270,12 @@ response contains `code` (`invalid_request`, `unsupported_schema`, or
 protocol responses only; startup/transport failures go to stderr and exit
 nonzero. EOF exits the process. Clients validate schema, correlation ID, response
 type, and supported activity source before presenting results. The macOS client
-terminates a service that exceeds its 30-second query deadline.
+terminates a service that exceeds its 30-second query deadline and says why it
+usually happens: project databases under Desktop, Documents or Downloads make macOS
+ask whether the app may open them, and `open()` waits for that answer. An ad-hoc
+signed local build asks again after every rebuild; allow the prompt, then refresh.
+Both the app and its helper declare why they need those folders
+(`NS*FolderUsageDescription` in `apps/macos/Info.plist` and `HostInfo.plist`).
 
 ## Verification
 
