@@ -36,6 +36,13 @@ final class NativeTranscriptArtifactTests: XCTestCase {
         XCTAssertEqual(ProjectWorkspace.panelWidth(preferred: 600, available: 900, sidebar: false), 540)
         XCTAssertEqual(ProjectWorkspace.panelWidth(preferred: 380, available: 680, sidebar: false), 320)
     }
+    func testTopbarFoldsBelowTheWebViewBreakpoint() {
+        // 1120 - 249 sidebar - 385 panel = 486: folded, as in the WebView at that size.
+        XCTAssertTrue(ProjectWorkspace.foldsTopbar(window: 1120, sidebar: true, panel: 380))
+        XCTAssertFalse(ProjectWorkspace.foldsTopbar(window: 1120, sidebar: false, panel: nil))
+        XCTAssertFalse(ProjectWorkspace.foldsTopbar(window: 969, sidebar: true, panel: nil))
+        XCTAssertTrue(ProjectWorkspace.foldsTopbar(window: 968, sidebar: true, panel: nil))
+    }
     func testCodeUserToolAndIncompleteStreamsDoNotProduceArtifacts() throws {
         let table = "| A | B |\n| --- | --- |\n| 1 | 2 |"
         let fenced = "````python\n```\n" + table + "\n$$ x $$\n````\n~~~\n$$ y $$\n~~~"
