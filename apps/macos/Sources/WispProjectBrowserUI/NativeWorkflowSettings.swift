@@ -11,6 +11,7 @@ struct NativeWorkflowSettings: View {
     @State private var workflowDraft: NativeWorkflowDraft?
     var body: some View {
         VStack(spacing: 22) {
+        if model.section == .specialists { subagentModel }
         NativeSettingsGroup(title: model.section.title) {
             Button("添加\(model.section.title)") { edit(.object(["id": .string(UUID().uuidString), "name": .string(""), "builtin": .bool(false)]), new: true) }
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
@@ -37,6 +38,29 @@ struct NativeWorkflowSettings: View {
         .sheet(item: $workflowDraft) { draft in NativeWorkflowCanvasEditor(draft: draft, close: { workflowDraft = nil }, saved: { Task { await model.load() } }) }
         if model.section == .workflows { conversion }
         }
+    }
+    /// Global default for every subagent (#1638): delegate_tasks children and
+    /// dispatch_subagent conversations. A Specialist's own binding and a
+    /// conversation's choice still outrank it; "" follows the conversation.
+    private var subagentModel: some View {
+        NativeSettingsGroup(title: "默认子智能体模型") {
+            NativePreferenceRow(title: "默认子智能体模型", hint: "delegate_tasks 创建的临时智能体和 dispatch_subagent 子会话默认用这个模型，而不是继承当前会话的模型。专家自身绑定的模型和会话里的“子智能体模型”选择优先；父智能体仍可按任务要求使用自己的模型（model_tier: inherit）。") {
+                Picker("", selection: Binding(get: { model.values["get_subagent_model"]?.string ?? "" }, set: { id in
+                    Task { _ = await model.run("set_subagent_model", ["id": .string(id)]) }
+                })) {
+                    Text(localized("跟随会话模型")).tag("")
+                    ForEach(Array(Self.chatModels(model.values["list_models"]?.array ?? []).enumerated()), id: \.offset) { _, row in
+                        Text(row["label"].string.isEmpty ? row["model"].string : row["label"].string).tag(row["id"].string)
+                    }
+                }
+                .labelsHidden().frame(maxWidth: 260).disabled(model.busy)
+                .accessibilityLabel(localized("默认子智能体模型")).accessibilityIdentifier("subagent-model-select")
+            }
+        }
+    }
+    /// Generation-only profiles cannot run a subagent; the host rejects them too.
+    static func chatModels(_ rows: [SettingsValue]) -> [SettingsValue] {
+        rows.filter { !$0["image_generation_capable"].bool && !$0["use_for_image_generation"].bool && !$0["use_for_video_generation"].bool }
     }
     private var conversion: some View {
         NativeSettingsGroup(title: "从技能或旧模板转换") {

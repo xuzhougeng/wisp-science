@@ -119,6 +119,8 @@ pub const COMMANDS: &[&str] = &[
     "save_decision_model",
     "test_decision_model",
     "clear_decision_model_key",
+    "get_subagent_model",
+    "set_subagent_model",
     "list_ssh_hosts",
     "list_ssh_trust_edges",
     "list_workflow_templates",
