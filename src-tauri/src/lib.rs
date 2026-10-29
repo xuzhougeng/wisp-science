@@ -4614,8 +4614,8 @@ async fn load_session_settings(
             String::new(),
             cfg.user_agent,
             true,
-            None,
-            String::new(),
+            cfg.send_session_id,
+            cfg.session_header_name,
         );
     }
     let profile_id = models::session_profile_id(store, frame_id).await;

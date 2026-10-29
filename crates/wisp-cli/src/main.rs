@@ -1970,6 +1970,10 @@ mod tests {
             effort(file(serde_json::json!({"id":"p/m"})), Some("high")),
             None
         );
+        // `.wisp/session-id` replaces `session_id` later; the gateway header stays on.
+        let cfg = magpie_provider_config(known(), None);
+        assert_eq!(cfg.send_session_id, Some(true));
+        assert_eq!(cfg.session_header_name, "X-Session-Id");
     }
 
     #[test]

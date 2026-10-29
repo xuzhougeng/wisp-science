@@ -42,6 +42,15 @@ Model changes in the personal editor take effect after Magpie is disconnected.
 External ACP agents and dedicated image/video generation configurations retain
 their own model management. A model must support any requested tools or images.
 
+## Gateway sessions
+
+Every model request through the Magpie connection carries an `X-Session-Id`
+header with the conversation's ID: the desktop conversation (or delegated
+child), or the CLI's `.wisp/session-id`. Wisp Science conversations then
+appear on Magpie's Sessions page as gateway-backed, read-only sessions with
+transcripts from the gateway's request ledger. Personal model profiles keep
+their own session-header setting.
+
 ## Model facts and reasoning effort
 
 Plugin builds that publish model facts also write
