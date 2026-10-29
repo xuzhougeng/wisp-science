@@ -33,6 +33,12 @@ so they no longer occupy the WebView's primary project-action positions. The foo
 appearance choices and the successful-read time; hover over the database filename
 to see its full path.
 
+User-facing SwiftUI text is written in Chinese and wrapped in `localized()`;
+`scripts/check_strings_native_macos.py` (run by the `swiftui` CI job) rejects
+English-only literals and `.capitalized` raw values, so the Chinese interface
+does not show untranslated English. Same-in-both-languages names (brands, file
+formats, field names) are listed in its `ALLOWED` set.
+
 Brand SVGs, the existing `compose_icon()` glyphs, and semantic colors are exported
 from the WebView sources into the Swift resource bundle. There is no second icon
 set. The shell and controls are native; specialized document rendering uses a

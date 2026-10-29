@@ -87,7 +87,7 @@ final class NativeDisplayParityTests: XCTestCase {
     func testComposerEffortAndBuiltinQuickActionAreLocalized() {
         XCTAssertEqual(NativeComposerEffort.label("high"), "高")
         XCTAssertEqual(NativeComposerEffort.label("xhigh"), "极高")
-        XCTAssertEqual(NativeComposerEffort.label("turbo"), "Turbo")
+        XCTAssertEqual(NativeComposerEffort.label("turbo"), "turbo")
         let builtin = SettingsValue.object(["id": .string("literature_research"), "name": .string("Research literature")])
         XCTAssertEqual(NativeWorkflowSettings.displayName(builtin), "文献调研")
         let renamed = SettingsValue.object(["id": .string("literature_research"), "name": .string("我的文献")])

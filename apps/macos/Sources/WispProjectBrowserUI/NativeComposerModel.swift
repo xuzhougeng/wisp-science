@@ -65,7 +65,13 @@ struct NativeComposerReferenceCatalog: Decodable {
     var contextLabel: String { contexts?.contexts.first { $0.id == contextID }?.label ?? contextID }
     var runtimeLabel: String {
         let rows = runtimes.filter { $0.key.contextId == contextID }
-        return rows.isEmpty ? "运行时 · 未启动" : "运行时 · " + rows.map { $0.key.language.uppercased() + " " + $0.status }.joined(separator: " / ")
+        return rows.isEmpty ? "运行时 · 未启动" : "运行时 · " + rows.map { Self.runtimeName($0.key.language) + " " + Self.runtimeStatus($0.status) }.joined(separator: " / ")
+    }
+    /// `language_display` in ui/src/app_support/runtime.rs.
+    static func runtimeName(_ language: String) -> String { ["python": "Python", "r": "R"][language] ?? language }
+    /// `runtime_status_label` in ui/src/app_support/runtime.rs.
+    static func runtimeStatus(_ status: String) -> String {
+        localized(["starting": "启动中", "ready": "就绪", "busy": "忙碌", "stopping": "停止中", "dead": "已终止", "unavailable": "不可用"][status] ?? "未启动")
     }
     private func decode<T: Decodable>(_ value: SettingsValue, _ type: T.Type) throws -> T {
         try JSONDecoder().decode(type, from: JSONEncoder().encode(value))
