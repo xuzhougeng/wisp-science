@@ -137,18 +137,22 @@ struct NativeToolsSettings: View {
     }
     private var connectors: some View {
         NativeSettingsGroup(title: "内置连接器与工具审批") {
-            ForEach(Array((model.values["list_connectors"]?["connectors"].array ?? []).enumerated()), id: \.offset) { _, row in
+            // Custom connections are listed under 自定义 MCP; this group is bundled only, as in the WebView.
+            ForEach(Array((model.values["list_connectors"]?["connectors"].array ?? []).filter { $0["kind"].string == "bundled" }.enumerated()), id: \.offset) { _, row in
                 DisclosureGroup(row["name"].string) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(row["description_zh"].string.isEmpty ? row["description"].string : row["description_zh"].string).foregroundStyle(.secondary)
                         toggle("启用", value: row["enabled"].bool, command: "set_connector_enabled", args: ["key": row["key"]])
                         toggle("跳过连接器审批", value: row["skip_approvals"].bool, command: "set_connector_skip_approvals", args: ["key": row["key"]])
-                        ForEach(Array(row["tools"].array.enumerated()), id: \.offset) { _, tool in
-                            Picker(tool["name"].string, selection: Binding(get: { tool["mode"].string }, set: { mode in Task { _ = await model.run("set_tool_approval", ["tool": tool["name"], "mode": .string(mode)]) } })) { Text(localized("允许")).tag("allow"); Text(localized("询问")).tag("ask"); Text(localized("禁止")).tag("deny") }
-                        }
+                        toolModes(row)
                     }.padding(10)
                 }
             }
+        }
+    }
+    private func toolModes(_ connector: SettingsValue) -> some View {
+        ForEach(Array(connector["tools"].array.enumerated()), id: \.offset) { _, tool in
+            Picker(tool["name"].string, selection: Binding(get: { tool["mode"].string }, set: { mode in Task { _ = await model.run("set_tool_approval", ["tool": tool["name"], "mode": .string(mode)]) } })) { Text(localized("允许")).tag("allow"); Text(localized("询问")).tag("ask"); Text(localized("禁止")).tag("deny") }
         }
     }
     private var mcp: some View {
@@ -163,6 +167,10 @@ struct NativeToolsSettings: View {
                     Spacer()
                     Button(localized("编辑")) { editMCP(conn) }
                     Button(localized("测试")) { Task { _ = await model.run(conn["transport"]["auth"].string == "oauth" ? "test_oauth_mcp_connection" : "test_mcp_connection", ["conn": conn], refresh: false, success: "连接成功，工具列表已获取") } }
+                }
+                // The custom connector's key is this connection's id.
+                if let connector = model.values["list_connectors"]?["connectors"].array.first(where: { $0["kind"].string == "custom" && $0["key"].string == conn["id"].string }), !connector["tools"].array.isEmpty {
+                    DisclosureGroup(localized("工具审批")) { VStack(alignment: .leading, spacing: 12) { toolModes(connector) }.padding(10) }
                 }
             }
         }

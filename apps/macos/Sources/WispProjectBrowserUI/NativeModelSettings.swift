@@ -264,7 +264,7 @@ struct NativeModelSettings: View {
     }
 
     private func credentialName(_ id: String) -> String {
-        ["openalex_api_key": "OpenAlex API 密钥", "infinisynapse_api_key": "InfiniSynapse API 密钥", "scimaster_api_key": "SciMaster API 密钥", "ncbi_api_key": "NCBI API 密钥", "ncbi_email": "NCBI 联系邮箱", "typesafe_api_key": "TypeSafe API 密钥"][id] ?? id
+        ["openalex_api_key": "OpenAlex API 密钥", "infinisynapse_api_key": "InfiniSynapse API 密钥", "scimaster_api_key": "SciMaster API 密钥", "ncbi_api_key": "NCBI API 密钥", "ncbi_email": "NCBI 联系邮箱", "openfda_api_key": "openFDA API 密钥", "typesafe_api_key": "TypeSafe API 密钥"][id] ?? id
     }
     private var credentials: some View {
         VStack(alignment: .leading, spacing: 22) {

@@ -250,11 +250,7 @@ struct NativeFilesView: View {
             Text(formattedBytes(completed) + " / " + formattedBytes(total)).font(.caption2).foregroundStyle(.secondary)
         }
     }
-    private func formattedBytes(_ count: Int64) -> String {
-        var format = ByteCountFormatStyle(style: .file)
-        format.locale = Locale(identifier: UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? "en_US" : "zh_CN")
-        return format.format(count)
-    }
+    private func formattedBytes(_ count: Int64) -> String { formatBytes(count) }
     private func drop(_ providers: [NSItemProvider]) -> Bool {
         guard !dropLoading, !chooser.busy, let target = model.transferTarget(upload: true), !providers.isEmpty else { return false }
         dropLoading = true; exportError = nil

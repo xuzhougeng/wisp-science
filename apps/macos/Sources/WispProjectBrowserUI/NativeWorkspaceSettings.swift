@@ -72,7 +72,7 @@ struct NativeWorkspaceSettings: View {
             Button(localized("撤销所有授权…")) { confirmation = .init(title: "撤销所有授权", command: "revoke_all_approval_grants") }
             ForEach(Array((model.values["list_approval_grants"]?.array ?? []).enumerated()), id: \.offset) { _, grant in
                 HStack {
-                    VStack(alignment: .leading, spacing: 5) { Text(grant["label"].string); Text("\(grant["scope"].string) · \(grant["target"].string)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                    VStack(alignment: .leading, spacing: 5) { Text(grant["label"].string); Text("\(localized(["session": "会话", "project": "项目", "global": "全局"][grant["scope"].string] ?? grant["scope"].string)) · \(grant["target"].string)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                     Spacer()
                     Button(localized("撤销…")) { confirmation = .init(title: "撤销此授权", command: "revoke_approval_grant", args: ["scope": grant["scope"], "kind": grant["kind"], "target": grant["target"], "sessionId": grant["session_id"], "projectId": grant["project_id"]]) }
                 }
@@ -89,7 +89,8 @@ struct NativeWorkspaceSettings: View {
                 ForEach(Array((model.values["list_execution_contexts"]?.array ?? []).enumerated()), id: \.offset) { _, context in
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text(context["label"].string.isEmpty ? context["id"].string : context["label"].string).fontWeight(.semibold); Spacer()
+                            // Same title rule as the WebView environments list (`compute.local`).
+                            Text(context["kind"].string == "local" ? localized("本地") : context["label"].string.isEmpty ? context["id"].string : context["label"].string).fontWeight(.semibold); Spacer()
                             Button(localized("探测")) { Task { detail = await model.run("probe_execution_context", ["contextId": context["id"]], refresh: false, success: "探测完成") } }
                             Button(localized("解释器")) { model.editor = SettingsEditor(title: "解释器路径", draft: .object(["python_executable": context["config_json"].decodedJSON["python_executable"], "rscript_executable": context["config_json"].decodedJSON["rscript_executable"]]), fields: [.init(key: "python_executable", label: "Python"), .init(key: "rscript_executable", label: "Rscript")], command: "update_execution_context_interpreters", parameter: nil, extra: ["contextId": context["id"]]) }
                             Button(localized("存储路径")) { Task { if let prefs = await model.run("get_context_storage_prefs", ["contextId": context["id"]], refresh: false, success: "") { model.editor = SettingsEditor(title: "执行环境存储", draft: prefs, fields: [.init(key: "remote_data_root", label: "远程数据目录"), .init(key: "remote_workdir_root", label: "远程运行目录"), .init(key: "local_results_dir", label: "本地结果目录", kind: .path)], command: "set_context_storage_prefs", parameter: nil, extra: ["contextId": context["id"]]) } } }.disabled(model.projectID == nil)
@@ -120,10 +121,11 @@ struct NativeWorkspaceSettings: View {
         VStack(spacing: 22) {
             NativeSettingsGroup(title: "本地存储") {
                 let usage = model.values["get_storage_usage"] ?? .null
-                Text(bytes(usage["total_bytes"])).font(WispDesign.font(size: 28, weight: .semibold))
+                // A missing read is not zero bytes.
+                Text(model.values["get_storage_usage"] == nil ? localized("计算中…") : bytes(usage["total_bytes"])).font(WispDesign.font(size: 28, weight: .semibold))
                 Text(usage["data_dir"].string).textSelection(.enabled).foregroundStyle(.secondary)
                 Button(localized("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: usage["data_dir"].string)]) }
-                ForEach(Array(usage["entries"].array.enumerated()), id: \.offset) { _, item in HStack { Text(item["key"].string); Spacer(); Text(bytes(item["bytes"])) } }
+                ForEach(Array(usage["entries"].array.enumerated()), id: \.offset) { _, item in HStack { Text(localized(NativeUsageRows.storageLabel(item["key"].string))); Spacer(); Text(bytes(item["bytes"])) } }
                 ForEach(Array(usage["projects"].array.enumerated()), id: \.offset) { _, item in HStack { Text(item["name"].string); Spacer(); Text(bytes(item["bytes"])); Button(localized("定位")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item["path"].string)]) } } }
             }
             if model.projectID != nil {
@@ -151,19 +153,57 @@ struct NativeWorkspaceSettings: View {
                     if sessions.count < sessionTotal { Button(localized("加载更多会话")) { Task { await loadSessions() } } }
                 }
             }
-            usageGroup("模型用量", key: "models", label: "model", metric: "tokens")
-            usageGroup("工具调用", key: "tools", label: "name", metric: "calls")
-            usageGroup("每日 Token", key: "days", label: "date", metric: "tokens")
+            let overview = model.values["get_token_usage"] ?? .null
+            usageGroup("模型用量", NativeUsageRows.models(overview["models"].array, profiles: model.values["list_models"]?.array ?? []))
+            usageGroup("工具调用", overview["tools"].array.map { ($0["name"].string, $0["calls"].integer) })
+            usageGroup("每日 Token", NativeUsageRows.pastDays(overview["days"].array))
         }
     }
-    private func usageGroup(_ title: String, key: String, label: String, metric: String) -> some View {
-        NativeSettingsGroup(title: title) { ForEach(Array((model.values["get_token_usage"]?[key].array ?? []).enumerated()), id: \.offset) { _, row in HStack { Text(row[label].string); Spacer(); Text(row[metric].string).monospacedDigit() } } }
+    private func usageGroup(_ title: String, _ rows: [(label: String, value: Int64)]) -> some View {
+        NativeSettingsGroup(title: title) { ForEach(Array(rows.enumerated()), id: \.offset) { _, row in HStack { Text(row.label); Spacer(); Text("\(row.value)").monospacedDigit() } } }
     }
     private func loadSessions() async {
         guard let id = sessionProject else { return }
         if let result = await model.run("get_session_token_usage", ["projectId": .string(id), "offset": .integer(Int64(sessions.count)), "limit": .integer(30)], refresh: false, success: "") { sessions += result["items"].array; sessionTotal = Int(result["total"].integer) }
     }
-    private func bytes(_ value: SettingsValue) -> String { ByteCountFormatter.string(fromByteCount: value.integer, countStyle: .file) }
+    private func bytes(_ value: SettingsValue) -> String { formatBytes(value.integer) }
+}
+
+/// Row shaping for Settings › Storage and Usage, kept identical to the WebView.
+enum NativeUsageRows {
+    /// The host pads the activity grid to the end of the current week.
+    static func pastDays(_ days: [SettingsValue]) -> [(label: String, value: Int64)] {
+        days.filter { !$0["future"].bool }.map { ($0["date"].string, $0["tokens"].integer) }
+    }
+
+    /// Mirrors `usage_model_slices` in ui/src/settings_view.rs: rows carry model
+    /// profile ids, shown by the profile's model id and merged; eight or more
+    /// labels keep the top seven plus one "其他模型" row.
+    static func models(_ rows: [SettingsValue], profiles: [SettingsValue]) -> [(label: String, value: Int64)] {
+        var merged: [String: Int64] = [:]
+        for row in rows where row["tokens"].integer > 0 {
+            let id = row["model"].string
+            let label: String
+            if let profile = profiles.first(where: { $0["id"].string == id }) {
+                let model = profile["model"].string.trimmingCharacters(in: .whitespaces)
+                label = model.isEmpty ? profile["label"].string : model
+            } else {
+                label = id == "unknown" ? localized("未知模型") : id
+            }
+            merged[label, default: 0] += row["tokens"].integer
+        }
+        var totals = merged.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map { (label: $0.key, value: $0.value) }
+        if totals.count > 8 {
+            let rest = totals[7...].reduce(0) { $0 + $1.value }
+            totals = Array(totals[..<7]) + [(label: localized("其他模型"), value: rest)]
+        }
+        return totals
+    }
+
+    /// Storage entry keys from `get_storage_usage`, with the WebView's legend names.
+    static func storageLabel(_ key: String) -> String {
+        ["database": "数据库（会话与工具结果）", "python": "Python 环境", "plugins": "插件", "workspace": "工作区文件", "other": "其他"][key] ?? key
+    }
 }
 
 struct SettingsOperation: Identifiable {

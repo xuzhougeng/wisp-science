@@ -326,7 +326,9 @@ struct NativePreferenceRow<Control: View>: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .center, spacing: 24) {
-                explanation.frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+                // ViewThatFits measures ideal width; without idealWidth a long hint's
+                // unwrapped line forces the stacked fallback even in a wide window.
+                explanation.frame(minWidth: 220, idealWidth: 220, maxWidth: .infinity, alignment: .leading)
                 control().fixedSize(horizontal: true, vertical: false)
             }
             VStack(alignment: .leading, spacing: 12) {

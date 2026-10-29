@@ -74,7 +74,7 @@ struct NativeSettingsView: View {
         .task {
             await state.load()
             if editProject, let project = await state.run("get_project_settings", refresh: false, success: "") {
-                state.editor = SettingsEditor(title: "项目设置", draft: project, fields: [.init(key: "name", label: "项目名称"), .init(key: "description", label: "项目说明", kind: .multiline), .init(key: "agent_context", label: "Agent Context", kind: .multiline)], command: "update_project", parameter: nil)
+                state.editor = SettingsEditor(title: "项目设置", draft: project, fields: [.init(key: "name", label: "项目名称"), .init(key: "description", label: "项目说明", kind: .multiline), .init(key: "agent_context", label: "Agent 上下文", kind: .multiline)], command: "update_project", parameter: nil)
             }
         }
         .onChange(of: state.section) { _ in state.editor = nil; state.detailSection = nil; Task { await state.load() } }

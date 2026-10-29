@@ -186,7 +186,7 @@ struct NativePanelView: View {
         let layout = grid ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(alignment: .top, spacing: 2))
         return layout {
             Button { if directory { navigate(path) } else { Task { await model.readFile(path) } } } label: {
-                row(title: name, subtitle: query.isEmpty ? directory ? "文件夹" : ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file) : path, icon: directory ? "folder" : "doc")
+                row(title: name, subtitle: query.isEmpty ? directory ? "文件夹" : formatBytes(Int64(clamping: size)) : path, icon: directory ? "folder" : "doc")
             }.buttonStyle(.plain)
             HStack(spacing: 2) {
                 if grid { Spacer(minLength: 0) }
@@ -244,9 +244,13 @@ struct NativePanelView: View {
                                 Button(title(id)) { var value = layout; value.show(id); store(value) }
                                     .font(.system(size: 12, weight: tab == id ? .semibold : .regular))
                                     .accessibilityAddTraits(tab == id ? .isSelected : [])
-                                Button { removeTab(id) } label: { WispIcon(name: "close", size: 12) }
-                                    .help("关闭" + title(id)).accessibilityLabel("关闭" + title(id))
-                            }.buttonStyle(.plain).padding(.horizontal, 8).padding(.vertical, 7)
+                                // Like the WebView, only the active tab carries ×; the others close
+                                // from the context menu, so five default tabs fit without scrolling.
+                                if tab == id {
+                                    Button { removeTab(id) } label: { WispIcon(name: "close", size: 12) }
+                                        .help("关闭" + title(id)).accessibilityLabel("关闭" + title(id))
+                                }
+                            }.buttonStyle(.plain).padding(.horizontal, 6).padding(.vertical, 7)
                                 .background(tab == id ? WispDesign.color("bg-elev", scheme) : .clear, in: RoundedRectangle(cornerRadius: 6))
                                 .id(id)
                                 .onDrag { draggedTab = id; return NSItemProvider(item: id as NSString, typeIdentifier: "science.wisp.native-panel-tab") }

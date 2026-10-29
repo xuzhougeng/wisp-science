@@ -60,8 +60,19 @@ extension NativeTrajectoryCell {
         return "completed"
     }
     public var rawJSON: String { Self.json(self) }
+    /// The host writes usage summaries in English ("round 1 · 12845 in / 117 out");
+    /// show the WebView's `usage_line` instead.
+    public var displaySummary: String { kind == "usage" && usage != nil ? preview : summary }
+    /// `trajectory.source.*` labels; the badge itself stays USER/TOOL as in the WebView.
+    public var sourceLabel: String { ["user": "用户", "assistant": "助手", "tool": "工具", "usage": "用量"][kind] ?? "未知" }
     public var preview: String {
-        if kind == "usage", let usage { return "第 \(usage.round) 轮 · 输入 \(usage.input_tokens) · 输出 \(usage.output_tokens) · 缓存 \(usage.cached_input_tokens)" }
+        if kind == "usage", let usage {
+            var line = "第 \(usage.round) 轮 · 输入 \(Self.tokens(usage.input_tokens)) · 输出 \(Self.tokens(usage.output_tokens))"
+            if usage.input_tokens > 0 && usage.cached_input_tokens > 0 {
+                line += " · 缓存 \(Int((Double(usage.cached_input_tokens) * 100 / Double(usage.input_tokens)).rounded()))%"
+            }
+            return line
+        }
         if let output = detail_output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return output }
         return detail_input ?? summary
     }
@@ -71,6 +82,8 @@ extension NativeTrajectoryCell {
         if let output = detail_output, !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return output }
         return summary
     }
+    /// `fmt_tokens` in ui/src/chat_render.rs.
+    static func tokens(_ n: Int64) -> String { n < 1000 ? "\(max(0, n))" : String(format: "%.1fk", Double(n) / 1000) }
     private static func json<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return (try? String(data: encoder.encode(value), encoding: .utf8)) ?? "—"

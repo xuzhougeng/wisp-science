@@ -26,8 +26,8 @@ struct NativeTrajectoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
+                // snapshot.model is a profile id (e.g. "m1"); the WebView header shows no model.
                 Text("运行轨迹").font(.title2.bold())
-                Text(model.snapshot?.model ?? "").foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 if model.loading { ProgressView().controlSize(.small) }
                 Button("刷新") { Task { await model.refresh() } }.disabled(model.loading)
@@ -69,7 +69,7 @@ struct NativeTrajectoryView: View {
                                         if let duration = row.cell.duration_ms { Text("\(duration) ms").font(.caption) }
                                         if row.cell.is_error || row.cell.ok == false { Text("失败").foregroundStyle(.orange) }
                                     }
-                                    Text(row.cell.summary).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(row.cell.displaySummary).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                                 }.padding(10).background(Color.primary.opacity(selected?.id == row.id ? 0.1 : 0.035), in: RoundedRectangle(cornerRadius: 8))
                             }.buttonStyle(.plain).id(row.id)
                         }
@@ -88,9 +88,9 @@ struct NativeTrajectoryView: View {
                                     Text(selected.cell.source).font(.system(.caption, design: .monospaced))
                                 } else {
 
-                                Text(selected.cell.summary).font(.headline)
+                                Text(selected.cell.displaySummary).font(.headline)
                                 if inspectorTab == "摘要" {
-                                    Text("来源：\(selected.cell.kind) · \(status(selected))").font(.caption)
+                                    Text("来源：\(localized(selected.cell.sourceLabel)) · \(status(selected))").font(.caption)
                                     Text("耗时：" + (selected.cell.duration_ms.map { "\(max(0, $0)) ms" } ?? "—")).font(.caption)
                                 }
                                 if let timestamp = selected.cell.ts { Text(Date(timeIntervalSince1970: Double(timestamp) / 1000), style: .time) }

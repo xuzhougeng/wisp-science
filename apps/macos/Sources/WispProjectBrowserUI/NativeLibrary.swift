@@ -133,7 +133,11 @@ struct NativeLibrarySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("收藏库").font(.headline)
+            HStack {
+                Text("收藏库").font(.headline)
+                Spacer()
+                Button("关闭") { library.dismiss() }.disabled(!library.deleting.isEmpty)
+            }
             HStack {
                 TextField("搜索标题、代码或项目", text: $library.query)
                     .textFieldStyle(.roundedBorder)
