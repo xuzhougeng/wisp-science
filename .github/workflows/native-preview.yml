@@ -17,6 +17,18 @@ jobs:
   changes:
     uses: ./.github/workflows/ci-changes.yml
 
+  # Not routed: a WebView-only PR must still say what the SwiftUI client does.
+  parity-ledger:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 -m unittest discover -s scripts -p test_check_native_parity.py
+      - run: python3 scripts/check_native_parity.py
+
   shared-assets:
     needs: changes
     if: needs.changes.outputs.shared_assets == 'true'

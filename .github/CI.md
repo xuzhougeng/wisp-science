@@ -63,6 +63,13 @@ camera/OCR behavior, device signing and distribution are not exercised by this
 job. Xcode test results are uploaded when available. The existing `swiftui` job
 is the macOS app, not the iOS app.
 
+`Native Apps / parity-ledger` is not routed: it runs on every PR. A PR that
+changes `ui/src/` without changing `apps/macos/Sources/` or `apps/macos/Tests/`
+(re-synced `Resources/` alone does not count) fails unless it also edits
+`docs/native-parity-ledger.md`, recording whether the SwiftUI client needs the same
+change. The rule lives in `scripts/check_native_parity.py`, with offline tests in
+`scripts/test_check_native_parity.py`.
+
 When changing routing, update `scripts/test_ci_scope.py`. It covers iOS-only and
 mixed changes, shared native assets, unknown paths, missing commits, multiple
 commits, divergent PR bases, deletions, cross-component renames, unusual filenames

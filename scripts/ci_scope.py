@@ -86,6 +86,8 @@ def scopes_for_path(path):
             return {"windows"}
         if name in {"wasm-bindgen-wrapper.sh", "strip_reference_types.py"}:
             return {"ui"}
+        if name in {"check_native_parity.py", "test_check_native_parity.py"}:
+            return set()  # The parity-ledger job runs on every PR regardless.
     if path in DESIGN_INPUTS:
         return {"shared_assets"}
     if path.startswith(".github/release-notes/"):

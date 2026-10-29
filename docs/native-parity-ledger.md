@@ -1,0 +1,33 @@
+# SwiftUI 同步台账
+
+WebView（`ui/src/`）与 SwiftUI（`apps/macos`）是两套界面。只在 WebView 落地的改动，
+过去常常只同步了 `native-english.json`，SwiftUI 实际并没有跟上（见
+[2026-10-19 分析](superpowers/plans/2026-10-19-macos-swiftui-ui-analysis.md)）。
+
+规则：PR 改了 `ui/src/`，却没有改 `apps/macos/Sources/` 或 `apps/macos/Tests/`
+（只重新同步 `Resources/` 不算），就必须在下表加一行。CI 的 `Native Apps /
+parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
+
+状态取值：
+
+- **不需要**：改动与 SwiftUI 无关，例如 WebView 专属的修复、只影响 Leptos 的重构、纯测试。
+- **待补**：SwiftUI 应该跟上但尚未实现。补上的 PR 把状态改为 **已补** 并写上 PR 号。
+- **已补**：SwiftUI 已有对应实现。
+
+新行加在表格最上面。逐页差异的完整记录见
+[2026-10-29 对比](superpowers/plans/2026-10-29-swiftui-webview-ui-diff.md)。
+
+| WebView 改动 | SwiftUI 状态 | 说明 |
+| --- | --- | --- |
+| 设置 › 专家：默认子智能体模型（#1638） | 待补 | 2026-10-29 对比发现 |
+| 设置 › 模型：决策模型标签页 | 待补 | 2026-10-29 对比发现 |
+| 右侧面板：运行（#1547）、备忘录（#1567） | 待补 | 两者都有共享 DTO |
+| 设置 › 插件：按项目启用开关、"启用并使用" | 待补 | |
+| 设置 › 技能：社区技能、从 GitHub 添加、标签筛选、批量启停 | 待补 | |
+| 设置 › 远程接入：网页远程访问、Wisp Lab 课题组 | 待补 | |
+| 设置 › 用量：仪表盘（热力图、环形图、调用排行） | 待补 | |
+| 设置 › 模型：ChatGPT Codex (legacy) 账号、每账号网络代理 | 待补 | |
+| 工作流全屏编辑器（库 / 画布 / 配置面板） | 待补 | SwiftUI 目前是设置列表 + 画布弹窗 |
+| 顶栏：回退历史、视图切换（完整记录 / 模型视图） | 待补 | |
+| 侧栏：已收起的对话、子会话折叠、分组拖动排序 | 待补 | |
+| 输入框选项：先计划、子智能体模型、计算环境 | 待补 | |
