@@ -7837,6 +7837,7 @@ pub fn run() {
             run_background::resume_pending(app.handle());
             scheduler::start_scheduler(app.handle());
             project_sync::start_folder_publisher(app.handle());
+            mcp_connections::start_idle_sweeper(app.handle());
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

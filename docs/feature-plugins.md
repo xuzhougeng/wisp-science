@@ -22,6 +22,12 @@ Claude packages are normalized into the native manifest at install time.
 immutable installed package directory. MCP processes are launched directly,
 without a command shell.
 
+Each conversation runs its own local MCP processes. When a conversation has
+not used one for 15 minutes and is not open in any window, not running a turn,
+and not showing a live App, Wisp stops that process to free memory; the
+conversation's next request starts it again. Servers that keep state in
+process memory lose it at that point. HTTP MCP connections are not affected.
+
 ## Install and enable
 
 Open **Settings → Plugins**. The install dialog keeps local ZIPs and HTTPS

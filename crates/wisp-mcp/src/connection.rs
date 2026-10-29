@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex as StdMutex, RwLock,
     },
     time::Duration,
 };
@@ -32,6 +32,7 @@ pub struct ManagedConnection {
     registered_generation: AtomicU64,
     catalog_changed: AtomicBool,
     closed: AtomicBool,
+    last_used: StdMutex<Instant>,
 }
 impl ManagedConnection {
     pub fn new(factory: ClientFactory) -> Self {
@@ -45,6 +46,7 @@ impl ManagedConnection {
             registered_generation: AtomicU64::new(0),
             catalog_changed: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            last_used: StdMutex::new(Instant::now()),
         }
     }
     pub fn with_identity(mut self, project: &str, frame: &str, connector: &str) -> Self {
@@ -88,8 +90,13 @@ impl ManagedConnection {
                 .as_ref()
                 .is_some_and(|c| c.is_connected())
     }
+    /// Record use so an idle sweep leaves this connection running.
+    pub fn touch(&self) {
+        *self.last_used.lock().unwrap() = Instant::now();
+    }
     pub async fn ready(&self) -> Result<Arc<McpClient>> {
         let _connect = self.connect.lock().await;
+        self.touch();
         if self.closed.load(Ordering::SeqCst) {
             return Err(anyhow!(
                 "MCP connector disabled or replaced; request not sent"
@@ -141,6 +148,36 @@ impl ManagedConnection {
                 Err(error)
             }
         }
+    }
+    /// Stop the local process of a stdio connection nobody has used for
+    /// `idle_for`, but keep the connection open: its next request relaunches
+    /// it through `ready()` as a new generation. Returns whether it stopped one.
+    pub async fn suspend_if_idle(&self, idle_for: Duration) -> bool {
+        // A connect or a queued caller holds this lock, so it is not idle.
+        let Ok(_connect) = self.connect.try_lock() else {
+            return false;
+        };
+        if self.closed.load(Ordering::SeqCst) || self.last_used.lock().unwrap().elapsed() < idle_for
+        {
+            return false;
+        }
+        let client = {
+            let mut current = self.current.write().unwrap();
+            // `ready()` hands out clones only under `connect`, so another
+            // owner here is a call that is still running.
+            if !current
+                .as_ref()
+                .is_some_and(|c| c.is_stdio() && Arc::strong_count(c) == 1)
+            {
+                return false;
+            }
+            current.take()
+        };
+        tracing::info!(target: "wisp", generation=self.generation(), idle_s=idle_for.as_secs(), "mcp.connection.suspended");
+        if let Some(client) = client {
+            let _ = Box::pin(client.shutdown()).await;
+        }
+        true
     }
     pub async fn shutdown(&self) -> Result<()> {
         // Reject new requests before waiting for a concurrent bounded initialization.

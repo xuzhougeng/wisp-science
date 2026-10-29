@@ -136,7 +136,8 @@ async fn run_stdio_transport_regressions() -> Result<(), String> {
     cancelled_isolated_call_leaves_connection_usable().await?;
     unlimited_stdio_and_late_response().await?;
     cancellation_during_write_preserves_framing().await?;
-    managed_stdio_reconnects_without_replay().await
+    managed_stdio_reconnects_without_replay().await?;
+    idle_managed_stdio_suspends_and_relaunches_on_demand().await
 }
 
 struct CancelEnv(std::sync::atomic::AtomicBool);
@@ -393,4 +394,60 @@ async fn managed_stdio_reconnects_without_replay() -> Result<(), String> {
     }
     assert_eq!(launches.load(Ordering::SeqCst), 2);
     client.shutdown().await.map_err(|e| e.to_string())
+}
+async fn idle_managed_stdio_suspends_and_relaunches_on_demand() -> Result<(), String> {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use wisp_mcp::connection::{ClientFactory, ManagedConnection};
+    let launches = Arc::new(AtomicUsize::new(0));
+    let observed = launches.clone();
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let factory: ClientFactory = Arc::new(move || {
+        let executable = executable.clone();
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            McpClient::launch(&executable.to_string_lossy(), &[ECHO_ARG.into()]).await
+        })
+    });
+    let client = Arc::new(McpClient::managed(ManagedConnection::new(factory)));
+    // Never launched: nothing to suspend.
+    assert!(!client.suspend_if_idle(Duration::ZERO).await);
+    client.tools_list().await.map_err(|e| e.to_string())?;
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    // Recently used.
+    assert!(!client.suspend_if_idle(Duration::from_secs(3600)).await);
+    // A running call keeps its process even when the threshold has passed.
+    let call = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .tool_call("echo", &json!({"token":"busy","delay_ms":300}))
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!client.suspend_if_idle(Duration::ZERO).await);
+    assert_eq!(call.await.unwrap().map_err(|e| e.to_string())?, "ok");
+    assert!(client.is_connected());
+
+    assert!(client.suspend_if_idle(Duration::ZERO).await);
+    assert!(!client.is_connected());
+    assert!(client.needs_catalog_refresh());
+    assert_eq!(launches.load(Ordering::SeqCst), 1);
+    // The next request relaunches as a new generation instead of failing.
+    assert_eq!(
+        client
+            .tool_call("echo", &json!({"token":"again"}))
+            .await
+            .map_err(|e| e.to_string())?,
+        "ok"
+    );
+    assert_eq!(launches.load(Ordering::SeqCst), 2);
+    assert_eq!(client.generation(), 2);
+    client.shutdown().await.map_err(|e| e.to_string())?;
+    // A closed connection is never relaunched by a later sweep.
+    assert!(!client.suspend_if_idle(Duration::ZERO).await);
+    Ok(())
 }

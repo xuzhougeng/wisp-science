@@ -426,6 +426,18 @@ impl McpClient {
             Transport::Managed(m) => m.is_connected(),
         }
     }
+    pub(crate) fn is_stdio(&self) -> bool {
+        matches!(self.transport, Transport::Stdio { .. })
+    }
+    /// Give back the local process of a managed stdio connection that has been
+    /// idle for `idle_for`; the next request relaunches it. Other transports
+    /// hold no local process and are left alone.
+    pub async fn suspend_if_idle(&self, idle_for: std::time::Duration) -> bool {
+        match &self.transport {
+            Transport::Managed(m) => m.suspend_if_idle(idle_for).instrument(m.span()).await,
+            _ => false,
+        }
+    }
     /// Spawn `command args...` and perform the MCP initialize handshake.
     pub async fn launch(command: &str, args: &[String]) -> Result<Self> {
         let mut cmd = tokio::process::Command::new(command);
@@ -638,10 +650,12 @@ impl McpClient {
             }
             crate::tool::validate_tool_arguments(&expected.input_schema, args)
                 .map_err(|e| anyhow!(e))?;
-            return client
+            let result = client
                 .tool_call_rich(&expected.name, args)
                 .instrument(m.span())
                 .await;
+            m.touch();
+            return result;
         }
         self.tool_call_rich(&expected.name, args).await
     }
@@ -667,9 +681,12 @@ impl McpClient {
                         "MCP connection changed while queued; request not sent"
                     ));
                 }
-                Box::pin(client.request(method, params))
+                // A long tools/call must not look idle the moment it returns.
+                let result = Box::pin(client.request(method, params))
                     .instrument(m.span())
-                    .await
+                    .await;
+                m.touch();
+                result
             }
             Transport::Stdio {
                 writer,

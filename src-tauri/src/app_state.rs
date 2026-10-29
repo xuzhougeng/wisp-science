@@ -429,6 +429,15 @@ impl McpAppBridges {
             bridge.limiter.cancel_epoch.fetch_add(1, Ordering::SeqCst);
         }
     }
+    /// Conversations with a live App, whose bridge needs its connection kept.
+    pub(crate) fn frames(&self) -> HashSet<String> {
+        self.bridges
+            .lock()
+            .unwrap()
+            .values()
+            .map(|b| b.frame_id.clone())
+            .collect()
+    }
     pub(crate) fn remove_for_frame(&self, frame_id: &str) {
         self.bridges.lock().unwrap().retain(|_, bridge| {
             if bridge.frame_id == frame_id {

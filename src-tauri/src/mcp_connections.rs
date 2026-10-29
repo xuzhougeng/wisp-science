@@ -58,6 +58,11 @@ impl Spec {
     }
 }
 
+/// A conversation that has not used a local stdio MCP server for this long
+/// gives its process back; the next request relaunches it.
+const IDLE_SUSPEND_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const IDLE_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct Key {
     project: String,
@@ -370,6 +375,30 @@ impl Connections {
             }
         }
     }
+    /// Frames are owners, but an unused frame must not pin a process for the
+    /// life of the Host. Suspension keeps every entry, so ownership, scope
+    /// isolation and the frame's next request are unchanged.
+    pub(crate) async fn suspend_idle(
+        &self,
+        idle_for: std::time::Duration,
+        busy: &HashSet<String>,
+    ) -> usize {
+        let clients: Vec<_> = self
+            .entries
+            .lock()
+            .await
+            .iter()
+            .filter(|(key, _)| !busy.contains(&key.frame))
+            .map(|(_, entry)| entry.client.clone())
+            .collect();
+        let mut suspended = 0;
+        for client in clients {
+            if client.suspend_if_idle(idle_for).await {
+                suspended += 1;
+            }
+        }
+        suspended
+    }
     pub(crate) async fn shutdown_all(&self) {
         tracing::info!(target: "wisp", reason="host-exit", "mcp.scope.close_all");
         self.closing.store(true, Ordering::SeqCst);
@@ -382,6 +411,35 @@ impl Connections {
         }
         while tasks.join_next().await.is_some() {}
     }
+}
+
+/// Frames a sweep must leave running: open in a window, mid-turn, or showing
+/// an MCP App whose bridge would go stale.
+async fn busy_frames(state: &AppState) -> HashSet<String> {
+    let mut busy: HashSet<String> = state.viewed_frames().into_values().collect();
+    busy.extend(state.mcp_app_tool_bridges.frames());
+    for (frame, runtime) in state.sessions.lock().await.iter() {
+        if runtime.agent.try_lock().is_err() {
+            busy.insert(frame.clone());
+        }
+    }
+    busy
+}
+
+pub(crate) fn start_idle_sweeper(app: &tauri::AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(IDLE_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let busy = busy_frames(&app.state::<AppState>()).await;
+            let suspended = host().suspend_idle(IDLE_SUSPEND_AFTER, &busy).await;
+            if suspended > 0 {
+                tracing::info!(target: "wisp", suspended, "mcp.scope.suspend_idle");
+            }
+        }
+    });
 }
 
 /// Read the trusted persisted presentation, never a binding sent by a guest.
@@ -754,6 +812,31 @@ mod tests {
         owner.shutdown_all().await;
         server.abort();
         drop((a, b, owner, store));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn idle_sweep_leaves_remote_connections_running() {
+        let (root, store, spec, fixture, server) = lifecycle_fixture().await;
+        let owner = Connections::default();
+        let a = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
+        a.tools_list().await.unwrap();
+        // Only local stdio processes are given back; HTTP holds none.
+        assert_eq!(
+            owner
+                .suspend_idle(std::time::Duration::ZERO, &HashSet::new())
+                .await,
+            0
+        );
+        assert!(a.is_connected());
+        assert_eq!(fixture.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(owner.entries.lock().await.len(), 1);
+        owner.shutdown_all().await;
+        server.abort();
+        drop((a, owner, store));
         let _ = std::fs::remove_dir_all(root);
     }
 
