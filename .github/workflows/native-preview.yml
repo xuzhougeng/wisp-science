@@ -92,6 +92,7 @@ jobs:
           node-version: '22'
       - run: command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
       - run: python3 -m unittest discover -s scripts -p 'test_*native_macos.py'
+      - run: python3 scripts/check_strings_native_macos.py
       - run: cargo test --locked -p wisp-app -p wisp-service -p wisp-dto
       - run: WISP_CATALOG_OFFLINE=1 cargo test --locked -p wisp-tauri --lib native_host
       - run: swift test --package-path apps/macos --scratch-path target/native-macos/swift
