@@ -1401,18 +1401,23 @@ pub fn effective_context_window(value: u64) -> u64 {
 
 /// Context window of the model a session is bound to right now, with the same
 /// fallbacks as `model_label` (bound profile → active → first chat model).
-/// None for ACP-bound sessions, where the agent — not an HTTP profile — owns
-/// the window. The usage gauge shows this limit instead of the stale
-/// `max_context` carried by the last turn's usage event, so switching models
-/// or editing the profile moves the gauge immediately.
+/// A Magpie connection runs every HTTP turn on its one model, so its window
+/// wins over any profile. None for ACP-bound sessions, where the agent — not
+/// an HTTP profile — owns the window. The usage gauge shows this limit instead
+/// of the stale `max_context` carried by the last turn's usage event, so
+/// switching models or editing the profile moves the gauge immediately.
 pub fn session_context_window(
     models: &[ModelProfile],
     session_models: &HashMap<String, String>,
     session_id: Option<&str>,
+    magpie: Option<&MagpieModelDto>,
 ) -> Option<u64> {
     let bound = session_id.and_then(|session_id| session_models.get(session_id));
     if bound.is_some_and(|id| id.starts_with("acp:")) {
         return None;
+    }
+    if let Some(magpie) = magpie {
+        return Some(effective_context_window(magpie.context_window));
     }
     session_profile(models, session_models, session_id)
         .map(|model| effective_context_window(model.context_window))
@@ -1435,8 +1440,18 @@ mod model_label_tests {
 
 #[cfg(test)]
 mod session_context_window_tests {
-    use super::{session_context_window, ModelProfile};
+    use super::{session_context_window, MagpieModelDto, ModelProfile};
     use std::collections::HashMap;
+
+    fn magpie(context_window: u64) -> MagpieModelDto {
+        MagpieModelDto {
+            model: "fixture/reasoner".into(),
+            context_window,
+            max_tokens: 64_000,
+            efforts: vec!["low".into(), "high".into()],
+            default_effort: "high".into(),
+        }
+    }
 
     fn profile(id: &str, active: bool, context_window: u64) -> ModelProfile {
         ModelProfile {
@@ -1478,7 +1493,7 @@ mod session_context_window_tests {
         let models = vec![profile("a", true, 128_000), profile("b", false, 1_000_000)];
         let bindings = HashMap::from([("s1".to_string(), "b".to_string())]);
         assert_eq!(
-            session_context_window(&models, &bindings, Some("s1")),
+            session_context_window(&models, &bindings, Some("s1"), None),
             Some(1_000_000)
         );
     }
@@ -1488,7 +1503,7 @@ mod session_context_window_tests {
         let models = vec![profile("a", true, 200_000)];
         let bindings = HashMap::from([("s1".to_string(), "gone".to_string())]);
         assert_eq!(
-            session_context_window(&models, &bindings, Some("s1")),
+            session_context_window(&models, &bindings, Some("s1"), None),
             Some(200_000)
         );
     }
@@ -1497,7 +1512,7 @@ mod session_context_window_tests {
     fn window_below_4k_falls_back_to_128k() {
         let models = vec![profile("a", true, 0)];
         assert_eq!(
-            session_context_window(&models, &HashMap::new(), None),
+            session_context_window(&models, &HashMap::new(), None, None),
             Some(128_000)
         );
     }
@@ -1506,7 +1521,38 @@ mod session_context_window_tests {
     fn acp_bound_session_has_no_http_window() {
         let models = vec![profile("a", true, 128_000)];
         let bindings = HashMap::from([("s1".to_string(), "acp:Codex".to_string())]);
-        assert_eq!(session_context_window(&models, &bindings, Some("s1")), None);
+        assert_eq!(
+            session_context_window(&models, &bindings, Some("s1"), None),
+            None
+        );
+    }
+
+    #[test]
+    fn magpie_connection_window_wins_over_profiles() {
+        let models = vec![profile("a", true, 128_000), profile("b", false, 1_000_000)];
+        let bindings = HashMap::from([("s1".to_string(), "b".to_string())]);
+        let connected = magpie(500_000);
+        assert_eq!(
+            session_context_window(&models, &bindings, Some("s1"), Some(&connected)),
+            Some(500_000)
+        );
+        assert_eq!(
+            session_context_window(&[], &HashMap::new(), None, Some(&connected)),
+            Some(500_000)
+        );
+        assert_eq!(
+            session_context_window(&models, &bindings, Some("s1"), Some(&magpie(0))),
+            Some(128_000)
+        );
+    }
+
+    #[test]
+    fn acp_session_keeps_no_window_with_magpie_connected() {
+        let bindings = HashMap::from([("s1".to_string(), "acp:Codex ACP".to_string())]);
+        assert_eq!(
+            session_context_window(&[], &bindings, Some("s1"), Some(&magpie(500_000))),
+            None
+        );
     }
 }
 
@@ -4224,7 +4270,6 @@ pub struct CatalogEntryDto {
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct MagpieModelDto {
     pub model: String,
-    #[allow(dead_code)]
     pub context_window: u64,
     #[allow(dead_code)]
     pub max_tokens: u64,
