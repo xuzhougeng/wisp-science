@@ -357,7 +357,7 @@ fn catalog_registers_eleven_cancer_models_tools() {
             ("cancer-models", "get_model".into()),
             ("cancer-models", "list_models".into()),
             ("cancer-models", "search_genes".into()),
-            ("cancer-models", "search_models".into()),
+            ("cancer-models", "search_cell_models".into()),
         ]
     );
     for name in [
@@ -371,7 +371,7 @@ fn catalog_registers_eleven_cancer_models_tools() {
         "get_model",
         "list_models",
         "search_genes",
-        "search_models",
+        "search_cell_models",
     ] {
         assert!(crate::contains_tool(name), "{name}");
         assert_eq!(crate::domain_for_tool(name), Some("cancer-models"));
@@ -381,7 +381,11 @@ fn catalog_registers_eleven_cancer_models_tools() {
     for (domain, name, description) in &tools {
         if matches!(
             name.as_str(),
-            "gene_dependencies" | "get_model" | "list_models" | "search_genes" | "search_models"
+            "gene_dependencies"
+                | "get_model"
+                | "list_models"
+                | "search_genes"
+                | "search_cell_models"
         ) {
             assert_eq!(*domain, "cancer-models");
             assert!(
@@ -875,7 +879,7 @@ fn crispr_row(id: &str, model_id: &str, source: &str, bf: f64) -> Value {
 async fn rejects_empty_query_bounds_extra_keys_and_pathy_ids() {
     let bio = cmp_test_bio("http://127.0.0.1:1");
     let empty_search = bio
-        .call("search_models", &json!({"query": ""}))
+        .call("search_cell_models", &json!({"query": ""}))
         .await
         .unwrap_err()
         .to_string();
@@ -908,7 +912,7 @@ async fn rejects_empty_query_bounds_extra_keys_and_pathy_ids() {
         .unwrap_err()
         .to_string();
     let pathy_search = bio
-        .call("search_models", &json!({"query": "lung?x=1"}))
+        .call("search_cell_models", &json!({"query": "lung?x=1"}))
         .await
         .unwrap_err()
         .to_string();
@@ -1165,7 +1169,7 @@ async fn get_model_uses_include_and_fails_unknown_or_ambiguous_names() {
 }
 
 #[tokio::test]
-async fn search_models_keeps_type_model_only() {
+async fn search_cell_models_keeps_type_model_only() {
     let app = Router::new().route(
         "/search/{query}",
         get(|Path(query): Path<String>| async move {
@@ -1181,7 +1185,7 @@ async fn search_models_keeps_type_model_only() {
     );
     let (bio, server) = cmp_serve(app).await;
     let result = bio
-        .call("search_models", &json!({"query": "SYN"}))
+        .call("search_cell_models", &json!({"query": "SYN"}))
         .await
         .unwrap();
     server.abort();

@@ -375,6 +375,15 @@ shared client (HTTP + 设置→凭据 / CLI env). Each domain is a module with
 one. New upstream API keys belong in **设置 → 凭据** (`src-tauri/src/models.rs`
 `CREDENTIALS`) and are read with `NativeBio::credential`.
 
+Native tool names share one registry with the desktop's built-in tools, which
+are wired first, so a native name must not reuse a built-in one (Sanger's model
+search is `search_cell_models` because `search_models` finds chat models). A
+clash keeps the built-in tool, skips the connector's, and reports both sources
+in Capabilities and in `wisp.log`. Custom MCP connectors instead expose a taken
+name as `<connector>__<tool>`; only when that alias is taken too is the
+connector skipped. Each tool-wiring problem appears once in Capabilities
+however many sessions are open.
+
 The PubMed domain is complete. All seven PubMed operations
 (`search_articles`, `get_article_metadata`, `convert_article_ids`,
 `find_related_articles`, `lookup_article_by_citation`, `get_full_text_article`,

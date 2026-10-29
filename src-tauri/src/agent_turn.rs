@@ -385,6 +385,18 @@ pub(crate) async fn resume_subagent_parent(
     .await
 }
 
+/// Every session agent re-runs the same tool wiring, so keep one copy of each
+/// problem for the Capabilities panel and log it to wisp.log when first seen,
+/// so a bug report can quote it (#1639).
+fn record_wiring_errors(shown: &mut Vec<String>, errors: Vec<String>) {
+    for error in errors {
+        if !shown.contains(&error) {
+            tracing::warn!("tool wiring: {error}");
+            shown.push(error);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn send_message_inner_with_continuation(
     state: &AppState,
@@ -1281,7 +1293,7 @@ async fn send_message_inner_with_continuation(
             }
         }
         if !wiring.errors.is_empty() {
-            state.bootstrap.lock().unwrap().errors.extend(wiring.errors);
+            record_wiring_errors(&mut state.bootstrap.lock().unwrap().errors, wiring.errors);
         }
         *guard = Some(agent);
     }
@@ -3216,5 +3228,27 @@ mod context_epoch_tests {
         assert_eq!(crate::session_commands::head_keep_seq(&rows, 3), 9);
         assert_eq!(crate::session_commands::head_keep_seq(&rows, 9), 9);
         assert_eq!(crate::session_commands::head_keep_seq(&[], 0), 0);
+    }
+}
+
+#[cfg(test)]
+mod wiring_error_tests {
+    use super::record_wiring_errors;
+
+    #[test]
+    fn each_wiring_problem_is_shown_once_across_session_agents() {
+        let mut shown = vec!["Kernel worker not found at /w".to_string()];
+        record_wiring_errors(
+            &mut shown,
+            vec![
+                "tool name collision: `x`".into(),
+                "Kernel worker not found at /w".into(),
+            ],
+        );
+        record_wiring_errors(&mut shown, vec!["tool name collision: `x`".into()]);
+        assert_eq!(
+            shown,
+            ["Kernel worker not found at /w", "tool name collision: `x`"]
+        );
     }
 }

@@ -180,7 +180,7 @@ async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
         "get_model" => sanger::get_model(bio, args).await,
         "list_models" => sanger::list_models(bio, args).await,
         "search_genes" => sanger::search_genes(bio, args).await,
-        "search_models" => sanger::search_models(bio, args).await,
+        "search_cell_models" => sanger::search_cell_models(bio, args).await,
         _ => bail!("unknown native biological tool: {name}"),
     }
 }

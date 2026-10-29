@@ -1,6 +1,8 @@
 /* ---------- Project meta + file browser ---------- */
 .proj-meta { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 0 12px 8px; line-height: 1.4; }
-.modal-wide { max-width: 560px; max-height: min(80vh, 640px); overflow: hidden; }
+/* Capabilities grows with startup errors and the local-environment list, so it
+   scrolls like every other .modal instead of clipping its lower rows (#1639). */
+.modal-wide { max-width: 560px; max-height: min(80vh, 640px); overflow-y: auto; }
 .fb-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .fb-head h2 { margin: 0; }
 .fb-source-label { display: flex; flex-direction: column; gap: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }
@@ -97,6 +99,7 @@
 .cap-label { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
 .cap-section { display: flex; flex-direction: column; gap: 8px; }
 .cap-section h3 { margin: 0; font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text-muted); }
+.cap-errors { margin: 0; padding-left: 26px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
 /* ---------- Skill Manager ---------- */
 .skill-tags-filter button {
   background: var(--bg-input); color: var(--text-muted);

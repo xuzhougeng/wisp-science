@@ -1310,9 +1310,9 @@ pub(super) fn CapabilitiesOverlay(
                         ("mcp", &b.mcp_catalog.to_string()),
                     ])}}</p>
                     {(!b.errors.is_empty()).then(|| view! {
-                        <div class="settings-status fail">
-                            {b.errors.join("\n")}
-                        </div>
+                        <ul class="settings-status fail cap-errors">
+                            {b.errors.iter().map(|error| view! { <li>{error.clone()}</li> }).collect_view()}
+                        </ul>
                     })}
                 </div>
             }})}

@@ -3990,12 +3990,88 @@ async fn mcp_tool_named_like_a_builtin_is_aliased_not_dropped() {
             .unwrap(),
     );
     let mut registry = wisp_tools::Registry::builtins();
-    let names =
-        super::register_mcp_with_approval(&mut registry, client, "bm", "Basic Memory", false, None)
-            .await
-            .unwrap();
+    let names = super::register_mcp_with_approval(
+        &mut registry,
+        client.clone(),
+        "bm",
+        "Basic Memory",
+        false,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(names, ["Basic_Memory__search", "write_note"]);
     assert!(registry.get("Basic_Memory__search").unwrap().defer_schema());
     assert!(!registry.get("search").unwrap().defer_schema());
+
+    // With the alias taken too, the report names the tool, the alias rule, and
+    // where to resolve it instead of a bare name (#1639).
+    let error =
+        super::register_mcp_with_approval(&mut registry, client, "bm", "Basic Memory", false, None)
+            .await
+            .unwrap_err();
+    assert!(
+        error.starts_with("tool name collision: `search` — "),
+        "{error}"
+    );
+    assert!(error.contains("`Basic_Memory__` alias"), "{error}");
+    assert!(error.contains("Settings › Connections"), "{error}");
     service.abort();
+}
+
+#[tokio::test]
+async fn bundled_connector_tools_keep_out_of_built_in_names() {
+    let dir = std::env::temp_dir().join(format!("wisp_native_names_{}", uuid::Uuid::new_v4()));
+    let store = wisp_store::Store::open(&dir.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    let mut registry = wisp_tools::Registry::builtins();
+    registry.add(Box::new(crate::quick_actions::SearchModelsTool::new(store)));
+    let bio = Arc::new(wisp_bio::NativeBio::new(&[]).unwrap());
+
+    // #1639: Sanger's `search_models` used to lose to the built-in one.
+    let mut wiring = super::ToolWiringResult::default();
+    super::register_native_bio_tools(
+        &mut registry,
+        wisp_bio::tools_for_package(bio.clone(), "mcp_bio"),
+        |domain| domain != "pubmed",
+        &mut wiring,
+    );
+    assert!(wiring.errors.is_empty(), "{:?}", wiring.errors);
+    assert!(wiring.added_tools.iter().any(|t| t == "search_cell_models"));
+    assert!(!wiring
+        .added_tools
+        .iter()
+        .any(|t| wisp_bio::domain_for_tool(t) == Some("pubmed")));
+    assert!(registry
+        .get("search_models")
+        .unwrap()
+        .schema()
+        .function
+        .description
+        .contains("chat model profiles"));
+
+    // A taken name keeps the first tool and reports both sources and the impact.
+    let mut again = super::ToolWiringResult::default();
+    super::register_native_bio_tools(
+        &mut registry,
+        wisp_bio::tools_for_package(bio, "mcp_cancer_models"),
+        |_| true,
+        &mut again,
+    );
+    assert!(again.added_tools.is_empty());
+    let get_model = again
+        .errors
+        .iter()
+        .find(|error| error.contains("`get_model`"))
+        .unwrap();
+    assert!(
+        get_model.starts_with("tool name collision: "),
+        "{get_model}"
+    );
+    assert!(
+        get_model.contains("bundled connector Cancer Models (cancer-models)"),
+        "{get_model}"
+    );
+    assert!(get_model.contains("safe to ignore"), "{get_model}");
 }

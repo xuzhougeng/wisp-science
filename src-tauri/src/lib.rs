@@ -5835,24 +5835,15 @@ async fn wire_runtimes_and_mcp(
         let native_selected = wisp_bio::selected_by_package(&pkg);
         if native_selected {
             match wisp_bio::NativeBio::with_proxy(&service_env, &network::mcp_proxy()) {
-                Ok(client) => {
-                    for tool in wisp_bio::tools_for_package(std::sync::Arc::new(client), &pkg) {
-                        let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
-                        if disabled.contains(domain)
-                            || connector_allow.is_some_and(|allow| !allow.contains(domain))
-                        {
-                            continue;
-                        }
-                        if registry.get(tool.name()).is_some() {
-                            result
-                                .errors
-                                .push(format!("tool name collision: {}", tool.name()));
-                        } else {
-                            result.added_tools.push(tool.name().into());
-                            registry.add(tool);
-                        }
-                    }
-                }
+                Ok(client) => register_native_bio_tools(
+                    registry,
+                    wisp_bio::tools_for_package(std::sync::Arc::new(client), &pkg),
+                    |domain| {
+                        !disabled.contains(domain)
+                            && connector_allow.is_none_or(|allow| allow.contains(domain))
+                    },
+                    &mut result,
+                ),
                 Err(error) => result.errors.push(format!("Native bio: {error}")),
             }
         }
@@ -5873,6 +5864,43 @@ async fn wire_runtimes_and_mcp(
         connector_allow,
     )
     .await
+}
+
+/// Adds the bundled connector tools whose domain `admit` accepts. Native tools
+/// are wired after the host's own tools, so a name already in `registry`
+/// belongs to a built-in tool; that tool is kept and the connector's is skipped.
+fn register_native_bio_tools(
+    registry: &mut wisp_tools::Registry,
+    tools: Vec<Box<dyn wisp_tools::Tool>>,
+    admit: impl Fn(&str) -> bool,
+    result: &mut ToolWiringResult,
+) {
+    for tool in tools {
+        let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
+        if !admit(domain) {
+            continue;
+        }
+        if registry.get(tool.name()).is_some() {
+            result
+                .errors
+                .push(native_tool_collision(domain, tool.name()));
+        } else {
+            result.added_tools.push(tool.name().into());
+            registry.add(tool);
+        }
+    }
+}
+
+/// Shown in Capabilities and written to wisp.log: name both sources, say which
+/// one was dropped, and whether the user has to act (#1639).
+fn native_tool_collision(domain: &str, tool: &str) -> String {
+    format!(
+        "tool name collision: `{tool}` from bundled connector {} ({domain}) was skipped because \
+         a built-in Wisp tool already uses that name. The built-in tool and the connector's other \
+         tools still work, so this is safe to ignore; please report it so the connector tool can \
+         be renamed.",
+        domain_display_name(domain)
+    )
 }
 
 /// Host environment keys copied into a plugin MCP child after `env_clear()`.
@@ -6070,7 +6098,17 @@ async fn register_mcp_with_approval(
                 }
             }
             if !collisions.is_empty() {
-                return Err(format!("tool name collision: {}", collisions.join(", ")));
+                return Err(format!(
+                    "tool name collision: {} — both the name and its `{prefix}__` alias are \
+                     already used by built-in tools or other connectors, so this connector was \
+                     not loaded. Disable or rename one of the conflicting connectors in Settings \
+                     › Connections.",
+                    collisions
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             // Keep UI-only tools available to App bridges; model visibility is
             // checked below when adding tools to the agent registry.

@@ -97,7 +97,7 @@ pub(super) fn catalog() -> Vec<(&'static str, ToolSchema)> {
             }),
         ),
         cmp_tool(
-            "search_models",
+            "search_cell_models",
             "Search Sanger Cell Model Passports models via GET /search/{query} and keep resources with type=model. Returns the same lean rows as list_models on a bounded page. Prefer this when the exact CMP name/synonym is unknown.",
             json!({
                 "type": "object", "additionalProperties": false,
@@ -263,7 +263,7 @@ pub(super) async fn get_model(bio: &NativeBio, args: &Value) -> Result<Value> {
     Ok(record)
 }
 
-pub(super) async fn search_models(bio: &NativeBio, args: &Value) -> Result<Value> {
+pub(super) async fn search_cell_models(bio: &NativeBio, args: &Value) -> Result<Value> {
     let args: SearchModels = serde_json::from_value(args.clone())
         .context("invalid Cell Model Passports model search arguments")?;
     let cap = bound_page(args.max_records)?;

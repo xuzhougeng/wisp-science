@@ -11425,6 +11425,31 @@ test("capability counts open skills, connections, and editable project memory", 
   });
 });
 
+test("capabilities lists each startup problem and scrolls to its lower rows", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 560 });
+  await page.addInitScript(() => {
+    (window as any).__mockBootstrapErrors = [
+      "tool name collision: `get_model` from bundled connector Cancer Models (cancer-models) was skipped because a built-in Wisp tool already uses that name.",
+      "R runtime worker not found at /mock/r_worker",
+    ];
+  });
+  await enterApp(page);
+
+  await page.getByRole("button", { name: "Capabilities" }).click();
+  const capabilities = page.getByRole("dialog", { name: "Capabilities" });
+  const problems = capabilities.locator(".cap-errors li");
+  await expect(problems).toHaveCount(2);
+  await expect(problems.first()).toContainText("bundled connector Cancer Models (cancer-models)");
+  await expect(problems.nth(1)).toHaveText("R runtime worker not found at /mock/r_worker");
+
+  // #1639: the dialog clipped everything below its height cap instead of scrolling.
+  const setup = capabilities.getByRole("button", { name: "Set up environment" });
+  await expect(setup).not.toBeInViewport();
+  await capabilities.getByRole("heading", { name: "Capabilities" }).hover();
+  await page.mouse.wheel(0, 2000);
+  await expect(setup).toBeInViewport();
+});
+
 test("skill detail browses markdown and scripts and persists tags without leaving the file", async ({ page }, testInfo) => {
   await enterApp(page);
   await openSettingsSection(page, "Skills");
