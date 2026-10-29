@@ -13,5 +13,9 @@
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- Project databases often live in these folders; the prompt says why. -->
+    <key>NSDesktopFolderUsageDescription</key><string>Wisp Science 读取保存在桌面上的项目数据库和文件。Wisp Science reads projects stored on your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>Wisp Science 读取保存在文稿中的项目数据库和文件。Wisp Science reads projects stored in Documents.</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>Wisp Science 读取保存在下载文件夹中的项目数据库和文件。Wisp Science reads projects stored in Downloads.</string>
 </dict>
 </plist>

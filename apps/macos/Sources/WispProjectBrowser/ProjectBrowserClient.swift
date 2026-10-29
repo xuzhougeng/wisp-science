@@ -99,7 +99,12 @@ public protocol ProjectBrowserWriting: Sendable {
 
 public struct ProjectBrowserClient: ProjectBrowserQuerying, ProjectBrowserWriting {
     public static let schema = "wisp.project-browser.v1"
+    /// The usual cause of a stuck read is macOS asking whether this app may open
+    /// project databases under Desktop/Documents/Downloads: `open()` blocks until
+    /// the prompt is answered, and every ad-hoc rebuild asks again.
+    public static let timeoutMessage = "查询服务 30 秒内没有返回。如果 macOS 询问是否允许访问桌面、文稿或下载文件夹，请先允许，再点刷新。"
     public let executableURL: URL
+    var deadlineSeconds: Double = 30
 
     public init(executableURL: URL) {
         self.executableURL = executableURL
@@ -176,10 +181,11 @@ public struct ProjectBrowserClient: ProjectBrowserQuerying, ProjectBrowserWritin
         try input.fileHandleForWriting.write(contentsOf: data)
         try input.fileHandleForWriting.close()
         try process.run()
+        let timedOut = DeadlineFlag()
         let deadline = DispatchSource.makeTimerSource(queue: .global())
-        deadline.schedule(deadline: .now() + 30)
+        deadline.schedule(deadline: .now() + deadlineSeconds)
         deadline.setEventHandler {
-            if process.isRunning { process.terminate() }
+            if process.isRunning { timedOut.set(); process.terminate() }
         }
         deadline.resume()
         defer {
@@ -189,6 +195,7 @@ public struct ProjectBrowserClient: ProjectBrowserQuerying, ProjectBrowserWritin
         let reply = output.fileHandleForReading.readDataToEndOfFile()
         let diagnostics = errors.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        if timedOut.isSet { throw ProjectBrowserError.service(Self.timeoutMessage) }
         guard process.terminationStatus == 0 else {
             let message = String(decoding: diagnostics, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             throw ProjectBrowserError.service(message.isEmpty ? "查询服务已停止或超时，请重试。" : message)
@@ -230,4 +237,12 @@ public struct ProjectBrowserClient: ProjectBrowserQuerying, ProjectBrowserWritin
             case activitySource = "activity_source"
         }
     }
+}
+
+/// Set by the deadline timer, read after the child exits.
+private final class DeadlineFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.lock(); value = true; lock.unlock() }
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
 }
