@@ -4,7 +4,7 @@ import Foundation
 /// Data-backed surfaces opt into `available` as they become implemented.
 public struct NativePanelTabs: Equatable, Sendable {
     public static let defaults = ["artifacts", "agents", "files", "hosts"]
-    public static let all = ["artifacts", "agents", "notebook", "highlights", "files", "provenance", "hosts", "sidechat"]
+    public static let all = ["artifacts", "agents", "notebook", "highlights", "files", "provenance", "hosts", "runs", "memos", "sidechat"]
     public private(set) var open: [String]
     public private(set) var selected: String
     public let available: [String]

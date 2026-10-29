@@ -1,0 +1,25 @@
+{
+  "memos": [
+    {
+      "id": "memo-pinned",
+      "project_id": "project",
+      "title": "",
+      "body": "\n  Reviewer 2 wants the batch-corrected UMAP\nsecond line",
+      "pinned": true,
+      "created_at": 1761700000,
+      "updated_at": 1761700100
+    },
+    {
+      "id": "memo-titled",
+      "project_id": "project",
+      "title": "QC thresholds",
+      "body": "min_genes 200",
+      "pinned": false,
+      "created_at": 1761700200,
+      "updated_at": 1761700300
+    }
+  ],
+  "add_args": { "input": { "title": "", "body": "Check the doublet rate" } },
+  "update_args": { "patch": { "id": "memo-titled", "pinned": true } },
+  "delete_args": { "memoId": "memo-titled" }
+}

@@ -261,6 +261,9 @@ struct ProjectWorkspace: View {
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.nativeTerminal(projectID: project.id, sessionID: session).requestOpen(context)
                     terminalVisible = true
+                }, insertMemo: { body in
+                    guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                    conversation.draft = NativeProjectMemos.composeInsert(conversation.draft, body)
                 }) { panelVisible = false }
                     .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar))
                     .id(NativePanelScopeIdentity(databaseURL: model.databaseURL.standardizedFileURL, projectID: project.id, sessionID: session))

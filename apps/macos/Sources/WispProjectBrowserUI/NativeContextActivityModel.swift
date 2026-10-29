@@ -32,7 +32,10 @@ final class NativeContextActivityModel: ObservableObject {
         return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
     var runtimes: [NativeRuntimeInfo] { snapshot?.runtimes.filter { $0.key.contextId == contextID } ?? [] }
-    var runs: [NativeRun] { snapshot?.runs.filter { $0.context_id == contextID } ?? [] }
+    /// An empty `contextID` scopes runs to this conversation across every
+    /// environment instead (the right panel's 运行 tab).
+    var runs: [NativeRun] { snapshot?.runs.filter(owns) ?? [] }
+    private func owns(_ run: NativeRun) -> Bool { contextID.isEmpty ? run.frame_id == sessionID : run.context_id == contextID }
     func refresh() async {
         guard !refreshing else { return }
         let current = generation; refreshing = true; loading = snapshot == nil
@@ -53,7 +56,7 @@ final class NativeContextActivityModel: ObservableObject {
         do {
             let result = try await call("run_detail", args: ["run_id": .string(id)], as: NativeRun.self)
             guard current == detailGeneration, !Task.isCancelled else { return }
-            guard result.id == id, result.context_id == contextID else { throw ProjectBrowserError.invalidResponse }
+            guard result.id == id, owns(result) else { throw ProjectBrowserError.invalidResponse }
             detail = result
         } catch { if current == detailGeneration { self.error = error.localizedDescription } }
     }
