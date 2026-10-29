@@ -4219,6 +4219,19 @@ pub struct CatalogEntryDto {
     pub efforts: Vec<String>,
 }
 
+/// `magpie_model_info`: the model a Magpie connection runs every HTTP turn on.
+/// An empty `efforts` list means only the provider default can be used.
+#[derive(Deserialize, Clone, PartialEq)]
+pub struct MagpieModelDto {
+    pub model: String,
+    #[allow(dead_code)]
+    pub context_window: u64,
+    #[allow(dead_code)]
+    pub max_tokens: u64,
+    pub efforts: Vec<String>,
+    pub default_effort: String,
+}
+
 fn default_model_context_window() -> u64 {
     128_000
 }

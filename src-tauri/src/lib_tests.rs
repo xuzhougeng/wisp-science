@@ -46,6 +46,167 @@ fn magpie_personal_settings_validation_uses_the_explicit_form() {
     assert!(config("").is_err());
 }
 
+/// Answers `count` chat requests and returns their JSON bodies.
+async fn capture_chat_bodies(
+    count: usize,
+) -> (
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<Vec<serde_json::Value>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let mut bodies = Vec::new();
+        for _ in 0..count {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let body = loop {
+                let mut part = [0; 4096];
+                let n = stream.read(&mut part).await.unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&part[..n]);
+                let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") else {
+                    continue;
+                };
+                let length: usize = String::from_utf8_lossy(&bytes[..end])
+                    .lines()
+                    .find_map(|line| {
+                        line.to_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    break serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap();
+                }
+            };
+            bodies.push(body);
+            let reply = r#"{"choices":[{"message":{"role":"assistant","content":"fixture-ok"},"finish_reason":"stop"}]}"#;
+            stream
+                .write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).as_bytes())
+                .await
+                .unwrap();
+        }
+        bodies
+    });
+    (address, task)
+}
+
+fn magpie_runtime(
+    address: std::net::SocketAddr,
+    info: serde_json::Value,
+) -> super::magpie::Runtime {
+    let text = serde_json::json!({
+        "baseURL": format!("http://{address}/v1"),
+        "apiKey": "gateway-test-key",
+        "model": "fixture/reasoner",
+        "modelInfo": info,
+    });
+    super::magpie::Runtime::new(wisp_llm::magpie::parse(text.to_string().as_bytes()).unwrap())
+}
+
+async fn magpie_turn_body(store: &wisp_store::Store, frame_id: &str) -> String {
+    let settings = super::load_session_settings(store, frame_id).await;
+    let cfg = super::build_provider_config(
+        &settings.0,
+        &settings.1,
+        &settings.3,
+        &settings.2,
+        settings.4,
+        &settings.5,
+        &settings.6,
+        &settings.7,
+        settings.8,
+        settings.9,
+        &settings.10,
+        Some(frame_id),
+    )
+    .unwrap();
+    assert_eq!(cfg.model, "fixture/reasoner");
+    assert_eq!(cfg.api_key, "gateway-test-key");
+    let reply = wisp_llm::build(cfg)
+        .complete(&[wisp_llm::Message::user("fixture")], &[])
+        .await
+        .unwrap();
+    assert_eq!(reply.content, "fixture-ok");
+    settings.5
+}
+
+#[tokio::test]
+async fn magpie_session_effort_reaches_the_gateway_request() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_magpie_effort_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = wisp_store::Store::open(&tmp).await.unwrap();
+    store.create_project("p", "project", "").await.unwrap();
+    for frame in ["picked", "unsupported", "inherits"] {
+        store
+            .create_frame(frame, "p", "OPERON", "m1")
+            .await
+            .unwrap();
+    }
+    store
+        .set_frame_reasoning_effort("picked", "p", Some("high"))
+        .await
+        .unwrap();
+    store
+        .set_frame_reasoning_effort("unsupported", "p", Some("max"))
+        .await
+        .unwrap();
+
+    // Known levels: the conversation's choice when supported, else medium.
+    let (address, bodies) = capture_chat_bodies(3).await;
+    super::magpie::set_test_runtime(Some(magpie_runtime(
+        address,
+        serde_json::json!({"id": "fixture/reasoner", "context": 400000, "output": 64000, "efforts": ["low", "medium", "high"]}),
+    )));
+    let mut resolved = Vec::new();
+    for frame in ["picked", "unsupported", "inherits"] {
+        resolved.push(magpie_turn_body(&store, frame).await);
+    }
+    assert_eq!(resolved, ["high", "medium", "medium"]);
+    let bodies = bodies.await.unwrap();
+    let efforts: Vec<_> = bodies
+        .iter()
+        .map(|b| b["reasoning_effort"].clone())
+        .collect();
+    assert_eq!(efforts, ["high", "medium", "medium"]);
+    assert!(bodies
+        .iter()
+        .all(|b| b["max_tokens"] == 64000 && b["model"] == "fixture/reasoner"));
+    assert_eq!(super::magpie::context_window(), Some(400000));
+    let info = serde_json::to_value(super::magpie::magpie_model_info().unwrap()).unwrap();
+    assert_eq!(
+        info,
+        serde_json::json!({"model": "fixture/reasoner", "context_window": 400000, "max_tokens": 64000,
+            "efforts": ["low", "medium", "high"], "default_effort": "medium"})
+    );
+    let ui: wisp_dto::MagpieModelDto = serde_json::from_value(info).unwrap();
+    assert_eq!(ui.default_effort, "medium");
+
+    // A snapshot for another model is ignored: no levels, so the provider
+    // default applies even for a conversation that picked one earlier.
+    let (address, bodies) = capture_chat_bodies(1).await;
+    super::magpie::set_test_runtime(Some(magpie_runtime(
+        address,
+        serde_json::json!({"id": "fixture/previous", "output": 1000, "efforts": ["high"]}),
+    )));
+    assert_eq!(magpie_turn_body(&store, "picked").await, "");
+    let body = &bodies.await.unwrap()[0];
+    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["max_tokens"], 8192);
+    assert_eq!(
+        super::magpie::magpie_model_info()
+            .map(|info| serde_json::to_value(info).unwrap()["efforts"].clone()),
+        Some(serde_json::json!([]))
+    );
+    super::magpie::set_test_runtime(None);
+    drop(store);
+    let _ = std::fs::remove_file(&tmp);
+}
+
 #[test]
 fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
     let config = |session_id| {

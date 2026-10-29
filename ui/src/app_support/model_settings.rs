@@ -128,6 +128,8 @@ pub(crate) struct ModelSettingsState {
     pub(crate) specialist_transfer: RwSignal<Option<SpecialistTransfer>>,
     /// Global default subagent model profile id; "" follows the conversation.
     pub(crate) subagent_model: RwSignal<String>,
+    /// Set while Magpie overrides every HTTP model for this process.
+    pub(crate) magpie_model: RwSignal<Option<MagpieModelDto>>,
     // Cross-domain signals injected by `App`.
     pub(crate) models: RwSignal<Vec<ModelProfile>>,
     pub(crate) acp_agents: RwSignal<Vec<AcpAgentProfile>>,
@@ -155,6 +157,7 @@ impl ModelSettingsState {
             specialist_form: create_rw_signal(None::<Specialist>),
             specialist_transfer: create_rw_signal(None::<SpecialistTransfer>),
             subagent_model: create_rw_signal(String::new()),
+            magpie_model: create_rw_signal(None::<MagpieModelDto>),
             models,
             acp_agents,
             settings,
@@ -169,9 +172,18 @@ impl ModelSettingsState {
             models,
             acp_agents,
             subagent_model,
+            magpie_model,
             ..
         } = self;
         spawn_local(async move {
+            if let Ok(value) = invoke_checked("magpie_model_info", JsValue::UNDEFINED).await {
+                let model = serde_wasm_bindgen::from_value::<Option<MagpieModelDto>>(value)
+                    .ok()
+                    .flatten();
+                if magpie_model.get_untracked() != model {
+                    magpie_model.set(model);
+                }
+            }
             let v = invoke("list_models", JsValue::UNDEFINED).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
                 models.set(list);

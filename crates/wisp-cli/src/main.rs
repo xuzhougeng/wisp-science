@@ -886,8 +886,11 @@ async fn subscription_access_token(kind: &str) -> Result<Option<String>> {
 
 async fn provider_config() -> Result<ProviderConfig> {
     if !cfg!(test) {
-        if let Some(cfg) = wisp_llm::magpie::startup_config() {
-            return Ok(cfg);
+        if let Some(connection) = wisp_llm::magpie::startup_connection() {
+            return Ok(magpie_provider_config(
+                connection,
+                std::env::var("WISP_REASONING_EFFORT").ok().as_deref(),
+            ));
         }
     }
     let kind = parse_provider_kind(&env("WISP_PROVIDER", "openai"));
@@ -914,6 +917,20 @@ async fn provider_config() -> Result<ProviderConfig> {
         cfg.reasoning_effort = Some(effort);
     }
     Ok(cfg)
+}
+
+/// Magpie selects the model; WISP_REASONING_EFFORT still applies when that
+/// model supports it, as a conversation's effort does on the desktop.
+fn magpie_provider_config(
+    connection: wisp_llm::magpie::Connection,
+    reasoning_effort: Option<&str>,
+) -> ProviderConfig {
+    let mut cfg = connection.config;
+    cfg.reasoning_effort = wisp_llm::magpie::resolve_effort(
+        &connection.info.efforts,
+        &reasoning_effort.unwrap_or_default().to_ascii_lowercase(),
+    );
+    cfg
 }
 
 /// Dedicated image-analysis model used when the primary chat model cannot see.
@@ -1933,6 +1950,26 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("WISP_VISION_API_KEY"), "{err}");
+    }
+
+    #[test]
+    fn magpie_reasoning_effort_uses_supported_env_value_or_model_default() {
+        let file = |info: serde_json::Value| {
+            let text = serde_json::json!({"baseURL":"https://gateway.example/v1","apiKey":"k","model":"p/m","modelInfo":info});
+            wisp_llm::magpie::parse(text.to_string().as_bytes()).unwrap()
+        };
+        let known = || {
+            file(serde_json::json!({"id":"p/m","output":64000,"efforts":["low","medium","high"]}))
+        };
+        let effort = |connection, raw| magpie_provider_config(connection, raw).reasoning_effort;
+        assert_eq!(effort(known(), Some("HIGH")).as_deref(), Some("high"));
+        assert_eq!(effort(known(), None).as_deref(), Some("medium"));
+        assert_eq!(effort(known(), Some("max")).as_deref(), Some("medium"));
+        assert_eq!(magpie_provider_config(known(), None).max_tokens, 64000);
+        assert_eq!(
+            effort(file(serde_json::json!({"id":"p/m"})), Some("high")),
+            None
+        );
     }
 
     #[test]

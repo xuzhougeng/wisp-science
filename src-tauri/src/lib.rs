@@ -4601,13 +4601,16 @@ async fn load_session_settings(
     String,
 ) {
     if let Some(cfg) = magpie::config(Some(frame_id)) {
+        // Magpie replaces the bound profile, so only the conversation's own
+        // effort applies, checked against what the connected model supports.
+        let requested = models::session_reasoning_effort(store, frame_id, "").await;
         return (
             "openai".into(),
             cfg.base_url,
             cfg.model,
             cfg.api_key,
             cfg.max_tokens,
-            String::new(),
+            magpie::reasoning_effort(&requested).unwrap_or_default(),
             String::new(),
             cfg.user_agent,
             true,
@@ -5616,7 +5619,9 @@ fn build_provider_config(
     session_header_name: &str,
     session_id: Option<&str>,
 ) -> Result<ProviderConfig, String> {
-    if let Some(cfg) = magpie::config(session_id) {
+    if let Some(mut cfg) = magpie::config(session_id) {
+        // An effort the connected model does not list falls back to its default.
+        cfg.reasoning_effort = magpie::reasoning_effort(reasoning_effort);
         return Ok(cfg);
     }
     build_stored_provider_config(
@@ -8268,6 +8273,7 @@ pub fn run() {
             models::set_session_reasoning_effort,
             models::set_session_service_tier,
             model_catalog::model_catalog_lookup,
+            magpie::magpie_model_info,
             settings_commands::validate_settings,
             list_dir,
             create_file,

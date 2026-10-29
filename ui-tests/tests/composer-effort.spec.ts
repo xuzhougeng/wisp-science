@@ -252,3 +252,46 @@ test("the effort pill follows the session's model binding", async ({ page }) => 
     "Max",
   ]);
 });
+
+test("Magpie lists the connected model's levels and stores the choice on the conversation", async ({ page }) => {
+  await page.goto("/?mockSessionModels=1&mockComposerCatalog=1&mockMagpie=1");
+  await page.locator(".proj-card-main").first().click();
+  await page.locator('[data-session-id="s-model-a"]').click();
+  const pill = page.getByTestId("composer-effort-trigger");
+  // The stored profile's "high" does not apply while Magpie selects the model.
+  await expect(pill.getByTestId("composer-effort-value")).toHaveText("Default");
+
+  await pill.click();
+  const menu = page.getByTestId("composer-effort-menu");
+  await expect(menu.locator(".composer-effort-option")).toHaveText(["Default", "Low", "Medium", "High"]);
+  await menu.locator('[data-effort="high"]').click();
+  await expect(pill.getByTestId("composer-effort-value")).toHaveText("High");
+  await expect.poll(() => lastInvokeArgs(page, "set_session_reasoning_effort"))
+    .toMatchObject({ sessionId: "s-model-a", effort: "high" });
+
+  await pill.click();
+  await menu.locator('[data-effort="default"]').click();
+  await expect(pill.getByTestId("composer-effort-value")).toHaveText("Default");
+  await expect.poll(() => lastInvokeArgs(page, "set_session_reasoning_effort"))
+    .toMatchObject({ sessionId: "s-model-a", effort: "" });
+  // Personal model profiles are never rewritten for a Magpie choice.
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+});
+
+test("a Magpie effort picked before the first message applies to the new conversation", async ({ page }) => {
+  await page.goto("/?mockMagpie=1");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.locator("#composer-input")).toBeVisible();
+  const pill = page.getByTestId("composer-effort-trigger");
+  await pill.click();
+  await page.getByTestId("composer-effort-menu").locator('[data-effort="low"]').click();
+  await expect(pill.getByTestId("composer-effort-value")).toHaveText("Low");
+  expect(await lastInvokeArgs(page, "set_session_reasoning_effort")).toBeNull();
+
+  await page.locator("#composer-input").fill("hello");
+  await page.locator("button.send").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_reasoning_effort"))
+    .toMatchObject({ effort: "low", sessionId: expect.stringMatching(/.+/) });
+  await expect(pill.getByTestId("composer-effort-value")).toHaveText("Low");
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+});

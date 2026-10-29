@@ -31,8 +31,8 @@ restart the application. A newly launched CLI process also picks up the change.
 The fixed file is `~/.config/wisp-science/magpie.json`, or
 `%USERPROFILE%\.config\wisp-science\magpie.json` on Windows. XDG_CONFIG_HOME,
 APPDATA, and the native database directory do not relocate it. Magpie writes
-`baseURL`, `apiKey`, and `model`; all three must be valid for the override to
-activate. Missing, partial, invalid, oversized, or `{}` files use the normal
+`baseURL`, `apiKey`, and `model`, and newer plugins add `modelInfo`; the
+three connection fields must be valid for the override to activate. Missing, partial, invalid, oversized, or `{}` files use the normal
 personal configuration. The reader does not write this file or copy its key
 into the database/keyring.
 
@@ -40,8 +40,33 @@ The override uses OpenAI Chat Completions for built-in HTTP model calls. Persona
 profiles remain editable, and their validation tests the fields in the form.
 Model changes in the personal editor take effect after Magpie is disconnected.
 External ACP agents and dedicated image/video generation configurations retain
-their own model management. A model must support any requested tools or images;
-the integration file does not declare capabilities.
+their own model management. A model must support any requested tools or images.
+
+## Model facts and reasoning effort
+
+Plugin builds that publish model facts also write
+`modelInfo: { id, context, output, efforts }` with only the values Magpie knows.
+Wisp Science uses the snapshot only when its `id` equals `model`; a stale or
+malformed snapshot is ignored and the connection stays active.
+
+| Value | Source, in order |
+| --- | --- |
+| Context capacity | `modelInfo.context`, the built-in catalog by exact model ID, 128,000 |
+| Output limit (`max_tokens`) | `modelInfo.output`, the catalog, 8,192 |
+| Reasoning levels | `modelInfo.efforts`, the catalog; otherwise none |
+
+The composer's reasoning-effort menu lists only those levels while Magpie is
+connected, and the choice is stored on the current conversation (a choice made
+before the first message applies to the new conversation). Personal model
+profiles are not changed. Default is medium, then high, then the first listed
+level. A conversation's choice that the connected model does not list falls
+back to that default instead of failing the request. When no levels are known,
+no `reasoning_effort` is sent and the provider's own default applies.
+
+The CLI applies `WISP_REASONING_EFFORT` the same way: a level the model lists is
+sent, anything else uses the model default.
+
+Restart after switching models in Magpie so the new snapshot is read.
 
 Magpie restores the previous external fields on disconnect. An earlier valid
 external file becomes active again; otherwise normal personal models resume.

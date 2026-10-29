@@ -2403,6 +2403,7 @@ pub async fn set_session_reasoning_effort(
             effort,
             "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
         )
+        && !crate::magpie::supports_effort(effort)
     {
         return Err("Unknown reasoning effort.".into());
     }

@@ -708,3 +708,5 @@ ACP agents and remote MCP connections, is in
 [Magpie model connection](magpie.md) uses a separate `magpie.json` file to select
 the built-in HTTP agent model. Restart after connection, model changes, or
 disconnection. Personal model profiles, validation, and credentials are preserved.
+While connected, the composer's reasoning-effort menu offers the Magpie model's
+levels and stores the choice on the conversation, not on a profile.

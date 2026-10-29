@@ -901,6 +901,13 @@ fn App() -> impl IntoView {
     // None means the selected profile default needs no override.
     let pending_service_tier = create_rw_signal::<Option<String>>(None);
     let service_tier_busy = create_rw_signal(false);
+    // Magpie runs every HTTP turn on one connected model, so its effort is a
+    // per-conversation override. Map presence means the backend value has
+    // loaded; the nested None follows the connected model's default.
+    let session_reasoning_efforts =
+        create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
+    // A pre-send Magpie effort is held in memory until the first frame exists.
+    let pending_reasoning_effort = create_rw_signal::<Option<String>>(None);
     let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
     let active_acp_agent_id = create_rw_signal::<Option<String>>(None);
     let fast_profile = Signal::derive(move || {
@@ -1269,12 +1276,44 @@ fn App() -> impl IntoView {
         .cloned()?;
         Some((profile.provider, profile.api_url, profile.model))
     });
+    let magpie_model = model_settings.magpie_model;
+    let magpie_effort = create_memo(move |_| match active_session.get() {
+        Some(session_id) => session_reasoning_efforts
+            .with(|values| values.get(&session_id).cloned())
+            .flatten(),
+        None => pending_reasoning_effort.get(),
+    });
     // Persist a reasoning-effort default onto the model profile itself
     // (Cursor-style per-model effort). Sessions without an explicit override
-    // inherit the new default on their next turn.
-    let apply_model_effort = Callback::new(move |(id, effort): (String, String)| {
+    // inherit the new default on their next turn. Without a profile (Magpie)
+    // the choice belongs to this conversation and never touches a profile.
+    let apply_model_effort = Callback::new(move |(id, effort): (Option<String>, String)| {
         composer_effort_open.set(false);
-        model_settings.apply_model_effort(id, effort);
+        if let Some(id) = id {
+            model_settings.apply_model_effort(id, effort);
+            return;
+        }
+        let value = (!effort.is_empty()).then_some(effort);
+        let Some(session_id) = active_session.get_untracked() else {
+            pending_reasoning_effort.set(value);
+            return;
+        };
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "sessionId": session_id.clone(),
+                "effort": value.clone().unwrap_or_default(),
+            }))
+            .unwrap();
+            match invoke_checked("set_session_reasoning_effort", args).await {
+                Ok(_) => session_reasoning_efforts.update(|values| {
+                    values.insert(session_id, value);
+                }),
+                Err(error) => show_warning_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            }
+        });
     });
     let model_switch_confirm = create_rw_signal::<Option<(String, String, bool)>>(None);
     let status = create_rw_signal(String::new());
@@ -1889,6 +1928,30 @@ fn App() -> impl IntoView {
                     );
                 }
             }
+        });
+    });
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return;
+        };
+        if magpie_model.with(Option::is_none) {
+            return;
+        }
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
+            let effort = match invoke_checked("get_session_reasoning_effort", args).await {
+                // Older builds stored "" for the provider default.
+                Ok(value) => value.as_string().filter(|effort| !effort.is_empty()),
+                Err(error) => {
+                    web_sys::console::warn_1(
+                        &format!("get_session_reasoning_effort failed: {:?}", error).into(),
+                    );
+                    None
+                }
+            };
+            session_reasoning_efforts.update(|values| {
+                values.insert(session_id, effort);
+            });
         });
     });
     create_effect(move |_| {
@@ -5284,6 +5347,7 @@ fn App() -> impl IntoView {
         let active = active_session.get();
         let creates_session = active.is_none();
         let pending_fast = pending_service_tier.get();
+        let pending_effort = pending_reasoning_effort.get();
         // Any prior send-failed hint (e.g. the max_tokens truncation notice) is
         // stale once a new turn is committed; the Ok path never cleared it, so it
         // lingered forever. Clear it here so continuing the conversation dismisses it.
@@ -5465,6 +5529,28 @@ fn App() -> impl IntoView {
                     });
                 }
                 pending_service_tier.set(None);
+                if let Some(effort) = pending_effort.clone() {
+                    let args = to_value(&serde_json::json!({
+                        "sessionId": id.clone(),
+                        "effort": effort.clone(),
+                    }))
+                    .unwrap();
+                    if let Err(error) = invoke_checked("set_session_reasoning_effort", args).await {
+                        active_session.set(Some(id.clone()));
+                        input.set(message);
+                        attachments.set(saved_attachments);
+                        composer_references.set(saved_references);
+                        composer_quotes.set(quotes);
+                        feedback_context.set(attached_feedback.clone());
+                        status.set(send_failed(locale.get(), &js_error_text(error)));
+                        refresh_session_history();
+                        return;
+                    }
+                    session_reasoning_efforts.update(|values| {
+                        values.insert(id.clone(), Some(effort));
+                    });
+                }
+                pending_reasoning_effort.set(None);
             }
             // Keep the selection even if ACP startup fails before its binding
             // exists. The new frame id was not available in the model picker.
@@ -16974,16 +17060,29 @@ fn App() -> impl IntoView {
                                 if active_acp_agent_id.get().is_some() {
                                     return None;
                                 }
-                                let profile = session_profile(
-                                    &models.get(),
-                                    &session_model_ids.get(),
-                                    active_session.get().as_deref(),
-                                )
-                                .cloned()?;
-                                let current = profile.reasoning_effort.clone();
-                                let values = composer_model_efforts.get().unwrap_or_default();
+                                // Magpie lists only the connected model's levels and
+                                // stores the choice on this conversation.
+                                let (current, values, profile_id) = match magpie_model.get() {
+                                    Some(magpie) => (
+                                        magpie_effort.get().unwrap_or_default(),
+                                        magpie.efforts,
+                                        None,
+                                    ),
+                                    None => {
+                                        let profile = session_profile(
+                                            &models.get(),
+                                            &session_model_ids.get(),
+                                            active_session.get().as_deref(),
+                                        )
+                                        .cloned()?;
+                                        (
+                                            profile.reasoning_effort.clone(),
+                                            composer_model_efforts.get().unwrap_or_default(),
+                                            Some(profile.id.clone()),
+                                        )
+                                    }
+                                };
                                 let unverified = !current.is_empty() && !values.contains(&current);
-                                let profile_id = profile.id.clone();
                                 // The pill label closure owns its copy so the
                                 // dropdown closure below can still capture `current`.
                                 let pill_current = current.clone();

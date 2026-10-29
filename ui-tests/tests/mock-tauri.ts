@@ -3719,6 +3719,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           case "list_models":
             return mockModels;
+          case "magpie_model_info":
+            // A Magpie connection overrides every HTTP profile (src-tauri magpie.rs).
+            return query.get("mockMagpie") === "1"
+              ? { model: "fixture/reasoner", context_window: 400000, max_tokens: 64000,
+                  efforts: ["low", "medium", "high"], default_effort: "medium" }
+              : null;
           case "model_catalog_lookup": {
             if (query.get("mockSlowCatalog") === "1" && arg("model") === "gpt-5.6-luna") {
               await new Promise(resolve => setTimeout(resolve, 700));
