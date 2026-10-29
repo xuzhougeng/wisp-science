@@ -185,7 +185,7 @@ struct NativeSettingsView: View {
                 }
                 Text(localized("以下更新开关立即保存；取消不会撤销。"))
                     .font(.caption).foregroundStyle(.secondary)
-                immediateToggle("自动检查更新", read: "get_update_check_enabled", write: "set_update_check_enabled")
+                immediateToggle("检查更新", hint: "启动时检查 GitHub Releases，有新版本时在侧边栏显示提示。", read: "get_update_check_enabled", write: "set_update_check_enabled")
                 Button(localized("检查更新")) { Task { update = await state.run("check_for_updates", refresh: false, success: "检查完成") } }
                 if let update {
                     Text(update["update_available"].bool ? localized("发现版本 ") + update["latest_version"].string : localized("当前已是最新版本"))
@@ -236,13 +236,13 @@ struct NativeSettingsView: View {
             NativePreferenceRow(title: "生成后续问题", hint: "每次回复后，使用当前对话模型生成 3 个后续问题。") { settingToggle("follow_up_questions") }
             Text(localized("以下开关立即保存，只影响新会话的默认值；取消不会撤销。"))
                 .font(.caption).foregroundStyle(.secondary)
-            immediateToggle("自动审核（新会话默认）", read: "get_auto_review_enabled", write: "set_auto_review_enabled")
+            immediateToggle("自动审核（新会话默认）", hint: "回合结束时由审查模型检查分析结论，发现问题时请求一次修正。此处为新会话的默认值；仍可在输入框菜单中按会话单独开关。", read: "get_auto_review_enabled", write: "set_auto_review_enabled")
             HStack { Spacer(); Button(localized("取消")) { state.discardDrafts() }; Button(localized("保存")) { Task { await state.saveSettings() } }.buttonStyle(NativeSettingsButtonStyle(primary: true)) }
         }.disabled(state.loading || state.values["get_settings"] == nil)
     }
     private func number(_ key: String) -> some View {
-        TextField("", text: Binding(get: { state.numberText(key) }, set: { state.binding("get_settings", key).wrappedValue = $0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0)) }))
-            .textFieldStyle(NativeSettingsTextFieldStyle()).frame(width: 112).accessibilityLabel(localized(NativeSettingsModel.numberLabels[key] ?? key)).accessibilityIdentifier("native-setting-" + key)
+        NativeSettingsNumberField(text: Binding(get: { state.numberText(key) }, set: { state.binding("get_settings", key).wrappedValue = $0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0)) }), label: NativeSettingsModel.numberLabels[key] ?? key)
+            .accessibilityIdentifier("native-setting-" + key)
     }
     private func settingToggle(_ key: String) -> some View {
         Toggle("", isOn: Binding(get: { state.values["get_settings"]?[key].bool ?? false }, set: { state.binding("get_settings", key).wrappedValue = .bool($0) })).toggleStyle(.switch).labelsHidden().accessibilityLabel(key)
@@ -252,8 +252,9 @@ struct NativeSettingsView: View {
 
     private var pet: some View { NativePetSettings(model: state) }
 
-    private func immediateToggle(_ label: String, read: String, write: String) -> some View {
-        Toggle(localized(label), isOn: Binding(get: { state.values[read]?.bool ?? false }, set: { value in Task { _ = await state.run(write, ["enabled": .bool(value)]) } })).disabled(state.values[read] == nil || state.loading)
+    private func immediateToggle(_ label: String, hint: String = "", read: String, write: String) -> some View {
+        NativeSettingsSwitch(title: label, hint: hint, isOn: Binding(get: { state.values[read]?.bool ?? false }, set: { value in Task { _ = await state.run(write, ["enabled": .bool(value)]) } }))
+            .disabled(state.values[read] == nil || state.loading)
     }
 }
 

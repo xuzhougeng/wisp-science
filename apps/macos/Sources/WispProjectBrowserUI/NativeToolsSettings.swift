@@ -24,8 +24,8 @@ struct NativeToolsSettings: View {
         }
     }
     private func rows(_ command: String) -> [SettingsValue] { model.values[command]?.array ?? [] }
-    private func toggle(_ title: String, value: Bool, command: String, args: [String: SettingsValue]) -> some View {
-        Toggle(title, isOn: Binding(get: { value }, set: { enabled in var next = args; next["enabled"] = .bool(enabled); Task { _ = await model.run(command, next) } }))
+    private func toggle(_ title: String, hint: String = "", value: Bool, command: String, args: [String: SettingsValue]) -> some View {
+        NativeSettingsSwitch(title: title, hint: hint, isOn: Binding(get: { value }, set: { enabled in var next = args; next["enabled"] = .bool(enabled); Task { _ = await model.run(command, next) } }))
     }
     private var skills: some View {
         NativeSettingsGroup(title: "项目技能") {
@@ -142,8 +142,8 @@ struct NativeToolsSettings: View {
                 Button(localized("扩展管理页")) { Task { _ = await model.run("open_browser_extension_page", refresh: false, success: "已打开扩展管理页") } }
                 Button(localized("更新扩展")) { Task { _ = await model.run("update_browser_extension", success: "扩展更新完成，请检查连接状态") } }
             }
-            toggle("需要时自动启动浏览器", value: model.values["get_browser_auto_launch"]?.bool ?? false, command: "set_browser_auto_launch", args: [:])
-            toggle("自动关闭任务标签页", value: model.values["get_browser_auto_close_tabs"]?.bool ?? false, command: "set_browser_auto_close_tabs", args: [:])
+            toggle("自动打开浏览器", hint: "使用浏览器工具时，如果 Chrome/Chromium 没有在运行，就启动它，让已安装的 Wisp 扩展重新连上。使用你现有的用户资料，不会另开一套自动化浏览器。", value: model.values["get_browser_auto_launch"]?.bool ?? false, command: "set_browser_auto_launch", args: [:])
+            toggle("自动关闭浏览器标签页", hint: "一轮对话结束后，关闭本轮 Wisp 打开的标签页。你原来就已经打开的标签页不会动。", value: model.values["get_browser_auto_close_tabs"]?.bool ?? false, command: "set_browser_auto_close_tabs", args: [:])
         }
         NativeSettingsColumns {
         NativeSettingsGroup(title: "阻止访问") {

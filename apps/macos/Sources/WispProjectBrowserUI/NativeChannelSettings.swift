@@ -68,7 +68,7 @@ struct NativeChannelSettings: View {
     private var weixin: some View {
         NativeSettingsGroup(title: "微信") {
             Text(status["weixin_detail"].string.isEmpty ? status["weixin_state"].string : status["weixin_detail"].string).foregroundStyle(.secondary)
-            Toggle(localized("启用微信通道"), isOn: Binding(get: { status["weixin_enabled"].bool }, set: { enabled in Task { _ = await model.run("set_weixin_channel", ["enabled": .bool(enabled)]) } }))
+            NativeSettingsSwitch(title: "启用微信通道", isOn: Binding(get: { status["weixin_enabled"].bool }, set: { enabled in Task { _ = await model.run("set_weixin_channel", ["enabled": .bool(enabled)]) } }))
             HStack {
                 Button(localized("扫码绑定")) { Task { bindKind = "weixin"; binding = await model.run("weixin_bind_start", refresh: false, success: "请扫码并确认绑定") } }
                 Button(localized("解绑…")) { confirmation = .init(title: "解除微信绑定", command: "weixin_unbind") }.disabled(!status["weixin_bound"].bool)

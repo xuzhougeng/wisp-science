@@ -45,6 +45,13 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(NativeToolsSettings.pluginState(motif), "已为当前项目启用 · 运行环境就绪 · 1 技能 · 1 MCP")
         XCTAssertEqual(NativeToolsSettings.pluginState(editor), "未为当前项目启用 · 无需运行环境 · 0 技能 · 2 MCP")
     }
+    func testNumberStepperStepsFromTheTypedValueAndNeverBelowTheMinimum() {
+        XCTAssertEqual(NativeSettingsNumberField.step("100", by: 1, minimum: 0), "101")
+        XCTAssertEqual(NativeSettingsNumberField.step(" 80 ", by: -1, minimum: 0), "79")
+        XCTAssertEqual(NativeSettingsNumberField.step("0", by: -1, minimum: 0), "0")
+        XCTAssertEqual(NativeSettingsNumberField.step("", by: 1, minimum: 0), "1")
+        XCTAssertEqual(NativeSettingsNumberField.step("abc", by: -1, minimum: 10), "10")
+    }
     @MainActor func testSubscriptionProxySavePreservesOtherNetworkRoutes() async {
         let client = SettingsFake()
         let model = NativeSettingsModel(client: client, projectID: nil)
