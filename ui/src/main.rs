@@ -187,6 +187,31 @@ fn supports_fast_service_tier(profile: &ModelProfile) -> bool {
         )
 }
 
+/// The agent menu's "Subagent model" value: the conversation's override when it
+/// has one, otherwise the global default from Settings → Specialists, which
+/// itself falls back to following the conversation (#1638).
+fn subagent_model_summary(
+    locale: Locale,
+    models: &[ModelProfile],
+    global_default: &str,
+    session_override: Option<&str>,
+) -> String {
+    let follow = t(locale, "composer.subagent.follow");
+    match session_override {
+        Some("") => follow,
+        Some(id) => model_label(models, Some(id)).unwrap_or_else(|| id.to_string()),
+        None => {
+            let default_label = if global_default.is_empty() {
+                follow
+            } else {
+                model_label(models, Some(global_default))
+                    .unwrap_or_else(|| global_default.to_string())
+            };
+            tf(locale, "composer.subagent.default", &[("model", &default_label)])
+        }
+    }
+}
+
 fn selected_fast_profile(
     models: &[ModelProfile],
     session_models: &HashMap<String, String>,
@@ -867,6 +892,11 @@ fn App() -> impl IntoView {
     // Map presence means the backend value has loaded; its nested None means
     // this conversation inherits the selected model profile's Fast default.
     let session_service_tiers = create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
+    // Per-conversation subagent model override (#1638). Map presence means the
+    // backend value has loaded; the nested None follows the global default from
+    // Settings → Specialists, Some("") follows this conversation's own model.
+    let session_subagent_models =
+        create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
     // A pre-send Fast override is held in memory until the first frame exists.
     // None means the selected profile default needs no override.
     let pending_service_tier = create_rw_signal::<Option<String>>(None);
@@ -940,6 +970,7 @@ fn App() -> impl IntoView {
     let model_form_key = model_settings.model_form_key;
     let model_form_msg = model_settings.model_form_msg;
     let specialists = model_settings.specialists;
+    let subagent_model = model_settings.subagent_model;
     let specialist_form = model_settings.specialist_form;
     let specialist_transfer = model_settings.specialist_transfer;
     // Some/None memos (not the form contents) gate the sub-form panes; see the
@@ -1846,6 +1877,30 @@ fn App() -> impl IntoView {
                     });
                     web_sys::console::warn_1(
                         &format!("get_session_service_tier failed: {:?}", error).into(),
+                    );
+                }
+            }
+        });
+    });
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return;
+        };
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
+            match invoke_checked("get_session_subagent_model", args).await {
+                Ok(value) => {
+                    let model = value.as_string();
+                    session_subagent_models.update(|values| {
+                        values.insert(session_id, model);
+                    });
+                }
+                Err(error) => {
+                    session_subagent_models.update(|values| {
+                        values.insert(session_id, None);
+                    });
+                    web_sys::console::warn_1(
+                        &format!("get_session_subagent_model failed: {:?}", error).into(),
                     );
                 }
             }
@@ -8875,6 +8930,7 @@ fn App() -> impl IntoView {
     let compose_menu_open = create_rw_signal(false);
     let agent_menu_open = create_rw_signal(false);
     let reviewer_model_menu_open = create_rw_signal(false);
+    let subagent_model_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
     let compute_search = create_rw_signal(String::new());
     let hosts_attach_search = create_rw_signal(String::new());
@@ -10755,6 +10811,7 @@ fn App() -> impl IntoView {
                 || show_proj_menu.get()
                 || compose_menu_open.get()
                 || reviewer_model_menu_open.get()
+                || subagent_model_menu_open.get()
                 || compute_menu_open.get()
                 || specialist_menu_open.get()
                 || agent_menu_open.get()
@@ -10918,9 +10975,14 @@ fn App() -> impl IntoView {
             compose_menu_open.set(false);
             return;
         }
-        if reviewer_model_menu_open.get() || compute_menu_open.get() || specialist_menu_open.get() {
+        if reviewer_model_menu_open.get()
+            || subagent_model_menu_open.get()
+            || compute_menu_open.get()
+            || specialist_menu_open.get()
+        {
             ev.prevent_default();
             reviewer_model_menu_open.set(false);
+            subagent_model_menu_open.set(false);
             compute_menu_open.set(false);
             specialist_menu_open.set(false);
             return;
@@ -10929,6 +10991,7 @@ fn App() -> impl IntoView {
             ev.prevent_default();
             agent_menu_open.set(false);
             reviewer_model_menu_open.set(false);
+            subagent_model_menu_open.set(false);
             compute_menu_open.set(false);
             specialist_menu_open.set(false);
             return;
@@ -12954,6 +13017,7 @@ fn App() -> impl IntoView {
                     context_usage_open.set(false);
                     agent_menu_open.set(false);
                     reviewer_model_menu_open.set(false);
+                    subagent_model_menu_open.set(false);
                     compute_menu_open.set(false);
                     specialist_menu_open.set(false);
                     assistant_workspace.toggle(left);
@@ -15865,6 +15929,7 @@ fn App() -> impl IntoView {
                                     let opening = !agent_menu_open.get_untracked();
                                     agent_menu_open.set(opening);
                                     reviewer_model_menu_open.set(false);
+                                    subagent_model_menu_open.set(false);
                                     specialist_menu_open.set(false);
                                     compute_menu_open.set(false);
                                     if opening {
@@ -15882,6 +15947,7 @@ fn App() -> impl IntoView {
                                 <div class="compose-backdrop" on:click=move |_| {
                                     agent_menu_open.set(false);
                                     reviewer_model_menu_open.set(false);
+                                    subagent_model_menu_open.set(false);
                                     specialist_menu_open.set(false);
                                     compute_menu_open.set(false);
                                 }></div>
@@ -15958,6 +16024,7 @@ fn App() -> impl IntoView {
                                         on:click=move |_| {
                                             specialist_menu_open.update(|open| *open = !*open);
                                             reviewer_model_menu_open.set(false);
+                                            subagent_model_menu_open.set(false);
                                             compute_menu_open.set(false);
                                         }>
                                         <span>{move || t(locale.get(), "composer.specialist")}</span>
@@ -16011,6 +16078,7 @@ fn App() -> impl IntoView {
                                     <button type="button" class="agent-menu-row agent-menu-sub" aria-haspopup="menu"
                                         on:click=move |_| {
                                             reviewer_model_menu_open.update(|open| *open = !*open);
+                                            subagent_model_menu_open.set(false);
                                             specialist_menu_open.set(false);
                                             compute_menu_open.set(false);
                                         }>
@@ -16029,11 +16097,35 @@ fn App() -> impl IntoView {
                                         }}</span>
                                         <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
+                                    <button type="button" class="agent-menu-row agent-menu-sub" aria-haspopup="menu"
+                                        data-testid="agent-menu-subagent-model"
+                                        on:click=move |_| {
+                                            subagent_model_menu_open.update(|open| *open = !*open);
+                                            reviewer_model_menu_open.set(false);
+                                            specialist_menu_open.set(false);
+                                            compute_menu_open.set(false);
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.subagent_model")}</span>
+                                        <span class="agent-menu-value">{move || {
+                                            let profiles = models.get();
+                                            let current = active_session.get().and_then(|session_id| {
+                                                session_subagent_models.with(|values| values.get(&session_id).cloned())
+                                            }).flatten();
+                                            subagent_model_summary(
+                                                locale.get(),
+                                                &profiles,
+                                                &subagent_model.get(),
+                                                current.as_deref(),
+                                            )
+                                        }}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
+                                    </button>
                                     <div class="agent-menu-group" data-testid="agent-menu-group-resources">{move || t(locale.get(), "composer.group.resources")}</div>
                                     <button type="button" class="agent-menu-row" aria-haspopup="menu"
                                         on:click=move |_| {
                                             compute_menu_open.update(|open| *open = !*open);
                                             reviewer_model_menu_open.set(false);
+                                            subagent_model_menu_open.set(false);
                                             specialist_menu_open.set(false);
                                         }>
                                         <span>{move || t(locale.get(), "composer.compute")}</span>
@@ -16059,6 +16151,7 @@ fn App() -> impl IntoView {
                                         on:click=move |_| {
                                             agent_menu_open.set(false);
                                             reviewer_model_menu_open.set(false);
+                                            subagent_model_menu_open.set(false);
                                             specialist_menu_open.set(false);
                                             compute_menu_open.set(false);
                                             open_settings_fn(Some("hooks".into()));
@@ -16112,9 +16205,78 @@ fn App() -> impl IntoView {
                                                                 });
                                                                 agent_menu_open.set(false);
                                                                 reviewer_model_menu_open.set(false);
+                                                                subagent_model_menu_open.set(false);
                                                             }>
                                                             <span>{label}</span>
                                                             {(current == backend_key).then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
+                                                        </button>
+                                                    }
+                                                }).collect_view()
+                                            }}
+                                        </div>
+                                    })}
+                                    {move || subagent_model_menu_open.get().then(|| view! {
+                                        <div class="compose-menu agent-submenu subagent-model-menu" role="menu"
+                                            aria-label=move || t(locale.get(), "composer.subagent_model")>
+                                            {{
+                                                let profiles = models.get();
+                                                let current = active_session.get().and_then(|session_id| {
+                                                    session_subagent_models.with(|values| values.get(&session_id).cloned())
+                                                }).flatten();
+                                                let default_label = subagent_model_summary(
+                                                    locale.get(),
+                                                    &profiles,
+                                                    &subagent_model.get(),
+                                                    None,
+                                                );
+                                                let mut choices: Vec<(Option<String>, String)> = vec![
+                                                    (None, default_label),
+                                                    (Some(String::new()), t(locale.get(), "composer.subagent.follow")),
+                                                ];
+                                                choices.extend(
+                                                    profiles
+                                                        .into_iter()
+                                                        .filter(ModelProfile::is_chat_model)
+                                                        .map(|model| (Some(model.id), model.label)),
+                                                );
+                                                choices.into_iter().map(|(value, label)| {
+                                                    let selected = value == current;
+                                                    view! {
+                                                        <button type="button" class="agent-submenu-row"
+                                                            on:click=move |_| {
+                                                                let value = value.clone();
+                                                                spawn_local(async move {
+                                                                    // A choice made before the first message
+                                                                    // creates the conversation it belongs to,
+                                                                    // like the Auto-review switch.
+                                                                    let (session_id, created_session) = match active_session.get_untracked() {
+                                                                        Some(session_id) => (session_id, false),
+                                                                        None => match invoke("new_session", JsValue::UNDEFINED).await.as_string() {
+                                                                            Some(session_id) => (session_id, true),
+                                                                            None => return,
+                                                                        },
+                                                                    };
+                                                                    let args = to_value(&serde_json::json!({
+                                                                        "sessionId": session_id.clone(),
+                                                                        "modelId": value.clone(),
+                                                                    })).unwrap();
+                                                                    let saved = invoke_checked("set_session_subagent_model", args).await.is_ok();
+                                                                    if created_session {
+                                                                        active_session.set(Some(session_id.clone()));
+                                                                        items.set(vec![]);
+                                                                        refresh_session_history();
+                                                                    }
+                                                                    if saved {
+                                                                        session_subagent_models.update(|values| {
+                                                                            values.insert(session_id, value);
+                                                                        });
+                                                                    }
+                                                                });
+                                                                agent_menu_open.set(false);
+                                                                subagent_model_menu_open.set(false);
+                                                            }>
+                                                            <span>{label}</span>
+                                                            {selected.then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
                                                         </button>
                                                     }
                                                 }).collect_view()
@@ -17323,6 +17485,7 @@ fn App() -> impl IntoView {
                             }),
                             load_session,
                             swarm_state,
+                            models,
                         ).into_view(),
                         RightTab::Notebook => {
                             view! {
@@ -19009,7 +19172,7 @@ fn App() -> impl IntoView {
                 locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, ui_font_family, code_font_family, selection_popup_enabled, send_with_modifier, custom_css, update_check_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form, model_catalog_limits,
                 conn_form, memory_selected, specialist_form, specialist_transfer, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
-                acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
+                acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists, subagent_model,
                 quick_actions, workflow_templates, workflow_studio: workflow_studio_state,
                 selected_workflow_template,
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,
@@ -19028,6 +19191,7 @@ fn App() -> impl IntoView {
             save_model_form=Callback::new(save_model_form)
             save_specialist_form=Callback::new(save_specialist_form)
             test_reviewer_form=Callback::new(test_reviewer_form)
+            set_subagent_model=Callback::new(move |id: String| model_settings.apply_subagent_model(id))
             validate_model_form=Callback::new(validate_model_form)
             start_specialist_chat=start_specialist_chat
             refresh_conns=Callback::new(move |_: ()| refresh_conns())

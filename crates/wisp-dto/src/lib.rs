@@ -4744,6 +4744,10 @@ pub struct SubagentActivity {
     #[serde(default)]
     pub ended_at: Option<i64>,
     pub tool_calls: u32,
+    /// Label of the model the child runs on; empty when not tracked
+    /// (`explore` and `expert` run in-process on the parent's wiring).
+    #[serde(default)]
+    pub model: String,
     /// Child conversation to open in the chat, for `conversation` kind.
     #[serde(default)]
     pub session_id: Option<String>,

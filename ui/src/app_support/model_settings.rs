@@ -126,6 +126,8 @@ pub(crate) struct ModelSettingsState {
     pub(crate) specialists: RwSignal<Vec<Specialist>>,
     pub(crate) specialist_form: RwSignal<Option<Specialist>>,
     pub(crate) specialist_transfer: RwSignal<Option<SpecialistTransfer>>,
+    /// Global default subagent model profile id; "" follows the conversation.
+    pub(crate) subagent_model: RwSignal<String>,
     // Cross-domain signals injected by `App`.
     pub(crate) models: RwSignal<Vec<ModelProfile>>,
     pub(crate) acp_agents: RwSignal<Vec<AcpAgentProfile>>,
@@ -152,6 +154,7 @@ impl ModelSettingsState {
             specialists: create_rw_signal(vec![]),
             specialist_form: create_rw_signal(None::<Specialist>),
             specialist_transfer: create_rw_signal(None::<SpecialistTransfer>),
+            subagent_model: create_rw_signal(String::new()),
             models,
             acp_agents,
             settings,
@@ -163,7 +166,10 @@ impl ModelSettingsState {
 
     pub(crate) fn refresh_models(self) {
         let Self {
-            models, acp_agents, ..
+            models,
+            acp_agents,
+            subagent_model,
+            ..
         } = self;
         spawn_local(async move {
             let v = invoke("list_models", JsValue::UNDEFINED).await;
@@ -173,6 +179,44 @@ impl ModelSettingsState {
             let v = invoke("list_acp_agents", JsValue::UNDEFINED).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(v) {
                 acp_agents.set(list);
+            }
+            // The global subagent default is validated by the backend, so a
+            // deleted profile reads back as "follow the conversation".
+            if let Ok(value) = invoke_checked("get_subagent_model", JsValue::UNDEFINED).await {
+                subagent_model.set(value.as_string().unwrap_or_default());
+            }
+        })
+    }
+
+    /// Persist the global default subagent model (Settings → Specialists).
+    /// "" clears it so subagents follow the conversation again.
+    pub(crate) fn apply_subagent_model(self, id: String) {
+        let Self {
+            subagent_model,
+            settings_message,
+            locale,
+            ..
+        } = self;
+        let previous = subagent_model.get_untracked();
+        subagent_model.set(id.clone());
+        spawn_local(async move {
+            let args = match json_args(&serde_json::json!({ "id": id })) {
+                Ok(args) => args,
+                Err(_) => {
+                    subagent_model.set(previous);
+                    return;
+                }
+            };
+            match invoke_checked("set_subagent_model", args).await {
+                Ok(value) => subagent_model.set(value.as_string().unwrap_or_default()),
+                Err(error) => {
+                    subagent_model.set(previous);
+                    let msg = crate::app_support::js_error_text(error);
+                    settings_message.set(Some((
+                        false,
+                        tf(locale.get_untracked(), "status.save_failed", &[("msg", &msg)]),
+                    )));
+                }
             }
         })
     }

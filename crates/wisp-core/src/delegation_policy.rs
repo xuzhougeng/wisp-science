@@ -55,6 +55,17 @@ pub enum ModelFeature {
     Vision,
 }
 
+/// Which model class a parent Agent asks for a child, without naming a
+/// concrete profile. `Fast` is the host's configured subagent (worker) model,
+/// also what an omitted tier resolves to; `Inherit` is the delegating
+/// conversation's own model, for work that needs the parent's capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTier {
+    Fast,
+    Inherit,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityDefinition {
     pub id: String,
@@ -127,6 +138,11 @@ pub struct DelegationHostPolicy {
     pub executors: Vec<ExecutorProfilePolicy>,
     #[serde(default)]
     pub default_model_id: Option<String>,
+    /// The delegating conversation's own model profile. `ModelTier::Inherit`
+    /// resolves to it; `None` (nested delegation, headless policies) means the
+    /// tier is not offered and falls through to `default_model_id`.
+    #[serde(default)]
+    pub inherit_model_id: Option<String>,
     #[serde(default)]
     pub permission_ceiling: PermissionSet,
     #[serde(default)]
@@ -160,6 +176,10 @@ pub struct DelegatedTaskProposal {
     pub isolated: bool,
     #[serde(default)]
     pub model_id: Option<String>,
+    /// Parent-requested model class; consulted only when neither a concrete
+    /// `model_id` nor a Specialist binding decides the model.
+    #[serde(default)]
+    pub model_tier: Option<ModelTier>,
     #[serde(default)]
     pub executor: Option<AgentExecutorRef>,
     #[serde(default)]
@@ -912,6 +932,20 @@ fn select_native_model<'a>(
             return Ok(model);
         }
     }
+    // The parent's own model, when it asked for it and the host offers it.
+    // Soft like the Specialist binding: a tier is a preference, so a task
+    // that needs vision on a text-only parent model still falls through.
+    if proposal.model_tier == Some(ModelTier::Inherit) {
+        if let Some(id) = &host.inherit_model_id {
+            if let Some(model) = host.models.iter().find(|model| {
+                model.id == *id
+                    && model_eligible(model, required)
+                    && executor_accepts_model(executor, &model.id)
+            }) {
+                return Ok(model);
+            }
+        }
+    }
     if let Some(id) = &host.default_model_id {
         if let Some(model) = host.models.iter().find(|model| {
             model.id == *id
@@ -1182,6 +1216,9 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
         model_id: preferences
             .map(|preferences| preferences.model_id.clone())
             .unwrap_or_else(|| spec.model.clone()),
+        // A tier is consumed when the plan is first resolved; revalidation
+        // keeps the model that was snapshotted (or the explicit preference).
+        model_tier: None,
         executor: preferences
             .map(|preferences| preferences.executor.clone())
             .unwrap_or_else(|| spec.executor.clone()),
@@ -1648,6 +1685,7 @@ mod tests {
                 },
             ],
             default_model_id: Some("local".into()),
+            inherit_model_id: None,
             permission_ceiling: PermissionSet {
                 tools,
                 paths: vec!["project://**".into()],
@@ -1683,11 +1721,56 @@ mod tests {
             output_schema: None,
             isolated: false,
             model_id: None,
+            model_tier: None,
             executor: None,
             budget: None,
             timeout_secs: None,
             input: json!({}),
         }
+    }
+
+    #[test]
+    fn model_tier_inherit_prefers_the_conversation_model_but_stays_soft() {
+        let mut host = host_policy();
+        // Worker model is the host default; the conversation runs on `vision`.
+        host.inherit_model_id = Some("vision".into());
+        let registry = CapabilityRegistry::builtins();
+
+        let fast = registry
+            .resolve_task(proposal("fast", &["project_read"]), &host)
+            .unwrap();
+        assert_eq!(fast.spec().model.as_deref(), Some("local"));
+
+        let mut inherit = proposal("inherit", &["project_read"]);
+        inherit.model_tier = Some(ModelTier::Inherit);
+        let inherit = registry.resolve_task(inherit, &host).unwrap();
+        assert_eq!(inherit.spec().model.as_deref(), Some("vision"));
+
+        let mut explicit_fast = proposal("explicit-fast", &["project_read"]);
+        explicit_fast.model_tier = Some(ModelTier::Fast);
+        let explicit_fast = registry.resolve_task(explicit_fast, &host).unwrap();
+        assert_eq!(explicit_fast.spec().model.as_deref(), Some("local"));
+
+        // A Specialist binding outranks the tier.
+        let mut bound = proposal("bound", &["project_read"]);
+        bound.model_tier = Some(ModelTier::Inherit);
+        bound.specialist = Some(SpecialistSnapshot {
+            id: "s".into(),
+            name: "S".into(),
+            instructions: String::new(),
+            model_id: Some("local".into()),
+            skills: None,
+            connectors: None,
+        });
+        let bound = registry.resolve_task(bound, &host).unwrap();
+        assert_eq!(bound.spec().model.as_deref(), Some("local"));
+
+        // Inherit on a host that offers no conversation model falls through.
+        host.inherit_model_id = None;
+        let mut orphan = proposal("orphan", &["project_read"]);
+        orphan.model_tier = Some(ModelTier::Inherit);
+        let orphan = registry.resolve_task(orphan, &host).unwrap();
+        assert_eq!(orphan.spec().model.as_deref(), Some("local"));
     }
 
     #[test]

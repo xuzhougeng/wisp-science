@@ -1124,15 +1124,22 @@ pub(crate) async fn dynamic_delegation_policy_for_project(
     .await?;
     let isolation_available =
         crate::delegation_isolation::git_worktree_available(&project.root).await;
-    let preferred_model_id = match frame_id {
-        Some(frame_id) => Some(models::session_profile_id(store, frame_id).await),
-        None => None,
+    // Children default to the resolved subagent model (conversation override,
+    // then the global subagent default, then the conversation's model); the
+    // conversation's own model stays available as `model_tier: inherit`.
+    let (preferred_model_id, inherit_model_id) = match frame_id {
+        Some(frame_id) => (
+            Some(models::subagent_profile_id(store, frame_id).await),
+            Some(models::session_profile_id(store, frame_id).await),
+        ),
+        None => (None, None),
     };
     let (registry, host) = build_dynamic_delegation_policy(
         store,
         Some(&resources),
         isolation_available,
         preferred_model_id.as_deref(),
+        inherit_model_id.as_deref(),
     )
     .await?;
     Ok(ProjectDelegationPolicy {
@@ -1145,7 +1152,7 @@ pub(crate) async fn dynamic_delegation_policy_for_project(
 pub(crate) async fn dynamic_delegation_policy(
     store: &Store,
 ) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
-    build_dynamic_delegation_policy(store, None, false, None).await
+    build_dynamic_delegation_policy(store, None, false, None, None).await
 }
 
 fn select_default_model_id(
@@ -1182,6 +1189,7 @@ async fn build_dynamic_delegation_policy(
     resources: Option<&crate::delegation_resources::ScientificResourceCatalog>,
     isolation_available: bool,
     preferred_model_id: Option<&str>,
+    inherit_model_id: Option<&str>,
 ) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
     let model_profiles = models::delegation_profiles(store).await;
     let (active_provider, active_url, active_model, active_key) = load_settings(store).await;
@@ -1227,6 +1235,16 @@ async fn build_dynamic_delegation_policy(
         preferred_model_id,
         active_model_id.as_deref(),
     );
+    // Only advertise `inherit` when it is a real, enabled alternative to the
+    // default; otherwise the tier would be a no-op the parent could not reason about.
+    let inherit_model_id = inherit_model_id
+        .filter(|id| {
+            model_policies
+                .iter()
+                .any(|profile| profile.enabled && profile.id == *id)
+        })
+        .filter(|id| default_model_id.as_deref() != Some(*id))
+        .map(str::to_string);
     let enabled_model_ids = model_policies
         .iter()
         .filter(|profile| profile.enabled)
@@ -1294,6 +1312,7 @@ async fn build_dynamic_delegation_policy(
         &model_policies,
         &executors,
         &default_model_id,
+        &inherit_model_id,
         &acp_fingerprints,
         resources.map(|resources| resources.revision()).as_deref(),
     );
@@ -1361,6 +1380,7 @@ async fn build_dynamic_delegation_policy(
         models: model_policies,
         executors,
         default_model_id,
+        inherit_model_id,
         permission_ceiling: PermissionSet {
             tools: permission_tools,
             paths: vec!["project://**".into()],
@@ -1469,6 +1489,8 @@ pub(crate) fn nested_delegation_policy(
             models,
             executors,
             default_model_id,
+            // A nested child is pinned to its parent's one model; no tier.
+            inherit_model_id: None,
             permission_ceiling: parent.permissions.intersect(&host.permission_ceiling),
             context_ceiling: parent.context_policy.restrict(&host.context_ceiling),
             budget_ceiling: parent.budget.restrict(&host.budget_ceiling),
@@ -1483,6 +1505,7 @@ fn delegation_policy_revision(
     models: &[ModelProfilePolicy],
     executors: &[ExecutorProfilePolicy],
     default_model_id: &Option<String>,
+    inherit_model_id: &Option<String>,
     acp_fingerprints: &[(String, String)],
     resource_revision: Option<&str>,
 ) -> String {
@@ -1490,6 +1513,7 @@ fn delegation_policy_revision(
         models,
         executors,
         default_model_id,
+        inherit_model_id,
         acp_fingerprints,
         resource_revision,
     ))
@@ -5005,6 +5029,7 @@ mod tests {
                     },
                 ],
                 default_model_id: Some("local".into()),
+                inherit_model_id: None,
                 permission_ceiling: PermissionSet {
                     tools: vec![
                         "read".into(),
@@ -5053,6 +5078,7 @@ mod tests {
             output_schema: None,
             isolated: false,
             model_id: None,
+            model_tier: None,
             executor: None,
             budget: None,
             timeout_secs: None,
@@ -5075,6 +5101,7 @@ mod tests {
             output_schema: None,
             isolated: false,
             model_id: None,
+            model_tier: None,
             executor: None,
             budget: None,
             timeout_secs,
@@ -5268,7 +5295,7 @@ mod tests {
             &["python"],
         );
         let (registry, host) =
-            build_dynamic_delegation_policy(&store, Some(&resources), true, None)
+            build_dynamic_delegation_policy(&store, Some(&resources), true, None, None)
                 .await
                 .unwrap();
 
@@ -5302,7 +5329,7 @@ mod tests {
         let offline =
             crate::delegation_resources::ScientificResourceCatalog::fake(&[], &[], &[], &[], &[]);
         let (_, offline_host) =
-            build_dynamic_delegation_policy(&store, Some(&offline), false, None)
+            build_dynamic_delegation_policy(&store, Some(&offline), false, None, None)
                 .await
                 .unwrap();
         assert!(!offline_host

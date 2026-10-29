@@ -37,19 +37,34 @@ pub(crate) async fn list_subagent_activity(
         .list_dispatched_sessions(&project.id)
         .await
         .map_err(|error| error.to_string())?;
+    let profiles = crate::models::ensure(store).await;
     for (child, parent) in dispatched {
         if parent != root && parent != session_id {
             continue;
         }
         let reference = store.get_session_reference(&child).await.ok().flatten();
         let messages = store.load_messages(&child).await.unwrap_or_default();
-        items.push(conversation_activity(
+        let mut activity = conversation_activity(
             &child,
             reference.as_ref().map(|r| r.title.as_str()).unwrap_or(""),
             reference.as_ref().map(|r| r.created_at).unwrap_or(0),
             running.contains(&child),
             &messages,
-        ));
+        );
+        // The child's bound model (#1638), so the feed shows which worker ran.
+        activity.model = store
+            .frame_model(&child)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|id| {
+                profiles
+                    .iter()
+                    .find(|profile| profile.id == id)
+                    .map(|profile| profile.label.clone())
+            })
+            .unwrap_or_default();
+        items.push(activity);
     }
     let messages = store
         .load_messages(&session_id)
@@ -121,6 +136,7 @@ fn conversation_activity(
                 m.role == Role::Tool && m.tool_name.as_deref() != Some("attempt_completion")
             })
             .count() as u32,
+        model: String::new(),
         session_id: Some(session.to_string()),
         trace_path: None,
     }
@@ -186,6 +202,7 @@ fn explore_activities(messages: &[Message]) -> Vec<SubagentActivity> {
                 started_at: message.ts,
                 ended_at: result.map(|m| m.ts).filter(|ts| *ts > 0),
                 tool_calls,
+                model: String::new(),
                 session_id: None,
                 trace_path,
             });
@@ -275,6 +292,7 @@ fn expert_activities(messages: &[Message]) -> Vec<SubagentActivity> {
                 started_at: message.ts,
                 ended_at: result.map(|m| m.ts).filter(|ts| *ts > 0),
                 tool_calls: 0,
+                model: String::new(),
                 session_id: None,
                 trace_path: None,
             });

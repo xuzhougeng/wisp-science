@@ -41,7 +41,7 @@ pub use delegation::{
 pub use delegation_policy::{
     CapabilityDefinition, CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal,
     DelegationHostPolicy, ExecutorFeature, ExecutorProfilePolicy, ModelFeature, ModelProfilePolicy,
-    ResolutionError, ResolvedAgentTask, ResolvedDelegationPlan,
+    ModelTier, ResolutionError, ResolvedAgentTask, ResolvedDelegationPlan,
 };
 pub use execution::{
     DelegationExecutionObserver, DelegationExecutionResult, DelegationExecutionStatus,

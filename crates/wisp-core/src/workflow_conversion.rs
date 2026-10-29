@@ -294,6 +294,7 @@ pub fn resolve(
             output_schema: Some(contract.clone()),
             isolated: false,
             model_id: None,
+            model_tier: None,
             executor: None,
             budget: None,
             timeout_secs: task.timeout_secs,
@@ -337,6 +338,7 @@ mod tests {
                 enabled: true,
             }],
             default_model_id: Some("test".into()),
+            inherit_model_id: None,
             ..Default::default()
         };
         let source = WorkflowSource {

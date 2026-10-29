@@ -198,13 +198,14 @@ impl Tool for DispatchSubagentTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "dispatch_subagent",
-            "Start a subagent: a separate conversation in this project, listed under this one in the sidebar, where another agent works on one focused task with its own context. The researcher can watch it but not reply in it. Prefer this for sustained exploration that inspects inputs, revises scripts, waits for compute Runs, reviews results, and needs follow-up instructions; also use it when the researcher asks for a new or sub conversation for a task. Use delegate_tasks for a bounded graph with known dependencies and deliverables or an explicitly selected Workflow template, including single-node templates. Supply session_id to send a follow-up instruction to an idle subagent you started. Each dispatch synchronizes your model, selected execution contexts and default compute target to the child. Returns once the subagent accepts the instruction; its result or question is delivered here automatically and resumes you to handle it. You are responsible for answering its requests and sending follow-ups within the user's authorization. Do not poll while waiting.",
+            "Start a subagent: a separate conversation in this project, listed under this one in the sidebar, where another agent works on one focused task with its own context. The researcher can watch it but not reply in it. Prefer this for sustained exploration that inspects inputs, revises scripts, waits for compute Runs, reviews results, and needs follow-up instructions; also use it when the researcher asks for a new or sub conversation for a task. Use delegate_tasks for a bounded graph with known dependencies and deliverables or an explicitly selected Workflow template, including single-node templates. Supply session_id to send a follow-up instruction to an idle subagent you started. Each dispatch binds the child to the researcher's configured subagent model (or to your model when none is configured, or when you pass model_tier inherit for work that needs your full capability) and synchronizes your selected execution contexts and default compute target. Returns once the subagent accepts the instruction; its result or question is delivered here automatically and resumes you to handle it. You are responsible for answering its requests and sending follow-ups within the user's authorization. Do not poll while waiting.",
             json!({
                 "type": "object",
                 "properties": {
                     "instruction": {"type": "string", "description": "Complete, self-contained task: goal, inputs, expected output. The subagent sees nothing of this conversation."},
                     "title": {"type": "string", "description": "Short conversation title. Default: the instruction's first line."},
-                    "session_id": {"type": "string", "description": "A subagent you started, to send it a follow-up. Omit to start a new subagent."}
+                    "session_id": {"type": "string", "description": "A subagent you started, to send it a follow-up. Omit to start a new subagent."},
+                    "model_tier": {"type": "string", "enum": ["fast", "inherit"], "description": "fast (default): the researcher's configured subagent model. inherit: this conversation's own model, only for work that needs its full capability. Applies to new subagents and follow-ups alike."}
                 },
                 "required": ["instruction"]
             }),
@@ -254,13 +255,22 @@ impl Tool for DispatchSubagentTool {
         if let Err(error) = prepare_execution_contexts(&state.store, &self.parent, &session).await {
             return ToolResult::fail(error);
         }
-        // Like its execution contexts, the subagent follows its parent's model
-        // at every dispatch rather than the global default.
-        if let Err(error) = crate::models::copy_session_model_settings(
+        // Like its execution contexts, the subagent's model is rebound at every
+        // dispatch: the configured subagent model by default, the parent's own
+        // model on `model_tier: inherit` (#1638).
+        let model_tier = match args.get("model_tier") {
+            None | Some(Value::Null) => None,
+            Some(value) => match serde_json::from_value::<wisp_core::ModelTier>(value.clone()) {
+                Ok(tier) => Some(tier),
+                Err(_) => return ToolResult::fail("'model_tier' must be \"fast\" or \"inherit\""),
+            },
+        };
+        if let Err(error) = crate::models::bind_subagent_model_settings(
             &state.store,
             &self.parent,
             &session,
             &self.project_id,
+            model_tier,
         )
         .await
         {
@@ -284,7 +294,7 @@ impl Tool for DispatchSubagentTool {
         )
         .await
         {
-            Ok(()) => ToolResult::ok(format!("Subagent {session} has started and runs in the background with this conversation's model and selected execution contexts; the researcher can watch it in the sidebar. Tell them it has started, then finish this turn. Its result or request automatically resumes you here to answer, resolve prerequisites, or send a follow-up. Do not poll.")),
+            Ok(()) => ToolResult::ok(format!("Subagent {session} has started and runs in the background on its bound model with this conversation's selected execution contexts; the researcher can watch it in the sidebar. Tell them it has started, then finish this turn. Its result or request automatically resumes you here to answer, resolve prerequisites, or send a follow-up. Do not poll.")),
             Err(error) => ToolResult::fail(error),
         }
     }

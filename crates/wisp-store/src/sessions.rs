@@ -895,9 +895,9 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         let inserted = sqlx::query(
             "INSERT INTO frames(\
-                id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,reasoning_effort,service_tier,exploration_id,\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,reasoning_effort,service_tier,subagent_model,exploration_id,\
                 input_tokens,output_tokens,created_at,updated_at,completed_at\
-             ) SELECT ?,id,COALESCE(root_frame_id,id),?,'running',project_id,?,reasoning_effort,service_tier,exploration_id,0,0,?,?,NULL \
+             ) SELECT ?,id,COALESCE(root_frame_id,id),?,'running',project_id,?,reasoning_effort,service_tier,subagent_model,exploration_id,0,0,?,?,NULL \
              FROM frames WHERE id=? AND project_id=?",
         )
         .bind(id)
@@ -969,6 +969,47 @@ impl Store {
                 .await?
                 .flatten(),
         )
+    }
+
+    /// Per-conversation subagent model override. `None` follows the global
+    /// subagent default; `Some("")` explicitly follows this conversation's own
+    /// model; any other value is a chat profile id.
+    pub async fn frame_subagent_model(&self, frame_id: &str) -> Result<Option<String>> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.frame_subagent_model(frame_id)).await;
+        }
+        Ok(
+            sqlx::query_scalar::<_, Option<String>>("SELECT subagent_model FROM frames WHERE id=?")
+                .bind(frame_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten(),
+        )
+    }
+
+    pub async fn set_frame_subagent_model(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+        subagent_model: Option<&str>,
+    ) -> Result<()> {
+        if let Some(store) = self.route_project(project_id).await? {
+            return Box::pin(store.set_frame_subagent_model(frame_id, project_id, subagent_model))
+                .await;
+        }
+        let updated = sqlx::query(
+            "UPDATE frames SET subagent_model=?,updated_at=? WHERE id=? AND project_id=?",
+        )
+        .bind(subagent_model)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(frame_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            anyhow::bail!("Session not found");
+        }
+        Ok(())
     }
 
     /// Overwrite a frame's created/updated timestamps. Used by importers so

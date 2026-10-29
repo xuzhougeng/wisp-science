@@ -3820,6 +3820,7 @@ fn dynamic_workflow_card(
     state: AgentPanelState,
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
+    models: RwSignal<Vec<ModelProfile>>,
 ) -> View {
     let workflow = snapshot.workflow.clone();
     let workflow_id = workflow.id.clone();
@@ -3996,6 +3997,18 @@ fn dynamic_workflow_card(
                                     <span class="agent-chip capability">{capability}</span>
                                 }).collect_view()}
                             </div>
+                            {task.executor.model_id.clone().map(|model_id| {
+                                // Which worker ran this task (#1638): the resolved
+                                // profile's label, or its id when the profile is gone.
+                                let label = model_label(&models.get(), Some(&model_id))
+                                    .unwrap_or(model_id);
+                                view! {
+                                    <div class="agent-chip-row" aria-label=t(locale.get(), "agents.task.model")>
+                                        <span class="agent-chip-label">{t(locale.get(), "agents.task.model")}</span>
+                                        <span class="agent-chip model" data-testid="agent-task-model">{label}</span>
+                                    </div>
+                                }
+                            })}
                             {(!task.skill_bindings.is_empty()).then(|| view! {
                                 <div class="agent-chip-row" aria-label="Skills">
                                     <span class="agent-chip-label">{t(locale.get(),"workflow_studio.legacy_sources")}</span>
@@ -4435,6 +4448,9 @@ fn activity_meta(item: &SubagentActivity, locale: Locale) -> String {
             _ => "agents.activity.kind.conversation",
         },
     )];
+    if !item.model.is_empty() {
+        parts.push(item.model.clone());
+    }
     if item.tool_calls > 0 {
         parts.push(tf(
             locale,
@@ -4569,6 +4585,7 @@ fn activity_list(
     locale: RwSignal<Locale>,
     open_workflows: Callback<()>,
     swarm: crate::swarm::SwarmViewState,
+    models: RwSignal<Vec<ModelProfile>>,
 ) -> View {
     let has_swarm = create_memo(move |_| {
         state
@@ -4661,6 +4678,7 @@ fn activity_list(
                                         state,
                                         locale,
                                         open_workflows,
+                                        models,
                                     )).collect_view()}
                                 </div>
                             </section>
@@ -4688,6 +4706,7 @@ pub(super) fn agent_workflows_panel(
     open_workflows: Callback<()>,
     open_session: Callback<String>,
     swarm: crate::swarm::SwarmViewState,
+    models: RwSignal<Vec<ModelProfile>>,
 ) -> impl IntoView {
     // The detail page is the topmost layer of this pane: Escape returns to the
     // list (component-local state; the scoped window listener is removed on
@@ -4718,7 +4737,7 @@ pub(super) fn agent_workflows_panel(
                 });
                 match item {
                     Some(item) => activity_detail(item, state, locale.get(), open_session),
-                    None => activity_list(state, sessions, locale, open_workflows, swarm),
+                    None => activity_list(state, sessions, locale, open_workflows, swarm, models),
                 }
             }}
             {workflow_result_dialog(state, locale)}

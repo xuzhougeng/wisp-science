@@ -52,6 +52,10 @@ struct DelegateTaskInput {
     output_schema: Option<Value>,
     #[serde(default)]
     isolated: bool,
+    /// `fast` (the configured subagent model, also the default) or `inherit`
+    /// (this conversation's model). Never a concrete profile id.
+    #[serde(default)]
+    model_tier: Option<wisp_core::ModelTier>,
     #[serde(default)]
     budget: Option<AgentBudgetProposal>,
     /// Omit for the policy default, zero for unlimited, or seconds.
@@ -352,6 +356,16 @@ fn build_delegate_tasks_schema(
             "description": "Run the batch without blocking this turn. Use only for long work, such as analyses expected to take many minutes. Omit to wait for the results in this turn."
         });
     }
+    // The tier is offered only when the researcher configured a subagent
+    // model distinct from this conversation's model; the parent never sees
+    // concrete profile ids.
+    if host.inherit_model_id.is_some() {
+        schema.function.parameters["properties"]["tasks"]["items"]["properties"]["model_tier"] = json!({
+            "type": "string",
+            "enum": ["fast", "inherit"],
+            "description": "Which model class runs this task. fast (default): the researcher's configured subagent model, for bounded reading, extraction, drafting and checking. inherit: this conversation's own model, only for a task that needs its full capability, such as difficult synthesis or review. Specialist model bindings take precedence."
+        });
+    }
     schema
 }
 
@@ -544,6 +558,7 @@ impl DelegateTasksTool {
                     output_schema: task.output_schema,
                     isolated: task.isolated,
                     model_id: None,
+                    model_tier: task.model_tier,
                     executor: None,
                     budget: task.budget,
                     timeout_secs: task.timeout_secs,
@@ -1470,6 +1485,7 @@ mod tests {
                     enabled: true,
                 }],
                 default_model_id: Some("local".into()),
+                inherit_model_id: None,
                 permission_ceiling: PermissionSet {
                     tools: vec![
                         "read".into(),
@@ -1564,6 +1580,28 @@ mod tests {
         assert!(parameters.contains("max_tokens"));
         assert!(!parameters.contains("PRIVATE SPECIALIST RUBRIC"));
         assert!(!parameters.contains("private-model-binding"));
+    }
+
+    #[test]
+    fn model_tier_is_offered_only_when_a_distinct_subagent_model_is_configured() {
+        let (registry, mut host) = test_policy();
+        let without = build_delegate_tasks_schema(&registry, &host, &[], true);
+        assert!(
+            without.function.parameters["properties"]["tasks"]["items"]["properties"]
+                .get("model_tier")
+                .is_none()
+        );
+
+        host.inherit_model_id = Some("remote".into());
+        let with = build_delegate_tasks_schema(&registry, &host, &[], true);
+        let tier =
+            &with.function.parameters["properties"]["tasks"]["items"]["properties"]["model_tier"];
+        assert_eq!(tier["enum"], json!(["fast", "inherit"]));
+        let parameters = with.function.parameters.to_string();
+        assert!(
+            !parameters.contains("\"remote\""),
+            "no concrete profile ids: {parameters}"
+        );
     }
 
     #[test]

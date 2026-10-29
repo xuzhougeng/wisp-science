@@ -329,11 +329,37 @@ worker contract, Specialist identity/instructions, task context and dependency
 inputs, then the result contract.
 
 A valid Specialist model preference is used when the task resolves to Native.
-An empty or deleted model binding falls back through the normal active-model
-selection and the resolved model is persisted. ACP profiles remain executor
-choices rather than Specialist model bindings. The built-in Reviewer follows
-the same optional selection rule and is never appended to a dynamic plan
-automatically.
+An empty or deleted model binding falls back through the subagent model
+selection below and the resolved model is persisted. ACP profiles remain
+executor choices rather than Specialist model bindings. The built-in Reviewer
+follows the same optional selection rule and is never appended to a dynamic
+plan automatically.
+
+### Subagent model
+
+Temporary Agents and subagent conversations do not have to run on the
+conversation's own model. A high-end chat model can keep the planning and
+synthesis while bounded reading, extraction and drafting go to a cheaper
+worker. The model a child runs on is resolved in this order:
+
+1. A concrete override on the task (Workflow Studio editor) or the Specialist's
+   own model binding.
+2. The conversation's **Subagent model** choice from the agent menu in the
+   composer: a profile, or *Follow this conversation*.
+3. The global **Default subagent model** in Settings → Specialists. It outranks
+   the conversation model on purpose: setting it once keeps every worker off
+   the expensive model without touching each conversation.
+4. The conversation's model.
+
+The parent Agent never sees profile ids. When the resolved worker model differs
+from the conversation's model, `delegate_tasks` tasks and `dispatch_subagent`
+accept an optional `model_tier`: `fast` (the default, the worker model) or
+`inherit` (this conversation's model, for a task that needs its full
+capability). `inherit` is a preference like a Specialist binding: a task that
+requires vision on a text-only conversation model still falls through to an
+eligible profile. Nested delegation keeps pinning children to their parent's
+one model. The Agents panel lists the resolved model on every task and on each
+subagent conversation.
 
 ## Roundtable template
 
@@ -616,9 +642,13 @@ and the children box is not shown, but the family is still previewed and
 deleted as one, from its top selected conversation, rather than conversation
 by conversation.
 
-Each dispatch binds the child to the parent's chat model, reasoning effort and
-service tier, so a subagent runs on the model its parent uses rather than the
-global default. Switching the parent's model takes effect at the next dispatch.
+Each dispatch binds the child to the resolved subagent model (see "Subagent
+model" above): the conversation's choice, else the global default from
+Settings → Specialists, else the parent's chat model. When that is the
+parent's own model, or the parent passes `model_tier: "inherit"`, the parent's
+reasoning effort and service tier come along; a different worker model runs on
+its own profile defaults instead. Switching either model takes effect at the
+next dispatch.
 
 Each initial dispatch and follow-up also synchronizes the parent's selected
 execution contexts and resolved default compute target to the child. A server

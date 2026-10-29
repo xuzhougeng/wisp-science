@@ -1026,6 +1026,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
     : {};
   const sessionReasoningEfforts: Record<string, string> = {};
   const sessionServiceTiers: Record<string, string> = {};
+  // Subagent model (#1638): "" follows the conversation; per-session null
+  // follows the global default, "" follows the conversation, else a profile id.
+  let mockSubagentModel = query.get("mockSubagentModel") ?? "";
+  const sessionSubagentModels: Record<string, string> = {};
   let mockAcpAgents = [
     { id: "acp-test", label: "Test ACP Agent", command: "fake-acp", args: ["--stdio"] },
   ];
@@ -3757,6 +3761,33 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const sessionId = String(arg("sessionId") ?? "");
             if (Object.prototype.hasOwnProperty.call(sessionServiceTiers, sessionId)) {
               return sessionServiceTiers[sessionId];
+            }
+            return null;
+          }
+          case "get_subagent_model":
+            return mockSubagentModel;
+          case "set_subagent_model": {
+            const id = String(arg("id") ?? "").trim();
+            if (id && !mockModels.some((m) => m.id === id)) throw new Error("Unknown model.");
+            mockSubagentModel = id;
+            return mockSubagentModel;
+          }
+          case "get_session_subagent_model": {
+            const sessionId = String(arg("sessionId") ?? "");
+            if (Object.prototype.hasOwnProperty.call(sessionSubagentModels, sessionId)) {
+              return sessionSubagentModels[sessionId];
+            }
+            return null;
+          }
+          case "set_session_subagent_model": {
+            const sessionId = String(arg("sessionId") ?? "");
+            const modelId = arg("modelId");
+            if (modelId === null || typeof modelId === "undefined") {
+              delete sessionSubagentModels[sessionId];
+            } else {
+              const id = String(modelId);
+              if (id && !mockModels.some((m) => m.id === id)) throw new Error("Unknown model.");
+              sessionSubagentModels[sessionId] = id;
             }
             return null;
           }

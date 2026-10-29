@@ -210,6 +210,7 @@ const ACP_AGENT_SELECTION_MIGRATION: &str = "0060_acp_agent_selection";
 const SESSION_FILE_OPERATIONS_MIGRATION: &str = "0062_session_file_operations";
 const SESSION_TIMERS_MIGRATION: &str = "0063_session_timers";
 const SERVER_TURNS_MIGRATION: &str = "0066_server_turns";
+const SESSION_SUBAGENT_MODEL_MIGRATION: &str = "0067_session_subagent_model";
 
 #[derive(Clone)]
 pub struct Store {
@@ -848,6 +849,12 @@ impl Store {
             Self::add_columns_if_missing(pool, "frames", &[("service_tier", "TEXT")]).await?;
             Self::record_migration(pool, SESSION_SERVICE_TIER_MIGRATION).await?;
         }
+        // Per-conversation subagent model override (#1638): NULL follows the
+        // global default, "" explicitly follows the conversation's own model.
+        if !Self::migration_applied(pool, SESSION_SUBAGENT_MODEL_MIGRATION).await? {
+            Self::add_columns_if_missing(pool, "frames", &[("subagent_model", "TEXT")]).await?;
+            Self::record_migration(pool, SESSION_SUBAGENT_MODEL_MIGRATION).await?;
+        }
         // Append-only daily notes are separate from scientific decisions.
         if !Self::migration_applied(pool, RESEARCH_JOURNAL_MIGRATION).await? {
             Self::execute_sql_script(
@@ -992,6 +999,7 @@ impl Store {
                 ("dispatched_from", "TEXT"),
                 ("reasoning_effort", "TEXT"),
                 ("service_tier", "TEXT"),
+                ("subagent_model", "TEXT"),
                 ("acp_agent_selection", "TEXT"),
                 ("branch_point_user_index", "INTEGER"),
                 ("branch_point_kind", "TEXT"),

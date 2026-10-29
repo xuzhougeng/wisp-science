@@ -115,6 +115,7 @@ fn local_policy(model: &str) -> (CapabilityRegistry, DelegationHostPolicy) {
             enabled: true,
         }],
         default_model_id: Some(model.into()),
+        inherit_model_id: None,
         permission_ceiling: PermissionSet {
             tools,
             paths: vec!["project://**".into()],

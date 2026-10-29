@@ -946,6 +946,56 @@ async fn last_turn_outcome_is_the_latest_turn_end_of_that_frame() {
 }
 
 #[tokio::test]
+async fn frame_subagent_model_is_session_scoped_and_distinguishes_follow_from_default() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_frame_subagent_model_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_frame("first", "p", "OPERON", "m1")
+        .await
+        .unwrap();
+    store
+        .create_frame("second", "p", "OPERON", "m1")
+        .await
+        .unwrap();
+
+    assert_eq!(store.frame_subagent_model("first").await.unwrap(), None);
+    store
+        .set_frame_subagent_model("first", "p", Some("cheap"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.frame_subagent_model("first").await.unwrap(),
+        Some("cheap".into())
+    );
+    assert_eq!(store.frame_subagent_model("second").await.unwrap(), None);
+
+    // "" is an explicit "follow this conversation", distinct from NULL.
+    store
+        .set_frame_subagent_model("first", "p", Some(""))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.frame_subagent_model("first").await.unwrap(),
+        Some(String::new())
+    );
+    store
+        .set_frame_subagent_model("first", "p", None)
+        .await
+        .unwrap();
+    assert_eq!(store.frame_subagent_model("first").await.unwrap(), None);
+    assert!(store
+        .set_frame_subagent_model("missing", "p", Some("cheap"))
+        .await
+        .is_err());
+    drop(store);
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn frame_reasoning_effort_is_session_scoped_and_nullable() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_frame_reasoning_{}.sqlite",

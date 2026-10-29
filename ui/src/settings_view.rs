@@ -1613,6 +1613,8 @@ pub(super) struct SettingsViewState {
     pub(super) acp_form_msg: RwSignal<Option<(bool, String)>>,
     pub(super) acp_infos: RwSignal<HashMap<String, AcpAgentInfo>>,
     pub(super) specialists: RwSignal<Vec<Specialist>>,
+    /// Global default subagent model profile id; "" follows the conversation.
+    pub(super) subagent_model: RwSignal<String>,
     pub(super) quick_actions: RwSignal<Vec<QuickAction>>,
     pub(super) workflow_templates: RwSignal<Vec<WorkflowTemplate>>,
     pub(super) workflow_studio: AgentPanelState,
@@ -2226,6 +2228,7 @@ pub(super) fn SettingsView(
     save_model_form: Callback<web_sys::MouseEvent>,
     save_specialist_form: Callback<web_sys::MouseEvent>,
     test_reviewer_form: Callback<web_sys::MouseEvent>,
+    set_subagent_model: Callback<String>,
     validate_model_form: Callback<web_sys::MouseEvent>,
     start_specialist_chat: Callback<web_sys::MouseEvent>,
     refresh_conns: Callback<()>,
@@ -2298,6 +2301,7 @@ pub(super) fn SettingsView(
         acp_form_msg,
         acp_infos,
         specialists,
+        subagent_model,
         quick_actions,
         workflow_templates,
         workflow_studio,
@@ -6408,6 +6412,29 @@ pub(super) fn SettingsView(
                                     class:ok=move || ok
                                     class:fail=move || !ok>{text}</div>
                             })}
+                            // Global default for every subagent (#1638): delegate_tasks
+                            // children and dispatch_subagent conversations. A Specialist's
+                            // own binding and a conversation's choice still outrank it.
+                            <div class="specialists-subagent-model" data-testid="subagent-model-field">
+                                <label for="subagent-model-select">{move || t(locale.get(), "specialists.subagent_model")}</label>
+                                <select id="subagent-model-select" data-testid="subagent-model-select"
+                                    disabled=move || settings_busy.get()
+                                    on:change=move |ev| set_subagent_model.call(event_target_value(&ev))>
+                                    <option value="" prop:selected=move || subagent_model.get().is_empty()>
+                                        {move || t(locale.get(), "specialists.subagent_model.follow")}
+                                    </option>
+                                    {move || models.get().into_iter().filter(ModelProfile::is_chat_model).map(|model| {
+                                        let value = model.id.clone();
+                                        let selected_id = model.id.clone();
+                                        view! {
+                                            <option value=value prop:selected=move || subagent_model.get() == selected_id>
+                                                {model.label.clone()}
+                                            </option>
+                                        }
+                                    }).collect_view()}
+                                </select>
+                                <span class="hint">{move || t(locale.get(), "specialists.subagent_model.hint")}</span>
+                            </div>
                             <div class="conn-group-label">{move || t(locale.get(), "specialists.builtin")}</div>
                             <div class="settings-list">
                                 <For each=move || { specialists.get().into_iter().filter(|s| s.builtin).collect::<Vec<_>>() } key=|s| s.id.clone() let:s>

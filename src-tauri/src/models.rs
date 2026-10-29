@@ -161,6 +161,10 @@ impl Default for VideoGenerationOptions {
 
 const PROFILES_KEY: &str = "model_profiles";
 pub(crate) const ACTIVE_KEY: &str = "active_model_id";
+/// Global default model for subagents (`delegate_tasks` children and
+/// `dispatch_subagent` conversations). Missing or empty follows the
+/// delegating conversation's model (#1638).
+pub(crate) const SUBAGENT_MODEL_KEY: &str = "subagent_model_id";
 const VISION_KEY: &str = "vision_model_id";
 const IMAGE_GENERATION_KEY: &str = "image_generation_model_id";
 const VIDEO_GENERATION_KEY: &str = "video_generation_model_id";
@@ -739,7 +743,7 @@ fn endpoint_proxy(profiles: &[ModelProfile], profile: &ModelProfile) -> Option<S
 /// Ensure at least one profile exists. On the first read of a legacy install,
 /// migrate the single `provider`/`api_url`/`model` settings + `api_key` secret
 /// into a "default" profile so existing users keep working unchanged.
-async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
+pub(crate) async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = load_raw(store).await;
     if !profiles.is_empty() {
         remember_routes(&profiles);
@@ -850,9 +854,9 @@ pub async fn session_profile_id(store: &wisp_store::Store, frame_id: &str) -> St
     resolve_session_profile(store, frame_id).await.0
 }
 
-/// Bind `target` to the chat model, reasoning effort and service tier that
-/// `source` runs on, so a branch or subagent keeps its origin's model instead
-/// of falling back to the global default.
+/// Bind `target` to the chat model, reasoning effort, service tier and
+/// subagent-model override that `source` runs on, so a branch keeps its
+/// origin's model instead of falling back to the global default.
 pub(crate) async fn copy_session_model_settings(
     store: &wisp_store::Store,
     source: &str,
@@ -879,7 +883,113 @@ pub(crate) async fn copy_session_model_settings(
     store
         .set_frame_service_tier(target, project_id, service_tier.as_deref())
         .await
+        .map_err(|error| error.to_string())?;
+    copy_session_subagent_override(store, source, target, project_id).await
+}
+
+async fn copy_session_subagent_override(
+    store: &wisp_store::Store,
+    source: &str,
+    target: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let subagent_model = store
+        .frame_subagent_model(source)
+        .await
+        .map_err(|error| error.to_string())?;
+    store
+        .set_frame_subagent_model(target, project_id, subagent_model.as_deref())
+        .await
         .map_err(|error| error.to_string())
+}
+
+/// The global default subagent model: a chat profile id, or empty when
+/// subagents follow the delegating conversation's model. A deleted profile
+/// reads as empty, so nothing keeps resolving a dead binding.
+pub(crate) async fn global_subagent_model_id(store: &wisp_store::Store) -> String {
+    let want = store
+        .get_setting(SUBAGENT_MODEL_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if want.is_empty() {
+        return want;
+    }
+    let profiles = ensure(store).await;
+    if profiles
+        .iter()
+        .any(|profile| profile.id == want && is_chat_model(profile))
+    {
+        want
+    } else {
+        String::new()
+    }
+}
+
+/// The model a subagent started from `frame_id` runs on. Precedence: the
+/// conversation's own override (a profile id, or "" for "follow this
+/// conversation"), then the global subagent default, then the conversation's
+/// model. The global default outranks the conversation model on purpose:
+/// setting it is how the researcher keeps an expensive chat model from being
+/// inherited by every worker (#1638).
+pub(crate) async fn subagent_profile_id(store: &wisp_store::Store, frame_id: &str) -> String {
+    let override_value = store.frame_subagent_model(frame_id).await.ok().flatten();
+    match override_value.as_deref() {
+        Some("") => return session_profile_id(store, frame_id).await,
+        Some(id) => {
+            let profiles = ensure(store).await;
+            if profiles
+                .iter()
+                .any(|profile| profile.id == id && is_chat_model(profile))
+            {
+                return id.to_string();
+            }
+        }
+        None => {}
+    }
+    let global = global_subagent_model_id(store).await;
+    if !global.is_empty() {
+        return global;
+    }
+    session_profile_id(store, frame_id).await
+}
+
+/// Bind a dispatched subagent conversation to the model it should run on:
+/// `inherit` takes the parent's model (with its effort and tier), otherwise
+/// the resolved subagent model. When the worker differs from the parent's
+/// model, the parent's effort and tier overrides do not carry over: they were
+/// chosen for a different profile, so the worker runs on its own defaults.
+pub(crate) async fn bind_subagent_model_settings(
+    store: &wisp_store::Store,
+    parent: &str,
+    child: &str,
+    project_id: &str,
+    tier: Option<wisp_core::ModelTier>,
+) -> Result<String, String> {
+    let parent_model = session_profile_id(store, parent).await;
+    let model_id = match tier {
+        Some(wisp_core::ModelTier::Inherit) => parent_model.clone(),
+        Some(wisp_core::ModelTier::Fast) | None => subagent_profile_id(store, parent).await,
+    };
+    if model_id == parent_model {
+        copy_session_model_settings(store, parent, child, project_id).await?;
+        return Ok(model_id);
+    }
+    store
+        .set_frame_model(child, project_id, &model_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    store
+        .set_frame_reasoning_effort(child, project_id, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    store
+        .set_frame_service_tier(child, project_id, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    copy_session_subagent_override(store, parent, child, project_id).await?;
+    Ok(model_id)
 }
 
 /// Chat profile for `frame_id`. A leftover id (deleted LM Studio profile, etc.)
@@ -2312,6 +2422,105 @@ pub async fn set_session_reasoning_effort(
     Ok(())
 }
 
+/// Global default subagent model: a chat profile id, or "" when subagents
+/// follow the conversation.
+#[tauri::command]
+pub async fn get_subagent_model(state: State<'_, crate::AppState>) -> Result<String, String> {
+    Ok(global_subagent_model_id(&state.store).await)
+}
+
+#[tauri::command]
+pub async fn set_subagent_model(
+    state: State<'_, crate::AppState>,
+    id: String,
+) -> Result<String, String> {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        state
+            .store
+            .delete_setting(SUBAGENT_MODEL_KEY)
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(String::new());
+    }
+    ensure_chat_profile(&state.store, &id).await?;
+    state
+        .store
+        .set_setting(SUBAGENT_MODEL_KEY, &id)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(id)
+}
+
+/// Per-conversation subagent model override: `None` follows the global
+/// default, `Some("")` follows this conversation's model, otherwise a profile id.
+#[tauri::command]
+pub async fn get_session_subagent_model(
+    state: State<'_, crate::AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    session_id: String,
+) -> Result<Option<String>, String> {
+    let project = state.require_active(window.label())?;
+    if state
+        .store
+        .frame_project_id(&session_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        != Some(project.id.as_str())
+    {
+        return Err("Session not found".into());
+    }
+    let value = state
+        .store
+        .frame_subagent_model(&session_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    // A deleted profile reads as "no override" so the menu does not show a
+    // choice the backend will not honour.
+    match value.as_deref() {
+        Some("") | None => Ok(value),
+        Some(id) => Ok(ensure_chat_profile(&state.store, id)
+            .await
+            .is_ok()
+            .then(|| id.to_string())),
+    }
+}
+
+#[tauri::command]
+pub async fn set_session_subagent_model(
+    state: State<'_, crate::AppState>,
+    model_id: Option<String>,
+    session_id: String,
+) -> Result<(), String> {
+    let normalized = match model_id.as_deref().map(str::trim) {
+        None => None,
+        Some("") => Some(String::new()),
+        Some(id) => {
+            ensure_chat_profile(&state.store, id).await?;
+            Some(id.to_string())
+        }
+    };
+    let (project, scope) =
+        crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
+    let _activity = state.begin_project_activity(&project.id)?;
+    let _project_write_locked = crate::exploration_commands::conversation_project_write_locked(
+        &state.store,
+        &scope,
+        Some(&session_id),
+    )
+    .await?;
+    state
+        .store
+        .set_frame_subagent_model(&session_id, &project.id, normalized.as_deref())
+        .await
+        .map_err(|error| error.to_string())?;
+    // The delegate_tasks schema and policy are rebuilt from the frame on the
+    // next turn; drop the cached agent so the new default is picked up.
+    crate::clear_session_agent(&state, &session_id).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_session_service_tier(
     state: State<'_, crate::AppState>,
@@ -2345,6 +2554,120 @@ pub async fn set_session_service_tier(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn subagent_model_resolves_override_then_global_default_then_conversation() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_models_subagent_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        save_raw(
+            &store,
+            &[
+                test_profile("strong", "strong", "model-strong"),
+                test_profile("cheap", "cheap", "model-cheap"),
+                test_profile("other", "other", "model-other"),
+            ],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "strong").await.unwrap();
+        store
+            .create_frame("chat", "p", "OPERON", "strong")
+            .await
+            .unwrap();
+        store
+            .create_frame("child", "p", "OPERON", "strong")
+            .await
+            .unwrap();
+
+        // Nothing configured: subagents follow the conversation.
+        assert_eq!(global_subagent_model_id(&store).await, "");
+        assert_eq!(subagent_profile_id(&store, "chat").await, "strong");
+
+        // The global default outranks the conversation model.
+        store
+            .set_setting(SUBAGENT_MODEL_KEY, "cheap")
+            .await
+            .unwrap();
+        assert_eq!(subagent_profile_id(&store, "chat").await, "cheap");
+
+        // A per-conversation profile outranks the global default; "" means
+        // "follow this conversation" even while a global default is set.
+        store
+            .set_frame_subagent_model("chat", "p", Some("other"))
+            .await
+            .unwrap();
+        assert_eq!(subagent_profile_id(&store, "chat").await, "other");
+        store
+            .set_frame_subagent_model("chat", "p", Some(""))
+            .await
+            .unwrap();
+        assert_eq!(subagent_profile_id(&store, "chat").await, "strong");
+
+        // Deleted bindings fall through instead of resolving to nothing.
+        store
+            .set_frame_subagent_model("chat", "p", Some("gone"))
+            .await
+            .unwrap();
+        assert_eq!(subagent_profile_id(&store, "chat").await, "cheap");
+        store.set_setting(SUBAGENT_MODEL_KEY, "gone").await.unwrap();
+        assert_eq!(global_subagent_model_id(&store).await, "");
+        assert_eq!(subagent_profile_id(&store, "chat").await, "strong");
+
+        // Dispatch binding: the worker model drops the parent's effort/tier
+        // overrides; `inherit` copies them along with the parent's model.
+        store
+            .set_setting(SUBAGENT_MODEL_KEY, "cheap")
+            .await
+            .unwrap();
+        store
+            .set_frame_subagent_model("chat", "p", None)
+            .await
+            .unwrap();
+        store
+            .set_frame_reasoning_effort("chat", "p", Some("high"))
+            .await
+            .unwrap();
+        store
+            .set_frame_service_tier("chat", "p", Some("priority"))
+            .await
+            .unwrap();
+        assert_eq!(
+            bind_subagent_model_settings(&store, "chat", "child", "p", None)
+                .await
+                .unwrap(),
+            "cheap"
+        );
+        assert_eq!(session_profile_id(&store, "child").await, "cheap");
+        assert_eq!(store.frame_reasoning_effort("child").await.unwrap(), None);
+        assert_eq!(store.frame_service_tier("child").await.unwrap(), None);
+        assert_eq!(
+            bind_subagent_model_settings(
+                &store,
+                "chat",
+                "child",
+                "p",
+                Some(wisp_core::ModelTier::Inherit)
+            )
+            .await
+            .unwrap(),
+            "strong"
+        );
+        assert_eq!(session_profile_id(&store, "child").await, "strong");
+        assert_eq!(
+            store.frame_reasoning_effort("child").await.unwrap(),
+            Some("high".into())
+        );
+        assert_eq!(
+            store.frame_service_tier("child").await.unwrap(),
+            Some("priority".into())
+        );
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
 
     fn test_profile(id: &str, label: &str, model: &str) -> ModelProfile {
         ModelProfile {
@@ -2718,6 +3041,23 @@ mod tests {
             store.frame_service_tier("child").await.unwrap(),
             Some("priority".into())
         );
+
+        // The per-conversation subagent override travels with a branch too.
+        store
+            .set_frame_subagent_model("parent", "p", Some("m1"))
+            .await
+            .unwrap();
+        copy_session_model_settings(&store, "parent", "child", "p")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.frame_subagent_model("child").await.unwrap(),
+            Some("m1".into())
+        );
+        store
+            .set_frame_subagent_model("parent", "p", None)
+            .await
+            .unwrap();
 
         // A later copy follows the source's switch, including cleared overrides.
         store.set_frame_model("parent", "p", "m1").await.unwrap();

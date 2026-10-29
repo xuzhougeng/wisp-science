@@ -7207,11 +7207,12 @@ test("agent menu groups per-conversation options and links to Settings", async (
   const rows = menu.locator(".agent-menu-group, .agent-menu-row > span:first-child");
   await expect(rows).toHaveText([
     "Mode", "Plan first", "Full Permission",
-    "Agents", "Specialist", "Auto-review", "Reviewer model",
+    "Agents", "Specialist", "Auto-review", "Reviewer model", "Subagent model",
     "Resources", "Compute",
     "More in Settings",
   ]);
   await expect(menu.getByRole("button", { name: /^Reviewer model/ })).toHaveClass(/agent-menu-sub/);
+  await expect(menu.getByRole("button", { name: /^Subagent model/ })).toHaveClass(/agent-menu-sub/);
 
   await menu.getByTestId("agent-menu-more-settings").click();
   await expect(menu).toHaveCount(0);
@@ -7295,6 +7296,76 @@ test("agent menu updates review and reviewer model preferences", async ({ page }
   menu = await openAgentMenu(page);
   await menu.getByRole("button", { name: /^Reviewer model/ }).click();
   await expect(page.getByRole("menu", { name: "Reviewer model" })).toBeVisible();
+});
+
+test("agent menu sets the conversation's subagent model and Escape closes only the submenu", async ({ page }) => {
+  await enterApp(page);
+  let menu = await openAgentMenu(page);
+  // Nothing configured anywhere: subagents follow the conversation.
+  await expect(menu.getByRole("button", { name: /Subagent model Default \(Follow this conversation\)/ })).toBeVisible();
+
+  await menu.getByRole("button", { name: /^Subagent model/ }).click();
+  const submenu = page.getByRole("menu", { name: "Subagent model" });
+  await expect(submenu).toBeVisible();
+  await expect(submenu.getByRole("button")).toHaveText([
+    "Default (Follow this conversation)",
+    "Follow this conversation",
+    "deepseek-v4-pro",
+    "opus-4.8",
+  ]);
+  // One Escape closes the topmost layer only; the agent menu stays open.
+  await page.keyboard.press("Escape");
+  await expect(submenu).toHaveCount(0);
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  menu = await openAgentMenu(page);
+  await menu.getByRole("button", { name: /^Subagent model/ }).click();
+  await page.getByRole("menu", { name: "Subagent model" }).getByRole("button", { name: "opus-4.8" }).click();
+  // Choosing before the first message creates the conversation the choice belongs to.
+  await expect.poll(() => lastInvokeArgs(page, "set_session_subagent_model"))
+    .toMatchObject({ sessionId: expect.stringMatching(/^s-/), modelId: "opus" });
+  await expect(menu).toHaveCount(0);
+  menu = await openAgentMenu(page);
+  await expect(menu.getByRole("button", { name: /Subagent model opus-4\.8/ })).toBeVisible();
+
+  await menu.getByRole("button", { name: /^Subagent model/ }).click();
+  await page.getByRole("menu", { name: "Subagent model" })
+    .getByRole("button", { name: "Follow this conversation", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_subagent_model")).toMatchObject({ modelId: "" });
+  menu = await openAgentMenu(page);
+  await expect(menu.getByRole("button", { name: /^Subagent model Follow this conversation$/ })).toBeVisible();
+
+  await menu.getByRole("button", { name: /^Subagent model/ }).click();
+  await page.getByRole("menu", { name: "Subagent model" }).getByRole("button", { name: /^Default/ }).click();
+  // `None` crosses the bridge as an absent field (serde_wasm_bindgen), which
+  // the backend reads as "follow the global default" again.
+  await expect.poll(() => lastInvokeArgs(page, "set_session_subagent_model").then((args) => args?.modelId ?? null)).toBeNull();
+});
+
+test("agent menu shows the global default subagent model from Settings", async ({ page }) => {
+  await enterApp(page, "/?mockSubagentModel=opus");
+  const menu = await openAgentMenu(page);
+  await expect(menu.getByRole("button", { name: /Subagent model Default \(opus-4\.8\)/ })).toBeVisible();
+});
+
+test("Specialists settings pick the global default subagent model", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  const select = page.getByTestId("subagent-model-select");
+  await expect(select).toHaveValue("");
+  await expect(select.locator("option")).toHaveText([
+    "Follow the conversation model",
+    "deepseek-v4-pro",
+    "opus-4.8",
+  ]);
+  await select.selectOption("opus");
+  await expect.poll(() => lastInvokeArgs(page, "set_subagent_model")).toMatchObject({ id: "opus" });
+  await expect(select).toHaveValue("opus");
+  await select.selectOption("");
+  await expect.poll(() => lastInvokeArgs(page, "set_subagent_model")).toMatchObject({ id: "" });
+  await expect(select).toHaveValue("");
 });
 
 test("auto-review stays with the session that enabled it", async ({ page }) => {
