@@ -149,6 +149,52 @@ pub(crate) fn last_tool_input(items: &[ChatItem], tool: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Live notice for a model request being recovered inside the running turn
+/// (#1641). One per session; cleared by the next model output or the turn end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StreamRecoveryNotice {
+    pub phase: String,
+    pub cause: String,
+    pub attempt: u64,
+    pub max_attempts: u64,
+    pub retry_in_ms: u64,
+    pub error: String,
+}
+
+/// Drop a failed stream attempt's draft (#1641): trim exactly the bytes the
+/// cut stream had forwarded from the trailing assistant / reasoning rows ahead
+/// of the queued-user tail, removing rows that become empty. Stops at the
+/// first other row, so tool results and completed messages stay.
+pub(crate) fn discard_stream_draft(
+    items: &mut Vec<ChatItem>,
+    mut text_bytes: usize,
+    mut reasoning_bytes: usize,
+) {
+    let mut index = trailing_queue_start(items);
+    while index > 0 && (text_bytes > 0 || reasoning_bytes > 0) {
+        index -= 1;
+        let (text, budget) = match &mut items[index] {
+            ChatItem::Assistant { text, .. } if !text.starts_with("Error: ") => {
+                (text, &mut text_bytes)
+            }
+            ChatItem::Reasoning(text) => (text, &mut reasoning_bytes),
+            _ => break,
+        };
+        // Deltas were appended whole, so the boundary is exact; snapping only
+        // guards `truncate` if the counts ever drift.
+        let mut keep = text.len().saturating_sub(*budget);
+        while keep > 0 && !text.is_char_boundary(keep) {
+            keep -= 1;
+        }
+        *budget -= text.len() - keep;
+        text.truncate(keep);
+        let empty = text.is_empty();
+        if empty {
+            items.remove(index);
+        }
+    }
+}
+
 pub(crate) fn trailing_queue_start(items: &[ChatItem]) -> usize {
     items
         .iter()
@@ -1598,5 +1644,78 @@ mod terminal_chunk_tests {
             ChatItem::Tool { output, .. } => assert_eq!(output, "building\n100%\n"),
             _ => panic!("expected tool item"),
         }
+    }
+}
+
+#[cfg(test)]
+mod stream_recovery_tests {
+    use super::*;
+
+    fn assistant(text: &str) -> ChatItem {
+        ChatItem::Assistant {
+            text: text.into(),
+            model: None,
+            resources: Vec::new(),
+        }
+    }
+
+    fn tool() -> ChatItem {
+        ChatItem::Tool {
+            name: "shell".into(),
+            ok: Some(true),
+            input: "pwd".into(),
+            output: "/tmp".into(),
+            started_at_ms: None,
+            duration_ms: Some(1),
+        }
+    }
+
+    #[test]
+    fn drops_the_failed_attempts_reasoning_and_text_but_keeps_the_tool_row() {
+        let mut items = vec![
+            ChatItem::User("go".into()),
+            tool(),
+            ChatItem::Reasoning("deciding".into()),
+            assistant("The partial ans"),
+        ];
+        discard_stream_draft(&mut items, "The partial ans".len(), "deciding".len());
+        assert_eq!(items, vec![ChatItem::User("go".into()), tool()]);
+    }
+
+    #[test]
+    fn trims_only_the_tail_of_a_bubble_that_already_held_a_completed_text() {
+        let mut items = vec![assistant("Done part. half")];
+        discard_stream_draft(&mut items, "half".len(), 0);
+        assert_eq!(items, vec![assistant("Done part. ")]);
+    }
+
+    #[test]
+    fn skips_the_queued_user_tail_and_stops_at_non_stream_rows() {
+        let mut items = vec![
+            tool(),
+            assistant("abc"),
+            ChatItem::QueuedUser {
+                id: 7,
+                text: "next".into(),
+            },
+        ];
+        discard_stream_draft(&mut items, 99, 99);
+        assert_eq!(
+            items,
+            vec![
+                tool(),
+                ChatItem::QueuedUser {
+                    id: 7,
+                    text: "next".into(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_an_error_card_alone() {
+        let mut items = vec![assistant("Error: api: 401 invalid key")];
+        discard_stream_draft(&mut items, 5, 0);
+        assert_eq!(items, vec![assistant("Error: api: 401 invalid key")]);
     }
 }

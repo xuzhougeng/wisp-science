@@ -1284,6 +1284,114 @@ fn persisted_ui_events_keep_live_step_order_and_boundaries() {
 }
 
 #[test]
+fn stream_recovery_replay_drops_only_the_failed_attempts_draft() {
+    let frame_id = "f".to_string();
+    let recovery = |phase: &str, text: usize, reasoning: usize| AgentEvent::StreamRecovery {
+        frame_id: frame_id.clone(),
+        phase: phase.into(),
+        cause: "stream".into(),
+        attempt: 1,
+        max_attempts: 5,
+        retry_in_ms: 1_000,
+        error: "stream ended without completion".into(),
+        discarded_text_bytes: text as u64,
+        discarded_reasoning_bytes: reasoning as u64,
+    };
+    let text = |delta: &str| AgentEvent::Text {
+        frame_id: frame_id.clone(),
+        delta: delta.into(),
+    };
+    let reasoning = |delta: &str| AgentEvent::Reasoning {
+        frame_id: frame_id.clone(),
+        delta: delta.into(),
+    };
+    let events = vec![
+        AgentEvent::User {
+            frame_id: frame_id.clone(),
+            text: "go".into(),
+            queue_id: None,
+        },
+        // A completed round: text, then a tool call and its result.
+        text("Let me check."),
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 1,
+        },
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            preview: "pwd".into(),
+        },
+        AgentEvent::ToolResult {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            ok: true,
+            content: "/tmp".into(),
+            duration_ms: 1,
+        },
+        // The next request streams reasoning and part of an answer, then the
+        // connection drops and the loop reconnects.
+        reasoning("deciding"),
+        text("The partial ans"),
+        recovery("waiting", "The partial ans".len(), "deciding".len()),
+        recovery("reconnecting", 0, 0),
+        text("The full answer."),
+        recovery("recovered", 0, 0),
+        AgentEvent::Done {
+            frame_id: frame_id.clone(),
+            stop_reason: None,
+            effective_max_iter: None,
+        },
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (item.role.as_str(), item.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user", "go"),
+            ("assistant", "Let me check."),
+            ("tool", "/tmp"),
+            ("assistant", "The full answer."),
+        ]
+    );
+
+    // A cut after a completed text in the same bubble trims only the tail.
+    let events = vec![
+        text("Done part. "),
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 1,
+        },
+        text("half"),
+        recovery("waiting", "half".len(), 0),
+        text("whole"),
+    ];
+    let (items, _) = events_to_items(&events);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].text, "Done part. whole");
+
+    // Counts larger than the trailing stream rows stop at the first
+    // non-stream row instead of eating a tool result.
+    let events = vec![
+        AgentEvent::ToolResult {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            ok: true,
+            content: "/tmp".into(),
+            duration_ms: 1,
+        },
+        text("abc"),
+        recovery("waiting", 99, 99),
+    ];
+    let (items, _) = events_to_items(&events);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].role, "tool");
+}
+
+#[test]
 fn persisted_stdout_replay_folds_progress_and_stays_bounded() {
     let frame_id = "f".to_string();
     let events = vec![

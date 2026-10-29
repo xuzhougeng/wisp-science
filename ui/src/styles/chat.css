@@ -375,9 +375,22 @@
 @keyframes context-gather-top { 50% { transform: translateY(4px); opacity: .4; } }
 @keyframes context-gather-bottom { 50% { transform: translateY(-4px); opacity: .4; } }
 @keyframes context-settle { from { opacity: 0; transform: translateY(3px); } }
+/* In-turn model recovery notice (#1641): same row layout as the compaction
+   status, a neutral mark, and a slow spin that quickens while reconnecting. */
+.stream-recovery-live .context-compaction-mark {
+  color: var(--text-muted); border-color: var(--border); background: var(--bg-app);
+}
+.stream-recovery-live .context-compaction-mark svg { animation: stream-recovery-spin 3.2s linear infinite; }
+.stream-recovery-live[data-phase="reconnecting"] .context-compaction-mark svg { animation-duration: 1.2s; }
+.stream-recovery-error {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-faint);
+}
+@keyframes stream-recovery-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .context-compaction-live .context-compaction-mark svg path:first-child,
   .context-compaction-live .context-compaction-mark svg path:last-child,
+  .stream-recovery-live .context-compaction-mark svg,
   .context-compaction-complete { animation: none; }
 }
 .msg[data-in-context="false"],

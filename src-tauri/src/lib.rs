@@ -292,6 +292,20 @@ enum AgentEvent {
         #[serde(default)]
         strategy: String,
     },
+    /// In-turn recovery of a failed model request (#1641); see
+    /// `wisp_dto::AgentEvent::StreamRecovery`. Persisted so replay can drop
+    /// the failed attempt's partial draft.
+    StreamRecovery {
+        frame_id: String,
+        phase: String,
+        cause: String,
+        attempt: u64,
+        max_attempts: u64,
+        retry_in_ms: u64,
+        error: String,
+        discarded_text_bytes: u64,
+        discarded_reasoning_bytes: u64,
+    },
     /// The context estimate crossed the warning threshold and remains high.
     ContextWarning {
         frame_id: String,
@@ -405,6 +419,7 @@ impl AgentEvent {
             | Self::Compaction { frame_id, .. }
             | Self::CompactionUndone { frame_id, .. }
             | Self::CompactionStarted { frame_id, .. }
+            | Self::StreamRecovery { frame_id, .. }
             | Self::ContextWarning { frame_id, .. }
             | Self::Diff { frame_id, .. }
             | Self::FileChanged { frame_id, .. }
@@ -1664,6 +1679,44 @@ fn background_completion_ok(raw: &str) -> Option<bool> {
     }
 }
 
+/// Remove a failed stream attempt's draft from replayed rows (#1641): walk
+/// the trailing assistant/reasoning rows and trim exactly the bytes the cut
+/// stream had forwarded, dropping rows that become empty. Earlier rows, tool
+/// results and every completed message stay untouched.
+fn discard_stream_draft_rows(
+    items: &mut Vec<UiItem>,
+    mut text_bytes: usize,
+    mut reasoning_bytes: usize,
+) {
+    let mut index = items.len();
+    while index > 0 && (text_bytes > 0 || reasoning_bytes > 0) {
+        index -= 1;
+        let row = &mut items[index];
+        let budget = match row.role.as_str() {
+            "assistant" if !row.text.starts_with("Error: ") => &mut text_bytes,
+            "reasoning" => &mut reasoning_bytes,
+            _ => break,
+        };
+        let keep = trimmed_prefix_len(&row.text, *budget);
+        *budget -= row.text.len() - keep;
+        row.text.truncate(keep);
+        if row.text.is_empty() {
+            items.remove(index);
+        }
+    }
+}
+
+/// Length of `text` after dropping up to `bytes` from its tail, snapped to a
+/// char boundary. The deltas were appended whole, so the boundary is exact
+/// unless the counts drifted; snapping keeps `truncate` from panicking then.
+fn trimmed_prefix_len(text: &str, bytes: usize) -> usize {
+    let mut keep = text.len().saturating_sub(bytes);
+    while keep > 0 && !text.is_char_boundary(keep) {
+        keep -= 1;
+    }
+    keep
+}
+
 fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {
     let mut items: Vec<UiItem> = Vec::new();
     let mut boundaries = HashMap::new();
@@ -1952,6 +2005,22 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
             }),
             AgentEvent::MessageBoundary { seq, .. } => {
                 boundaries.insert(*seq, items.len());
+            }
+            AgentEvent::StreamRecovery {
+                phase,
+                discarded_text_bytes,
+                discarded_reasoning_bytes,
+                ..
+            } => {
+                // The partial draft was never an answer: replay must not splice
+                // it onto the text the reconnected request produced.
+                if phase == "waiting" {
+                    discard_stream_draft_rows(
+                        &mut items,
+                        *discarded_text_bytes as usize,
+                        *discarded_reasoning_bytes as usize,
+                    );
+                }
             }
             AgentEvent::Resources { resources, .. } => {
                 if let Some(item) = items.iter_mut().rev().find(|item| item.role == "assistant") {
@@ -3472,6 +3541,7 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }
             | AgentEvent::CompactionUndone { .. }
+            | AgentEvent::StreamRecovery { .. }
             | AgentEvent::Done { .. }
             | AgentEvent::Error { .. }
     )
@@ -3615,6 +3685,19 @@ impl Output for TauriOutput {
         self.emit(AgentEvent::CompactionStarted {
             frame_id: self.frame_id.clone(),
             strategy: strategy.into(),
+        });
+    }
+    fn stream_recovery(&self, recovery: &wisp_core::StreamRecovery) {
+        self.emit(AgentEvent::StreamRecovery {
+            frame_id: self.frame_id.clone(),
+            phase: recovery.phase.as_str().into(),
+            cause: recovery.kind.as_str().into(),
+            attempt: recovery.attempt as u64,
+            max_attempts: recovery.max_attempts as u64,
+            retry_in_ms: recovery.retry_in.as_millis() as u64,
+            error: recovery.error.clone(),
+            discarded_text_bytes: recovery.discarded_text_bytes as u64,
+            discarded_reasoning_bytes: recovery.discarded_reasoning_bytes as u64,
         });
     }
     fn context_warning(&self, ctx_tokens: usize, max_context: usize) {

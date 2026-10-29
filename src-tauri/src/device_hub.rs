@@ -177,6 +177,8 @@ impl DeviceHub {
             ),
             AgentEvent::MessageBoundary { .. }
             | AgentEvent::Resources { .. }
+            // Still this turn, still working: the pet state does not change.
+            | AgentEvent::StreamRecovery { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::AppContextUpdate { .. }
             | AgentEvent::Usage { .. }

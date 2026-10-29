@@ -4,7 +4,9 @@
 
 use crate::archive::{prune_dir, ArchiveRetention};
 use crate::context::{image_content, ContextManager};
-use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
+use crate::output::{
+    StreamRecovery, StreamRecoveryKind, StreamRecoveryPhase, StreamSinkAdapter, ToolEnvAdapter,
+};
 use crate::plan_progress::PlanProgress;
 use crate::provenance;
 use crate::Output;
@@ -16,18 +18,26 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use wisp_llm::{
-    is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolCall, ToolSchema,
+    is_retriable, is_stream_interruption, Completion, Content, LlmError, Message, Part, Provider,
+    ToolCall, ToolSchema,
 };
 use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv, ToolResult, ToolSchemaOrigin};
 
+/// Backoff between request retries after a provider rejection (rate limit,
+/// overload, 5xx): the service is the bottleneck, so the window spans minutes.
 const RETRY_DELAYS: [u64; 5] = [2_000, 10_000, 30_000, 60_000, 120_000];
+/// Backoff before reconnecting a stream that was cut mid-response (#1641). A
+/// dropped proxy or relay connection is usually back within seconds, and each
+/// reconnect rebuilds the request from the confirmed context, so the window is
+/// short. One budget per model request, not per turn.
+const STREAM_RECOVERY_DELAYS: [u64; 5] = [1_000, 3_000, 8_000, 20_000, 45_000];
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const STOPPED_BY_USER: &str = "stopped by user";
 /// Bytes of a discarded tool call's arguments kept in history.
 const DISCARDED_ARGS_EXCERPT_BYTES: usize = 300;
 const AUTO_CONTINUE_PROMPT: &str =
     "Continue from where the previous response was truncated. Do not repeat completed work. The partial response already shown to the user was:\n\n";
-const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到结束标记），已生成的部分内容不完整、不会计入上下文。常见原因：网络不稳定、代理/中转站切断连接，或同一 API key 的并发请求达到上限（例如多个会话同时使用同一模型）。可重发消息重试；需要并行会话时建议错开请求或使用不同的 API key。(stream cut mid-response, #437)";
+const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到结束标记），已生成的部分内容不完整、不会计入上下文。常见原因：网络不稳定、代理/中转站切断连接，或同一 API key 的并发请求达到上限（例如多个会话同时使用同一模型）。已完成的工具结果均已保留，可点击“继续执行”重试；需要并行会话时建议错开请求或使用不同的 API key。(stream cut mid-response, #437)";
 const EMPTY_RESPONSE_MESSAGE: &str = "模型完成了本轮推理，但没有返回可显示的文本或工具调用。对话上下文和已完成的工具结果均已保留；请点击“继续执行”重新生成最终回复。若长对话中反复出现，请先发送 /compact 压缩上下文。(model returned no visible response)";
 const ABNORMAL_FINISH_MESSAGE: &str = "模型服务没有正常完成本轮响应，已生成的部分内容不会作为最终答案提交。已完成的工具结果均已保留；请点击“继续执行”重试。(provider returned an unsuccessful finish reason)";
 const ITERATION_LIMIT_SUMMARY_FAILURE: &str = "已达到本轮 Agent 最大迭代次数，但模型未能生成无工具收尾总结。已完成的工具结果均已保留；请点击“继续执行”接着做。(failed to summarize after reaching max agent iterations)";
@@ -197,8 +207,13 @@ impl AgentLoopOutcome {
 #[derive(Debug)]
 pub enum LoopError {
     StoppedByUser,
-    /// The stream closed before its end marker (#437).
-    StreamCut,
+    /// The stream closed before its end marker (#437) and every in-turn
+    /// reconnect failed too (#1641). `reconnects` is how many were spent;
+    /// `detail` carries the transport error when the cut was not a bare EOF.
+    StreamCut {
+        reconnects: usize,
+        detail: Option<String>,
+    },
     /// A clean finish with neither visible text nor a tool call.
     EmptyResponse,
     /// The provider reported a finish reason other than stop/length.
@@ -219,7 +234,16 @@ impl fmt::Display for LoopError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::StoppedByUser => f.write_str(STOPPED_BY_USER),
-            Self::StreamCut => f.write_str(STREAM_CUT_MESSAGE),
+            Self::StreamCut { reconnects, detail } => {
+                f.write_str(STREAM_CUT_MESSAGE)?;
+                if let Some(detail) = detail {
+                    write!(f, " 底层错误：{detail}")?;
+                }
+                if *reconnects > 0 {
+                    write!(f, " 本轮已自动重连 {reconnects} 次仍未恢复。")?;
+                }
+                Ok(())
+            }
             Self::EmptyResponse => f.write_str(EMPTY_RESPONSE_MESSAGE),
             Self::AbnormalFinish => f.write_str(ABNORMAL_FINISH_MESSAGE),
             Self::StuckLoop => f.write_str(STUCK_LOOP_MESSAGE),
@@ -618,8 +642,15 @@ impl<'a> AgentLoop<'a> {
             match stream_with_retry(self.provider, &messages, schemas, &mut sink, self.cancel).await
             {
                 Ok(comp) => break comp,
-                Err(LlmError::Incomplete) => return Err(LoopError::StreamCut.into()),
-                Err(original) if original.is_context_overflow() && !overflow_recovery_used => {
+                Err(StreamFailure { error, reconnects }) if is_stream_interruption(&error) => {
+                    // A bare EOF needs no detail; a transfer error names itself.
+                    let detail =
+                        (!matches!(error, LlmError::Incomplete)).then(|| error.to_string());
+                    return Err(LoopError::StreamCut { reconnects, detail }.into());
+                }
+                Err(StreamFailure {
+                    error: original, ..
+                }) if original.is_context_overflow() && !overflow_recovery_used => {
                     overflow_recovery_used = true;
                     if let Err(compaction) = self.compact(ctx, fixed_tokens, "overflow").await {
                         return Err(LoopError::OverflowRecoveryFailed {
@@ -629,7 +660,7 @@ impl<'a> AgentLoop<'a> {
                         .into());
                     }
                 }
-                Err(error) => return Err(error.into()),
+                Err(StreamFailure { error, .. }) => return Err(error.into()),
             }
         };
         if comp.usage.input_tokens > 0 {
@@ -1062,34 +1093,129 @@ async fn describe_image(
     ))
 }
 
+/// Why [`stream_with_retry`] gave up, plus the reconnects it spent so the
+/// terminal error can say the cut stream was already retried.
+#[derive(Debug)]
+struct StreamFailure {
+    error: LlmError,
+    reconnects: usize,
+}
+
+/// One model request with two independent recovery budgets (#1641):
+///
+/// * a provider rejection (rate limit, overload, 5xx) retries on
+///   [`RETRY_DELAYS`];
+/// * a response that started and was cut before its end marker reconnects on
+///   [`STREAM_RECOVERY_DELAYS`], rebuilding the request from the same
+///   confirmed context — tool results already appended stay, nothing is
+///   re-executed, and the failed attempt's partial output never enters the
+///   context.
+///
+/// Every wait is reported through [`Output::stream_recovery`] and is cut
+/// short by `cancel`. Business errors (authentication, billing, invalid
+/// request) and the user's Stop return at once.
 async fn stream_with_retry(
     provider: &dyn Provider,
     messages: &[Message],
     schemas: &[ToolSchema],
     sink: &mut StreamSinkAdapter<'_>,
     cancel: Option<&AtomicBool>,
-) -> Result<Completion, LlmError> {
-    let mut last = None;
-    for attempt in 0..=RETRY_DELAYS.len() {
+) -> Result<Completion, StreamFailure> {
+    let output = sink.output();
+    let mut request_retries = 0usize;
+    let mut reconnects = 0usize;
+    loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-            return Err(cancelled_stream_error());
+            return Err(StreamFailure {
+                error: cancelled_stream_error(),
+                reconnects,
+            });
         }
-        match stream_or_cancel(provider, messages, schemas, sink, cancel).await {
-            Ok(c) => return Ok(c),
-            Err(e) => {
-                if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-                    return Err(cancelled_stream_error());
+        sink.begin_attempt();
+        let error = match stream_or_cancel(provider, messages, schemas, sink, cancel).await {
+            Ok(completion) => {
+                if request_retries + reconnects > 0 {
+                    output.stream_recovery(&StreamRecovery {
+                        phase: StreamRecoveryPhase::Recovered,
+                        kind: if reconnects > 0 {
+                            StreamRecoveryKind::Stream
+                        } else {
+                            StreamRecoveryKind::Request
+                        },
+                        attempt: request_retries + reconnects,
+                        max_attempts: if reconnects > 0 {
+                            STREAM_RECOVERY_DELAYS.len()
+                        } else {
+                            RETRY_DELAYS.len()
+                        },
+                        retry_in: Duration::ZERO,
+                        error: String::new(),
+                        discarded_text_bytes: 0,
+                        discarded_reasoning_bytes: 0,
+                    });
                 }
-                if !is_retriable(&e) || attempt == RETRY_DELAYS.len() {
-                    return Err(e);
-                }
-                tracing::warn!("LLM stream failed (attempt {}), retrying: {e}", attempt + 1);
-                last = Some(e);
-                retry_delay_or_cancel(Duration::from_millis(RETRY_DELAYS[attempt]), cancel).await?;
+                return Ok(completion);
             }
+            Err(error) => error,
+        };
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(StreamFailure {
+                error: cancelled_stream_error(),
+                reconnects,
+            });
         }
+        let (kind, attempt, max_attempts, delay) = if is_stream_interruption(&error) {
+            if reconnects >= STREAM_RECOVERY_DELAYS.len() {
+                return Err(StreamFailure { error, reconnects });
+            }
+            let delay = Duration::from_millis(STREAM_RECOVERY_DELAYS[reconnects]);
+            reconnects += 1;
+            (
+                StreamRecoveryKind::Stream,
+                reconnects,
+                STREAM_RECOVERY_DELAYS.len(),
+                delay,
+            )
+        } else if is_retriable(&error) {
+            if request_retries >= RETRY_DELAYS.len() {
+                return Err(StreamFailure { error, reconnects });
+            }
+            let delay = Duration::from_millis(RETRY_DELAYS[request_retries]);
+            request_retries += 1;
+            (
+                StreamRecoveryKind::Request,
+                request_retries,
+                RETRY_DELAYS.len(),
+                delay,
+            )
+        } else {
+            return Err(StreamFailure { error, reconnects });
+        };
+        let (discarded_text_bytes, discarded_reasoning_bytes) = sink.forwarded_bytes();
+        tracing::warn!(
+            "LLM {} failed (attempt {attempt}/{max_attempts}), retrying in {delay:?}: {error}",
+            kind.as_str()
+        );
+        let mut recovery = StreamRecovery {
+            phase: StreamRecoveryPhase::Waiting,
+            kind,
+            attempt,
+            max_attempts,
+            retry_in: delay,
+            error: error.to_string(),
+            discarded_text_bytes,
+            discarded_reasoning_bytes,
+        };
+        output.stream_recovery(&recovery);
+        retry_delay_or_cancel(delay, cancel)
+            .await
+            .map_err(|error| StreamFailure { error, reconnects })?;
+        recovery.phase = StreamRecoveryPhase::Reconnecting;
+        recovery.retry_in = Duration::ZERO;
+        recovery.discarded_text_bytes = 0;
+        recovery.discarded_reasoning_bytes = 0;
+        output.stream_recovery(&recovery);
     }
-    Err(last.unwrap_or_else(|| LlmError::Config("LLM stream retry exhausted".into())))
 }
 
 fn cancelled_stream_error() -> LlmError {
@@ -1216,6 +1342,17 @@ mod tests {
     fn retry_window_covers_sustained_provider_overload() {
         assert!(RETRY_DELAYS.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(RETRY_DELAYS.iter().sum::<u64>() >= 180_000);
+    }
+
+    #[test]
+    fn stream_reconnects_are_quick_and_bounded() {
+        assert!(STREAM_RECOVERY_DELAYS
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
+        // A dropped relay connection is usually back within seconds; the
+        // whole window stays well under the request-retry window.
+        assert!(STREAM_RECOVERY_DELAYS[0] <= 2_000);
+        assert!(STREAM_RECOVERY_DELAYS.iter().sum::<u64>() < RETRY_DELAYS.iter().sum::<u64>());
     }
 
     #[test]
@@ -1660,7 +1797,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(LlmError::Config(message)) if message == STOPPED_BY_USER
+            Err(StreamFailure { error: LlmError::Config(message), .. }) if message == STOPPED_BY_USER
         ));
     }
 
@@ -1689,7 +1826,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(LlmError::Config(message)) if message == STOPPED_BY_USER
+            Err(StreamFailure { error: LlmError::Config(message), .. }) if message == STOPPED_BY_USER
         ));
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
     }
@@ -2069,7 +2206,9 @@ mod tests {
         assert!(ctx.runtime_injections.is_empty());
     }
 
-    #[tokio::test]
+    // start_paused: the exhausted sequence provider reports a cut stream,
+    // and the reconnect backoff would otherwise run in real time.
+    #[tokio::test(start_paused = true)]
     async fn plan_reminder_is_removed_if_the_followup_model_request_fails() {
         let provider = SequenceProvider::new([
             plan_update("initial", &["in_progress"]),
@@ -2091,7 +2230,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error.downcast_ref::<LoopError>(),
-            Some(LoopError::StreamCut)
+            Some(LoopError::StreamCut {
+                reconnects: 5,
+                detail: None
+            })
         ));
         assert!(ctx.runtime_injections.is_empty());
         assert_eq!(tool_result_ids(&ctx), ["initial"]);
@@ -4536,6 +4678,338 @@ mod tests {
             "recovered after overload",
             "the recovered turn's content must land in context intact"
         );
+    }
+
+    /// Records every recovery event the loop reports.
+    struct RecoveryRecorder(Mutex<Vec<StreamRecovery>>);
+
+    impl Output for RecoveryRecorder {
+        fn stream_recovery(&self, recovery: &StreamRecovery) {
+            self.0.lock().unwrap().push(recovery.clone());
+        }
+    }
+
+    fn recovery_phases(output: &RecoveryRecorder) -> Vec<(StreamRecoveryPhase, usize)> {
+        output
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| (r.phase, r.attempt))
+            .collect()
+    }
+
+    enum CutStep {
+        /// Stream this text, then close without an end marker.
+        Partial(&'static str),
+        Done(Completion),
+    }
+
+    /// Scripts a relay that drops the connection after part of the answer.
+    struct CutStreamProvider {
+        steps: Mutex<VecDeque<CutStep>>,
+        stream_calls: AtomicUsize,
+    }
+
+    impl CutStreamProvider {
+        fn new(steps: impl IntoIterator<Item = CutStep>) -> Self {
+            Self {
+                steps: Mutex::new(steps.into_iter().collect()),
+                stream_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for CutStreamProvider {
+        fn name(&self) -> &str {
+            "cut-stream"
+        }
+
+        fn model(&self) -> &str {
+            "cut-stream"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Err(LlmError::Config("complete is not used".into()))
+        }
+
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            // Default to a cut stream so an exhausted script keeps failing.
+            match self.steps.lock().unwrap().pop_front() {
+                Some(CutStep::Done(completion)) => Ok(completion),
+                Some(CutStep::Partial(text)) => {
+                    sink.on_reasoning("thinking");
+                    sink.on_text(text);
+                    Err(LlmError::Incomplete)
+                }
+                None => Err(LlmError::Incomplete),
+            }
+        }
+    }
+
+    // start_paused: the reconnect backoff auto-advances instead of sleeping.
+    #[tokio::test(start_paused = true)]
+    async fn cut_stream_reconnects_within_the_turn_and_keeps_tool_results() {
+        // A finished plan, so the final answer ends the turn without the
+        // unfinished-plan reminder asking the model for one more round.
+        let provider = CutStreamProvider::new([
+            CutStep::Done(plan_update("initial", &["completed"])),
+            CutStep::Partial("The partial ans"),
+            CutStep::Done(Completion {
+                content: "The full answer.".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            }),
+        ]);
+        let output = RecoveryRecorder(Mutex::new(Vec::new()));
+        let mut ctx = ContextManager::new(100_000);
+
+        let outcome = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins(),
+            Path::new("."),
+            &output,
+            "Write a report",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome, AgentLoopOutcome::Completed);
+        assert_eq!(
+            provider.stream_calls.load(Ordering::SeqCst),
+            3,
+            "tool round, cut stream, reconnected request"
+        );
+        // The tool ran once and its result survived the reconnect; the
+        // partial text never entered the context.
+        assert_eq!(tool_result_ids(&ctx), ["initial"]);
+        let last = ctx.messages.last().unwrap();
+        assert_eq!(last.role, wisp_llm::Role::Assistant);
+        assert_eq!(last.content.as_text(), "The full answer.");
+        assert!(!serde_json::to_string(&ctx.messages)
+            .unwrap()
+            .contains("The partial ans"));
+
+        let events = output.0.lock().unwrap().clone();
+        assert_eq!(
+            recovery_phases(&output),
+            [
+                (StreamRecoveryPhase::Waiting, 1),
+                (StreamRecoveryPhase::Reconnecting, 1),
+                (StreamRecoveryPhase::Recovered, 1),
+            ]
+        );
+        let waiting = &events[0];
+        assert_eq!(waiting.kind, StreamRecoveryKind::Stream);
+        assert_eq!(waiting.max_attempts, STREAM_RECOVERY_DELAYS.len());
+        assert_eq!(
+            waiting.retry_in,
+            Duration::from_millis(STREAM_RECOVERY_DELAYS[0])
+        );
+        assert_eq!(waiting.discarded_text_bytes, "The partial ans".len());
+        assert_eq!(waiting.discarded_reasoning_bytes, "thinking".len());
+        assert_eq!(events[1].discarded_text_bytes, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn exhausted_reconnects_end_the_turn_with_a_stream_cut() {
+        let provider = CutStreamProvider::new([CutStep::Partial("never finishes")]);
+        let output = RecoveryRecorder(Mutex::new(Vec::new()));
+        let mut ctx = ContextManager::new(100_000);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins().filtered(&[]),
+            Path::new("."),
+            &output,
+            "keep trying",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error.downcast_ref::<LoopError>(),
+            Some(LoopError::StreamCut {
+                reconnects, detail: None
+            }) if *reconnects == STREAM_RECOVERY_DELAYS.len()
+        ));
+        assert!(error.to_string().contains("自动重连 5 次"));
+        assert_eq!(
+            provider.stream_calls.load(Ordering::SeqCst),
+            STREAM_RECOVERY_DELAYS.len() + 1
+        );
+        // Five waits, five reconnects, no "recovered": the host gets one
+        // terminal error, not a card per attempt.
+        let phases = recovery_phases(&output);
+        assert_eq!(phases.len(), 2 * STREAM_RECOVERY_DELAYS.len());
+        assert!(!phases
+            .iter()
+            .any(|(phase, _)| *phase == StreamRecoveryPhase::Recovered));
+        assert_eq!(phases.last(), Some(&(StreamRecoveryPhase::Reconnecting, 5)));
+        // The user message is the only context: no partial assistant text.
+        assert!(ctx
+            .messages
+            .iter()
+            .all(|m| m.role != wisp_llm::Role::Assistant));
+    }
+
+    /// Presses Stop as soon as the loop reports that it is waiting to retry.
+    struct StopWhileWaiting<'a>(&'a AtomicBool);
+
+    impl Output for StopWhileWaiting<'_> {
+        fn stream_recovery(&self, recovery: &StreamRecovery) {
+            if recovery.phase == StreamRecoveryPhase::Waiting {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_during_reconnect_backoff_ends_the_turn_without_a_late_restart() {
+        let provider = CutStreamProvider::new([CutStep::Partial("half")]);
+        let cancel = AtomicBool::new(false);
+        let output = StopWhileWaiting(&cancel);
+        let mut ctx = ContextManager::new(100_000);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins().filtered(&[]),
+            Path::new("."),
+            &output,
+            "stop me",
+            0,
+            Some(&cancel),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains(STOPPED_BY_USER));
+        assert_eq!(
+            provider.stream_calls.load(Ordering::SeqCst),
+            1,
+            "the pending reconnect must not fire after Stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn business_errors_fail_at_once_without_reconnecting() {
+        struct Unauthorized(AtomicUsize);
+        #[async_trait]
+        impl Provider for Unauthorized {
+            fn name(&self) -> &str {
+                "unauthorized"
+            }
+            fn model(&self) -> &str {
+                "unauthorized"
+            }
+            async fn complete(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+            ) -> wisp_llm::Result<Completion> {
+                Err(LlmError::Config("complete is not used".into()))
+            }
+            async fn stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _sink: &mut dyn wisp_llm::StreamSink,
+            ) -> wisp_llm::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(LlmError::Api {
+                    status: 401,
+                    body: "invalid api key".into(),
+                })
+            }
+        }
+        let provider = Unauthorized(AtomicUsize::new(0));
+        let output = RecoveryRecorder(Mutex::new(Vec::new()));
+        let mut ctx = ContextManager::new(100_000);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins().filtered(&[]),
+            Path::new("."),
+            &output,
+            "hello",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("401"));
+        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+        assert!(output.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn request_retries_are_reported_as_recovery_state() {
+        let provider = FlakyThenOkProvider {
+            fail_times: 2,
+            stream_calls: AtomicUsize::new(0),
+            completions: Mutex::new(VecDeque::from([Completion {
+                content: "recovered".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            }])),
+        };
+        let output = RecoveryRecorder(Mutex::new(Vec::new()));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &Registry::builtins().filtered(&[]),
+            Path::new("."),
+            &output,
+            "keep going",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            recovery_phases(&output),
+            [
+                (StreamRecoveryPhase::Waiting, 1),
+                (StreamRecoveryPhase::Reconnecting, 1),
+                (StreamRecoveryPhase::Waiting, 2),
+                (StreamRecoveryPhase::Reconnecting, 2),
+                (StreamRecoveryPhase::Recovered, 2),
+            ]
+        );
+        let events = output.0.lock().unwrap();
+        assert!(events.iter().all(|r| r.kind == StreamRecoveryKind::Request));
+        assert_eq!(events[0].max_attempts, RETRY_DELAYS.len());
+        assert_eq!(events[0].retry_in, Duration::from_millis(RETRY_DELAYS[0]));
+        assert_eq!(events[2].retry_in, Duration::from_millis(RETRY_DELAYS[1]));
+        assert!(events[0].error.contains("503"));
     }
 
     /// Stands in for the `python` tool: reports paths the way a local kernel

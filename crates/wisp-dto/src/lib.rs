@@ -361,6 +361,29 @@ pub enum AgentEvent {
     CompactionStarted {
         frame_id: String,
     },
+    /// A model request failed recoverably and the turn is retrying it in
+    /// place (#1641). `phase` is `waiting`, `reconnecting` or `recovered`;
+    /// `cause` is `stream` (the response was cut) or `request` (the provider
+    /// rejected it). On `waiting`, the discarded byte counts say how much of
+    /// the live assistant draft belonged to the failed attempt.
+    StreamRecovery {
+        frame_id: String,
+        phase: String,
+        #[serde(default)]
+        cause: String,
+        #[serde(default)]
+        attempt: u64,
+        #[serde(default)]
+        max_attempts: u64,
+        #[serde(default)]
+        retry_in_ms: u64,
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        discarded_text_bytes: u64,
+        #[serde(default)]
+        discarded_reasoning_bytes: u64,
+    },
     ContextWarning {
         frame_id: String,
         ctx_tokens: usize,

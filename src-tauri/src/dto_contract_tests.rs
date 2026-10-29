@@ -1015,6 +1015,60 @@ fn native_approval_snapshot_and_resolution_share_the_request_contract() {
 }
 
 #[test]
+fn stream_recovery_event_roundtrips_and_tolerates_a_minimal_payload() {
+    let backend = super::AgentEvent::StreamRecovery {
+        frame_id: "f".into(),
+        phase: "waiting".into(),
+        cause: "stream".into(),
+        attempt: 1,
+        max_attempts: 5,
+        retry_in_ms: 1_000,
+        error: "stream ended without completion".into(),
+        discarded_text_bytes: 17,
+        discarded_reasoning_bytes: 4,
+    };
+    let wire = serde_json::to_value(&backend).unwrap();
+    assert_eq!(wire["kind"], "StreamRecovery");
+    assert_eq!(wire["cause"], "stream");
+    match roundtrip::<_, wisp_dto::AgentEvent>(&backend) {
+        wisp_dto::AgentEvent::StreamRecovery {
+            phase,
+            cause,
+            attempt,
+            max_attempts,
+            retry_in_ms,
+            discarded_text_bytes,
+            discarded_reasoning_bytes,
+            ..
+        } => {
+            assert_eq!((phase.as_str(), cause.as_str()), ("waiting", "stream"));
+            assert_eq!((attempt, max_attempts, retry_in_ms), (1, 5, 1_000));
+            assert_eq!((discarded_text_bytes, discarded_reasoning_bytes), (17, 4));
+        }
+        _ => panic!("expected StreamRecovery"),
+    }
+
+    let minimal: wisp_dto::AgentEvent = serde_json::from_value(json!({
+        "kind": "StreamRecovery",
+        "frame_id": "f",
+        "phase": "recovered"
+    }))
+    .unwrap();
+    match minimal {
+        wisp_dto::AgentEvent::StreamRecovery {
+            phase,
+            attempt,
+            discarded_text_bytes,
+            ..
+        } => {
+            assert_eq!(phase, "recovered");
+            assert_eq!((attempt, discarded_text_bytes), (0, 0));
+        }
+        _ => panic!("expected StreamRecovery"),
+    }
+}
+
+#[test]
 fn compaction_event_accepts_missing_and_present_epoch() {
     let legacy: wisp_dto::AgentEvent = serde_json::from_value(json!({
         "kind": "Compaction",

@@ -245,24 +245,50 @@ pub fn annotate_transport_error(
     format!("{message} ({note})")
 }
 
+/// A compatible gateway kept the HTTP/SSE response at 2xx but encoded an
+/// upstream transport failure as an in-band error payload (#798). Kept
+/// narrow: authentication, billing and invalid-request errors must not
+/// become retry loops.
+fn is_in_band_transport_failure(status: u16, lower_body: &str) -> bool {
+    (200..=299).contains(&status)
+        && (lower_body.contains("upstream connection reset")
+            || lower_body.contains("connection reset by peer")
+            || lower_body.contains("upstream timeout")
+            || lower_body.contains("upstream timed out")
+            || lower_body.contains("unexpected eof")
+            || (lower_body.contains("eof") && lower_body.contains("codex: post")))
+}
+
+/// True when the model response started and then failed before its end
+/// marker: an SSE stream that closed early (`Incomplete`), a body transfer
+/// error or read timeout while waiting for the next chunk, or a gateway's
+/// in-band upstream failure. The agent loop recovers these inside the turn
+/// by rebuilding the request from the confirmed context (#1641).
+///
+/// Connection-establishment failures are deliberately excluded: they keep the
+/// request-retry / fail-fast classification of [`is_retriable`], so a dead
+/// local proxy still fails the turn immediately instead of reconnecting.
+pub fn is_stream_interruption(err: &LlmError) -> bool {
+    match err {
+        LlmError::Incomplete => true,
+        LlmError::Api { status, body } => {
+            is_in_band_transport_failure(*status, &body.to_ascii_lowercase())
+        }
+        LlmError::Http(e) => {
+            !e.is_connect() && !is_fail_fast_transport(&error_chain(e)) && e.is_body()
+        }
+        _ => false,
+    }
+}
+
 /// True for transient provider failures worth retrying (rate limits, overload, 5xx).
 pub fn is_retriable(err: &LlmError) -> bool {
     match err {
         LlmError::Api { status, body } => {
             let lower = body.to_ascii_lowercase();
-            // Compatible gateways can report an upstream transport failure in
-            // an HTTP 200 SSE error envelope. Keep this narrow: authentication,
-            // billing and invalid-request errors must not become retry loops.
-            let in_band_transport = (200..=299).contains(status)
-                && (lower.contains("upstream connection reset")
-                    || lower.contains("connection reset by peer")
-                    || lower.contains("upstream timeout")
-                    || lower.contains("upstream timed out")
-                    || lower.contains("unexpected eof")
-                    || (lower.contains("eof") && lower.contains("codex: post")));
             matches!(*status, 408 | 429)
                 || (500..=599).contains(status)
-                || in_band_transport
+                || is_in_band_transport_failure(*status, &lower)
                 || lower.contains("overloaded")
                 || lower.contains("rate_limit")
                 || lower.contains("1305")
@@ -1314,6 +1340,49 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn stream_interruptions_are_classified_apart_from_request_failures() {
+        assert!(is_stream_interruption(&LlmError::Incomplete));
+        // A 2xx SSE envelope carrying an upstream reset means the response
+        // had started: recover it, do not treat it as a fresh request retry.
+        let in_band = LlmError::Api {
+            status: 200,
+            body: "upstream connection reset".into(),
+        };
+        assert!(is_stream_interruption(&in_band));
+        assert!(is_retriable(&in_band));
+        // Overload is a request-level retry, not a cut stream.
+        let overloaded = LlmError::Api {
+            status: 503,
+            body: "overloaded".into(),
+        };
+        assert!(!is_stream_interruption(&overloaded));
+        assert!(is_retriable(&overloaded));
+        // Business errors enter neither loop.
+        for err in [
+            LlmError::Api {
+                status: 401,
+                body: "invalid api key".into(),
+            },
+            LlmError::Api {
+                status: 400,
+                body: "invalid_request_error".into(),
+            },
+            LlmError::Api {
+                status: 200,
+                body: "insufficient balance".into(),
+            },
+            LlmError::Config("bad profile".into()),
+            LlmError::NotCompleted {
+                status: "incomplete".into(),
+                reason: "max_output_tokens".into(),
+            },
+        ] {
+            assert!(!is_stream_interruption(&err), "{err}");
+            assert!(!is_retriable(&err), "{err}");
+        }
+    }
+
     #[tokio::test]
     async fn live_connection_refused_is_not_retriable() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -1332,6 +1401,10 @@ mod tests {
         assert!(
             !is_retriable(&wrapped),
             "a dead listener must not enter the multi-minute retry window: {wrapped}"
+        );
+        assert!(
+            !is_stream_interruption(&wrapped),
+            "a connect failure never started a stream, so it must not reconnect: {wrapped}"
         );
     }
 }

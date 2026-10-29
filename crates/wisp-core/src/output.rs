@@ -14,6 +14,72 @@ use std::pin::Pin;
 /// yields while the UI sends its decision back.
 pub type OutputFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// Where an in-turn model request recovery stands (#1641).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamRecoveryPhase {
+    /// The request failed recoverably; the loop waits `retry_in` before
+    /// sending it again. Partial output from the failed attempt is discarded.
+    Waiting,
+    /// The backoff elapsed; the request is being rebuilt and resent.
+    Reconnecting,
+    /// A resent request completed. The turn continues from where the confirmed
+    /// context left off.
+    Recovered,
+}
+
+impl StreamRecoveryPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::Reconnecting => "reconnecting",
+            Self::Recovered => "recovered",
+        }
+    }
+}
+
+/// Which failure a recovery answers. The two kinds draw on separate budgets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamRecoveryKind {
+    /// The provider rejected the request before or instead of answering
+    /// (rate limit, overload, 5xx): the long request-retry backoff.
+    Request,
+    /// The response started and was cut before its end marker (SSE EOF,
+    /// transfer error, idle timeout): the short reconnect backoff.
+    Stream,
+}
+
+impl StreamRecoveryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Stream => "stream",
+        }
+    }
+}
+
+/// One step of recovering a model request inside the running turn. Emitted
+/// through [`Output::stream_recovery`] so hosts can show a live, cancellable
+/// state instead of a terminal error card, and so transcript replay can drop
+/// the failed attempt's partial output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamRecovery {
+    pub phase: StreamRecoveryPhase,
+    pub kind: StreamRecoveryKind,
+    /// 1-based reconnect this event belongs to, within its kind's budget.
+    pub attempt: usize,
+    pub max_attempts: usize,
+    /// Backoff before the next request (`Waiting` only; zero otherwise).
+    pub retry_in: std::time::Duration,
+    /// The failure being recovered, as shown to the user.
+    pub error: String,
+    /// Bytes of assistant text the failed attempt had already streamed. The
+    /// host must remove exactly this tail from its live draft: it is not part
+    /// of the answer and never enters the model context.
+    pub discarded_text_bytes: usize,
+    /// Same for streamed reasoning.
+    pub discarded_reasoning_bytes: usize,
+}
+
 pub trait Output: Send + Sync {
     fn assistant_text(&self, _delta: &str) {}
     fn reasoning(&self, _delta: &str) {}
@@ -33,6 +99,10 @@ pub trait Output: Send + Sync {
     }
     fn compaction(&self, _before: usize, _after: usize, _strategy: &str) {}
     fn compaction_started(&self, _strategy: &str) {}
+    /// A model request failed recoverably and the loop is retrying it inside
+    /// this turn (#1641). The turn is not over: tool results already in the
+    /// context stay, and `Stop` cancels the wait. Default: no-op.
+    fn stream_recovery(&self, _recovery: &StreamRecovery) {}
     /// Fired once when the context estimate crosses the warning threshold and
     /// automatic compaction is disabled or could not bring it back under.
     fn context_warning(&self, _ctx_tokens: usize, _max_context: usize) {}
@@ -377,10 +447,19 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
 pub struct StreamSinkAdapter<'a> {
     out: &'a dyn Output,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Bytes forwarded during the current attempt, so a retry can tell the
+    /// host how much live draft belongs to the failed stream.
+    text_bytes: usize,
+    reasoning_bytes: usize,
 }
 impl<'a> StreamSinkAdapter<'a> {
     pub fn new(out: &'a dyn Output) -> Self {
-        Self { out, cancel: None }
+        Self {
+            out,
+            cancel: None,
+            text_bytes: 0,
+            reasoning_bytes: 0,
+        }
     }
     /// Like `new`, but the streaming loop can poll `is_cancelled()` to stop
     /// token generation mid-stream when the user hits Stop.
@@ -388,14 +467,30 @@ impl<'a> StreamSinkAdapter<'a> {
         Self {
             out,
             cancel: Some(cancel),
+            text_bytes: 0,
+            reasoning_bytes: 0,
         }
+    }
+    pub fn output(&self) -> &'a dyn Output {
+        self.out
+    }
+    /// Forget what the previous attempt streamed; call before each request.
+    pub fn begin_attempt(&mut self) {
+        self.text_bytes = 0;
+        self.reasoning_bytes = 0;
+    }
+    /// `(text, reasoning)` bytes forwarded to the host during this attempt.
+    pub fn forwarded_bytes(&self) -> (usize, usize) {
+        (self.text_bytes, self.reasoning_bytes)
     }
 }
 impl<'a> wisp_llm::StreamSink for StreamSinkAdapter<'a> {
     fn on_text(&mut self, delta: &str) {
+        self.text_bytes += delta.len();
         self.out.assistant_text(delta);
     }
     fn on_reasoning(&mut self, delta: &str) {
+        self.reasoning_bytes += delta.len();
         self.out.reasoning(delta);
     }
     fn on_tool_call(&mut self, _i: usize, _name: &str, _args: &str) {}

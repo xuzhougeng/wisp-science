@@ -407,6 +407,27 @@ impl Output for CliOutput {
             self.reset()
         );
     }
+    fn stream_recovery(&self, recovery: &wisp_core::StreamRecovery) {
+        use wisp_core::StreamRecoveryPhase;
+        let line = match recovery.phase {
+            StreamRecoveryPhase::Waiting => format!(
+                "[model {} failed: {}] retrying in {}s ({}/{}); completed tool results are kept",
+                recovery.kind.as_str(),
+                recovery.error,
+                recovery.retry_in.as_secs(),
+                recovery.attempt,
+                recovery.max_attempts
+            ),
+            StreamRecoveryPhase::Reconnecting => format!(
+                "[model reconnecting] attempt {}/{}",
+                recovery.attempt, recovery.max_attempts
+            ),
+            StreamRecoveryPhase::Recovered => {
+                format!("[model recovered] after {} retries", recovery.attempt)
+            }
+        };
+        println!("\n{}{line}{}", self.yellow(), self.reset());
+    }
     fn compaction(&self, before: usize, after: usize, strategy: &str) {
         println!(
             "{}[compact {}] {} → {} (-{}){}",

@@ -1325,6 +1325,15 @@ fn App() -> impl IntoView {
             .get()
             .is_some_and(|id| compacting_sessions.with(|sessions| sessions.contains(&id)))
     });
+    // In-turn model recovery (#1641): one live notice per session while a cut
+    // or rejected model request is retried; the next model output clears it.
+    let stream_recovery_sessions =
+        create_rw_signal(HashMap::<String, StreamRecoveryNotice>::new());
+    let stream_recovery_active = create_memo(move |_| {
+        active_session
+            .get()
+            .and_then(|id| stream_recovery_sessions.with(|all| all.get(&id).cloned()))
+    });
     let semantic_compact_after_model = create_rw_signal::<Option<String>>(None);
     let switch_http_model = Callback::new(move |(id, dont_ask_again): (String, bool)| {
         provisional_acp_selection.set(None);
@@ -3444,6 +3453,7 @@ fn App() -> impl IntoView {
     let pet_activity_cb = pet_activity;
     let status_cb = status;
     let compacting_sessions_cb = compacting_sessions;
+    let stream_recovery_sessions_cb = stream_recovery_sessions;
     let compact_dialog_cb = compact_dialog;
     let compact_busy_cb = compact_busy;
     let compact_error_cb = compact_error;
@@ -3670,6 +3680,14 @@ fn App() -> impl IntoView {
                 sessions.remove(frame_id);
             });
         };
+        // Any model output, or the end of the turn, ends the recovery notice.
+        let clear_stream_recovery = |frame_id: &str| {
+            if stream_recovery_sessions_cb.with_untracked(|all| all.contains_key(frame_id)) {
+                stream_recovery_sessions_cb.update(|all| {
+                    all.remove(frame_id);
+                });
+            }
+        };
         let refresh_transcript_projections = |frame_id: &str| {
             if active_cb.get_untracked().as_deref() == Some(frame_id) {
                 transcript_projection_epoch_cb.update(|revision| {
@@ -3698,6 +3716,58 @@ fn App() -> impl IntoView {
                 compacting_sessions_cb.update(|sessions| {
                     sessions.insert(frame_id);
                 });
+            }
+            AgentEvent::StreamRecovery {
+                frame_id,
+                phase,
+                cause,
+                attempt,
+                max_attempts,
+                retry_in_ms,
+                error,
+                discarded_text_bytes,
+                discarded_reasoning_bytes,
+            } => {
+                // Ordered after the deltas the failed attempt streamed.
+                flush_now();
+                if phase == "waiting" {
+                    // The partial reply was never an answer and never enters
+                    // the model context: take it off the screen too, so the
+                    // retry does not splice onto it.
+                    route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
+                        discard_stream_draft(
+                            items,
+                            discarded_text_bytes as usize,
+                            discarded_reasoning_bytes as usize,
+                        );
+                    });
+                    refresh_transcript_projections(&frame_id);
+                }
+                if phase == "recovered" {
+                    clear_stream_recovery(&frame_id);
+                    if active_cb.get_untracked().as_deref() == Some(frame_id.as_str()) {
+                        status_cb.set(tf(
+                            locale_cb.get(),
+                            "chat.stream_recovery.recovered",
+                            &[("attempt", attempt.to_string().as_str())],
+                        ));
+                    }
+                } else {
+                    stream_recovery_sessions_cb.update(|all| {
+                        all.insert(
+                            frame_id.clone(),
+                            StreamRecoveryNotice {
+                                phase,
+                                cause,
+                                attempt,
+                                max_attempts,
+                                retry_in_ms,
+                                error,
+                            },
+                        );
+                    });
+                }
+                set_pet_activity(&frame_id, "running");
             }
             AgentEvent::User {
                 frame_id,
@@ -3813,6 +3883,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Text { frame_id, delta } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 set_pet_activity(&frame_id, "running");
                 let needs_response_time = conversation_outlines_cb.with_untracked(|outlines| {
                     outlines
@@ -3853,6 +3924,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Reasoning { frame_id, delta } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 set_pet_activity(&frame_id, "running");
                 queue(frame_id, PendingDelta::Reasoning(delta));
             }
@@ -3862,6 +3934,7 @@ fn App() -> impl IntoView {
                 preview,
             } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 set_pet_activity(&frame_id, "review");
                 flush_now();
                 trajectory_push(
@@ -4122,6 +4195,7 @@ fn App() -> impl IntoView {
                 epoch,
             } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 let auto_continue = strategy == "auto_continue";
                 let manual_compaction = strategy == "manual";
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
@@ -4194,6 +4268,7 @@ fn App() -> impl IntoView {
                 stop_reason,
             } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 if stop_reason.as_deref() == Some("compact")
                     && compact_dialog_cb.get_untracked().as_deref() == Some(frame_id.as_str())
                 {
@@ -4263,6 +4338,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Error { frame_id, message } => {
                 finish_compaction(&frame_id);
+                clear_stream_recovery(&frame_id);
                 flush_now();
                 refresh_context_state.call(frame_id.clone());
                 conversation_outlines_cb.update(|outlines| {
@@ -14771,6 +14847,36 @@ fn App() -> impl IntoView {
                             </span>
                             <span class="context-compaction-rule" aria-hidden="true"></span>
                         </div>
+                    })}
+                    {move || stream_recovery_active.get().map(|notice| {
+                        let loc = locale.get();
+                        let attempt = notice.attempt.to_string();
+                        let max = notice.max_attempts.to_string();
+                        let seconds = notice.retry_in_ms.div_ceil(1000).to_string();
+                        let vars = [("attempt", attempt.as_str()), ("max", max.as_str()), ("seconds", seconds.as_str())];
+                        let (title, note) = if notice.phase == "reconnecting" {
+                            (tf(loc, "chat.stream_recovery.reconnecting_title", &vars), tf(loc, "chat.stream_recovery.reconnecting_note", &vars))
+                        } else if notice.cause == "request" {
+                            (tf(loc, "chat.stream_recovery.request_title", &vars), tf(loc, "chat.stream_recovery.waiting_note", &vars))
+                        } else {
+                            (tf(loc, "chat.stream_recovery.waiting_title", &vars), tf(loc, "chat.stream_recovery.waiting_note", &vars))
+                        };
+                        let error = (!notice.error.is_empty())
+                            .then(|| tf(loc, "chat.stream_recovery.error", &[("error", notice.error.as_str())]));
+                        view! {
+                            <div class="context-compaction-status stream-recovery-live" role="status" aria-live="polite"
+                                data-testid="stream-recovery-live" data-phase=notice.phase.clone()>
+                                <span class="context-compaction-mark stream-recovery-mark" aria-hidden="true">{compose_icon("refresh")}</span>
+                                <span class="context-compaction-copy">
+                                    <strong>{title}</strong>
+                                    <span class="context-compaction-detail">{note}</span>
+                                    {error.map(|error| view! {
+                                        <span class="context-compaction-detail stream-recovery-error" title=error.clone()>{error}</span>
+                                    })}
+                                </span>
+                                <span class="context-compaction-rule" aria-hidden="true"></span>
+                            </div>
+                        }
                     })}
                     {move || (!busy.get()).then(|| active_session.get()).flatten().and_then(|frame_id| {
                         follow_up_questions.with(|all| all.get(&frame_id).cloned()).map(|questions| {
