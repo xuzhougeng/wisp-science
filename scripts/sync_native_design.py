@@ -83,6 +83,17 @@ def exports():
     if len(presets) != 6:
         raise ValueError("Review MODEL_PRESETS export after WebView changes")
     yield "model-presets.json", (json.dumps(presets, indent=2) + "\n").encode()
+    # Settings → Models → 决策模型: the services, think modes and both locales'
+    # strings, so the native page never hand-copies them.
+    decision = (ROOT / "crates/wisp-dto/src/decision_model.rs").read_text(encoding="utf-8")
+    block = decision.split("pub const DECISION_PRESETS:", 1)[1].split("];", 1)[0]
+    pattern = r'DecisionPreset \{\s*id: "([^"]+)",\s*base_url: "([^"]*)",\s*model: "([^"]*)",\s*timeout_secs: (\d+),\s*key_required: (true|false),\s*key_url: "([^"]*)",\s*\}'
+    decision_presets = [dict(id=i, base_url=b, model=m, timeout_secs=int(t), key_required=k == "true", key_url=u) for i, b, m, t, k, u in re.findall(pattern, block)]
+    if not decision_presets or len(decision_presets) != block.count("DecisionPreset {"):
+        raise ValueError("Review DECISION_PRESETS export after decision model changes")
+    think_modes = json.loads("[" + decision.split("pub const DECISION_THINK_MODES: &[&str] = &[", 1)[1].split("];", 1)[0] + "]")
+    strings = {key: {"zh": value, "en": by_locale["En"].get(key, value)} for key, value in by_locale["Zh"].items() if key.startswith("decision.")}
+    yield "decision-model.json", (json.dumps({"presets": decision_presets, "think_modes": think_modes, "strings": strings}, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
     css = (ROOT / "ui/src/styles/base.css").read_text(encoding="utf-8")
     palettes = {}
     for theme, selector in (("light", ":root"), ("dark", ':root[data-theme="dark"]')):
