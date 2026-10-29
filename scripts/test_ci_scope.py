@@ -84,6 +84,8 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(select_scopes([".github/workflows/native-preview.yml"]),
                          {"macos", "windows", "ios", "shared_assets"})
         self.assertEqual(select_scopes(["scripts/github_release_notes.sh"]), {"release_notes"})
+        self.assertEqual(select_scopes(["scripts/check_native_parity.py", "scripts/test_check_native_parity.py",
+                                        "docs/native-parity-ledger.md"]), set())
 
     def test_no_changes_skip_jobs_but_invalid_or_missing_diffs_run_all(self):
         self.assertEqual(select_scopes([]), set())

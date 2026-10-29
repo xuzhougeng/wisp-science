@@ -38,6 +38,7 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - Do not run local tests without the user's explicit permission. This includes unit, integration, end-to-end, smoke, and evaluation tests, plus scripts or development servers started to execute them. A request to implement, fix, commit, or push changes is not permission to run tests. Once authorized, stay within the approved scope; do not automatically expand to the full suite.
 - Add or update test code with every behavior change. Writing tests does not authorize running them.
 - Playwright tests in `ui-tests/` run fully parallel and sharded in CI: each test boots its own page and must not depend on another test running first or on module-level state another test mutated. Do not add `retries`; a failing test is a bug to fix.
+- A PR that changes the WebView UI (`ui/src/`) without changing the SwiftUI sources or tests must add a row to `docs/native-parity-ledger.md` (CI `parity-ledger` enforces this). Re-syncing `native-english.json` is not native work.
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing a release (see Cutting a release).
 - If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
