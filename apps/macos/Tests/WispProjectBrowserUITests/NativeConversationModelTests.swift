@@ -61,6 +61,21 @@ private actor ConversationFake: NativeConversationQuerying {
     func finish(_ value: ConversationSnapshot) { held?.resume(returning: value); held = nil }
 }
 final class NativeConversationModelTests: XCTestCase {
+    func testRunningConversationsLongPollWhileIdleOnesKeepTheTimer() throws {
+        XCTAssertEqual(NativeLivePolling.step(running: true, connectionError: false, waitSupported: true).sleep, 100_000_000)
+        XCTAssertEqual(NativeLivePolling.step(running: true, connectionError: false, waitSupported: true).waitMilliseconds, 700)
+        XCTAssertEqual(NativeLivePolling.step(running: true, connectionError: false, waitSupported: false).sleep, 350_000_000)
+        XCTAssertNil(NativeLivePolling.step(running: true, connectionError: false, waitSupported: false).waitMilliseconds)
+        XCTAssertNil(NativeLivePolling.step(running: false, connectionError: false, waitSupported: true).waitMilliseconds)
+        XCTAssertEqual(NativeLivePolling.step(running: true, connectionError: true, waitSupported: true).sleep, 2_000_000_000)
+        // The wait contract shared with the host.
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        let wait = try JSONDecoder().decode(SettingsValue.self, from: Data(contentsOf: root.appendingPathComponent("contracts/native-conversations/v1/wait.json")))
+        XCTAssertEqual(wait["command"].string, "native_conversation_wait")
+        XCTAssertEqual(wait["args"]["after"].integer, 41)
+        XCTAssertEqual(wait["result"]["activity"].integer, 42)
+    }
     @MainActor func testAcknowledgedReferencesClearTheirOriginalDraftAfterNavigation() async throws {
         for queued in [false, true] {
             let client = ConversationFake(); let model = NativeConversationModel(client: client)
