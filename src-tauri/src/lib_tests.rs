@@ -21,6 +21,32 @@ use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
 
 #[test]
+fn magpie_personal_settings_validation_uses_the_explicit_form() {
+    // The settings editor deliberately bypasses the runtime override builder.
+    let config = |key| {
+        super::build_stored_provider_config(
+            "openai",
+            "https://personal.example/v1",
+            key,
+            "personal-model",
+            1024,
+            "",
+            "",
+            "personal-client",
+            true,
+            None,
+            "",
+            None,
+        )
+    };
+    let cfg = config("personal-test-key").unwrap();
+    assert_eq!(cfg.base_url, "https://personal.example/v1");
+    assert_eq!(cfg.model, "personal-model");
+    assert_eq!(cfg.api_key, "personal-test-key");
+    assert!(config("").is_err());
+}
+
+#[test]
 fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
     let config = |session_id| {
         super::build_provider_config(

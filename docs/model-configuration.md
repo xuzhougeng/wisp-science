@@ -702,3 +702,9 @@ The full CLI environment-variable table, eval/RPC commands, and bundled MCP
 launch flags are in [development](development.md). Desktop setup, including
 ACP agents and remote MCP connections, is in
 [basic configuration](basic-configuration.md).
+
+## Magpie
+
+[Magpie model connection](magpie.md) uses a separate `magpie.json` file to select
+the built-in HTTP agent model. Restart after connection, model changes, or
+disconnection. Personal model profiles, validation, and credentials are preserved.

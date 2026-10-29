@@ -1,6 +1,7 @@
 use super::{
-    build_provider_config, clear_idle_agents, desktop_lifecycle, effective_api_key, load_locale,
-    load_settings, models, normalized_provider, pet_commands::load_pet_asset, AppState, Settings,
+    build_stored_provider_config, clear_idle_agents, desktop_lifecycle, effective_api_key,
+    load_locale, load_stored_settings, models, normalized_provider, pet_commands::load_pet_asset,
+    AppState, Settings,
 };
 use serde_json::json;
 use std::{
@@ -93,7 +94,7 @@ async fn validate_provider_config(
 
 #[tauri::command]
 pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, _api_key) = load_stored_settings(&state.store).await;
     let locale = load_locale(&state.store).await;
     let workspace_dir = state
         .store
@@ -730,12 +731,12 @@ pub(super) async fn validate_settings(
             .await
             .unwrap_or_default(),
         None => {
-            let (_, _, _, stored_key) = load_settings(&state.store).await;
+            let (_, _, _, stored_key) = load_stored_settings(&state.store).await;
             stored_key
         }
     };
     let api_key = effective_api_key(key, stored_key);
-    let mut cfg = build_provider_config(
+    let mut cfg = build_stored_provider_config(
         &settings.provider,
         &settings.api_url,
         &api_key,

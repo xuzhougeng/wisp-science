@@ -864,6 +864,11 @@ async fn subscription_access_token(kind: &str) -> Result<Option<String>> {
 }
 
 async fn provider_config() -> Result<ProviderConfig> {
+    if !cfg!(test) {
+        if let Some(cfg) = wisp_llm::magpie::startup_config() {
+            return Ok(cfg);
+        }
+    }
     let kind = parse_provider_kind(&env("WISP_PROVIDER", "openai"));
     let api_key = env("WISP_API_KEY", "");
     let base_url = env("WISP_API_URL", default_provider_url(&kind));

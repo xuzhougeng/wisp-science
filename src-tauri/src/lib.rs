@@ -91,6 +91,7 @@ mod model_catalog;
 // The runtime only uses lookup()/types; build.rs uses distill() instead.
 #[cfg(test)]
 mod dto_contract_tests;
+mod magpie;
 mod mandate_report;
 mod mandates;
 mod memory_tidy;
@@ -4485,6 +4486,14 @@ fn resolve_model_settings(
 }
 
 pub(crate) async fn load_settings(store: &Store) -> (String, String, String, String) {
+    if let Some(cfg) = magpie::config(None) {
+        return ("openai".into(), cfg.base_url, cfg.model, cfg.api_key);
+    }
+    load_stored_settings(store).await
+}
+
+// Settings editors must read only user-owned profiles, never the runtime override.
+pub(crate) async fn load_stored_settings(store: &Store) -> (String, String, String, String) {
     // Resolve through the active model profile (migrates legacy single-model
     // installs on first read), then apply env/default fallbacks so a blank
     // field still produces a usable config.
@@ -4508,6 +4517,21 @@ async fn load_session_settings(
     Option<bool>,
     String,
 ) {
+    if let Some(cfg) = magpie::config(Some(frame_id)) {
+        return (
+            "openai".into(),
+            cfg.base_url,
+            cfg.model,
+            cfg.api_key,
+            cfg.max_tokens,
+            String::new(),
+            String::new(),
+            cfg.user_agent,
+            true,
+            None,
+            String::new(),
+        );
+    }
     let profile_id = models::session_profile_id(store, frame_id).await;
     let (
         provider,
@@ -5496,6 +5520,40 @@ pub(crate) fn llm_proxy() -> Option<String> {
 }
 
 fn build_provider_config(
+    provider: &str,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    max_tokens: u64,
+    reasoning_effort: &str,
+    service_tier: &str,
+    user_agent: &str,
+    send_user_agent: bool,
+    send_session_id: Option<bool>,
+    session_header_name: &str,
+    session_id: Option<&str>,
+) -> Result<ProviderConfig, String> {
+    if let Some(cfg) = magpie::config(session_id) {
+        return Ok(cfg);
+    }
+    build_stored_provider_config(
+        provider,
+        api_url,
+        api_key,
+        model,
+        max_tokens,
+        reasoning_effort,
+        service_tier,
+        user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
+        session_id,
+    )
+}
+
+// Explicit settings validation must use the fields in the user's form.
+fn build_stored_provider_config(
     provider: &str,
     api_url: &str,
     api_key: &str,

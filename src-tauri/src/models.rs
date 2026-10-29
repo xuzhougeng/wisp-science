@@ -927,6 +927,9 @@ pub async fn resolve_session_profile(store: &wisp_store::Store, frame_id: &str) 
 }
 
 pub async fn session_label(store: &wisp_store::Store, frame_id: &str) -> String {
+    if let Some(cfg) = crate::magpie::config(None) {
+        return format!("Magpie · {}", cfg.model);
+    }
     let profiles = ensure(store).await;
     let id = session_profile_id(store, frame_id).await;
     profiles
@@ -1720,6 +1723,9 @@ fn clamp_to_catalog(profile: &mut ModelProfile) {
 
 /// Context capacity for the active HTTP model.
 pub async fn active_context_window(store: &wisp_store::Store) -> u64 {
+    if let Some(window) = crate::magpie::context_window() {
+        return window;
+    }
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
     profiles
@@ -1731,6 +1737,9 @@ pub async fn active_context_window(store: &wisp_store::Store) -> u64 {
 
 /// Context capacity for a concrete HTTP model profile.
 pub async fn profile_context_window(store: &wisp_store::Store, id: &str) -> Option<u64> {
+    if let Some(window) = crate::magpie::context_window() {
+        return Some(window);
+    }
     ensure(store)
         .await
         .iter()

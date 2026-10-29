@@ -88,7 +88,7 @@ Build from source, CLI, and architecture: [development](docs/development.md).
 
 | | |
 |---|---|
-| **Start** | [Basic setup](docs/basic-configuration.md) · [Models](docs/model-configuration.md) · [ACP agents](docs/acp-agents.md) |
+| **Start** | [Basic setup](docs/basic-configuration.md) · [Models](docs/model-configuration.md) · [Magpie](docs/magpie.md) · [ACP agents](docs/acp-agents.md) |
 | **Research** | [Explorations](docs/exploration-branches.md) · [Evidence capsules](docs/publication-evidence.md) · [Case studies](docs/case-studies.zh-CN.md) |
 | **Projects** | [Transfer](docs/project-transfer.md) · [Sync](docs/project-sync.md) · [Global library](docs/global-library.md) |
 | **Compute** | [Terminals](docs/terminal-sessions.md) · [Remote files](docs/remote-file-browser.md) · [Transfers](docs/server-transfers.md) |

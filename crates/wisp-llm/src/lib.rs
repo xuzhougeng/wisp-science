@@ -16,6 +16,7 @@
 pub mod anthropic;
 pub mod chatgpt_auth;
 pub mod codex_auth;
+pub mod magpie;
 pub mod message;
 pub mod openai;
 pub mod provider;
