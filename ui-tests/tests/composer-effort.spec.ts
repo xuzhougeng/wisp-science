@@ -295,3 +295,15 @@ test("a Magpie effort picked before the first message applies to the new convers
   await expect(pill.getByTestId("composer-effort-value")).toHaveText("Low");
   expect(await lastInvokeArgs(page, "save_model")).toBeNull();
 });
+
+test("the context gauge measures a Magpie conversation against the connected model", async ({ page }) => {
+  await page.goto("/?mockMagpie=1");
+  await page.locator(".proj-card-main").first().click();
+  await page.locator("#composer-input").fill("CONTEXTUSAGE");
+  await page.locator("button.send").click();
+  // An idle conversation re-bases the gauge on its model: with Magpie that is
+  // the connected model's 400K, not a personal profile's 128K.
+  const trigger = page.getByTestId("context-usage-trigger");
+  await expect(trigger).toHaveAttribute("title", /79\.9K \/ 400K tokens/);
+  await expect(trigger).toHaveText("20%");
+});

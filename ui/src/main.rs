@@ -1127,6 +1127,7 @@ fn App() -> impl IntoView {
                         &models.get(),
                         &session_model_ids.get(),
                         Some(&session_id),
+                        model_settings.magpie_model.get().as_ref(),
                     ) {
                         snapshot.max = max as usize;
                     }
