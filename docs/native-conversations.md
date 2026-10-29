@@ -979,7 +979,7 @@ Assistant, publication editing, MCP Apps or final packaged/DPI acceptance.
 ### Windows and macOS session ZIP import
 
 On Windows use **导入会话归档…** in the project menu or command palette. On macOS
-use **导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
+use **更多 → 导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
 the command palette. Choose a Wisp session-export ZIP and an explicit
 destination project. Preview shows the
 message/artifact counts, first four user/assistant messages (600 characters each),
@@ -1018,7 +1018,7 @@ both locales/schemes, frozen destinations and an archive changed after preview.
 ### Windows and macOS Codex and Claude session import
 
 On Windows use **导入 Codex / Claude 会话…** in the project menu or command
-palette. On macOS use **导入 Codex / Claude 会话** in the project sidebar or
+palette. On macOS use **更多 → 导入 Codex / Claude 会话** in the project sidebar or
 `>import codex` / `>import claude` in the command palette. Choose
 the destination project, Codex CLI or Claude Code, and a local or registered
 WSL/SSH source. The initial list uses the metadata cache; **重新扫描来源** scans
