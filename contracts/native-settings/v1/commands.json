@@ -506,6 +506,12 @@
       "source": "src-tauri/src/settings_commands.rs"
     },
     {
+      "command": "get_subagent_model",
+      "arguments": [],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/models.rs"
+    },
+    {
       "command": "get_token_usage",
       "arguments": [],
       "result": "Result<TokenUsageOverview, String>",
@@ -1705,6 +1711,18 @@
       ],
       "result": "Result<(), String>",
       "source": "src-tauri/src/skill_commands.rs"
+    },
+    {
+      "command": "set_subagent_model",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/models.rs"
     },
     {
       "command": "set_tool_approval",

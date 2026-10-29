@@ -143,7 +143,9 @@ save replies; automated tests do not use real accounts or keys.
   `scripts/sync_native_design.py`; the API key goes to the keyring and is never read back.
 - Quick actions: bindings, scripts/prompts, workflow references.
 - Workflows: templates, nodes/dependencies, copy/save/delete, conversion and source provenance.
-- Specialists: prompts, models, tools/skills, reviewer configuration.
+- Specialists: prompts, models, tools/skills, reviewer configuration, and the
+  global default subagent model (`get_subagent_model` / `set_subagent_model`,
+  empty follows the conversation; chat profiles only).
 - Memory: enablement, project/global memory, edits, clearing, automatic failure analysis.
 - Skills: search, tags, enablement, files, install/remove, skill store.
 - Plugins: install, grants, enablement, removal.

@@ -26,7 +26,7 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
         case .models: return ["list_models", "list_acp_agents"]
         case .quickActions: return ["list_quick_actions", "list_workflow_templates"]
         case .workflows: return ["list_workflow_templates", "list_models", "list_skills"]
-        case .specialists: return ["list_specialists", "list_models", "list_skills"]
+        case .specialists: return ["list_specialists", "list_models", "list_skills", "get_subagent_model"]
         case .memory: return ["get_memory_view", "get_auto_failure_analysis_settings"]
         case .skills: return ["list_skills"]
         case .plugins: return ["list_plugins"]

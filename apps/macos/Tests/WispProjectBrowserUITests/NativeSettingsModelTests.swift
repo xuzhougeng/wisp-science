@@ -52,6 +52,19 @@ final class NativeSettingsModelTests: XCTestCase {
         XCTAssertEqual(NativeSettingsNumberField.step("", by: 1, minimum: 0), "1")
         XCTAssertEqual(NativeSettingsNumberField.step("abc", by: -1, minimum: 10), "10")
     }
+    @MainActor func testSpecialistsReadTheDefaultSubagentModelAndOfferOnlyChatProfiles() async {
+        let model = NativeSettingsModel(client: SettingsFake(), projectID: nil)
+        model.section = .specialists
+        await model.load()
+        XCTAssertNotNil(model.values["get_subagent_model"])
+        let rows: [SettingsValue] = [
+            .object(["id": .string("chat")]),
+            .object(["id": .string("painter"), "use_for_image_generation": .bool(true)]),
+            .object(["id": .string("capable"), "image_generation_capable": .bool(true)]),
+            .object(["id": .string("video"), "use_for_video_generation": .bool(true)]),
+        ]
+        XCTAssertEqual(NativeWorkflowSettings.chatModels(rows).map { $0["id"].string }, ["chat"])
+    }
     @MainActor func testSubscriptionProxySavePreservesOtherNetworkRoutes() async {
         let client = SettingsFake()
         let model = NativeSettingsModel(client: client, projectID: nil)
