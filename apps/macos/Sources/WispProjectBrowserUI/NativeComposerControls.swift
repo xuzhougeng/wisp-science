@@ -49,13 +49,17 @@ struct NativeComposerEffort: View {
             Menu {
                 Button("默认") { Task { await model.selectEffort("") } }
                 ForEach(model.efforts, id: \.self) { value in
-                    Button(value.capitalized) { Task { await model.selectEffort(value) } }
+                    Button(Self.label(value)) { Task { await model.selectEffort(value) } }
                 }
             } label: {
-                Text(acp ? "ACP" : model.effort.isEmpty ? "默认" : model.effort.capitalized).lineLimit(1)
+                Text(acp ? "ACP" : model.effort.isEmpty ? "默认" : Self.label(model.effort)).lineLimit(1)
             }.menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("思考强度").help(acp ? "思考强度由 ACP 智能体管理" : model.efforts.isEmpty ? "此模型未声明可调节的思考强度" : "更改此模型的默认思考强度，在下一轮使用")
         }.frame(height: 32).disabled(!enabled || acp || model.busy || model.efforts.isEmpty)
+    }
+    /// `composer.effort.*` in ui/src/i18n.rs.
+    static func label(_ effort: String) -> String {
+        localized(["none": "无", "minimal": "极低", "low": "低", "medium": "中", "high": "高", "xhigh": "极高", "max": "最高", "ultra": "超强"][effort] ?? effort.capitalized)
     }
 }
 

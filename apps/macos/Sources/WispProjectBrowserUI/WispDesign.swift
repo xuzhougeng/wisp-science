@@ -152,6 +152,15 @@ func localized(_ text: String) -> String {
     UserDefaults.standard.string(forKey: "nativeSettings.locale") == "en" ? (WispDesign.english[text] ?? text) : text
 }
 
+/// Same 1024-based, one-decimal sizes as `format_bytes` in ui/src/text.rs.
+func formatBytes(_ count: Int64) -> String {
+    let n = Double(count)
+    if count < 1024 { return "\(count) B" }
+    if n < 1024 * 1024 { return String(format: "%.1f KB", n / 1024) }
+    if n < 1024 * 1024 * 1024 { return String(format: "%.1f MB", n / (1024 * 1024)) }
+    return String(format: "%.1f GB", n / (1024 * 1024 * 1024))
+}
+
 /// Workspace navigation has the same reading rhythm as the WebView sidebar.
 /// Keep this separate from compact buttons used inside dense inspectors.
 struct WispSidebarButtonStyle: ButtonStyle {

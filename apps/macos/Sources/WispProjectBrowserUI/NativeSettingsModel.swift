@@ -37,7 +37,7 @@ enum NativeSettingsSection: String, CaseIterable, Identifiable {
         case .permissions: return ["list_approval_grants", "list_connectors"]
         case .environments: return ["list_execution_contexts", "list_ssh_hosts", "get_default_execution_context", "list_ssh_trust_edges"]
         case .storage: return ["get_storage_usage", "get_project_run_retention"]
-        case .usage: return ["get_token_usage"]
+        case .usage: return ["get_token_usage", "list_models"]
         }
     }
 }

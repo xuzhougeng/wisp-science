@@ -16,7 +16,7 @@ struct NativeWorkflowSettings: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text(row["name"].string).fontWeight(.semibold)
+                        Text(Self.displayName(row)).fontWeight(.semibold)
                         if row["builtin"].bool { Text(localized("内置")).font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button(localized("编辑")) { edit(row) }
@@ -67,6 +67,11 @@ struct NativeWorkflowSettings: View {
         switch model.section { case .quickActions: return "list_quick_actions"; case .workflows: return "list_workflow_templates"; default: return "list_specialists" }
     }
     private var rows: [SettingsValue] { model.values[read]?.array ?? [] }
+    /// `quick_action_label` in ui/src/app_support/palettes.rs: the host names the
+    /// built-in literature action in English until the user renames it.
+    static func displayName(_ row: SettingsValue) -> String {
+        row["id"].string == "literature_research" && row["name"].string == "Research literature" ? localized("文献调研") : row["name"].string
+    }
     private func edit(_ row: SettingsValue, new: Bool = false, sourceHash: SettingsValue = .null) {
         var draft = row
         var fields: [SettingsField] = [.init(key: "name", label: "名称"), .init(key: "description", label: "说明", kind: .multiline)]

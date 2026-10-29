@@ -9,6 +9,10 @@ public struct NewProjectDraft: Equatable {
     public var agentContext = ""
     public var standardLayout = false
     public init() {}
+    /// Same rule as the WebView create button: name and directory are required.
+    public var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !directory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 enum NewProjectLayout {
@@ -88,7 +92,7 @@ struct NewProjectSheet: View {
             }
             field("说明", text: details)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Agent Context").font(WispDesign.font(size: 12, weight: .medium))
+                Text("Agent 上下文").font(WispDesign.font(size: 12, weight: .medium))
                 TextEditor(text: agentContext).font(WispDesign.font(size: 13)).frame(minHeight: 120)
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(WispDesign.color("border", scheme)))
                     .disabled(model.createBusy)
@@ -105,7 +109,7 @@ struct NewProjectSheet: View {
                 Button("取消") { model.dismissNewProject() }.disabled(model.createBusy)
                 Button(model.createBusy ? "正在创建…" : "创建") { Task { await model.submitNewProject() } }
                     .buttonStyle(WispButtonStyle(primary: true))
-                    .disabled(model.createBusy)
+                    .disabled(model.createBusy || !model.createDraft.canSubmit)
                     .accessibilityIdentifier("create-project-submit")
             }
         }
