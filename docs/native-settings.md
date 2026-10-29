@@ -136,7 +136,11 @@ save replies; automated tests do not use real accounts or keys.
 - Session: iteration limits, compaction, continuation, follow-ups, review.
 - Appearance: theme, palettes, fonts, selection popup, send shortcut, WebView stylesheet preferences.
 - Pet: enablement, directory, runtime status.
-- Models/API: model profiles, keys, catalog limits, capabilities, roles, active model, ACP agents.
+- Models/API: model profiles, keys, catalog limits, capabilities, roles, active model, ACP agents,
+  and the 决策模型 tab (`get/save/test_decision_model`, `clear_decision_model_key`). Its
+  services, think modes and strings come from `Resources/decision-model.json`, exported
+  from `crates/wisp-dto/src/decision_model.rs` and the WebView i18n by
+  `scripts/sync_native_design.py`; the API key goes to the keyring and is never read back.
 - Quick actions: bindings, scripts/prompts, workflow references.
 - Workflows: templates, nodes/dependencies, copy/save/delete, conversion and source provenance.
 - Specialists: prompts, models, tools/skills, reviewer configuration.

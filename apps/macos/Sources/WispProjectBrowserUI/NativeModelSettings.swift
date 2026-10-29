@@ -24,7 +24,8 @@ struct NativeModelSettings: View {
                     VStack(alignment: .leading, spacing: 12) { categories; addButton }
                 }
                 Text(localized("模型配置由所有项目共享。默认模型用于新建对话，列表操作立即保存。")).font(WispDesign.font(size: 12)).foregroundStyle(.secondary)
-                if model.modelCategory == "subscriptions" { subscriptions } else if model.modelCategory == "acp" { agents } else { models }
+                if model.modelCategory == "subscriptions" { subscriptions } else if model.modelCategory == "acp" { agents }
+                else if model.modelCategory == "decision" { NativeDecisionModelSettings(client: model.client) } else { models }
             }
         }
         .task(id: model.readRevision) { await loadAccounts() }
@@ -61,9 +62,10 @@ struct NativeModelSettings: View {
         tab("API 模型", count: apiModels.count, category: "api")
         tab("ACP Agents", count: model.values["list_acp_agents"]?.array.count ?? 0, category: "acp")
         tab("订阅账号", count: nil, category: "subscriptions")
+        tab("决策模型", count: nil, category: "decision")
     }
     @ViewBuilder private var addButton: some View {
-        if model.modelCategory != "subscriptions" {
+        if model.modelCategory != "subscriptions" && model.modelCategory != "decision" {
             Button(localized(model.modelCategory == "acp" ? "添加智能体" : "添加 API 接入")) {
                 if model.modelCategory == "acp" { editAgent(.object(["id": .string(""), "label": .string(""), "command": .string(""), "args": .array([])])) }
                 else { addModel() }

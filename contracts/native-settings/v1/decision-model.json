@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "enabled": true,
+    "preset": "startlux_bamboo",
+    "base_url": "https://api.bamboonode.dev",
+    "model": "startlux-decision-27b-autothink",
+    "think_mode": "auto",
+    "timeout_secs": 60,
+    "stored_keys": ["typesafe"]
+  },
+  "save_args": {
+    "settings": {
+      "enabled": true,
+      "preset": "typesafe",
+      "base_url": "https://api.typesafe.ai",
+      "model": "jev-latest",
+      "think_mode": "",
+      "timeout_secs": 10,
+      "stored_keys": []
+    },
+    "apiKey": ""
+  },
+  "probe": { "model": "jev-latest", "elapsed_ms": 42 }
+}

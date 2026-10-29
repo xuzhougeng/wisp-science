@@ -113,6 +113,18 @@
       "source": "src-tauri/src/app_updates.rs"
     },
     {
+      "command": "clear_decision_model_key",
+      "arguments": [
+        {
+          "name": "preset",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
+    },
+    {
       "command": "clear_memory",
       "arguments": [
         {
@@ -362,6 +374,12 @@
       ],
       "result": "Result<ContextStoragePrefsView, String>",
       "source": "src-tauri/src/storage_prefs.rs"
+    },
+    {
+      "command": "get_decision_model",
+      "arguments": [],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
     },
     {
       "command": "get_default_execution_context",
@@ -1130,6 +1148,23 @@
       "source": "src-tauri/src/codex_login.rs"
     },
     {
+      "command": "save_decision_model",
+      "arguments": [
+        {
+          "name": "settings",
+          "rust_type": "DecisionModelSettings",
+          "optional": false
+        },
+        {
+          "name": "apiKey",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
+    },
+    {
       "command": "save_local_environment_paths",
       "arguments": [
         {
@@ -1744,6 +1779,23 @@
       ],
       "result": "Result<AcpAgentInfoDto, String>",
       "source": "src-tauri/src/acp.rs"
+    },
+    {
+      "command": "test_decision_model",
+      "arguments": [
+        {
+          "name": "settings",
+          "rust_type": "DecisionModelSettings",
+          "optional": false
+        },
+        {
+          "name": "apiKey",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<DecisionModelProbe, String>",
+      "source": "src-tauri/src/decision_model.rs"
     },
     {
       "command": "test_mcp_connection",

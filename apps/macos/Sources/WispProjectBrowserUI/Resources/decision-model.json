@@ -1,0 +1,192 @@
+{
+  "presets": [
+    {
+      "base_url": "https://api.typesafe.ai",
+      "id": "typesafe",
+      "key_required": true,
+      "key_url": "https://console.typesafe.ai",
+      "model": "jev-latest",
+      "timeout_secs": 10
+    },
+    {
+      "base_url": "https://api.bamboonode.dev",
+      "id": "startlux_bamboo",
+      "key_required": true,
+      "key_url": "https://bamboonode.dev",
+      "model": "startlux-decision-27b-autothink",
+      "timeout_secs": 60
+    },
+    {
+      "base_url": "http://127.0.0.1:8090",
+      "id": "startlux_local",
+      "key_required": false,
+      "key_url": "https://github.com/StartLuxLabs/StartLux-Decision",
+      "model": "",
+      "timeout_secs": 60
+    },
+    {
+      "base_url": "",
+      "id": "custom",
+      "key_required": false,
+      "key_url": "",
+      "model": "",
+      "timeout_secs": 30
+    }
+  ],
+  "strings": {
+    "decision.api_key": {
+      "en": "API key",
+      "zh": "API key"
+    },
+    "decision.base_url": {
+      "en": "Base URL",
+      "zh": "Base URL"
+    },
+    "decision.desc": {
+      "en": "A decision model answers typed yes/no, choice, and score questions with a calibrated probability for every option instead of writing text, usually within milliseconds to a few seconds. Once configured, it makes the fast calls in map_items' decide step and in desktop_autopilot.",
+      "zh": "决策模型只回答类型化的是/否、单选和打分问题，为每个选项返回校准概率，不生成文本，通常在毫秒到数秒内完成。配置后，map_items 的批量判定（decide）和 desktop_autopilot 会用它做快速决策。"
+    },
+    "decision.egress": {
+      "en": "When deciding, map_items sends each item's extracted row (or the start of its text) and desktop_autopilot sends the window's control labels to this service.",
+      "zh": "判定时，map_items 会把每个条目抽取出的行（或正文开头）、desktop_autopilot 会把窗口控件文字发送到这个服务。"
+    },
+    "decision.enabled": {
+      "en": "Use a decision model",
+      "zh": "启用决策模型"
+    },
+    "decision.key_cleared": {
+      "en": "API key cleared",
+      "zh": "已清除 API key"
+    },
+    "decision.key_optional": {
+      "en": "Optional",
+      "zh": "可选"
+    },
+    "decision.key_required": {
+      "en": "This service needs an API key.",
+      "zh": "这个服务需要 API key。"
+    },
+    "decision.link.startlux_bamboo": {
+      "en": "Get a Bamboo API key",
+      "zh": "获取 Bamboo API key"
+    },
+    "decision.link.startlux_local": {
+      "en": "Setup guide",
+      "zh": "部署说明"
+    },
+    "decision.link.typesafe": {
+      "en": "Open TypeSafe console",
+      "zh": "打开 TypeSafe 控制台"
+    },
+    "decision.model": {
+      "en": "Model ID",
+      "zh": "模型 ID"
+    },
+    "decision.model_placeholder": {
+      "en": "Empty uses the server default",
+      "zh": "留空使用服务端默认"
+    },
+    "decision.preset": {
+      "en": "Service",
+      "zh": "服务"
+    },
+    "decision.preset.custom": {
+      "en": "Custom System One server",
+      "zh": "自定义 System One 服务"
+    },
+    "decision.preset.startlux_bamboo": {
+      "en": "StartLux (hosted on Bamboo)",
+      "zh": "StartLux（Bamboo 托管）"
+    },
+    "decision.preset.startlux_local": {
+      "en": "StartLux (self-hosted)",
+      "zh": "StartLux（自部署）"
+    },
+    "decision.preset.typesafe": {
+      "en": "TypeSafe Jev",
+      "zh": "TypeSafe Jev"
+    },
+    "decision.preset_hint.custom": {
+      "en": "Any server that implements POST /v1/systemone. The base URL may be the root, /v1, or the full path.",
+      "zh": "任何实现 POST /v1/systemone 的服务。Base URL 可以是根地址、/v1 或完整路径。"
+    },
+    "decision.preset_hint.startlux_bamboo": {
+      "en": "StartLux-Decision 27B AutoThink hosted on Bamboo. Needs a Bamboo API key (free during testing). It thinks when unsure, which can take much longer.",
+      "zh": "Bamboo 托管的 StartLux-Decision 27B AutoThink，需要 Bamboo API key（测试期免费）。不确定时会先思考，耗时可能明显变长。"
+    },
+    "decision.preset_hint.startlux_local": {
+      "en": "A server started with startlux-decide serve on this machine or your network. Needs an API key only if it was started with --api-keys-file. The StartLux weights are licensed CC BY-NC 4.0.",
+      "zh": "用 startlux-decide serve 在本机或局域网启动的服务。只有用 --api-keys-file 启动时才需要 API key。StartLux 权重采用 CC BY-NC 4.0 许可。"
+    },
+    "decision.preset_hint.typesafe": {
+      "en": "TypeSafe's hosted Jev models. Needs an API key.",
+      "zh": "TypeSafe 托管的 Jev 模型，需要 API key。"
+    },
+    "decision.saved": {
+      "en": "Saved",
+      "zh": "已保存"
+    },
+    "decision.status_no_key": {
+      "en": "{preset} is on but has no saved API key, so it is not in use.",
+      "zh": "已启用 {preset}，但还没有保存 API key，暂不可用。"
+    },
+    "decision.status_off": {
+      "en": "Off. map_items offers no decide step and desktop_autopilot is unavailable.",
+      "zh": "未启用。map_items 不提供判定步骤，desktop_autopilot 不可用。"
+    },
+    "decision.status_on": {
+      "en": "In use: {preset} · {model}",
+      "zh": "使用中：{preset} · {model}"
+    },
+    "decision.test": {
+      "en": "Test connection",
+      "zh": "测试连接"
+    },
+    "decision.test_failed": {
+      "en": "Test failed: {error}",
+      "zh": "测试失败：{error}"
+    },
+    "decision.test_ok": {
+      "en": "Connected: {model} answered in {ms} ms.",
+      "zh": "连接成功：{model}，用时 {ms} ms。"
+    },
+    "decision.testing": {
+      "en": "Testing…",
+      "zh": "正在测试…"
+    },
+    "decision.think": {
+      "en": "Think mode",
+      "zh": "思考模式"
+    },
+    "decision.think.always": {
+      "en": "Always",
+      "zh": "总是"
+    },
+    "decision.think.auto": {
+      "en": "Auto (think when unsure)",
+      "zh": "自动（不确定时思考）"
+    },
+    "decision.think.default": {
+      "en": "Server default",
+      "zh": "服务端默认"
+    },
+    "decision.think.never": {
+      "en": "Never (fastest)",
+      "zh": "从不（最快）"
+    },
+    "decision.think_hint": {
+      "en": "Think mode applies only to servers that can think, such as StartLux AutoThink. Keep the default or choose Never for Instant models, which reject the other modes. The timeout is per request, and thinking can take longer.",
+      "zh": "思考模式只对支持思考的服务生效（如 StartLux AutoThink）。Instant 模型请保持默认或选“从不”，否则服务会拒绝请求。超时按单次请求计算，思考时可能需要更久。"
+    },
+    "decision.timeout": {
+      "en": "Timeout (seconds)",
+      "zh": "超时（秒）"
+    }
+  },
+  "think_modes": [
+    "",
+    "auto",
+    "never",
+    "always"
+  ]
+}
