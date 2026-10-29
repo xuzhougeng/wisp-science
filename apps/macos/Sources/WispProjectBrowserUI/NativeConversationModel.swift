@@ -27,6 +27,18 @@ private extension String {
     }
 }
 
+/// Snapshot cadence. A running conversation long-polls the host for activity
+/// (`native_conversation_wait`), so streamed text lands about every 100 ms
+/// instead of in 350 ms steps; idle, failed or older-host conversations keep
+/// the fixed timer.
+enum NativeLivePolling {
+    static func step(running: Bool, connectionError: Bool, waitSupported: Bool) -> (sleep: UInt64, waitMilliseconds: Int64?) {
+        if connectionError { return (2_000_000_000, nil) }
+        if !running { return (1_500_000_000, nil) }
+        return waitSupported ? (100_000_000, 700) : (350_000_000, nil)
+    }
+}
+
 @MainActor
 final class NativeConversationModel: ObservableObject {
     @Published var draft = ""
@@ -380,10 +392,24 @@ final class NativeConversationModel: ObservableObject {
         } catch { if generation == current { operationError = error.localizedDescription } }
         guard generation == current else { return }
         polling = Task { [weak self] in
+            var activity: Int64?
+            var waitSupported = true
             while !Task.isCancelled {
-                let delay: UInt64 = self?.connectionError != nil ? 2_000_000_000 : (self?.snapshot?.running == true ? 350_000_000 : 1_500_000_000)
-                do { try await Task.sleep(nanoseconds: delay) } catch { break }
+                let step = NativeLivePolling.step(running: self?.snapshot?.running == true, connectionError: self?.connectionError != nil, waitSupported: waitSupported)
+                do { try await Task.sleep(nanoseconds: step.sleep) } catch { break }
                 guard !Task.isCancelled else { break }
+                if let timeout = step.waitMilliseconds {
+                    var args: [String: SettingsValue] = ["session_id": .string(session), "timeout_ms": .integer(timeout)]
+                    if let activity { args["after"] = .integer(activity) }
+                    do {
+                        guard let client = self?.client else { break }
+                        activity = try await client.invoke("native_conversation_wait", args: args, projectID: project)["activity"].integer
+                    } catch {
+                        // An older host, or a failed wait: keep the fixed cadence for this conversation.
+                        waitSupported = false
+                    }
+                    guard !Task.isCancelled else { break }
+                }
                 await self?.refresh()
             }
         }

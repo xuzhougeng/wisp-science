@@ -450,6 +450,55 @@ async fn remote_turn(
     .map(Value::String)
 }
 
+/// Answers once the conversation's activity counter differs from `after`
+/// (a first wait answers at once), or after the capped timeout. Without a live
+/// runtime nothing can change except a turn started elsewhere, which the
+/// client's next timed-out wait picks up.
+pub(crate) async fn wait_for_activity(
+    state: &crate::AppState,
+    session: &str,
+    args: dto::WaitRequest,
+) -> dto::WaitResult {
+    let timeout = std::time::Duration::from_millis(
+        args.timeout_ms
+            .unwrap_or(dto::WAIT_TIMEOUT_MAX_MS)
+            .min(dto::WAIT_TIMEOUT_MAX_MS),
+    );
+    let runtime = state.sessions.lock().await.get(session).cloned();
+    let Some(runtime) = runtime else {
+        tokio::time::sleep(timeout).await;
+        return dto::WaitResult {
+            activity: args.after.unwrap_or(0),
+            changed: false,
+        };
+    };
+    wait_on(runtime.ui_activity.subscribe(), args.after, timeout).await
+}
+
+async fn wait_on(
+    mut activity: tokio::sync::watch::Receiver<u64>,
+    after: Option<u64>,
+    timeout: std::time::Duration,
+) -> dto::WaitResult {
+    let current = *activity.borrow_and_update();
+    match after {
+        Some(after) if after == current => {}
+        // A first wait, or activity the client has not seen yet.
+        after => {
+            return dto::WaitResult {
+                activity: current,
+                changed: after.is_some(),
+            }
+        }
+    }
+    let changed = matches!(
+        tokio::time::timeout(timeout, activity.changed()).await,
+        Ok(Ok(()))
+    );
+    let activity = *activity.borrow();
+    dto::WaitResult { activity, changed }
+}
+
 pub(crate) async fn call(
     broker: &Broker,
     project: &str,
@@ -528,6 +577,12 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
         session,
     )
     .await?;
+    if request.command == "native_conversation_wait" {
+        // Before the record lock: a pending wait must not hold up sends or snapshots.
+        let state = broker.app.state::<crate::AppState>();
+        let result = wait_for_activity(&state, session, decode(&request.args)?).await;
+        return serde_json::to_value(result).map_err(|e| e.to_string());
+    }
     if request.command == "native_conversation_timer" {
         return crate::native_assistant::timer(broker, project, decode(&request.args)?).await;
     }
@@ -1480,6 +1535,27 @@ mod tests {
         });
         assert!(invalid.proposal.is_none());
         assert_eq!(invalid.text, "unparsed plan");
+    }
+
+    #[tokio::test]
+    async fn wait_answers_unseen_activity_at_once_and_otherwise_on_change_or_timeout() {
+        use std::time::Duration;
+        let (tx, rx) = tokio::sync::watch::channel(7u64);
+        let long = Duration::from_secs(5);
+        // First wait and stale `after` answer without waiting.
+        let first = super::wait_on(rx.clone(), None, long).await;
+        assert_eq!((first.activity, first.changed), (7, false));
+        let stale = super::wait_on(rx.clone(), Some(3), long).await;
+        assert_eq!((stale.activity, stale.changed), (7, true));
+        // Up to date: answers on the next bump.
+        let pending = tokio::spawn(super::wait_on(rx.clone(), Some(7), long));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tx.send_modify(|count| *count += 1);
+        let bumped = pending.await.unwrap();
+        assert_eq!((bumped.activity, bumped.changed), (8, true));
+        // No activity: answers unchanged after the timeout.
+        let idle = super::wait_on(rx, Some(8), Duration::from_millis(30)).await;
+        assert_eq!((idle.activity, idle.changed), (8, false));
     }
 
     #[test]
