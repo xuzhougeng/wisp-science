@@ -419,6 +419,7 @@ async fn send_message_inner_with_continuation(
     let authorization = continuation
         .map(|context| context.authorization.as_str())
         .unwrap_or(&message);
+    let dispatch_held = continuation.is_some_and(|context| context.dispatch_held);
     // Automatic delegation resume carries an owned workflow guard and uses the
     // synthetic "main" route. It must preserve the window that launched the
     // parent task; every direct/queued user turn may claim its actual window.
@@ -1158,7 +1159,9 @@ async fn send_message_inner_with_continuation(
             // One level only: a subagent starts no subagents of its own, and
             // an exploration's work stays inside its isolated scope.
             if matches!(frame_scope, wisp_store::StateScope::Mainline { .. }) {
-                for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization) {
+                for tool in
+                    subagent_tool::tools(&app, &ap.id, &frame_id, authorization, dispatch_held)
+                {
                     agent.add_tool(tool);
                 }
                 // An agent-opened branch is a `/fork` of this conversation and
@@ -1312,8 +1315,9 @@ async fn send_message_inner_with_continuation(
     } else if agent.tools.get("dispatch_subagent").is_some() {
         // Cached agents use the current user's request, or the host-captured
         // original request during a child's automatic return. A generated
-        // continuation must never become fresh user authorization.
-        for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization) {
+        // continuation must never become fresh user authorization. Replacing
+        // every turn also lifts a capped child's dispatch hold on the next one.
+        for tool in subagent_tool::tools(&app, &ap.id, &frame_id, authorization, dispatch_held) {
             agent.tools.replace(tool);
         }
     }

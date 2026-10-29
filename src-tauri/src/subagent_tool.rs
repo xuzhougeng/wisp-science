@@ -37,7 +37,7 @@ impl crate::dispatch::Dispatcher for SubagentDispatcher {
     }
 
     fn brief(&self, instruction: &str) -> String {
-        format!("[From the parent conversation's agent]\nYou are its subagent, working in a conversation of your own. The researcher can watch here but cannot reply. Your selected execution contexts and default compute target follow the parent at each dispatch. If you need a decision, a resource, or missing information, end your turn with a precise request to the parent agent: your final answer wakes the parent to handle it and send a follow-up. Do not ask the researcher to operate this watch-only conversation.\n\n{instruction}")
+        format!("[From the parent conversation's agent]\nYou are its subagent, working in a conversation of your own. The researcher can watch here but cannot reply. Your selected execution contexts and default compute target follow the parent at each dispatch. If you need a decision, a resource, or missing information, end your turn with a precise request to the parent agent: your final answer wakes the parent to handle it and send a follow-up. This includes installing software or packages beyond one project-local attempt, administrator rights, credentials or access, system-wide or network settings, and choices that belong to the researcher. Stop at the first such blocker instead of retrying variants or working around it, and state what is needed, why, and the exact command or options to approve. Do not ask the researcher to operate this watch-only conversation.\n\n{instruction}")
     }
 
     fn review_prompt(&self) -> &'static str {
@@ -103,12 +103,14 @@ pub(crate) async fn require_instruction_source(
     }
 }
 
-/// The tools a conversation uses to run subagents.
+/// The tools a conversation uses to run subagents. `dispatch_held` is set
+/// for the parent's automatic return from a child that hit its step limit.
 pub(crate) fn tools(
     app: &AppHandle,
     project_id: &str,
     parent: &str,
     authorization: &str,
+    dispatch_held: bool,
 ) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(DispatchSubagentTool {
@@ -116,6 +118,7 @@ pub(crate) fn tools(
             project_id: project_id.into(),
             parent: parent.into(),
             authorization: authorization.into(),
+            held: dispatch_held,
         }),
         Box::new(SubagentStatusTool {
             app: app.clone(),
@@ -187,7 +190,11 @@ struct DispatchSubagentTool {
     project_id: String,
     parent: String,
     authorization: String,
+    /// Only the researcher's answer may start more work this turn.
+    held: bool,
 }
+
+const HELD_DISPATCH: &str = "A subagent of this conversation stopped at its step limit, so dispatch_subagent is unavailable until the researcher answers. Report what it completed and what blocked it, and ask them with ask_user whether and how to continue.";
 
 #[async_trait]
 impl Tool for DispatchSubagentTool {
@@ -221,6 +228,9 @@ impl Tool for DispatchSubagentTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if self.held {
+            return ToolResult::fail(HELD_DISPATCH);
+        }
         let state = self.app.state::<AppState>();
         let instruction = args
             .get("instruction")
@@ -528,8 +538,14 @@ mod tests {
             dispatcher(false).continuation_authorization(),
             Some("Align the reads")
         );
-        assert!(dispatcher(false)
-            .brief("Align the reads")
-            .ends_with("\n\nAlign the reads"));
+        let brief = dispatcher(false).brief("Align the reads");
+        // The UI hides the framing up to the first blank line, so it must
+        // stay one paragraph after the header.
+        let (framing, task) = brief.split_once("\n\n").unwrap();
+        assert_eq!(task, "Align the reads");
+        // Blockers only the researcher can lift go back to the parent instead
+        // of being retried in a conversation nobody can answer (#1645).
+        assert!(framing.contains("installing software"));
+        assert!(framing.contains("Stop at the first such blocker"));
     }
 }

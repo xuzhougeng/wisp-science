@@ -700,13 +700,28 @@ separate summary to the parent conversation; no polling is needed. After a
 normal child turn, the parent automatically continues under its conversation
 lock to handle the child's questions, missing resources and follow-up work.
 The parent uses available context and existing user authorization first, and
-asks the researcher in the parent conversation only when new information or
-authority is required. The continuation keeps the original user request
+asks the researcher in the parent conversation, with `ask_user`, only when new
+information or authority is required, such as installing software, granting
+access or choosing between options. The continuation keeps the original user request
 separate from the child's result; it does not create a synthetic human message
 or treat the child's proposed actions as permission. It retains the original
 remote-message approval policy.
 
-Cancelled, failed or iteration-limited turns produce a report without an
+A subagent cannot ask the researcher itself, so its framing tells it to hand
+such blockers back: installing software or packages beyond one project-local
+attempt, administrator rights, credentials or access, system-wide or network
+settings, and choices that belong to the researcher. It stops at the first one
+and names what is needed and the exact command or options, instead of retrying
+variants until its step limit.
+
+A child turn that still reaches its step limit also resumes the parent, but
+that turn cannot dispatch: the parent reports what the child completed and what
+blocked it, then asks the researcher with `ask_user` whether and how to
+continue. The child runs again only after the researcher answers, because the
+researcher cannot continue a watch-only child and an automatic restart could
+loop through the limit again (#1645).
+
+Cancelled or failed turns produce a report without an
 automatic restart. A cancelled parent, a deleted conversation, changed ownership,
 or a child that has already started newer work does not act on a delayed request. An
 archived parent keeps the report without resuming; automatic continuation also
