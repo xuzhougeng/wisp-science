@@ -82,6 +82,10 @@ impl UserMcpConfig {
         };
         let mut config = Self::default();
         for (name, entry) in entries {
+            // Claude Desktop and Cline spell a switched-off server this way.
+            if entry.get("disabled").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
             match server(name, entry, &lookup) {
                 Ok(server) => config.servers.push(server),
                 Err(error) => config.errors.push(format!("MCP server '{name}': {error}")),
@@ -273,6 +277,19 @@ mod tests {
             "EMPTY" => Some(String::new()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn a_disabled_server_is_left_out_without_an_error() {
+        let text = json!({"mcpServers": {
+            "off": {"command": "npx", "env": {"TOKEN": "${UNSET_TOKEN}"}, "disabled": true},
+            "on": {"command": "uvx", "disabled": false},
+        }})
+        .to_string();
+        let config = UserMcpConfig::parse(&text, env);
+        assert_eq!(config.errors, Vec::<String>::new());
+        let ids: Vec<_> = config.servers.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["user:on"]);
     }
 
     #[test]
