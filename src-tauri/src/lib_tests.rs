@@ -1374,8 +1374,14 @@ fn stream_recovery_replay_drops_only_the_failed_attempts_draft() {
     assert_eq!(items[0].text, "Done part. whole");
 
     // Counts larger than the trailing stream rows stop at the first
-    // non-stream row instead of eating a tool result.
+    // non-stream row instead of eating a tool result. (A result only fills
+    // the row its call created, so the call comes first.)
     let events = vec![
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            preview: "pwd".into(),
+        },
         AgentEvent::ToolResult {
             frame_id: frame_id.clone(),
             name: "shell".into(),
