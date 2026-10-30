@@ -2206,6 +2206,11 @@ async fn persist_and_emit_terminal_event(
     let project_id = state.store.frame_project_id(frame_id).await.ok().flatten();
     emit_session_notice(state, app, project_id.as_deref(), &event).await;
     emit_agent_event_in(app, event, project_id.as_deref());
+    if let Some(runtime) = state.sessions.lock().await.get(frame_id) {
+        runtime
+            .ui_activity
+            .send_modify(|count| *count = count.wrapping_add(1));
+    }
 }
 
 /// Keep the raw terminal records intact for support bundles. Historical
@@ -3374,6 +3379,9 @@ impl TauriOutput {
     fn emit(&self, event: AgentEvent) {
         self.device_hub
             .apply_agent_event(&event, Some(&self.project_id));
+        self.queue_runtime
+            .ui_activity
+            .send_modify(|count| *count = count.wrapping_add(1));
         if should_persist_ui_event(&event) {
             if let Some(tx) = &self.ui_events {
                 let _ = tx.send(SessionUiMessage::Event(event.clone()));

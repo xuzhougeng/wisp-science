@@ -613,10 +613,17 @@ Rust, Swift and C# consume fixtures under `contracts/native-conversations/v1`.
 | `native_conversation_acp_permission` | `session_id`, `request_id`, nullable `option_id` | Resolve the exact pending ACP option (null cancels) |
 | `native_conversation_acp_answer` | `session_id`, `request_id`, `answer` | Persist one reply for the pending bridge question |
 | `native_conversation_model` | `session_id`, `model_id` | Existing model list result |
+| `native_conversation_wait` | `session_id`, optional `after`, optional `timeout_ms` (≤ 2000) | `{activity, changed}` once the conversation's activity counter differs from `after`, or after the timeout |
 
-The initial transport polls a bounded transcript snapshot every 350 ms while a
-turn runs, 1.5 s while idle, and 2 s after a connection failure. This is incremental
-rendering of persisted/coalesced text, not an SSE token-delta stream. Each snapshot
+While a turn runs, the macOS client long-polls `native_conversation_wait` (up to
+700 ms) and reads a snapshot as soon as the host reports activity, at most every
+100 ms, so streamed text arrives in roughly 100 ms steps. The host bumps a
+per-conversation counter for every agent event and for the terminal Done/Error
+event; a pending wait is answered before the conversation record lock is taken, so
+it never delays sends or snapshots. Idle conversations still poll every 1.5 s, a
+connection failure waits 2 s, and a host without the wait command (or a failed
+wait) falls back to the former 350 ms timer. This is incremental rendering of
+persisted/coalesced text, not an SSE token-delta stream. Each snapshot
 flushes the existing UI event writer, folds the same transcript as WebView, and
 includes execution and approval state. It does not reload the entire outline or
 change a WebView window's active project. Older pages use `next_before_seq` and
@@ -979,7 +986,7 @@ Assistant, publication editing, MCP Apps or final packaged/DPI acceptance.
 ### Windows and macOS session ZIP import
 
 On Windows use **导入会话归档…** in the project menu or command palette. On macOS
-use **导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
+use **更多 → 导入会话 ZIP 归档** in the project sidebar or `>import session archive` in
 the command palette. Choose a Wisp session-export ZIP and an explicit
 destination project. Preview shows the
 message/artifact counts, first four user/assistant messages (600 characters each),
@@ -1018,7 +1025,7 @@ both locales/schemes, frozen destinations and an archive changed after preview.
 ### Windows and macOS Codex and Claude session import
 
 On Windows use **导入 Codex / Claude 会话…** in the project menu or command
-palette. On macOS use **导入 Codex / Claude 会话** in the project sidebar or
+palette. On macOS use **更多 → 导入 Codex / Claude 会话** in the project sidebar or
 `>import codex` / `>import claude` in the command palette. Choose
 the destination project, Codex CLI or Claude Code, and a local or registered
 WSL/SSH source. The initial list uses the metadata cache; **重新扫描来源** scans

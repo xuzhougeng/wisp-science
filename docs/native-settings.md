@@ -136,10 +136,16 @@ save replies; automated tests do not use real accounts or keys.
 - Session: iteration limits, compaction, continuation, follow-ups, review.
 - Appearance: theme, palettes, fonts, selection popup, send shortcut, WebView stylesheet preferences.
 - Pet: enablement, directory, runtime status.
-- Models/API: model profiles, keys, catalog limits, capabilities, roles, active model, ACP agents.
+- Models/API: model profiles, keys, catalog limits, capabilities, roles, active model, ACP agents,
+  and the 决策模型 tab (`get/save/test_decision_model`, `clear_decision_model_key`). Its
+  services, think modes and strings come from `Resources/decision-model.json`, exported
+  from `crates/wisp-dto/src/decision_model.rs` and the WebView i18n by
+  `scripts/sync_native_design.py`; the API key goes to the keyring and is never read back.
 - Quick actions: bindings, scripts/prompts, workflow references.
 - Workflows: templates, nodes/dependencies, copy/save/delete, conversion and source provenance.
-- Specialists: prompts, models, tools/skills, reviewer configuration.
+- Specialists: prompts, models, tools/skills, reviewer configuration, and the
+  global default subagent model (`get_subagent_model` / `set_subagent_model`,
+  empty follows the conversation; chat profiles only).
 - Memory: enablement, project/global memory, edits, clearing, automatic failure analysis.
 - Skills: search, tags, enablement, files, install/remove, skill store.
 - Plugins: install, grants, enablement, removal.
@@ -163,7 +169,10 @@ The SwiftUI shell follows the WebView settings information architecture:
 1040 pt (920 pt for the model list), 16 pt rounded cards and shared color tokens.
 Model management separates API models from ACP agents; editors replace the
 content pane with breadcrumb navigation. Advanced generation and request-header
-fields start collapsed. Appearance has theme tiles, palette/font controls and a
+fields start collapsed. On/off settings use `NativeSettingsSwitch` (title and
+hint on the left, switch on the right, like the WebView) rather than checkboxes,
+and integer settings use `NativeSettingsNumberField`, a text field with step
+arrows that never goes below its minimum. Appearance has theme tiles, palette/font controls and a
 live draft preview. Memory, browser rules and remote access use two columns when
 space permits and stack in narrower windows. Escape dismisses the topmost native
 menu, editor or settings page, in that order.

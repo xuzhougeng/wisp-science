@@ -17,6 +17,7 @@ struct ProjectWorkspace: View {
     }
     @Environment(\.colorScheme) private var scheme
     @State private var sidebarVisible = true
+    @State private var moreOpen = false
     @State private var trajectoryPresented = false
     @State private var archivePresented = false
     @State private var sharePresented = false
@@ -105,32 +106,45 @@ struct ProjectWorkspace: View {
                     } label: { WispIcon(name: "more", size: 16) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted")).accessibilityLabel("会话操作")
                     Spacer()
+                    let noSession = model.activeSessionID == nil
+                    let archiveDisabled = noSession || conversation.snapshot?.running == true
+                    if Self.foldsTopbar(window: geometry.size.width, sidebar: showsSidebar,
+                                        panel: panelVisible && !noSession ? Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar) : nil) {
+                        Menu {
+                            Button { conversation.outlinePresented = true } label: { Label { Text("会话大纲") } icon: { WispIcon(name: "list", size: 14) } }.disabled(noSession)
+                            Button { sharePresented = true } label: { Label { Text("分享") } icon: { WispIcon(name: "share", size: 14) } }.disabled(noSession)
+                            Button { trajectoryPresented = true } label: { Label { Text("运行轨迹") } icon: { WispIcon(name: "timeline", size: 14) } }.disabled(noSession)
+                            Button { archivePresented = true } label: { Label { Text("研究归档") } icon: { WispIcon(name: "archive", size: 14) } }.disabled(archiveDisabled)
+                            Button { inboxPresented = true; refreshInbox() } label: { Label { Text(inbox.entries.isEmpty ? "待查看" : "待查看 (\(inbox.entries.count))") } icon: { WispIcon(name: "bell", size: 14) } }
+                            Button { terminalVisible.toggle() } label: { Label { Text("终端") } icon: { WispIcon(name: "terminal", size: 14) } }.disabled(noSession)
+                        } label: { WispIcon(name: "more", size: 16) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(color("text-muted"))
+                        .help(localized("更多操作")).accessibilityLabel(localized("更多操作")).accessibilityIdentifier("topbar-more")
+                        .popover(isPresented: $conversation.outlinePresented, arrowEdge: .bottom) { NativeConversationOutlineView(conversation: conversation) }
+                        .background(Color.clear.popover(isPresented: $inboxPresented, arrowEdge: .bottom) { inboxView })
+                    } else {
                     Button { conversation.outlinePresented.toggle() } label: { WispIcon(name: "list") }
                         .buttonStyle(.plain).help("会话大纲").accessibilityLabel("会话大纲")
-                        .disabled(model.activeSessionID == nil)
+                        .disabled(noSession)
                         .popover(isPresented: $conversation.outlinePresented, arrowEdge: .bottom) {
                             NativeConversationOutlineView(conversation: conversation)
                         }
                     Button { sharePresented = true } label: { WispIcon(name: "share") }
                         .buttonStyle(.plain).help("分享").accessibilityLabel("分享")
-                        .disabled(model.activeSessionID == nil)
+                        .disabled(noSession)
                     Button { trajectoryPresented = true } label: { WispIcon(name: "timeline") }
                         .buttonStyle(.plain).help("运行轨迹").accessibilityLabel("运行轨迹")
-                        .disabled(model.activeSessionID == nil)
+                        .disabled(noSession)
                     Button { archivePresented = true } label: { WispIcon(name: "archive") }
                         .buttonStyle(.plain).help("研究归档").accessibilityLabel("研究归档")
-                        .disabled(model.activeSessionID == nil || conversation.snapshot?.running == true)
+                        .disabled(archiveDisabled)
                     Button { inboxPresented.toggle(); refreshInbox() } label: {
                         HStack(spacing: 2) { WispIcon(name: "bell"); if !inbox.entries.isEmpty { Text("\(inbox.entries.count)").font(.caption2) } }
                     }.buttonStyle(.plain).help("待查看").accessibilityLabel("待查看")
-                        .popover(isPresented: $inboxPresented, arrowEdge: .bottom) {
-                            NativeInboxView(inbox: inbox, refresh: refreshInbox, open: { entry in
-                                inboxPresented = false
-                                Task { await model.openProject(entry.project_id, sessionID: entry.id) }
-                            }, close: { inboxPresented = false })
-                        }
+                        .popover(isPresented: $inboxPresented, arrowEdge: .bottom) { inboxView }
                     Button { terminalVisible.toggle() } label: { WispIcon(name: "terminal") }
-                        .buttonStyle(.plain).help("终端").accessibilityLabel("终端").disabled(model.activeSessionID == nil)
+                        .buttonStyle(.plain).help("终端").accessibilityLabel("终端").disabled(noSession)
+                    }
                     Button { panelVisible.toggle() } label: { WispIcon(name: "panel") }
                         .buttonStyle(.plain).help("切换侧面板").accessibilityLabel("切换侧面板").disabled(model.activeSessionID == nil)
                 }
@@ -247,6 +261,9 @@ struct ProjectWorkspace: View {
                     guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
                     model.nativeTerminal(projectID: project.id, sessionID: session).requestOpen(context)
                     terminalVisible = true
+                }, insertMemo: { body in
+                    guard model.activeProjectID == project.id, model.activeSessionID == session else { return }
+                    conversation.draft = NativeProjectMemos.composeInsert(conversation.draft, body)
                 }) { panelVisible = false }
                     .frame(width: Self.panelWidth(preferred: panelWidth, available: geometry.size.width, sidebar: showsSidebar))
                     .id(NativePanelScopeIdentity(databaseURL: model.databaseURL.standardizedFileURL, projectID: project.id, sessionID: session))
@@ -469,6 +486,17 @@ struct ProjectWorkspace: View {
         await model.openProject(project.id, sessionID: model.activeSessionID)
     }
 
+    /// The WebView folds the topbar actions into ⋮ when the conversation column
+    /// is narrower than 720 px; the panel toggle stays visible.
+    static func foldsTopbar(window: CGFloat, sidebar: Bool, panel: CGFloat?) -> Bool {
+        window - (sidebar ? 249 : 0) - (panel.map { $0 + 5 } ?? 0) < 720
+    }
+    private var inboxView: some View {
+        NativeInboxView(inbox: inbox, refresh: refreshInbox, open: { entry in
+            inboxPresented = false
+            Task { await model.openProject(entry.project_id, sessionID: entry.id) }
+        }, close: { inboxPresented = false })
+    }
     static func panelWidth(preferred: CGFloat, available: CGFloat, sidebar: Bool) -> CGFloat {
         // Preserve a usable composer when a wide inspector is reopened in a
         // smaller window. The drag preference remains local to this workspace.
@@ -480,6 +508,10 @@ struct ProjectWorkspace: View {
         Task { if let id = await conversation.create(project: project.id, acpAgentID: acpAgentID) { await model.openNativeDraft(id, projectID: project.id, database: database, sourceSession: sourceSession) } }
     }
 
+    private func moreEntry(_ icon: String, _ title: String, id: String, action: @escaping () -> Void) -> some View {
+        Button { moreOpen = false; action() } label: { HStack { WispIcon(name: icon, size: 16); Text(localized(title)); Spacer() } }
+            .buttonStyle(WispSidebarButtonStyle()).help(localized(title)).accessibilityLabel(localized(title)).accessibilityIdentifier(id)
+    }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
@@ -499,12 +531,6 @@ struct ProjectWorkspace: View {
             }
             VStack(spacing: 0) {
                 Button { createSession() } label: { HStack { WispIcon(name: "plus", size: 16); Text("新建会话"); Spacer() } }.buttonStyle(WispSidebarButtonStyle()).disabled(conversation.busy)
-                Button { sessionImportPresented = true } label: {
-                    HStack { WispIcon(name: "archive-import", size: 16); Text(localized("导入会话 ZIP 归档")); Spacer() }
-                }.buttonStyle(WispSidebarButtonStyle()).accessibilityIdentifier("import-session-archive")
-                Button { externalImportPresented = true } label: {
-                    HStack { WispIcon(name: "conversation-import", size: 16); Text(localized("导入 Codex / Claude 会话")); Spacer() }
-                }.buttonStyle(WispSidebarButtonStyle()).accessibilityIdentifier("import-external-session")
                 Button { model.searchPresented = true } label: {
                     HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer(); Text("⌘K").font(WispDesign.font(size: 11)).foregroundStyle(color("text-faint")) }
                 }.buttonStyle(WispSidebarButtonStyle())
@@ -527,27 +553,25 @@ struct ProjectWorkspace: View {
                 .help("文件")
                 .accessibilityLabel("文件")
                 .accessibilityIdentifier("sidebar-files")
-                Button { publication.dismiss(); model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) } label: {
-                    HStack { WispIcon(name: "research-trail", size: 16); Text("研究历程"); Spacer() }
+                // Like the WebView sidebar, less frequent destinations live under 更多 so
+                // the conversation list keeps its height.
+                Button { moreOpen.toggle() } label: {
+                    HStack { WispIcon(name: "more", size: 16); Text(localized("更多")); Spacer(); WispIcon(name: moreOpen ? "chevron-down" : "chevron-right", size: 12) }
                 }
                 .buttonStyle(WispSidebarButtonStyle())
-                .help("研究历程")
-                .accessibilityLabel("研究历程")
-                .accessibilityIdentifier("sidebar-journey")
-                Button { journey.dismiss(); publication.open(projectID: project.id, databaseURL: model.databaseURL) } label: {
-                    HStack { WispIcon(name: "book", size: 16); Text("论文证据"); Spacer() }
+                .help(localized("更多")).accessibilityLabel(localized("更多"))
+                .accessibilityIdentifier("sidebar-more")
+                if moreOpen {
+                    VStack(spacing: 0) {
+                        moreEntry("research-trail", "研究历程", id: "sidebar-journey") { publication.dismiss(); model.journey.open(projectID: project.id, day: model.journeyFocus?.projectID == project.id ? model.journeyFocus?.day : nil) }
+                        moreEntry("book", "论文证据", id: "sidebar-publication") { journey.dismiss(); publication.open(projectID: project.id, databaseURL: model.databaseURL) }
+                        moreEntry("star", "收藏库", id: "sidebar-library") { model.library.presented = true }
+                        moreEntry("archive-import", "导入会话 ZIP 归档", id: "import-session-archive") { sessionImportPresented = true }
+                        moreEntry("conversation-import", "导入 Codex / Claude 会话", id: "import-external-session") { externalImportPresented = true }
+                    }
+                    .padding(4).background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 10))
+                    .background(NativeSettingsEscape { moreOpen = false })
                 }
-                .buttonStyle(WispSidebarButtonStyle())
-                .help("论文证据")
-                .accessibilityLabel("论文证据")
-                .accessibilityIdentifier("sidebar-publication")
-                Button { model.library.presented = true } label: {
-                    HStack { WispIcon(name: "star", size: 16); Text("收藏"); Spacer() }
-                }
-                .buttonStyle(WispSidebarButtonStyle())
-                .help("收藏")
-                .accessibilityLabel("收藏")
-                .accessibilityIdentifier("sidebar-library")
             }
             HStack {
                 Text("会话").font(WispDesign.font(size: 11, weight: .semibold)).foregroundStyle(color("text-faint"))

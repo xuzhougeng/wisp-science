@@ -40,6 +40,14 @@ private actor ComposerClient: NativeConversationQuerying {
     func finish() { held?.resume(returning: catalogResponse("s")); held = nil }
 }
 final class NativeComposerTests: XCTestCase {
+    @MainActor func testRuntimeLineUsesTheWebViewNamesAndStatuses() {
+        XCTAssertEqual(NativeComposerModel.runtimeName("python"), "Python")
+        XCTAssertEqual(NativeComposerModel.runtimeName("r"), "R")
+        XCTAssertEqual(NativeComposerModel.runtimeName("julia"), "julia")
+        XCTAssertEqual(NativeComposerModel.runtimeStatus("ready"), localized("就绪"))
+        XCTAssertEqual(NativeComposerModel.runtimeStatus("dead"), localized("已终止"))
+        XCTAssertEqual(NativeComposerModel.runtimeStatus("idle"), localized("未启动"))
+    }
     @MainActor func testCatalogUsesExactIDAndSavePreservesFreshProfileAndCredentials() async throws {
         let client = ComposerClient(); let model = NativeComposerModel(client: client)
         await model.bind(project: "project", session: "s", profile: client.row())

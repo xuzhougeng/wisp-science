@@ -38,8 +38,7 @@ struct NativeSettingsField: View {
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.25)))
                 .accessibilityLabel(localized(field.label))
         case .integer:
-            TextField(localized(field.label), text: Binding(get: { value.string }, set: { value = ($0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0))) }))
-                .textFieldStyle(NativeSettingsTextFieldStyle()).frame(maxWidth: 160).labelsHidden()
+            NativeSettingsNumberField(text: Binding(get: { value.string }, set: { value = ($0.isEmpty ? .null : (Int64($0).map(SettingsValue.integer) ?? .string($0))) }), width: 140, label: field.label)
         case .toggle:
             Toggle(localized(field.label), isOn: Binding(get: { value.bool }, set: { value = .bool($0) })).toggleStyle(.switch).labelsHidden().accessibilityLabel(localized(field.label))
         case .choice(let choices):
@@ -316,6 +315,40 @@ struct NativeSettingsColumns<First: View, Second: View>: View {
             HStack(alignment: .top, spacing: 20) { first().frame(minWidth: 380, maxWidth: .infinity); second().frame(minWidth: 340, maxWidth: .infinity) }
             VStack(spacing: 20) { first(); second() }
         }
+    }
+}
+
+/// The WebView settings switch: title and hint on the left, switch on the right.
+/// Settings use this instead of a checkbox-style Toggle.
+struct NativeSettingsSwitch: View {
+    let title: String
+    var hint = ""
+    @Binding var isOn: Bool
+    var body: some View {
+        NativePreferenceRow(title: title, hint: hint) {
+            Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden().accessibilityLabel(localized(title))
+        }
+    }
+}
+
+/// An integer setting with the WebView number input's step arrows. Empty stays
+/// empty (the host default); the stepper never goes below `minimum`.
+struct NativeSettingsNumberField: View {
+    @Binding var text: String
+    var minimum: Int64 = 0
+    var width: CGFloat = 112
+    var label = ""
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField("", text: $text).textFieldStyle(NativeSettingsTextFieldStyle()).frame(width: width)
+                .accessibilityLabel(localized(label))
+            Stepper("", onIncrement: { text = Self.step(text, by: 1, minimum: minimum) },
+                    onDecrement: { text = Self.step(text, by: -1, minimum: minimum) })
+                .labelsHidden().accessibilityLabel(localized(label))
+        }
+    }
+    static func step(_ text: String, by delta: Int64, minimum: Int64) -> String {
+        String(max(minimum, (Int64(text.trimmingCharacters(in: .whitespaces)) ?? minimum) + delta))
     }
 }
 

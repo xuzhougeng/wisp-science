@@ -59,7 +59,7 @@ struct NativeComposerEffort: View {
     }
     /// `composer.effort.*` in ui/src/i18n.rs.
     static func label(_ effort: String) -> String {
-        localized(["none": "无", "minimal": "极低", "low": "低", "medium": "中", "high": "高", "xhigh": "极高", "max": "最高", "ultra": "超强"][effort] ?? effort.capitalized)
+        localized(["none": "无", "minimal": "极低", "low": "低", "medium": "中", "high": "高", "xhigh": "极高", "max": "最高", "ultra": "超强"][effort] ?? effort)
     }
 }
 

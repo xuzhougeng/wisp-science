@@ -104,3 +104,32 @@ pub struct DecisionModelProbe {
     pub model: String,
     pub elapsed_ms: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The native settings page reads and writes these shapes.
+    #[test]
+    fn native_fixture_matches_the_settings_and_probe() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-settings/v1/decision-model.json"
+        ))
+        .unwrap();
+        let settings: DecisionModelSettings =
+            serde_json::from_value(fixture["settings"].clone()).unwrap();
+        assert!(settings.enabled && settings.has_key("typesafe"));
+        assert!(DecisionPreset::find(&settings.preset).is_some());
+        let saved: DecisionModelSettings =
+            serde_json::from_value(fixture["save_args"]["settings"].clone()).unwrap();
+        assert_eq!(
+            saved,
+            DecisionModelSettings {
+                enabled: true,
+                ..DecisionModelSettings::from_preset(DecisionPreset::find("typesafe").unwrap())
+            }
+        );
+        let probe: DecisionModelProbe = serde_json::from_value(fixture["probe"].clone()).unwrap();
+        assert_eq!((probe.model.as_str(), probe.elapsed_ms), ("jev-latest", 42));
+    }
+}

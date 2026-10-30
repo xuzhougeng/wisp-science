@@ -36,6 +36,18 @@
       "source": "src-tauri/src/connector_commands.rs"
     },
     {
+      "command": "add_project_memo",
+      "arguments": [
+        {
+          "name": "input",
+          "rust_type": "wisp_dto::ProjectMemoInput",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::ProjectMemo, String>",
+      "source": "src-tauri/src/project_commands.rs"
+    },
+    {
       "command": "add_ssh_host",
       "arguments": [
         {
@@ -111,6 +123,18 @@
       "arguments": [],
       "result": "Result<UpdateCheck, String>",
       "source": "src-tauri/src/app_updates.rs"
+    },
+    {
+      "command": "clear_decision_model_key",
+      "arguments": [
+        {
+          "name": "preset",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
     },
     {
       "command": "clear_memory",
@@ -236,6 +260,18 @@
       ],
       "result": "Result<Vec<MemoryFile>, String>",
       "source": "src-tauri/src/memory_commands.rs"
+    },
+    {
+      "command": "delete_project_memo",
+      "arguments": [
+        {
+          "name": "memoId",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<(), String>",
+      "source": "src-tauri/src/project_commands.rs"
     },
     {
       "command": "detect_local_environment",
@@ -364,6 +400,12 @@
       "source": "src-tauri/src/storage_prefs.rs"
     },
     {
+      "command": "get_decision_model",
+      "arguments": [],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
+    },
+    {
       "command": "get_default_execution_context",
       "arguments": [],
       "result": "Result<Option<String>, String>",
@@ -462,6 +504,12 @@
       "arguments": [],
       "result": "Result<serde_json::Value, String>",
       "source": "src-tauri/src/settings_commands.rs"
+    },
+    {
+      "command": "get_subagent_model",
+      "arguments": [],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/models.rs"
     },
     {
       "command": "get_token_usage",
@@ -633,6 +681,12 @@
       "arguments": [],
       "result": "Result<Vec<PluginView>, String>",
       "source": "src-tauri/src/plugins.rs"
+    },
+    {
+      "command": "list_project_memos",
+      "arguments": [],
+      "result": "Result<Vec<wisp_dto::ProjectMemo>, String>",
+      "source": "src-tauri/src/project_commands.rs"
     },
     {
       "command": "list_projects",
@@ -1128,6 +1182,23 @@
       ],
       "result": "Result<Vec<ModelProfile>, String>",
       "source": "src-tauri/src/codex_login.rs"
+    },
+    {
+      "command": "save_decision_model",
+      "arguments": [
+        {
+          "name": "settings",
+          "rust_type": "DecisionModelSettings",
+          "optional": false
+        },
+        {
+          "name": "apiKey",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<DecisionModelSettings, String>",
+      "source": "src-tauri/src/decision_model.rs"
     },
     {
       "command": "save_local_environment_paths",
@@ -1642,6 +1713,18 @@
       "source": "src-tauri/src/skill_commands.rs"
     },
     {
+      "command": "set_subagent_model",
+      "arguments": [
+        {
+          "name": "id",
+          "rust_type": "String",
+          "optional": false
+        }
+      ],
+      "result": "Result<String, String>",
+      "source": "src-tauri/src/models.rs"
+    },
+    {
       "command": "set_tool_approval",
       "arguments": [
         {
@@ -1744,6 +1827,23 @@
       ],
       "result": "Result<AcpAgentInfoDto, String>",
       "source": "src-tauri/src/acp.rs"
+    },
+    {
+      "command": "test_decision_model",
+      "arguments": [
+        {
+          "name": "settings",
+          "rust_type": "DecisionModelSettings",
+          "optional": false
+        },
+        {
+          "name": "apiKey",
+          "rust_type": "Option<String>",
+          "optional": true
+        }
+      ],
+      "result": "Result<DecisionModelProbe, String>",
+      "source": "src-tauri/src/decision_model.rs"
     },
     {
       "command": "test_mcp_connection",
@@ -1863,6 +1963,18 @@
         }
       ],
       "result": "Result<ProjectSummary, String>",
+      "source": "src-tauri/src/project_commands.rs"
+    },
+    {
+      "command": "update_project_memo",
+      "arguments": [
+        {
+          "name": "patch",
+          "rust_type": "wisp_dto::ProjectMemoPatch",
+          "optional": false
+        }
+      ],
+      "result": "Result<wisp_dto::ProjectMemo, String>",
       "source": "src-tauri/src/project_commands.rs"
     },
     {

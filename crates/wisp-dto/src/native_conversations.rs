@@ -80,6 +80,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_delete",
     "native_conversation_exists",
     "native_conversation_snapshot",
+    "native_conversation_wait",
     "native_conversation_timer",
     "native_conversation_send",
     "native_conversation_attach",
@@ -781,6 +782,27 @@ pub struct PlanRequest {
     pub session_id: String,
     pub enabled: bool,
 }
+/// Long-poll for conversation activity so a native client snapshots when the
+/// transcript changes instead of on a fixed timer. The host answers as soon as
+/// the conversation's activity counter differs from `after`, or after
+/// `timeout_ms` (capped at [`WAIT_TIMEOUT_MAX_MS`]); a client then snapshots.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaitRequest {
+    pub session_id: String,
+    /// The `activity` from the previous answer; absent on the first wait.
+    #[serde(default)]
+    pub after: Option<u64>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+pub const WAIT_TIMEOUT_MAX_MS: u64 = 2_000;
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct WaitResult {
+    pub activity: u64,
+    /// False when the wait timed out without activity.
+    pub changed: bool,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FastRequest {
@@ -1298,6 +1320,29 @@ mod tests {
         )
         .is_err());
         assert!(serde_json::from_str::<ImageRequest>(r#"{"path":"p.png"}"#).is_err());
+    }
+    #[test]
+    fn wait_fixture_round_trips_and_rejects_unknown_fields() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/wait.json"
+        ))
+        .unwrap();
+        assert!(COMMANDS.contains(&fixture["command"].as_str().unwrap()));
+        let request: WaitRequest = serde_json::from_value(fixture["args"].clone()).unwrap();
+        assert_eq!((request.after, request.timeout_ms), (Some(41), Some(1000)));
+        let result: WaitResult = serde_json::from_value(fixture["result"].clone()).unwrap();
+        assert_eq!(
+            result,
+            WaitResult {
+                activity: 42,
+                changed: true
+            }
+        );
+        let first: WaitRequest = serde_json::from_str(r#"{"session_id":"s"}"#).unwrap();
+        assert_eq!((first.after, first.timeout_ms), (None, None));
+        assert!(
+            serde_json::from_str::<WaitRequest>(r#"{"session_id":"s","before_seq":1}"#).is_err()
+        );
     }
     #[test]
     fn fast_preserves_default_and_explicit_off_semantics() {

@@ -12,7 +12,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "apps/macos/Sources/WispProjectBrowserUI/Resources"
-ICONS = ("search", "sort", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "download", "link", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "archive-import", "archive-export", "conversation-import", "conversation-move", "fork", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more", "circle-alert", "server", "arrow-up", "bolt", "plan", "expand", "bubble", "sun", "moon", "monitor")
+ICONS = ("search", "sort", "refresh", "database", "folder", "star", "star-filled", "chat", "doc", "sync", "clock", "arrow-left", "chevron-left", "chevron-right", "chevron-down", "gear", "calendar", "upload", "download", "link", "plus", "folder-plus", "research-trail", "book", "grid", "list", "share", "timeline", "archive", "archive-import", "archive-export", "conversation-import", "conversation-move", "fork", "bell", "attach", "terminal", "panel", "adjustments", "close", "user", "sparkles", "wrench", "gauge", "check", "edit", "pin", "trash", "copy", "more", "circle-alert", "server", "arrow-up", "bolt", "plan", "expand", "bubble", "sun", "moon", "monitor", "lock")
 # WebView-only settings sections the native preview has no page for yet.
 WEBVIEW_ONLY_SECTIONS = set()
 COLORS = ("bg-app", "bg-elev", "bg-sunken", "surface-hover", "text", "text-muted", "text-faint", "border", "border-strong", "clay", "clay-strong")
@@ -83,6 +83,17 @@ def exports():
     if len(presets) != 6:
         raise ValueError("Review MODEL_PRESETS export after WebView changes")
     yield "model-presets.json", (json.dumps(presets, indent=2) + "\n").encode()
+    # Settings → Models → 决策模型: the services, think modes and both locales'
+    # strings, so the native page never hand-copies them.
+    decision = (ROOT / "crates/wisp-dto/src/decision_model.rs").read_text(encoding="utf-8")
+    block = decision.split("pub const DECISION_PRESETS:", 1)[1].split("];", 1)[0]
+    pattern = r'DecisionPreset \{\s*id: "([^"]+)",\s*base_url: "([^"]*)",\s*model: "([^"]*)",\s*timeout_secs: (\d+),\s*key_required: (true|false),\s*key_url: "([^"]*)",\s*\}'
+    decision_presets = [dict(id=i, base_url=b, model=m, timeout_secs=int(t), key_required=k == "true", key_url=u) for i, b, m, t, k, u in re.findall(pattern, block)]
+    if not decision_presets or len(decision_presets) != block.count("DecisionPreset {"):
+        raise ValueError("Review DECISION_PRESETS export after decision model changes")
+    think_modes = json.loads("[" + decision.split("pub const DECISION_THINK_MODES: &[&str] = &[", 1)[1].split("];", 1)[0] + "]")
+    strings = {key: {"zh": value, "en": by_locale["En"].get(key, value)} for key, value in by_locale["Zh"].items() if key.startswith("decision.")}
+    yield "decision-model.json", (json.dumps({"presets": decision_presets, "think_modes": think_modes, "strings": strings}, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
     css = (ROOT / "ui/src/styles/base.css").read_text(encoding="utf-8")
     palettes = {}
     for theme, selector in (("light", ":root"), ("dark", ':root[data-theme="dark"]')):

@@ -85,7 +85,7 @@ struct NativeSharePage: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(row.role == "user" ? WispDesign.color("bg-sunken", scheme) : .clear, in: RoundedRectangle(cornerRadius: 12))
             }
-            Divider(); Text("Shared from Wisp Science").font(.caption).foregroundStyle(.secondary)
+            Divider(); Text(localized("来自 wisp-science 的分享")).font(.caption).foregroundStyle(.secondary)
         }.padding(24).background(WispDesign.color("bg-app", scheme)).foregroundStyle(WispDesign.color("text", scheme)).environment(\.colorScheme, scheme)
     }
     @MainActor static func png(rows: [NativeShareRow], width: Int, scheme: ColorScheme) throws -> Data {

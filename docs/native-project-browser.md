@@ -20,7 +20,10 @@ long pages scroll. The right column now contains the same five recent saved
 sessions as the WebView. Clicking a project enters its workspace; clicking a
 recent session opens that exact conversation. The workspace has project switching,
 a collapsible left session sidebar, a main transcript pane, and a back-to-projects
-action. Saved transcripts load in pages of 20 user turns with an older-messages
+action. Less frequent sidebar destinations (research journey, publication, library and
+session imports) sit under **更多**, as in the WebView. When the conversation column
+is narrower than 720 points, the topbar folds outline, share, trajectory, archive,
+inbox and terminal into **⋮**; the panel toggle stays visible. Saved transcripts load in pages of 20 user turns with an older-messages
 control. Reading does not mark messages seen or change the WebView's active session.
 
 The home search icon (Command-K) opens a dismissible search sheet for projects
@@ -32,6 +35,12 @@ sidebar collapsed. Database selection and refresh live in the app footer,
 so they no longer occupy the WebView's primary project-action positions. The footer provides system/light/dark
 appearance choices and the successful-read time; hover over the database filename
 to see its full path.
+
+User-facing SwiftUI text is written in Chinese and wrapped in `localized()`;
+`scripts/check_strings_native_macos.py` (run by the `swiftui` CI job) rejects
+English-only literals and `.capitalized` raw values, so the Chinese interface
+does not show untranslated English. Same-in-both-languages names (brands, file
+formats, field names) are listed in its `ALLOWED` set.
 
 Brand SVGs, the existing `compose_icon()` glyphs, and semantic colors are exported
 from the WebView sources into the Swift resource bundle. There is no second icon
@@ -270,7 +279,12 @@ response contains `code` (`invalid_request`, `unsupported_schema`, or
 protocol responses only; startup/transport failures go to stderr and exit
 nonzero. EOF exits the process. Clients validate schema, correlation ID, response
 type, and supported activity source before presenting results. The macOS client
-terminates a service that exceeds its 30-second query deadline.
+terminates a service that exceeds its 30-second query deadline and says why it
+usually happens: project databases under Desktop, Documents or Downloads make macOS
+ask whether the app may open them, and `open()` waits for that answer. An ad-hoc
+signed local build asks again after every rebuild; allow the prompt, then refresh.
+Both the app and its helper declare why they need those folders
+(`NS*FolderUsageDescription` in `apps/macos/Info.plist` and `HostInfo.plist`).
 
 ## Verification
 
@@ -348,7 +362,7 @@ surface.
 
 ## Library
 
-**收藏** on the home header and in the project sidebar opens the same library
+**收藏** on the home header and **更多 → 收藏库** in the project sidebar open the same library
 sheet. Search and delete go to the desktop host's app-global library store
 (`library.sqlite` via `AppState.library`), the same store the WebView library
 uses. `wisp-service` cannot search or delete that store.
@@ -404,7 +418,7 @@ Escape immediately after the sheet opens closes only the calendar. WinUI uses th
 
 ## Research journey
 
-The sidebar **研究历程** button, and the calendar's **打开研究历程** action,
+The sidebar **更多 → 研究历程** entry, and the calendar's **打开研究历程** action,
 open the same journey sheet for one project. `native_research_journey` requires
 that project id and reads only its mainline history for the requested range.
 The calendar passes the selected day; the sidebar reads the current local month.
@@ -432,7 +446,7 @@ macOS editing surfaces are separate from its current implementation.
 
 ## Publication workspace
 
-The sidebar **论文证据** button replaces the conversation column with the
+The sidebar **更多 → 论文证据** entry replaces the conversation column with the
 publication workspace for the open project. `native_publication_workspace`
 reads that project's papers. `native_publication_create` creates one paper and
 its first revision. `native_publication_sources` lists exact artifact versions,

@@ -1036,3 +1036,24 @@ responses. The new Rust test exercises successful replacement, changed baselines
 missing files, parent-directory escape and oversized previews. Rust verification
 and packaged editor interaction are still in progress; this feature is not yet
 counted as fully accepted.
+
+## Runs and Memos tabs (SwiftUI)
+
+The SwiftUI right panel now has the WebView's 运行 and 备忘录 tabs.
+
+运行 lists this conversation's runs and file transfers (`frame_id` equals the
+session; runs without a frame are left out), split into 进行中 and a collapsed
+已完成 group with the same ordering as `session_run_groups`. The tab title counts
+only active runs. Rows reuse the existing activity model and commands for detail,
+cancel (confirmed first) and re-harvest; the tab polls every 2 s while shown.
+
+备忘录 lists the project's private memos, pinned first then newest, with search,
+new, edit, pin/unpin, copy, delete and 插入输入框. Insert appends the body to the
+main composer draft after a blank line, matching `compose_insert`; nothing is
+sent. The four memo commands are on the native settings allowlist and run in the
+project's hidden host context; a memo returned for another project is rejected.
+Escape closes the inline editor first (asking before discarding changes) and
+leaves the panel open. `contracts/native-settings/v1/project-memos.json` is
+decoded by both wisp-dto and Swift tests.
+
+The WinUI `NativePanelTabs` registry does not include these two IDs yet.
