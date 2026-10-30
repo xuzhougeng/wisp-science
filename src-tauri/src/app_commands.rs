@@ -545,14 +545,28 @@ fn discover_local_paths(
     config: &serde_json::Value,
 ) -> wisp_dto::LocalEnvironmentStatus {
     use wisp_runtime::PythonEnv;
+    // Tools Wisp installed itself are found after PATH, so a user's own
+    // installation keeps priority unless the install saved its paths.
+    let managed = crate::toolchain::Layout::new(app_data);
+    let or_managed =
+        |found: Option<std::path::PathBuf>, name: &str| found.or_else(|| managed.find(name));
     let paths = [
         ("python_executable", PythonEnv::find_python(app_data)),
-        ("rscript_executable", wisp_runtime::find_rscript()),
-        ("uv_executable", PythonEnv::find_uv()),
-        ("node_executable", PythonEnv::find_node()),
-        ("npm_executable", PythonEnv::find_npm()),
-        ("sci_executable", PythonEnv::find_sci()),
-        ("pixi_executable", PythonEnv::find_pixi()),
+        (
+            "rscript_executable",
+            or_managed(wisp_runtime::find_rscript(), "Rscript"),
+        ),
+        ("uv_executable", or_managed(PythonEnv::find_uv(), "uv")),
+        (
+            "node_executable",
+            or_managed(PythonEnv::find_node(), "node"),
+        ),
+        ("npm_executable", or_managed(PythonEnv::find_npm(), "npm")),
+        ("sci_executable", or_managed(PythonEnv::find_sci(), "sci")),
+        (
+            "pixi_executable",
+            or_managed(PythonEnv::find_pixi(), "pixi"),
+        ),
         ("cua_driver_executable", PythonEnv::find_cua_driver()),
     ]
     .into_iter()

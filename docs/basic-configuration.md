@@ -36,6 +36,21 @@
 
 本地环境页会后台检测 Python、Rscript、uv、Node、npm、sci、pixi、Cua Driver 的路径，保存到 Local，并保留已有配置。可点 **编辑路径** 手动填写可执行文件的完整路径，再点 **保存路径**；支持包含空格的 Windows/macOS/Linux 路径。保存前检查文件是否存在，不执行程序。命令填 `cua-driver` 的本地 MCP 连接会直接运行这里保存的 Cua Driver 路径，不要求它在 PATH 上。清空字段后保存会恢复自动检测；**重新检测路径** 保留已保存的手动选择。**设置 → 常规 → 本地环境** 也支持同样的编辑操作；该面板不再位于模型页。网络代理和包镜像位于 **设置 → 网络**（基础偏好中，紧挨在常规下面）。缺少工具不影响启动，也不会自动安装；需要时可在对话中让 Wisp 使用 `local-env-setup` 配置。以后可随时按 **Cmd/Ctrl+P**，搜索 **快速配置** 重新打开这个页面。重新打开只刷新检测结果，不会重置模型或自动安装依赖。
 
+### 安装到 Wisp（uv、Python、R、Node）
+
+新电脑上不必再手动、零散地装这些工具。本地环境页下方的 **安装到 Wisp** 列出 uv、Python 3.12、R 和 Node.js：
+
+- **已检测到**的工具直接使用系统里现有的版本，不提供安装；四个都检测到时只显示一行说明。
+- **未检测到**的工具标为「建议安装」并默认勾选，点 **安装所选** 即可。
+- 现在不想装也可以直接点 **开始使用** 跳过，之后在 **设置 → 常规 → 本地环境**（或能力页）安装，或在对话里让 Wisp 用 `local-env-setup` 配置。
+
+- **装到哪里**：全部装进 Wisp 自己的应用数据目录（页面上会显示完整路径，例如 macOS 的 `~/Library/Application Support/science.wisp-science/wisp-science/toolchain`），不需要管理员权限，不修改系统 PATH 或 shell 配置，也不会碰你自己的 `~/.pixi`。
+- **怎么装**：Wisp 先下载一个固定版本、校验 SHA-256 的 pixi，再从 conda-forge 把 uv、Python、R（含持久化 R 工具需要的 jsonlite）和 Node.js（含 npm）各装成一个独立环境。勾选 Python 时会同时安装 uv，并用 uv 创建 Wisp 的默认 Python 环境（`python/.venv`），装好常用分析包（pandas、requests 等）。
+- **网络**：下载走 **设置 → 网络** 的「代码请求」代理；填写了 Conda 通道镜像时用它代替 conda-forge（请填写 conda-forge 的镜像地址），Python 包索引和 CA 证书包也会生效。
+- **进度**：按钮下方显示当前步骤和最近的安装输出。安装在后台进行，关掉引导或设置页也不会中断；重新打开能看到进度。可以点 **停止安装**，已完成的工具会保留，之后点 **重试** 从断点继续。
+- **装好之后**：路径自动保存到 Local，Python / R 工具直接使用；正在运行的 Python / R 解释器需要重启才会换用新路径。Wisp 在本机执行的命令和 Run 会优先找到这些工具，其中 `python`、`pip` 指 Wisp 的默认环境。
+- **项目环境**：某个项目需要专门的依赖时，不要装进 Wisp 的默认环境，而是在项目目录里用 uv 建环境（`uv init` 或 `uv venv`、`uv add …`、`uv run …`），需要 conda 包时用 pixi。可以直接在对话里让 Wisp 帮你建好，并把项目的 `.venv` 设为当前解释器。
+
 打开任意项目，进入 **设置 → 模型**。这里的 **Models** 是 Wisp 内置 Agent 使用的 HTTP API 模型；外部 Codex、Claude Code 等进程应配置到旁边的 **ACP Agents**，不要把 ACP 启动命令填进 HTTP 模型表单。
 
 ![模型配置列表](assets/basic-configuration/01-models-overview.png)

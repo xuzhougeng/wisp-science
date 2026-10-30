@@ -1270,6 +1270,7 @@ pub(super) fn LocalEnvironmentPanel(
                     </div>
                 }.into_view()
             }}
+            <crate::toolchain_setup::ToolchainSetup locale=locale bootstrap=bootstrap />
         </section>
     }
 }

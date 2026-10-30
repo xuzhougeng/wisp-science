@@ -2522,7 +2522,7 @@ fn local_command(context_id: &str, script: &str, cwd: Option<PathBuf>) -> RunCom
         script: script.into(),
         cwd,
         stdin: None,
-        envs: wisp_tools::network::command_proxy_env(),
+        envs: wisp_tools::local_env::command_env(),
     }
 }
 
@@ -2535,7 +2535,7 @@ fn local_command(context_id: &str, script: &str, cwd: Option<PathBuf>) -> RunCom
         script: script.into(),
         cwd,
         stdin: None,
-        envs: wisp_tools::network::command_proxy_env(),
+        envs: wisp_tools::local_env::command_env(),
     }
 }
 

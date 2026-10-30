@@ -119,6 +119,7 @@ mod research_recap;
 mod resource_leases;
 mod resource_refs;
 mod review;
+mod toolchain;
 mod workflow_approval;
 mod workflow_artifacts;
 pub(crate) use wisp_runs as run_context;
@@ -7663,6 +7664,7 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from(".wisp"))
                 .join("wisp-science");
             std::fs::create_dir_all(&app_data).expect("create app data dir");
+            wisp_tools::local_env::set_managed_path(toolchain::Layout::new(&app_data).path_dirs());
             let db_path = app_data.join("wisp.sqlite");
             let store = startup.record("store", || {
                 tauri::async_runtime::block_on(Store::open_application(&db_path)).expect("open store")
@@ -8357,6 +8359,9 @@ pub fn run() {
             app_commands::get_bootstrap_status,
             app_commands::detect_local_environment,
             app_commands::save_local_environment_paths,
+            toolchain::get_toolchain_status,
+            toolchain::install_toolchain,
+            toolchain::cancel_toolchain_install,
             app_updates::check_for_updates,
             app_updates::download_update,
             app_updates::install_update,

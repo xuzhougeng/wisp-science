@@ -1,6 +1,6 @@
 ---
 name: local-env-setup
-description: Prepare optional local Python/R runtimes, user-configured Python MCP servers, Node/scimaster-cli, and pixi for the user’s task. Reuse detected paths, configure Wisp interpreters, and apply mirrors when needed. Use for 配置环境, missing runtime dependencies, or requested local installations. For remote SSH compute use compute-env-setup.
+description: Prepare optional local Python/R runtimes, user-configured Python MCP servers, Node/scimaster-cli, and pixi for the user’s task. Points users to Install into Wisp for uv/Python/R/Node, creates project environments with uv or pixi, reuses detected paths, configures Wisp interpreters, and applies mirrors when needed. Use for 配置环境, missing runtime dependencies, or requested local installations. For remote SSH compute use compute-env-setup.
 license: Apache-2.0
 tags: environment, uv, python, r, node, npm, pixi, scimaster, mirror, china, install, macos, windows, linux
 ---
@@ -8,11 +8,39 @@ tags: environment, uv, python, r, node, npm, pixi, scimaster, mirror, china, ins
 # Local runtime setup
 
 Wisp starts and runs native biological tools without Python, R, uv, or Node.
-First-run model setup and Settings → Models show a background path check.
-**Cmd/Ctrl+P → Quick setup (快速配置)** reopens setup and refreshes the check.
-It never runs installers or creates a virtualenv. Detected executable paths are
-saved in the Local execution context without replacing existing choices.
-A found path does not establish version compatibility or installed packages.
+The local environment panel (first-run setup, Settings → General → Local
+environment, Capabilities) shows a background path check. **Cmd/Ctrl+P → Quick
+setup (快速配置)** reopens setup and refreshes the check. Detection never runs
+installers or creates a virtualenv. Detected executable paths are saved in the
+Local execution context without replacing existing choices. A found path does
+not establish version compatibility or installed packages.
+
+## Wisp-managed tools (preferred on a new machine)
+
+The same panel has **Install into Wisp (安装到 Wisp)**. Tools already detected
+on the computer are used as they are and are not offered. Missing ones among
+uv, Python, R, and Node are suggested; the user ticks them (or skips and comes
+back later) and Wisp installs them into its own folder — no administrator
+rights, no shell-profile or system PATH change:
+
+| Item | Location (under the app data folder) |
+|---|---|
+| Toolchain (pixi `PIXI_HOME`) | `toolchain/` — `envs/uv`, `envs/python`, `envs/r` (r-base + r-jsonlite), `envs/nodejs` |
+| Wisp's Python environment | `python/.venv`, created by that uv from Python 3.12, with `python/requirements-kernel.txt` |
+
+The installer uses a pinned, checksum-verified pixi and conda-forge, follows
+Settings → Network (Code requests proxy, Conda mirror for conda-forge, Python
+package index, CA bundle), and saves the installed paths on Local. Wisp's local
+shell commands and Runs then find `uv`, `python`/`pip` (Wisp's environment),
+`Rscript`, `node`, and `npm` on PATH. When the user lacks a tool, point them to
+this panel before running any installer yourself; it is the reproducible route.
+
+**Project-specific environments** belong to the project, not to Wisp's
+environment: use uv there (`uv venv` or `uv init`, `uv add …` / `uv pip install
+…`, `uv run …`), or pixi when conda packages are needed (Layer 3). Save the
+project interpreter with `set_runtime_interpreter` when the persistent tool
+should use it. Do not `pip install` project dependencies into Wisp's own
+environment.
 
 | Task | Optional tools |
 |---|---|
@@ -24,9 +52,9 @@ A found path does not establish version compatibility or installed packages.
 
 Start with the user's task and existing environment. Install only what it
 needs. Do not treat every missing optional tool as a broken installation.
-After changing PATH, use **Check paths again** in model settings; restart Wisp
-only if the GUI process needs to inherit a changed PATH. Interpreter settings
-can be saved directly without restarting the app.
+After changing PATH, use **Check paths again** in the local environment panel;
+restart Wisp only if the GUI process needs to inherit a changed PATH.
+Interpreter settings can be saved directly without restarting the app.
 
 ## Step 0 — Detect platform, region, and current state
 
@@ -139,6 +167,9 @@ locations for users who already prepared them; it never creates them on launch:
 
 ### Install uv
 
+Prefer **Install into Wisp** above. Install system-wide only when the user asks
+for it or needs uv outside Wisp.
+
 **International:**
 
 ```powershell
@@ -173,6 +204,17 @@ uv python list
 Target: **Python 3.11+**. With mainland mirrors, export `UV_INDEX_URL` first.
 
 ### Create a project environment when needed
+
+With Wisp-managed tools, a Python project usually needs only uv in its own
+directory:
+
+```sh
+uv init --bare        # or: uv venv
+uv add pandas scanpy  # records dependencies in pyproject.toml / uv.lock
+uv run python analysis.py
+```
+
+A bare environment without a project file works too:
 
 Set `ENV_DIR` to a task-specific environment location and `REQ` to the bundled
 or repository `python/requirements-kernel.txt` when those analysis packages
@@ -299,7 +341,9 @@ pixi info    # shows config paths and channels
 
 | Issue | Fix |
 |---|---|
-| uv/node installed but app still says missing | Restart wisp-science; confirm tools on PATH for the **GUI user** (macOS: relaunch from Dock after shell profile update). |
+| uv/node installed but app still says missing | Restart wisp-science; confirm tools on PATH for the **GUI user** (macOS: relaunch from Dock after shell profile update). Or install them with **Install into Wisp**, which needs no PATH change. |
+| Install into Wisp fails downloading pixi | GitHub is unreachable: set the Code requests proxy in Settings → Network, then **Retry**. Finished tools stay installed. |
+| Install into Wisp fails solving or fetching packages | Check the Conda mirror (it must mirror conda-forge) and proxy in Settings → Network; the log under the button shows pixi's message. |
 | Cannot modify PATH | Set `UV_PATH` / `PIXI_PATH` to full binary paths before launching wisp-science. |
 | Mainland: timeouts on pypi.org / registry.npmjs.org | Apply Step 0a mirrors; retry. |
 | Corporate proxy / TLS | `HTTPS_PROXY`, trust store; still use mirrors if direct egress to US is blocked. |
@@ -309,7 +353,8 @@ pixi info    # shows config paths and channels
 ## Agent workflow
 
 1. Load this skill for requested setup or a task blocked by a missing dependency.
-2. Detect OS and existing paths; reuse the user's selected environment.
+2. Detect OS and existing paths; reuse the user's selected environment. For a
+   missing uv/Python/R/Node, suggest **Install into Wisp** first.
 3. Before downloading, choose appropriate network mirrors (Step 0a).
 4. Install only the Python/R, custom MCP, literature, or bioinformatics components needed.
 5. Save interpreter paths to the chosen execution context and verify actual task/tool execution.

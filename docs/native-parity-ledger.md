@@ -19,6 +19,7 @@ parity-ledger` 检查这一点（`scripts/check_native_parity.py`）。
 
 | WebView 改动 | SwiftUI 状态 | 说明 |
 | --- | --- | --- |
+| 本地环境：安装到 Wisp（uv、Python、R、Node 一键安装、进度、停止/重试） | 待补 | 命令 `get_toolchain_status` / `install_toolchain` / `cancel_toolchain_install`，事件 `toolchain-install` |
 | 设置 › 专家：默认子智能体模型（#1638） | 已补 | #1660 |
 | 设置 › 模型：决策模型标签页 | 已补 | #1656 |
 | 右侧面板：运行（#1547）、备忘录（#1567） | 已补 | #1658 |
