@@ -98,6 +98,15 @@ pub(crate) fn ToolchainSetup(
     let offering = create_memo(move |_| {
         running.get() || missing.with(|tools| tools.as_ref().is_some_and(|tools| !tools.is_empty()))
     });
+    // With every tool detected there is nothing to offer, so the section stays
+    // out of the panel unless a stopped or failed install still needs reading.
+    let visible = create_memo(move |_| {
+        offering.get()
+            || status.with(|s| {
+                s.as_ref()
+                    .is_some_and(|s| matches!(s.state.as_str(), "failed" | "cancelled"))
+            })
+    });
 
     spawn_local(async move {
         if let Ok(value) = invoke_checked("get_toolchain_status", JsValue::UNDEFINED).await {
@@ -165,13 +174,11 @@ pub(crate) fn ToolchainSetup(
         });
     };
 
-    view! {
+    move || {
+        visible.get().then(|| view! {
         <div class="toolchain-setup" data-testid="toolchain-setup">
             <h4>{move || t(locale.get(), "toolchain.title")}</h4>
             <p class="hint">{move || {
-                if missing.with(|tools| tools.as_ref().is_some_and(Vec::is_empty)) && !running.get() {
-                    return t(locale.get(), "toolchain.all_found");
-                }
                 let root = status.with(|s| s.as_ref().map(|s| s.root.clone()).unwrap_or_default());
                 tf(locale.get(), "toolchain.hint", &[("root", &root)])
             }}</p>
@@ -247,5 +254,6 @@ pub(crate) fn ToolchainSetup(
                 <p class="hint toolchain-later">{move || t(locale.get(), "toolchain.later")}</p>
             })}
         </div>
+    })
     }
 }

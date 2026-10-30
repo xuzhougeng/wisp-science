@@ -228,7 +228,6 @@
   "stderr_tail": "Standard error · log tail",
   "stdout_tail": "Standard output · log tail",
   "tokens": "tokens",
-  "uv、Python、R、Node 都已在这台电脑上检测到，Wisp 直接使用现有版本。": "uv, Python, R, and Node were all found on this computer; Wisp uses them as they are.",
   "wisp-science": "wisp-science",
   "wisp-science 拍了拍 Reviewer：帮我检查一下这次回答": "wisp-science nudged Reviewer: please check this response",
   "wisp-science 能做什么": "What wisp-science can do",

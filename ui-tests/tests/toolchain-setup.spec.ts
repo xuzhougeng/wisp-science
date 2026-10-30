@@ -139,12 +139,13 @@ test("detected tools are used as they are and nothing is offered", async ({ page
   await page.locator(".proj-card-main").first().click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
-  const setup = page.getByTestId("toolchain-setup");
-  // The default mock finds Python, Rscript, uv, and Node.
-  await expect(setup).toContainText("were all found on this computer; Wisp uses them as they are");
-  await expect(setup.locator('input[type="checkbox"]')).toHaveCount(0);
-  await expect(setup.getByRole("button")).toHaveCount(0);
-  await expect(toolRow(setup, "R")).toContainText("Found · used as is");
+  // The default mock finds Python, Rscript, uv, and Node: the panel lists
+  // their paths and offers no install section at all.
+  const environment = page.getByTestId("local-environment");
+  await expect(environment).toContainText("/mock/bin/Rscript");
+  await expect.poll(async () => (await invokes(page, "get_toolchain_status")).length).toBeGreaterThan(0);
+  await expect(page.getByTestId("toolchain-setup")).toHaveCount(0);
+  await expect(environment.locator('input[type="checkbox"]')).toHaveCount(0);
   expect(await invokes(page, "install_toolchain")).toEqual([]);
 });
 
